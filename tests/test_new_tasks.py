@@ -69,7 +69,7 @@ class TestNewTasks(AltitudeCase):
         self.assertEqual(server.new_tasks_view()["only"], [{"project": self.project, "engine": config.ENGINES[1]}])
         with self.assertRaises(T.TransitionError):
             dispatch.request_setting(None, "new_tasks", "@high", "L3 cannot steer every project", actor="l3")
-        dispatch.request_setting(None, "new_tasks", "@high", "CLI spelling", actor="burak")
+        dispatch.request_setting(None, "new_tasks", "@high", "CLI spelling", actor=config.OPERATOR_ACTOR)
         dispatch._run_setting(None, "new_tasks")
         self.assertEqual(config.machine_settings()["new_tasks"], {"effort": "high"})
 

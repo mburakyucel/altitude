@@ -306,8 +306,8 @@ else:
 
 def set_project_setting(project: str, setting: str, value) -> None:
     """Save one project setting the way Settings and `alt project set` do: a reasoned request altd applies."""
-    from altitude import dispatch
-    dispatch.request_setting(project, setting, value, "Test setting", actor="burak")
+    from altitude import config, dispatch
+    dispatch.request_setting(project, setting, value, "Test setting", actor=config.OPERATOR_ACTOR)
     dispatch._run_setting(project, setting)
 
 
