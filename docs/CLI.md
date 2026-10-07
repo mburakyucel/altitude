@@ -306,7 +306,10 @@ digits, dots, underscores or hyphens); retry an interrupted acknowledgement with
 and identical arguments.
 The acknowledgement supplies the exchange identifier for a reply. A reply must address the other
 participant of an incoming exchange. Both projects must remain registered to the same resolved
-checkouts; changed registration refuses reuse and leaves pending information unsupplied.
+checkouts; changed registration refuses reuse and leaves pending information unsupplied. These rows
+stay visible without expiration or a removal control; reattaching the same checkout permits supply.
+For diagnostic text beginning with a dash, put options before `--`, then the literal text:
+`alt project message peer --summary 'Flag refusal' --request-id probe-2 -- '-p flag rejected'`.
 
 Text is limited to 4 KiB and the summary to one plain line of 100 characters. Local incident IDs,
 task slugs, review IDs and public issue/PR URLs may cross. Files, attachments, private record/home

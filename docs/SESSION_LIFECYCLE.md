@@ -1158,10 +1158,13 @@ pending text or replying to a different checkout.
 
 These rows never make the autonomous queue ready. An already admitted ordinary turn with an
 eligible engine supplies pending text through the shared coordinator prompt path, writes one
-incoming system chat row and retains its receipt before removing it from the queue. An engine
-hold keeps the inbox pending. A failed turn does not imply successful triage or activation;
-inspect the actual response. Interrupted queue removal is recoverable without a second visible
-chat row. Information rows stay outside operator decision sources and historical human handoffs.
+incoming system chat row and retains its receipt before removing it from the queue after a completed
+provider turn or actual assistant output. Routing holds, launch failures, input refusal and
+provider refusal without assistant output keep the inbox pending for another ordinary turn. A failed
+turn does not imply successful triage or activation;
+inspect the actual response. Interrupted receipt/queue removal is reconciled from the proven incoming
+chat row on the next ordinary turn, without another visible inbox row or forwarding it twice.
+Information rows stay outside operator decision sources and historical human handoffs.
 Replies use the same exchange and the same next-ordinary-turn delivery. No task transition,
 owner wake, approval, grant or extra provider turn follows from messaging itself.
 

@@ -120,6 +120,20 @@ const conversation = () => screen.findByRole("region", { name: "Conversation" })
 afterEach(() => vi.useRealTimers());
 
 describe("queued L3 Send now", () => {
+  it.each([390, 1440])("does not count information as a runnable queue position at %i", async (width) => {
+    setViewport(width);
+    mockFetch({ chat: { ...chatView, queued: [
+      { id: "information", text: "Diagnostic", trigger: "project-message", role: "system",
+        project_message: { sender: "lab", recipient: "altitude", exchange_id: "exchange-1", message_id: "information",
+          summary: "Probe", direction: "incoming", status: "queued" } },
+      { id: "first", text: "First ordinary request", trigger: "chat" },
+      { id: "second", text: "Second ordinary request", trigger: "chat" },
+    ] } });
+    renderApp({ route: "/projects/altitude" });
+    await screen.findByText("Queued · runs next");
+    expect(screen.getByText("Queued · 2 in line")).toBeVisible();
+    expect(screen.queryByText("Queued · 3 in line")).toBeNull();
+  });
   it.each([390, 1440])("keeps information exchanges separate and read-only at %i", async (width) => {
     setViewport(width);
     const peer = { sender: "lab", recipient: "altitude", exchange_id: "exchange-1", message_id: "message-1",

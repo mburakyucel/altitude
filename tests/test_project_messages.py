@@ -34,6 +34,11 @@ class TestProjectMessages(AltitudeCase):
     def rows(self, project):
         return [row for row in l3.chat_history(project, None) if row.get("trigger") == "project-message"]
 
+    def supply(self, project):
+        selected = l3._pending_project_messages(project)
+        l3._record_project_messages(project, selected)
+        return l3._project_message_prompt(selected)
+
     def test_send_reply_on_each_engine_waits_for_ordinary_turn_and_preserves_authority(self):
         for engine in config.ENGINES:
             with self.subTest(engine=engine):
@@ -103,7 +108,7 @@ class TestProjectMessages(AltitudeCase):
         self.assertEqual(l3.search(self.project, "Local probe result")["matched"], 1)
         self.assertEqual(len(self.rows(self.project)), 1)
         self.assertEqual(len(l3.queued(self.peer)), 1)
-        l3._take_project_messages(self.peer)
+        self.supply(self.peer)
         self.assertEqual(self.send(), first)
         self.assertEqual(len(self.rows(self.peer)), 1)
         self.assertEqual(len(self.rows(self.project)), 1)
@@ -187,13 +192,13 @@ class TestProjectMessages(AltitudeCase):
         projects = config.load_projects()
         projects[self.peer]["path"] = str(replacement)
         config.save_projects(projects)
-        self.assertEqual(l3._take_project_messages(self.peer), "")
+        self.assertEqual(self.supply(self.peer), "")
         self.assertEqual(l3.queued(self.peer)[0]["project_message"]["status"], "registration-changed")
         with self.assertRaisesRegex(ValueError, "different content or registration"):
             self.send()
         projects[self.peer]["path"] = str(self.peer_repo)
         config.save_projects(projects)
-        l3._take_project_messages(self.peer)
+        self.supply(self.peer)
         projects[self.project]["path"] = str(replacement)
         config.save_projects(projects)
         with self.assertRaisesRegex(ValueError, "registration changed"):
@@ -216,10 +221,11 @@ class TestProjectMessages(AltitudeCase):
         self.assertEqual(self.rows(self.peer), [])
         with mock.patch.object(l3, "_write_queue", side_effect=OSError("fictional queue rewrite failure")):
             with self.assertRaises(OSError):
-                l3._take_project_messages(self.peer)
+                self.supply(self.peer)
         self.assertEqual(len(self.rows(self.peer)), 1)
+        self.assertEqual(l3.chat_state(self.peer)["queued"], [], "an interrupted queue removal has no duplicate visible row")
         self.send()  # Same acceptance is recoverable from queue and receipt.
-        self.assertIn("Fictional probe", l3._take_project_messages(self.peer))
+        self.assertEqual(self.supply(self.peer), "", "proven supply is not replayed after queue-removal recovery")
         self.assertEqual(len(self.rows(self.peer)), 1)
         self.assertEqual(len([row for row in S.read_project_log(self.peer, limit=0)
                               if row["kind"] == "project-message-received"]), 1)
@@ -237,3 +243,73 @@ class TestProjectMessages(AltitudeCase):
         with self.assertRaises(ValueError):
             server.l3_verb_request(self.project, {"kind": "alt", "args": args, "stdin": "Private file text"})
         self.assertEqual(l3.queued(self.peer), [])
+        with self.assertRaisesRegex(ValueError, "not a registered project"):
+            self.send(target="unknown-fixture-project")
+        response = server.l3_verb_request(self.project, {"kind": "alt", "args": ["project", "message", self.peer,
+            "--summary", "Flag refusal", "--request-id", "dash-text", "--", "--file=fixture rejected"]})
+        self.assertEqual(response["returncode"], 0)
+
+    def test_refused_provider_fallback_hold_launch_and_input_failure_keep_the_inbox(self):
+        for engine in config.ENGINES:
+            self.send(request_id="held-" + engine)
+            pending = l3.queued(self.peer)
+            previous = self.rows(self.peer)
+            responses = [({"limited": {"reason": "fixture limit"}, "safe_to_retry": True, "text": "", "usage": {}},
+                          [{"engine": engine, "why": "fixture"}, {"engine": None, "why": "fallback held"}]),
+                         ({"error": "fixture launch failed", "text": "", "usage": {}},
+                          [{"engine": engine, "why": "fixture"}])]
+            for result, choices in responses:
+                def refuse(_prompt, **options):
+                    options["on_start"](123456789)  # Starting a CLI does not prove its provider read the input.
+                    return result.copy()
+                with mock.patch.object(l3, "_select", side_effect=choices), \
+                     mock.patch.object(l3.route, "note_limit"), \
+                     mock.patch.object(engines, "claude_print", side_effect=refuse), \
+                     mock.patch.object(engines, "codex_exec", side_effect=refuse):
+                    self.assertFalse(l3.turn(self.peer, "Ordinary fixture request").get("completed"))
+                self.assertEqual(l3.queued(self.peer), pending)
+                self.assertEqual(self.rows(self.peer), previous)
+            with mock.patch.object(l3, "_select", return_value={"engine": engine, "why": "fixture"}), \
+                 mock.patch.object(l3.image_store, "resolve", side_effect=l3.image_store.ImageError("fixture missing image")):
+                self.assertFalse(l3.turn(self.peer, "Image input", image_message={"images": []})["completed"])
+            self.assertEqual(l3.queued(self.peer), pending)
+            self.assertEqual(self.rows(self.peer), previous)
+
+    def test_eligible_fallback_and_partial_output_acknowledge_the_same_pending_input(self):
+        self.send()
+        seen = []
+        def execute(prompt, **options):
+            seen.append(prompt)
+            if len(seen) == 1:
+                return {"limited": {"reason": "fixture limit"}, "safe_to_retry": True, "text": "", "usage": {}}
+            if options.get("on_text"):
+                options["on_text"]("Partial fixture assistant output")
+            return {"text": "Partial fixture assistant output", "session_id": "fixture-interrupted",
+                    "reported_session_id": "fixture-interrupted", "interrupted": True, "usage": {}}
+        choices = [{"engine": engine, "why": "fixture"} for engine in config.ENGINES]
+        with mock.patch.object(l3, "_select", side_effect=choices), \
+             mock.patch.object(l3.route, "note_limit"), \
+             mock.patch.object(engines, "claude_print", side_effect=execute), \
+             mock.patch.object(engines, "codex_exec", side_effect=execute):
+            self.assertTrue(l3.turn(self.peer, "Ordinary request")["interrupted"])
+        self.assertEqual(len(seen), 2)
+        self.assertTrue(all("Fictional probe" in prompt for prompt in seen))
+        self.assertEqual(l3.queued(self.peer), [])
+        self.assertEqual(len(self.rows(self.peer)), 1)
+
+    def test_interrupted_provider_without_assistant_output_keeps_the_inbox(self):
+        self.send()
+        for engine in config.ENGINES:
+            result = {"text": "", "interrupted": True, "session_id": "fixture-interrupted",
+                      "reported_session_id": "fixture-interrupted", "usage": {}}
+            with mock.patch.object(l3, "_select", return_value={"engine": engine, "why": "fixture"}), \
+                 mock.patch.object(engines, "claude_print", return_value=result.copy()), \
+                 mock.patch.object(engines, "codex_exec", return_value=result.copy()):
+                self.assertTrue(l3.turn(self.peer, "Ordinary request")["interrupted"])
+            self.assertEqual(len(l3.queued(self.peer)), 1)
+            self.assertEqual(self.rows(self.peer), [])
+
+    def test_information_does_not_change_runnable_queue_position(self):
+        self.send()
+        self.assertEqual(l3.queue_message(self.peer, "Ordinary request", trigger="chat")["position"], 1)
+        self.assertEqual(l3.queue_message(self.peer, "Next request", trigger="chat")["position"], 2)

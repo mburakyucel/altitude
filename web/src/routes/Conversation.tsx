@@ -282,6 +282,7 @@ export default function Conversation({
 
   const neverStarted = project.isSuccess && !project.data.l3?.session_id && view && view.history.length === 0 && !view.active;
   const queued = view?.queued ?? [];
+  const queuePositions = new Map(queued.filter(row => row.trigger !== "project-message").map((row, index) => [row.id, index]));
   const busy = Boolean(view?.busy || view?.active || (local && !local.done));
   const empty = Boolean(view && view.history.length === 0 && !view.active && !local && queued.length === 0);
 
@@ -395,13 +396,13 @@ export default function Conversation({
           {rows}
           {queued.length > 0 ? (
             <ul className="queued" aria-label="Queued messages">
-              {queued.map((row, index) => (
+              {queued.map((row) => (
                 <li key={row.id} className="queued-row">
                   {row.project_message ? (
                     <SystemLine project={name} titles={titles} turn={{ id: row.id, at: row.at ?? null,
                       trigger: "project-message", prompt: row.text, reply: null, error: null,
                       inProgress: false, slug: null, fyi: true, headsUp: false, projectMessage: row.project_message }} />
-                  ) : <div className="queued-text"><span>{row.text}</span><MessageImages project={name} images={row.images} /><span className="queued-status text-muted">{row.send_now ? "Sending now" : index === 0 ? "Queued · runs next" : `Queued · ${index + 1} in line`}</span></div>}
+                  ) : <div className="queued-text"><span>{row.text}</span><MessageImages project={name} images={row.images} /><span className="queued-status text-muted">{row.send_now ? "Sending now" : queuePositions.get(row.id) === 0 ? "Queued · runs next" : `Queued · ${(queuePositions.get(row.id) ?? 0) + 1} in line`}</span></div>}
                   {!row.trigger || row.trigger === "chat" ? (
                     <div className="queued-actions">
                     <SendNow visible pending={Boolean(row.send_now || (sendNow.isPending && sendNow.variables === row.id))}
