@@ -232,7 +232,7 @@ test("Work keeps waiting tasks once without answer controls, retains recent hist
   await expect(waiting).toHaveAttribute("href", new RegExp(`question=${decision.id}&revision=1`));
   await expect(v.panel.getByRole("article")).toHaveCount(0);
   await expect(v.panel.getByRole("button", { name: "Fast-forward it", exact: true })).toHaveCount(0);
-  const pausedRow = current.getByRole("link", { name: `${parked.title} · Paused`, exact: true });
+  const pausedRow = current.getByRole("link", { name: `${parked.title} · Work is paused; no reason is recorded.`, exact: true });
   const stoppedRow = current.getByRole("link", { name: `${stoppedTask.title} · You requested a stop; confirmation is in the task.`, exact: true });
   const faultRow = current.getByRole("link", { name: `${faulty.title} · A system problem paused work. Waiting for the coordinator to check the blocker.`, exact: true });
   await expect(pausedRow.locator(".dot")).toHaveAttribute("data-state", "idle");

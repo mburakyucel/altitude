@@ -328,7 +328,7 @@ test("Work rows retain running questions and partial answers, then keep the task
   await park(request, slug);
   await back.click();
   await walk.state("03c-owner-asks-all-three-again", {
-    visible: [row.getByText(/Your turn · 3 questions/), row.getByText("Waiting for you", { exact: true }), badge(5)], hidden: [work.getByRole("article")],
+    visible: [row.getByText(/Your turn · 3 questions/), row.getByText("Waiting for your answer to the task’s question.", { exact: true }), badge(5)], hidden: [work.getByRole("article")],
   });
   await primary.getByRole("link", { name: /Needs you/ }).click();
   await list.getByRole("button", { name: "14 days", exact: true }).click();

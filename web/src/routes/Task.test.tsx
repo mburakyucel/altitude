@@ -629,7 +629,7 @@ describe("Task on desktop", () => {
     expect(within(screen.getByRole("dialog", { name: "Task details" })).getByText("which suite covers the timer")).toBeInTheDocument();
   });
 
-  it("shows a fault as one red sentence and says L3 has been told", async () => {
+  it("explains a fault in red without inferring its cause from diagnostic prose", async () => {
     stub(faulted);
     renderApp({ route });
 

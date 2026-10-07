@@ -55,7 +55,12 @@ test("planned work accepts a brief update, releases through capacity, and auto-r
   await walk.open(workPath);
   const queuedRow = work.getByRole("link", { name: /^Check index compatibility · Queued · waits for a free task slot/ });
   await walk.state("04-released-queued-at-capacity", { visible: [queuedRow, dependentRow], hidden: [plannedRow] });
-  await expect(queuedRow).toContainText("WIP limit: 1 running on this machine");
+  await queuedRow.click();
+  await page.getByRole("button", { name: /Task details$/ }).click();
+  await walk.state("04b-capacity-evidence-in-details", {
+    visible: [page.getByRole("dialog", { name: "Task details", exact: true }).getByText("WIP limit: 1 running on this machine", { exact: true })], hidden: [],
+  });
+  await walk.open(workPath);
   const released = await readTask(request);
   expect(released.state).toBe("queued");
   expect(released.planned_wait).toBeFalsy();
@@ -102,7 +107,7 @@ test("planned-message denial retains the draft and restores sending after access
   await expect(field).toHaveValue(text);
   await conversation.getByRole("button", { name: "Send", exact: true }).click();
   await expect(field).toHaveValue("");
-  await walk.state("03-saved-after-access-restored", { visible: [conversation.getByText(text, { exact: true }), conversation.getByText(`Waits for ${reason}`, { exact: true })], hidden: [denial] });
+  await walk.state("03-saved-after-access-restored", { visible: [conversation.getByText(text, { exact: true }), page.locator(".task-explanation").getByText(`Waiting for ${reason}.`, { exact: true })], hidden: [denial] });
   expect((await readTask(request)).planned_wait).toMatchObject({ reason });
 });
 

@@ -285,8 +285,9 @@ test("a blocked task: the question at the end of the chat, waiting for L3, a fau
   await expect(page.locator(".msg-row:has-text('I also checked the timer tests.') ~ .conversation-question")).toHaveCount(1);
   await walk.state("01-blocked-on-the-operator", {
     visible: [v.main.getByText("Your turn · 1 question", { exact: true }).first(), turn.getByText("Your turn · 1 question", { exact: true }), card, card.getByText(question), card.getByRole("button", { name: "Keep it & resume", exact: true }), v.composer, ...(v.phone ? [] : [v.reject])],
-    hidden: [line, v.stop, v.main.getByRole("button", { name: "Resume", exact: true })],
+    hidden: [v.stop, v.main.getByRole("button", { name: "Resume", exact: true })],
   });
+  await expect(line).toHaveTextContent("Waiting for your answer to the task’s question.");
 
   await clearRoutes(page);
   const waiting = DecisionSchema.parse({ ...decision, id: "suite-question", anchor_id: "suite-anchor", asked_by: "l2", audience: "l3", question: "which suite covers the timer", recommendation: null });

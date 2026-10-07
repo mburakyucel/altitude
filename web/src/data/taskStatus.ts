@@ -36,6 +36,7 @@ export function taskExplanation(task: TaskRow, decision?: Decision): string | nu
   const steering = record(task["steering"])["state"];
   if (state === "running" && !task["stop_id"] && steering !== "stopping" && steering !== "stop_unconfirmed") return null;
   const questions = currentQuestions(task);
+  const hasQuestionRecords = Array.isArray(task["questions"]) || Array.isArray(record(task["question_group"])["questions"]);
   const coordinator = questions.find((q) => q["audience"] === "l3" && !q["response"]);
   const question = statusExcerpt(coordinator?.["detail"] ?? coordinator?.["question"]);
   const fault = text(task["fault"]);
@@ -60,7 +61,7 @@ export function taskExplanation(task: TaskRow, decision?: Decision): string | nu
   if (state === "queued") return "Waiting for Altitude to start the task.";
   if (state === "blocked" || state === "reported") {
     if (decision?.kind === "review") return "Waiting for your review before merge.";
-    if (questions.some((q) => q["audience"] === "operator" && !q["response"]) || decision?.id) {
+    if (questions.some((q) => q["audience"] === "operator" && !q["response"]) || (!hasQuestionRecords && decision?.id)) {
       return "Waiting for your answer to the task’s question.";
     }
     if (coordinator || task["waiting_on"] === "l3") {

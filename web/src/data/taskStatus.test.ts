@@ -92,6 +92,14 @@ describe("task explanations", () => {
       .toMatch(/your answer/i);
   });
 
+  it("does not revive an answered question from an older overview read", () => {
+    const decision: Decision = { project: "atlas", slug: blocked.slug, id: "access-question", kind: "asks" };
+    expect(taskExplanation({ ...blocked, questions: [question("operator", { response: { text: "Approved" } })] }, decision))
+      .toMatch(/task owner.*reply/i);
+    expect(taskExplanation({ ...blocked, handed_back: "2026-10-07T04:04:00Z", questions: [question("operator")] }, decision))
+      .not.toMatch(/your answer/i);
+  });
+
   it("ignores resolved coordinator questions", () => {
     const explanation = taskExplanation({ ...blocked, fault: "l2-died", questions: [question("l3", { status: "resolved" })] });
     expect(explanation).not.toMatch(/approved machine access/i);
