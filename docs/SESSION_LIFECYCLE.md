@@ -260,6 +260,8 @@ type/errno when available, sanitized stderr up to 8 KiB with head/tail retention
 and whether stream capture completed. Each raw stream is bounded to 2 MiB; stderr partial lines at raw
 cuts are omitted before redaction. Credential assignments, home paths and private operational identities
 are redacted using the existing incident privacy boundary; evidence that fails that check is withheld.
+Encoded text is decoded before redaction; nested encoding is withheld. Incomplete private-key blocks
+and key endings after a raw cut are redacted too.
 Provider stdout is not copied into diagnostics. Evidence survives cancellation, uncertain termination
 and explicit retries in its original review record. Successful review results retain their existing
 contract. Diagnostics neither reconstruct missing historical evidence nor prove reviewer recovery;

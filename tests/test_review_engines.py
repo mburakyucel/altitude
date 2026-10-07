@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+from urllib.parse import quote
 from unittest.mock import patch
 
 from altitude import config, engines, platform, route
@@ -182,6 +183,26 @@ class ReviewEngineTests(AltitudeCase):
         self.assertTrue(result["termination_confirmed"])
         spawn.assert_not_called()
 
+    def test_encoded_quoted_credentials_are_redacted_in_stderr_and_startup_exceptions(self):
+        credential = quote('"password": "fictional secret with spaces"', safe="")
+        service = self.fixture()
+        service.return_value = [sys.executable, "-I", "-c",
+            f"import sys; sys.stdin.read(); sys.stderr.write('startup failed\\n' + {credential!r}); sys.exit(12)"]
+        result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        self.assertIn("startup failed", result["diagnostics"]["stderr"])
+        self.assertIn("[REDACTED]", result["diagnostics"]["stderr"])
+        self.assertNotIn("fictional", json.dumps(result))
+        self.assertNotIn("with spaces", json.dumps(result))
+        self.patch(engines.subprocess, "Popen", side_effect=OSError(2, "startup failed " + credential))
+        result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        self.assertEqual(result["diagnostics"]["errno"], 2)
+        self.assertIn("startup failed", result["diagnostics"]["stderr"])
+        self.assertNotIn("fictional", json.dumps(result))
+        self.assertNotIn("with spaces", json.dumps(result))
+        capture = engines._BoundedRawCapture()
+        capture.add(quote(credential, safe=""))
+        self.assertIn("withheld", engines._review_diagnostics(capture)["stderr"])
+
     def test_nonzero_exit_keeps_stderr_and_status_without_stdout_transcript(self):
         service = self.fixture()
         service.return_value = [sys.executable, "-I", "-c",
@@ -226,6 +247,22 @@ class ReviewEngineTests(AltitudeCase):
         evidence = engines._review_diagnostics(capture)
         self.assertEqual(evidence["stderr"], "useful start\n[capture limit]\nuseful end\n")
         self.assertTrue(evidence["stderr_truncated"])
+        capture = engines._BoundedRawCapture(128)
+        capture.add("useful start\n-----BEGIN PRIVATE KEY-----\n" + "PRIVATE MATERIAL\n" * 100
+                    + "-----END PRIVATE KEY-----\nuseful end\n")
+        evidence = engines._review_diagnostics(capture)
+        self.assertNotIn("PRIVATE MATERIAL", evidence["stderr"])
+        self.assertNotIn("PRIVATE KEY", evidence["stderr"])
+        self.assertIn("useful start", evidence["stderr"])
+        self.assertIn("useful end", evidence["stderr"])
+        for private in ("prefix\n-----BEGIN PRIVATE KEY-----\nPRIVATE MATERIAL\n",
+                        "prefix\n" + "x" * 200 + "\n-----BEGIN PRIVATE KEY-----\n" + "PRIVATE MATERIAL\n" * 100
+                        + "-----END PRIVATE KEY-----\nuseful end\n"):
+            capture = engines._BoundedRawCapture(128)
+            capture.add(private)
+            evidence = engines._review_diagnostics(capture)
+            self.assertNotIn("PRIVATE MATERIAL", evidence["stderr"])
+            self.assertNotIn("PRIVATE KEY", evidence["stderr"])
         capture = engines._BoundedRawCapture()
         capture.add("useful start\n" + "é" * 10000 + "\nuseful end\n")
         evidence = engines._review_diagnostics(capture)

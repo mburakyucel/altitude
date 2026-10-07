@@ -16,6 +16,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import unquote
 from zoneinfo import ZoneInfo
 
 from . import config, platform, state as S
@@ -2392,6 +2393,14 @@ def _review_diagnostics(stderr: _BoundedRawCapture, *, exit_status=None, stdout_
             tail.split("\n", 1)[1] if "\n" in tail else "")
     if exception is not None:
         text += "\n" + str(exception)
+    text = unquote(text)
+    if unquote(text) != text:
+        text = "[diagnostic withheld: nested encoding]"
+    text = re.sub(r"-----BEGIN [\w ]*PRIVATE KEY-----[\s\S]*?(?:-----END [\w ]*PRIVATE KEY-----|$)",
+                  "[REDACTED]", text)
+    if truncated:
+        # A multiline private key can end in the retained tail after its beginning was dropped.
+        text = re.sub(r"(?s)(\n\[capture limit\]\n).*?-----END [\w ]*PRIVATE KEY-----", r"\1[REDACTED]", text)
     # Diagnostic assignments can hold quoted values with spaces; discard the rest of that line.
     text = re.sub(r"(?im)((?:authorization|cookie|password|passwd|secret|token|api[_-]?key|credential)[\"']?\s*[:=]).*$",
                   r"\1 [REDACTED]", text)
