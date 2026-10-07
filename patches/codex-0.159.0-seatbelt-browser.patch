@@ -20,7 +20,51 @@
  use codex_protocol::permissions::FileSystemSandboxPolicy;
  use codex_protocol::permissions::NetworkSandboxPolicy;
  use codex_protocol::permissions::PROTECTED_METADATA_PATH_NAMES;
-@@ -1050,6 +1052,48 @@
+@@ -916,6 +918,43 @@
+         .cloned()
+         .map(normalize_top_level_alias_for_sandbox)
+         .transpose()?;
++    // I-20260929-203338 / #625: independent write grants must not let a
++    // broader root bypass a contained root's policy-protected metadata.
++    // Use emitted root identities without resolving ordinary mutable paths;
++    // explicit narrower write roots retain their independent grants.
++    let metadata_roots = writable_roots
++        .iter()
++        .map(|root| {
++            let emitted_root = match normalize_writable_root_for_sandbox(
++                root.root.clone(),
++                allowed_symlinked_codex_home.as_ref(),
++            )? {
++                NormalizedWritableRoot::Subpath(path) | NormalizedWritableRoot::Literal(path) => {
++                    path
++                }
++            };
++            Ok((
++                emitted_root,
++                protected_metadata_names_for_writable_root(
++                    file_system_sandbox_policy,
++                    root,
++                    sandbox_policy_cwd,
++                ),
++            ))
++        })
++        .collect::<Result<Vec<_>, SeatbeltPreparationError>>()?;
++    for (root, (emitted_root, _)) in writable_roots.iter_mut().zip(&metadata_roots) {
++        for (child, names) in &metadata_roots {
++            if child != emitted_root && child.as_path().starts_with(emitted_root.as_path()) {
++                for name in names {
++                    let protected = child.join(name);
++                    if !root.read_only_subpaths.contains(&protected) {
++                        root.read_only_subpaths.push(protected);
++                    }
++                }
++            }
++        }
++    }
+     // Protect ancestors of read-only paths so renaming a writable directory
+     // cannot move its descendants outside their policy carveouts.
+     let mut protected_ancestors = BTreeSet::new();
+@@ -1050,6 +1089,48 @@
          file_write_policy,
          network_policy,
      ];
@@ -484,3 +528,450 @@
  
  impl ConfigReloader for TestConfigReloader {
      fn source_label(&self) -> String {
+@@ -3081,3 +3487,6 @@
+         empty_root_canonical,
+     }
+ }
++
++#[path = "seatbelt_metadata_tests.rs"]
++mod metadata_tests;
+--- /dev/null
++++ b/codex-rs/sandboxing/src/seatbelt_metadata_tests.rs
+@@ -0,0 +1,437 @@
++use super::*;
++use pretty_assertions::assert_eq;
++use std::collections::HashMap;
++use std::collections::VecDeque;
++
++// Evaluate the emitted write alternatives, rather than the preparation's
++// intermediate root lists. This is deterministic generation evidence only.
++#[derive(Debug)]
++enum Expr {
++    Atom(String),
++    List(Vec<Expr>),
++}
++
++impl Expr {
++    fn parse(tokens: &mut VecDeque<String>) -> Self {
++        let token = tokens.pop_front().expect("policy token");
++        if token != "(" {
++            return Self::Atom(token);
++        }
++        let mut children = Vec::new();
++        while tokens.front().expect("closing parenthesis") != ")" {
++            children.push(Self::parse(tokens));
++        }
++        tokens.pop_front();
++        Self::List(children)
++    }
++
++    fn atom(&self) -> &str {
++        match self {
++            Self::Atom(value) => value,
++            Self::List(_) => panic!("expected atom: {self:?}"),
++        }
++    }
++
++    fn matches(&self, path: &Path, params: &HashMap<&str, &str>) -> bool {
++        let Self::List(parts) = self else {
++            panic!("expected predicate: {self:?}");
++        };
++        match parts[0].atom() {
++            "allow" => {
++                let predicates = parts[1..]
++                    .iter()
++                    .filter(|part| matches!(part, Self::List(_)))
++                    .collect::<Vec<_>>();
++                predicates.is_empty() || predicates.iter().any(|part| part.matches(path, params))
++            }
++            "require-all" => parts[1..].iter().all(|part| part.matches(path, params)),
++            "require-not" => !parts[1].matches(path, params),
++            "literal" | "path" | "subpath" => {
++                let value = match &parts[1] {
++                    Self::Atom(value) => value.trim_matches('"'),
++                    Self::List(parameter) => {
++                        assert_eq!(parameter[0].atom(), "param");
++                        params[parameter[1].atom().trim_matches('"')]
++                    }
++                };
++                let root = Path::new(value);
++                if parts[0].atom() != "subpath" {
++                    path == root
++                } else {
++                    path.starts_with(root)
++                }
++            }
++            "regex" => {
++                let pattern = parts[1]
++                    .atom()
++                    .trim_start_matches('#')
++                    .trim_matches('"')
++                    .replace("\\\"", "\"");
++                regex_lite::Regex::new(&pattern)
++                    .expect("valid emitted regex")
++                    .is_match(&path.to_string_lossy())
++            }
++            // Conservatively admit these non-path constraints. A path denial
++            // must hold without relying on extensions or fictional vnode type.
++            "extension" | "vnode-type" => true,
++            other => panic!("unsupported write predicate: {other}"),
++        }
++    }
++}
++
++fn emitted_write_allows(args: &[String], path: &Path) -> bool {
++    let policy = seatbelt_policy_arg(args);
++    let lexer = regex_lite::Regex::new(r##";[^\n]*|#?"(?:\\.|[^"\\])*"|[()]|[^\s()]+"##)
++        .expect("policy lexer");
++    let mut tokens = lexer
++        .find_iter(policy)
++        .filter(|token| !token.as_str().starts_with(';'))
++        .map(|token| token.as_str().to_string())
++        .collect::<VecDeque<_>>();
++    let params = args
++        .iter()
++        .filter_map(|arg| arg.strip_prefix("-D")?.split_once('='))
++        .collect();
++    let mut allowed = false;
++    while !tokens.is_empty() {
++        let expression = Expr::parse(&mut tokens);
++        if let Expr::List(parts) = &expression
++            && parts
++                .first()
++                .is_some_and(|part| matches!(part, Expr::Atom(action) if action == "allow"))
++            && parts
++                .iter()
++                .any(|part| matches!(part, Expr::Atom(action) if action.starts_with("file-write")))
++        {
++            allowed |= expression.matches(path, &params);
++        }
++    }
++    allowed
++}
++
++fn metadata_args(
++    policy: &FileSystemSandboxPolicy,
++    cwd: &Path,
++    profile: MacosSeatbeltProfile,
++    trusted_home: Option<&AbsolutePathBuf>,
++) -> Vec<String> {
++    create_seatbelt_command_args_with_profile(
++        CreateSeatbeltCommandArgsParams {
++            command: vec!["/usr/bin/true".to_string()],
++            file_system_sandbox_policy: policy,
++            network_sandbox_policy: NetworkSandboxPolicy::Restricted,
++            sandbox_policy_cwd: cwd,
++            enforce_managed_network: false,
++            managed_network: None,
++            environment_id: None,
++            network: None,
++            extra_allow_unix_sockets: &[],
++        },
++        profile,
++        trusted_home,
++    )
++    .expect("prepare metadata policy")
++}
++
++#[test]
++fn contained_metadata_is_denied_by_every_write_alternative() {
++    // #625: fixed expectations for named worker common/worktree Git roots,
++    // independently of the public matcher used for the parity assertion.
++    for existing in ["missing", "file", "directory"] {
++        for reverse in [false, true] {
++            let tmp = TempDir::new().expect("tempdir");
++            let cwd = tmp.path().canonicalize().expect("canonical tempdir");
++            let common = cwd.join("repository/.git");
++            let middle = common.join("worktrees");
++            let child = middle.join("task");
++            let state = cwd.join("task-state");
++            let workspace = cwd.join("repository/.claude/worktrees/task");
++            for root in [&child, &state, &workspace] {
++                fs::create_dir_all(root).expect("writable fixture root");
++            }
++            fs::write(
++                workspace.join(".git"),
++                format!("gitdir: {}\n", child.display()),
++            )
++            .expect("worktree Git pointer");
++            for name in PROTECTED_METADATA_PATH_NAMES {
++                let metadata = child.join(name);
++                match existing {
++                    "missing" => {}
++                    "file" => fs::write(metadata, "fictional").expect("metadata file"),
++                    "directory" => fs::create_dir(metadata).expect("metadata directory"),
++                    _ => unreachable!(),
++                }
++            }
++            let mut roots = vec![
++                workspace.as_path(),
++                common.as_path(),
++                middle.as_path(),
++                child.as_path(),
++                state.as_path(),
++            ];
++            if reverse {
++                roots.reverse();
++            }
++            roots.push(child.as_path()); // duplicate entry does not remove protection
++            let policy = restricted_write_policy(&roots);
++            for profile in [
++                MacosSeatbeltProfile::Process,
++                MacosSeatbeltProfile::FileSystemHelper,
++            ] {
++                let args = metadata_args(&policy, &cwd, profile, /*trusted_home*/ None);
++                for name in PROTECTED_METADATA_PATH_NAMES {
++                    for target in [child.join(name), child.join(name).join("settings")] {
++                        assert!(!policy.can_write_local_path_with_cwd(&target, &cwd));
++                        assert!(
++                            !emitted_write_allows(&args, &target),
++                            "{existing}: {target:?}"
++                        );
++                    }
++                }
++                for target in [
++                    common.join("config"),
++                    workspace.join("ordinary"),
++                    child.join("index"),
++                    state.join("progress"),
++                ] {
++                    assert!(policy.can_write_local_path_with_cwd(&target, &cwd));
++                    assert!(
++                        emitted_write_allows(&args, &target),
++                        "ordinary write {target:?}"
++                    );
++                }
++                assert!(
++                    args.iter()
++                        .any(|arg| arg.starts_with("-DPROTECTED_ANCESTOR_")
++                            && arg.ends_with(&format!("={}", middle.display())))
++                );
++            }
++        }
++    }
++}
++
++#[test]
++fn explicit_metadata_and_deeper_write_grants_keep_public_semantics() {
++    let tmp = TempDir::new().expect("tempdir");
++    let cwd = tmp.path().canonicalize().expect("canonical tempdir");
++    let parent = cwd.join("parent");
++    let child = parent.join("child");
++    let metadata = child.join(".agents");
++    let allowed = metadata.join("allowed");
++    fs::create_dir_all(&allowed).expect("fixture roots");
++    for explicit in [&metadata, &allowed] {
++        let policy = restricted_write_policy(&[&parent, &child, explicit]);
++        let args = metadata_args(
++            &policy,
++            &cwd,
++            MacosSeatbeltProfile::Process,
++            /*trusted_home*/ None,
++        );
++        for (target, permitted) in [
++            (explicit.join("settings"), true),
++            (explicit.join(".codex"), true),
++            (child.join(".codex"), false),
++        ] {
++            assert_eq!(
++                policy.can_write_local_path_with_cwd(&target, &cwd),
++                permitted
++            );
++            assert_eq!(emitted_write_allows(&args, &target), permitted);
++        }
++        let forbidden = metadata.join("outside");
++        assert_eq!(
++            emitted_write_allows(&args, &forbidden),
++            explicit == &metadata
++        );
++    }
++}
++
++#[test]
++fn ancestor_metadata_entry_order_keeps_public_semantics() {
++    let tmp = TempDir::new().expect("tempdir");
++    let cwd = tmp.path().canonicalize().expect("canonical tempdir");
++    let parent = cwd.join("parent");
++    let git = parent.join(".git");
++    let child = git.join("task");
++    fs::create_dir_all(&child).expect("fixture roots");
++    // Preserve the public matcher's first metadata prefix, including an
++    // explicit ancestor metadata grant. This test does not approve its order
++    // dependence as native isolation acceptance.
++    for (roots, expected) in [
++        ([parent.as_path(), git.as_path(), child.as_path()], true),
++        ([child.as_path(), git.as_path(), parent.as_path()], false),
++    ] {
++        let policy = restricted_write_policy(&roots);
++        let args = metadata_args(
++            &policy,
++            &cwd,
++            MacosSeatbeltProfile::Process,
++            /*trusted_home*/ None,
++        );
++        let target = child.join(".agents/settings");
++        assert_eq!(
++            policy.can_write_local_path_with_cwd(&target, &cwd),
++            expected
++        );
++        assert_eq!(emitted_write_allows(&args, &target), expected);
++    }
++}
++
++#[test]
++fn contained_metadata_directory_symlink_excludes_its_target() {
++    let tmp = TempDir::new().expect("tempdir");
++    let cwd = tmp.path().canonicalize().expect("canonical tempdir");
++    let parent = cwd.join("parent");
++    let child = parent.join("child");
++    let target = parent.join("target");
++    fs::create_dir_all(&child).expect("child root");
++    fs::create_dir(&target).expect("target root");
++    std::os::unix::fs::symlink(&target, child.join(".agents")).expect("metadata symlink");
++    let policy = restricted_write_policy(&[&parent, &child]);
++    let args = metadata_args(
++        &policy,
++        &cwd,
++        MacosSeatbeltProfile::Process,
++        /*trusted_home*/ None,
++    );
++    for path in [child.join(".agents/settings"), target.join("settings")] {
++        assert!(
++            !emitted_write_allows(&args, &path),
++            "symlink protection {path:?}"
++        );
++    }
++}
++
++#[test]
++fn trusted_home_alias_uses_emitted_containment() {
++    let tmp = TempDir::new().expect("tempdir");
++    let cwd = tmp.path().canonicalize().expect("canonical tempdir");
++    let physical = cwd.join("physical");
++    let child = physical.join("child");
++    let home = cwd.join("home");
++    fs::create_dir_all(&child).expect("physical roots");
++    std::os::unix::fs::symlink(&physical, &home).expect("trusted home alias");
++    let policy = restricted_write_policy(&[&home, &child]);
++    let trusted = AbsolutePathBuf::from_absolute_path(&home).expect("absolute home");
++    let args = metadata_args(&policy, &cwd, MacosSeatbeltProfile::Process, Some(&trusted));
++    assert!(!emitted_write_allows(
++        &args,
++        &child.join(".agents/settings")
++    ));
++    assert!(emitted_write_allows(&args, &child.join("ordinary")));
++}
++
++#[test]
++fn non_overlapping_profiles_keep_original_write_bytes_and_parameters() {
++    let tmp = TempDir::new().expect("tempdir");
++    let cwd = tmp.path().canonicalize().expect("canonical tempdir");
++    let one = cwd.join("one");
++    let two = cwd.join("two");
++    for root in [&one, &two] {
++        fs::create_dir(root).expect("disjoint root");
++    }
++    for paths in [
++        vec![],
++        vec![one.as_path()],
++        vec![one.as_path(), two.as_path()],
++    ] {
++        let policy = restricted_write_policy(&paths);
++        for profile in [
++            MacosSeatbeltProfile::Process,
++            MacosSeatbeltProfile::FileSystemHelper,
++        ] {
++            let args = metadata_args(&policy, &cwd, profile, /*trusted_home*/ None);
++            // The original caller's mapping, without contained-root additions.
++            let roots = policy.get_writable_roots_with_cwd_preserving_mutable_paths(&cwd);
++            let (original, definitions) = super::super::build_seatbelt_access_policy(
++                super::super::SeatbeltAccessKind::Write,
++                roots
++                    .into_iter()
++                    .map(|root| super::super::SeatbeltAccessRoot {
++                        protected_metadata_names:
++                            super::super::protected_metadata_names_for_writable_root(
++                                &policy, &root, &cwd,
++                            ),
++                        root: root.root,
++                        excluded_subpaths: root.read_only_subpaths,
++                    })
++                    .collect(),
++                /*allowed_symlinked_codex_home*/ None,
++            )
++            .expect("original non-overlap emission");
++            if original.is_empty() {
++                assert!(!seatbelt_policy_arg(&args).contains("(allow file-write*\n"));
++            } else {
++                assert!(seatbelt_policy_arg(&args).contains(&original));
++            }
++            let actual: Vec<_> = args
++                .iter()
++                .filter(|arg| arg.starts_with("-DWRITABLE_ROOT_"))
++                .cloned()
++                .collect();
++            let expected: Vec<_> = definitions
++                .into_iter()
++                .map(|(name, path)| format!("-D{name}={}", path.display()))
++                .collect();
++            assert_eq!(actual, expected);
++        }
++    }
++}
++
++#[test]
++fn top_level_tmp_alias_preserves_contained_exclusions() {
++    let tmp = TempDir::new_in("/private/tmp").expect("aliased tempdir");
++    let physical = tmp.path().canonicalize().expect("physical root");
++    let logical = Path::new("/tmp").join(physical.file_name().expect("root name"));
++    let child = logical.join("child");
++    fs::create_dir(physical.join("child")).expect("child root");
++    let policy = restricted_write_policy(&[&logical, &child]);
++    let args = metadata_args(
++        &policy,
++        &logical,
++        MacosSeatbeltProfile::Process,
++        /*trusted_home*/ None,
++    );
++    assert!(!policy.can_write_local_path_with_cwd(&child.join(".agents/settings"), &logical));
++    assert!(!emitted_write_allows(
++        &args,
++        &physical.join("child/.agents/settings")
++    ));
++    assert!(emitted_write_allows(
++        &args,
++        &physical.join("child/ordinary")
++    ));
++}
++
++#[test]
++fn evaluator_detects_an_additional_write_grant() {
++    let tmp = TempDir::new().expect("tempdir");
++    let cwd = tmp.path().canonicalize().expect("canonical tempdir");
++    let child = cwd.join("child");
++    fs::create_dir(&child).expect("child root");
++    let policy = restricted_write_policy(&[&cwd, &child]);
++    let args = metadata_args(
++        &policy,
++        &cwd,
++        MacosSeatbeltProfile::Process,
++        /*trusted_home*/ None,
++    );
++    let target = child.join(".agents/settings");
++    assert!(!emitted_write_allows(&args, &target));
++    let index = args
++        .iter()
++        .position(|arg| arg == "-p")
++        .expect("policy argument")
++        + 1;
++    for grant in [
++        "(allow file-write* (subpath (param \"WRITABLE_ROOT_0\")))",
++        "(allow file-write*)",
++        "(allow file-read* file-write*)",
++    ] {
++        let mut extended = args.clone();
++        extended[index].push('\n');
++        extended[index].push_str(grant);
++        assert!(emitted_write_allows(&extended, &target), "{grant}");
++    }
++}

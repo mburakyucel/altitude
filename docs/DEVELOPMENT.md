@@ -341,12 +341,33 @@ Apply the patch to a fresh checkout, run upstream `just fmt-check`, then
 The patch admits only a network-enabled process policy semantically equal to canonical
 workspace-write plus both `/run/user/<real UID>/bus` and `/run/user/<real UID>/systemd` denies.
 The comparison uses the named-profile compiler's canonical form, which omits legacy skip-missing
-defaults. Only the comparison operand is normalized; supplied restrictions and the emitted
-filesystem policy are unchanged. Plain workspace-write is excluded, as are
+defaults. Only the comparison operand is normalized; supplied filesystem permissions are
+unchanged. Plain workspace-write is excluded from Mach access, as are
 other narrower policies. Identical effective permissions share eligibility regardless of profile name.
 The added policy tests cover effective worker roots, current role combinations, missing or wrong-UID
 denies, extra restrictions, ordering/duplicates and whole-name matching. Native nested-sandbox
 tests cannot establish enforcement inside a worker that already denies nested Seatbelt application.
+
+The emitter also excludes each contained writable root's metadata denied by the public matcher from
+every broader write clause, including logical and resolved exclusion paths and protected rename ancestors.
+Containment follows emitted root normalization; ordinary mutable roots are not canonicalized.
+This tightens filesystem emission in every role/profile using the candidate, independently of Mach
+eligibility. Explicit narrower writable entries retain their independent grants. Direct config/hooks
+inside an explicitly writable Git root remain permitted by the public Git-operation contract;
+the contained root's own protected metadata is a separate boundary. Disjoint-root policies retain
+their original write-policy bytes and parameters. The upstream tests evaluate emitted alternatives,
+use fixed worker-shape denial/ordinary-write expectations and public-permission comparisons, and
+cover missing/file/directory metadata, multiple ancestors, explicit writes and trusted aliases.
+The existing Mach eligibility matrix remains unchanged. Record exact upstream format/test/build
+results and package digests separately: Altitude's required PR check does not run these Rust tests.
+
+The public matcher's first metadata-prefix rule can permit child metadata when an explicit writable
+ancestor metadata root wins by entry order; emission preserves that existing public exception.
+In the recorded isolated task shape, the workspace is a linked worktree and
+the common Git directory is outside it: the repository root is not a writable task root. Current
+coordinator and captured-review policies do not grant the repository root either. Native eligibility
+still inspects actual roots and order; a repository-root/common-Git combination is not accepted from
+these fixtures, and its metadata denial remains an adoption stop.
 
 Build the CLI and its code-mode host together using upstream's package builder's verified V8
 artifact pair:
@@ -374,8 +395,11 @@ Matching-name collisions, spoofing or cross-task port exchange/disruption stop a
 filter supplies no task identity and Chromium's separate peer enforcement is disabled by default.
 Native metadata checks include child metadata under overlapping common-Git and worktree-Git roots:
 the named compiler omits legacy nested carveouts, and component equality does not prove that a
-broader parent write clause preserves the child's protections. This candidate does not repair or
-establish that pre-existing native boundary.
+broader parent write clause preserves the child's protections. The contained-root emitter correction
+is preparation; actual native writes, creation and rename/unlink probes remain required. Public
+metadata-entry ordering, equal physical roots reached through different trusted aliases and resolved
+metadata symlinks to files remain explicit native acceptance concerns. Restoring stock also restores
+its known contained-metadata limitation; stock service health is not isolation acceptance.
 Required browser protections and the security merge hold still apply. The validation container
 does not establish native Mac acceptance; its Darwin admission refusal is distinct from the native
 Mach launch failure and the separate remote Mac rig. Explicitly authorized native acceptance runs only
