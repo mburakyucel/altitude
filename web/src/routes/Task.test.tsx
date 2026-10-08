@@ -222,6 +222,22 @@ describe("Task on desktop", () => {
     expect(within(row).getByLabelText("Message images")).toBeInTheDocument();
   });
 
+  it("links an L2 reply's validation captures in a new tab, worded by how many there are", async () => {
+    const capture = (title: string) => ({ name: `${"a".repeat(64)}.gif`, title, bytes: 306_000, width: 390, height: 600, frames: 11, seconds: 9.8 });
+    stub({ ...running, messages: [running.messages[1],
+      { id: "m-4", at: "2026-08-30T10:00:00Z", role: "l2", text: "One phone capture.", captures: [capture("Phone send")], capture_run: 7 },
+      { id: "m-5", at: "2026-08-30T11:00:00Z", role: "l2", text: "Two captures.", captures: [capture("Phone send"), capture("Desktop send")], capture_run: 8 }] });
+    renderApp({ route });
+    const convo = await screen.findByRole("region", { name: "Task conversation" });
+    const one = within(convo).getByRole("link", { name: "Watch capture · Phone send" });
+    expect(one).toHaveAttribute("href", "/projects/altitude/tasks/fix-timer/captures/m-4");
+    expect(one).toHaveAttribute("target", "_blank");
+    expect(one).toHaveAttribute("rel", "noopener noreferrer");
+    expect(within(convo).getByRole("link", { name: "Watch 2 captures" })).toHaveAttribute("href", "/projects/altitude/tasks/fix-timer/captures/m-5");
+    expect(within(convo).getAllByRole("link", { name: /^Watch / })).toHaveLength(2);
+    expect(within(convo.querySelector<HTMLElement>('[data-role="l2"]')!).queryByRole("link")).toBeNull();
+  });
+
   it.each([200, 500])("reconciles by identity before response %i without hiding repeated text or changing recovery", async (status) => {
     let finish!: (response: Response) => void;
     const response = new Promise<Response>((resolve) => { finish = resolve; });

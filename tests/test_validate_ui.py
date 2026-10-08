@@ -51,6 +51,20 @@ class TestValidateUI(AltitudeCase):
                     ui.validate(args)
                 launch.assert_not_called()
 
+    def test_capture_records_only_the_selected_journeys_stage(self):
+        with mock.patch.object(ui.subprocess, "Popen") as launch, self.assertRaisesRegex(ValueError, "UI_ARGS"):
+            ui.validate([], capture=True)
+        launch.assert_not_called()
+        for capture in (False, True):
+            seen = {}
+            with self.subTest(capture=capture), self.launch(iter([0] * 5)) as launch:
+                start = launch.side_effect
+                launch.side_effect = lambda command, **kwargs: (
+                    seen.__setitem__(command[-1], kwargs["env"].get("ALTITUDE_UI_CAPTURE")), start(command, **kwargs))[1]
+                self.assertEqual(ui.validate(["project-menu.pw.ts"], capture=capture), 0)
+                self.assertEqual(seen["project-menu.pw.ts"], str(self.results / "captures") if capture else None)
+                self.assertEqual([name for name, folder in seen.items() if folder], ["project-menu.pw.ts"] if capture else [])
+
     def test_preflight_failure_stops_before_journeys_and_retains_configuration_and_report(self):
         with self.launch(iter([0, 0, 0, 7])) as launch:
             self.assertEqual(ui.validate(["project-menu.pw.ts"]), 7)

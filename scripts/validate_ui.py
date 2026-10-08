@@ -1,4 +1,7 @@
-"""Repeat fictional browser journeys in an admitted validation run, with disposable tools and evidence."""
+"""Repeat fictional browser journeys in an admitted validation run, with disposable tools and evidence.
+
+`--capture` also keeps each selected journey's recording as a small GIF in RESULTS/captures
+(docs/DEVELOPMENT.md#validation-captures)."""
 from __future__ import annotations
 
 import json
@@ -14,9 +17,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from altitude import platform
 
 
-def validate(specs: list[str]) -> int:
+def validate(specs: list[str], capture: bool = False) -> int:
     if os.environ.get("ALTITUDE_VALIDATION") != "1" or not os.environ.get("VALIDATION_RESULTS"):
         raise ValueError("Run through alt task validate; a worker shell is not the fictional-browser runner")
+    if capture and not specs:
+        raise ValueError("CAPTURE=1 records only the journeys UI_ARGS selects; name their .pw.ts files")
     results = Path(os.environ["VALIDATION_RESULTS"])
     web = Path(__file__).resolve().parents[1] / "web"
     for spec in specs:
@@ -56,6 +61,8 @@ def validate(specs: list[str]) -> int:
             if name in ("preflight", "journeys"):
                 env["ALTITUDE_BROWSER_EVIDENCE"] = str(results / f"{name}.json")
                 env["ALTITUDE_UI_RESULTS"] = str(results / name)
+            if name == "journeys" and capture:
+                env["ALTITUDE_UI_CAPTURE"] = str(results / "captures")
             with (results / f"{name}.log").open("w") as log:
                 try:
                     run = subprocess.Popen(command, cwd=web, env=env, stdout=log, stderr=subprocess.STDOUT,
@@ -88,4 +95,5 @@ def validate(specs: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(validate(sys.argv[1:]))
+    arguments = sys.argv[1:]
+    raise SystemExit(validate([a for a in arguments if a != "--capture"], "--capture" in arguments))

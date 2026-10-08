@@ -31,15 +31,19 @@ const routePaths = [...new Set(paths(source))];
 for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe(() => {
   const design = route.includes("/design/");
   const file = route.endsWith("/file");
-  test.use({ serviceScript: design ? "task-design-service.py" : file ? "file-references-service.py" : "" });
+  const captures = route.includes("/captures/");
+  test.use({ serviceScript: design ? "task-design-service.py" : captures ? "captures-service.py" : file ? "file-references-service.py" : "" });
   test(`${route} renders without errors or horizontal overflow (issue #195, SPEC §2.2)`, async ({ page, request, browserName }, info) => {
     const project = await fixtureProject(request, route === "/projects" || route === "/chat");
     const task = route.includes(":slug") ? await fixtureTask(request, project.name) : undefined;
     if (design) expect(task?.question?.design_url, "The fixture supplies a real saved proposal").toBeTruthy();
+    // The reply whose captures are all present: a missing one is captures.pw.ts's unavailable state.
+    const reply = captures ? (await (await request.get("/fixture/captures")).json()).single as string : "";
     let url = route.replace(":name", encodeURIComponent(project.name))
       .replace(":slug", encodeURIComponent(task?.slug ?? ""))
       .replace(":questionId", encodeURIComponent(task?.question?.id ?? ""))
       .replace(":revision", String(task?.question?.revision ?? ""))
+      .replace(":messageId", encodeURIComponent(reply))
       .replace("*", "__ui_unknown_route__");
     if (file) {
       const { paths } = await (await request.get("/fixture/files")).json();
@@ -85,6 +89,12 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
         .toHaveAttribute("href", `/projects/${project.name}/tasks/${task.slug}?question=${task.question!.id}&revision=${task.question!.revision}`);
       await expect(main.getByText("Loading preview…", { exact: true })).toHaveCount(0);
       await expect(main.getByText("Loading screenshot…", { exact: true })).toHaveCount(0);
+    } else if (task && captures) {
+      await expect(main.getByRole("heading", { name: "Captures from validation run 3", exact: true })).toBeVisible();
+      await expect(main.getByRole("img", { name: "Phone send", exact: true })).toBeVisible();
+      await expect(main.getByRole("link", { name: "← Back to conversation", exact: true })).toHaveAttribute("href", new RegExp(`^/projects/${project.name}/tasks/${task.slug}([?#]|$)`));
+      await expect(main.getByText("Loading captures…", { exact: true })).toHaveCount(0);
+      await expect(main.getByText("Loading capture…", { exact: true })).toHaveCount(0);
     } else if (task && route.includes("/decisions/")) {
       // Legacy decision links resolve to the owning human conversation, including archived tasks.
       await expect(page).toHaveURL(new RegExp(`/projects/${project.name}/tasks/${task.slug}(\\?|$)`));

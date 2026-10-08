@@ -380,3 +380,75 @@ class TestMacLifecycle(AltitudeCase):
             self.assertEqual(mac.main(), 2)
             run.assert_not_called()
         self.assertFalse((self.tmp / "r").exists())
+
+
+class TestInstallationVmCapture(AltitudeCase):
+    """`--capture` around a lane run whose VM, builds and harness are fixtures; the replay is real up to the encoder."""
+
+    def lane(self, *, capture, made=None, failure=None, unreadable=False):
+        from scripts import installation_vm as vm
+        from altitude import capture as C
+        native = subprocess.run
+
+        class Machine:
+            def __init__(self, work, image):
+                pass
+            start = wait_ready = unplug_online_card = stop = copy = lambda self, *args, **kwargs: None
+            ssh = lambda self, *args, **kwargs: subprocess.CompletedProcess(args, 0, "Ubuntu 24.04 fixture\n", "")
+            reboot = lambda self, deadline: "boot-2"
+
+        def harness(machine, commit, phase, log):
+            with log.open("w") as stream:  # written as it runs, as the real harness's ssh output is
+                for step in range(3):
+                    stream.write(f"\x1b[32mok\x1b[0m {phase} step {step}\n")
+                    stream.flush()
+                    time.sleep(0.2)
+            return 0
+
+        def terminal(lines, target, title, steps):
+            made.append((lines, title, steps))
+            if failure:
+                raise (C.CaptureError if failure == "ffmpeg unavailable" else RuntimeError)(failure)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"GIF89a fixture")
+            return {}
+        reachable = iter([{"internet": True, "host-through-online-card": True, "host-through-offline-card": False}]
+                         + [{"internet": False}] * 2)
+        results = self.tmp / f"results-{capture}-{failure}"
+        if unreadable:  # a harness log the replay cannot read
+            (results / "harness-unreadable.log").mkdir(parents=True)
+        with mock.patch.object(vm.subprocess, "run", side_effect=lambda command, **kw: subprocess.CompletedProcess(
+                    command, 0, "QEMU emulator version 9.0 fixture\n", "") if command[0] == "qemu-system-x86_64"
+                    else native(command, **kw)), \
+                mock.patch.object(vm, "build"), mock.patch.object(vm, "base_image", return_value={"image": "fixture"}), \
+                mock.patch.object(vm, "Machine", Machine), mock.patch.object(vm, "harness", side_effect=harness), \
+                mock.patch.object(vm, "reachable", side_effect=lambda machine: next(reachable)), \
+                mock.patch.object(C, "terminal", side_effect=terminal), mock.patch("sys.stdout"):
+            code = vm.run(results, "0123456789abcdef", self.tmp / "cache", capture=capture)
+        return code, results, json.loads((results / "vm.json").read_text())
+
+    def test_without_capture_nothing_is_recorded(self):
+        code, results, record = self.lane(capture=False)
+        self.assertEqual((code, record["passed"]), (0, True))
+        self.assertNotIn("capture", record)
+        self.assertFalse((results / "captures").exists())
+
+    def test_a_capture_replays_progress_and_harness_output_with_their_arrival_times(self):
+        made = []
+        code, results, record = self.lane(capture=True, made=made)
+        self.assertEqual((code, record["passed"]), (0, True))
+        self.assertEqual(record["capture"], str(results / "captures" / "installation-vm.gif"))
+        [(lines, title, steps)] = made
+        self.assertEqual(title, "installation-vm 0123456789ab")
+        self.assertEqual(steps[:2], ("building both release versions from 0123456789ab", "verifying the Ubuntu cloud image"))
+        self.assertEqual(steps[-1], f"VM deleted; passed; evidence in {results}")
+        texts = [text for _, text in lines]
+        for phase in ("all", "bootstrap", "update", "reboot-install", "reboot-verify"):
+            self.assertIn(f"\x1b[32mok\x1b[0m {phase} step 2", texts)
+        self.assertLess(texts.index("running the all phase"), texts.index("\x1b[32mok\x1b[0m all step 0"))
+
+    def test_a_capture_that_fails_leaves_the_lanes_result_alone(self):
+        for failure in ("ffmpeg unavailable", "an encoder fault"):
+            with self.subTest(failure):
+                code, results, record = self.lane(capture=True, made=[], failure=failure, unreadable=True)
+                self.assertEqual((code, record["passed"], record["capture"]), (0, True, f"none: {failure}"))
