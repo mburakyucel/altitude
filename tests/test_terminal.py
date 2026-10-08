@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 
 from tests.support import AltitudeCase, local_terminal_launch, local_terminal_stop, make_repo, terminal_session as session
-from altitude import config, dispatch, engines, platform, server, state as S, tasks as T, terminal
+from altitude import config, dispatch, engines, l3, platform, server, state as S, tasks as T, terminal
 
 SHELL = ["bash", "--noprofile", "--norc"]
 class TerminalCase(AltitudeCase):
@@ -351,13 +351,13 @@ class TestHandedCommand(TerminalCase):
         self.assertIn("the command you handed the operator looks finished in the task terminal: "
                       "`sleep 1.5; echo slept-$((4*4))`", text)
         self.assertIn("alt task terminal", text)
-        self.assertIn("slept-16", terminal.owner_output(self.project, self.slug)["text"])
+        self.assertIn("slept-16", terminal.output(self.project, self.slug)["text"])
 
     def test_a_failed_command_is_reported_as_run_and_the_owner_reads_how(self):
         self.hand("ls /no-such-folder-here")
         self.type("\r", self.slug)
         self.assertIn("looks finished", self.notice())
-        self.assertIn("No such file or directory", terminal.owner_output(self.project, self.slug)["text"])
+        self.assertIn("No such file or directory", terminal.output(self.project, self.slug)["text"])
 
     def test_a_shell_builtin_counts_once_the_shell_is_back(self):
         self.hand("cd /")
@@ -452,45 +452,112 @@ class TestHandedCommand(TerminalCase):
                     task.pop(key)
                 S.save_task(self.project, task)
 
-    def test_a_finished_task_gets_no_notice_and_a_project_terminal_takes_no_command(self):
+    def test_a_finished_task_gets_no_notice(self):
         task = S.load_task(self.project, self.slug)
         task["state"] = "done"
         S.save_task(self.project, task)
         self.assertIsNone(T.notify(self.project, self.slug, "Terminal: notice", by="terminal", attempt=task["attempt"]))
-        self.open()
-        with self.assertRaises(terminal.TerminalError) as caught:
-            terminal.hand(self.project, None, terminal.status(self.project, None)["id"], "echo x")
-        self.assertEqual(caught.exception.status, 400)
+
+
+class TestCoordinatorCommand(TerminalCase):
+    """A command the page typed from the coordinator's `run` block in project chat: the coordinator hears once it has
+    run, as a queued turn."""
+
+    def setUp(self):
+        super().setUp()
+        self.turn(True)
+        self.ident = self.open()
+
+    def notices(self):
+        return [row for row in l3.queued(self.project) if row["trigger"] == "terminal"]
+
+    def notice(self):
+        self.wait(self.notices)
+        [row] = self.notices()
+        self.assertEqual(row["role"], "server")
+        return row["text"]
+
+    def test_the_coordinator_hears_once_its_command_has_run(self):
+        terminal.hand(self.project, None, self.ident, "echo handed-$((3*3))")
+        self.type("echo handed-$((3*3))")
+        time.sleep(terminal.COMMAND_SETTLE_SECONDS + .5)  # typed but not run: nothing to report
+        self.assertEqual(self.notices(), [])
+        self.type("\r")
+        text = self.notice()
+        self.assertIn("the command you handed the operator looks finished in the project terminal: "
+                      "`echo handed-$((3*3))`", text)
+        self.assertIn("`alt project terminal`", text)
+        self.assertNotIn("alt task terminal", text)
+        self.assertIn("handed-9", terminal.output(self.project, None)["text"])
+        self.assertEqual([row for row in T.pending(self.project, self.slug) if row.get("by") == "terminal"], [])
+
+    def test_a_command_the_operator_typed_themselves_sends_no_notice(self):
+        self.type("echo mine\r")
+        self.output(until="mine\r\n")
+        time.sleep(terminal.COMMAND_SETTLE_SECONDS + .5)
+        term = self.current()
+        terminal.close(self.project, None)
+        self.gone(term)
+        time.sleep(.2)
+        self.assertEqual(self.notices(), [])
+
+    def test_the_terminal_ending_first_is_reported_unless_the_project_was_removed(self):
+        terminal.hand(self.project, None, self.ident, "echo never")
+        term = self.current()
+        terminal.close(self.project, None)
+        self.gone(term)
+        self.assertIn("the project terminal ended (closed) before the operator ran the command you handed them: "
+                      "`echo never`", self.notice())
+        l3.queue_path(self.project).unlink()
+        terminal.hand(self.project, None, self.open(), "echo gone")
+        term = self.current()
+        self.patch(config, "is_managed", return_value=False)
+        terminal.sweep()
+        self.gone(term)
+        self.assertEqual(term.reason, "project-removed")
+        time.sleep(.2)
+        self.assertEqual(self.notices(), [])
+
+    def test_a_project_removed_while_the_notice_waits_gets_none(self):
+        # Review finding: removal finishing between the notice's first check and its enqueue left a stale turn.
+        terminal.hand(self.project, None, self.ident, "echo raced")
+        term = self.current()
+        managed = iter([True, False])  # the notice's first check, then removal finished before its enqueue
+        self.patch(config, "is_managed", side_effect=lambda _name: next(managed, False))
+        terminal.close(self.project, None)
+        self.gone(term)
+        time.sleep(.2)
+        self.assertEqual(self.notices(), [])
 
 
 class TestOwnerOutput(TerminalCase):
     def test_the_owner_reads_its_task_terminal_as_text_until_a_new_terminal_or_the_task_ends(self):
         self.turn(True)
-        self.assertEqual(terminal.owner_output(self.project, self.slug)["state"], "none")
+        self.assertEqual(terminal.output(self.project, self.slug)["state"], "none")
         self.open(self.slug)
         self.type("printf '\\033[1;32mgreen\\033[0m\\n'; printf 'step 1\\rstep 2\\n'\n", self.slug)
         self.output(self.slug, until="step 2\r\n")
-        running = terminal.owner_output(self.project, self.slug)
+        running = terminal.output(self.project, self.slug)
         self.assertEqual((running["state"], running["missed"]), ("running", False))
         self.assertIn("\ngreen\nstep 2\n", running["text"])
         self.assertNotIn("\x1b", running["text"])
         term = self.current(self.slug)
         self.type("exit 5\n", self.slug)
         self.gone(term)
-        ended = terminal.owner_output(self.project, self.slug)
+        ended = terminal.output(self.project, self.slug)
         self.assertEqual((ended["state"], ended["exit_code"], ended["reason"]), ("exited", 5, "exited"))
         self.assertIn("step 2", ended["text"])
         self.open(self.slug)  # a new terminal replaces what the owner could read
-        self.assertNotIn("step 2", terminal.owner_output(self.project, self.slug)["text"])
+        self.assertNotIn("step 2", terminal.output(self.project, self.slug)["text"])
         term = self.current(self.slug)
         terminal.close(self.project, self.slug)
         self.gone(term)
-        self.assertEqual(terminal.owner_output(self.project, self.slug)["state"], "exited")
+        self.assertEqual(terminal.output(self.project, self.slug)["state"], "exited")
         task = S.load_task(self.project, self.slug)
         task.update(state="done", agent_id=None)
         S.save_task(self.project, task)
         terminal.sweep()
-        self.assertEqual(terminal.owner_output(self.project, self.slug)["state"], "none")
+        self.assertEqual(terminal.output(self.project, self.slug)["state"], "none")
 
     def test_the_owner_learns_when_earlier_output_was_dropped_and_never_reads_the_project_terminal(self):
         self.turn(True)
@@ -498,11 +565,11 @@ class TestOwnerOutput(TerminalCase):
         self.open(self.slug)
         self.type("head -c 20000 /dev/zero | tr '\\0' x; echo; echo done-$((1+1))\n", self.slug)
         self.output(self.slug, until="done-2")
-        self.assertTrue(terminal.owner_output(self.project, self.slug)["missed"])
+        self.assertTrue(terminal.output(self.project, self.slug)["missed"])
         self.open()
         self.type("echo project-only\n")
         self.output(until="project-only")
-        self.assertNotIn("project-only", terminal.owner_output(self.project, self.slug)["text"])
+        self.assertNotIn("project-only", terminal.output(self.project, self.slug)["text"])
 
 
 class TestOwnerHttp(TerminalCase):
@@ -566,6 +633,83 @@ class TestOwnerHttp(TerminalCase):
         self.assertIn("only the current L2 reads its own task's terminal", result.stderr)
         result = self.alt("task", "terminal", self.slug, env={**base, "ALTITUDE_ACTOR": "l3"})
         self.assertIn("not available to an L3", result.stderr)
+
+
+class TestCoordinatorReader(TerminalCase):
+    """The project's coordinator reads its project terminal through its project-bound socket, and nothing else does."""
+
+    def setUp(self):
+        super().setUp()
+        self.turn(True)
+        self.broker = server.start_l3_verb_broker(self.project)
+        self.addCleanup(server.stop_l3_verb_broker, self.broker)
+
+    def coordinator(self, project, *args):
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.connect(str(l3.verb_socket_path(project)))
+            client.sendall((json.dumps({"kind": "alt", "args": ["project", "terminal", *args], "stdin": ""}) + "\n").encode())
+            client.shutdown(socket.SHUT_WR)
+            return json.loads(b"".join(iter(lambda: client.recv(65536), b"")))
+
+    def test_the_coordinator_reads_its_project_terminal_as_text_until_altitude_restarts(self):
+        self.assertEqual(self.coordinator(self.project)["stdout"], "[altitude] no terminal output: this project's "
+                         "terminal has not been opened since Altitude last started\n")
+        self.open()
+        self.type("printf '\\033[1;32mgreen\\033[0m\\n'; echo for-the-$((1+1))\n")
+        self.output(until="for-the-2\r\n")
+        self.open(self.slug)
+        self.type("echo task-$((2*2))\n", self.slug)
+        self.output(self.slug, until="task-4\r\n")
+        result = self.coordinator(self.project)
+        self.assertEqual(result["returncode"], 0, result)
+        self.assertTrue(result["stdout"].startswith("[altitude] terminal running\n"), result["stdout"])
+        self.assertIn("\ngreen\nfor-the-2\n", result["stdout"])
+        self.assertNotIn("task-", result["stdout"])
+        self.assertNotIn("\x1b", result["stdout"])
+        term = self.current()
+        self.type("exit 6\n")
+        self.gone(term)
+        record = json.loads(self.coordinator(self.project, "--json")["stdout"])
+        self.assertEqual((record["state"], record["exit_code"], record["reason"]), ("exited", 6, "exited"))
+        self.assertIn("for-the-2", record["text"])
+        self.assertEqual(self.coordinator(self.project, "--last", "5"), {"error": "alt project terminal: the only option is --json"})
+        terminal._ended.clear()  # altd's restart: the output lived only in its memory
+        self.assertIn("has not been opened since Altitude last started", self.coordinator(self.project)["stdout"])
+
+    def test_the_coordinator_reads_only_the_last_bounded_output(self):
+        self.patch(terminal, "REPLAY_BYTES", 4096)
+        self.open()
+        self.type("head -c 20000 /dev/zero | tr '\\0' x; echo; echo done-$((2+2))\n")
+        self.output(until="done-4")
+        stdout = self.coordinator(self.project)["stdout"]
+        self.assertTrue(stdout.startswith("[altitude] terminal running; earlier output was dropped\n"), stdout[:80])
+        self.assertIn("done-4", stdout)
+        self.assertLessEqual(len(stdout), 4096 + 100)
+
+    def test_another_projects_coordinator_and_task_workers_cannot_read_it(self):
+        self.open()
+        self.type("echo project-$((7*6))\n")
+        self.output(until="project-42\r\n")
+        other = f"{self.project}-other"
+        other_repo = self.tmp / "other-repo"
+        other_repo.mkdir()
+        self.register(other, path=other_repo)
+        broker = server.start_l3_verb_broker(other)
+        self.addCleanup(server.stop_l3_verb_broker, broker)
+        self.assertNotIn("project-42", self.coordinator(other)["stdout"])
+        forged = self.coordinator(other, "--project", self.project)
+        self.assertNotIn("project-42", json.dumps(forged))
+        # The owner's HTTP reader names a task; it has no project-terminal form.
+        self.patch(terminal, "owner_connection", return_value=True)
+        with self.assertRaises(ValueError):
+            server.owner_terminal_output(self.project, None, "1", ("127.0.0.1", 1), ("127.0.0.1", 2))
+        # The ordinary CLI, for a task owner, the coordinator's environment or the operator, has no such verb.
+        for env in ({"ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"},
+                    {"ALTITUDE_ACTOR": "l3"}, {}):
+            result = self.alt("project", "terminal", env={"ALTITUDE_PROJECT": self.project, **env})
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn("project-42", result.stdout)
+            self.assertIn("only through the project's coordinator socket", result.stderr)
 
 
 class TestTerminalJob(AltitudeCase):

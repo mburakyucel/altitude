@@ -220,7 +220,7 @@ export default function Terminal({ project, task, keys, head, closeIcon, onLeave
         <button type="button" className="btn" onClick={() => setConfirm(null)}>Cancel</button>
       </>}>{`${confirm} is still running and will be stopped.`}</Card> : null}
       {closeError ? <p role="alert" className="text-meta text-danger">{closeError}</p> : null}
-      {task ? <p className="terminal-note">This task's owner can read this terminal's output.</p> : null}
+      <p className="terminal-note">{task ? "This task's owner" : "The coordinator"} can read this terminal's output, and what it reads reaches its AI provider.</p>
       {restart && !restart.failed ? <p className="terminal-note" role="status">Altitude restarts at its next quiet point to apply an update. This terminal will close then.</p> : null}
       <ScreenBoundary onError={screenFailed}>
         <Suspense fallback={<div className="terminal-screen" aria-label="Loading the terminal" />}>

@@ -999,6 +999,7 @@ alt task grant <slug> --from-task <earlier-slug> --approval <message-id> --quest
 alt task grant <slug> --revoke --reason <why>
 alt task run <slug> <command>
 alt task terminal [<slug>] [--json]
+alt project terminal [--json]  # the coordinator, through its project socket
 alt task done <slug> --digest <text> [--findings-tracked <reference>]
 alt task reject <slug> --reason <reason>
 ```
@@ -1990,8 +1991,8 @@ only: nothing it does types into, resizes or closes the terminal. altd answers o
 current attempt, and only a connection made from a process in that owner's own worker job, so another
 task's agent cannot read it. The last ended terminal's output stays readable until a new terminal opens
 for the task, the task finishes or Altitude restarts; after a restart the command says no output is
-available. Project terminals have no reader. Output the owner reads becomes part of its session and
-provider record; save only what the task's evidence needs.
+available. Output the owner reads becomes part of its session and provider record; save only what the
+task's evidence needs.
 
 When the operator opens the owner's `run` command in the task terminal, altd tells the owner how it went
 with a Terminal notice at its next checkpoint, waking it when blocked: the command looks finished (the shell
@@ -2002,3 +2003,17 @@ carries no exit status, and a command waiting for input, such as `read`, can loo
 output with `alt task terminal` and verifies that the command ended and how. Ctrl+C before Enter drops the command without a notice. The
 notice is not a chat message and grants no approval, access or authority; a stopped or faulted task keeps
 it for its next resume.
+
+### Reading the project terminal
+
+`alt project terminal` prints the project terminal's output for the project's coordinator, in the same form and
+with the same limits as `alt task terminal`: a status line, then up to the last 256 KB as plain text, or the
+record with `--json`; it never types into, resizes or closes the terminal. altd answers it only on the project's
+coordinator socket, so the ordinary CLI, task owners and other projects' coordinators cannot read it. Output stays
+readable until a new project terminal opens, the project is removed or Altitude restarts.
+
+When the operator opens the coordinator's project-chat `run` command in the project terminal, altd follows it as
+it does an owner's and queues a Terminal notice as a coordinator turn once the command looks finished or the
+terminal ended first. The notice is the same prompt to check, naming `alt project terminal`; a command the
+operator types without a `run` block sends none. Output the coordinator reads becomes part of its session and
+provider record.
