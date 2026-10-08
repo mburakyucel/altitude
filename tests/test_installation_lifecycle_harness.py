@@ -461,17 +461,17 @@ class TestInstallationMacosVm(AltitudeCase):
     class Guest:
         """Answers the lane's probes as a guest whose network card is plugged in until `unplug`."""
 
-        def __init__(self, unplug_reaches=(), failing=None):
+        def __init__(self, unplug_reaches=(), failing=()):
             self.gateway = self.listener = None
-            self.plugged, self.unplug_reaches, self.failing, self.sent = True, set(unplug_reaches), failing, []
+            self.plugged, self.unplug_reaches, self.failing, self.sent = True, set(unplug_reaches), dict(failing), []
 
         def ssh(self, command, timeout=120, check=True):
             if command.startswith("route"):
                 return subprocess.CompletedProcess(command, 0, "127.0.0.1\n", "")
             kind = "internet" if command.startswith("curl") else "host"
-            if kind == self.failing:
-                return subprocess.CompletedProcess(command, 255, "", "")
-            return subprocess.CompletedProcess(command, 0 if self.plugged or kind in self.unplug_reaches else 7, "", "")
+            if kind in self.failing:
+                return subprocess.CompletedProcess(command, self.failing[kind], "", "")
+            return subprocess.CompletedProcess(command, 0 if self.plugged or kind in self.unplug_reaches else 1, "", "")
 
         def command(self, line):
             self.sent.append(line)
@@ -527,13 +527,39 @@ class TestInstallationMacosVm(AltitudeCase):
 
     def test_a_probe_that_could_not_run_stops_the_run_instead_of_proving_isolation(self):
         from scripts import installation_macos_vm as vm
-        guest = self.Guest(failing="host")
-        try:
-            with self.assertRaisesRegex(vm.Stop, "could not run"):
-                vm.isolate(guest, {})
-        finally:
-            guest.listener.close()
-        self.assertEqual(guest.sent, [])
+        # SSH failing, and the internet probe's TLS or other error, which says nothing about reachability.
+        for failing in ({"host": 255}, {"internet": 3}):
+            guest = self.Guest(failing=failing)
+            try:
+                with self.assertRaisesRegex(vm.Stop, "could not run"):
+                    vm.isolate(guest, {})
+            finally:
+                guest.listener.close()
+            self.assertEqual(guest.sent, [])
+
+    def test_internet_probe_tells_unreachable_from_inconclusive_and_avoids_the_served_host(self):
+        from scripts import installation_macos_vm as vm
+        self.assertNotIn("github.com", vm.INTERNET)
+        for code, expected in ((0, 0), (6, 1), (7, 1), (28, 1), (60, 3), (35, 3)):
+            shell = vm.INTERNET.replace("curl -sS --max-time 10 -o /dev/null https://www.apple.com/", f"(exit {code})")
+            self.assertEqual(subprocess.run(["sh", "-c", shell]).returncode, expected, code)
+
+    def test_a_guest_that_does_not_start_leaves_no_helper_running(self):
+        from scripts import installation_macos_vm as vm
+        fake = self.tmp / "helper"
+        fake.write_text("#!/bin/sh\nexec sleep 60\n")
+        fake.chmod(0o755)
+        started = []
+        popen = subprocess.Popen
+        def spawn(*args, **kwargs):
+            started.append(popen(*args, **kwargs))
+            return started[-1]
+        for interruption in (vm.Stop("the guest helper did not say 'started' within 120s"), SystemExit(143)):
+            with mock.patch.object(vm, "helper", return_value=fake), mock.patch.object(vm.subprocess, "Popen", spawn), \
+                    mock.patch.object(vm.Guest, "expect", side_effect=interruption):
+                with self.assertRaises(type(interruption)):
+                    vm.Guest(self.tmp, self.tmp, self.tmp / "vm.log")
+            self.assertIsNotNone(started[-1].poll())
 
     def test_refusal_passes_only_with_its_documented_fix_and_nothing_changed(self):
         from scripts import installation_macos_vm as vm
@@ -543,6 +569,14 @@ class TestInstallationMacosVm(AltitudeCase):
                         {"exit": 1, "output": output, "unchanged": False},
                         {"exit": 1, "output": "Altitude cannot be installed on this Mac yet.", "unchanged": True}):
             self.assertFalse(vm.judged(outcome, "missing-python")["passed"])
+
+    def test_openssl_refusal_needs_the_path_fix_as_well_as_the_install(self):
+        from scripts import installation_macos_vm as vm
+        output = ("Altitude was not installed: the openssl on PATH is LibreSSL 3.3.6, not OpenSSL 3.\n"
+                  "  Install it (brew install openssl@3), put it ahead of /usr/bin")
+        path_fix = ' (export PATH="$(brew --prefix openssl@3)/bin:$PATH", also in your shell profile), then run this again.'
+        self.assertFalse(vm.judged({"exit": 1, "output": output, "unchanged": True}, "openssl-not-first")["passed"])
+        self.assertTrue(vm.judged({"exit": 1, "output": output + path_fix, "unchanged": True}, "openssl-not-first")["passed"])
 
     def test_public_command_trusts_the_test_authority_for_its_own_and_install_shs_downloads(self):
         from scripts import installation_macos_vm as vm

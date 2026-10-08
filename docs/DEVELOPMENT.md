@@ -1044,8 +1044,8 @@ download from GitHub itself or the real check and notice schedule.
 `scripts/installation_macos_vm.py` runs the built `install.sh` in fresh macOS guests on an Apple
 silicon Mac through Apple's Virtualization framework, at no cost and without root. It needs Xcode's
 command line tools, which compile and locally sign its Swift helper `scripts/macos_vm.swift` with the
-virtualization entitlement, Python 3.12, `pnpm` for the release build and GitHub CLI, which it
-copies into the guests. One command builds the guests once and runs every phase against a committed
+virtualization entitlement, Python 3.12, `pnpm` with the web packages already in its store (the
+release build runs offline) and GitHub CLI, which it copies into the guests. One command builds the guests once and runs every phase against a committed
 revision (default: HEAD):
 
 ```sh
@@ -1064,16 +1064,19 @@ line tools, Homebrew and Homebrew's `python@3.12` and `openssl@3`. The restore i
 `installation_macos_vm.py run RESULTS [--phase PHASE]` builds `v0.0.1` from the committed revision
 and runs each phase in its own copy-on-write clone with 4 CPUs, 4 GiB of memory and a 64 GiB sparse
 disk, reached over SSH through the host-guest socket only. Before the installer runs, the runner
-probes the internet and a listener it opens on the guest network's gateway on this Mac: both must
-answer, and after it unplugs the guest's only network card neither may. A probe that cannot run stops the run, and the probes repeat at the end. The release is served
+probes the internet (`www.apple.com`) and a listener it opens on the guest network's gateway on this
+Mac: both must answer, and after it unplugs the guest's only network card neither may. A probe that
+neither reaches its destination nor finds it unreachable, for example one that cannot run or fails
+TLS, stops the run, and the probes repeat at the end. The release is served
 on the guest's loopback over HTTPS with a throwaway certificate authority that the public command's
 shell trusts, with `github.com` resolving to the loopback.
 
 - `fresh`: the public command must stop for the missing Python.
 - `prerequisites`: it must stop for OpenSSL 3 not being first on PATH; after the documented fix, a
   second account with the same shell setup and no desktop session must be stopped for the missing
-  session. Each refusal must name its documented fix and leave the account's files outside
-  `Library`, its LaunchAgents and its launchd jobs unchanged.
+  session. Each refusal must name its documented fix and leave the size and modification time of
+  every file outside `Library` and in the `Library` folders an installation writes, and the
+  account's launchd jobs, unchanged.
 - `lifecycle`: with the documented fix and GitHub CLI in place, the guest's account runs the
   [macOS installation lane](#macos-installation-lane)'s `mac` phase under a throwaway HOME, as
   `installation_mac.py` does: install, update detection and notice, `alt update`, the Update button,
@@ -1090,7 +1093,7 @@ and load average before and after, the guest's sizing, each image's restore imag
 prerequisites and disk footprint, and per phase the probe outcomes, every attempt's and step's exit
 and result, the guest's load average, the disk the clone took and the run time. Each step's full output, the
 lifecycle's own results and the guest helper's log stay beside it. Everything the runner writes
-lives in `~/.cache/altitude-installation-vm/macos`: the helper, the images (about 26 GiB for macOS
+lives in `~/.cache/altitude-installation-vm/macos`: the helper, the release build and its temporary files, the images (about 26 GiB for macOS
 26.6.2) and per-run clones (about 1 GiB at most), deleted after each phase, also after a failure or a
 stop. One guest runs at a time, and the runner stops whenever less than 10 GiB of disk would stay
 free. Building the images takes about fifteen minutes after the restore image's download. On an

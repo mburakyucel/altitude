@@ -159,9 +159,13 @@ class Guest:
             try:
                 self.mac = self.expect("started", 120).split()[1]
                 break
-            except Stop as error:
+            except BaseException as error:
                 # The framework's service can hold the guest's storage for a moment after the previous guest ended.
-                if "Failed to lock" not in str(error) or attempt == 5:
+                if not isinstance(error, Stop) or "Failed to lock" not in str(error) or attempt == 5:
+                    self.process.kill()
+                    self.process.wait(30)
+                    self.reader.join(10)
+                    self.log.close()
                     raise
                 self.process.wait(30)
                 time.sleep(10)
@@ -630,11 +634,18 @@ def image(step_only: bool) -> int:
 # ---- Runs ---------------------------------------------------------------------------------------------------------
 
 def probe(guest: Guest, command: str) -> bool:
-    """A probe's outcome. SSH failure (255) or a probe that could not run (126, 127) proves nothing."""
+    """Whether the probe reached its destination (exit 0) or found it unreachable (exit 1). Anything else, such as
+    an SSH failure, a probe that could not run or a TLS error, proves nothing."""
     code = guest.ssh(command, timeout=60, check=False).returncode
-    if code in (126, 127, 255):
+    if code not in (0, 1):
         raise Stop(f"a network probe could not run in the guest (exit {code}): {command}")
     return code == 0
+
+
+# curl's exits for a name that does not resolve, a refused connection and a timeout mean unreachable. The host is
+# one the lane never maps to the guest's release server.
+INTERNET = ("curl -sS --max-time 10 -o /dev/null https://www.apple.com/; "
+            "case $? in 0) exit 0 ;; 6|7|28) exit 1 ;; *) exit 3 ;; esac")
 
 
 def reachable(guest: Guest) -> dict:
@@ -648,7 +659,7 @@ def reachable(guest: Guest) -> dict:
         guest.listener.bind((found, 0))
         guest.listener.listen()
     port = guest.listener.getsockname()[1]
-    return {"internet": probe(guest, "curl -sS --max-time 10 -o /dev/null https://github.com/"),
+    return {"internet": probe(guest, INTERNET),
             "host": probe(guest, f"nc -z -G 5 -w 5 {guest.gateway} {port}")}
 
 
@@ -702,9 +713,12 @@ nohup /usr/bin/openssl s_server -quiet -WWW -accept 443 -cert {SHARED}/server.pe
 sleep 1
 """
 
-# What a refused attempt must not change: the account's files outside Library, its LaunchAgents and launchd jobs.
-LISTING = ("find \"$HOME\" -path \"$HOME/Library\" -prune -o -print | LC_ALL=C sort; "
-           "ls -la \"$HOME/Library/LaunchAgents\" 2>/dev/null; launchctl list 2>/dev/null | grep -i altitude || true")
+# What a refused attempt must not change: every file's size and modification time outside Library, including shell
+# profiles, and in the Library folders an installation writes, and the account's launchd jobs.
+LISTING = ("{ find \"$HOME\" -path \"$HOME/Library\" -prune -o -exec stat -f '%m %z %N' {} +; "
+           "find \"$HOME/Library/LaunchAgents\" \"$HOME/Library/Logs/altitude\" \"$HOME/Library/Caches/dev.altitude\" "
+           "-exec stat -f '%m %z %N' {} + 2>/dev/null; } | LC_ALL=C sort; "
+           "launchctl list 2>/dev/null | grep -i altitude || true")
 
 
 def public_command(repository: str) -> str:
@@ -728,7 +742,8 @@ def attempt(guest: Guest, repository: str, user: str, results: Path, label: str)
 # Each refusal names the missing prerequisite and its documented fix.
 EXPECTED = {
     "missing-python": ("Python 3.12 or newer was not found", "brew install python@3.12"),
-    "openssl-not-first": ("not OpenSSL 3", "brew install openssl@3"),
+    "openssl-not-first": ("not OpenSSL 3", "brew install openssl@3",
+                          'export PATH="$(brew --prefix openssl@3)/bin:$PATH", also in your shell profile'),
     "no-desktop-session": ("no logged-in desktop session", "Log in to this Mac's desktop"),
 }
 
@@ -897,11 +912,17 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, rele
 PHASES = {"fresh": phase_fresh, "prerequisites": phase_prerequisites, "lifecycle": phase_lifecycle, "login": phase_login}
 
 
-def build(commit: str, output: Path, log: Path) -> None:
+def build(commit: str, work: Path, log: Path) -> Path:
+    """The release, built in `work` with packages already in this Mac's pnpm store; the build downloads nothing."""
+    temp = work / "tmp"
+    temp.mkdir()
+    environment = {**os.environ, "TMPDIR": str(temp), "XDG_CACHE_HOME": str(temp), "npm_config_cache": str(temp),
+                   "npm_config_offline": "true"}
     with log.open("w") as stream:
         subprocess.run([sys.executable, "-B", str(SCRIPTS / "build_release.py"), "--version", "v0.0.1",
-                        "--output", str(output), "--source", commit], stdout=stream, stderr=subprocess.STDOUT,
-                       check=True, timeout=300)
+                        "--output", str(work / "release"), "--source", commit], stdout=stream, stderr=subprocess.STDOUT,
+                       env=environment, check=True, timeout=300)
+    return work / "release"
 
 
 def run_phase(name: str, release: Path, results: Path, record: dict) -> None:
@@ -966,9 +987,9 @@ def lane(results: Path, commit: str, phases: list[str]) -> int:
     work = Path(tempfile.mkdtemp(prefix="release.", dir=CACHE))
     try:
         note(f"building the release from {commit[:12]}")
-        build(commit, work / "release", results / "build.log")
+        release = build(commit, work, results / "build.log")
         for name in phases:
-            run_phase(name, work / "release", results, record)
+            run_phase(name, release, results, record)
         record["passed"] = all(record["phases"][name]["passed"] for name in phases)
     except (Stop, subprocess.SubprocessError) as error:
         record["error"] = str(error)
