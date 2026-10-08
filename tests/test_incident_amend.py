@@ -17,7 +17,7 @@ def fixture_incident(project: str = PROJECT, iid: str = "I-001", task: str = "fi
     """An incident file written from the real template, so a template change breaks these tests loudly."""
     body = (config.TEMPLATES / "incident.md").read_text().format(
         id=iid, title="the task used stale repository state", date=S.now()[:10], task=task, project=project,
-        what=what, evidence="events.log 00:15:07 running->blocked",
+        system="platform: Linux", what=what, summary="", evidence="events.log 00:15:07 running->blocked",
         cause="the worktree base was not refreshed", status="watch", issue="")
     p = config.project_dir(project) / "incidents" / f"{iid}.md"
     S.atomic_write(p, body)

@@ -432,6 +432,7 @@ Everything above the platform seam is the same on both hosts. These are the beha
 | Failed update, interrupted activation | the previous version is restored and its unit restarted; `alt recover` (or `install.py --recover`) finishes an interrupted one | the same, restarting the LaunchAgent | Setup, Operations |
 | Uninstall | stops, disables and removes the unit and launcher; settings, TLS identity and data stay | boots out and removes the LaunchAgent and launcher; launchd keeps its enable/disable record for the label; settings, TLS identity and data stay | Operations |
 | L3 journal reading | `journalctl` shim | not available; L3 reads service status through the broker | Isolation and landing |
+| Incident system facts | `os-release` name, kernel release, DMI vendor and product family (product name when the family is a placeholder) | macOS version, Darwin release, `hw.model` identifier | [Incident issues](CLI.md#incident-issues) |
 
 Case-insensitive project names are refused on both hosts, because macOS disks are case-insensitive by
 default and runtime folders are named after projects.

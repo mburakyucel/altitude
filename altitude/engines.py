@@ -2226,9 +2226,33 @@ def _review_native(engine: str, executable: str, modified: int, size: int) -> tu
         return False, ()
 
 
+def _executable(engine: str) -> str | None:
+    return {"claude": config.CLAUDE_BIN, "codex": config.CODEX_BIN}.get(engine)
+
+
+def cli_version(engine: str) -> str | None:
+    """The installed engine CLI's version number, as `--version` prints it; None when it does not answer."""
+    executable = _executable(engine)
+    if not executable:
+        return None
+    try:
+        out = subprocess.run([executable, "--version"], capture_output=True, text=True, timeout=5,
+                             env=clean_env()).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = re.search(r"\b\d+\.\d+(?:\.\d+)?(?:[-+][\w.]+)?", out)
+    return match.group(0) if match else None
+
+
+def worker_confinement(engine: str) -> str:
+    """The job and the engine boundary an L2 worker of this engine runs under on this host."""
+    boundary = {"claude": "Claude permission rules", "codex": "Codex sandbox"}.get(engine, "engine boundary")
+    return f"{platform.job_confinement(profile=engine == 'claude')}, {boundary}"
+
+
 def review_capability(engine: str) -> dict:
     """Local CLI feature inspection only; unsupported confinement refuses a model launch."""
-    executable = {"claude": config.CLAUDE_BIN, "codex": config.CODEX_BIN}.get(engine)
+    executable = _executable(engine)
     try:
         path = Path(shutil.which(str(executable)) or str(executable))
         stat = path.stat()
