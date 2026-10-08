@@ -1,9 +1,12 @@
 """One execution contract: Codex keeps its own sandbox, both engines use the `alt` door, a window switch is a fresh attempt."""
+import hashlib
 import io
 import json
 import os
 import subprocess
 import sys
+import threading
+import time
 import tomllib
 import unittest
 from pathlib import Path
@@ -267,29 +270,58 @@ class TestCodexAdapter(AltitudeCase):
                                      "DBUS_SESSION_BUS_ADDRESS": "unix:path=/manager/bus"})
         self.assertEqual(json.loads(result.stdout), {"project": "altitude", "task": "task", "secret": None, "bus": None})
 
-    def test_synchronous_turn_sends_the_prompt_on_stdin_and_reads_the_last_message(self):
-        stdout = "\n".join(json.dumps(e) for e in (
-            {"type": "thread.started", "thread_id": "thr-l3"},
-            {"type": "item.completed", "item": {"type": "agent_message", "text": "first"}},
-            {"type": "item.completed", "item": {"type": "agent_message", "text": "the answer"}},
-            {"type": "turn.completed", "usage": {"input_tokens": 7}})) + "\n"
-        seen = {}
+    def test_synchronous_turn_sends_the_whole_prompt_on_stdin_and_reads_the_last_message(self):
+        # The engine starts reading after the turn's first half-second poll, and the prompt exceeds every pipe
+        # buffer: a coordinator turn on a loaded Mac once waited its whole limit for the rest of its prompt (#617).
+        engine = self.tmp / "codex"
+        engine.write_text(f"#!{sys.executable}\n" + (
+            "import hashlib, json, sys, time\n"
+            "time.sleep(1)\n"
+            "received = {'argv': sys.argv[1:], 'sha256': hashlib.sha256(sys.stdin.buffer.read()).hexdigest()}\n"
+            "for event in ({'type': 'thread.started', 'thread_id': 'thr-l3'},\n"
+            "              {'type': 'item.completed', 'item': {'type': 'agent_message', 'text': 'first'}},\n"
+            "              {'type': 'item.completed', 'item': {'type': 'agent_message', 'text': json.dumps(received)}},\n"
+            "              {'type': 'turn.completed', 'usage': {'input_tokens': 7}}):\n"
+            "    print(json.dumps(event), flush=True)\n"))
+        engine.chmod(0o755)
+        prompt = "Keep the public result stable. ✓\n" * 8192
+        self.patch(config, "CODEX_BIN", str(engine))
+        self.patch(platform, "job_command", side_effect=lambda unit, command, env, **kw: command)
+        out = engines.codex_exec(prompt, cwd=self.worktree, effort="high", resume="thr-l3",
+                                 extra_env={"ALTITUDE_ACTOR": "l3"}, timeout=30)
+        received = json.loads(out["text"])
+        self.assertEqual(received["argv"][:2], ["exec", "resume"])
+        self.assertEqual(received["argv"][-2:], ["thr-l3", "-"])
+        self.assertIn('model_reasoning_effort="high"', received["argv"])
+        self.assertEqual(received["sha256"], hashlib.sha256(prompt.encode()).hexdigest())
+        self.assertEqual((out["reported_session_id"], out["usage"], out["error"]), ("thr-l3", {"input_tokens": 7}, None))
 
-        def popen(cmd, **kw):
-            seen["cmd"] = cmd
-            return SimpleNamespace(pid=9, returncode=0,
-                                   communicate=lambda text, timeout=None: seen.update(stdin=text) or (stdout, ""))
+    def _engine_that_never_reads(self, script: str) -> str:
+        engine = self.tmp / "codex"
+        engine.write_text(f"#!{sys.executable}\n" + script)
+        engine.chmod(0o755)
+        self.patch(config, "CODEX_BIN", str(engine))
+        self.patch(platform, "job_command", side_effect=lambda unit, command, env, **kw: command)
+        return "Keep the public result stable. ✓\n" * 8192
 
-        with mock.patch.object(engines.subprocess, "Popen", side_effect=popen), \
-             mock.patch.object(platform, "job_command", side_effect=lambda unit, command, env, **kw: command):
-            out = engines.codex_exec("hello", cwd=self.worktree, effort="high", resume="thr-l3",
-                                     extra_env={"ALTITUDE_ACTOR": "l3"})
-        self.assertEqual(seen["cmd"][:3], [config.CODEX_BIN, "exec", "resume"])
-        self.assertEqual(seen["cmd"][-2:], ["thr-l3", "-"])
-        self.assertIn('model_reasoning_effort="high"', seen["cmd"])
-        self.assertEqual(seen["stdin"], "hello")
-        self.assertEqual((out["text"], out["reported_session_id"], out["usage"], out["error"]),
-                         ("the answer", "thr-l3", {"input_tokens": 7}, None))
+    def assert_prompt_writer_ends(self):
+        deadline = time.monotonic() + 10
+        while any(thread.name.endswith("(_feed)") for thread in threading.enumerate()) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertEqual([thread.name for thread in threading.enumerate() if thread.name.endswith("(_feed)")], [])
+
+    def test_an_engine_that_exits_without_reading_its_prompt_reports_its_failure(self):
+        prompt = self._engine_that_never_reads("import sys\nprint('codex: not signed in', file=sys.stderr)\nsys.exit(3)\n")
+        out = engines.codex_exec(prompt, cwd=self.worktree, timeout=30)
+        self.assertEqual((out["returncode"], out["error"]), (3, "codex: not signed in"))
+        self.assert_prompt_writer_ends()
+
+    def test_a_turn_whose_engine_never_reads_its_prompt_times_out_and_releases_the_writer(self):
+        prompt = self._engine_that_never_reads("import time\ntime.sleep(60)\n")
+        self.patch(platform, "job_stop")
+        with self.assertRaises(subprocess.TimeoutExpired):
+            engines.codex_exec(prompt, cwd=self.worktree, timeout=1)
+        self.assert_prompt_writer_ends()
 
     def test_window_hold_belongs_to_claude_only(self):
         with mock.patch.object(engines, "usage_hold", return_value="2030-01-01T00:00:00+00:00"):

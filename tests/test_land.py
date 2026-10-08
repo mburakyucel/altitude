@@ -168,7 +168,9 @@ class TestLand(AltitudeCase):
                                        dispositions=[], reason="Checked the correction and final candidate.")
                 with mock.patch.object(land, '_note', side_effect=assess_when_notified), \
                         mock.patch.object(land, 'CHECK_POLL_SECONDS', .01):
-                    result = land.land("Reviewed delivery", cwd=self.repo, wait=5, merge=True, approval=approval['id'])
+                    # The owner assesses at the notice; the wait only has to outlast publication and the local
+                    # suite on a busy host, which once took a Mac validation run past five seconds (#617).
+                    result = land.land("Reviewed delivery", cwd=self.repo, wait=300, merge=True, approval=approval['id'])
                 self.assertTrue(result['merged'])
                 self.assertEqual(len(corrected), 1)
                 self.assertEqual(sum(call[:2] == ['pr', 'merge'] for call in self.gh_log()), 1)

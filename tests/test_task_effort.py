@@ -1,4 +1,5 @@
 """Task effort selection, native launch arguments, and conversation-preserving resume."""
+import io
 import json
 import subprocess
 from types import SimpleNamespace
@@ -271,7 +272,7 @@ class TestEffortCommand(AltitudeCase):
         for resume in (None, "conversation"):
             for effort in (None, "high", "ultra"):
                 with self.subTest(resume=resume, effort=effort):
-                    process = SimpleNamespace(pid=123, returncode=0, communicate=lambda *args, **kwargs: (output, ""))
+                    process = SimpleNamespace(pid=123, returncode=0, stdin=io.StringIO(), communicate=lambda *args, **kwargs: (output, ""))
                     with mock.patch.object(engines.subprocess, "Popen", return_value=process) as launch:
                         result = engines.codex_exec("request", cwd=self.repo, effort=effort, resume=resume)
                     self.assertIsNone(result["error"])

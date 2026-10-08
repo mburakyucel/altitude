@@ -33,7 +33,7 @@ class TestEngineRawCapture(AltitudeCase):
 
     def test_codex_exec_returns_both_complete_raw_streams(self):
         stdout = json.dumps({"type": "turn.completed", "usage": {"input_tokens": 3}}) + "\n"
-        process = SimpleNamespace(pid=1, returncode=0, communicate=lambda *_a, **_k: (stdout, "codex diagnostic\n"))
+        process = SimpleNamespace(pid=1, returncode=0, stdin=io.StringIO(), communicate=lambda *_a, **_k: (stdout, "codex diagnostic\n"))
         with mock.patch.object(engines.subprocess, "Popen", return_value=process):
             result = engines.codex_exec("prompt", cwd=self.tmp)
 

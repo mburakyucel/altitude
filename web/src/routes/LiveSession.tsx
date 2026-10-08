@@ -221,6 +221,8 @@ class TranscriptBody extends Component<ScrollProps> {
   private previousScroll = 0;
   private touchY: number | null = null;
   private observer: ResizeObserver | null = null;
+  // Upward intent stops following at once: a resize before the pause renders must not pin the reader back down.
+  private following = this.props.following;
 
   private remember = () => {
     const node = this.body.current;
@@ -235,7 +237,7 @@ class TranscriptBody extends Component<ScrollProps> {
   private restore = () => {
     const node = this.body.current;
     if (!node || !this.props.active) return;
-    if (this.props.following) node.scrollTop = node.scrollHeight;
+    if (this.following) node.scrollTop = node.scrollHeight;
     else if (this.anchor) {
       const row = Array.from(node.querySelectorAll<HTMLElement>("[data-transcript-id]"))
         .find((candidate) => candidate.dataset.transcriptId === this.anchor?.id);
@@ -251,9 +253,10 @@ class TranscriptBody extends Component<ScrollProps> {
   }
   getSnapshotBeforeUpdate(previous: ScrollProps) {
     const node = this.body.current;
+    if (previous.following !== this.props.following) this.following = this.props.following;
     // A refresh can commit after native scrolling but before its scroll event.
     // Capture that reading position before the DOM changes, not the stale anchor.
-    if (previous.active && this.props.active && !this.props.following && node && node.scrollTop !== this.previousScroll) {
+    if (previous.active && this.props.active && !this.following && node && node.scrollTop !== this.previousScroll) {
       const up = node.scrollTop < this.previousScroll;
       this.remember();
       return up;
@@ -269,6 +272,7 @@ class TranscriptBody extends Component<ScrollProps> {
 
   private upward = () => {
     if (!this.props.active) return;
+    this.following = false;
     this.props.onPause();
     if ((this.body.current?.scrollTop ?? Infinity) <= 64) this.props.onOlder();
   };
@@ -288,7 +292,9 @@ class TranscriptBody extends Component<ScrollProps> {
       onScroll={() => {
         const node = this.body.current;
         if (!node || !this.props.active || node.scrollTop === this.previousScroll) return;
-        const up = node.scrollTop < this.previousScroll;
+        // Content shrinking under a following view lowers scrollTop too, but leaves it at the bottom.
+        const up = node.scrollTop < this.previousScroll
+          && !(this.following && node.scrollHeight - node.scrollTop - node.clientHeight <= 1);
         this.remember();
         if (up) this.upward();
       }}>

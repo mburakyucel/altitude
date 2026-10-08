@@ -293,18 +293,23 @@ describe("Task on desktop", () => {
     const pendingRead = new Promise<Response>((resolve) => { stale = resolve; });
     const fetchMock = stub(running);
     const original = fetchMock.getMockImplementation()!;
-    let reads = 0;
+    // Hold the read this test starts, whichever of the running task's two-second polls came before it.
+    let holdNextRead = false;
     fetchMock.mockImplementation((input, init) => {
       if (String(input).includes("/api/l2/message")) return pendingReceipt;
-      if (String(input).includes("/api/task/altitude/fix-timer") && ++reads === 2) return pendingRead;
+      if (holdNextRead && String(input).includes("/api/task/altitude/fix-timer")) {
+        holdNextRead = false;
+        return pendingRead;
+      }
       return original(input, init);
     });
     const { user, router, queryClient } = renderApp({ route });
     await screen.findByText("Keep the change focused.");
     await user.type(screen.getByRole("textbox", { name: "Message the L2" }), "Keep the queued sample");
     await user.click(screen.getByRole("button", { name: "Send" }));
+    holdNextRead = true;
     void queryClient.invalidateQueries({ queryKey: ["task", "altitude", "fix-timer"] });
-    await waitFor(() => expect(reads).toBe(2));
+    await waitFor(() => expect(holdNextRead).toBe(false));
     await act(() => router.navigate("/projects/altitude"));
     const row = { id: "late-message", role: running.messages[0]!.role, text: "Keep the queued sample", at: ago(0) };
     await act(async () => receipt(jsonResponse({ message: row })));

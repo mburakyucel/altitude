@@ -1087,7 +1087,7 @@ describe("Composer", () => {
     await third.user.type(third.field, " typed");
     expect(third.field).toHaveValue("Third typed");
     server.connection = "ok";
-    await waitFor(() => expect(HostCapture.retained.size).toBe(0), { timeout: 5000 });
+    await waitFor(() => expect(HostCapture.retained.size).toBe(0));
     await third.user.click(screen.getByRole("button", { name: "Start voice input" }));
     expect(await screen.findByText("Starting voice…")).toBeInTheDocument();
     await third.user.click(screen.getByRole("button", { name: "Cancel voice input" }));
@@ -1250,7 +1250,7 @@ describe("Composer", () => {
     await screen.findByRole("button", { name: "Stop voice input" });
     act(() => FakeSpeechRecognition.instances[0]!.hear(["merge the pr today"]));
     await user.click(screen.getByRole("button", { name: "Stop voice input" }));
-    await waitFor(() => expect(field).not.toHaveAttribute("readonly"), { timeout: 5000 });
+    await waitFor(() => expect(field).not.toHaveAttribute("readonly"));
     expect(field).toHaveValue("merge the pr today");
     expect(screen.getByRole("status")).toHaveTextContent("Added without punctuation: still loading. Next time it will be ready.");
   });

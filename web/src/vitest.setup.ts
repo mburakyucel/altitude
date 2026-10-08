@@ -1,9 +1,12 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup } from "@testing-library/react";
+import { cleanup, configure } from "@testing-library/react";
 import { afterEach, beforeEach, vi } from "vitest";
 import { HostCapture } from "./components/hostCapture";
 import { presetVoiceBackend } from "./components/voiceBackend";
 import { punctuationFixture } from "./components/voiceTest";
+
+// findBy and waitFor wait out a busy host as the test timeout does (vite.config.ts).
+configure({ asyncUtilTimeout: 10_000 });
 
 // The bundled punctuation model runs only in a real browser (web/e2e); unit tests use a fixture.
 vi.mock("./punctuation", () => ({ loadPunctuator: () => punctuationFixture.load() }));

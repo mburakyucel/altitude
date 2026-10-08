@@ -395,9 +395,13 @@ describe.each([390, 1440])("project switching at %ipx", (width) => {
     const pendingRead = new Promise<Response>((resolve) => { stale = resolve; });
     const { chats, fetchMock } = projectChats(() => pendingReceipt);
     const original = fetchMock.getMockImplementation()!;
-    let reads = 0;
+    // Hold the read this test starts, whichever of the conversation's polls came before it.
+    let holdNextRead = false;
     fetchMock.mockImplementation((input, init) => {
-      if (String(input).startsWith("/api/chat/alpha-project") && ++reads === 2) return pendingRead;
+      if (holdNextRead && String(input).startsWith("/api/chat/alpha-project")) {
+        holdNextRead = false;
+        return pendingRead;
+      }
       return original(input, init);
     });
     setViewport(width);
@@ -405,8 +409,9 @@ describe.each([390, 1440])("project switching at %ipx", (width) => {
     await screen.findByText("alpha-project history");
     await user.type(field("alpha"), "Queued sample request");
     await user.click(screen.getByRole("button", { name: "Send" }));
+    holdNextRead = true;
     void queryClient.invalidateQueries({ queryKey: ["chat", "alpha-project"] });
-    await waitFor(() => expect(reads).toBe(2));
+    await waitFor(() => expect(holdNextRead).toBe(false));
     const old = jsonResponse(chats["alpha-project"]);
     await act(() => router.navigate("/projects/beta-project"));
     await screen.findByText("beta-project history");
@@ -469,7 +474,7 @@ describe.each([390, 1440])("project switching at %ipx", (width) => {
       await act(async () => { reply.frame({ turn }); });
       // The response still belongs to the departed component. The mounted conversation must read
       // its server state while that stream remains open, including after background throttling.
-      await waitFor(() => expect(screen.getByText("Please inspect the sample project")).toBeInTheDocument(), { timeout: 4_000 });
+      await waitFor(() => expect(screen.getByText("Please inspect the sample project")).toBeInTheDocument());
     } finally {
       await act(async () => reply.close());
     }

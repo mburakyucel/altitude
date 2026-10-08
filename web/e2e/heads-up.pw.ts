@@ -116,7 +116,8 @@ test("a heads-up arriving below a reader preserves scroll position", async ({ pa
   await walk.open(route);
   const convo = page.getByRole("region", { name: "Conversation", exact: true });
   const scroll = convo.locator(".convo-scroll");
-  await expect(convo.locator(".sys-line", { hasText: text })).toBeVisible();
+  // Read back only once the conversation has opened at its end.
+  await expect(convo.locator(".sys-line", { hasText: text })).toBeInViewport();
   await scroll.evaluate((node) => { node.scrollTop = 120; node.dispatchEvent(new Event("scroll", { bubbles: true })); });
   const top = await scroll.evaluate((node) => node.scrollTop);
   await walk.state("01-reading-history", { visible: [convo], hidden: [] });

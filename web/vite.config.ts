@@ -30,5 +30,8 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/vitest.setup.ts"],
     css: false,
+    // Time limits end a failing test; they never budget a passing one. A Mac validation run on a host
+    // busy with other tasks runs these tests up to ten times slower than an idle one (#617).
+    testTimeout: 30_000,
   },
 });

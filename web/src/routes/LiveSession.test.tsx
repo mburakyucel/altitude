@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
 
@@ -224,6 +224,37 @@ describe("LiveSession", () => {
     const panel = await openPanel();
     expect(await within(panel).findByText("Session ended")).toBeInTheDocument();
     expect(within(panel).queryByText("No session file for this attempt")).toBeNull();
+  });
+
+  it("keeps following when content shrinks under it, and stops at once when the reader scrolls up", async () => {
+    const resized: (() => void)[] = [];
+    vi.stubGlobal("ResizeObserver", class { constructor(callback: () => void) { resized.push(callback); } observe() {} disconnect() {} });
+    stub();
+    renderApp({ route });
+    const panel = await openPanel();
+    await within(panel).findByRole("region", { name: "Live transcript" });
+    const body = within(panel).getByLabelText("Session activity");
+    // jsdom has no layout: give the body a browser's geometry, which clamps scrollTop to the content.
+    let height = 1000;
+    let top = 0;
+    Object.defineProperty(body, "clientHeight", { configurable: true, get: () => 400 });
+    Object.defineProperty(body, "scrollHeight", { configurable: true, get: () => height });
+    Object.defineProperty(body, "scrollTop", { configurable: true, get: () => top, set: (value: number) => { top = Math.max(0, Math.min(value, height - 400)); } });
+    body.scrollTop = height;
+    fireEvent.scroll(body);
+    height = 800;
+    body.scrollTop = top;
+    fireEvent.scroll(body);
+    expect(within(panel).getByRole("button", { name: "Pause" })).toBeInTheDocument();
+    // The reader scrolls up as content grows; the resize lands before the pause renders.
+    act(() => {
+      body.scrollTop = 100;
+      body.dispatchEvent(new Event("scroll"));
+      height = 1200;
+      resized.forEach((callback) => callback());
+    });
+    expect(top).toBe(100);
+    expect(within(panel).getByRole("button", { name: "Follow" })).toBeInTheDocument();
   });
 
   it("loads one earlier page only on upward intent, including a short initial viewport, and retries history in place", async () => {
