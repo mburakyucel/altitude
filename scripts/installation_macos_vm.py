@@ -798,8 +798,10 @@ def phase_lifecycle(guest: Guest, repository: str, results: Path, record: dict, 
               f'env -i HOME="$work/home" USER={ACCOUNT} LOGNAME={ACCOUNT} SHELL=/bin/zsh LANG=en_US.UTF-8 TMPDIR="$temp" '
               f'PATH="$(/opt/homebrew/bin/brew --prefix openssl@3)/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" '
               f'/opt/homebrew/bin/python3.12 -I -B {SHARED}/installation_lifecycle.py {SHARED}/release {SHARED}/release '
-              f'"$work/home/results" {commit} mac; code=$?; cp -R "$work/home/results" {SHARED}/lifecycle; exit $code')
+              f'"$work/home/results" {commit} mac; code=$?; cp -R "$work/home/results" {SHARED}/lifecycle; '
+              f'cp -R "$work/home/Library/Logs" {SHARED}/lifecycle/logs 2>/dev/null; exit $code')
     result = guest.ssh(script, timeout=480, check=False)
+    record["guest_load"] = guest.ssh("sysctl -n vm.loadavg").stdout.strip()
     (results / "lifecycle.log").write_text(result.stdout + result.stderr)
     guest.fetch(f"{SHARED}/lifecycle", results / "lifecycle")
     outcome = json.loads((results / "lifecycle/result.json").read_text())
