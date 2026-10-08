@@ -815,8 +815,13 @@ class TestOperatorGrant(AltitudeCase):
             "exit": None, "timed_out": False, "started": datetime.now(timezone.utc).isoformat(), "finished": None,
             "error": "still running or interrupted with altd"}) + "\n")
         self.active.add(self.unit(1))
-        settling = server.settle_interrupted_machine_commands()
-        wait_for(lambda: len(server.MACHINE_LINE.holders) == 2, "the running command to take a place beyond the line's")
+        settled, settle = threading.Event(), server._settle_interrupted
+        self.patch(server, "_settle_interrupted", side_effect=lambda *args: (settled.wait(30), settle(*args)))
+        settling = server.settle_interrupted_machine_commands()   # however late its settling thread runs
+        self.assertEqual([h["what"] for h in server.MACHINE_LINE.holders], [
+            "the command of other/task holds a place", f"the command of {self.project}/{self.slug} holds a place"],
+            "it takes a place, beyond the line's, before altd serves a request")
+        settled.set()
         release.set()
         wait_for(lambda: len(server.MACHINE_LINE.holders) == 1, "the other task's command to end")
         with server.MACHINE_LINE.lock:
@@ -825,6 +830,30 @@ class TestOperatorGrant(AltitudeCase):
         for thread in settling:
             thread.join(30)
         self.assertEqual(server.MACHINE_LINE.holders, [])
+
+    def test_a_client_that_reconnects_after_a_restart_and_stops_ends_the_command(self):
+        grant = self.granted()[0]
+        self.patch(server, "MACHINE_LINE", line.Line(1, "a machine-run place"))
+        request = uuid.uuid4().hex
+        (S.task_dir(self.project, self.slug) / "machine.jsonl").write_text(json.dumps({
+            "n": 1, "request": request, "attempt": 1, "purpose": "p", "granted": grant["id"], "command": "make deploy",
+            "unit": self.unit(1), "exit": None, "timed_out": False, "started": datetime.now(timezone.utc).isoformat(),
+            "finished": None, "error": "still running or interrupted with altd"}) + "\n")
+        self.active.add(self.unit(1))
+        self.patch(platform, "job_stop", side_effect=lambda name, env, **kwargs: self.active.discard(name))
+        settling = server.settle_interrupted_machine_commands()
+        client = http.client.HTTPConnection(*self.httpd.server_address, timeout=30)
+        client.request("POST", "/api/task/run", body=json.dumps({
+            "project": self.project, "slug": self.slug, "attempt": "1", "command": "make deploy", "request": request}),
+            headers={"Content-Type": "application/json", "Accept": "application/x-ndjson"})
+        time.sleep(server.MACHINE_POLL_SECONDS * 5)   # it awaits the command's result
+        client.close()   # the reconnected client is interrupted
+        for thread in settling:
+            thread.join(30)
+        [row] = self.rows()
+        self.assertEqual(row["error"], server.MACHINE_CLIENT_GONE)
+        self.assertEqual(platform.job_stop.call_args.args[0], self.unit(1))
+        self.assertEqual((server.MACHINE_LINE.holders, server._client_stopped), ([], {}))
 
     def test_the_cli_says_what_a_waiting_command_waits_for(self):
         self.granted()

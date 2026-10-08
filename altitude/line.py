@@ -46,7 +46,7 @@ class Line:
         try:
             while True:
                 with self.lock:
-                    if force or self._queue.index(ticket) < self.places - len(self.holders):
+                    if force or self._queue[0] is ticket and len(self.holders) < self.places:
                         place = {"what": what, "ends": limit and datetime.now(timezone.utc) + timedelta(seconds=limit)}
                         self.holders.append(place)
                         break

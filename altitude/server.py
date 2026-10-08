@@ -21,6 +21,7 @@ import threading
 import time
 import traceback
 import uuid
+from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -2809,6 +2810,9 @@ def _machine_rows(runs: Path) -> list[dict]:
 
 
 MACHINE_LINE = line.Line(config.MACHINE_RUNS, "a machine-run place")   # concurrent `alt task run` commands
+MACHINE_REVOKED = "the grant was revoked while this ran, so Altitude stopped it; effects it already had remain"
+MACHINE_CLIENT_GONE = f"{line.CLIENT_GONE}, so Altitude stopped it; effects it already had remain"
+_client_stopped: dict[str, str] = {}   # unit → why a client awaiting a command from before a restart stopped it
 
 
 def run_machine_command(project: str, slug: str, attempt: object, command: object, request: object, *,
@@ -2877,7 +2881,7 @@ def run_machine_command(project: str, slug: str, attempt: object, command: objec
             task, earlier, row = admit(True)   # the task, its grant and its commands may have changed while it waited
             if row is not None:
                 return _start_machine_command(project, slug, task, row, gone)
-    return _await_machine_row(project, slug, earlier["n"])
+    return _await_machine_row(project, slug, earlier["n"], gone)
 
 
 def _start_machine_command(project: str, slug: str, task: dict, row: dict, gone) -> dict:
@@ -2888,9 +2892,9 @@ def _start_machine_command(project: str, slug: str, task: dict, row: dict, gone)
     def stop_when_revoked() -> None:  # the launcher waits for the job, so revocation and the client are watched beside it
         while not finished.wait(MACHINE_POLL_SECONDS):
             if not stopped and _grant_revoked(project, slug, row):
-                stopped.append(engines.MACHINE_REVOKED)
+                stopped.append(MACHINE_REVOKED)
             elif not stopped and gone():
-                stopped.append(f"{line.CLIENT_GONE}, so Altitude stopped it; effects it already had remain")
+                stopped.append(MACHINE_CLIENT_GONE)
             if stopped:
                 engines.machine_stop(row["unit"])  # again each poll: the job may not exist yet, or a stop may fail
 
@@ -2929,8 +2933,9 @@ def settle_machine_command(project: str, slug: str, row: dict, *, watched: bool,
     folder = S.task_dir(project, slug)
     outcome = engines.machine_outcome(folder, row["unit"], row["started"], watched=watched,
                                       timeout=config.MACHINE_COMMAND_TIMEOUT, launch_error=launch_error,
-                                      poll=MACHINE_POLL_SECONDS, revoked=lambda: _grant_revoked(project, slug, row),
-                                      stopped=stopped)
+                                      poll=MACHINE_POLL_SECONDS, stopped=stopped,
+                                      stop=lambda: MACHINE_REVOKED if _grant_revoked(project, slug, row)
+                                      else _client_stopped.pop(row["unit"], None))
     runs = folder / "machine.jsonl"
     with S.project_lock(project):
         rows = _machine_rows(runs)
@@ -2946,14 +2951,19 @@ def settle_machine_command(project: str, slug: str, row: dict, *, watched: bool,
     return {**current, **engines.machine_output(folder, current["unit"])}
 
 
-def _await_machine_row(project: str, slug: str, sequence: int) -> dict:
-    """The row once it is complete, or as it stands when the command's limit has long passed."""
+def _await_machine_row(project: str, slug: str, sequence: int, gone=lambda: False) -> dict:
+    """The row once it is complete, or as it stands when the command's limit has long passed. A client that goes
+    away meanwhile has the command stopped by whoever settles it, with that reason."""
     folder = S.task_dir(project, slug)
     deadline = time.monotonic() + config.MACHINE_COMMAND_TIMEOUT + 90
     while True:
         row = next(r for r in _machine_rows(folder / "machine.jsonl") if r["n"] == sequence)
         if row["finished"] is not None or time.monotonic() >= deadline:
             return {**row, **engines.machine_output(folder, row["unit"])}
+        if gone():
+            _client_stopped[row["unit"]] = MACHINE_CLIENT_GONE
+            engines.machine_stop(row["unit"])
+            gone = lambda: False   # noqa: E731 — stop once; the settler records the end
         time.sleep(MACHINE_POLL_SECONDS)
 
 
@@ -2971,20 +2981,22 @@ def settle_interrupted_machine_commands() -> list[threading.Thread]:
                 log(f"machine commands: cannot read {runs}: {exc}")
                 continue
             for row in rows:
-                thread = threading.Thread(target=_settle_interrupted, args=(project, runs.parent.name, row),
+                # It keeps a place, beyond the line's places if need be, taken before altd serves any request.
+                held = ExitStack()
+                place = held.enter_context(MACHINE_LINE.turn(f"the command of {project}/{runs.parent.name} holds a "
+                                                             "place", None, command="alt task run", force=True))
+                MACHINE_LINE.ends(place, config.MACHINE_COMMAND_TIMEOUT - int(
+                    (datetime.now(timezone.utc) - datetime.fromisoformat(row["started"])).total_seconds()))
+                thread = threading.Thread(target=_settle_interrupted, args=(project, runs.parent.name, row, held),
                                           name=f"machine-{row['unit']}", daemon=True)
                 thread.start()
                 threads.append(thread)
     return threads
 
 
-def _settle_interrupted(project: str, slug: str, row: dict) -> None:
-    """Settle a command that runs on from before a restart; it keeps a machine-run place, beyond the line's places if
-    need be, until it ends."""
-    with MACHINE_LINE.turn(f"the command of {project}/{slug} holds a place", None, command="alt task run",
-                           force=True) as place:
-        with MACHINE_LINE.lock:
-            place["ends"] = datetime.fromisoformat(row["started"]) + timedelta(seconds=config.MACHINE_COMMAND_TIMEOUT)
+def _settle_interrupted(project: str, slug: str, row: dict, held: ExitStack) -> None:
+    """Settle a command that runs on from before a restart, then free the machine-run place it `held`."""
+    with held:
         settle_machine_command(project, slug, row, watched=False)
 
 

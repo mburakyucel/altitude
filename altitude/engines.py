@@ -897,24 +897,21 @@ def machine_stop(unit: str) -> None:
         pass
 
 
-MACHINE_REVOKED = "the grant was revoked while this ran, so Altitude stopped it; effects it already had remain"
-
-
 def machine_outcome(folder: Path, unit: str, started: str, *, watched: bool, timeout: int,
-                    launch_error: str | None = None, poll: float = 2, revoked=lambda: False,
+                    launch_error: str | None = None, poll: float = 2, stop=lambda: None,
                     stopped: str | None = None) -> dict:
     """Wait until the unit has written its exit status or ended, then return its exit status and timing.
 
     `watched` says this altd saw the job end, so a missing status after the limit is a timeout; a job that ended
     unseen, while Altitude restarted, without a status stays an explicit uncertainty. Neither is ever a success.
-    `revoked()` turning true stops the job, asked again on every poll until it ends: revoking the grant also ends the
-    command it is running. `stopped` says why the caller already stopped the command while it ran."""
+    `stop()` returning a reason, such as a revoked grant, stops the job, asked again on every poll until it ends.
+    `stopped` says why the caller already stopped the command while it ran. The reason is recorded as its error."""
     status = machine_files(folder, unit)[1]
     begun = datetime.fromisoformat(started)
     env = codex_env(retain_user_bus=True)
     while not status.exists():
-        if stopped or revoked():
-            stopped = stopped or MACHINE_REVOKED
+        stopped = stopped or stop()
+        if stopped:
             machine_stop(unit)
         try:  # the limit ends the job, so past it (and a little grace) nothing is still running
             ended = datetime.now(timezone.utc) >= begun + timedelta(seconds=timeout + 60) or \
