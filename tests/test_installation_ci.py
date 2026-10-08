@@ -88,9 +88,9 @@ class TestInstallationCiSeparation(AltitudeCase):
                                  (expected, False, None))
         self.contexts().update(self.connection([]))
         S.write_json(self.ghdir / "checks.json", [])
-        self.assertEqual(self.classify(), "skipped")
+        self.assertEqual(self.classify(), "missing")
         result = land.land("required check is absent", cwd=self.repo, wait=0, merge=True)
-        self.assertEqual((result["checks"], result["merged"]), ("skipped", False))
+        self.assertEqual((result["checks"], result["merged"]), ("missing", False))
         self.assertFalse(any(call[:2] == ["pr", "merge"] for call in self.gh_log()))
         self.assertEqual(self.runner_log(), [])
 
