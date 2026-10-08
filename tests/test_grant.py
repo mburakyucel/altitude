@@ -19,7 +19,7 @@ from unittest import mock
 from datetime import datetime, timedelta, timezone
 
 from tests.support import REPO, AltitudeCase, add_worktree, git, make_repo
-from altitude import config, dispatch, engines, platform, server, state as S, tasks as T, terminal
+from altitude import config, dispatch, engines, line, platform, server, state as S, tasks as T, terminal
 
 # On the suite's interpreter: macOS's /usr/bin/python3 is an xcrun shim whose cache warnings would join the log.
 SHIM = f"#!{sys.executable}\n" + r'''"""systemd-run stand-in: honour the output properties and runtime limit, run the command after `--`."""
@@ -737,6 +737,111 @@ class TestOperatorGrant(AltitudeCase):
         future = pool.submit(self.run_command, f"touch {started}; while [ ! -e {release} ]; do sleep .02; done; exit 3")
         wait_for(started.exists, "the command to start")
         return future
+
+    def send(self, command):
+        """A run request left open, from a client that hears what it waits for."""
+        connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=30)
+        self.addCleanup(connection.close)
+        connection.request("POST", "/api/task/run", body=json.dumps({
+            "project": self.project, "slug": self.slug, "attempt": "1", "command": command,
+            "request": uuid.uuid4().hex}), headers={"Content-Type": "application/json", "Accept": "application/x-ndjson"})
+        return connection
+
+    def one_place(self):
+        """A line of one machine-run place, held by another task's command until the returned event is set."""
+        self.patch(server, "MACHINE_LINE", line.Line(1, "a machine-run place"))
+        release, held = threading.Event(), threading.Event()
+
+        def hold():
+            with server.MACHINE_LINE.turn("the command of other/task holds a place", None, command="test"):
+                held.set()
+                release.wait(30)
+        holder = threading.Thread(target=hold)
+        holder.start()
+        self.addCleanup(holder.join)
+        self.addCleanup(release.set)
+        held.wait(30)
+        return release
+
+    def waiting(self):
+        with server.MACHINE_LINE.lock:
+            return len(server.MACHINE_LINE._queue)
+
+    def test_commands_beyond_the_machine_run_places_wait_their_turn_in_arrival_order(self):
+        self.granted()
+        release = self.one_place()
+        first = self.send("echo first").getresponse()
+        self.assertEqual((first.status, first.headers["Content-Type"]), (200, "application/x-ndjson"))
+        self.assertEqual(json.loads(first.readline()),
+                         {"waiting": "waiting for a machine-run place: the command of other/task holds a place"})
+        second = self.send("echo second").getresponse()
+        self.assertEqual(json.loads(second.readline())["waiting"], "waiting for a machine-run place: the command of "
+                         "other/task holds a place; 1 request(s) ahead of this one")
+        leaving = self.send("echo leaving")
+        self.assertIn("2 request(s) ahead", json.loads(leaving.getresponse().readline())["waiting"])
+        leaving.close()   # a waiting client that stops leaves the line
+        wait_for(lambda: self.waiting() == 2, "the stopped client to leave the line")
+        self.assertFalse((S.task_dir(self.project, self.slug) / "machine.jsonl").exists(), "nothing runs while waiting")
+        release.set()
+        *_, answer = [json.loads(row) for row in first.read().splitlines()]
+        self.assertEqual((answer["n"], answer["exit"], answer["output"]), (1, 0, "first\n"))
+        *waits, answer = [json.loads(row) for row in second.read().splitlines()]
+        self.assertEqual((answer["n"], answer["exit"], answer["output"]), (2, 0, "second\n"))
+        self.assertIn(f"the command of {self.project}/{self.slug} holds a place until its limit at", waits[-1]["waiting"])
+        self.assertEqual([(r["n"], r["command"]) for r in self.rows()], [(1, "echo first"), (2, "echo second")])
+        self.assertEqual((server.MACHINE_LINE.holders, self.waiting()), ([], 0), "each command's end frees its place")
+
+    def test_a_client_that_stops_ends_its_command_and_frees_its_place(self):
+        self.granted()
+        self.patch(server, "MACHINE_LINE", line.Line(1, "a machine-run place"))
+        started, release = self.tmp / "started", self.tmp / "release"
+        self.patch(platform, "job_stop", side_effect=lambda name, env, **kwargs: release.touch())
+        client = self.send(f"touch {started}; until [ -e {release} ]; do sleep .02; done; exit 143")
+        wait_for(started.exists, "the command to start")
+        client.close()   # the client is stopped, interrupted or loses its connection
+        wait_for(lambda: self.rows()[0]["finished"], "the stopped command's record")
+        [row] = self.rows()
+        self.assertEqual((row["exit"], row["error"]), (143, "its client stopped or lost its connection, so Altitude "
+                                                            "stopped it; effects it already had remain"))
+        self.assertEqual(platform.job_stop.call_args.args[0], self.unit(1))
+        wait_for(lambda: not server.MACHINE_LINE.holders, "its place to be freed")
+        self.assertEqual(self.run_command("echo next")["output"], "next\n", "the next command has the place")
+
+    def test_a_command_running_on_from_before_a_restart_keeps_a_place_until_it_ends(self):
+        grant = self.granted()[0]
+        release = self.one_place()
+        (S.task_dir(self.project, self.slug) / "machine.jsonl").write_text(json.dumps({
+            "n": 1, "purpose": "p", "granted": grant["id"], "command": "make deploy", "unit": self.unit(1),
+            "exit": None, "timed_out": False, "started": datetime.now(timezone.utc).isoformat(), "finished": None,
+            "error": "still running or interrupted with altd"}) + "\n")
+        self.active.add(self.unit(1))
+        settling = server.settle_interrupted_machine_commands()
+        wait_for(lambda: len(server.MACHINE_LINE.holders) == 2, "the running command to take a place beyond the line's")
+        release.set()
+        wait_for(lambda: len(server.MACHINE_LINE.holders) == 1, "the other task's command to end")
+        with server.MACHINE_LINE.lock:
+            self.assertIn(f"{self.project}/{self.slug}", server.MACHINE_LINE._waiting_for(0))
+        self.active.discard(self.unit(1))
+        for thread in settling:
+            thread.join(30)
+        self.assertEqual(server.MACHINE_LINE.holders, [])
+
+    def test_the_cli_says_what_a_waiting_command_waits_for(self):
+        self.granted()
+        release = self.one_place()
+        self.serving(self.httpd.server_address[1])
+        owner = subprocess.Popen(
+            [sys.executable, str(REPO / "bin" / "alt"), "task", "run", self.slug, "echo after"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            env={**os.environ, "ALTITUDE_HOME": str(config.ROOT), "ALTITUDE_PROJECT": self.project,
+                 "ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"})
+        self.addCleanup(owner.kill)
+        self.assertEqual(owner.stderr.readline(),
+                         "[altitude] waiting for a machine-run place: the command of other/task holds a place\n")
+        release.set()
+        stdout, stderr = owner.communicate(timeout=60)
+        self.assertEqual((owner.returncode, stderr), (0, ""))
+        self.assertTrue(stdout.startswith("after\n"), stdout)
 
     def test_revoking_the_grant_stops_the_command_it_is_running_even_when_regranted_at_once(self):
         _, question, row = self.granted()

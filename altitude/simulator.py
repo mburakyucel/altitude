@@ -90,12 +90,17 @@ class Phone:
         self.devices, self.chosen, self.udid = devices, chosen, None
 
     def boot(self) -> str:
-        """Create and boot the phone headless; return its Web Inspector socket."""
+        """Create and boot the phone headless; return its Web Inspector socket. The steps share BOOT_SECONDS, so one
+        that a busy host slows can use the time the others left (#724)."""
         self.devices.mkdir(mode=0o700)
+        deadline = time.monotonic() + BOOT_SECONDS
+
+        def left() -> float:
+            return max(1.0, deadline - time.monotonic())
         self.udid = _simctl(self.devices, "create", "altitude-validation", self.chosen["device_id"],
-                            self.chosen["runtime_id"]).strip()
-        _simctl(self.devices, "bootstatus", self.udid, "-b", timeout=BOOT_SECONDS)
-        return _simctl(self.devices, "getenv", self.udid, "RWI_LISTEN_SOCKET").strip()
+                            self.chosen["runtime_id"], timeout=left()).strip()
+        _simctl(self.devices, "bootstatus", self.udid, "-b", timeout=left())
+        return _simctl(self.devices, "getenv", self.udid, "RWI_LISTEN_SOCKET", timeout=left()).strip()
 
     def safari(self) -> str:
         """Safari's version on the phone, from its bundle."""

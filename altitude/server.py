@@ -27,7 +27,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, validation, verify
+from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, line, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, validation, verify
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -1138,26 +1138,34 @@ def tick() -> None:
     morning_digest()
 
 
-SELF_DEPLOY_FETCH_GRACE_SECONDS = 300
-_fetch_failing_since: dict[str, float] = {}  # project → monotonic time its self-deploy fetches started failing
+TICK_GRACE_SECONDS = 300
+_failing_since: dict[str, float] = {}  # a tick step that keeps failing → monotonic time its failures began
+
+
+def _retry_next_tick(step: str, exc: BaseException) -> bool:
+    """Whether `step` failing with `exc` is only logged: a fetch (#602), or a command that timed out on a busy host
+    (#724), often succeeds on a later tick, so it is retried until the same step has kept failing for
+    TICK_GRACE_SECONDS. Past that the caller files a system fault. A step that succeeds pops its `_failing_since`."""
+    since = _failing_since.setdefault(step, time.monotonic())
+    if time.monotonic() - since >= TICK_GRACE_SECONDS:
+        return False
+    log(f"{step} failed; retrying next tick: {exc}")
+    return True
 
 
 def self_deploy(project: str) -> None:
     # Activation: a sole running worker's merge must activate without another dispatch or report.
+    step = f"[{project}] self-deploy"
     try:
         with dispatch.publication_settlement(project):
             dispatch.self_deploy_fast_forward(project)
-    except git_policy.FetchError as e:
-        # #602: a fetch that recovers on a later tick is not an incident; one failing past the grace period is.
-        since = _fetch_failing_since.setdefault(project, time.monotonic())
-        if time.monotonic() - since < SELF_DEPLOY_FETCH_GRACE_SECONDS:
-            log(f"[{project}] self-deploy fetch failed; retrying next tick: {e}")
-        else:
+    except (git_policy.FetchError, subprocess.TimeoutExpired) as e:
+        if not _retry_next_tick(step, e):
             incidents.system_fault("self-deploy", f"{project}: {e}", project=project)
         return
     except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError) as e:
         incidents.system_fault("self-deploy", f"{project}: {e}", project=project)
-    _fetch_failing_since.pop(project, None)
+    _failing_since.pop(step, None)
 
 
 def tick_project(project: str) -> None:
@@ -1165,8 +1173,12 @@ def tick_project(project: str) -> None:
         spawn(f"audit:{project}", audit.run, project)
     try:
         project_setup.maintain(project)
+        _failing_since.pop(f"[{project}] setup check", None)
     except (OSError, ValueError, RuntimeError) as exc:
         log(f"[{project}] setup check unavailable: {exc}")
+    except subprocess.TimeoutExpired as exc:
+        if not _retry_next_tick(f"[{project}] setup check", exc):
+            incidents.system_fault("tick", f"{project}: {exc}", project=project)
     self_deploy(project)
     try:
         images.collect(project)
@@ -1196,7 +1208,10 @@ def tick_project(project: str) -> None:
                         t2 = S.load_task(project, t["slug"]); t2["cleaned"] = S.now(); S.save_task(project, t2)
                 S.append_event(project, t["slug"], "cleanup", notes=notes)
                 log(f"[{project}/{t['slug']}] cleanup{' deferred' if deferred else ''}: {notes}")
+        _failing_since.pop(f"[{project}] tick", None)
     except Exception as e:  # noqa: BLE001
+        if isinstance(e, subprocess.TimeoutExpired) and _retry_next_tick(f"[{project}] tick", e):
+            return
         log(f"[{project}] tick failed: {e}\n{traceback.format_exc()}")
         incidents.system_fault("tick", f"{project}: {e}", project=project)
 
@@ -1222,12 +1237,14 @@ def timer_loop(tls_context: ssl.SSLContext | None = None, tls_host: str | None =
             next_tls_check = time.monotonic() + 86400
         try:
             tick()
+            _failing_since.pop("tick", None)
         except Exception as e:  # noqa: BLE001
-            log(f"tick: {e}\n{traceback.format_exc()}")
-            try:
-                incidents.system_fault("tick", str(e))
-            except Exception as e2:  # noqa: BLE001 — the fault channel itself is broken: the journal is the last resort
-                log(f"tick: could not record fault: {e2}")
+            if not (isinstance(e, subprocess.TimeoutExpired) and _retry_next_tick("tick", e)):
+                log(f"tick: {e}\n{traceback.format_exc()}")
+                try:
+                    incidents.system_fault("tick", str(e))
+                except Exception as e2:  # noqa: BLE001 — the fault channel itself is broken: the journal is the last resort
+                    log(f"tick: could not record fault: {e2}")
         time.sleep(config.AGENT_POLL_SECONDS)
 
 
@@ -1785,11 +1802,11 @@ class Handler(BaseHTTPRequestHandler):
             log(f"update request failed: {exc!r}")
             return self._json({"error": "Altitude could not complete the update request. Run alt update in a terminal to see why."}, 503)
 
-    def _validate(self, o: dict) -> None:
-        """`alt task validate`: one validation run, answered as JSON. A client that accepts NDJSON hears what a busy
-        machine makes its request wait for, one line at a time, then gets the answer as the last line. Once its
-        request is read, the client sends nothing more: a connection at its end, or failed, means the client closed it
-        or went away, which takes a waiting request out of the line and stops an admitted run
+    def _in_line(self, call) -> None:
+        """`alt task validate` and `alt task run`: `call(waiting, gone)` answered as JSON. A client that accepts NDJSON
+        hears what a busy machine makes its request wait for, one line at a time, then gets the answer as the last
+        line. Once its request is read, the client sends nothing more: a connection at its end, or failed, means the
+        client closed it or went away, which takes a waiting request out of the line and stops an admitted run
         (docs/DEVELOPMENT.md#validation-runner)."""
         streaming, started = "application/x-ndjson" in (self.headers.get("Accept") or ""), False
 
@@ -1824,16 +1841,7 @@ class Handler(BaseHTTPRequestHandler):
             except (OSError, ValueError):
                 return True
         try:
-            if o.keys() - {"project", "slug", "attempt", "command", "kvm", "publish", "simulator"}:
-                raise ValueError("alt task validate: unsupported fields")
-            peer, local = self.client_address, self.connection.getsockname()
-
-            def owner(task: dict) -> bool:
-                return task_owner_connection(o["project"], o["slug"], task, peer, local)
-            answer, code = validation.run(o["project"], o["slug"], o.get("attempt"), o.get("command"),
-                                          kvm=o.get("kvm", False), publish=o.get("publish"),
-                                          simulator=o.get("simulator", False), owner=owner, waiting=waiting,
-                                          gone=gone), 200
+            answer, code = call(waiting, gone), 200
         except PermissionError as exc:
             answer, code = {"error": str(exc)}, 403
         except (ValueError, KeyError, OSError, RuntimeError) as exc:
@@ -2180,20 +2188,24 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, 403)
                 except (ValueError, KeyError, OSError, RuntimeError) as exc:
                     return self._json({"error": str(exc)}, 400)
-            if parts == ["api", "task", "validate"]:
-                return self._validate(o)
-            if parts == ["api", "task", "run"]:
-                try:
-                    if o.keys() - {"project", "slug", "attempt", "command", "request"}:
-                        raise ValueError("alt task run: unsupported fields")
-                    peer, local = self.client_address, self.connection.getsockname()
-                    return self._json(run_machine_command(
-                        o["project"], o["slug"], o.get("attempt"), o.get("command"), o.get("request"),
-                        owner=lambda task: task_owner_connection(o["project"], o["slug"], task, peer, local)))
-                except PermissionError as exc:
-                    return self._json({"error": str(exc)}, 403)
-                except (ValueError, KeyError, OSError) as exc:
-                    return self._json({"error": str(exc)}, 400)
+            if parts in (["api", "task", "validate"], ["api", "task", "run"]):
+                peer, local = self.client_address, self.connection.getsockname()
+
+                def owner(task: dict) -> bool:
+                    return task_owner_connection(o["project"], o["slug"], task, peer, local)
+
+                def call(waiting, gone) -> dict:
+                    if parts[-1] == "run":
+                        if o.keys() - {"project", "slug", "attempt", "command", "request"}:
+                            raise ValueError("alt task run: unsupported fields")
+                        return run_machine_command(o["project"], o["slug"], o.get("attempt"), o.get("command"),
+                                                   o.get("request"), owner=owner, waiting=waiting, gone=gone)
+                    if o.keys() - {"project", "slug", "attempt", "command", "kvm", "publish", "simulator"}:
+                        raise ValueError("alt task validate: unsupported fields")
+                    return validation.run(o["project"], o["slug"], o.get("attempt"), o.get("command"),
+                                          kvm=o.get("kvm", False), publish=o.get("publish"),
+                                          simulator=o.get("simulator", False), owner=owner, waiting=waiting, gone=gone)
+                return self._in_line(call)
             if parts == ["api", "pr", "close"]:
                 try:
                     if o.keys() - {"project", "number", "body"}:
@@ -2796,8 +2808,11 @@ def _machine_rows(runs: Path) -> list[dict]:
     return [json.loads(line) for line in runs.read_text().splitlines() if line.strip()] if runs.exists() else []
 
 
+MACHINE_LINE = line.Line(config.MACHINE_RUNS, "a machine-run place")   # concurrent `alt task run` commands
+
+
 def run_machine_command(project: str, slug: str, attempt: object, command: object, request: object, *,
-                        owner=lambda task: False) -> dict:
+                        owner=lambda task: False, waiting=lambda text: None, gone=lambda: False) -> dict:
     """One command under the task's recorded operator grant, executed by altd outside the worker sandbox.
 
     Only the running owner's current attempt may call it, from its own worker job (`owner(task)`), so another agent
@@ -2805,7 +2820,8 @@ def run_machine_command(project: str, slug: str, attempt: object, command: objec
     command, unit, exit status and output land in the task folder (`machine.jsonl` and the unit's own log), the task
     events and the project log, so the operator can read exactly what ran under their grant. `request` names the caller's
     command: calling again with it, after a restart ended the connection, waits for that command's result
-    instead of running it again.
+    instead of running it again. A command that finds every machine-run place taken waits its turn, telling
+    `waiting(text)` what it waits for; `gone()` says its client stopped, which takes it out of the line or stops it.
     """
     S.require_task_slug(slug)
     if not isinstance(command, str) or not command.strip() or len(command) > MACHINE_COMMAND_LIMIT:
@@ -2814,17 +2830,24 @@ def run_machine_command(project: str, slug: str, attempt: object, command: objec
         raise ValueError("alt task run: name the request with 32 lowercase hexadecimal characters")
     folder = S.task_dir(project, slug)
     runs = folder / "machine.jsonl"
-    with S.project_lock(project):
-        task = S.load_task(project, slug)
-        if task.get("state") != "running" or str(task.get("attempt")) != str(attempt):
-            raise PermissionError("alt task run: only the running owner's current attempt may run machine commands")
-        if not owner(task):
-            raise PermissionError("alt task run: only this task's owner may run its granted commands")
-        rows = _machine_rows(runs)
-        earlier = next((r for r in rows if r.get("request") == request), None)
-        if earlier is not None and earlier.get("attempt") != task.get("attempt"):
-            raise PermissionError("alt task run: this request belongs to an earlier attempt")
-        if earlier is None:
+
+    def admit(start: bool) -> tuple[dict, dict | None, dict | None]:
+        """The task, the request's earlier row and, when `start`, the row it records; refuses a request that may
+        not run."""
+        with S.project_lock(project):
+            task = S.load_task(project, slug)
+            if task.get("state") != "running" or str(task.get("attempt")) != str(attempt):
+                raise PermissionError("alt task run: only the running owner's current attempt may run machine commands")
+            if not owner(task):
+                raise PermissionError("alt task run: only this task's owner may run its granted commands")
+            rows = _machine_rows(runs)
+            earlier = next((r for r in rows if r.get("request") == request), None)
+            if earlier is not None and earlier.get("attempt") != task.get("attempt"):
+                raise PermissionError("alt task run: this request belongs to an earlier attempt")
+            if earlier is not None:
+                if earlier["command"] != command:
+                    raise ValueError("alt task run: this request already ran a different command")
+                return task, earlier, None
             grant = task.get("grant")
             if not grant:
                 raise PermissionError("alt task run: this task has no operator grant; ask the operator for access for "
@@ -2834,6 +2857,8 @@ def run_machine_command(project: str, slug: str, attempt: object, command: objec
                 raise PermissionError("alt task run: the operator grant belongs to an earlier attempt; ask again")
             if any(r["finished"] is None for r in rows):  # one at a time keeps the record readable
                 raise ValueError("alt task run: one command at a time; the previous command is still running")
+            if not start:
+                return task, None, None
             # The row exists before the unit starts, so a command that restarts altd keeps its number and unit.
             sequence = len(rows) + 1
             row = {"n": sequence, "request": request, "attempt": task.get("attempt"), "purpose": grant["purpose"],
@@ -2842,28 +2867,47 @@ def run_machine_command(project: str, slug: str, attempt: object, command: objec
                    "started": datetime.now(timezone.utc).isoformat(), "finished": None,
                    "error": "still running or interrupted with altd"}
             T._append_jsonl(runs, row)
-        elif earlier["command"] != command:
-            raise ValueError("alt task run: this request already ran a different command")
-    if earlier is not None:
-        return _await_machine_row(project, slug, earlier["n"])
-    finished, stopped = threading.Event(), []
+            return task, None, row
 
-    def stop_when_revoked() -> None:  # the launcher waits for the job, so revocation is watched beside it
+    task, earlier, _ = admit(False)
+    if earlier is None:
+        with MACHINE_LINE.turn(f"the command of {project}/{slug} holds a place", config.MACHINE_COMMAND_TIMEOUT,
+                               command="alt task run", wait=config.MACHINE_COMMAND_WAIT, watch=MACHINE_POLL_SECONDS,
+                               waiting=waiting, gone=gone):
+            task, earlier, row = admit(True)   # the task, its grant and its commands may have changed while it waited
+            if row is not None:
+                return _start_machine_command(project, slug, task, row, gone)
+    return _await_machine_row(project, slug, earlier["n"])
+
+
+def _start_machine_command(project: str, slug: str, task: dict, row: dict, gone) -> dict:
+    """Run the command whose row was just recorded and settle it, stopping it when its grant is revoked or its client
+    goes away."""
+    folder, finished, stopped = S.task_dir(project, slug), threading.Event(), []
+
+    def stop_when_revoked() -> None:  # the launcher waits for the job, so revocation and the client are watched beside it
         while not finished.wait(MACHINE_POLL_SECONDS):
-            if stopped or _grant_revoked(project, slug, row):
-                stopped.append(True)
+            if not stopped and _grant_revoked(project, slug, row):
+                stopped.append(engines.MACHINE_REVOKED)
+            elif not stopped and gone():
+                stopped.append(f"{line.CLIENT_GONE}, so Altitude stopped it; effects it already had remain")
+            if stopped:
                 engines.machine_stop(row["unit"])  # again each poll: the job may not exist yet, or a stop may fail
 
-    threading.Thread(target=stop_when_revoked, daemon=True).start()
+    watcher = threading.Thread(target=stop_when_revoked, name="machine-client", daemon=True)
+    watcher.start()
     try:  # a launch that fails still settles its row, so it never holds the next command
-        launch_error = engines.machine_command(command, cwd=Path(task.get("worktree") or config.project_path(project)),
-                                               folder=folder, unit=row["unit"], timeout=config.MACHINE_COMMAND_TIMEOUT,
+        launch_error = engines.machine_command(row["command"], folder=folder, unit=row["unit"],
+                                               cwd=Path(task.get("worktree") or config.project_path(project)),
+                                               timeout=config.MACHINE_COMMAND_TIMEOUT,
                                                identity=dispatch.l2_env(project, slug, task["attempt"]))
     except (OSError, RuntimeError, ValueError, KeyError) as exc:
         launch_error = str(exc)[:300]
     finally:
         finished.set()
-    return settle_machine_command(project, slug, row, watched=True, launch_error=launch_error, stopped=bool(stopped))
+        watcher.join()   # it reads the client's connection, which the answer is written to next
+    return settle_machine_command(project, slug, row, watched=True, launch_error=launch_error,
+                                  stopped=stopped[0] if stopped else None)
 
 
 def _grant_revoked(project: str, slug: str, row: dict) -> bool:
@@ -2876,10 +2920,11 @@ def _grant_revoked(project: str, slug: str, row: dict) -> bool:
 
 
 def settle_machine_command(project: str, slug: str, row: dict, *, watched: bool,
-                           launch_error: str | None = None, stopped: bool = False) -> dict:
+                           launch_error: str | None = None, stopped: str | None = None) -> dict:
     """Follow the row's unit to its end and complete its row, task event and project log entry once; return the
     completed row with the unit's output. The altd that started the command settles it, and the next altd settles
-    one that a restart interrupted, stopping it if its grant was revoked meanwhile. The row is written last, so a
+    one that a restart interrupted, stopping it if its grant was revoked meanwhile; `stopped` says why its altd
+    already stopped it. The row is written last, so a
     restart between the writes settles it again, and the task event, found by unit, is not repeated."""
     folder = S.task_dir(project, slug)
     outcome = engines.machine_outcome(folder, row["unit"], row["started"], watched=watched,
@@ -2926,11 +2971,21 @@ def settle_interrupted_machine_commands() -> list[threading.Thread]:
                 log(f"machine commands: cannot read {runs}: {exc}")
                 continue
             for row in rows:
-                thread = threading.Thread(target=settle_machine_command, args=(project, runs.parent.name, row),
-                                          kwargs={"watched": False}, name=f"machine-{row['unit']}", daemon=True)
+                thread = threading.Thread(target=_settle_interrupted, args=(project, runs.parent.name, row),
+                                          name=f"machine-{row['unit']}", daemon=True)
                 thread.start()
                 threads.append(thread)
     return threads
+
+
+def _settle_interrupted(project: str, slug: str, row: dict) -> None:
+    """Settle a command that runs on from before a restart; it keeps a machine-run place, beyond the line's places if
+    need be, until it ends."""
+    with MACHINE_LINE.turn(f"the command of {project}/{slug} holds a place", None, command="alt task run",
+                           force=True) as place:
+        with MACHINE_LINE.lock:
+            place["ends"] = datetime.fromisoformat(row["started"]) + timedelta(seconds=config.MACHINE_COMMAND_TIMEOUT)
+        settle_machine_command(project, slug, row, watched=False)
 
 
 def task_owner_connection(project: str, slug: str, task: dict, peer: tuple, local: tuple) -> bool:

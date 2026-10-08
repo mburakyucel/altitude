@@ -536,7 +536,8 @@ def main(argv=None) -> None:
         import time
         # A restart can end a machine command's connection while its unit runs on; asking again with the same
         # request waits for that command's result instead of running it again.
-        reconnect_until, reconnecting = time.monotonic() + config.MACHINE_COMMAND_TIMEOUT + 120, False
+        reconnect_until = time.monotonic() + config.MACHINE_COMMAND_WAIT + config.MACHINE_COMMAND_TIMEOUT + 120
+        reconnecting = False
         while True:
             # The running service's record, not this process's launch environment, says where altd listens and
             # which CA proves it, read afresh for each attempt, so a restart onto another certificate folder or
@@ -551,19 +552,23 @@ def main(argv=None) -> None:
             request = urllib.request.Request(f"{service_url}/api/{endpoint}",
                                              data=None if setup_command and not args.repair else json.dumps(payload).encode(),
                                              headers={"Content-Type": "application/json", access.KEY_HEADER: access.machine_key() or "",
-                                                      **({"Accept": "application/x-ndjson"} if validation_run else {})})
+                                                      **({"Accept": "application/x-ndjson"} if machine_run or validation_run else {})})
             context = ssl.create_default_context(cafile=str(ca) if ca.exists() else None) if found["tls"] else None
             try:
                 with urllib.request.urlopen(request, context=context, timeout=None if review_run else config.MACHINE_COMMAND_TIMEOUT + 60 if machine_run else validation.TIMEOUT + 600 + (validation.SIMULATOR_SECONDS if args.simulator else 0) if validation_run else 130) as response:
-                    if validation_run:  # what a busy machine makes the request wait for, a line at a time, then the answer
+                    if machine_run or validation_run:  # what a busy machine makes the request wait for, a line at a time, then the answer
                         result, shown = {}, None
                         for line in response:
                             result = json.loads(line)
                             if result.keys() == {"waiting"} and result["waiting"] != shown:
                                 shown = result["waiting"]
                                 print(f"[altitude] {shown}", file=sys.stderr, flush=True)
+                        if "unit" not in result and result.get("error"):
+                            sys.exit(result["error"])
                         if "unit" not in result:
-                            sys.exit(result.get("error") or "alt task validate: altd ended the connection before the run's result")
+                            if machine_run:  # a restart ended the connection: ask again for this request's result
+                                raise ConnectionResetError("altd ended the connection before the command's result")
+                            sys.exit("alt task validate: altd ended the connection before the run's result")
                     else:
                         result = json.load(response)
                     if review_run and not result.get("ok"):
@@ -662,7 +667,7 @@ def main(argv=None) -> None:
             if isinstance(voice_request, dict):
                 voice_request = {k: "removed speech service" if isinstance(v, dict) else v for k, v in voice_request.items()}
             out({"wip": config.machine_wip(), "override": config.machine_settings().get("wip"),
-                 "default": config.WIP_PER_MACHINE,
+                 "default": config.WIP_PER_MACHINE, "machine_runs": config.MACHINE_RUNS,
                  "request": S.read_json(config.ROOT / "wip-request.json", None),
                  "voice": config.voice_setting(),
                  "voice_request": voice_request,
