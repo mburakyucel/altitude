@@ -799,7 +799,11 @@ def phase_lifecycle(guest: Guest, repository: str, results: Path, record: dict, 
               f'PATH="$(/opt/homebrew/bin/brew --prefix openssl@3)/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" '
               f'/opt/homebrew/bin/python3.12 -I -B {SHARED}/installation_lifecycle.py {SHARED}/release {SHARED}/release '
               f'"$work/home/results" {commit} mac; code=$?; cp -R "$work/home/results" {SHARED}/lifecycle; '
-              f'cp -R "$work/home/Library/Logs" {SHARED}/lifecycle/logs 2>/dev/null; exit $code')
+              f'cp -R "$work/home/Library/Logs" {SHARED}/lifecycle/logs 2>/dev/null; '
+              # What launchd and the guest were doing when a step failed.
+              f'if [ $code != 0 ]; then label=$(sed -n \'s/.*"label": "\\(.*\\)".*/\\1/p\' "$work/home/results/service-label.json"); '
+              f'launchctl print "gui/$(id -u)/$label" > {SHARED}/lifecycle/launchd.txt 2>&1; '
+              f'ps -Ao pcpu,pmem,etime,comm -r | head -25 > {SHARED}/lifecycle/processes.txt; fi; exit $code')
     result = guest.ssh(script, timeout=480, check=False)
     record["guest_load"] = guest.ssh("sysctl -n vm.loadavg").stdout.strip()
     (results / "lifecycle.log").write_text(result.stdout + result.stderr)
