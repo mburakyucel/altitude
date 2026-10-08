@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the installation lifecycle harness in a throwaway local Ubuntu 24.04 KVM VM.
 
-    python3 scripts/installation_vm.py RESULTS_DIR [--source REF] [--baseline-release TAG [--recovery]]
+    python3 scripts/installation_vm.py RESULTS_DIR [--source REF] [--baseline-release TAG [--recovery]] [--capture]
 
 Builds two synthetic release versions from one committed revision (default HEAD) and runs the
 harness from this checkout against them; RESULTS_DIR/vm.json records the outcome. With
@@ -18,6 +18,8 @@ offers. Then another installs the baseline, the VM restarts and the harness chec
 on its own before removing it. --recovery instead runs only the
 recovery phase: the published baseline's installation must fail, and after the documented cleanup the
 candidate installed over it must start and keep its settings, TLS identity and data.
+--capture also keeps an accelerated replay of the lane's progress and harness output as
+RESULTS_DIR/captures/installation-vm.gif (docs/DEVELOPMENT.md#validation-captures).
 Requires qemu-system-x86, qemu-utils and cloud-image-utils, and read/write access to /dev/kvm.
 """
 from __future__ import annotations
@@ -35,6 +37,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 from urllib.request import urlopen
 
@@ -48,10 +51,60 @@ OFFLINE_MAC, ONLINE_MAC = "52:54:00:a1:70:01", "52:54:00:a1:70:02"
 
 
 STARTED = time.monotonic()
+REPLAY: Replay | None = None
 
 
 def note(message: str) -> None:
     print(f"[{time.monotonic() - STARTED:5.0f}s] {message}", flush=True)
+    if REPLAY:
+        REPLAY.note(message)
+
+
+class Replay:
+    """With --capture: this lane's progress lines and its harness logs' lines, each with when it arrived, read from
+    the logs every half second so the harness runs exactly as without a capture."""
+
+    def __init__(self, results: Path):
+        self.results, self.lines, self.steps, self.read = results, [], [], {}
+        self.done = threading.Event()
+        self.thread = threading.Thread(target=self.follow, name="capture", daemon=True)
+        self.thread.start()
+
+    def note(self, message: str) -> None:
+        self.steps.append(message)
+        self.lines.append((time.monotonic() - STARTED, message))
+
+    def follow(self) -> None:
+        while not self.done.wait(0.5):
+            self.collect()
+
+    def collect(self) -> None:
+        for log in sorted(self.results.glob("harness*.log")):
+            try:
+                with log.open("rb") as stream:
+                    stream.seek(self.read.get(log, 0))
+                    data = stream.read()
+            except OSError:
+                continue  # read again on the next round; the replay never stops the lane
+            whole = data[:data.rfind(b"\n") + 1]
+            self.read[log] = self.read.get(log, 0) + len(whole)
+            at = time.monotonic() - STARTED
+            self.lines.extend((at, line) for line in whole.decode(errors="replace").splitlines())
+
+    def save(self, title: str, last: str) -> str:
+        """The replay as RESULTS/captures/installation-vm.gif; returns its path, or why there is none."""
+        self.done.set()
+        self.thread.join()
+        self.collect()
+        self.note(last)
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        target = self.results / "captures" / "installation-vm.gif"
+        try:
+            from altitude import capture
+            capture.terminal(self.lines, target, title, tuple(self.steps))
+            return str(target)
+        except Exception as error:  # the capture never changes whether the lane passed
+            return f"none: {error}"
 
 
 def user_data(public_key: str) -> str:
@@ -326,7 +379,9 @@ def build(commit: str, work: Path, results: Path, versions: tuple = (("baseline"
                            stdout=log, stderr=subprocess.STDOUT, check=True, timeout=600)
 
 
-def run(results: Path, commit: str, cache: Path, baseline_release: str | None = None, recovery: bool = False) -> int:
+def run(results: Path, commit: str, cache: Path, baseline_release: str | None = None, recovery: bool = False,
+        capture: bool = False) -> int:
+    global REPLAY
     results.mkdir(parents=True, exist_ok=True)
     checkout = Path(__file__).resolve().parent.parent
     git = lambda *args: subprocess.run(["git", *args], cwd=checkout, capture_output=True, text=True, check=True).stdout.strip()
@@ -337,6 +392,7 @@ def run(results: Path, commit: str, cache: Path, baseline_release: str | None = 
                                     text=True).stdout.splitlines()[0]
     work = Path(tempfile.mkdtemp(prefix="altitude-installation-vm."))
     machine = None
+    REPLAY = Replay(results) if capture else None
     try:
         if baseline_release:
             note(f"downloading the published {baseline_release} and building the candidate from {commit[:12]}")
@@ -400,8 +456,12 @@ def run(results: Path, commit: str, cache: Path, baseline_release: str | None = 
         finally:
             # The overlay, its private key and seed go even when stopping or copying logs failed.
             shutil.rmtree(work)
+            ended = "VM deleted; " + ("passed" if record["passed"] else "failed") + f"; evidence in {results}"
+            if REPLAY:  # the capture never changes whether the lane passed
+                record["capture"] = REPLAY.save(f"installation-vm {commit[:12]}", ended)
             (results / "vm.json").write_text(json.dumps(record, indent=2) + "\n")
-            note("VM deleted; " + ("passed" if record["passed"] else "failed") + f"; evidence in {results}")
+            REPLAY = None
+            note(ended)
     return 0 if record["passed"] else 1
 
 
@@ -412,6 +472,8 @@ def main() -> int:
     parser.add_argument("--baseline-release", metavar="TAG", help="published release to install first and update from")
     parser.add_argument("--recovery", action="store_true",
                         help="install the candidate over the published baseline's failed installation instead")
+    parser.add_argument("--capture", action="store_true",
+                        help="keep an accelerated replay of the run as RESULTS/captures/installation-vm.gif")
     parser.add_argument("--cache", type=Path, default=Path.home() / ".cache/altitude-installation-vm",
                         help="where the verified base image is kept between runs")
     args = parser.parse_args()
@@ -429,7 +491,8 @@ def main() -> int:
     if resolved.returncode:
         print(f"{args.source} is not a commit in this repository.", file=sys.stderr)
         return 2
-    return run(args.results.resolve(), resolved.stdout.strip(), args.cache, args.baseline_release, args.recovery)
+    return run(args.results.resolve(), resolved.stdout.strip(), args.cache, args.baseline_release, args.recovery,
+               args.capture)
 
 
 if __name__ == "__main__":

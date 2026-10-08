@@ -275,10 +275,11 @@ class TestValidationRunner(ClientStop, RunnerCase):
             self.assertIn("need podman", self.validate(["true"], status=400)["error"])
         with mock.patch.object(validation, "FREE_DISK", 1 << 62):
             self.assertIn("GiB free", self.validate(["true"], status=400)["error"])
-        with validation._lock, mock.patch.object(validation, "WAIT", 0):
+        with validation.LINE.turn("the runner is removing what earlier runs left", None, command="test"), \
+                mock.patch.object(validation, "WAIT", 0):
             self.assertIn("not admitted within 0 minutes, waiting for the validation slot: the runner is removing "
                           "what earlier runs left", self.validate(["true"], status=400)["error"])
-        self.assertEqual(validation._queue, [])
+        self.assertEqual(validation.LINE._queue, [])
         T.block(self.project, self.slug, "Waiting", actor="l2", expected_state="running", expected_attempt=1)
         self.assertIn("running owner", self.validate(["true"], status=403)["error"])
         self.assertFalse(self.record.exists())
@@ -288,8 +289,8 @@ class TestValidationRunner(ClientStop, RunnerCase):
         release, holder, answers = self.holding()
         second = self.send(["echo", "second"]).getresponse()
         self.assertEqual((second.status, second.headers["Content-Type"]), (200, "application/x-ndjson"))
-        with validation._line:
-            ends = f"{validation._holder['ends']:%Y-%m-%d %H:%M:%S} UTC"
+        with validation.LINE.lock:
+            ends = f"{validation.LINE.holders[0]['ends']:%Y-%m-%d %H:%M:%S} UTC"
         self.assertEqual(json.loads(second.readline()), {"waiting": (
             f"waiting for the validation slot: the validation run of {self.project}/{self.slug} holds this machine "
             f"until its limit at {ends}")})
@@ -298,9 +299,9 @@ class TestValidationRunner(ClientStop, RunnerCase):
         leaving = self.send(["echo", "leaving"])
         self.assertIn("2 request(s) ahead", json.loads(leaving.getresponse().readline())["waiting"])
         leaving.close()   # a waiting client that stops leaves the line
-        wait_for(lambda: len(validation._queue) == 2, "the stopped client to leave the line")
+        wait_for(lambda: len(validation.LINE._queue) == 2, "the stopped client to leave the line")
         silent = self.send(["echo", "silent"], lines=False)   # a client that reads one JSON reply waits without lines
-        wait_for(lambda: len(validation._queue) == 3, "the silent request to wait")
+        wait_for(lambda: len(validation.LINE._queue) == 3, "the silent request to wait")
         release.touch()
         holder.join()
         self.assertEqual(answers[0]["exit"], 0)
@@ -314,7 +315,7 @@ class TestValidationRunner(ClientStop, RunnerCase):
         self.assertEqual([(row["command"], row["ended"]) for row in self.rows()],
                          [(f"sh -c 'touch {self.tmp / 'holding'}; until [ -e {release} ]; do sleep .02; done'", "exit"),
                           ("echo second", "exit"), ("echo third", "exit"), ("echo silent", "exit")])
-        self.assertEqual(validation._queue, [])
+        self.assertEqual(validation.LINE._queue, [])
 
     def test_a_client_that_stops_while_its_run_is_set_up_ends_it_before_it_starts(self):
         client, clone = self.send(["sh", "-c", f"touch {self.tmp / 'ran'}"]), validation._clone
@@ -519,11 +520,11 @@ class TestValidationRunner(ClientStop, RunnerCase):
         T.finish_machine_run(self.project, self.slug, {**row, "exit": 0, "finished": S.now(), "ended": "exit"})
         cleanup = validation.cleanup
         held = []
-        with mock.patch.object(validation, "cleanup", side_effect=lambda runs: (held.append(validation._lock.locked()),
+        with mock.patch.object(validation, "cleanup", side_effect=lambda runs: (held.append(list(validation.LINE.holders)),
                                                                                cleanup(runs))[1]):
             validation.reconcile()
         self.assertTrue(validation._ready.is_set())
-        self.assertEqual(held, [True])
+        self.assertEqual(held, [[{"what": "the runner is removing what earlier runs left", "ends": None}]])
         self.assertEqual(self.stops.call_args.args[0], "altitude-validation-*.service")
         self.assertFalse(any(area.exists() for area in areas.values()))
         saved = [json.loads(line) for line in (S.task_dir(self.project, self.slug) / "machine.jsonl").read_text()
@@ -572,22 +573,16 @@ class TestValidationRunner(ClientStop, RunnerCase):
         self.assertIn("exit 3", result.stdout)
         self.assertIn(f"results {S.task_dir(self.project, self.slug) / 'validation' / '1'}", result.stdout)
 
-        told, describe, done = [], validation._waiting_for, []
-        validation._lock.acquire()
-        try:
-            with validation._line:
-                validation._holder.update(task="other/task", ends=datetime(2026, 10, 8, 2, 8, 48, tzinfo=timezone.utc))
-            with mock.patch.object(validation, "_waiting_for", side_effect=lambda ahead: (told.append(ahead),
-                                                                                          describe(ahead))[1]):
-                waiting = threading.Thread(target=lambda: done.append(self.alt("task", "validate", "--", "echo", "after",
-                                                                               env=owner)))
-                waiting.start()
-                wait_for(lambda: len(told) > 1, "the request to say what it waits for")   # it printed, then looked again
-        finally:
-            with validation._line:
-                validation._holder.clear()
-                validation._lock.release()
-                validation._line.notify_all()
+        told, describe, done = [], validation.LINE._waiting_for, []
+        with validation.LINE.turn("the validation run of other/task holds this machine", None, command="test") as place, \
+                mock.patch.object(validation.LINE, "_waiting_for", side_effect=lambda ahead: (told.append(ahead),
+                                                                                             describe(ahead))[1]):
+            with validation.LINE.lock:
+                place["ends"] = datetime(2026, 10, 8, 2, 8, 48, tzinfo=timezone.utc)
+            waiting = threading.Thread(target=lambda: done.append(self.alt("task", "validate", "--", "echo", "after",
+                                                                           env=owner)))
+            waiting.start()
+            wait_for(lambda: len(told) > 1, "the request to say what it waits for")   # it printed, then looked again
         waiting.join()
         [result] = done
         self.assertEqual(result.returncode, 0, result.stderr)

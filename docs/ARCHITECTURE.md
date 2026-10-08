@@ -832,10 +832,12 @@ into the task branch before pushing when needed, preserving adopted ancestry and
 head checks. A conflicting integration is aborted with local work retained for owner reconciliation.
 For a completed review whose assessment is stale, the current L2's merging invocation retains the
 turn while the owner explicitly reassesses the pinned candidate through the existing review command.
-CI and assessment share the `--wait` deadline. Polls hold the task review lock only for local review
-reads; network reads and sleeps leave review requests available. Assessment fetches preserve landing's
-`FETCH_HEAD` receipt. A notice names every stale review and subject with the assessed/current values
-of its changed evidence, so the owner posts explanations together before assessing each request.
+CI and assessment share one deadline, an hour after publication unless `--wait` shortens it, so a
+merging candidate keeps the turn through its fresh required check. Polls hold the task review lock
+only for local review reads; network reads and sleeps leave review requests available. Assessment
+fetches preserve landing's `FETCH_HEAD` receipt. A notice names every stale review and subject with
+the assessed/current values of its changed evidence, so the owner posts explanations together before
+assessing each request.
 Proposal and changes findings remain separate; a changes assessment does not retire a proposal.
 Fresh context invalidation, including during final merge validation, uses the same wait and original
 deadline. Final candidate, checks, ownership and hold validation repeats after assessment.
@@ -1027,12 +1029,13 @@ failure; otherwise valid isolated tasks continue. Publication retains its curren
 ownership boundaries and review holds.
 
 A failing `git fetch origin main` for self-deploy raises `git_policy.FetchError`. The tick logs each
-such failure and retries it on the next tick. It raises the `self-deploy` system fault only once fetches
-have failed for five minutes without a success in between, carrying the latest fetch error. The
-post-delivery fast-forward returns a note for a failed fetch and leaves the retry to the tick. Every
-other self-deploy failure, including a dirty, diverged, ahead or off-main checkout and a failed
-fast-forward, raises the fault immediately. The failure start is held in daemon memory, so a restart
-starts a new grace period.
+such failure, and each command of the tick that outlives its time limit on a busy host (#724), and
+retries it on the next tick. It raises the system fault (`self-deploy`, or `tick` for the setup check
+and the rest of the tick) only once the same step has failed for five minutes without a success in
+between, carrying the latest error. The post-delivery fast-forward returns a note for a failed fetch
+and leaves the retry to the tick. Every other self-deploy failure, including a dirty, diverged, ahead
+or off-main checkout and a failed fast-forward, raises the fault immediately. The failure start is
+held in daemon memory, so a restart starts a new grace period.
 
 Base fetching tolerates one competing update of the same remote-tracking ref across linked
 worktrees, including ordinary Git commands and landing fetches. `git_policy.fetch_origin` uses
@@ -2551,6 +2554,18 @@ version. Loading, Retry and Back remain in the ordinary preview page. Superseded
 replacing the displayed capture. First acceptance also verifies the saved evidence; identical retries
 of an already recorded decision retain their receipt. Viewing and follow-ups do not decide anything,
 and neither design acceptance nor publication releases a merge hold.
+
+Validation captures follow the same fixed-evidence path ([validation captures](DEVELOPMENT.md#validation-captures)).
+`alt task reply --capture <run>` reads that run's GIFs from the task's own `validation/` evidence through
+directory descriptors without following links, accepts only regular files that `capture.describe` parses as
+one GIF within 1 MiB, 1024 px a side and 300 frames (at most 12), and saves content-named copies in the task
+folder's `captures/` (at most 64 MiB per task) with their titles and shapes on the reply's conversation row.
+The conversation shows **Watch capture** under that reply, opening
+`/projects/<project>/tasks/<slug>/captures/<message>` in a new tab. The page reads
+`GET /api/captures/<project>/<slug>/<message>`, which resolves only that L2 reply; each GIF is
+`/api/captures/<project>/<slug>/<message>/<content-hash>.gif`, served to this machine or a paired browser
+only when the reply lists it, its bytes match the hash and it still parses as a capture, as `image/gif` with
+`nosniff`, a restrictive CSP, `no-referrer` and no-store caching. Anything else is **Capture unavailable**.
 
 ### Monitor and live sessions
 

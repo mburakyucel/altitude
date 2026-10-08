@@ -136,6 +136,8 @@ PROJECT_SETTINGS = ("routing", "l2_preference", "l2_engine", "l3_engine", "l3_ch
 WIP_PER_MACHINE = 80
 L3_TURN_TIMEOUT = 900             # seconds
 MACHINE_COMMAND_TIMEOUT = 600     # seconds; one command under a task's operator grant
+MACHINE_COMMAND_WAIT = 1800       # seconds such a command waits in line for a machine-run place
+MACHINE_RUNS = max(1, (os.cpu_count() or 4) // 4)   # such commands running at once: a quarter of the cores
 L3_CODEX_TURN_TIMEOUT = 1200
 AGENT_POLL_SECONDS = 30
 

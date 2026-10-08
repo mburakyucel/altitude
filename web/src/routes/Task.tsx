@@ -224,6 +224,15 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
 
 interface PendingMessage { id: string; text: string; images?: ImagePreview[] }
 
+/** An L2 reply's validation captures open in their own tab, leaving the conversation and draft in place. */
+function CaptureLink({ project, slug, message }: { project: string; slug: string; message: TaskMessage }) {
+  const captures = message.captures ?? [];
+  if (!captures.length) return null;
+  return <a className="text-meta prose-link capture-link" href={`/projects/${project}/tasks/${slug}/captures/${message.id}`} target="_blank" rel="noopener noreferrer">
+    {captures.length > 1 ? `Watch ${captures.length} captures` : `Watch capture · ${captures[0]?.title}`}
+  </a>;
+}
+
 function TaskConversation({ project, task, facts, readOnly, checking, refresh, draft, setDraft, pending, setPending, steering, active, denied, setDenied, questionVisit, selection, onEscapeOwnership, reviewControls }: {
   project: string; task: TaskView; facts: Facts; readOnly: boolean; checking: boolean; refresh: () => void;
   draft: string; setDraft: (value: string) => void; pending: PendingMessage | null; setPending: Dispatch<SetStateAction<PendingMessage | null>>;
@@ -447,7 +456,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         </div> : null}
       </Bubble> :
         message.role === "l3" ? <Coordination key={key} text={message.text} summary={message.summary} at={message.at} images={message.images?.length} onOpen={() => { following.current = false; }}><MessageImages project={project} images={message.images} /></Coordination>
-        : <Reply key={key} text={message.text} at={message.at} role={message.role}><MessageImages project={project} images={message.images} /></Reply>);
+        : <Reply key={key} text={message.text} at={message.at} role={message.role}><MessageImages project={project} images={message.images} /><CaptureLink project={project} slug={task.slug} message={message} /></Reply>);
     }
   });
   if (pending && !messages.some((message) => message.id === pending.id)) {

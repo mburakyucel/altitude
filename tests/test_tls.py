@@ -594,11 +594,13 @@ class TestShare(ServiceCase):
         certificate = (self.service_tls / "ca.crt").read_bytes()
         with urllib.request.urlopen(link, timeout=5) as response:
             self.assertEqual(response.headers["Content-Type"], "text/html; charset=utf-8")
-            self.assertEqual(response.headers["Content-Security-Policy"], "default-src 'none'; style-src 'unsafe-inline'")
+            self.assertEqual(response.headers["Content-Security-Policy"],
+                             "default-src 'none'; style-src 'unsafe-inline'; img-src data:")
             page = response.read().decode()
         for row in tls.fingerprint_rows(authority["sha256"]):
             self.assertIn(row, page)
-        for text in ('href="/altitude.mobileconfig"', 'href="/ca.crt"', "Certificate Trust Settings",
+        # Safari asks a page without an icon for /favicon.ico, which the policy refuses with a console error.
+        for text in ('<link rel="icon" href="data:,">', 'href="/altitude.mobileconfig"', 'href="/ca.crt"', "Certificate Trust Settings",
                      f'href="https://127.0.0.1:{health.port}"', "If it differs, stop here.",
                      "Set up this device for Altitude", 'id="linux"', 'id="macos"', 'id="ios"', 'id="android"',
                      "openssl x509 -in ca.crt -noout -subject -fingerprint -sha256",

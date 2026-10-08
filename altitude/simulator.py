@@ -20,6 +20,7 @@ import plistlib
 import re
 import selectors
 import shutil
+import signal
 import socket
 import struct
 import subprocess
@@ -32,6 +33,7 @@ from . import platform
 XCRUN = "/usr/bin/xcrun"
 SAFARI = "com.apple.mobilesafari"
 BOOT_SECONDS = 300
+RECORD_STOP = 10                 # seconds for a screen recording to finish its file once asked to stop
 FRAME_LIMIT = 64 << 20            # bytes in one inspector message; a page snapshot is a few MiB
 FRAME_SECONDS = 30               # for the rest of a message once its first byte has arrived
 SESSIONS = 4                     # run connections at once; a walkthrough uses one
@@ -90,12 +92,17 @@ class Phone:
         self.devices, self.chosen, self.udid = devices, chosen, None
 
     def boot(self) -> str:
-        """Create and boot the phone headless; return its Web Inspector socket."""
+        """Create and boot the phone headless; return its Web Inspector socket. The steps share BOOT_SECONDS, so one
+        that a busy host slows can use the time the others left (#724)."""
         self.devices.mkdir(mode=0o700)
+        deadline = time.monotonic() + BOOT_SECONDS
+
+        def left() -> float:
+            return max(1.0, deadline - time.monotonic())
         self.udid = _simctl(self.devices, "create", "altitude-validation", self.chosen["device_id"],
-                            self.chosen["runtime_id"]).strip()
-        _simctl(self.devices, "bootstatus", self.udid, "-b", timeout=BOOT_SECONDS)
-        return _simctl(self.devices, "getenv", self.udid, "RWI_LISTEN_SOCKET").strip()
+                            self.chosen["runtime_id"], timeout=left()).strip()
+        _simctl(self.devices, "bootstatus", self.udid, "-b", timeout=left())
+        return _simctl(self.devices, "getenv", self.udid, "RWI_LISTEN_SOCKET", timeout=left()).strip()
 
     def safari(self) -> str:
         """Safari's version on the phone, from its bundle."""
@@ -111,6 +118,11 @@ class Phone:
     def open(self, url: str) -> None:
         _simctl(self.devices, "openurl", self.udid, url, timeout=30)
 
+    def record(self, path: Path) -> Recording:
+        """Start recording the whole screen as the video `path`."""
+        return Recording([XCRUN, "simctl", "--set", str(self.devices), "io", self.udid, "recordVideo",
+                          "--codec=h264", "--force", str(path)], path.with_suffix(".log"))
+
     def screenshot(self, path: Path) -> str | None:
         """The whole screen as `path`; returns why there is none, or None."""
         try:
@@ -118,6 +130,34 @@ class Phone:
             return None
         except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
             return str(exc)
+
+
+class Recording:
+    """A screen recording until `stop()`, with simctl's own messages in `log`."""
+
+    def __init__(self, command: list[str], log: Path):
+        self.log = log
+        with open(log, "wb") as out:
+            self.process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT)
+
+    def stop(self) -> str | None:
+        """End the recording, forcefully after `RECORD_STOP` seconds; returns why there is no video, or None. It never
+        raises, so a recording cannot change its run's outcome."""
+        try:
+            if self.process.poll() is None:
+                self.process.send_signal(signal.SIGINT)
+            try:
+                code = self.process.wait(RECORD_STOP)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait()
+                return f"the screen recording did not stop within {RECORD_STOP} s"
+            if code:
+                tail = self.log.read_text(errors="replace").strip()[-400:] if self.log.is_file() else ""
+                return f"simctl recordVideo failed: {tail or f'exit {code}'}"
+        except OSError as exc:
+            return f"the screen recording did not stop: {exc}"
+        return None
 
 
 def remove(devices: Path) -> str | None:

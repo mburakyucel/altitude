@@ -1,13 +1,14 @@
 """cleanup_task frees a finished task's worktree and branch once nothing needs them, and
 prune_source_exports removes launch exports nothing names (real git, disposable repositories)."""
 import os
+import subprocess
 import time
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests.support import AltitudeCase, git, make_repo
-from altitude import config, dispatch, engines, server, state as S
+from altitude import config, dispatch, engines, project_setup, server, state as S
 
 
 class TestCleanup(AltitudeCase):
@@ -303,20 +304,20 @@ class TestSelfDeploy(AltitudeCase):
         return fault, log
 
     def test_tick_logs_a_failed_fetch_that_recovers_without_a_fault(self):
-        self.addCleanup(server._fetch_failing_since.pop, "altitude", None)
+        self.addCleanup(server._failing_since.pop, "[altitude] self-deploy", None)
         restore = self.unreachable_origin()
         fault, log = self.tick_self_deploy(1000.0)
         fault.assert_not_called()
-        self.assertIn("self-deploy fetch failed; retrying next tick: git fetch origin main:", log.call_args.args[0])
+        self.assertIn("[altitude] self-deploy failed; retrying next tick: git fetch origin main:", log.call_args.args[0])
         restore()
         fault, _ = self.tick_self_deploy(1030.0)
         fault.assert_not_called()
-        self.assertNotIn("altitude", server._fetch_failing_since)
+        self.assertNotIn("[altitude] self-deploy", server._failing_since)
 
     def test_tick_faults_once_fetches_keep_failing_past_the_grace_period(self):
-        self.addCleanup(server._fetch_failing_since.pop, "altitude", None)
+        self.addCleanup(server._failing_since.pop, "[altitude] self-deploy", None)
         self.unreachable_origin()
-        grace = server.SELF_DEPLOY_FETCH_GRACE_SECONDS
+        grace = server.TICK_GRACE_SECONDS
         for now in (1000.0, 1000.0 + grace - 1):
             fault, _ = self.tick_self_deploy(now)
             fault.assert_not_called()
@@ -326,13 +327,13 @@ class TestSelfDeploy(AltitudeCase):
         self.assertIn("altitude: git fetch origin main:", fault.call_args.args[1])
 
     def test_tick_faults_a_policy_refusal_immediately(self):
-        self.addCleanup(server._fetch_failing_since.pop, "altitude", None)
-        server._fetch_failing_since["altitude"] = 1000.0  # an earlier fetch failure does not delay a refusal
+        self.addCleanup(server._failing_since.pop, "[altitude] self-deploy", None)
+        server._failing_since["[altitude] self-deploy"] = 1000.0  # an earlier fetch failure does not delay a refusal
         (self.repo / "README.md").write_text("dirty deployment\n")
         fault, _ = self.tick_self_deploy(1001.0)
         fault.assert_called_once()
         self.assertIn("uncommitted changes", fault.call_args.args[1])
-        self.assertNotIn("altitude", server._fetch_failing_since)
+        self.assertNotIn("[altitude] self-deploy", server._failing_since)
 
     def test_pull_after_done_leaves_a_failed_fetch_to_the_tick(self):
         self.unreachable_origin()
@@ -341,6 +342,66 @@ class TestSelfDeploy(AltitudeCase):
         fault.assert_not_called()
         self.assertTrue(notes[0].startswith("self-deploy fetch failed; the tick retries: git fetch origin main:"), notes)
 
+
+
+class TestTickOnABusyHost(AltitudeCase):
+    """#724: on an overloaded host a Git call outlives its limit; the tick retries it before it is a system fault."""
+
+    def setUp(self):
+        super().setUp()
+        make_repo(self.repo)
+        self.slow = subprocess.TimeoutExpired(["git", "-C", str(self.repo), "rev-parse", "--show-toplevel"], 10)
+        self.patch(server.images, "collect")
+        for name in ("self_deploy", "request_l3_drain", "resume_stranded_reports", "spawn"):
+            self.patch(server, name)
+        self.waiting = self.patch(server, "dispatch_waiting")
+        self.patch(dispatch, "run_settings")
+        self.patch(dispatch, "poll", return_value=[])
+        self.addCleanup(server._failing_since.clear)
+
+    def tick(self, now: float) -> tuple[mock.Mock, mock.Mock]:
+        with mock.patch("altitude.incidents.system_fault") as fault, mock.patch.object(server, "log") as log, \
+             mock.patch.object(server.time, "monotonic", return_value=now):
+            server.tick_project(self.project)
+        return fault, log
+
+    def test_a_setup_check_whose_git_call_times_out_is_logged_and_the_tick_goes_on(self):
+        self.patch(project_setup, "_repository", side_effect=self.slow)
+        fault, log = self.tick(1000.0)
+        fault.assert_not_called()
+        self.assertEqual(log.call_args_list[0].args[0], f"[{self.project}] setup check failed; retrying next tick: "
+                         f"Command '{self.slow.cmd}' timed out after 10 seconds")
+        self.waiting.assert_called_once_with(self.project)   # coordination carries on in the same tick
+        fault, _ = self.tick(1000.0 + server.TICK_GRACE_SECONDS - 1)
+        fault.assert_not_called()
+        self.patch(project_setup, "maintain")   # the host recovers
+        fault, _ = self.tick(1000.0 + server.TICK_GRACE_SECONDS)
+        fault.assert_not_called()
+        self.assertEqual(server._failing_since, {})
+
+    def test_a_git_call_that_keeps_timing_out_past_the_grace_period_is_a_system_fault(self):
+        self.patch(project_setup, "_repository", side_effect=self.slow)
+        for now in (1000.0, 1000.0 + server.TICK_GRACE_SECONDS - 1):
+            self.tick(now)[0].assert_not_called()
+        fault, _ = self.tick(1000.0 + server.TICK_GRACE_SECONDS)
+        fault.assert_called_once()
+        self.assertEqual(fault.call_args.args, ("tick", f"{self.project}: {self.slow}"))
+
+    def test_a_timed_out_command_elsewhere_in_the_tick_waits_out_the_same_grace(self):
+        self.patch(server.project_setup, "maintain")
+        self.patch(dispatch, "poll", side_effect=self.slow)
+        fault, log = self.tick(1000.0)
+        fault.assert_not_called()
+        self.assertIn(f"[{self.project}] tick failed; retrying next tick: Command", log.call_args.args[0])
+        fault, _ = self.tick(1000.0 + server.TICK_GRACE_SECONDS)
+        self.assertEqual(fault.call_args.args[0], "tick")
+        with mock.patch.object(server.time, "sleep", side_effect=KeyboardInterrupt), \
+             mock.patch.object(server, "tick", side_effect=self.slow), \
+             mock.patch("altitude.incidents.system_fault") as fault, mock.patch.object(server, "log") as log:
+            with self.assertRaises(KeyboardInterrupt):
+                server.timer_loop()   # the timer still sleeps before its next tick
+        fault.assert_not_called()
+        self.assertIn("tick failed; retrying next tick: Command", log.call_args.args[0])
 
 if __name__ == "__main__":
     unittest.main()

@@ -793,7 +793,9 @@ alt machine set --unset-wip --reason 'Restore the machine default of 80'
 ```
 
 `machine show` reports the effective machine `wip`, its `override` (null when inherited), `default`
-(80), and `request.status` showing whether a change is still `pending` or has completed.
+(80), and `request.status` showing whether a change is still `pending` or has completed. It also
+reports `machine_runs`, how many [granted commands](#operator-grant) run at once on this computer: a
+quarter of its cores, at least one, not a setting.
 Project registration and settings expose no concurrency cap. Stored project `wip` overrides
 impose no limit.
 
@@ -971,7 +973,7 @@ replaying tool logs. See [session lifecycle](SESSION_LIFECYCLE.md#messages-resum
 alt task new --title <title> [--wait <reason> | --after <task>] [--effort <level>] [--paths a.py,b/] [--hold-merge <reason>] [--image <id>] -
 alt task release <slug> --reason <reason>
 alt task message <slug> <text>|- [--file <path>] [--image <id>] [--summary <line>]
-alt task reply [<slug>] <text>|- [--file <path>]
+alt task reply [<slug>] <text>|- [--file <path>] [--capture <run>]
 alt task block <slug> --reason <question> [--recommendation <approach> --label <action> --why <reason>] [--for-operator | --fault]
 alt task escalate <slug> --question <question> [--recommendation <approach> --label <action> --why <reason>]
 alt task resume|stop <slug> --reason <reason>
@@ -991,7 +993,8 @@ alt task reject <slug> --reason <reason>
 `alt task reply - <<'EOF'` keeps amounts such as $1.20, quotes and line breaks literal; a single-quoted
 argument suffices for one line. A reply always goes to the current task; like the sibling verbs it may
 lead with that task's slug (`alt task reply "$ALTITUDE_TASK" -`), and any other extra argument is
-refused. Without `--questions-file`, a block's reason is its question: a different reason revises the
+refused. `--capture <run>` attaches that validation run's [captures](DEVELOPMENT.md#validation-captures)
+as fixed copies; the reply shows **Watch capture** under its text. Without `--questions-file`, a block's reason is its question: a different reason revises the
 open question, and the saved reason re-parks it unchanged.
 
 Repository changes use `alt land --message <message> [--merge]`. Project, incident, service, TLS,
@@ -1331,9 +1334,11 @@ check, with or without `--merge`. It waits before fetching, publishing or checki
 when waiting and when its turn starts, and returns seconds waited as `waited` (zero without a
 wait). This preserves shared candidate admission from I-20260923-062538 while CI runs the suite.
 Keep the command and owner session alive; ordinary contention needs no L3 landing-window request.
-Admission waits at most 3600 seconds, independently of `--wait`, which bounds the shared CI and
-owner-assessment wait (600 seconds by default). An admission timeout refuses without selecting a
-candidate or publishing changes; retry explicitly when ready.
+Admission waits at most 3600 seconds. The shared CI and owner-assessment wait that follows has the
+same 3600-second bound, so a merging candidate keeps the turn while its fresh required check is
+queued or running and one green check leads to one merge; `--wait` only shortens it. Landing prints
+the remaining bound when it first sees pending checks. An admission timeout refuses without selecting
+a candidate or publishing changes; retry explicitly when ready.
 
 Each admitted invocation rechecks ownership and holds, fetches current main, and merges it into
 the task branch when needed before pushing and checking the fresh candidate. This preserves
@@ -1923,7 +1928,13 @@ machine key cannot run commands under this task's grant. It records the run in `
 first, then runs the command as the operator in a transient user unit outside every worker sandbox,
 in the task worktree, through a login shell, with the user service manager reachable and the
 owner's task identity in the environment, so `alt` inside the command acts as that L2. One command
-runs at a time per task, for at most `MACHINE_COMMAND_TIMEOUT` (600 seconds); the unit itself
+runs at a time per task, for at most `MACHINE_COMMAND_TIMEOUT` (600 seconds), and at most a quarter
+of the computer's cores (at least one) run at once across the machine; `alt machine show` reports
+that number as `machine_runs`. A command that finds every place taken waits its turn in arrival
+order, for up to 30 minutes, and prints what it waits for on standard error: the commands holding
+the places, when their limits end and how many requests are ahead. Stopping or interrupting the CLI,
+or losing its connection, takes the command out of the line, or stops it and records why, and frees
+its place ([machine runs](DEVELOPMENT.md#validation-runner)). The unit itself
 writes its output to `<unit>.log` and its exit status to `<unit>.exit` in the task folder, so the
 result outlives altd. The CLI prints the output and a status line, then exits with the command's
 status (124 on timeout). Each run completes its `machine.jsonl` row, with the finish time the unit
@@ -1945,7 +1956,7 @@ not which local process calls; the grant record and its per-command log are the 
 ### Validation runs
 
 ```text
-alt task validate [--kvm] [--publish PORT] [--simulator] -- <command>
+alt task validate [--kvm] [--publish PORT] [--simulator [--capture]] -- <command>
 ```
 
 The current owner runs one command against a throwaway clone of its task's committed `HEAD`, isolated
@@ -1955,7 +1966,8 @@ Linux, and a job under the validation sandbox profile on macOS. No grant is need
 `--publish` forwards a container port to a free loopback port and prints it; a macOS run refuses both
 and binds free loopback ports itself. On a Mac, `--simulator` adds a disposable iOS Simulator iPhone
 whose Safari the command reaches through the relay socket in `$SIMULATOR_INSPECTOR`, kept as a
-screenshot and removed when the run ends ([iOS Simulator runs](DEVELOPMENT.md#ios-simulator-runs)).
+screenshot and removed when the run ends ([iOS Simulator runs](DEVELOPMENT.md#ios-simulator-runs)); `--capture`
+also records its screen as `validation/<n>.simulator.gif` ([validation captures](DEVELOPMENT.md#validation-captures)).
 The command starts in the clone, and whatever it writes to
 `$VALIDATION_RESULTS` (`/results` in the container) is copied to the task folder's `validation/<n>/`,
 and its output to `validation/<n>.log`. The run is recorded in `machine.jsonl` with purpose

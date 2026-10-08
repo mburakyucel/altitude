@@ -380,6 +380,7 @@ def main(argv=None) -> None:
     vl.add_argument("--kvm", action="store_true", help="Linux: add /dev/kvm for a virtual machine")
     vl.add_argument("--publish", type=int, metavar="PORT", help="Linux: publish this container port on a free 127.0.0.1 port")
     vl.add_argument("--simulator", action="store_true", help="macOS: a disposable iOS Simulator iPhone whose Safari the command drives through $SIMULATOR_INSPECTOR")
+    vl.add_argument("--capture", action="store_true", help="with --simulator: record the iPhone's screen as a small GIF beside its screenshot")
     vl.add_argument("command", nargs=argparse.REMAINDER, help="-- then the command and its arguments")
     dn = ts.add_parser("done"); dn.add_argument("slug"); dn.add_argument("--digest", default=""); dn.add_argument("--file")
     dn.add_argument("--findings-tracked", default="", metavar="REFERENCE",
@@ -387,6 +388,7 @@ def main(argv=None) -> None:
     br = ts.add_parser("brief"); br.add_argument("slug"); br.add_argument("--file"); br.add_argument("text", nargs="?")
     rp = ts.add_parser("reply", help="current L2: append a human-readable reply to this task's conversation")
     rp.add_argument("text", nargs="*", metavar="[slug] text|-", help="optionally led by this task's slug, as in the sibling verbs; - or nothing reads stdin"); rp.add_argument("--file")
+    rp.add_argument("--capture", type=int, metavar="RUN", help="attach this validation run's captures; the reply links to them")
     review = ts.add_parser("review", help="request, run and assess a cross-engine review of the owned task")
     review_actions = review.add_subparsers(dest="review_action", required=True)
     for action in ("status", "request", "run", "assess", "cancel", "withdraw"):
@@ -429,7 +431,7 @@ def main(argv=None) -> None:
     dp = sub.add_parser("dispatch"); dp.add_argument("slug"); dp.add_argument("--model")
     vf = sub.add_parser("verify"); vf.add_argument("slug")
     pl = sub.add_parser("poll")
-    ln = sub.add_parser("land"); ln.add_argument("--message", required=True, help="commit message; its first line is the default PR title"); ln.add_argument("--pr-title"); ln.add_argument("--pr-body-file"); ln.add_argument("--merge", action="store_true"); ln.add_argument("--approval", help="with --merge on a held task: the operator's task-chat message approving this PR"); ln.add_argument("--wait", type=int, default=600, help="shared seconds to wait for PR checks and owner review assessment (0 = do not wait)"); ln.add_argument("--base", default="main"); ln.add_argument("--test-cmd", default="make test", help="one command split into argv without a shell, run as the full local suite on the merge candidate only when neither pinned side has hosted CI: 'make check', or an explicit wrapper such as 'sh -c \"pnpm typecheck && pnpm test\"'"); ln.add_argument("--dry-run", action="store_true", help="report the prospective base, head or staged tree and gate; commit, push, open, test and merge nothing")
+    ln = sub.add_parser("land"); ln.add_argument("--message", required=True, help="commit message; its first line is the default PR title"); ln.add_argument("--pr-title"); ln.add_argument("--pr-body-file"); ln.add_argument("--merge", action="store_true"); ln.add_argument("--approval", help="with --merge on a held task: the operator's task-chat message approving this PR"); ln.add_argument("--wait", type=int, help="shorten the shared wait for PR checks and owner review assessment from its 3600-second bound (0 = do not wait)"); ln.add_argument("--base", default="main"); ln.add_argument("--test-cmd", default="make test", help="one command split into argv without a shell, run as the full local suite on the merge candidate only when neither pinned side has hosted CI: 'make check', or an explicit wrapper such as 'sh -c \"pnpm typecheck && pnpm test\"'"); ln.add_argument("--dry-run", action="store_true", help="report the prospective base, head or staged tree and gate; commit, push, open, test and merge nothing")
     ln.add_argument("--adopt-pr", type=int, help="adopt an existing same-repository PR, preserving its branch and history")
     ln.add_argument("--closes-issue", type=int, action="append", default=[], help="require a GitHub closing link for this fully resolved issue in the project repository (repeatable)")
     ln.add_argument("--expected-head", help="full observed PR head SHA required with --adopt-pr")
@@ -518,7 +520,7 @@ def main(argv=None) -> None:
         import urllib.request
         body = "" if setup_command or machine_run or validation_run or review_run or terminal_read or sys.stdin.isatty() and (closing_pr or args.operation == "close") else sys.stdin.read()
         payload = {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"],
-                   "review_id": args.review_id, "context_ids": args.context_message, "proposal_id": args.proposal_message} if review_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"]} if terminal_read else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "request": uuid.uuid4().hex} if machine_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "kvm": args.kvm, "publish": args.publish, "simulator": args.simulator} if validation_run else {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
+                   "review_id": args.review_id, "context_ids": args.context_message, "proposal_id": args.proposal_message} if review_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"]} if terminal_read else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "request": uuid.uuid4().hex} if machine_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "kvm": args.kvm, "publish": args.publish, "simulator": args.simulator, "capture": args.capture} if validation_run else {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
                    "project": _project(args), "operation": args.operation, "body": body,
                    **{key: getattr(args, key) for key in ("title", "labels", "number", "reason") if hasattr(args, key)}}
         # An option left unset sends nothing, so a checkout awaiting activation keeps working against the older
@@ -536,7 +538,8 @@ def main(argv=None) -> None:
         import time
         # A restart can end a machine command's connection while its unit runs on; asking again with the same
         # request waits for that command's result instead of running it again.
-        reconnect_until, reconnecting = time.monotonic() + config.MACHINE_COMMAND_TIMEOUT + 120, False
+        reconnect_until = time.monotonic() + config.MACHINE_COMMAND_WAIT + config.MACHINE_COMMAND_TIMEOUT + 120
+        reconnecting = False
         while True:
             # The running service's record, not this process's launch environment, says where altd listens and
             # which CA proves it, read afresh for each attempt, so a restart onto another certificate folder or
@@ -551,19 +554,23 @@ def main(argv=None) -> None:
             request = urllib.request.Request(f"{service_url}/api/{endpoint}",
                                              data=None if setup_command and not args.repair else json.dumps(payload).encode(),
                                              headers={"Content-Type": "application/json", access.KEY_HEADER: access.machine_key() or "",
-                                                      **({"Accept": "application/x-ndjson"} if validation_run else {})})
+                                                      **({"Accept": "application/x-ndjson"} if machine_run or validation_run else {})})
             context = ssl.create_default_context(cafile=str(ca) if ca.exists() else None) if found["tls"] else None
             try:
                 with urllib.request.urlopen(request, context=context, timeout=None if review_run else config.MACHINE_COMMAND_TIMEOUT + 60 if machine_run else validation.TIMEOUT + 600 + (validation.SIMULATOR_SECONDS if args.simulator else 0) if validation_run else 130) as response:
-                    if validation_run:  # what a busy machine makes the request wait for, a line at a time, then the answer
+                    if machine_run or validation_run:  # what a busy machine makes the request wait for, a line at a time, then the answer
                         result, shown = {}, None
                         for line in response:
                             result = json.loads(line)
                             if result.keys() == {"waiting"} and result["waiting"] != shown:
                                 shown = result["waiting"]
                                 print(f"[altitude] {shown}", file=sys.stderr, flush=True)
+                        if "unit" not in result and result.get("error"):
+                            sys.exit(result["error"])
                         if "unit" not in result:
-                            sys.exit(result.get("error") or "alt task validate: altd ended the connection before the run's result")
+                            if machine_run:  # a restart ended the connection: ask again for this request's result
+                                raise ConnectionResetError("altd ended the connection before the command's result")
+                            sys.exit("alt task validate: altd ended the connection before the run's result")
                     else:
                         result = json.load(response)
                     if review_run and not result.get("ok"):
@@ -584,7 +591,7 @@ def main(argv=None) -> None:
                               + (f"; results {result['results']}; commit {result['commit']} tree {result['tree']}; "
                                  f"{result['host']}; {result['isolation']}" if validation_run else "")
                               + ("; " + ", ".join(str(result["simulator"].get(key)) for key in (
-                                  "device", "runtime", "safari", "xcode", "screenshot") if result["simulator"].get(key))
+                                  "device", "runtime", "safari", "xcode", "screenshot", "capture") if result["simulator"].get(key))
                                  if validation_run and result.get("simulator") else ""))
                         # Only a command that exited 0 and whose run ended cleanly is a success.
                         code = 124 if result["timed_out"] else result["exit"] if ended == "exit" else 1
@@ -662,7 +669,7 @@ def main(argv=None) -> None:
             if isinstance(voice_request, dict):
                 voice_request = {k: "removed speech service" if isinstance(v, dict) else v for k, v in voice_request.items()}
             out({"wip": config.machine_wip(), "override": config.machine_settings().get("wip"),
-                 "default": config.WIP_PER_MACHINE,
+                 "default": config.WIP_PER_MACHINE, "machine_runs": config.MACHINE_RUNS,
                  "request": S.read_json(config.ROOT / "wip-request.json", None),
                  "voice": config.voice_setting(),
                  "voice_request": voice_request,
@@ -845,7 +852,8 @@ def main(argv=None) -> None:
             if len(words) > 1:
                 sys.exit("alt task reply: give one text or -, optionally after this task's slug")
             args.text = words[0] if words else "-"
-            out(T.message(p, slug, "l2", _stdin_or_file(args), by="l2", expected_attempt=int(attempt)))
+            out(T.message(p, slug, "l2", _stdin_or_file(args), by="l2", expected_attempt=int(attempt),
+                          capture_run=args.capture))
         elif tc in ("show", "status"):
             from altitude import status
             slug = args.slug or os.environ.get("ALTITUDE_TASK")

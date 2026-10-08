@@ -16,26 +16,28 @@ check-web:
 	cd web && $(TIME) pnpm ui:shell
 web:            ## build the SPA into web/dist (supported Node and pnpm on PATH)
 	cd web && pnpm install --frozen-lockfile && pnpm build
-ui:             ## isolated headless browser walkthroughs at phone and desktop widths (build first)
-	cd web && pnpm ui $(UI_ARGS)
+ui:             ## isolated headless browser walkthroughs at phone and desktop widths (build first; CAPTURE=1 with UI_ARGS=spec keeps GIFs in web/ui-artifacts/captures)
+	$(if $(CAPTURE),$(if $(UI_ARGS),,$(error CAPTURE=1 records only the journeys UI_ARGS selects)))
+	cd web && $(if $(CAPTURE),ALTITUDE_UI_CAPTURE=ui-artifacts/captures) pnpm ui $(UI_ARGS)
 ui-shell:       ## fictional project/draft/clipboard recovery lane in Chromium headless shell (build first)
 	cd web && pnpm ui:shell $(UI_ARGS)
-ui-validate:    ## disposable candidate fictional browser checks; invoke with alt task validate -- make ui-validate [UI_ARGS=spec]
-	python3 scripts/validate_ui.py $(UI_ARGS)
-ui-ios:         ## opt-in emulated iPhone walkthroughs in desktop WebKit, outside make check (build first)
-	cd web && pnpm ui:ios $(UI_ARGS)
-ui-simulator:   ## opt-in phone walkthrough in iOS Safari on a disposable Simulator iPhone (macOS, [RESULTS=dir]); inside a task, through the validation runner
+ui-validate:    ## disposable candidate fictional browser checks; invoke with alt task validate -- make ui-validate [UI_ARGS=spec [CAPTURE=1]]
+	python3 scripts/validate_ui.py $(if $(CAPTURE),--capture) $(UI_ARGS)
+ui-ios:         ## opt-in emulated iPhone walkthroughs in desktop WebKit, outside make check (build first; CAPTURE=1 with UI_ARGS=spec keeps GIFs in web/ui-artifacts/ios/captures)
+	$(if $(CAPTURE),$(if $(UI_ARGS),,$(error CAPTURE=1 records only the journeys UI_ARGS selects)))
+	cd web && $(if $(CAPTURE),ALTITUDE_UI_CAPTURE=ui-artifacts/ios/captures) pnpm ui:ios $(UI_ARGS)
+ui-simulator:   ## opt-in phone walkthrough in iOS Safari on a disposable Simulator iPhone (macOS, [RESULTS=dir] [CAPTURE=1]); inside a task, through the validation runner
 ifdef ALTITUDE_TASK
-	alt task validate --simulator -- sh -c 'make web && make ui-simulator'
+	alt task validate --simulator $(if $(CAPTURE),--capture) -- sh -c 'make web && make ui-simulator'
 else
 	python3 scripts/ios_simulator.py $(RESULTS)
 endif
-installation-vm: ## installation lifecycle, install.sh bootstrap and reboot in a throwaway KVM VM (RESULTS=dir [SOURCE=ref] [BASELINE=published tag [RECOVERY=1]]); inside a task, through the validation runner
+installation-vm: ## installation lifecycle, install.sh bootstrap and reboot in a throwaway KVM VM (RESULTS=dir [SOURCE=ref] [BASELINE=published tag [RECOVERY=1]] [CAPTURE=1]); inside a task, through the validation runner
 ifdef ALTITUDE_TASK
-	alt task validate --kvm -- make installation-vm RESULTS=/results SOURCE="$(or $(SOURCE),HEAD)" $(if $(BASELINE),BASELINE="$(BASELINE)") $(if $(RECOVERY),RECOVERY=1)
+	alt task validate --kvm -- make installation-vm RESULTS=/results SOURCE="$(or $(SOURCE),HEAD)" $(if $(BASELINE),BASELINE="$(BASELINE)") $(if $(RECOVERY),RECOVERY=1) $(if $(CAPTURE),CAPTURE=1)
 else
 	$(if $(RESULTS),,$(error Set RESULTS to a directory for the evidence))
-	python3 scripts/installation_vm.py "$(RESULTS)" --source "$(or $(SOURCE),HEAD)" $(if $(BASELINE),--baseline-release "$(BASELINE)") $(if $(RECOVERY),--recovery)
+	python3 scripts/installation_vm.py "$(RESULTS)" --source "$(or $(SOURCE),HEAD)" $(if $(BASELINE),--baseline-release "$(BASELINE)") $(if $(RECOVERY),--recovery) $(if $(CAPTURE),--capture)
 endif
 installation-mac: ## installation lifecycle on this Mac under a throwaway HOME and LaunchAgent label: install.sh, update detection, alt update, the Update button, failed-update recovery, uninstall (RESULTS=dir [SOURCE=ref]); outside the worker sandbox, inside a task with alt task run
 	$(if $(RESULTS),,$(error Set RESULTS to a directory for the evidence))

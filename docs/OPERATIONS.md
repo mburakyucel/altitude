@@ -277,8 +277,9 @@ and runtime-state recovery. Never reset the deployment checkout to a release tag
 
 Ordinary development and code agents must not start, stop, mask, unmask, or restart the service.
 Source-deployed Altitude activates merged backend and web changes itself. The regular thirty-second tick discovers
-merges even while their workers run. A failed fetch of `origin/main` is logged and retried on the next
-tick, and becomes a `self-deploy` system fault only after five minutes without a successful fetch.
+merges even while their workers run. A failed fetch of `origin/main`, or a Git call that outlives its
+time limit on a busy host, is logged and retried on the next tick, and becomes a system fault only after
+the same step has failed for five minutes without a success.
 Other self-deploy refusals fault immediately. A self-deploy fast-forward marks activation
 pending for loaded backend paths (`altitude/`, `bin/`, `systemd/`) or tracked web build inputs
 (`web/src/`, `web/design/tokens.css`, `web/index.html`, `web/package.json`, `web/pnpm-lock.yaml`,

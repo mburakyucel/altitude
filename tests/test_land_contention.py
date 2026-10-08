@@ -10,6 +10,7 @@ import os
 import shutil
 import signal
 import time
+import types
 from pathlib import Path
 from unittest import mock
 
@@ -46,6 +47,12 @@ def run_owner(project, slug, worktree, fixture, output, options):
     land._note = note
     land.LAND_WAIT_TIMEOUT = options.pop('lock_timeout', land.LAND_WAIT_TIMEOUT)
     land.CHECK_POLL_SECONDS = .05
+    scale = options.pop('clock_scale', None)
+    if scale:
+        # Landing's own clock runs `scale` times faster, so an hour-long bound fits in seconds.
+        origin = time.monotonic()
+        land.time = types.SimpleNamespace(monotonic=lambda: origin + (time.monotonic() - origin) * scale,
+                                          sleep=lambda seconds: time.sleep(seconds / scale))
     if options.pop('required_check', False):
         (fixture / 'required-pr-check').touch()
         (fixture / 'hosted-barrier').touch()
@@ -252,6 +259,35 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
                              and 'waiting for owner assessment' in (output / 'notes').read_text(),
                              'explicit owner reassessment wait')
         self.assertTrue(process.is_alive())
+
+    def test_merging_owner_keeps_turn_through_a_check_longer_than_600_seconds(self):
+        # PR #718: a 600-second CI wait released an approved candidate's turn before its fresh check finished.
+        scale = 300
+        self.ship_check_workflow()
+        first_fixture, second_fixture = self.owners['first'][1], self.owners['second'][1]
+        first = self.start('first', required_check=True, wait=None, clock_scale=scale)
+        self.checked('first')
+        (first_fixture / 'checks.json').write_text('[{"bucket": "pending"}]')
+        second = self.start('second', required_check=True, wait=None)
+        self.waiting(second)
+        self.release('first')
+        self.await_condition(lambda: 'PR checks pending' in (first[1] / 'notes').read_text(), 'pending check')
+        self.assertIn('polling for up to', (first[1] / 'notes').read_text())
+        time.sleep(900 / scale)  # Past the old 600-second default on landing's clock, within its hour.
+        self.assertTrue(first[0].is_alive())
+        self.assertFalse((second_fixture / 'log.jsonl').exists())
+        self.assertNotIn('acquired', (second[1] / 'notes').read_text())
+        (first_fixture / 'checks.json').write_text('[{"bucket": "pass"}]')
+        result = self.merged('first', self.finish(first))
+        self.assertEqual(result['checks'], 'pass')
+        notes = (first[1] / 'notes').read_text()
+        self.assertEqual((notes.count('pushed head'), notes.count('integrating current')), (1, 0))
+        self.release('second')
+        second_result = self.merged('second', self.finish(second))
+        notes = (second[1] / 'notes').read_text()
+        self.assertEqual((notes.count('integrating current'), notes.count('pushed head')), (1, 1))
+        first_merge = json.loads((first_fixture / 'pr.json').read_text())['mergeCommit']['oid']
+        self.assertEqual(git('merge-base', first_merge, second_result['head'], cwd=self.repo).strip(), first_merge)
 
     def test_reviewed_waiter_reassesses_integrated_head_without_losing_turn(self):
         self.ship_check_workflow()

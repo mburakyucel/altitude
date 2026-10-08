@@ -339,7 +339,7 @@ acceptance. Loaded history has proportional DOM/memory cost; recent-first loadin
 
 `alt task validate -- make ui-validate` repeats the full fictional phone/desktop browser
 suite against the task's committed candidate. `UI_ARGS=project-menu.pw.ts` selects a focused
-journey. The command installs frozen dependencies and locked Chromium into the disposable run,
+journey, and `CAPTURE=1` with it keeps each selected journey as a [capture](#validation-captures). The command installs frozen dependencies and locked Chromium into the disposable run,
 builds the web app, then runs a finite blank/local-fictional full-Chromium preflight before journeys.
 It keeps stage logs, browser/version/executable digest, effective shared launch options, reports
 and named attachments in `VALIDATION_RESULTS`; the daemon retains them privately on the task.
@@ -407,8 +407,15 @@ alt task validate -- python3 -m unittest tests.test_container_workflow tests.tes
   run holds the machine, when that run's limit ends and how many requests are ahead. Every check is
   repeated at admission. altd watches each request's connection: a client that stops, is interrupted
   or loses its connection leaves the line, or, once admitted, has its run stopped at once and recorded
-  as `stopped`, which frees the machine for the next request. `alt task run` does not share this slot;
-  it is refused only while a command or run of its own task is unfinished.
+  as `stopped`, which frees the machine for the next request.
+- **Machine runs.** Commands under an operator grant (`alt task run`) wait in a line of their own,
+  apart from this slot: at most a quarter of the computer's cores run at once (at least one; two on
+  an 8-core Mac), and `alt machine show` reports the number as `machine_runs`. A command beyond
+  that waits in arrival order for up to 30 minutes, printing the commands that hold the places,
+  when their limits end and how many requests are ahead. A client that stops or loses its connection
+  leaves the line, or has its command stopped with that reason recorded, which frees its place.
+  A command still running when altd restarts keeps a place until it ends. A task still runs one
+  command at a time.
 - **Storage.** The image, Podman's storage, the cloud-image cache and each run's area live in
   `~/.altitude-validation`, beside Altitude's home rather than in it. Workers can write Altitude's
   home, and a path a worker replaced must not become a mount or a place the run writes.
@@ -512,7 +519,9 @@ make ui-simulator   # inside a task: alt task validate --simulator -- sh -c 'mak
   area, outside the folders the run can write, and boots it headless. It picks the newest available iOS
   runtime and an iPhone of the newest generation it supports, the shortest-named model, by detection. The
   operator's own Simulator devices are never listed or touched. A boot takes about 35 seconds and the
-  phone's data about 3 GB, inside the runner's 20 GiB free-disk check.
+  phone's data about 3 GB, inside the runner's 20 GiB free-disk check. Creating the phone, booting it
+  and reading its inspector socket share one five-minute limit, so a step that a busy host slows can
+  use the time the others left.
 - **Relay.** The run still cannot reach the Simulator service. It reaches the phone's Safari through a
   Unix socket in its own `TMPDIR`, named by `SIMULATOR_INSPECTOR`. altd relays Safari's Web Inspector
   protocol (the binary-plist protocol Safari's Develop menu uses) and filters it: only Safari's web pages
@@ -535,21 +544,55 @@ make ui-simulator   # inside a task: alt task validate --simulator -- sh -c 'mak
   ends the run as `cleanup failed` and keeps new runs refused until a later request or start removes
   it. A phone that does not start is removed and the request is refused with Simulator's error, before
   any run is recorded.
+- **Capture.** With `--capture` (`make ui-simulator CAPTURE=1`), altd also records the screen from just
+  before the command starts and keeps it as `validation/<n>.simulator.gif`; the recording stops when the
+  command ends, forcefully after 10 seconds (see [validation captures](#validation-captures)).
 - **Record.** The run's record and status line name the Xcode version, the iOS runtime and build,
-  the iPhone model, Safari's version and the screenshot. On Linux, or on a Mac without Xcode or an iOS
+  the iPhone model, Safari's version, the screenshot and any capture. On Linux, or on a Mac without Xcode or an iOS
   Simulator runtime, `--simulator` is refused with the reason.
 
 `scripts/ios_simulator.py` is the walkthrough: it serves the built app with the fixture engines and
 fictional data of `web/e2e/acceptance-service.py` on loopback, pairs Safari as the fixture's device,
-opens a project's work in the phone layout, taps into a task and goes Back. It keeps a page snapshot
-per step (`01-work.png`, `02-task.png`, `03-back.png`), Safari's console (`console.log`), the fixture
-service's log, the steps and the browser's user agent, viewport and speech-recognition support
-(`walkthrough.json`) in `$VALIDATION_RESULTS/simulator`. A step that does not reach its state,
-horizontal overflow, a console error or a fixture service that does not end cleanly fails it.
+opens a project's work in the phone layout, taps into a task and goes Back, then walks voice input's
+restart after the X (below). It then checks what Add to Home Screen takes from the app: at the root, project and task addresses Safari finds the title
+Altitude, the approved Climb `apple-touch-icon.png` (byte for byte, decoded at 180×180) and the
+manifest's name and standalone display. Last, it opens the [device setup page](SETUP.md#share-with-a-desktop-or-phone)
+for a fictional CA, as `alt tls-share` offers it, checks the CA's name and SHA-256 there and taps
+**Download the profile**; Safari must fetch the profile, which the page sends in full. Each address
+and file must answer without an error or a redirect. It keeps a page snapshot per step
+(`01-work.png`, `02-task.png`, `03-back.png`, `04-icon.png`, `05-setup.png`), Safari's console
+(`console.log`), the fixture service's log, the steps and the browser's user agent, viewport and
+speech-recognition support (`walkthrough.json`) in `$VALIDATION_RESULTS/simulator`. A step that does
+not reach its state, horizontal overflow, a console error or a fixture service that does not end
+cleanly fails it. The walkthrough leaves the app only between its requests, since Safari logs a
+request cut off by leaving as a console error. Whether Safari accepts the profile shows only in the
+run's final screenshot, as its own prompt to allow it; `tests/test_tls.py` checks the profile's contents.
+
+The voice journey walks the restart after the X of [issue
+698](https://github.com/mburakyucel/altitude/issues/698) with browser recognition. It starts voice
+troubleshooting diagnostics in Settings; then in the project's composer and a task's, without
+reloading, it types a draft and three times taps the microphone, receives words and cancels with the
+X, with a snapshot per state (`voice-1-` to `voice-4-`). Each round passes when the words and a
+moving waveform appear (a tall bar, then a changed frame from a tone that swells twice a second),
+the X restores the typed draft, focus stays on the microphone and the viewport keeps its height, and
+the recognizer, stream and waveform audio context are released. Focusing the field afterwards must
+shrink the viewport for the keyboard, so these checks can see one (`dictation.json`). The diagnostic
+report (`voice-report.json`) must show six captures, each with a waveform signal in at least two
+samples, and none of the draft's or dictated words. A round that stops keeps the page state
+(`dictation-failure.json`) and the report so far.
+
+Simulator Safari's microphone request and speech recognizer stop at native permission dialogs that
+the relay cannot answer, and granting them would record this Mac's room and send it to Apple. The
+journey therefore uses a tone from Safari's own audio engine as the microphone and a scripted
+recognizer. It establishes the composer's capture lifecycle, waveform graph, timers, focus and
+keyboard behavior in iOS Safari, but not native audio capture, the native recognizer or spoken
+words. Those remain a physical-iPhone observation with the diagnostics on.
 
 Taps are page events marked as user gestures, not touches on the screen. The lane establishes iOS
 Safari's rendering, layout and WebKit APIs in a phone-layout journey on the Simulator's iOS version; it
-is not physical-iPhone acceptance (see [device evidence](#device-evidence)). The relay depends on
+is not physical-iPhone acceptance (see [device evidence](#device-evidence)). Safari's own controls
+and other apps stay out of its reach: it cannot allow, install or trust a profile, open Settings,
+add the app to the Home Screen or open it from there. The relay depends on
 Safari's unpublished inspector protocol, so an Xcode update can break it; the run then fails with the
 versions recorded. `tests/test_simulator.py` covers the relay's filtering, the device lifecycle and
 its recovery with a fixture `xcrun` and inspector; a real phone is recorded evidence from a Mac.
@@ -607,6 +650,41 @@ Named states cover loading, queued controls, interruption pending, delivered and
 denied and unconfirmed requests, unavailable delivery and waiting for system work. Unit and Python
 fixtures additionally cover selected-message ordering, concurrent pickup, question/fault supersession,
 Stop recovery and engine job termination. The emulated iPhone lane remains separate evidence.
+
+## Validation captures
+
+A lane records nothing unless asked. With `CAPTURE=1` it keeps a few small looping GIFs with that run's
+evidence, so the operator can watch what it did from the task conversation:
+
+| Lane | Request | Capture |
+| --- | --- | --- |
+| iOS Simulator | `make ui-simulator CAPTURE=1` (`alt task validate --simulator --capture`) | The iPhone's whole screen from just before the command starts to its end, recorded by altd with `simctl io recordVideo`, as `validation/<n>.simulator.gif` beside the screenshot |
+| VM installation | `make installation-vm CAPTURE=1` (`--capture`) | An accelerated replay of the lane's progress lines and harness logs, each line at the time it arrived and led by its real elapsed time, in an 80×24 terminal that fills and then clears like a pager, under a top line naming the commit and current step, as `captures/installation-vm.gif` in the results |
+| Browser walkthroughs | `make ui-validate UI_ARGS=spec.pw.ts CAPTURE=1`; also `make ui` / `make ui-ios` | Playwright's video of each selected journey, one GIF per journey and viewport, in the results' `captures/` (`web/ui-artifacts/captures/` or `web/ui-artifacts/ios/captures/` outside the runner) with `captures.json` naming each outcome |
+
+The browser lanes refuse `CAPTURE=1` without `UI_ARGS`, so a whole-suite run never records hundreds of
+journeys, and `make check` never records. `altitude/capture.py` makes every capture the same way: 4 frames a
+second, unchanged frames dropped, a still screen held at most 2 s, at most 60 s of playback (a longer run is
+sped up evenly), 64 colours without dithering, phone captures 390 px wide and desktop ones 800 px. A capture
+is at most 1 MiB, 1024 px a side and 300 frames, and a run keeps at most 12; one over budget is re-encoded
+once at three-quarter size and otherwise not kept. Measured phone and desktop journeys are 0.3–0.6 MiB for
+about ten seconds.
+
+`ffmpeg` is an optional capability found on `PATH` (altd's own for the Simulator, the run's for the other
+lanes); the validation image installs it. A capture never decides a lane: a recording, conversion or budget
+failure is the capture's own outcome (`none: ffmpeg unavailable` in the run record's `simulator.capture`,
+`vm.json`'s `capture` or `captures.json`) beside the lane's unchanged exit and evidence. Recordings and frames
+stay in the run's own area and are removed with it; Playwright's HTML report keeps each journey's WebM like
+any Playwright video, and the per-test copies are removed after conversion.
+
+`alt task reply --capture <n>` attaches run `<n>`'s captures to the owner's reply. Each is read from the task's
+own `validation/` evidence without following links and must parse as one GIF within the limits above; the
+reply keeps content-named copies in the task's `captures/` folder, at most 64 MiB per task, so later edits to
+the run folder change nothing it shows. The conversation shows **Watch capture · title** (or **Watch N
+captures**) under the reply, opening a page in a new tab where each GIF loops at its recorded size with its
+title, size and length; a missing or altered file shows **Capture unavailable** with Retry. Captures hold
+only the lanes' fictional data, never enter Git or a PR diff, and are removed or archived with the task's
+other evidence.
 
 ## Validation environments
 
@@ -912,7 +990,8 @@ through the [validation runner](#validation-runner) with KVM. The committed `SOU
 is built inside the container, results go to the task folder's `validation/<n>/`, and the cloud image
 is cached in `~/.altitude-validation/cache`. The container has no GitHub login, so `BASELINE` runs
 need the operator's own shell or a [operator grant](CLI.md#operator-grant). The runner never touches
-the host's Altitude service, trust stores or network configuration.
+the host's Altitude service, trust stores or network configuration. `CAPTURE=1` adds an accelerated replay
+of the run as `captures/installation-vm.gif` ([validation captures](#validation-captures)).
 
 ### macOS installation lane
 
@@ -989,9 +1068,10 @@ publication, CI waiting and merge across Altitude owners, including nonmerging i
 For reviewed merging candidates, CI and explicit owner reassessment share one bounded wait while
 the same process retains the repository turn. `tests/test_land_contention.py` drives real competing
 landing processes, Git and fixture reviewers through main integration, in-turn assessment, fresh
-required checks, timeout, termination, ownership loss and material-edit refusal. Proposal followed by
-implementation review reports both stale assessments together; messages during admission, hosted CI
-or local validation require explicit assessment in the same landing invocation. Invalid dispositions
+required checks (one pending for more than ten minutes on a scaled landing clock), timeout,
+termination, ownership loss and material-edit refusal. Proposal followed by implementation review
+reports both stale assessments together; messages during admission, hosted CI or local validation
+require explicit assessment in the same landing invocation. Invalid dispositions
 leave the candidate unmerged and its operator hold intact, and final validation does not restart the
 assessment deadline. `tests/test_reviews.py` checks the review identity and changed evidence in refusals.
 Original review receipts remain unchanged. Fixtures establish the application protocol, not live engine support for
