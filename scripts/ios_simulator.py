@@ -2,11 +2,12 @@
 """The phone UI in iOS Safari on a validation run's Simulator iPhone.
 
 Serves this checkout's built web app with fixture engines and fictional data on loopback, pairs the phone's Safari,
-opens a project's work in the phone layout, taps into a task and back, checks what Add to Home Screen would take from
-the app, then opens the device setup page of a fictional CA and taps Download the profile. It keeps a page snapshot at
-each step, Safari's console and the browser's versions. A step that does not reach its state, horizontal overflow, a
-console error or a profile Safari does not fetch fails the walkthrough. The run's final screenshot shows Safari's
-answer to the profile.
+opens a project's work in the phone layout, taps into a task and back, walks voice input's restart after the X (issue
+#698) with diagnostics on, checks what Add to Home Screen would take from the app, then opens the device setup page of
+a fictional CA and taps Download the profile. It keeps a page snapshot at each step, Safari's console, the browser's
+versions and the voice diagnostic report. A step that does not reach its state, horizontal overflow, a console error
+or a profile Safari does not fetch fails the walkthrough. The run's final screenshot shows Safari's answer to the
+profile.
 
 It runs inside `alt task validate --simulator` (`make ui-simulator`): altd's relay to that iPhone's Safari is the socket
 in $SIMULATOR_INSPECTOR, and nothing here reaches the Simulator service. Evidence goes to RESULTS, by default
@@ -263,7 +264,186 @@ def walkthrough(safari: Safari, url: str, device: str, results: Path) -> list[di
     state("03-back", f"{task_link} && !shown('section[aria-label=\"Task conversation\"]')",
           "the project's work again", action="shown('button[aria-label=\"Back\"]').click(); 0")
     task = safari.evaluate(f"{task_link}.getAttribute('href')")
+    steps += dictation(safari, url, work, task.split("?")[0], results)
     steps.append(home_screen(safari, url, ["/", work, task], results))
+    return steps
+
+
+#: Simulator Safari's microphone and speech recognizer stop at native permission dialogs the inspector cannot answer,
+#: and granting them would record this Mac's room. A tone from Safari's own audio engine stands in for the microphone
+#: and a scripted recognizer for the native one; the waveform graph, timers, focus and layout are iOS Safari's.
+VOICE_FIXTURES = """
+// Held, so WebKit keeps this wrapper and its stand-in instead of collecting it and offering the native request again.
+window.__voice = {recognizers: [], graphs: [], streams: [], log: [], devices: navigator.mediaDevices};
+window.SpeechRecognition = class {
+  constructor() { this.onresult = this.onerror = this.onend = null; this.ended = false; __voice.recognizers.push(this); }
+  start() { __voice.log.push(['recognizer started', Math.round(performance.now())]); this.onstart && this.onstart(); this.onaudiostart && this.onaudiostart(); }
+  stop() { setTimeout(() => this.end(), 0); }
+  abort() { setTimeout(() => this.end(), 0); }
+  end() { if (this.ended) return; this.ended = true; this.onaudioend && this.onaudioend(); this.onend && this.onend(); }
+  hear(words) { this.onresult && this.onresult({results: [{isFinal: false, 0: {transcript: words}, length: 1}]}); }
+};
+var NativeAudioContext = window.AudioContext;
+window.AudioContext = class extends NativeAudioContext {
+  constructor(...args) { super(...args); __voice.graphs.push(this); }
+};
+Object.defineProperty(__voice.devices, 'getUserMedia', {configurable: true, value: async () => {
+  if (!__voice.tone) {
+    __voice.tone = new NativeAudioContext();
+    __voice.oscillator = __voice.tone.createOscillator();
+    __voice.oscillator.start();
+  }
+  __voice.log.push(['microphone requested', __voice.tone.state, Math.round(performance.now())]);
+  const destination = __voice.tone.createMediaStreamDestination();
+  __voice.oscillator.connect(destination);
+  await __voice.tone.resume();
+  __voice.log.push(['microphone opened', __voice.tone.state, Math.round(performance.now())]);
+  __voice.streams.push(destination.stream);
+  return destination.stream;
+}});
+0
+"""
+
+#: The tallest waveform bar as a share of the canvas height: the silent minimum is a few pixels.
+LOUDEST = """(() => {
+  const canvas = shown('.composer-wave');
+  const data = canvas && canvas.height && canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+  if (!data) return 0;
+  let tallest = 0;
+  for (let x = 0; x < data.width; x++) {
+    let column = 0;
+    for (let y = 0; y < data.height; y++) if (data.data[(y * data.width + x) * 4 + 3] > 0) column++;
+    tallest = Math.max(tallest, column);
+  }
+  return tallest / canvas.height;
+})()"""
+
+
+STATE = """({phase: [...document.querySelectorAll('.composer')].map(c => c.dataset.phase),
+  hint: [...document.querySelectorAll('.composer-hint, .composer-feedback, [role="status"]')].map(e => e.textContent),
+  buttons: [...document.querySelectorAll('.composer button')].filter(b => b.getClientRects().length)
+    .map(b => (b.getAttribute('aria-label') || b.textContent) + (b.disabled ? ' (disabled)' : '')),
+  focus: document.activeElement && (document.activeElement.getAttribute('aria-label') || document.activeElement.tagName),
+  log: window.__voice && __voice.log, tone: window.__voice && __voice.tone && __voice.tone.state,
+  graphs: window.__voice && __voice.graphs.map(g => [g.state, g.currentTime]),
+  recognizers: window.__voice && __voice.recognizers.map(r => r.ended),
+  streams: window.__voice && __voice.streams.map(s => s.getTracks().map(t => t.readyState))})"""
+
+
+def dictation(safari: Safari, url: str, work: str, task: str, results: Path) -> list[dict]:
+    """Issue #698's journey with diagnostics on: dictate, cancel with the X and tap the microphone again, three times
+    in the project's composer and three in a task's, without reloading; then the diagnostic report."""
+    steps = []
+    rounds = []
+
+    def go(path: str) -> None:  # within the app, so the page's diagnostics survive
+        safari.evaluate(f"history.pushState(null, '', {json.dumps(path)}); dispatchEvent(new PopStateEvent('popstate')); 0")
+
+    def snap(name: str, what: str) -> None:
+        safari.snapshot(results / f"{name}.png")
+        steps.append({"step": name, "url": safari.evaluate("location.href"), "reached": what})
+
+    def check(expression: str, what: str, seconds: float = 20):
+        try:
+            return safari.wait(HELPERS + f"(v => v instanceof Node || v)(fits() && ({expression}))", what, seconds)
+        except TimeoutError:
+            # Where it stopped: the composer, the stand-ins' log and the audio graphs, never the draft's words.
+            (results / "dictation-failure.json").write_text(json.dumps(safari.evaluate(HELPERS + STATE), indent=2) + "\n")
+            safari.snapshot(results / "dictation-failure.png")
+            if not reporting:
+                reporting.append(True)
+                try:
+                    (results / "dictation-failure-report.json").write_text(read_report())
+                except (RuntimeError, TimeoutError) as exc:
+                    print(f"ios_simulator: no diagnostic report after the failure: {exc}", file=sys.stderr)
+            raise
+
+    def read_report() -> str:
+        go("/settings/voice")
+        check(summary, "Voice input settings again")
+        safari.evaluate(f"{summary}.parentElement.open || {summary}.click(); 0", gesture=True)
+        safari.evaluate(f"{button.format('View report')}.click(); 0", gesture=True)
+        return check("[...document.querySelectorAll('textarea')].find(t => t.value.includes('altitude-voice-diagnostic'))"
+                     "?.value", "the diagnostic report")
+
+    reporting: list = []
+    summary = "[...document.querySelectorAll('summary')].find(s => s.textContent === 'Voice troubleshooting')"
+    button = "[...document.querySelectorAll('button')].find(b => b.textContent === {!r} && b.getClientRects().length)"
+    # The installation answers browser recognition, the backend whose restart #698 reports.
+    status = safari.wait("window.__backend || (window.__saving ||= fetch('/api/voice').then(r => r.json()).then(v => "
+                         "fetch('/api/voice', {method: 'POST', headers: {'Content-Type': 'application/json'}, "
+                         "body: JSON.stringify({backend: 'browser', selection: v.selection})})).then(r => "
+                         "window.__backend = r.status), 0)", "the browser recognition setting")
+    if status != 200:
+        raise RuntimeError(f"saving browser recognition answered {status}")
+    leave(safari, url + "/settings/voice")
+    check(summary, "Voice input settings")
+    safari.evaluate(REQUESTS)  # this page's, for leaving it later
+    safari.evaluate(f"{summary}.click(); 0", gesture=True)
+    safari.evaluate(f"{button.format('Start diagnostics')}.click(); 0", gesture=True)
+    check(button.format("Stop diagnostics"), "diagnostics collecting")
+    snap("voice-1-diagnostics-on", "voice diagnostics collecting")
+    safari.evaluate(VOICE_FIXTURES)
+
+    field = "shown('textarea.composer-field')"
+    for where, path, draft in (("project", work, "Typed project draft"), ("task", task, "Typed task draft")):
+        go(path)
+        check(f"{field} && !{field}.readOnly && shown('button[aria-label=\"Start voice input\"]')", f"the {where} composer")
+        safari.evaluate(HELPERS + f"var f = {field}; Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "
+                        f"'value').set.call(f, {json.dumps(draft)}); f.dispatchEvent(new Event('input', {{bubbles: true}})); "
+                        f"f.blur(); 0")
+        check(f"{field}.value === {json.dumps(draft)} && document.activeElement !== {field}", f"the typed {where} draft")
+        for turn in range(1, 4):
+            words = f"{where} words {turn}"
+            capture = safari.evaluate("__voice.recognizers.length")
+            before = safari.evaluate("visualViewport.height")
+            safari.evaluate(HELPERS + "shown('button[aria-label=\"Start voice input\"]').click(); 0", gesture=True)
+            check(f"shown('.composer[data-phase=\"listening\"]') && shown('.composer-wave') && "
+                  f"__voice.recognizers.length === {capture + 1}", f"{where} listening, round {turn}")
+            safari.evaluate(f"__voice.recognizers[{capture}].hear({json.dumps(words)}); 0")
+            check(f"{field}.value === {json.dumps(f'{draft} {words}')}", f"{where} words, round {turn}")
+            loudest = check(f"{LOUDEST} > 0.5 && {LOUDEST}", f"{where} waveform, round {turn}", seconds=10)
+            time.sleep(1.2)  # a diagnostic waveform sample a second
+            snap(f"voice-{2 if where == 'project' else 3}-{where}-{turn}-listening", f"{where} words and waveform, round {turn}")
+            safari.evaluate(HELPERS + "shown('button[aria-label=\"Cancel voice input\"]').click(); 0", gesture=True)
+            check(f"shown('button[aria-label=\"Start voice input\"]') && !shown('button[aria-label=\"Cancel voice input\"]') "
+                  f"&& !shown('.composer-wave') && {field}.value === {json.dumps(draft)} && !{field}.readOnly",
+                  f"{where} X keeps the draft, round {turn}")
+            ended = check(f"__voice.recognizers[{capture}].ended && __voice.streams[{capture}].getTracks().every(t => "
+                          f"t.readyState === 'ended') && __voice.graphs[{capture}].state === 'closed' && "
+                          f"__voice.graphs[{capture}].state", f"{where} capture released, round {turn}")
+            focus = safari.evaluate("document.activeElement && (document.activeElement.getAttribute('aria-label') || "
+                                    "document.activeElement.tagName)")
+            if focus != "Start voice input":
+                raise RuntimeError(f"{where} X, round {turn}: focus went to {focus}, not the microphone")
+            after = safari.evaluate("visualViewport.height")
+            if after < before:
+                raise RuntimeError(f"{where} X, round {turn}: the viewport shrank from {before} to {after}")
+            snap(f"voice-{2 if where == 'project' else 3}-{where}-{turn}-cancelled", f"{where} X, round {turn}")
+            rounds.append({"composer": where, "round": turn, "waveform": round(loudest, 2), "graph": ended,
+                           "focus": focus, "viewport": [before, after]})
+            safari.evaluate("document.activeElement && document.activeElement.blur(); 0")
+
+    # Whether this phone shows a keyboard the viewport reports: focus the field as a tap does.
+    resting = safari.evaluate("visualViewport.height")
+    safari.evaluate(HELPERS + f"{field}.focus(); 0", gesture=True)
+    time.sleep(1)
+    keyboard = {"resting": resting, "field focused": safari.evaluate("visualViewport.height")}
+    safari.evaluate("document.activeElement.blur(); 0")
+
+    report = read_report()
+    snap("voice-4-diagnostic-report", "the voice diagnostic report")
+    (results / "voice-report.json").write_text(report)
+    if "Typed" in report or "words" in report:
+        raise RuntimeError("the diagnostic report contains draft or dictated text")
+    events = json.loads(report)["events"]
+    listening = sum(e["event"] == "capture.listening" for e in events)
+    heard = {e.get("source") for e in events if e["event"] == "waveform.sample" and e.get("signal")}
+    (results / "dictation.json").write_text(json.dumps({"rounds": rounds, "keyboard": keyboard,
+                                                        "captures": listening, "graphs with signal": len(heard)},
+                                                       indent=2) + "\n")
+    if listening != 6 or len(heard) != 6:
+        raise RuntimeError(f"the report shows {listening} captures and {len(heard)} waveform graphs with signal, not 6")
     return steps
 
 

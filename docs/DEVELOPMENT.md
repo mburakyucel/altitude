@@ -540,8 +540,8 @@ make ui-simulator   # inside a task: alt task validate --simulator -- sh -c 'mak
 
 `scripts/ios_simulator.py` is the walkthrough: it serves the built app with the fixture engines and
 fictional data of `web/e2e/acceptance-service.py` on loopback, pairs Safari as the fixture's device,
-opens a project's work in the phone layout, taps into a task and goes Back. It then checks what Add
-to Home Screen takes from the app: at the root, project and task addresses Safari finds the title
+opens a project's work in the phone layout, taps into a task and goes Back, then walks voice input's
+restart after the X (below). It then checks what Add to Home Screen takes from the app: at the root, project and task addresses Safari finds the title
 Altitude, the approved Climb `apple-touch-icon.png` (byte for byte, decoded at 180×180) and the
 manifest's name and standalone display. Last, it opens the [device setup page](SETUP.md#share-with-a-desktop-or-phone)
 for a fictional CA, as `alt tls-share` offers it, checks the CA's name and SHA-256 there and taps
@@ -554,6 +554,25 @@ not reach its state, horizontal overflow, a console error or a fixture service t
 cleanly fails it. The walkthrough leaves the app only between its requests, since Safari logs a
 request cut off by leaving as a console error. Whether Safari accepts the profile shows only in the
 run's final screenshot, as its own prompt to allow it; `tests/test_tls.py` checks the profile's contents.
+
+The voice journey walks the restart after the X of [issue
+698](https://github.com/mburakyucel/altitude/issues/698) with browser recognition. It starts voice
+troubleshooting diagnostics in Settings; then in the project's composer and a task's, without
+reloading, it types a draft and three times taps the microphone, receives words and cancels with the
+X, with a snapshot per state (`voice-1-` to `voice-4-`). Each round passes when the words and a
+moving waveform appear, the X restores the typed draft, focus stays on the microphone and the
+viewport keeps its height, and the recognizer, stream and waveform audio context are released.
+Focusing the field afterwards shows that the viewport does shrink for the keyboard
+(`dictation.json`). The diagnostic report (`voice-report.json`) must show six captures, each with a
+waveform signal, and none of the draft's or dictated words. A round that stops keeps the page state
+(`dictation-failure.json`) and the report so far.
+
+Simulator Safari's microphone request and speech recognizer stop at native permission dialogs that
+the relay cannot answer, and granting them would record this Mac's room and send it to Apple. The
+journey therefore uses a tone from Safari's own audio engine as the microphone and a scripted
+recognizer. It establishes the composer's capture lifecycle, waveform graph, timers, focus and
+keyboard behavior in iOS Safari, but not native audio capture, the native recognizer or spoken
+words. Those remain a physical-iPhone observation with the diagnostics on.
 
 Taps are page events marked as user gestures, not touches on the screen. The lane establishes iOS
 Safari's rendering, layout and WebKit APIs in a phone-layout journey on the Simulator's iOS version; it
