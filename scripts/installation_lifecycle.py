@@ -813,7 +813,8 @@ class MacLifecycle(Lifecycle):
             self.doctor("installed", before)
             agent = self.home / f"Library/LaunchAgents/{self.label}.plist"
             loaded = self.launchd(self.label)
-            assert agent.is_file() and loaded and f"path = {agent}" in loaded, loaded
+            # launchd names the definition by its resolved path (/private/var for the temporary folder).
+            assert agent.is_file() and loaded and f"path = {agent.resolve()}" in loaded, loaded
             saved = json.loads(self.settings.read_text())["environment"]
             assert (saved["HTTPS_PROXY"], saved["SSL_CERT_FILE"]) == (server.proxy, bundle), saved
             sentinels = [self.home / ".altitude/fictional/history.jsonl",
