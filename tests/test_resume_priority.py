@@ -240,6 +240,16 @@ class TestResumePriority(AltitudeCase):
         self.assertIn("usage window exhausted", held["held"])
         self.assertEqual(len(self.fake.calls), 2)
 
+        # A sign-in rejection recorded while that request waits is retried by the repeated Resume.
+        for path in config.MONITOR_DIR.glob("route-unavailable-*.json"):
+            path.unlink()  # the usage window has reset
+        route.note_rejection({"engine": engine}, engines.rejection(engine, {"error": "authentication_error"}))
+        self.assertIn("sign in, then Retry or Resume", dispatch.run_task_operation(self.project, slug)["held"])
+        repeat = dispatch.request_task_operation(self.project, slug, "resume", "Retry", actor=config.OPERATOR_ACTOR)
+        self.assertTrue(repeat["idempotent"])
+        self.assertEqual(dispatch.run_task_operation(self.project, slug)["state"], "running")
+        self.assertEqual(len(self.fake.calls), 3)
+
     def test_setup_contention_does_not_reserve_capacity_in_any_project_tick_order(self):
         original = self.launch("Setup held owner")
         original["hold_merge"] = "Keep review hold"

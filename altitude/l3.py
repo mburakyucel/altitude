@@ -1216,13 +1216,15 @@ def _handoff(history: list[dict], engine: str, since: str | None, *, fresh: bool
             + "\n[altitude] End historical context.\n\n")
 
 
-def _select(project: str, engine: str | None = None, *, model: str | None = None, excluded: tuple = ()) -> dict:
+def _select(project: str, engine: str | None = None, *, model: str | None = None, excluded: tuple = (),
+            retry_sign_in: bool = False) -> dict:
     """Shared Auto policy or an explicit turn/project pin; session observation is never a pin."""
     proj, inf = config.project(project), info(project)
     current = inf.get("engine_last")
     session = (inf.get("sessions") or {}).get(current, {})
     return route.pick_engine("l3", forced=engine, model=model, project=proj,
-                             current=current, current_model=session.get("launch_model"), excluded=excluded)
+                             current=current, current_model=session.get("launch_model"), excluded=excluded,
+                             retry_sign_in=retry_sign_in)
 
 
 def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None = None,
@@ -1249,8 +1251,11 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
         claimed = getattr(_turn_local, "claimed", None)
         claimed = claimed if claimed and claimed["turn"] is active_turn else None
         choice = claimed["choice"] if claimed else _select(project, requested, model=model)
-        if trigger == "chat" and not choice.get("engine") and route.retry_sign_in():
-            choice = _select(project, requested, model=model)  # the operator's message retries after signing in
+        if trigger == "chat" and not choice.get("engine"):
+            # The operator's message retries the engine it would use once they have signed in again.
+            retry = _select(project, requested, model=model, retry_sign_in=True)
+            if retry.get("engine") and route.retry_sign_in(retry["engine"]):
+                choice = retry
         if trigger == "report-landed" and not choice.get("engine"):
             # A pending report waits for an available L3; its retry owns delivery, so the chat stays quiet.
             return {"completed": False, "held": True, "error": f"engine hold: {choice['why']}", "turn_id": turn_id}
