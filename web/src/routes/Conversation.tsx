@@ -3,16 +3,16 @@ import type { ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { imageSendRefused, sendImageChat, streamChat, useChatDequeue } from "../data/api";
-import type { ChatMessage, ChatSent, ChatView, EngineReadout, ProjectView, TaskRow } from "../data/api";
+import { imageSendRefused, sendImageChat, streamChat, useChatDequeue, useSendNow } from "../data/api";
+import { SendNow } from "../components/SendNow";
+import type { ChatMessage, ChatSent, ChatView, ProjectView, TaskRow } from "../data/api";
 import { ProseScope } from "../components/Prose";
 import { ProseTerminal } from "../components/CodeBlock";
 import { requestCommand } from "../data/terminalCommand";
 import { when } from "../data/observed";
 import { Bubble, DayDivider, Reply, Typing, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
-import { L3EngineSelect } from "../components/L3EngineSelect";
-import { useViewport } from "../shell/breakpoints";
+import { L3ModelButton } from "../components/Models";
 import type { ImageSubmission } from "../components/ImageDraft";
 import { MessageImages, PendingImages } from "../components/MessageImages";
 import type { ImagePreview } from "../components/MessageImages";
@@ -52,6 +52,12 @@ export function turnsOf(history: ChatMessage[]): Turn[] {
     if (row.role === "system") {
       const turn = fresh(id || `row-${index}`, row, true);
       turn.user = row;
+      const suppliedTo = row.project_message?.supplied_turn_id;
+      const receiving = suppliedTo ? byId.get(suppliedTo) : undefined;
+      if (receiving) {
+        turns.pop();
+        turns.splice(turns.indexOf(receiving), 0, turn);
+      }
       open = null;
       return;
     }
@@ -80,9 +86,10 @@ function systemTurn(turn: Turn, project: string, activeId: string | null): Syste
     reply: turn.assistant?.text ?? null,
     error: turn.error?.text ?? null,
     inProgress: !turn.assistant && !turn.error && turn.id === activeId,
-    slug: row ? subjectOf(row, project) : null,
+    slug: row && !row.project_message ? subjectOf(row, project) : null,
     fyi: turn.fyi,
-    headsUp: turn.fyi && turn.trigger === "fyi" && turn.user?.heads_up === true,
+    headsUp: turn.fyi && (turn.trigger === "project-message-error" || (turn.trigger === "fyi" && turn.user?.heads_up === true)),
+    projectMessage: row?.project_message,
   };
 }
 
@@ -109,7 +116,7 @@ export function itemsOf(turns: Turn[], project: string, activeId: string | null)
       continue;
     }
     const system = systemTurn(turn, project, activeId);
-    if (system.inProgress || system.headsUp) {
+    if (system.inProgress || system.headsUp || system.projectMessage) {
       flush();
       items.push({ kind: "system", turn: system });
     } else run.push(system);
@@ -163,12 +170,10 @@ export default function Conversation({
   name,
   chat,
   project,
-  engines,
 }: {
   name: string;
   chat: UseQueryResult<ChatView>;
   project: UseQueryResult<ProjectView>;
-  engines: EngineReadout[];
 }) {
   const queryClient = useQueryClient();
   const scroller = useRef<HTMLDivElement>(null);
@@ -182,7 +187,7 @@ export default function Conversation({
   }, [name, queryClient]);
   const [local, setLocal] = useState<Local | null>(null);
   const dequeue = useChatDequeue(name);
-  const { phone } = useViewport();
+  const sendNow = useSendNow(name);
   const navigate = useNavigate();
   const location = useLocation();
   // A `run` block in project chat opens the project folder's terminal with its command typed (SPEC.md §3.3).
@@ -283,6 +288,7 @@ export default function Conversation({
 
   const neverStarted = project.isSuccess && !project.data.l3?.session_id && view && view.history.length === 0 && !view.active;
   const queued = view?.queued ?? [];
+  const queuePositions = new Map(queued.filter(row => row.trigger !== "project-message").map((row, index) => [row.id, index]));
   const busy = Boolean(view?.busy || view?.active || (local && !local.done));
   const empty = Boolean(view && view.history.length === 0 && !view.active && !local && queued.length === 0);
 
@@ -396,13 +402,23 @@ export default function Conversation({
           {rows}
           {queued.length > 0 ? (
             <ul className="queued" aria-label="Queued messages">
-              {queued.map((row, index) => (
+              {queued.map((row) => (
                 <li key={row.id} className="queued-row">
-                  <div className="queued-text"><span>{row.text}</span><MessageImages project={name} images={row.images} /><span className="queued-status text-muted">{index === 0 ? "Queued · runs next" : `Queued · ${index + 1} in line`}</span></div>
+                  {row.project_message ? (
+                    <SystemLine project={name} titles={titles} turn={{ id: row.id, at: row.at ?? null,
+                      trigger: "project-message", prompt: row.text, reply: null, error: null,
+                      inProgress: false, slug: null, fyi: true, headsUp: false, projectMessage: row.project_message }} />
+                  ) : <div className="queued-text"><span>{row.text}</span><MessageImages project={name} images={row.images} /><span className="queued-status text-muted">{row.send_now ? "Sending now" : queuePositions.get(row.id) === 0 ? "Queued · runs next" : `Queued · ${(queuePositions.get(row.id) ?? 0) + 1} in line`}</span></div>}
                   {!row.trigger || row.trigger === "chat" ? (
-                    <button type="button" className="link" disabled={dequeue.isPending} onClick={() => dequeue.mutate(row.id)}>
+                    <div className="queued-actions">
+                    <SendNow visible pending={Boolean(row.send_now || (sendNow.isPending && sendNow.variables === row.id))}
+                      disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending || Boolean(view?.send_now_reason)}
+                      reason={view?.send_now_reason || (row.send_now ? row.send_now_reason : null)}
+                      error={sendNow.variables === row.id ? sendNow.error : null} onClick={() => sendNow.mutate(row.id)} />
+                    <button type="button" className="link" disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending} onClick={() => dequeue.mutate(row.id)}>
                       {dequeue.isPending && dequeue.variables === row.id ? "Removing…" : "Remove"}
                     </button>
+                    </div>
                   ) : null}
                 </li>
               ))}
@@ -421,7 +437,7 @@ export default function Conversation({
           placeholder={`Message L3 about ${name}`}
           ariaLabel={`Message L3 about ${name}`}
           busy={busy}
-          pill={phone ? undefined : <L3EngineSelect name={name} engine={view?.engine ?? ""} engines={engines} />}
+          pill={<L3ModelButton project={name} />}
           hint="L3 answers or creates one task. Shift + Enter for a new line."
         />
       </div>

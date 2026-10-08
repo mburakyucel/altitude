@@ -48,4 +48,28 @@ describe("question and review text", () => {
     mount(<ReviewDecision decision={{ ...review, detail: "Operator review of the release notes" }} />);
     expect(document.querySelector("p.decision-why")?.textContent).toBe("Operator review of the release notes");
   });
+  it("leads a group with its open question and folds closed members into one earlier row", () => {
+    const closed = (id: string, question: string, disposition: string) => DecisionSchema.parse({ ...base, id, question, status: "resolved", group_id: "g",
+      recommendation: { text: `Recommended for ${id}`, label: "Use", why: "" }, resolution: { disposition, text: `Closed ${id}`, at: "2026-09-23T21:00:00Z", by: "l2" } });
+    const current = DecisionSchema.parse({ ...base, id: "q3", group_id: "g", question: "Merge the fix today?", options: [{ key: "yes", label: "Merge", text: "Merge today." }],
+      recommended_key: "yes", recommendation: { text: "Merge today.", label: "Merge", why: "The fix is green." } });
+    const wait = DecisionSchema.parse({ ...base, id: "q4", group_id: "g", audience: "l3", question: "Waiting for the runner image." });
+    const { container } = mount(<QuestionSet decisions={[closed("q1", "Publish rc.2?", "withdrawn"), closed("q2", "Rerun CI?", "answered"), current, wait]} group={{ id: "g", revision: 3, anchor_id: "a", questions: [] }} chat />);
+    const earlier = container.querySelector("details.question-earlier") as HTMLDetailsElement;
+    expect(earlier.open).toBe(false);
+    expect(earlier.querySelector("summary")?.textContent).toBe("2 earlier questions");
+    expect([...earlier.querySelectorAll("[data-question-id]")].map((node) => node.getAttribute("data-question-id"))).toEqual(["q1", "q2"]);
+    expect(screen.getByText("1 question to answer")).toBeVisible();
+    expect(screen.getByText("Merge the fix today?")).toBeVisible();
+    expect(screen.getByRole("button", { name: /Merge/ })).toHaveAttribute("data-recommended", "true");
+    expect(screen.getByText("The fix is green.")).toBeVisible();
+    expect(screen.getByText("Waiting for the runner image.").closest(".question-body")?.textContent).toContain("L3 is handling this");
+    expect(screen.queryByText("Recommended for q2")).not.toBeVisible();
+  });
+  it("shows every member of a closed group without folding", () => {
+    const closed = DecisionSchema.parse({ ...base, status: "resolved", question: "Publish rc.2?", resolution: { disposition: "answered", text: "Published.", at: "2026-09-23T21:00:00Z", by: "l2" } });
+    const { container } = mount(<QuestionSet decisions={[closed]} chat />);
+    expect(container.querySelector("details.question-earlier")).toBeNull();
+    expect(screen.getByText("Decision recorded")).toBeVisible();
+  });
 });

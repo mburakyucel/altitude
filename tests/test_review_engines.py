@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+from urllib.parse import quote
 from unittest.mock import patch
 
 from altitude import config, engines, platform, route
@@ -128,8 +129,12 @@ class ReviewEngineTests(AltitudeCase):
                                      "GH_TOKEN": "secret", "ANTHROPIC_API_KEY": "secret", "OPENAI_API_KEY": "secret",
                                      "DBUS_SESSION_BUS_ADDRESS": "private", "SSH_AUTH_SOCK": "private"}):
             env = engines._review_env()
-        self.assertEqual(set(env) - {"HOME", "PATH", "LANG", "LC_ALL", "CODEX_HOME", "CLAUDE_CONFIG_DIR"}, set())
+        self.assertEqual(set(env) - {"HOME", "USER", "PATH", "LANG", "LC_ALL", "CODEX_HOME", "CLAUDE_CONFIG_DIR"}, set())
         self.assertNotIn("secret", env.values())
+
+    def test_environment_names_the_login_for_keychain_sign_in(self):
+        with patch.dict(os.environ, {"USER": "fictional-login"}):
+            self.assertEqual(engines._review_env()["USER"], "fictional-login")
 
     def fixture(self, *, result=None, answer=None, exitcode=0, served=True):
         if served:
@@ -156,6 +161,313 @@ class ReviewEngineTests(AltitudeCase):
         self.assertEqual(workers, [{"unit": result["worker"]["unit"], "pid": None, "started_ticks": None}, result["worker"]])
         self.assertTrue(result["termination_confirmed"])
         self.assertNotIn("runtime_max", service.call_args.kwargs)
+        self.assertNotIn("diagnostics", result, "successful reviews keep their existing result contract")
+
+    def test_startup_failure_keeps_sanitized_exception_and_errno(self):
+        self.fixture()
+        self.patch(engines.subprocess, "Popen", side_effect=FileNotFoundError(
+            2, "missing executable api_key=fictional-secret-value", "/Users/fictional/private/tool"))
+        result = engines.review("Private assignment", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        evidence = result["diagnostics"]
+        self.assertEqual((evidence["exit_status"], evidence["exception_type"], evidence["errno"]),
+                         (None, "FileNotFoundError", 2))
+        self.assertIn("missing executable", evidence["stderr"])
+        self.assertIn("[REDACTED]", evidence["stderr"])
+        self.assertNotIn("fictional-secret-value", json.dumps(result))
+        self.assertNotIn("/Users/fictional", json.dumps(result))
+        self.assertTrue(result["termination_confirmed"])
+
+    def test_command_preparation_failure_keeps_diagnostics_before_spawn(self):
+        self.fixture()
+        self.patch(engines, "_review_command", side_effect=FileNotFoundError(2, "review executable disappeared"))
+        spawn = self.patch(engines.subprocess, "Popen")
+        result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        self.assertEqual(result["diagnostics"]["errno"], 2)
+        self.assertIn("executable disappeared", result["diagnostics"]["stderr"])
+        self.assertTrue(result["termination_confirmed"])
+        spawn.assert_not_called()
+
+    def test_encoded_quoted_credentials_are_redacted_in_stderr_and_startup_exceptions(self):
+        credential = quote('"password": "fictional secret with spaces"', safe="")
+        service = self.fixture()
+        service.return_value = [sys.executable, "-I", "-c",
+            f"import sys; sys.stdin.read(); sys.stderr.write('startup failed\\n' + {credential!r}); sys.exit(12)"]
+        result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        self.assertIn("startup failed", result["diagnostics"]["stderr"])
+        self.assertIn("[REDACTED]", result["diagnostics"]["stderr"])
+        self.assertNotIn("fictional", json.dumps(result))
+        self.assertNotIn("with spaces", json.dumps(result))
+        self.patch(engines.subprocess, "Popen", side_effect=OSError(2, "startup failed " + credential))
+        result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        self.assertEqual(result["diagnostics"]["errno"], 2)
+        self.assertIn("startup failed", result["diagnostics"]["stderr"])
+        self.assertNotIn("fictional", json.dumps(result))
+        self.assertNotIn("with spaces", json.dumps(result))
+        capture = engines._BoundedRawCapture()
+        capture.add(quote(credential, safe=""))
+        self.assertIn("withheld", engines._review_diagnostics(capture)["stderr"])
+
+    def test_nonzero_exit_keeps_stderr_and_status_without_stdout_transcript(self):
+        service = self.fixture()
+        service.return_value = [sys.executable, "-I", "-c",
+            "import sys; sys.stdin.read(); print('PRIVATE TRANSCRIPT'); "
+            "sys.stderr.buffer.write(b'cannot connect captured adapter\\ninvalid byte: \\xff\\n'"
+            "b'api_key=fictional-secret-value\\n/Users/fictional/private/tool\\n'); sys.exit(23)"]
+        result = engines.review("Private assignment", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        evidence = result["diagnostics"]
+        self.assertEqual(evidence["exit_status"], 23)
+        self.assertIn("status 23", result["error"])
+        self.assertIn("cannot connect captured adapter", evidence["stderr"])
+        self.assertIn("invalid byte: \ufffd", evidence["stderr"])
+        self.assertIn("[REDACTED]", evidence["stderr"])
+        for private in ("PRIVATE TRANSCRIPT", "Private assignment", "fictional-secret-value", "/Users/fictional"):
+            self.assertNotIn(private, json.dumps(result))
+        self.assertTrue(evidence["capture_complete"])
+        self.assertFalse(evidence["stderr_truncated"])
+        self.assertFalse(evidence["stdout_truncated"])
+
+    def test_stdout_only_structured_errors_are_fixed_categories_for_both_engines(self):
+        private = 'PRIVATE SOURCE password=fictional-secret /Users/fictional/private'
+        outputs = {
+            "claude": json.dumps({"is_error": True, "errors": ["MCP connection refused " + private],
+                                  "result": private, "usage": {"private": private}}),
+            "codex": '\n'.join(map(json.dumps, [
+                {"type": "item.completed", "item": {"type": "agent_message", "text": private}},
+                {"type": "turn.failed", "error": {"message": "MCP connection refused " + private}}])),
+        }
+        for engine, stdout in outputs.items():
+            for exitcode in (1, 0):
+                with self.subTest(engine=engine, exitcode=exitcode):
+                    service = self.fixture(served=False)
+                    service.return_value = [sys.executable, "-I", "-c",
+                        f"import sys; sys.stdin.read(); print({stdout!r}); sys.exit({exitcode})"]
+                    result = engines.review("PRIVATE PROMPT", engine=engine,
+                                            snapshot=self.snapshot, runtime=self.runtime)
+                    evidence = result["diagnostics"]
+                    self.assertTrue(result["error"])
+                    self.assertEqual(result["findings"], [])
+                    self.assertEqual(evidence["exit_status"], exitcode)
+                    self.assertEqual(evidence["stderr"], "")
+                    self.assertEqual(evidence["stdout_state"], "recognized_error")
+                    self.assertEqual(evidence["stdout_errors"], ["connection", "captured_input"])
+                    self.assertNotIn("PRIVATE", json.dumps(result))
+                    self.assertNotIn("fictional", json.dumps(result))
+
+    def test_stdout_diagnostic_states_never_retain_unknown_or_partial_output(self):
+        cases = [
+            ("", "empty"), ('{"is_error":true', "malformed"),
+            ('[]', "malformed"), ('{"is_error":true,"errors":["PRIVATE SOURCE"]}', "unrecognized_error"),
+            ('[' * 2000 + ']' * 2000, "malformed"),
+            ('{"result":"MCP PRIVATE SOURCE","is_error":false}', "no_structured_error"),
+            ('{"is_error":true,"errors":{"message":"PRIVATE SOURCE"}}', "unrecognized_error"),
+        ]
+        for stdout, expected in cases:
+            evidence = engines._review_diagnostics(engines._BoundedRawCapture(), stdout=stdout, engine="claude")
+            self.assertEqual(evidence["stdout_state"], expected)
+            self.assertEqual(evidence["stdout_errors"], [])
+            self.assertNotIn("PRIVATE", json.dumps(evidence))
+        stdout = json.dumps({"is_error": True, "errors": ["MCP connection refused"]})
+        for flags, expected in (({"stdout_truncated": True}, "truncated"),
+                                ({"capture_complete": False}, "incomplete")):
+            evidence = engines._review_diagnostics(engines._BoundedRawCapture(), stdout=stdout,
+                                                   engine="claude", **flags)
+            self.assertEqual(evidence["stdout_state"], expected)
+            self.assertEqual(evidence["stdout_errors"], [])
+        for stdout in ('{"type":"error","message":"permission denied PRIVATE"}\nnot json',
+                       '{"type":"turn.failed","error":"PRIVATE"}'):
+            state, labels, facts = engines._review_stdout_errors("codex", stdout)
+            self.assertIn(state, ("malformed", "unrecognized_error"))
+            self.assertEqual((labels, facts), ([], {}))
+        state, labels, facts = engines._review_stdout_errors("codex", json.dumps(
+            {"type": "error", "message": "authentication failed " + "PRIVATE" * 10000}))
+        self.assertEqual((state, labels, facts), ("recognized_error", ["authentication"], {}))
+
+    def test_unrecognized_claude_result_keeps_fixed_facts_only(self):
+        private = "PRIVATE SOURCE password=fictional-secret /Users/fictional/private"
+        stdout = json.dumps({"type": "result", "subtype": "success", "is_error": True, "result": private,
+                             "terminal_reason": "api_error", "api_error_status": 403,
+                             "api_error": "model_requires_usage_credits", "api_error_code": private,
+                             "num_turns": 1, "duration_api_ms": 412, "session_id": private,
+                             "usage": {"private": private}, "errors": [private]})
+        service = self.fixture(served=False)
+        service.return_value = [sys.executable, "-I", "-c",
+            f"import sys; sys.stdin.read(); print({stdout!r}); sys.exit(1)"]
+        result = engines.review("PRIVATE PROMPT", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        evidence = result["diagnostics"]
+        self.assertEqual((evidence["exit_status"], evidence["stderr"]), (1, ""))
+        self.assertEqual((evidence["stdout_state"], evidence["stdout_errors"]), ("unrecognized_error", []))
+        self.assertEqual(evidence["stdout_facts"], {
+            "subtype": "success", "terminal_reason": "api_error", "api_error": "model_requires_usage_credits",
+            "api_error_status": 403, "num_turns": 1, "api_contacted": True})
+        self.assertNotIn("PRIVATE", json.dumps(result))
+        self.assertNotIn("fictional", json.dumps(result))
+
+    def test_claude_result_facts_refuse_unknown_values(self):
+        cases = [
+            ({"subtype": "PRIVATE_KIND", "terminal_reason": "PRIVATE REASON", "api_error": "PRIVATE",
+              "api_error_status": 999, "num_turns": True, "duration_api_ms": "PRIVATE"},
+             {"subtype": "unknown", "terminal_reason": "unknown", "api_error": "unknown"}),
+            ({"subtype": "error_during_execution", "terminal_reason": "turn_setup_failed", "api_error_status": "401",
+              "num_turns": 0, "duration_api_ms": 0, "api_error": {"PRIVATE": 1}},
+             {"subtype": "error_during_execution", "terminal_reason": "turn_setup_failed", "num_turns": 0,
+              "api_contacted": False}),
+            ({"num_turns": -1, "api_error_status": 99}, {}),
+        ]
+        for record, expected in cases:
+            with self.subTest(record=record):
+                stdout = json.dumps({"type": "result", "is_error": True, "result": "PRIVATE", **record})
+                evidence = engines._review_diagnostics(engines._BoundedRawCapture(), stdout=stdout, engine="claude")
+                self.assertEqual(evidence["stdout_state"], "unrecognized_error")
+                self.assertEqual(evidence.get("stdout_facts", {}), expected)
+                self.assertNotIn("PRIVATE", json.dumps(evidence))
+        stdout = json.dumps({"type": "result", "is_error": True, "terminal_reason": "api_error", "num_turns": 1})
+        for flags in ({"stdout_truncated": True}, {"capture_complete": False}):
+            evidence = engines._review_diagnostics(engines._BoundedRawCapture(), stdout=stdout,
+                                                   engine="claude", **flags)
+            self.assertNotIn("stdout_facts", evidence)
+        self.assertNotIn("stdout_facts", engines._review_diagnostics(
+            engines._BoundedRawCapture(), stdout=json.dumps({"is_error": True, "num_turns": 1}), engine="claude"))
+
+    def test_fixed_cli_failure_phrases_map_to_categories(self):
+        cases = {
+            "Not logged in \u00b7 Please run /login": ["authentication"],
+            "Login expired \u00b7 Please run /login": ["authentication"],
+            "OAuth token revoked \u00b7 Please run /login": ["authentication"],
+            "Failed to authenticate: OAuth session expired and could not be refreshed": ["authentication"],
+            "Credit balance is too low": ["rate_limit"],
+            "Opus now uses usage credits": ["rate_limit"],
+            "Unable to connect to API (ECONNREFUSED)": ["connection"],
+            "EPERM: operation not permitted, open": ["permission"],
+            "Prompt is too long": ["context_limit"],
+        }
+        for message, expected in cases.items():
+            with self.subTest(message=message):
+                state, labels, _ = engines._review_stdout_errors(
+                    "claude", json.dumps({"type": "result", "is_error": True, "result": message}))
+                self.assertEqual((state, labels), ("recognized_error", expected))
+
+    def test_capture_overflow_names_stream_and_withholds_ambiguous_stderr_tail(self):
+        service = self.fixture()
+        service.return_value = [sys.executable, "-I", "-c",
+            "import sys; sys.stdin.read(); print('PRIVATE TRANSCRIPT' * 1000); "
+            "sys.stderr.write('startup diagnostic\\napi_key=fictional-secret-value\\n' + 'x' * 20000 + "
+            "'\\nlast diagnostic\\n'); sys.exit(0)"]
+        with patch.object(engines, "RAW_CAPTURE_CAP", 1024):
+            result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        self.assertIn("capture limit", result["error"])
+        evidence = result["diagnostics"]
+        self.assertEqual(evidence["exit_status"], 0)
+        self.assertTrue(evidence["stdout_truncated"])
+        self.assertTrue(evidence["stderr_truncated"])
+        self.assertIn("startup diagnostic", evidence["stderr"])
+        self.assertNotIn("last diagnostic", evidence["stderr"])
+        self.assertIn("stderr tail withheld", evidence["stderr"])
+        self.assertNotIn("PRIVATE TRANSCRIPT", json.dumps(result))
+        self.assertNotIn("fictional-secret-value", json.dumps(result))
+        self.assertLessEqual(len(evidence["stderr"].encode()), 8192)
+
+    def test_diagnostic_bound_and_raw_cuts_do_not_expose_partial_credentials(self):
+        capture = engines._BoundedRawCapture(128)
+        capture.add("useful start\napi_key=" + "s" * 400 + "\nuseful end\n")
+        evidence = engines._review_diagnostics(capture)
+        self.assertEqual(evidence["stderr"], "useful start\n[capture limit: stderr tail withheld]\n")
+        self.assertTrue(evidence["stderr_truncated"])
+        capture = engines._BoundedRawCapture(128)
+        capture.add("useful start\n-----BEGIN PRIVATE KEY-----\n" + "PRIVATE MATERIAL\n" * 100
+                    + "-----END PRIVATE KEY-----\nuseful end\n")
+        evidence = engines._review_diagnostics(capture)
+        self.assertNotIn("PRIVATE MATERIAL", evidence["stderr"])
+        self.assertNotIn("PRIVATE KEY", evidence["stderr"])
+        self.assertIn("useful start", evidence["stderr"])
+        self.assertNotIn("useful end", evidence["stderr"], "raw truncation withholds the ambiguous tail")
+        for private in ("prefix\n-----BEGIN PRIVATE KEY-----\nPRIVATE MATERIAL\n",
+                        "prefix\n" + "x" * 200 + "\n-----BEGIN PRIVATE KEY-----\n" + "PRIVATE MATERIAL\n" * 100
+                        + "-----END PRIVATE KEY-----\nuseful end\n"):
+            capture = engines._BoundedRawCapture(128)
+            capture.add(private)
+            evidence = engines._review_diagnostics(capture)
+            self.assertNotIn("PRIVATE MATERIAL", evidence["stderr"])
+            self.assertNotIn("PRIVATE KEY", evidence["stderr"])
+        capture = engines._BoundedRawCapture(128)
+        capture.add("useful start\n" + "benign padding\n" * 100 + "-----BEGIN PRIVATE KEY-----\n"
+                    + "PRIVATE MATERIAL\n" * 100)
+        evidence = engines._review_diagnostics(capture)
+        self.assertIn("useful start", evidence["stderr"])
+        self.assertIn("stderr tail withheld", evidence["stderr"])
+        self.assertNotIn("PRIVATE MATERIAL", evidence["stderr"])
+        self.assertNotIn("PRIVATE KEY", evidence["stderr"])
+        capture = engines._BoundedRawCapture()
+        capture.add("useful start\n" + "é" * 10000 + "\nuseful end\n")
+        evidence = engines._review_diagnostics(capture)
+        self.assertTrue(evidence["stderr_truncated"])
+        self.assertLessEqual(len(evidence["stderr"].encode()), 8192)
+        self.assertIn("useful start", evidence["stderr"])
+        self.assertIn("useful end", evidence["stderr"])
+        capture = engines._BoundedRawCapture()
+        capture.add('connection refused\n"password": "fictional secret with spaces"\n'
+                    'cookie=session=fictional-cookie\nAuthorization: Bearer fictional-access-token\n')
+        evidence = engines._review_diagnostics(capture)
+        self.assertIn("connection refused", evidence["stderr"])
+        self.assertNotIn("fictional", evidence["stderr"])
+        self.assertEqual(evidence["stderr"].count("[REDACTED]"), 1)
+
+    def test_multiline_credentials_and_remaining_capture_are_withheld(self):
+        assignments = ['"password":\n"fictional secret with spaces"',
+                       'api_key="fictional\nsecret\nwith spaces"',
+                       'cookie=\nfictional-secret', 'Authorization: Bearer\nfictional-secret',
+                       '"secret": "unterminated\nfictional-secret']
+        for assignment in assignments:
+            for encoded in (False, True):
+                with self.subTest(assignment=assignment, encoded=encoded):
+                    stderr = "adapter startup failed\n" + assignment + "\nfollowing diagnostic\n"
+                    if encoded:
+                        stderr = quote(stderr, safe="")
+                    service = self.fixture()
+                    service.return_value = [sys.executable, "-I", "-c",
+                        f"import sys; sys.stdin.read(); sys.stderr.write({stderr!r}); sys.exit(12)"]
+                    result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+                    evidence = result["diagnostics"]
+                    self.assertEqual(evidence["exit_status"], 12)
+                    self.assertIn("adapter startup failed", evidence["stderr"])
+                    self.assertIn("[REDACTED]", evidence["stderr"])
+                    for private in ("fictional", "with spaces", "unterminated", "following diagnostic"):
+                        self.assertNotIn(private, evidence["stderr"])
+                    with patch.object(engines.subprocess, "Popen", side_effect=OSError(2, stderr)):
+                        result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+                    self.assertEqual(result["diagnostics"]["errno"], 2)
+                    self.assertIn("adapter startup failed", result["diagnostics"]["stderr"])
+                    self.assertNotIn("fictional", json.dumps(result))
+                    self.assertNotIn("with spaces", json.dumps(result))
+
+    def test_incomplete_stderr_capture_is_named_in_failure_evidence(self):
+        self.fixture(exitcode=4)
+        self.patch(engines, "review_stop", return_value=True)
+        spawn = engines.subprocess.Popen
+        class FailedReader:
+            def read(self, size):
+                raise OSError("private reader failure")
+            def close(self):
+                self.stream.close()
+        def with_failed_stderr(*args, **kwargs):
+            process = spawn(*args, **kwargs)
+            reader = FailedReader()
+            reader.stream = process.stderr
+            process.stderr = reader
+            return process
+        self.patch(engines.subprocess, "Popen", side_effect=with_failed_stderr)
+        result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        self.assertEqual(result["diagnostics"]["exit_status"], 4)
+        self.assertFalse(result["diagnostics"]["capture_complete"])
+        self.assertNotIn("private reader failure", json.dumps(result))
+
+    def test_stderr_overflow_does_not_fail_a_successful_review(self):
+        service = self.fixture()
+        service.return_value[-1] = service.return_value[-1].replace("sys.exit(0)", "sys.stderr.write('x' * 10000); sys.exit(0)")
+        with patch.object(engines, "RAW_CAPTURE_CAP", 4096):
+            result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
+        self.assertIsNone(result["error"])
+        self.assertEqual(result["findings"][0]["id"], "F1")
+        self.assertNotIn("diagnostics", result)
 
     def test_failure_and_malformed_findings_never_become_clean_review(self):
         self.fixture(result={"text": "Malformed", "findings": [{"title": "No body"}]})
@@ -241,6 +553,8 @@ class ReviewEngineTests(AltitudeCase):
         started = self.patch(engines, "review_stop")
         result = engines.review("No model call", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
         self.assertTrue(result["unavailable"])
+        self.assertEqual(result["diagnostics"]["exception_type"], "RuntimeError")
+        self.assertIn("user bus unavailable", result["diagnostics"]["stderr"])
         self.assertTrue(result["termination_confirmed"])
         self.assertIsNone(result["worker"])
         spawn.assert_not_called()
@@ -276,7 +590,7 @@ class ReviewEngineTests(AltitudeCase):
             with self.subTest(remaining=state):
                 active.return_value = state
                 result = engines.review("Review", engine="claude", snapshot=self.snapshot, runtime=self.runtime)
-                self.assertIn("failed", result["error"])
+                self.assertIn("status 1", result["error"])
                 self.assertEqual(result["termination_confirmed"], state is False)
                 stop.assert_called_with(result["worker"])
         self.assertEqual(stop.call_count, 2)
@@ -567,4 +881,3 @@ class ReviewRoutingTests(AltitudeCase):
         with patch.object(config, "ENGINES", ("codex",)):
             self.assertIsNone(route.pick_review({"l2_engine": "codex"}, {}, engine="claude")["engine"])
         self.assertIn("requires --engine", route.pick_review({"l2_engine": "codex"}, {"l2_engine": "claude"}, model="custom")["why"])
-

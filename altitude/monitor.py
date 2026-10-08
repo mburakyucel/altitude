@@ -3,19 +3,11 @@ from __future__ import annotations
 import time
 
 from . import engines, config, route, state as S
-from .engines import transcript_context_percent
 
 
 def sessions() -> list[dict]:
-    """Everything the monitor dir knows: statusline snapshots (interactive sessions), L2 live rows, L3 infos."""
+    """The sessions Altitude runs: each project's L3 and its live task owners (L2)."""
     out = []
-    for p in sorted(config.MONITOR_DIR.glob("statusline-*.json")):
-        d = S.read_json(p, {}) or {}
-        out.append({"kind": "statusline", "session_id": p.stem.split("-", 1)[1], "at": d.get("_at"),
-                    "context_percent": ((d.get("context_window") or {}).get("used_percentage")),
-                    "five_hour": ((d.get("rate_limits") or {}).get("five_hour") or {}).get("used_percentage"),
-                    "seven_day": ((d.get("rate_limits") or {}).get("seven_day") or {}).get("used_percentage"),
-                    "cwd": d.get("cwd") or (d.get("workspace") or {}).get("current_dir"), "model": (d.get("model") or {}).get("display_name")})
     for name in config.load_projects():
         inf = S.read_json(config.project_dir(name) / "l3.json", {}) or {}
         if inf:
@@ -30,10 +22,7 @@ def sessions() -> list[dict]:
                 counts = (S.read_json(counts_p, {}) if counts_p else {}) or {}
                 live = S.read_json(config.MONITOR_DIR / f"live-{name}--{t['slug']}.json", {}) or {}
                 engine = t.get("l2_engine") or "claude"
-                if engine == "codex":
-                    cp = None  # Completed-turn consumption is not context-window occupancy.
-                else:
-                    cp = transcript_context_percent(t.get("session_id"), config.project_path(name))
+                cp = ((t.get("token_usage") or {}).get("context") or {}).get("percent")
                 out.append({"kind": "l2", "project": name, "slug": t["slug"], "session_id": t.get("session_id"),
                             "attempt": t.get("attempt"), "state": t["state"], "agent": live.get("agent"),
                             "token_usage": t.get("token_usage"),

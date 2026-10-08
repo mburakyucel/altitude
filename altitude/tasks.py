@@ -4,6 +4,7 @@ import json
 import hashlib
 import os
 import re
+import shutil
 import stat
 import subprocess
 import uuid
@@ -12,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 
-from . import config, github_intake, images as image_store, state as S, usage
+from . import capture as C, config, github_intake, images as image_store, platform, state as S, usage
 
 def short_reason(reason: str, limit: int = 200) -> str:
     """The first sentence of a block reason, for the card; the whole reason stays in detail."""
@@ -42,23 +43,25 @@ DESIGN_IMAGE_LIMIT = 8 << 20
 DESIGN_TOTAL_LIMIT = 32 << 20
 DESIGN_TEXT_LIMIT = 64 << 10
 DESIGN_IMAGE_COUNT = 12
+CAPTURE_TASK_LIMIT = 64 << 20   # attached validation captures one task keeps
 
 
 @contextmanager
-def _design_directory(root: Path | int, parts: list[str], *, create: bool = False):
+def _directory(root: Path | int, parts: list[str], *, create: bool = False, search: bool = False):
     """Walk relative to an open root without following any symlink, including racing replacements."""
-    fd = os.dup(root) if isinstance(root, int) else os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    flags = (platform.directory_search_access() if search else os.O_RDONLY) | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.dup(root) if isinstance(root, int) else os.open(root, flags)
     try:
         for part in parts:
             if not part or part in (".", "..") or "/" in part or "\\" in part:
-                raise ValueError("invalid design path")
+                raise ValueError("invalid relative directory path")
             if create:
                 try:
                     os.mkdir(part, mode=0o700, dir_fd=fd)
                     os.fsync(fd)
                 except FileExistsError:
                     pass
-            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            child = os.open(part, flags, dir_fd=fd)
             os.close(fd)
             fd = child
         yield fd
@@ -70,7 +73,7 @@ def _design_bytes(root: Path | int, relative: str, limit: int) -> bytes:
     parts = relative.split("/")
     if any(not p or p in (".", "..") or "\\" in p for p in parts):
         raise ValueError("invalid design path")
-    with _design_directory(root, parts[:-1]) as directory:
+    with _directory(root, parts[:-1]) as directory:
         fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
         before = os.fstat(fd)
         if not stat.S_ISREG(before.st_mode) or before.st_size > limit:
@@ -128,10 +131,10 @@ def task_file(project: str, reference: str) -> dict:
         raise TaskFileError(unsupported, 415)
     try:
         # Starting at / also refuses symlinks in ancestors of the configured runtime home.
-        with _design_directory(Path("/"), list(config.project_dir(project).parts[1:])) as root:
+        with _directory(Path("/"), list(config.project_dir(project).parts[1:]), search=True) as root:
             for location in ("tasks", "archive"):
                 try:
-                    with _design_directory(root, [location, slug]) as directory:
+                    with _directory(root, [location, slug]) as directory:
                         try:
                             record = json.loads(_design_bytes(directory, "status.json", DESIGN_IMAGE_LIMIT))
                         except (OSError, ValueError):
@@ -215,15 +218,17 @@ def _capture_design(project: str, task: dict, selection: dict) -> tuple[dict, di
     return {**design, "id": _design_hash(design)}, files
 
 
-def _save_design(project: str, slug: str, files: dict[str, bytes]) -> None:
-    relative = (S.task_dir(project, slug) / "designs").relative_to(config.ROOT)
-    with _design_directory(config.ROOT, list(relative.parts), create=True) as directory:
+def _save_design(project: str, slug: str, files: dict[str, bytes], folder: str = "designs",
+                 limit: int = DESIGN_IMAGE_LIMIT) -> None:
+    """Content-named `files` in the task's `folder`, written without following links."""
+    relative = (S.task_dir(project, slug) / folder).relative_to(config.ROOT)
+    with _directory(config.ROOT, list(relative.parts), create=True) as directory:
         for name, data in files.items():
             try:
                 saved = os.stat(name, dir_fd=directory, follow_symlinks=False)
                 if not stat.S_ISREG(saved.st_mode):
                     raise ValueError("saved design path is not a regular file")
-                if saved.st_size <= DESIGN_IMAGE_LIMIT and _design_bytes(config.ROOT, str(relative / name), DESIGN_IMAGE_LIMIT) == data:
+                if saved.st_size <= limit and _design_bytes(config.ROOT, str(relative / name), limit) == data:
                     continue
             except FileNotFoundError:
                 pass
@@ -281,6 +286,74 @@ def require_design(project: str, slug: str, question: dict) -> None:
 
 def design_url(project: str, slug: str, question: dict) -> str:
     return f"/projects/{quote(project, safe='')}/tasks/{slug}/design/{question['id']}/{question['revision']}"
+
+
+def _run_captures(project: str, slug: str, run: object) -> tuple[list[dict], dict[str, bytes]]:
+    """Validation run `run`'s captures, read from this task's own evidence without following links: the Simulator's
+    beside the run and the lanes' own in its `captures/` folder. Each must be a regular file that is one GIF within the
+    capture budget; the reply keeps content-named copies, so later edits to the run's folder change nothing shown."""
+    if type(run) is not int or run < 1:
+        raise TransitionError("--capture names a validation run number")
+    evidence = S.task_dir(project, slug).relative_to(config.ROOT) / "validation"
+    sources = [(str(evidence / f"{run}.simulator.gif"), "Simulator iPhone")]
+    try:
+        with _directory(config.ROOT, [*evidence.parts, str(run), "captures"]) as folder:
+            names = sorted(name for name in os.listdir(folder) if name.endswith(".gif"))
+        sources += [(str(evidence / str(run) / "captures" / name), name[:-4].replace("-", " ").capitalize()) for name in names]
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError) as exc:
+        raise TransitionError(f"validation run {run} captures unavailable: {exc}") from exc
+    captures, files = [], {}
+    for path, title in sources:
+        try:
+            data = _design_bytes(config.ROOT, path, C.BUDGET)
+            shape = C.describe(data)
+        except FileNotFoundError:
+            continue
+        except (OSError, ValueError) as exc:
+            raise TransitionError(f"{title}: not a capture Altitude can show: {exc}") from exc
+        name = hashlib.sha256(data).hexdigest() + ".gif"
+        files[name] = data
+        captures.append({"name": name, "title": title, **shape})
+    if not captures:
+        raise TransitionError(f"validation run {run} has no captures; ask its lane for them with CAPTURE=1")
+    if len(captures) > C.RUN_LIMIT:
+        raise TransitionError(f"validation run {run} has {len(captures)} captures; a reply shows at most {C.RUN_LIMIT}")
+    return captures, files
+
+
+def _attach_captures(project: str, slug: str, run: object) -> list[dict]:
+    """Save run `run`'s captures in the task's `captures/` folder within `CAPTURE_TASK_LIMIT`."""
+    captures, files = _run_captures(project, slug, run)
+    folder = S.task_dir(project, slug) / "captures"
+    kept = {path.name: path.stat().st_size for path in folder.glob("*.gif")} if folder.is_dir() else {}
+    if sum({**kept, **{name: len(data) for name, data in files.items()}}.values()) > CAPTURE_TASK_LIMIT:
+        raise TransitionError(f"this task already keeps {CAPTURE_TASK_LIMIT >> 20} MiB of attached captures")
+    _save_design(project, slug, files, "captures", C.BUDGET)
+    return captures
+
+
+def task_captures(project: str, slug: str, message_id: str) -> dict:
+    """The conversation row `message_id` that lists captures; nothing else is ever selected."""
+    config.project(project)
+    S.require_task_slug(slug)
+    row = next((row for row in task_messages(project, slug) if row.get("id") == message_id), None)
+    if not row or row.get("role") != "l2" or not row.get("captures"):
+        raise ValueError("capture unavailable")
+    return row
+
+
+def capture_image(project: str, slug: str, row: dict, name: str) -> bytes:
+    """One capture the row lists, exactly the bytes its name digests and still a capture."""
+    if not re.fullmatch(r"[a-f0-9]{64}\.gif", name) or not any(c["name"] == name for c in row["captures"]):
+        raise ValueError("capture unavailable")
+    relative = (S.task_dir(project, slug) / "captures" / name).relative_to(config.ROOT)
+    data = _design_bytes(config.ROOT, str(relative), C.BUDGET)
+    if hashlib.sha256(data).hexdigest() != name[:-4]:
+        raise ValueError("saved capture was altered")
+    C.describe(data)
+    return data
 
 
 def ci_recheck_identity(task: dict) -> dict:
@@ -475,10 +548,10 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
             stop_id: str | None = None,
             uploads: list[dict] | None = None, image_ids: list[str] | None = None,
             request_id: str | None = None, request_digest: str | None = None,
-            summary: str | None = None) -> dict:
+            summary: str | None = None, capture_run: int | None = None) -> dict:
     """Append one message to the task conversation. The operator's and L3's messages also wait in the task's inbox until
     the worker reads them at its next checkpoint. An L2 names its attempt, so a worker of an earlier attempt cannot speak for
-    the current one. L3's one-line `summary` describes its message in the conversation's folded row."""
+    the current one, and may attach one validation run's captures (`capture_run`). L3's one-line `summary` describes its message in the conversation's folded row."""
     if role not in TASK_MESSAGE_ROLES:
         raise TransitionError(f"task message role must be one of {TASK_MESSAGE_ROLES}")
     text = str(text or "").strip()
@@ -532,6 +605,10 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
             if len(members) == 1:
                 row.update(question_id=members[0]["id"], question_revision=members[0]["revision"])
         d = S.task_dir(project, slug)
+        if capture_run is not None:
+            if role != "l2":
+                raise TransitionError("Only the owner attaches validation captures.")
+            row.update(captures=_attach_captures(project, slug, capture_run), capture_run=capture_run)
         if uploads or image_ids:
             if role not in (OPERATOR_MESSAGE_ROLE, "l3") or uploads and image_ids:
                 raise TransitionError("Images must be operator input or an explicit coordinator handoff.")
@@ -657,6 +734,10 @@ def removable_messages(project: str, slug: str, task: dict) -> set[str]:
     if task.get("state") not in ("running", "blocked", "queued"):
         return set()
     protected = {row["id"] for row in (task.get("resume_claim") or {}).get("messages", [])}
+    request = task.get("daemon_request") or {}
+    if request.get("status") in ("pending", "executing"):
+        protected.add(request.get("send_now"))
+    protected.add(task.get("send_now"))
     protected.update(task.get("message_deliveries") or {})
     for question in task.get("questions", []):
         protected.add((question.get("acceptance_message") or {}).get("id"))
@@ -695,6 +776,11 @@ def _message_views(project: str, slug: str, task: dict, delivered: list[dict]) -
     queued = {row["id"] for row in pending(project, slug)}
     claimed = {row["id"] for row in (task.get("resume_claim") or {}).get("messages", [])}
     removable = removable_messages(project, slug, task) - receipts.keys()
+    request = task.get("daemon_request") or {}
+    selected = (request.get("send_now") if request.get("status") in ("pending", "executing")
+                else task.get("send_now"))
+    from . import dispatch
+    unavailable = dispatch.send_now_unavailable(project, task) if removable else None
     rows = task_messages(project, slug)
     for row in rows:
         if row["role"] not in (OPERATOR_MESSAGE_ROLE, "l3"):
@@ -704,6 +790,12 @@ def _message_views(project: str, slug: str, task: dict, delivered: list[dict]) -
                  else receipt.get("state", "delivered") if receipt else "queued" if row["id"] in queued else "unconfirmed")
         row["delivery"] = {"state": state, "at": receipt.get("at") if receipt else None,
                            "removable": row["id"] in removable}
+        if row.get("role") == row.get("by") == OPERATOR_MESSAGE_ROLE and state in ("queued", "sending"):
+            sending_now = row["id"] == selected
+            reason = (task.get("blocked_reason") if sending_now and task.get("resume_after")
+                      else unavailable if row["id"] in removable else "This message is already being delivered.")
+            row["delivery"].update(send_now=row["id"] in removable and not unavailable,
+                                   send_now_reason=reason, send_now_pending=sending_now)
     return rows
 
 
@@ -768,7 +860,12 @@ def claim_resume(project: str, slug: str, *, expected_daemon_request: str | None
         if task.get("state") != "blocked" or task.get("resume_claim"):
             return None
         _ensure_question(project, task)
-        rows = _pending_rows(task, path)
+        pending_rows = _pending_rows(task, path)
+        selected = task.get("send_now")
+        rows = [row for row in pending_rows if not selected or row["id"] == selected]
+        if selected and not rows:
+            raise TransitionError("The selected message is no longer queued.")
+        left = [row for row in pending_rows if row not in rows]
         _mark_acceptance_delivered(task, {row["id"] for row in rows})
         request = task.get("daemon_request") or {}
         if expected_daemon_request and request.get("deliver_reason") and not request.get("message_id"):
@@ -781,13 +878,16 @@ def claim_resume(project: str, slug: str, *, expected_daemon_request: str | None
             _append_jsonl(S.task_dir(project, slug) / "conversation.jsonl", reason)
             request["message_id"] = reason["id"]
             rows.append(reason)
-        claim = {"id": uuid.uuid4().hex, "at": S.now(), "owner_pid": os.getpid(), "phase": "claimed",
+        claim = {"id": uuid.uuid4().hex, "at": S.now(), "owner_process": platform.process_identity(os.getpid()), "phase": "claimed",
                  "block_id": task.get("block_id"),
                  "request": task.get("resume_request"), "resume_after": task.get("resume_after"), "messages": rows}
         task.update({"resume_claim": claim, "dispatching": claim["at"]})
         task.pop("verified", None)  # A resumed owner must report its current work before completion.
         _save_claim_task(project, task)
-        path.unlink(missing_ok=True)
+        if left:
+            S.atomic_write(path, "".join(json.dumps(row, sort_keys=True) + "\n" for row in left))
+        else:
+            path.unlink(missing_ok=True)
         return claim
 
 
@@ -860,6 +960,7 @@ def release_resume_claim(project: str, slug: str, claim_id: str, *, consume_requ
         if suppress_retry and claim.get("block_id") == task.get("block_id"):
             task.pop("resume_after", None)
             task.pop("resume_request", None)
+            task.pop("send_now", None)
             task["resume_failed"] = claim_id
         elif consume_request:
             same_request = (claim.get("request") is not None
@@ -869,6 +970,7 @@ def release_resume_claim(project: str, slug: str, claim_id: str, *, consume_requ
             if same_request or same_timer:
                 task.pop("resume_after", None)
                 task.pop("resume_request", None)
+                task.pop("send_now", None)
                 task["resume_failed"] = claim_id
         _save_claim_task(project, task)
         S.regen_state_md(project)
@@ -916,7 +1018,7 @@ def render_inbox(rows: list[dict]) -> str:
 def _clear_block(project: str, task: dict) -> None:
     _ensure_question(project, task)
     task["blocked_reason"] = None
-    for key in ("resume_after", "resume_request", "resume_claim", "resume_failed", "waiting_on", "fault", "escalated", "block_actor", "usage_limit", "stop_id"):
+    for key in ("resume_after", "resume_request", "resume_claim", "resume_failed", "waiting_on", "fault", "escalated", "block_actor", "usage_limit", "stop_id", "send_now"):
         task.pop(key, None)
 
 
@@ -932,9 +1034,13 @@ def _take_turn(task: dict) -> None:
 
 def _supersede_resume(task: dict) -> None:
     # I-20260908-045037: a new question/block supersedes earlier wake requests and launch claims.
+    request = task.get("daemon_request") or {}
+    if request.get("send_now") and task.get("stop_id") == request.get("id"):
+        task.pop("stop_id", None)
     task["block_id"] = uuid.uuid4().hex
     task.pop("resume_after", None)
     task.pop("resume_request", None)
+    task.pop("send_now", None)
 
 
 def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
@@ -944,18 +1050,6 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
     usage.remember(task)
     if to == "rejected":
         usage.capture(project, task)
-    stopped = None
-    if to == "rejected" and frm in ("running", "blocked") and task.get("agent_id"):
-        from . import engines
-        engine = task.get("l2_engine") or "claude"
-        try:
-            note = engines.remove_l2_worker(
-                engine, task["agent_id"], job_root=S.task_dir(project, task["slug"]) / "l2-engine")
-        except Exception as exc:
-            raise TransitionError(
-                f"{task['slug']}: cannot reject while its {engine} worker may still be live: {exc}"
-            ) from exc
-        stopped = (engine, note)
     task["state"] = to
     if to in ("reported", "done", "rejected"):
         _store_groups(task)
@@ -976,10 +1070,6 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
         task["dispatching"] = None
     S.save_task(project, task)
     S.append_event(project, task["slug"], "state", frm=frm, to=to, by=actor, **ev)
-    if stopped:
-        engine, note = stopped
-        S.append_event(project, task["slug"], "session-stopped", agent_id=task["agent_id"],
-                       engine=engine, note=note[:200])
     S.regen_state_md(project)
     return task
 
@@ -1088,6 +1178,19 @@ def reject(project: str, slug: str, reason: str, actor: str = OPERATOR_MESSAGE_R
                               expected_agent_id=expected_agent_id, expected_session_id=expected_session_id)
         if expected_state is not None and task.get("state") != expected_state:
             raise TransitionError(f"{slug}: expected {expected_state}, found {task.get('state')}")
+        if task["state"] in ("running", "blocked") and task.get("agent_id"):
+            from . import engines
+            engine = engines.transcript_engine(task)
+            try:
+                note = engines.remove_l2_worker(
+                    engine, task["agent_id"], job_root=S.task_dir(project, slug) / "l2-engine")
+            except Exception as exc:
+                raise TransitionError(
+                    f"{slug}: cannot reject while its worker may still be live: {exc}"
+                ) from exc
+            S.append_event(project, slug, "session-stopped", agent_id=task["agent_id"],
+                           engine=engine, note=note[:200])
+        _remove_tool_cache(project, slug)
         _clear_block(project, task)
         task = _move(project, task, "rejected", actor, reason=reason)
         _archive(project, slug)
@@ -1191,6 +1294,11 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
             captured, files = _capture_design(project, task, design)
         _supersede_resume(task)
         task.update(updates or {})
+        request = task.get("daemon_request") or {}
+        if expected_daemon_request and request.get("operation") == "stop" and request.get("send_now"):
+            # Send now's Stop owns this new block; a later question still supersedes its continuation.
+            request["block_id"] = task["block_id"]
+            task["send_now"] = request["send_now"]
         if resume_pending:
             # #302: select the final-turn inbox under the same lock as the block; a later Send
             # sees a blocked task and schedules its own wake without losing an earlier message.
@@ -1340,6 +1448,7 @@ def done(project: str, slug: str, actor: str = "l3", digest: str = "", *,
                              and not (tracked and verified.get("problems") == [verify.OPEN_FINDINGS]))):
             raise TransitionError("; ".join([f"{slug}: current delivery requires a verified report before completion",
                                              *(verified.get("problems") or [])]))
+        _remove_tool_cache(project, slug)
         task = _move(project, task, "done", actor, **({"findings_tracked": tracked} if tracked else {}))
         if tracked:
             digest = "\n".join([digest.rstrip(), "", f"Open review findings tracked at {tracked['reference']}:",
@@ -1378,6 +1487,7 @@ def finalize_completion(project: str, slug: str, actor: str = "altd", *,
             continue_report(project, task, actor=actor, reason="Follow-up messages await the owner", check_pr=False)
             raise TransitionError(f"{slug}: pending messages require continuation before completion")
         _require_no_code_change(task)
+        _remove_tool_cache(project, slug)
         digest = str(request.get("digest") or "")
         d = S.task_dir(project, slug)
         task = _move(project, task, "done", actor, requested_by="l2")
@@ -1388,6 +1498,16 @@ def finalize_completion(project: str, slug: str, actor: str = "altd", *,
     fyi(project, slug, " ".join(filter(None, (f"{task['title']} completed without code changes.", digest.strip(),
                                               "Its findings stay in the task conversation."))), actor=actor)
     return task
+
+
+def _remove_tool_cache(project: str, slug: str) -> None:
+    """Dispose tool data before a terminal state is saved, under the caller's project lock."""
+    try:
+        relative = (S.tasks_dir(project) / slug / "l2-engine").relative_to(config.ROOT)
+        with _directory(config.ROOT.resolve(), list(relative.parts)) as directory:
+            shutil.rmtree("tool-cache", dir_fd=directory)
+    except FileNotFoundError:
+        pass  # Tasks that never launched have no tool caches.
 
 
 def _archive(project: str, slug: str) -> None:
@@ -1581,17 +1701,26 @@ def _validate_questions(payload: dict) -> list[dict]:
     return normalized
 
 
+def _audience(block: str, previous: dict | None, text: str) -> str:
+    """A member follows the audience of the block that publishes it. Re-parking an unchanged operator question keeps
+    it the operator's, so an escalation is never parked away; a reworded one, such as a wait on L3 or an external
+    event, leaves the operator's list."""
+    unchanged = previous is not None and previous["detail"].strip() == text.strip()
+    return "operator" if block == "operator" or (unchanged and previous["audience"] == "operator") else "l3"
+
+
 def _publish_question(task: dict, text: str, actor: str, *, recommendation: str | None = None,
                       label: str | None = None, why: str | None = None, force_revision: bool = False,
                       previous: object = _UNSET, group: dict | None = None, options: list[dict] | None = None,
-                      recommended_key: str | None = None, bump: bool = True, design: object = _UNSET) -> dict:
+                      recommended_key: str | None = None, bump: bool = True, design: object = _UNSET,
+                      audience: str | None = None) -> dict:
     questions = task.setdefault("questions", [])
     if previous is _UNSET:
         previous = questions[-1] if questions else None
     if design is _UNSET:
         design = previous.get("design") if previous and (previous["status"] == "open" or force_revision) else None
     groups = _store_groups(task)
-    audience = previous["audience"] if force_revision else "l3" if task.get("waiting_on") == "l3" else "operator"
+    audience = audience or (previous["audience"] if force_revision else "l3" if task.get("waiting_on") == "l3" else "operator")
     parsed = parse_dilemma(text)
     structured = options is not None
     selected = next((o for o in parsed["options"] if o["key"] == parsed["recommendation"]["option"]), None)
@@ -1644,7 +1773,8 @@ def _publish_question(task: dict, text: str, actor: str, *, recommendation: str 
     return question
 
 
-def _publish_questions(task: dict, payload: dict, actor: str, reason: str, *, design: dict | None = None) -> list[dict]:
+def _publish_questions(task: dict, payload: dict, actor: str, reason: str, audience: str, *,
+                       design: dict | None = None) -> list[dict]:
     inputs = _validate_questions(payload)
     groups = _store_groups(task)
     group = groups[-1] if groups else None
@@ -1667,8 +1797,6 @@ def _publish_questions(task: dict, payload: dict, actor: str, reason: str, *, de
         raise TransitionError("a group has at most three open questions; resolve existing questions before adding another")
     before = len(task.get("questions", []))
     for item, previous in targets:
-        if previous and previous["audience"] == "operator":
-            task["waiting_on"] = OPERATOR_MESSAGE_ROLE
         keep_options = previous and previous["detail"] == item["question"] and not item["options_supplied"]
         options = question_choices(previous) if keep_options else item["options"]
         recommended = _recommended_key(previous) if keep_options else item["recommended_key"]
@@ -1677,7 +1805,8 @@ def _publish_questions(task: dict, payload: dict, actor: str, reason: str, *, de
         _publish_question(task, item["question"], actor, previous=previous, group=group, bump=False,
                           force_revision=bool(previous and previous.get("response")),
                           options=options, recommended_key=recommended, why=why,
-                          design=design if design is not None else _UNSET)
+                          design=design if design is not None else _UNSET,
+                          audience=_audience(audience, previous, item["question"]))
     group["reason"] = reason
     if len(task["questions"]) != before:
         group["revision"] += 1
@@ -1687,43 +1816,53 @@ def _publish_questions(task: dict, payload: dict, actor: str, reason: str, *, de
 def _publish_block_questions(task: dict, reason: str, actor: str, payload: dict | None,
                              recommendation: str | None, label: str | None, why: str | None,
                              *, design: dict | None = None) -> list[dict]:
+    members = _publish_block_members(task, reason, actor, payload, recommendation, label, why, design=design)
+    # The operator has the turn only while an open member is theirs; otherwise the block waits on L3.
+    if any(q["status"] == "open" and q["audience"] == "operator" for q in members):
+        task["waiting_on"] = OPERATOR_MESSAGE_ROLE
+    return members
+
+
+def _publish_block_members(task: dict, reason: str, actor: str, payload: dict | None,
+                           recommendation: str | None, label: str | None, why: str | None,
+                           *, design: dict | None = None) -> list[dict]:
     groups = _store_groups(task)
     group = groups[-1] if groups else None
     members = _group_members(task, group) if group else []
     pending = [q for q in members if q["status"] == "open"]
-    if any(q["audience"] == "operator" for q in pending):
-        task["waiting_on"] = OPERATOR_MESSAGE_ROLE
+    audience = "l3" if task.get("waiting_on") == "l3" else "operator"
     if payload is not None:
         if any(value is not None for value in (recommendation, label, why)):
             raise TransitionError("questions JSON supplies its own options and recommendation")
-        return _publish_questions(task, payload, actor, reason, design=design)
+        return _publish_questions(task, payload, actor, reason, audience, design=design)
     previous = next((q for q in pending if q["detail"].strip() == reason.strip()), None)
     no_replacement = all(value is None for value in (recommendation, label, why))
-    audience = "l3" if task.get("waiting_on") == "l3" else "operator"
     if design is None and no_replacement and group and reason.strip() == group["reason"].strip() and pending:
         # The ordinary block verb parks the same whole group after discussing a follow-up.
-        if all(q["audience"] == audience for q in pending):
+        if all(q["audience"] == _audience(audience, q, q["detail"]) for q in pending):
             return members
         for question in pending:
             _publish_question(task, question["detail"], actor, previous=question, group=group, bump=False,
                               options=question_choices(question), recommended_key=_recommended_key(question),
-                              why=(question.get("recommendation") or {}).get("why"))
+                              why=(question.get("recommendation") or {}).get("why"),
+                              audience=_audience(audience, question, question["detail"]))
         group["revision"] += 1
         return _group_members(task, group)
     if previous is None and len(pending) > 1:
         raise TransitionError("several questions remain open; use --questions-file with their ids or park with the saved group reason")
     previous = previous or (pending[0] if pending else None)
+    target = _audience(audience, previous, reason)
     if previous and previous["detail"].strip() == reason.strip() and no_replacement:
-        if previous["audience"] == audience and (design is None or previous.get("design") == design):
+        if previous["audience"] == target and (design is None or previous.get("design") == design):
             return members
         _publish_question(task, reason, actor, previous=previous, group=group,
                           options=question_choices(previous), recommended_key=_recommended_key(previous),
                           why=(previous.get("recommendation") or {}).get("why"),
-                          design=design if design is not None else _UNSET)
+                          design=design if design is not None else _UNSET, audience=target)
     else:
         _publish_question(task, reason, actor, previous=previous, group=group if pending else None,
                           recommendation=recommendation, label=label, why=why,
-                          design=design if design is not None else _UNSET)
+                          design=design if design is not None else _UNSET, audience=target)
     current_group = _groups(task)[-1]
     current_group["reason"] = reason
     return _group_members(task, current_group)
@@ -1772,7 +1911,8 @@ def open_questions(task: dict) -> str:
 def question_view(project: str, task: dict, question: dict) -> dict:
     group = _group_for(task, question)
     return {**{k: v for k, v in question.items() if k not in ("message", "acceptance_message", "acceptance_delivered", "design")},
-            **({"design_url": design_url(project, task["slug"], question)} if question.get("design") else {}),
+            **({"design_url": design_url(project, task["slug"], question),
+                "design_title": question["design"]["title"]} if question.get("design") else {}),
             "options": question_choices(question), "recommended_key": _recommended_key(question),
             "response": question.get("response"),
             "group_id": group["id"], "group_revision": group["revision"], "group_anchor_id": group["anchor_id"],
@@ -1819,10 +1959,12 @@ def _question_target(task: dict, identity: str, revision: int) -> dict:
     return question
 
 
-def _decision_messages(project: str, slug: str, source: str) -> list[dict]:
+def _decision_messages(project: str, slug: str, source: str, *, resumes: bool = False) -> list[dict]:
     if source == "task":
-        # A resume reason authorizes that resume only; it never answers a question or approves a merge.
-        return [row for row in task_messages(project, slug) if not row.get("removed_at") and not row.get("resume")]
+        # A resume reason never answers an operator question or approves a merge; `resumes` admits L3's
+        # reason for the L3-audience question it settles (the grant it recorded before resuming the owner).
+        return [row for row in task_messages(project, slug)
+                if not row.get("removed_at") and (resumes or not row.get("resume"))]
     if source != "project":
         raise TransitionError("resolution source must be task or project")
     path = config.project_dir(project) / "chat.jsonl"
@@ -1839,15 +1981,17 @@ def _decision_messages(project: str, slug: str, source: str) -> list[dict]:
 def _decision_source(project: str, slug: str, question: dict, message_id: str, source: str, *,
                      l3_authority: str | None = None, exact: bool = False) -> dict:
     """Original authority and viewed revision shared by decisions and merge reconciliation."""
-    row = next((r for r in _decision_messages(project, slug, source) if r["id"] == message_id), None)
-    authorized = row and ((row["role"] == OPERATOR_MESSAGE_ROLE and row.get("by") == OPERATOR_MESSAGE_ROLE)
+    resumes = question["audience"] == "l3" and not l3_authority and not exact
+    row = next((r for r in _decision_messages(project, slug, source, resumes=resumes) if r["id"] == message_id), None)
+    authorized = row and ((row["role"] == OPERATOR_MESSAGE_ROLE and row.get("by") == OPERATOR_MESSAGE_ROLE
+                           and not row.get("resume"))
                           or (source == "task" and (question["audience"] == "l3" or l3_authority)
                               and row["role"] == "l3" and row.get("by") == "l3"))
     if l3_authority and not (source == "task" and row and row["role"] == "l3" and row.get("by") == "l3"):
         raise TransitionError("L3 authority must cite an original L3 task message")
     if not authorized:
         raise TransitionError("resolution must cite an original message with authority for this question")
-    # An operator answer survives re-publication. Design approvals and machine grants (`exact`) stay bound
+    # An operator answer survives re-publication. Design approvals and operator grants (`exact`) stay bound
     # to the captures or purpose the operator actually read.
     relaxed = row["role"] == OPERATOR_MESSAGE_ROLE and not exact and not question.get("design")
     if source == "task" and not relaxed:
@@ -2289,60 +2433,161 @@ def set_hold_merge(project: str, slug: str, why: str | None, actor: str = "l3") 
     return t
 
 
-def grant_machine_access(project: str, slug: str, approval: str, *, question: str, revision: int, reason: str,
-                         actor: str, source: str = "task") -> dict:
-    """The operator's answer to the owner's purpose question is the only authority that opens the machine to a task.
+def _standing_policy(project: str, heading: str, approval: str) -> dict:
+    """Capture one approved purpose from main, never a task's editable policy."""
+    root = config.project_path(project)
+    try:
+        commit = subprocess.run(["git", "rev-parse", "--verify", "refs/heads/main^{commit}"], cwd=root,
+                                check=True, capture_output=True, text=True, timeout=30).stdout.strip()
+        document = subprocess.run(["git", "show", f"{commit}:AGENTS.md"], cwd=root,
+                                  check=True, capture_output=True, text=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError("standing policy requires AGENTS.md committed on the registered project's main") from exc
+    headings = list(re.finditer(r"^#{1,6} ([^\n]+)$", document, re.MULTILINE))
+    matches = [i for i, match in enumerate(headings) if match.group(1) == heading]
+    if len(matches) != 1:
+        raise ValueError("standing policy heading must identify exactly one section in AGENTS.md")
+    index = matches[0]
+    end = headings[index + 1].start() if index + 1 < len(headings) else len(document)
+    text = document[headings[index].end():end].strip()
+    if not text or re.search(r"\n\s*\n", text) or f"`{approval}`" not in text:
+        raise ValueError("standing policy must be one paragraph citing the backtick-quoted operator approval ID")
+    return {"file": "AGENTS.md", "heading": heading, "commit": commit, "text": text}
 
-    The check is mechanical: the cited operator message resolved that exact current question revision as answered
-    with no remainder, so the recorded purpose is the question the operator actually read. L3 or the operator
-    records it after judging that the answer is a yes to that purpose; the owner cannot record its own grant,
-    and nobody can widen one. The grant binds to the current attempt.
+
+def record_grant(project: str, slug: str, approval: str, *, question: str, revision: int, reason: str,
+                 actor: str, source: str = "task", expected_attempt: int | None = None,
+                 standing_policy: str | None = None, from_task: str | None = None) -> dict:
+    """Record an exact operator answer, or L3's application of an approved project-policy purpose.
+
+    The recorder judges approval and later revocations; mechanical checks bind its source, purpose,
+    question and attempt. An owner self-records only from the operator's task-chat answer. L3 may apply
+    the operator's answer to a question another task of this project asked (`from_task`), for that
+    identical purpose; the grant records where the answer came from and binds this task's current attempt.
     """
-    if actor not in ("l3", OPERATOR_MESSAGE_ROLE) or not reason.strip():
-        raise TransitionError("a machine grant needs the coordinator or the operator and a reason")
+    if actor not in ("l2", "l3", OPERATOR_MESSAGE_ROLE) or not reason.strip():
+        raise TransitionError("an operator grant needs the owner, the coordinator or the operator and a reason")
     with S.project_lock(project):
         task = S.load_task(project, slug)
         try:
             if task["state"] not in ("running", "blocked", "reported"):
                 raise ValueError("task is not active")
-            decision = _question_target(task, question, revision)
+            if actor == "l2" and (task["state"] != "running" or expected_attempt != task.get("attempt")
+                                  or source != "task"):
+                raise ValueError("the owner records a grant only while running its current attempt, "
+                                 "from the operator's task-chat answer")
+            asked = task
+            if from_task is not None:
+                if actor != "l3" or standing_policy is not None or from_task == slug:
+                    raise ValueError("only L3 applies an operator answer from another task, without a standing policy")
+                if expected_attempt != task.get("attempt"):
+                    raise ValueError("a grant from another task's answer must name this task's current attempt")
+                S.require_task_slug(from_task)
+                asked = S.load_task(project, from_task)
+            decision = _question_target(asked, question, revision)
+            policy = None
             saved = decision.get("resolution") or {}
-            if (decision != next(q for q in reversed(task["questions"]) if q["id"] == question)
-                    or decision["status"] != "resolved" or decision["audience"] != "operator"
-                    or saved.get("disposition") != "answered" or saved.get("remaining")
-                    or (saved.get("message_id"), saved.get("source"), saved.get("by")) != (approval, source, OPERATOR_MESSAGE_ROLE)):
-                raise ValueError("cite the operator message that answered the current operator question revision")
-            operator = _decision_source(project, slug, decision, approval, source, exact=True)
+            current = next(q for q in reversed(asked["questions"]) if q["id"] == question)
+            if standing_policy is not None:
+                if actor != "l3" or source != "project":
+                    raise ValueError("only L3 records a standing project approval")
+                if expected_attempt != task.get("attempt"):
+                    raise ValueError("standing grant must name the current task attempt")
+                if (decision != current or decision["status"] != "open" or decision["audience"] != "l3"
+                        or decision["asked_by"] != "l2" or decision.get("design") or decision.get("response")):
+                    raise ValueError("standing grant needs the owner's current open L3 purpose question")
+                operator = next((row for row in _decision_messages(project, slug, "project")
+                                 if row["id"] == approval and row["role"] == OPERATOR_MESSAGE_ROLE
+                                 and row.get("by") == OPERATOR_MESSAGE_ROLE and not row.get("removed_at")), None)
+                if not operator:
+                    raise ValueError("standing approval must cite an original operator message in this project's chat")
+                policy = _standing_policy(project, standing_policy, approval)
+                if decision["detail"].split() != policy["text"].split():
+                    raise ValueError("requested purpose must exactly match the standing policy scope")
+            else:
+                if (decision != current or decision["status"] != "resolved" or decision["audience"] != "operator"
+                        or saved.get("disposition") != "answered" or saved.get("remaining")
+                        or (saved.get("message_id"), saved.get("source"), saved.get("by")) != (approval, source, OPERATOR_MESSAGE_ROLE)):
+                    raise ValueError("cite the operator message that answered the current operator question revision")
+                operator = _decision_source(project, from_task or slug, decision, approval, source, exact=True)
+            previous = task.get("grant")
+            if previous and (policy or previous.get("policy")) and any((
+                    previous.get("purpose", "").split() != decision["detail"].split(),
+                    previous.get("approval") != approval, previous.get("source") != source,
+                    previous.get("attempt") != task.get("attempt"), previous.get("policy") != policy)):
+                raise ValueError("revoke the existing operator grant before switching its purpose or standing policy")
         except (ValueError, KeyError, TypeError, TransitionError) as exc:
-            S.append_event(project, slug, "machine-grant-refused", actor=actor, approval=approval, question=question,
-                           revision=revision, reason=reason, error=str(exc))
-            raise TransitionError(f"machine grant refused: {exc}") from exc
+            S.append_event(project, slug, "grant-refused", actor=actor, approval=approval, question=question,
+                           revision=revision, reason=reason, standing_policy=standing_policy, from_task=from_task,
+                           error=str(exc))
+            raise TransitionError(f"operator grant refused: {exc}") from exc
         grant = {"purpose": decision["detail"], "answer": operator.get("text"), "approval": approval,
                  "approved_at": operator["at"], "question": question, "revision": revision, "source": source,
                  "attempt": task.get("attempt"), "actor": actor, "reason": reason.strip(), "at": S.now()}
-        task["machine_access"] = grant
+        if policy:
+            grant["policy"] = policy
+        if from_task:
+            grant["from_task"] = from_task
+        # Commands run under one grant id; recording the same answer again keeps it, so they keep running.
+        same = previous and all(previous.get(key) == grant.get(key) for key in
+                                ("purpose", "approval", "question", "revision", "source", "attempt", "policy",
+                                 "from_task"))
+        grant["id"] = previous["id"] if same and previous.get("id") else uuid.uuid4().hex
+        task["grant"] = grant
         S.save_task(project, task)
-        S.append_event(project, slug, "machine-grant", **grant)
+        S.append_event(project, slug, "grant", **grant)
         return grant
 
 
-def revoke_machine_access(project: str, slug: str, reason: str, *, actor: str,
-                          expected_attempt: int | None = None) -> dict:
+def revoke_grant(project: str, slug: str, reason: str, *, actor: str,
+                 expected_attempt: int | None = None) -> dict:
     """Revocation narrows authority: the coordinator or the operator at any time, the owner for its own attempt."""
     if actor not in ("l2", "l3", OPERATOR_MESSAGE_ROLE) or not reason.strip():
-        raise TransitionError("revoking a machine grant needs the owner, the coordinator or the operator and a reason")
+        raise TransitionError("revoking an operator grant needs the owner, the coordinator or the operator and a reason")
     with S.project_lock(project):
         task = S.load_task(project, slug)
-        previous = task.get("machine_access")
+        previous = task.get("grant")
         if not previous:
-            raise TransitionError("task has no machine grant")
+            raise TransitionError("task has no operator grant")
         if actor == "l2" and expected_attempt != task.get("attempt"):
             raise TransitionError("the owner revokes a grant only for its current attempt")
-        task["machine_access"] = None
+        task["grant"] = None
         S.save_task(project, task)
-        S.append_event(project, slug, "machine-revoke", actor=actor, reason=reason.strip(),
+        S.append_event(project, slug, "grant-revoke", actor=actor, reason=reason.strip(),
                        purpose=previous["purpose"], approval=previous["approval"])
         return task
+
+
+def start_machine_run(project: str, slug: str, fields) -> dict:
+    """Number and record a command altd runs outside the worker sandbox (`machine.jsonl`) before its unit starts, so
+    a command that restarts altd keeps its number and unit. `fields(n)` gives the row's purpose, command and unit."""
+    runs = S.task_dir(project, slug) / "machine.jsonl"
+    with S.project_lock(project):
+        rows = [json.loads(line) for line in runs.read_text().splitlines() if line.strip()] if runs.exists() else []
+        row = {"n": len(rows) + 1, **fields(len(rows) + 1), "exit": None, "timed_out": False, "started": S.now(), "finished": None,
+               "error": "still running or interrupted with altd"}
+        _append_jsonl(runs, row)
+    return row
+
+
+def finish_machine_run(project: str, slug: str, row: dict) -> dict:
+    """Add the run's task and project events once, then replace its row with the outcome. The row is written last,
+    so an interruption between the writes leaves it unfinished to finish again, and a second finish keeps the
+    outcome the first one recorded. Return that persisted outcome so evidence cleanup uses its paths."""
+    runs = S.task_dir(project, slug) / "machine.jsonl"
+    with S.project_lock(project):
+        recorded = next((e for e in S.read_events(project, slug)
+                         if e["kind"] == "machine-run" and e.get("unit") == row["unit"]), None)
+        if recorded is None:
+            S.append_event(project, slug, "machine-run", actor="l2", **row)
+            S.project_log(project, "machine-run", slug=slug, command=row["command"], unit=row["unit"],
+                          exit=row["exit"], timed_out=row["timed_out"], purpose=row["purpose"])
+        else:
+            row = {key: value for key, value in recorded.items() if key not in ("at", "kind", "actor")}
+        rows = [json.loads(line) for line in runs.read_text().splitlines() if line.strip()]
+        S.atomic_write(runs, "".join(json.dumps(row if r["n"] == row["n"] else r, sort_keys=True) + "\n"
+                                     for r in rows))
+        return row
 
 
 def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, head: str,

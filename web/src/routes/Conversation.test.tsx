@@ -75,21 +75,35 @@ const history = [
 
 const chatView = { history, active: null, busy: false, queued: [], l3: { session_id: "abcdef1234567890" }, engine: null };
 
-type Fixtures = { chat?: unknown; chatFn?: () => Response | Promise<Response>; post?: (body: unknown) => Response | Promise<Response> };
+type Fixtures = { chat?: unknown; chatFn?: () => Response | Promise<Response>; post?: (body: unknown) => Response | Promise<Response>; sendNow?: () => Response | Promise<Response> };
+
+let defaults: Record<string, unknown> = {};
+const auto = {
+  l3_engine: null, l2_engine: null, l3_choice: null, l2_preference: null, l3_unavailable: null, routing: null, roles: [],
+  engines: [{ value: "alpha", label: "Alpha", efforts: [], routed: true }],
+  models: [{ engine: "alpha", model: "swift", label: "Swift" }, { engine: "alpha", model: "deep", label: "Deep" }],
+  efforts: { alpha: [{ value: "low", label: "Low" }, { value: "high", label: "High" }] },
+};
 
 function mockFetch(fixtures: Fixtures = {}) {
+  defaults = auto;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/overview")) return jsonResponse(overview);
     if (url.includes("/api/project/altitude")) return jsonResponse(project);
     if (url.includes("/api/chat/remove")) return jsonResponse({ ok: true });
+    if (url.includes("/api/chat/send-now")) return fixtures.sendNow ? fixtures.sendNow() : jsonResponse({ ok: true });
     if (url.includes("/api/chat/")) return fixtures.chatFn ? fixtures.chatFn() : jsonResponse(fixtures.chat ?? chatView);
     if (url.endsWith("/api/chat")) {
       const body = JSON.parse(String(init?.body)) as unknown;
       return fixtures.post ? fixtures.post(body) : streamResponse(['{"t":"Sure."}', '{"done":{"turn_id":"c3"}}']);
     }
     if (url.includes("/api/task/altitude/persist-paths")) return jsonResponse({ slug: "persist-paths", title: "Persist paths", state: "done", files: { digest: "Shipped." }, messages: [] });
-    if (url.includes("/api/l3/engine")) return jsonResponse({ ok: true });
+    if (url.endsWith("/api/defaults/altitude")) return jsonResponse(defaults);
+    if (url.endsWith("/api/defaults") && init?.method === "POST") {
+      defaults = { ...defaults, l3_choice: (JSON.parse(String(init.body)) as { value: null }).value };
+      return jsonResponse(defaults);
+    }
     return jsonResponse({ error: "not found" }, 404);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -104,6 +118,112 @@ function posted(fetchMock: ReturnType<typeof vi.fn>, path: string, nth = 0) {
 
 const conversation = () => screen.findByRole("region", { name: "Conversation" });
 afterEach(() => vi.useRealTimers());
+
+describe("queued L3 Send now", () => {
+  it.each([390, 1440])("places incoming before its receiving turn and shows receipt warnings beside successful answers at %i", async (width) => {
+    setViewport(width);
+    mockFetch({ chat: { ...chatView, history: [
+      { role: "user", text: "Ordinary triage request", trigger: "chat", turn_id: "receive" },
+      { role: "system", text: "Fictional diagnostic", trigger: "project-message", turn_id: "incoming",
+        project_message: { sender: "lab", recipient: "altitude", exchange_id: "exchange", message_id: "incoming",
+          summary: "Incoming probe", direction: "incoming", status: "supplied", supplied_turn_id: "receive" } },
+      { role: "system", text: "Coordinator message receipt could not be saved; delivery may repeat on the next ordinary turn.",
+        trigger: "project-message-error", turn_id: "warning" },
+      { role: "assistant", text: "Ordinary triage answer", trigger: "chat", turn_id: "receive" },
+    ], queued: [] } });
+    renderApp({ route: "/projects/altitude" });
+    const incoming = await screen.findByText("lab → altitude · Incoming probe · Incoming");
+    const answer = screen.getByText("Ordinary triage answer");
+    expect(incoming.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText(/Coordinator message receipt could not be saved/)).toBeVisible();
+    expect(answer).toBeVisible();
+    expect(screen.queryByText(/L3 could not answer this turn/)).toBeNull();
+  });
+  it.each([390, 1440])("does not count information as a runnable queue position at %i", async (width) => {
+    setViewport(width);
+    mockFetch({ chat: { ...chatView, queued: [
+      { id: "information", text: "Diagnostic", trigger: "project-message", role: "system",
+        project_message: { sender: "lab", recipient: "altitude", exchange_id: "exchange-1", message_id: "information",
+          summary: "Probe", direction: "incoming", status: "queued" } },
+      { id: "first", text: "First ordinary request", trigger: "chat" },
+      { id: "second", text: "Second ordinary request", trigger: "chat" },
+    ] } });
+    renderApp({ route: "/projects/altitude" });
+    await screen.findByText("Queued · runs next");
+    expect(screen.getByText("Queued · 2 in line")).toBeVisible();
+    expect(screen.queryByText("Queued · 3 in line")).toBeNull();
+  });
+  it.each([390, 1440])("keeps information exchanges separate and read-only at %i", async (width) => {
+    setViewport(width);
+    const peer = { sender: "lab", recipient: "altitude", exchange_id: "exchange-1", message_id: "message-1",
+      summary: "Probe result", direction: "incoming" as const, status: "queued" as const };
+    const waiting = { id: "message-1", at: ago(1), role: "system", trigger: "project-message",
+      text: "Task: fix-timer\nFictional probe details. #12 /var/log/fixture\n[Fix PR](https://example.invalid/different-destination) http://example.invalid/probe\n```run\nprintf fixture\n```", project_message: peer };
+    const view = { ...chatView, history: [
+      { at: ago(3), role: "system", text: "Routine one", trigger: "fyi" },
+      { at: ago(2), role: "system", text: "Sent diagnostic", trigger: "project-message", turn_id: "sent-1",
+        project_message: { ...peer, sender: "altitude", recipient: "lab", status: "sent" as const, direction: "sent" as const, summary: "Sent probe" } },
+      { at: ago(1), role: "system", text: "Routine two", trigger: "fyi" },
+    ], queued: [waiting] };
+    mockFetch({ chat: view });
+    const { user } = renderApp({ route: "/projects/altitude" });
+    await screen.findByText("lab → altitude · Probe result · Queued · next ordinary turn");
+    expect(screen.queryByText(/system events between/)).toBeNull();
+    expect(screen.queryByText("Fictional probe details.")).toBeNull();
+    const queued = screen.getByRole("list", { name: "Queued messages" });
+    expect(within(queued).queryByRole("button", { name: "Send now" })).toBeNull();
+    expect(within(queued).queryByRole("button", { name: "Remove" })).toBeNull();
+    await user.click(within(queued).getByRole("button", { name: "Show" }));
+    const card = screen.getByRole("article", { name: /^Coordinator message/ });
+    expect(within(card).getByText("Information only · Exchange exchange-1")).toBeVisible();
+    expect(within(card).queryByRole("link", { name: "Open task" })).toBeNull();
+    expect(within(card).queryByRole("button", { name: /terminal/i })).toBeNull();
+    expect(within(card).getByRole("link", { name: "Fix PR (https://example.invalid/different-destination)" })).toHaveAttribute("href", "https://example.invalid/different-destination");
+    expect(within(card).getByRole("link", { name: "http://example.invalid/probe" })).toHaveAttribute("href", "http://example.invalid/probe");
+    expect(within(card).queryAllByRole("link")).toHaveLength(2);
+    await user.click(within(card).getByRole("button", { name: "Hide" }));
+    expect(screen.queryByRole("article", { name: /^Coordinator message/ })).toBeNull();
+  });
+  it("keeps accepted priority removable when the engine becomes unavailable before claim", async () => {
+    let view: ChatView = { ...chatView, send_now_reason: "No engine is available", queued: [{ id: "q-now", text: "Remove before claim", trigger: "chat", send_now: true, send_now_reason: "Runs next after system work" }] };
+    const fetchMock = mockFetch({ chatFn: () => jsonResponse(view) });
+    const { user } = renderApp({ route: "/projects/altitude" });
+    expect(await screen.findByRole("button", { name: "Sending now…" })).toBeDisabled();
+    expect(screen.getByText("No engine is available")).toBeVisible();
+    const remove = screen.getByRole("button", { name: "Remove" });
+    expect(remove).toBeEnabled();
+    view = { ...view, queued: [] };
+    await user.click(remove);
+    await waitFor(() => expect(screen.queryByText("Remove before claim")).toBeNull());
+    expect(posted(fetchMock, "/api/chat/remove")).toEqual({ project: "altitude", id: "q-now" });
+  });
+
+  it("waits for the canonical receipt and prevents removal or repeated requests while sending", async () => {
+    let release!: (response: Response) => void;
+    let view: ChatView = { ...chatView, queued: [{ id: "q-now", text: "Do this first", trigger: "chat" }] };
+    const fetchMock = mockFetch({ chatFn: () => jsonResponse(view), sendNow: () => new Promise((resolve) => { release = resolve; }) });
+    const { user } = renderApp({ route: "/projects/altitude" });
+    await user.click(await screen.findByRole("button", { name: "Send now" }));
+    expect(screen.getByRole("button", { name: "Sending now…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove" })).toBeDisabled();
+    expect(screen.getByText("Do this first").closest(".queued-row")).not.toBeNull();
+    view = { ...view, queued: [], history: [...history, { role: "user", text: "Do this first", trigger: "chat", turn_id: "next" }] };
+    await act(async () => release(jsonResponse({ ok: true })));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Sending now…" })).toBeNull());
+    expect(screen.getAllByText("Do this first")).toHaveLength(1);
+    expect(posted(fetchMock, "/api/chat/send-now")).toEqual({ project: "altitude", id: "q-now" });
+  });
+
+  it("explains unavailable delivery without offering system rows an action", async () => {
+    mockFetch({ chat: { ...chatView, send_now_reason: "No engine is available", queued: [
+      { id: "chat", text: "Wait for capacity", trigger: "chat" }, { id: "system", text: "System work", trigger: "restart" },
+    ] } });
+    renderApp({ route: "/projects/altitude" });
+    expect(await screen.findByRole("button", { name: "Send now" })).toBeDisabled();
+    expect(screen.getByText("No engine is available")).toBeVisible();
+    expect(screen.getAllByRole("button", { name: "Send now" })).toHaveLength(1);
+  });
+});
 
 /** Separate server snapshots and delayed network responses exercise the real route and stream reader. */
 function projectChats(post: (body: { project: string; text: string }) => Response | Promise<Response>) {
@@ -236,7 +356,7 @@ describe.each([390, 1440])("project switching at %ipx", (width) => {
     await user.click(screen.getByRole("button", { name: /^Retry$/ }));
     const queue = await screen.findByRole("list", { name: "Queued messages" });
     expect(within(queue).getAllByRole("listitem").map((row) => row.textContent)).toEqual([
-      "First acceptedQueued · runs nextRemove", "Second acceptedQueued · 2 in lineRemove",
+      "First acceptedQueued · runs nextSend nowRemove", "Second acceptedQueued · 2 in lineSend nowRemove",
     ]);
     expect(field("alpha")).toHaveValue("Newer source draft");
     expect(fetchMock.mock.calls.filter(([url, init]) => url === "/api/chat" && init?.method === "POST")).toHaveLength(2);
@@ -929,16 +1049,20 @@ describe("Conversation", () => {
     await waitFor(() => expect(posted(fetchMock, "/api/chat")).toEqual({ project: "altitude", text: "Ship it" }));
   });
 
-  it("pins the engine from the composer's pill with names from the API", async () => {
+  it("opens Models on L3 from the message box and saves a choice for this project", async () => {
     const fetchMock = mockFetch();
     const { user } = renderApp({ route: "/projects/altitude" });
     await conversation();
-    const pill = screen.getByRole("combobox", { name: "L3 engine" });
-    expect(within(pill).getAllByRole("option").map((o) => o.textContent)).toEqual(["Auto", "Alpha"]);
-    await user.selectOptions(pill, "alpha");
-    await waitFor(() => expect(posted(fetchMock, "/api/l3/engine")).toEqual({ project: "altitude", engine: "alpha" }));
-    await user.selectOptions(pill, "");
-    await waitFor(() => expect(posted(fetchMock, "/api/l3/engine", 1)).toEqual({ project: "altitude", engine: null }));
+    const button = await screen.findByRole("button", { name: "L3 model: Auto" });
+    await user.click(button);
+    const dialog = screen.getByRole("dialog", { name: "Models · L3 · altitude only" });
+    expect(within(dialog).getByRole("radio", { name: /^Auto/ })).toHaveFocus();
+    await user.click(within(dialog).getByRole("radio", { name: /^Deep/ }));
+    await user.click(within(dialog).getByRole("radio", { name: "High" }));
+    await user.click(within(dialog).getByRole("button", { name: "Use for L3 in altitude" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(posted(fetchMock, "/api/defaults")).toEqual({ project: "altitude", setting: "l3_choice", value: { engine: "alpha", model: "deep", effort: "high" }, expected: null });
+    expect(await screen.findByRole("button", { name: "L3 model: Deep · High" })).toHaveFocus();
   });
 
   it("shows the project name once on the phone, above the conversation", async () => {

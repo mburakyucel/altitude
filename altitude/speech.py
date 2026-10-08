@@ -268,6 +268,9 @@ def _stage(files, staging: Path, digest: str, cancel: threading.Event) -> None:
 
 def remove_runtime() -> None:
     """Delete every runtime and the remembered failure; a setup in progress must be stopped first."""
+    unavailable = platform.container_unavailable("Voice")
+    if unavailable:
+        raise SpeechError(unavailable, 403)
     if _setting_up():
         raise SpeechError("Voice is being set up. Cancel setup first.", 409)
     for path in _runtimes():

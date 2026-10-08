@@ -176,12 +176,18 @@ class Installation(InstallationCase):
             self.assertEqual(path.read_bytes(), data)
 
     def test_install_persists_application_choices_without_worker_authority(self):
-        with mock.patch.dict(os.environ, {"ALTITUDE_OPERATOR": "Trial user", "ALTITUDE_TASK": "unrelated-task"}):
+        network = {"HTTPS_PROXY": "http://127.0.0.1:3128", "NO_PROXY": "127.0.0.1,localhost",
+                   "SSL_CERT_FILE": str(self.home / "proxy-ca.pem")}
+        with mock.patch.dict(os.environ, {"ALTITUDE_OPERATOR": "Trial user", "ALTITUDE_TASK": "unrelated-task",
+                                          "PYTHONPATH": "/elsewhere", **network}):
             self.install()
         saved = json.loads(self.settings.read_text())["environment"]
         self.assertEqual(saved["ALTITUDE_OPERATOR"], "Trial user")
         self.assertEqual(saved["ALTITUDE_ROOTS"], str(self.home / "Projects"))
         self.assertNotIn("ALTITUDE_TASK", saved)
+        self.assertNotIn("PYTHONPATH", saved)
+        # Release checks and updates reach GitHub through the installing shell's proxy and CA bundle.
+        self.assertEqual({key: saved[key] for key in network}, network)
 
     def test_install_preserves_discovered_custom_nvm_tools_in_clean_service_environment(self):
         from tests.test_toolchain import nvm_fixture
@@ -637,15 +643,18 @@ class Platform(unittest.TestCase):
 
 
 class PublishedReleaseCase(InstallationCase):
-    """v0.1.0 installed; GitHub's release lookup and downloads are fixtures."""
+    """INSTALLED installed; GitHub's release list and downloads are fixtures."""
+    INSTALLED = "v0.1.0"
     RELEASES = "https://github.com/example/altitude/releases"
+    LIST = "https://api.github.com/repos/example/altitude/releases?per_page=30"
+    LATEST = "https://api.github.com/repos/example/altitude/releases/latest"
 
     def setUp(self):
         super().setUp()
-        self.install()
+        self.install(self.INSTALLED)
         self.requests = []
         self.published = {}
-        patcher = mock.patch.object(config, "RELEASE", {"version": "v0.1.0", "repository": "https://github.com/example/altitude"})
+        patcher = mock.patch.object(config, "RELEASE", {"version": self.INSTALLED, "repository": "https://github.com/example/altitude"})
         patcher.start()
         self.addCleanup(patcher.stop)
         self.download = installation._get
@@ -659,14 +668,23 @@ class PublishedReleaseCase(InstallationCase):
             raise OSError("fixture: not published")
         return self.published[url]
 
-    def publish(self, version, *, latest=None, checksum=None, edited=True):
+    def publish(self, version, *, checksum=None, edited=True):
         archive, digest = self.archive(version, edited=edited)
         download = f"{self.RELEASES}/download/{version}/altitude-{version}.tar.gz"
         self.published[download] = archive.read_bytes()
         self.published[download + ".sha256"] = f"{checksum or digest}\n".encode()
-        if latest is not None:
-            self.published["https://api.github.com/repos/example/altitude/releases/latest"] = json.dumps(latest).encode()
         return download
+
+    def listed(self, *releases):
+        """GitHub's releases, newest first: a tag as the release workflow publishes it, or a raw entry. Its latest
+        release is the newest that is neither a draft nor a prerelease."""
+        releases = [{"tag_name": release, "draft": False, "prerelease": "-rc." in release} if isinstance(release, str)
+                    else release for release in releases]
+        self.published[self.LIST] = json.dumps(releases).encode()
+        self.published.pop(self.LATEST, None)
+        latest = [release for release in releases if not release.get("draft") and not release.get("prerelease")]
+        if latest:
+            self.published[self.LATEST] = json.dumps(latest[0]).encode()
 
 
 class PublishedUpdate(PublishedReleaseCase):
@@ -706,22 +724,22 @@ class PublishedUpdate(PublishedReleaseCase):
         self.assertFalse((self.prefix / "versions/v0.1.1").exists())
 
     def test_latest_release_is_downloaded_verified_and_activated(self):
-        download = self.publish("v0.1.1", latest={"tag_name": "v0.1.1", "prerelease": False, "draft": False})
+        download = self.publish("v0.1.1")
+        self.listed("v0.2.0-rc.1", "v0.1.1", "v0.1.0")
         result = installation.update()
         self.assertEqual((result["version"], result["updated"]), ("v0.1.1", True))
         self.assertEqual(result["notes"], f"{self.RELEASES}/tag/v0.1.1")
         self.assertEqual(set(result), {"version", "updated", "service", "url", "notes"})
         self.assertNotIn(str(self.home), json.dumps(result))
-        self.assertEqual(self.requests, ["https://api.github.com/repos/example/altitude/releases/latest",
-                                         download, download + ".sha256"])
+        self.assertEqual(self.requests, [self.LATEST, download, download + ".sha256"])
         self.assertEqual((self.prefix / "current").resolve(), self.prefix / "versions/v0.1.1")
         self.assertEqual(installation.metadata(self.prefix / "versions/v0.1.0")["version"], "v0.1.0")
 
     def test_current_or_older_latest_changes_nothing(self):
-        for latest in ("v0.1.0", "v0.1.0-rc.2", "v0.0.9"):
-            with self.subTest(latest=latest):
-                self.published = {"https://api.github.com/repos/example/altitude/releases/latest":
-                                  json.dumps({"tag_name": latest}).encode()}
+        for releases in (("v0.1.0",), ("v0.2.0-rc.1", "v0.1.0"), ("v0.0.9",), ({"tag_name": "main", "draft": False},)):
+            with self.subTest(releases=releases):
+                self.published = {}
+                self.listed(*releases)
                 self.requests.clear()
                 self.actions.clear()
                 result = installation.update()
@@ -742,7 +760,8 @@ class PublishedUpdate(PublishedReleaseCase):
         self.assertEqual(self.requests, [])
 
     def test_mismatched_published_checksum_keeps_the_installed_version(self):
-        self.publish("v0.1.1", latest={"tag_name": "v0.1.1"}, checksum="0" * 64)
+        self.publish("v0.1.1", checksum="0" * 64)
+        self.listed("v0.1.1")
         self.actions.clear()
         with self.assertRaisesRegex(ValueError, "checksum mismatch"):
             installation.update()
@@ -751,12 +770,11 @@ class PublishedUpdate(PublishedReleaseCase):
         self.assertEqual(self.actions, [])
 
     def test_unusable_lookup_or_unnamed_repository_refuses_before_downloading(self):
-        for latest in ({"tag_name": "v0.2.0", "prerelease": True}, {"tag_name": "main"}, ["v0.2.0"]):
+        for latest in (["v0.2.0"], "v0.2.0", None):
             with self.subTest(latest=latest):
-                self.published = {"https://api.github.com/repos/example/altitude/releases/latest":
-                                  json.dumps(latest).encode()}
+                self.published = {self.LATEST: json.dumps(latest).encode()}
                 self.requests.clear()
-                with self.assertRaisesRegex(ValueError, "no valid version"):
+                with self.assertRaisesRegex(ValueError, "returned no releases"):
                     installation.update()
                 self.assertEqual(len(self.requests), 1)
         self.requests.clear()
@@ -802,7 +820,8 @@ class UpdatedProjectGuards(PublishedReleaseCase):
         self.assertEqual(S.load_task("demo", first["slug"])["state"], "running")
         self.assertEqual(git_policy.require_hooks_installed(repo), self.prefix / "hooks")
 
-        self.publish("v0.1.1", latest={"tag_name": "v0.1.1"})
+        self.publish("v0.1.1")
+        self.listed("v0.1.1")
         self.assertEqual(installation.update()["version"], "v0.1.1")
         self.serve("v0.1.1")
         second = T.new("demo", "After the update", "Fictional work on the updated version.")
@@ -821,8 +840,7 @@ class UpdatedProjectGuards(PublishedReleaseCase):
 
 
 class NoticeCase(PublishedReleaseCase):
-    """v0.1.0 installed, its release lookup a fixture, and the detached update recorded instead of run."""
-    LATEST = "https://api.github.com/repos/example/altitude/releases/latest"
+    """v0.1.0 installed, its release list a fixture, and the detached update recorded instead of run."""
 
     def setUp(self):
         super().setUp()
@@ -831,8 +849,14 @@ class NoticeCase(PublishedReleaseCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def latest(self, version):
-        self.published[self.LATEST] = json.dumps({"tag_name": version}).encode()
+    def offered(self, *releases):
+        (config.ROOT / "update.json").unlink(missing_ok=True)
+        self.listed(*releases)
+        installation.check_for_update()
+        # A candidate installation reads the release list; a stable one only GitHub's latest release.
+        self.assertEqual(self.requests[-1], self.LIST if "-rc." in self.INSTALLED else self.LATEST)
+        self.assertIn("checked", installation._update_record()[1], "A lookup that found nothing to follow still succeeded")
+        return (installation.update_status()["available"] or {}).get("version")
 
 
 class NewVersionNotice(NoticeCase):
@@ -844,7 +868,7 @@ class NewVersionNotice(NoticeCase):
         self.assertIsNone(installation.update_status()["available"])
         installation.check_for_update(now=1000 + 3599)
         self.assertEqual(len(self.requests), 1)
-        self.latest("v0.2.0")
+        self.listed("v0.2.0")
         installation.check_for_update(now=1000 + 3600)
         self.assertEqual(len(self.requests), 2)
         self.assertEqual(installation.update_status()["available"],
@@ -855,20 +879,16 @@ class NewVersionNotice(NoticeCase):
         self.assertEqual(len(self.requests), 3)
         self.assertEqual(installation.update_status()["available"]["version"], "v0.2.0")
 
-    def test_only_a_newer_stable_release_is_offered(self):
-        for version, offered in (("v0.1.0", False), ("v0.0.9", False), ("v0.1.1", True)):
-            with self.subTest(version=version):
-                (config.ROOT / "update.json").unlink(missing_ok=True)
-                self.latest(version)
-                installation.check_for_update()
-                self.assertEqual(bool(installation.update_status()["available"]), offered)
-        self.published[self.LATEST] = json.dumps({"tag_name": "v0.3.0-rc.1", "prerelease": True}).encode()
-        (config.ROOT / "update.json").unlink()
-        installation.check_for_update()
-        self.assertIsNone(installation.update_status()["available"])
+    def test_a_stable_installation_is_offered_only_a_newer_stable_release(self):
+        for releases, offered in ((("v0.1.0", "v0.0.9", "v0.1.0-rc.2"), None),
+                                  (("v0.3.0-rc.1", "v0.1.0"), None),
+                                  (("v0.3.0-rc.1", "v0.1.1", "v0.1.0"), "v0.1.1"),
+                                  (({"tag_name": "v0.4.0", "draft": True, "prerelease": False}, "v0.1.1"), "v0.1.1")):
+            with self.subTest(releases=releases):
+                self.assertEqual(self.offered(*releases), offered)
 
     def test_the_switch_stops_the_check_and_hides_the_notice(self):
-        self.latest("v0.2.0")
+        self.listed("v0.2.0")
         installation.check_for_update()
         S.write_json(config.ROOT / "settings.json", {"update_check": False})
         self.requests.clear()
@@ -886,7 +906,7 @@ class NewVersionNotice(NoticeCase):
 
     def test_the_terminal_line_appears_once_a_day_from_the_saved_check(self):
         self.assertIsNone(installation.update_notice())
-        self.latest("v0.2.0")
+        self.listed("v0.2.0")
         installation.check_for_update()
         self.requests.clear()
         self.assertEqual(installation.update_notice(), "Altitude v0.2.0 is available: run alt update "
@@ -898,7 +918,7 @@ class NewVersionNotice(NoticeCase):
         self.assertEqual(self.requests, [])
 
     def test_doctor_reports_the_available_release(self):
-        self.latest("v0.2.0")
+        self.listed("v0.2.0")
         installation.check_for_update()
         with mock.patch.object(installation, "_gh_signed_in", return_value=False), \
                 mock.patch.object(tls, "info", side_effect=OSError("fixture: no certificate")):
@@ -908,7 +928,7 @@ class NewVersionNotice(NoticeCase):
         for version in ("v0.2.0", "v0.1.0", "v0.0.9"):
             with self.subTest(before_check=version), self.assertRaisesRegex(ValueError, "Only the newer release"):
                 installation.request_update(version)
-        self.latest("v0.2.0")
+        self.listed("v0.2.0")
         installation.check_for_update()
         for version in ("v0.1.1", "v0.3.0", "v0.1.0", "v0.2.0; rm -rf ~"):
             with self.subTest(version=version), self.assertRaisesRegex(ValueError, "Only the newer release"):
@@ -926,7 +946,7 @@ class NewVersionNotice(NoticeCase):
         self.assertEqual(len(self.detached), 1)
 
     def test_a_failed_or_stalled_update_is_reported_and_can_be_retried(self):
-        self.latest("v0.2.0")
+        self.listed("v0.2.0")
         installation.check_for_update()
         installation.request_update("v0.2.0")
         with self.assertRaises(OSError):
@@ -942,7 +962,7 @@ class NewVersionNotice(NoticeCase):
                              "state": "failed", "error": "Run alt update in a terminal to see why."})
 
     def test_an_update_that_cannot_start_is_marked_failed(self):
-        self.latest("v0.2.0")
+        self.listed("v0.2.0")
         installation.check_for_update()
         with mock.patch.object(platform, "detach", side_effect=RuntimeError("fixture: systemd-run failed")):
             with self.assertRaises(RuntimeError):
@@ -950,13 +970,13 @@ class NewVersionNotice(NoticeCase):
         self.assertEqual(installation.update_status()["attempt"]["state"], "failed")
 
     def test_a_check_finishing_during_an_update_keeps_its_attempt(self):
-        self.latest("v0.2.0")
+        self.listed("v0.2.0")
         installation.check_for_update()
         lookup = installation.latest_release
 
-        def slow_lookup(repository):
+        def slow_lookup(repository, current):
             installation.request_update("v0.2.0")  # the Update button while the daemon's lookup is in flight
-            return lookup(repository)
+            return lookup(repository, current)
 
         with mock.patch.object(installation, "latest_release", side_effect=slow_lookup), \
                 mock.patch.object(installation.time, "time", return_value=time.time() + 13 * 3600):
@@ -964,13 +984,40 @@ class NewVersionNotice(NoticeCase):
         self.assertEqual(installation.update_status()["attempt"]["state"], "running")
 
     def test_a_finished_update_clears_the_notice(self):
-        self.publish("v0.1.1", latest={"tag_name": "v0.1.1"})
+        self.publish("v0.1.1")
+        self.listed("v0.1.1")
         installation.check_for_update()
         installation.request_update("v0.1.1")
         installation.update("v0.1.1")
         with mock.patch.object(config, "RELEASE", {"version": "v0.1.1", "repository": "https://github.com/example/altitude"}):
             status = installation.update_status()
         self.assertEqual((status["current"], status["available"], status["attempt"]), ("v0.1.1", None, None))
+
+
+class CandidateInstallation(NoticeCase):
+    """An installation from a release candidate follows newer candidates and stable releases."""
+    INSTALLED = "v0.1.0-rc.2"
+
+    def test_a_newer_candidate_or_stable_release_is_offered(self):
+        for releases, offered in ((("v0.1.0-rc.3", "v0.1.0-rc.2"), "v0.1.0-rc.3"),
+                                  (("v0.1.0", "v0.1.0-rc.3", "v0.1.0-rc.2"), "v0.1.0"),
+                                  (("v0.1.1", "v0.2.0-rc.1", "v0.1.0"), "v0.2.0-rc.1")):
+            with self.subTest(releases=releases):
+                self.assertEqual(self.offered(*releases), offered)
+
+    def test_older_equal_and_draft_releases_are_never_offered(self):
+        for releases in (("v0.1.0-rc.2", "v0.1.0-rc.1", "v0.0.9"),
+                         ({"tag_name": "v0.1.0-rc.3", "draft": True, "prerelease": True}, "v0.1.0-rc.2"),
+                         ({"tag_name": "v0.2.0", "draft": True, "prerelease": False},)):
+            with self.subTest(releases=releases):
+                self.assertIsNone(self.offered(*releases))
+
+    def test_update_without_a_version_installs_the_newest_followed_release(self):
+        download = self.publish("v0.1.0-rc.3")
+        self.listed({"tag_name": "v0.2.0", "draft": True, "prerelease": False}, "v0.1.0-rc.3", "v0.1.0-rc.2")
+        self.assertEqual(installation.update()["version"], "v0.1.0-rc.3")
+        self.assertEqual(self.requests, [self.LIST, download, download + ".sha256"])
+        self.assertEqual((self.prefix / "current").resolve(), self.prefix / "versions/v0.1.0-rc.3")
 
 
 class UpdateRequests(NoticeCase):
@@ -987,7 +1034,7 @@ class UpdateRequests(NoticeCase):
         threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": .01}, daemon=True).start()
         self.addCleanup(self.httpd.server_close)
         self.addCleanup(self.httpd.shutdown)
-        self.latest("v0.2.0")
+        self.listed("v0.2.0")
         installation.check_for_update()
 
     def post(self, path, body, *, status=200, headers=None):

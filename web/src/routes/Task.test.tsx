@@ -102,10 +102,11 @@ const transcript = {
   slug: "fix-timer",
   engine: "claude",
   session_id: "0123456789abcdef",
-  cursor: 2,
+  attempt: 1, cursor: "fixture:2", lower: "", next: "", more: false, reset: false,
+  has_earlier: false, has_engine_records: true, deleted: [],
   events: [
-    { seq: 0, source: "platform", kind: "boundary", type: "state", at: "2026-08-29T12:00:00", text: "queued → running" },
-    { seq: 1, source: "claude", kind: "message", type: "assistant", role: "assistant", at: null, text: "Reading the timer code" },
+    { id: "boundary", order: "01", version: 1, source: "platform", kind: "boundary", type: "state", at: "2026-08-29T12:00:00", text: "queued → running" },
+    { id: "reading", order: "02", version: 2, source: "claude", kind: "message", type: "assistant", role: "assistant", at: null, text: "Reading the timer code" },
   ],
   redaction: "credential-shaped keys and values are redacted",
 };
@@ -116,7 +117,42 @@ interface StubOptions {
   message?: () => Response | Promise<Response>;
   action?: () => Response | Promise<Response>;
   task?: () => Response;
+  sendNow?: () => Response | Promise<Response>;
 }
+
+describe("queued L2 Send now", () => {
+  it("keeps the queued message through interruption until canonical delivery and sends its identity once", async () => {
+    let release!: (response: Response) => void;
+    const message = { id: "steer-now", role: "operator", text: "Check this first", delivery: { state: "queued", at: null, removable: true, send_now: true } };
+    let record = { ...running, messages: [message] };
+    const fetchMock = stub(record, { task: () => jsonResponse(record), sendNow: () => new Promise((resolve) => { release = resolve; }) });
+    const { user } = renderApp({ route: "/projects/altitude/tasks/fix-timer" });
+    await user.click(await screen.findByRole("button", { name: "Send now" }));
+    expect(screen.getByRole("button", { name: "Sending now…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove" })).toBeDisabled();
+    expect(screen.getByText("Stops work and reviews to deliver now.")).toBeVisible();
+    expect(screen.getByText("Queued · waiting for a checkpoint")).toBeVisible();
+    record = { ...record, messages: [{ ...message, delivery: { ...message.delivery, state: "delivered", removable: false, send_now: false } }] };
+    await act(async () => release(jsonResponse({ ok: true })));
+    await screen.findByText("Delivered to session");
+    expect(screen.queryByRole("button", { name: "Send now" })).toBeNull();
+    expect(screen.getAllByText("Check this first")).toHaveLength(1);
+    const calls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/l2/send-now"));
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(String(calls[0]?.[1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", id: "steer-now" });
+  });
+
+  it.each([[403, "You do not have permission to send this message now."], [409, "Answer the open question first"], [500, "Send now unconfirmed. Check this message’s status before trying again."]])("refreshes and explains failed delivery (%s)", async (status, expected) => {
+    const record = { ...running, messages: [{ id: "steer-now", role: "operator", text: "Keep evidence", delivery: { state: "queued", at: null, removable: true, send_now: true } }] };
+    const read = vi.fn(() => jsonResponse(record));
+    stub(record, { task: read, sendNow: () => jsonResponse({ error: "Answer the open question first" }, status) });
+    const { user } = renderApp({ route: "/projects/altitude/tasks/fix-timer" });
+    await user.click(await screen.findByRole("button", { name: "Send now" }));
+    await screen.findByText(expected);
+    expect(read.mock.calls.length).toBeGreaterThan(1);
+    expect(screen.getByText("Keep evidence")).toBeVisible();
+  });
+});
 
 /** This computer's speech service for the current test: its last words are "spoken detail". */
 let voice = hostVoiceServer({ final: "spoken detail" });
@@ -139,6 +175,7 @@ function stub(task: unknown, options: StubOptions = {}) {
     if (url.startsWith("/api/voice/live")) return voice.fetch(input, init);
     if (url.includes("/api/task/action")) return options.action ? options.action() : jsonResponse({ ok: true });
     if (url.includes("/api/transcript/")) return jsonResponse(transcript);
+    if (url.includes("/api/l2/send-now")) return options.sendNow ? options.sendNow() : jsonResponse({ ok: true });
     if (url.includes("/api/task/")) {
       if (options.task) return options.task();
       const record = task as { messages?: unknown[] };
@@ -183,6 +220,22 @@ describe("Task on desktop", () => {
     expect(within(row).queryByLabelText("Message images")).toBeNull();
     fireEvent.click(within(row).getByRole("button", { name: "Show" }));
     expect(within(row).getByLabelText("Message images")).toBeInTheDocument();
+  });
+
+  it("links an L2 reply's validation captures in a new tab, worded by how many there are", async () => {
+    const capture = (title: string) => ({ name: `${"a".repeat(64)}.gif`, title, bytes: 306_000, width: 390, height: 600, frames: 11, seconds: 9.8 });
+    stub({ ...running, messages: [running.messages[1],
+      { id: "m-4", at: "2026-08-30T10:00:00Z", role: "l2", text: "One phone capture.", captures: [capture("Phone send")], capture_run: 7 },
+      { id: "m-5", at: "2026-08-30T11:00:00Z", role: "l2", text: "Two captures.", captures: [capture("Phone send"), capture("Desktop send")], capture_run: 8 }] });
+    renderApp({ route });
+    const convo = await screen.findByRole("region", { name: "Task conversation" });
+    const one = within(convo).getByRole("link", { name: "Watch capture · Phone send" });
+    expect(one).toHaveAttribute("href", "/projects/altitude/tasks/fix-timer/captures/m-4");
+    expect(one).toHaveAttribute("target", "_blank");
+    expect(one).toHaveAttribute("rel", "noopener noreferrer");
+    expect(within(convo).getByRole("link", { name: "Watch 2 captures" })).toHaveAttribute("href", "/projects/altitude/tasks/fix-timer/captures/m-5");
+    expect(within(convo).getAllByRole("link", { name: /^Watch / })).toHaveLength(2);
+    expect(within(convo.querySelector<HTMLElement>('[data-role="l2"]')!).queryByRole("link")).toBeNull();
   });
 
   it.each([200, 500])("reconciles by identity before response %i without hiding repeated text or changing recovery", async (status) => {
@@ -266,7 +319,7 @@ describe("Task on desktop", () => {
     stub({ ...askingL3, hold_merge: holdReason, question: { ...decision, audience: "l3" }, questions: [{ ...decision, audience: "l3" }] });
     const { user } = renderApp({ route });
     const opener = await screen.findByRole("button", { name: /Task details$/ });
-    expect(screen.getByText("Waits for L3")).toBeInTheDocument();
+    expect(screen.getByText("Waiting for coordinator")).toBeInTheDocument();
     expect(screen.queryByText(holdReason)).toBeNull();
     expect(screen.queryByText(askingL3.blocked_reason)).toBeNull();
     const field = screen.getByRole("textbox", { name: "Message the L2" });
@@ -292,7 +345,7 @@ describe("Task on desktop", () => {
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
     expect(screen.getByRole("button", { name: "Back" })).toHaveTextContent("‹ altitude");
     expect(screen.getByText("L2 working")).toBeInTheDocument();
-    expect(screen.getByText("Opus on Claude")).toBeInTheDocument();
+    expect(screen.getByText("Opus 5 on Claude")).toBeInTheDocument();
     expect(screen.queryByText("attempt 1 · started 7 min ago · 34% of its context used")).toBeNull();
 
     const convo = screen.getByRole("region", { name: "Task conversation" });
@@ -322,7 +375,7 @@ describe("Task on desktop", () => {
     expect(within(panel).getByText("Following live · new steps appear at the bottom")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Live session" })).toHaveAttribute("aria-pressed", "true");
     expect(String(fetchMock.mock.calls.find(([u]) => String(u).includes("/api/transcript/"))?.[0])).toContain(
-      "/api/transcript/altitude/fix-timer?engine=claude&session_id=0123456789abcdef&raw=0",
+      "/api/transcript/altitude/fix-timer?engine=claude&session_id=0123456789abcdef&attempt=1&raw=0",
     );
     expect(screen.getAllByRole("button", { name: "Stop" }).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();
@@ -385,10 +438,16 @@ describe("Task on desktop", () => {
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
     expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Reject" }));
-    const group = screen.getByRole("group", { name: "Reject this task?" });
+    let group = screen.getByRole("group", { name: "Reject this task?" });
+    expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["Cancel", "Reject task"]);
+    expect(within(group).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("group", { name: "Reject this task?" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Reject" }));
+    group = screen.getByRole("group", { name: "Reject this task?" });
     expect(group).toHaveTextContent("Reject this task? Its worker ends and the task is archived.");
     await user.type(within(group).getByLabelText("Reason (optional)"), "waiting on the API");
-    await user.click(within(group).getByRole("button", { name: "Reject" }));
+    await user.click(within(group).getByRole("button", { name: "Reject task" }));
     await waitFor(() => expect(actionCall(fetchMock)).toBeDefined());
     expect(JSON.parse(String(actionCall(fetchMock)?.[1]?.body))).toEqual({
       project: "altitude",
@@ -432,7 +491,7 @@ describe("Task on desktop", () => {
     const { user, queryClient } = renderApp({ route });
     await screen.findByText("Planned", { exact: true });
     const conversation = screen.getByRole("region", { name: "Task conversation" });
-    expect(within(conversation).getByText("Waits for the index migration to land")).toBeInTheDocument();
+    expect(screen.getAllByText("Waiting for the index migration to land.")[0]).toBeInTheDocument();
     expect(within(conversation).getByText("No messages yet.")).toBeInTheDocument();
     const field = screen.getByRole("textbox", { name: "Message the L2" });
     await user.type(field, "Keep pagination compatible.");
@@ -447,7 +506,7 @@ describe("Task on desktop", () => {
     task.planned_wait = null;
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ["task", "altitude", task.slug] }); });
     await screen.findByText("Queued", { exact: true });
-    expect(screen.queryByText("Waits for the index migration to land")).toBeNull();
+    expect(screen.queryByText("Waiting for the index migration to land.")).toBeNull();
     expect(field).toBeEnabled();
     expect(field).toHaveValue("Preserve this draft");
     expect(within(conversation).getByText("Keep pagination compatible.")).toBeInTheDocument();
@@ -469,7 +528,7 @@ describe("Task on desktop", () => {
     expect(screen.getByText("Queued")).toBeInTheDocument();
     expect(screen.queryByText("Blocked")).toBeNull();
     const panel = screen.getByRole("region", { name: "Live session" });
-    expect(within(panel).getByText("Waits for resume · usage limit: the window resets at 02:00")).toBeInTheDocument();
+    expect(within(panel).getByText("Waits for resume")).toBeInTheDocument();
     expect(screen.getByText("Delivered when Altitude resumes the L2.")).toBeInTheDocument();
   });
 
@@ -489,7 +548,7 @@ describe("Task on desktop", () => {
     expect(turn.previousElementSibling).toHaveTextContent("L3 messaged the L2");
     expect(convo.querySelectorAll(".conversation-question")).toHaveLength(1);
     expect(screen.getAllByText("Your turn · 1 question")).toHaveLength(2);
-    expect(document.querySelector(".task-line")).toBeNull();
+    expect(document.querySelector(".task-explanation")).toHaveTextContent("Waiting for your answer to the task’s question.");
     expect(screen.getByLabelText("Message the L2")).toBeInTheDocument();
     expect(screen.getByText("Replying hands the turn back to the L2.")).toBeInTheDocument();
   });
@@ -586,20 +645,20 @@ describe("Task on desktop", () => {
     const { user } = renderApp({ route });
 
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
-    expect(screen.getByText("Waits for L3")).toBeInTheDocument();
+    expect(screen.getByText("Waiting for coordinator")).toBeInTheDocument();
     expect(screen.queryByText("which suite covers the timer")).toBeNull();
-    expect(document.querySelector(".task-line")).toBeNull();
+    expect(document.querySelector(".task-explanation")).toHaveTextContent("Waiting for the coordinator: which suite covers the timer.");
     await user.click(screen.getByRole("button", { name: /Task details$/ }));
     expect(within(screen.getByRole("dialog", { name: "Task details" })).getByText("which suite covers the timer")).toBeInTheDocument();
   });
 
-  it("shows a fault as one red sentence and says L3 has been told", async () => {
+  it("explains a fault in red without inferring its cause from diagnostic prose", async () => {
     stub(faulted);
     renderApp({ route });
 
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
     const line = document.querySelector(".task-line");
-    expect(line).toHaveTextContent("The sandbox refused the network socket. L3 has been told.");
+    expect(line).toHaveTextContent("A system problem paused work. Waiting for the coordinator to check the blocker.");
     expect(line).not.toHaveTextContent("Tried twice");
     expect(line).toHaveClass("text-danger");
   });
@@ -610,8 +669,8 @@ describe("Task on desktop", () => {
     const { user } = renderApp({ route });
     const opener = await screen.findByRole("button", { name: /Task details$/ });
     const notice = document.querySelector(".task-fault");
-    expect(notice).toHaveTextContent("The verification browser could not start");
-    expect(notice).toHaveTextContent("… L3 has been told.");
+    expect(notice).toHaveTextContent("A system problem paused work.");
+    expect(notice).not.toHaveTextContent(reason);
     expect(notice!.textContent!.length).toBeLessThanOrEqual(120);
     await user.click(opener);
     expect(within(screen.getByRole("dialog", { name: "Task details" })).getByText(reason)).toBeInTheDocument();
@@ -1084,7 +1143,7 @@ describe("Task on the phone", () => {
     stub(faulted);
     renderApp({ route });
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
-    expect(document.querySelector(".task-line")).toHaveTextContent("The sandbox refused the network socket. L3 has been told.");
+    expect(document.querySelector(".task-line")).toHaveTextContent("A system problem paused work. Waiting for the coordinator to check the blocker.");
   });
 });
 

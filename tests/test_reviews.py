@@ -9,10 +9,13 @@ import threading
 import subprocess
 import unittest
 import uuid
+import sys
 from unittest import mock
 
 from tests.support import AltitudeCase, add_worktree, git, make_repo
 from altitude import config, dispatch, engines, reviews, route, server, state as S, tasks as T, verify
+
+run_engine_review = engines.review
 
 
 class TestReviews(AltitudeCase):
@@ -65,6 +68,111 @@ class TestReviews(AltitudeCase):
     def pair(self):
         return {"base_sha": git("rev-parse", "origin/main", cwd=self.worktree).strip(),
                 "head_sha": git("rev-parse", "HEAD", cwd=self.worktree).strip()}
+
+    def test_failed_process_diagnostics_stay_on_owning_review_and_survive_retry(self):
+        self.engine.side_effect = run_engine_review
+        self.patch(engines, "review_capability", return_value={"available": True})
+        self.patch(engines, "_review_command", return_value=["fixture-only"])
+        self.patch(engines.platform, "job_active", return_value=False)
+        self.patch(engines.platform, "job_command", return_value=[sys.executable, "-I", "-c",
+            "import sys; sys.stdin.read(); print('PRIVATE TRANSCRIPT'); "
+            "sys.stderr.write('adapter startup failed\\napi_key=fictional-secret-value\\n'); sys.exit(17)"])
+        other = T.new(self.project, "Other task", "Unrelated task records.")
+        failed = self.run_review()
+        self.assertEqual(failed["state"], "failed")
+        evidence = failed["diagnostics"]
+        self.assertEqual(evidence["exit_status"], 17)
+        self.assertIn("adapter startup failed", evidence["stderr"])
+        self.assertIn("[REDACTED]", evidence["stderr"])
+        saved = S.load_task(self.project, self.slug)
+        self.assertEqual(saved["reviews"][0]["diagnostics"], evidence)
+        self.assertEqual(reviews.view(self.project, self.slug)["latest"]["diagnostics"], evidence)
+        for private in ("PRIVATE TRANSCRIPT", "fictional-secret-value"):
+            self.assertNotIn(private, json.dumps(saved))
+        self.assertNotIn("diagnostics", json.dumps(S.load_task(self.project, other["slug"])))
+        with self.assertRaises(T.TransitionError):
+            reviews.run(self.project, other["slug"], failed["id"], actor="l2", expected_attempt=1)
+        self.engine.side_effect = self.success
+        completed = self.run_review(self.request(previous=failed["id"]))
+        self.assertEqual(completed["state"], "completed")
+        self.assertNotIn("diagnostics", completed)
+        self.assertEqual(reviews.view(self.project, self.slug)["history"][0]["diagnostics"], evidence)
+
+    def test_stdout_only_error_receipt_is_owner_readable_after_explicit_retry(self):
+        self.engine.side_effect = run_engine_review
+        self.patch(engines, "review_capability", return_value={"available": True})
+        self.patch(engines, "_review_command", return_value=["fixture-only"])
+        self.patch(engines.platform, "job_active", return_value=False)
+        records = [
+            {"is_error": True, "errors": ["captured adapter connection refused PRIVATE SOURCE"]},
+            {"type": "turn.failed", "error": {"message": "captured adapter connection refused PRIVATE SOURCE"}},
+        ]
+        # Both configured engine fixtures share the same real process/task receipt path.
+        previous = None
+        for engine, record in zip(config.ENGINES, records):
+            with self.subTest(engine=engine):
+                self.pick.return_value = {**self.choice, "engine": engine}
+                self.patch(engines.platform, "job_command", return_value=[sys.executable, "-I", "-c",
+                    f"import sys; sys.stdin.read(); print({json.dumps(record)!r}); sys.exit(1)"])
+                failed = self.run_review(self.request(previous=previous))
+                self.assertEqual(failed["state"], "failed")
+                evidence = failed["diagnostics"]
+                self.assertEqual(evidence["stderr"], "")
+                self.assertEqual(evidence["stdout_state"], "recognized_error")
+                self.assertEqual(evidence["stdout_errors"], ["connection", "captured_input"])
+                self.assertEqual(reviews.view(self.project, self.slug)["latest"]["diagnostics"], evidence)
+                self.assertNotIn("PRIVATE SOURCE", json.dumps(S.load_task(self.project, self.slug)))
+                self.engine.side_effect = self.success
+                completed = self.run_review(self.request(previous=failed["id"]))
+                self.assertEqual(completed["state"], "completed")
+                self.assertEqual(reviews.view(self.project, self.slug)["history"][0]["diagnostics"], evidence)
+                self.assess(completed)
+                previous = completed["id"]
+                self.engine.side_effect = run_engine_review
+
+    def test_unrecognized_claude_failure_receipt_names_fixed_facts(self):
+        self.engine.side_effect = run_engine_review
+        self.patch(engines, "review_capability", return_value={"available": True})
+        self.patch(engines, "_review_command", return_value=["fixture-only"])
+        self.patch(engines.platform, "job_active", return_value=False)
+        self.pick.return_value = {**self.choice, "engine": "claude"}
+        record = {"type": "result", "subtype": "success", "is_error": True, "result": "PRIVATE SOURCE",
+                  "terminal_reason": "api_error", "api_error_status": 401, "num_turns": 1, "duration_api_ms": 90}
+        self.patch(engines.platform, "job_command", return_value=[sys.executable, "-I", "-c",
+            f"import sys; sys.stdin.read(); print({json.dumps(record)!r}); sys.exit(1)"])
+        failed = self.run_review(self.request())
+        self.assertEqual(failed["state"], "failed")
+        evidence = reviews.view(self.project, self.slug)["latest"]["diagnostics"]
+        self.assertEqual((evidence["stdout_state"], evidence["stdout_errors"]), ("unrecognized_error", []))
+        self.assertEqual(evidence["stdout_facts"], {"subtype": "success", "terminal_reason": "api_error",
+                                                    "api_error_status": 401, "num_turns": 1, "api_contacted": True})
+        self.assertNotIn("PRIVATE SOURCE", json.dumps(S.load_task(self.project, self.slug)))
+        self.engine.side_effect = self.success
+        completed = self.run_review(self.request(previous=failed["id"]))
+        self.assertEqual(completed["state"], "completed")
+        self.assertNotIn("diagnostics", completed)
+        self.assertEqual(reviews.view(self.project, self.slug)["history"][0]["diagnostics"], evidence)
+
+    def test_failure_diagnostics_survive_unconfirmed_termination_and_owner_change(self):
+        evidence = {"exit_status": 9, "stderr": "adapter failed", "stderr_truncated": False,
+                    "stdout_truncated": False, "capture_complete": True}
+        for confirmed in (False, True):
+            with self.subTest(termination_confirmed=confirmed):
+                task = S.load_task(self.project, self.slug)
+                task.update(agent_id="owner-one", reviews=[])
+                S.save_task(self.project, task)
+                def failure(prompt, **kwargs):
+                    current = S.load_task(self.project, self.slug)
+                    current["agent_id"] = "replacement-owner"
+                    S.save_task(self.project, current)
+                    return {"error": "Review process exited with status 9.", "diagnostics": evidence,
+                            "termination_confirmed": confirmed}
+                self.engine.side_effect = failure
+                with mock.patch.object(reviews, "_termination_fault"):
+                    result = self.run_review()
+                self.assertEqual(result["state"], "cancelled" if confirmed else "running")
+                self.assertEqual(result["diagnostics"], evidence)
+                self.assertEqual(S.load_task(self.project, self.slug)["reviews"][0]["diagnostics"], evidence)
 
     def test_detached_project_retains_saved_review_without_selecting_reviewer(self):
         completed = self.run_review()

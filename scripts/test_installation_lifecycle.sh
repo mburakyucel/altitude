@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Only on an explicitly disposable Ubuntu VM. Never run on a development host.
 # PHASE reboot-install keeps the installed account for the machine to restart; reboot-verify then
-# checks it and removes it. PHASE bootstrap points the release host at this machine's loopback for the
-# duration of the test. Each phase writes to RESULTS_DIR/PHASE.
+# checks it and removes it. PHASE bootstrap points the release host, and PHASE update also its api. host, at this
+# machine's loopback for the duration of the test. Each phase writes to RESULTS_DIR/PHASE.
 set -euo pipefail
-if [[ ($# != 5 && $# != 6) || $1 != --disposable-vm || ! ${6:-all} =~ ^(all|bootstrap|reboot-install|reboot-verify|recovery)$ ]]; then
-    echo 'Usage: sudo bash scripts/test_installation_lifecycle.sh --disposable-vm BASELINE_DIR CANDIDATE_DIR RESULTS_DIR [BASELINE_COMMIT..]SOURCE_COMMIT [bootstrap|reboot-install|reboot-verify|recovery]' >&2
+if [[ ($# != 5 && $# != 6) || $1 != --disposable-vm || ! ${6:-all} =~ ^(all|bootstrap|update|reboot-install|reboot-verify|recovery)$ ]]; then
+    echo 'Usage: sudo bash scripts/test_installation_lifecycle.sh --disposable-vm BASELINE_DIR CANDIDATE_DIR RESULTS_DIR [BASELINE_COMMIT..]SOURCE_COMMIT [bootstrap|update|reboot-install|reboot-verify|recovery]' >&2
     exit 2
 fi
 # BASELINE_COMMIT.. names a published baseline built from another commit.
@@ -107,14 +107,16 @@ else
     timeout 30 loginctl enable-linger "$account"
     timeout 30 systemctl start "user@$test_uid.service"
 fi
-if [[ $phase == bootstrap ]]; then
-    # The test account serves the release over HTTPS on 127.0.0.1:443 under the release's own host name.
+if [[ $phase == bootstrap || $phase == update ]]; then
+    # The test account serves the release over HTTPS on 127.0.0.1:443 under the release's own host name,
+    # and for update also under its API host.
     host=$(sed -n "s|^REPOSITORY='https://\([^/':]*\)/.*|\1|p" "$test_home/baseline/install.sh")
     [[ $host =~ ^[A-Za-z0-9.-]+$ ]] || { echo 'The baseline install.sh names no release host.' >&2; exit 2; }
     port_floor=$(sysctl -n net.ipv4.ip_unprivileged_port_start)
     cp -- /etc/hosts "$scratch/hosts"
     redirected=true
     printf '127.0.0.1 %s\n' "$host" >> /etc/hosts
+    [[ $phase == update ]] && printf '127.0.0.1 api.%s\n' "$host" >> /etc/hosts
     sysctl -qw net.ipv4.ip_unprivileged_port_start=443
 fi
 # No runner token, credentials, Python path or owner runtime enters the test.

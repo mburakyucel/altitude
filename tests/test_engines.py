@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 from unittest import mock
 
 from tests.support import ALT, AltitudeCase
@@ -303,3 +304,115 @@ print(json.dumps({"type": "result", "is_error": error, "result": detail}), flush
             self.assertEqual(active.call_args.args[0], engines._claude_unit("project/old-1"))
             active.return_value = False
             self.assertFalse(engines.worker_live("claude", task, job_root=self.job_root))
+
+
+class TestWorkerTokenInput(AltitudeCase):
+    """A worker's GitHub token arrives on its job's first input line, which the engine never reads. On macOS the
+    engine once read its input file from the beginning and sent the token to its model as prompt text."""
+
+    TOKEN = "fixture-github-token"
+    ENGINE = ("import os, sys\n"
+              "try:  # a file, from its beginning, wherever the position\n"
+              "    data = os.pread(0, 1 << 20, 0)\n"
+              "except OSError:  # a pipe\n"
+              "    data = sys.stdin.buffer.read()\n"
+              "sys.stdout.buffer.write(data)\n"
+              "sys.stderr.write('GH_TOKEN=' + os.environ.get('GH_TOKEN', '') + '\\n')\n")
+
+    def setUp(self):
+        super().setUp()
+        self.patch(engines, "github_token", return_value=self.TOKEN)
+        self.patch(engines, "_codex_processes", {})
+        self.patch(engines, "claude_agents", return_value=[])
+        self.patch(platform, "job_active", return_value=True)
+        engine = self.tmp / "engine"
+        engine.write_text(f"#!{sys.executable}\n{self.ENGINE}")
+        engine.chmod(0o755)
+        self.patch(config, "CLAUDE_BIN", str(engine))
+        self.patch(config, "CODEX_BIN", str(engine))
+        (self.tmp / "persona.md").write_text("Worker instructions")
+        (self.tmp / "settings.json").write_text("{}")
+
+    def launched(self, engine: str, host: str) -> tuple[list[str], bytes]:
+        """The job command and input a worker launch hands its host's service manager."""
+        self.patch(platform.sys, "platform", host)
+        launches = []
+
+        def popen(cmd, **kw):
+            event = ({"type": "system", "subtype": "init", "session_id": "s"} if engine == "claude" else
+                     {"type": "thread.started", "thread_id": "s"})
+            kw["stdout"].write((json.dumps(event) + "\n").encode())
+            launches.append((cmd, _Process(io.BytesIO())))
+            return launches[-1][1]
+
+        with mock.patch.object(engines.subprocess, "Popen", side_effect=popen), \
+             mock.patch.object(engines, "codex_sandbox", return_value=[]), \
+             mock.patch.object(engines, "_git_dirs", return_value=[]):
+            result = engines.start_l2(engine, "project/worker-1", "brief", cwd=self.repo, persona=self.tmp / "persona.md",
+                                      model=None, settings=self.tmp / "settings.json", extra_env={"ALTITUDE_TASK": "worker"},
+                                      job_root=self.tmp / "jobs")
+        self.assertEqual(result["returncode"], 0, result)
+        return launches[0][0], launches[0][1].stdin.getvalue()
+
+    def assert_engine_read_only_the_prompt(self, output: bytes, errors: bytes) -> None:
+        self.assertNotIn(self.TOKEN.encode(), output)
+        self.assertTrue(output.endswith(b"brief"), output[-200:])
+        self.assertIn(f"GH_TOKEN={self.TOKEN}".encode(), errors, "the reader exports the line it took")
+
+    def test_linux_job_engine_reads_only_what_follows_the_token(self):
+        for engine in ("claude", "codex"):
+            with self.subTest(engine=engine):
+                command, sent = self.launched(engine, "linux")
+                self.assertTrue(sent.startswith(self.TOKEN.encode() + b"\n"))
+                # systemd-run --pipe hands the job its launcher's own input pipe.
+                job = subprocess.run(command[command.index("--") + 1:], input=sent, capture_output=True, timeout=60)
+                self.assertEqual(job.returncode, 0, job.stderr)
+                self.assert_engine_read_only_the_prompt(job.stdout, job.stderr)
+
+    def test_macos_job_engine_reads_only_what_follows_the_token_and_keeps_no_copy(self):
+        home = self.tmp / "home"
+        home.mkdir()
+        out, err = self.tmp / "out", self.tmp / "err"
+        self.patch(platform.Path, "home", return_value=home)
+        self.patch(platform, "_bsd", return_value=platform._BSDInfo(start_sec=1))
+        self.patch(platform, "_coalition_of", return_value=44)
+        self.patch(platform, "_stop_members", return_value=True)
+        self.patch(platform, "_running", return_value=True)
+        self.patch(platform, "CAFFEINATE", "/usr/bin/true")
+        for engine in ("claude", "codex"):
+            with self.subTest(engine=engine):
+                command, sent = self.launched(engine, "darwin")
+                spec = json.loads(command[-1])
+                spec["writable"] = None  # Seatbelt replaces itself with the command; confinement has its own tests
+                out.write_bytes(b""), err.write_bytes(b"")
+                kept = []
+
+                def launchd(argv, **kw):  # bootstrap runs the job's supervisor; afterwards launchd has forgotten it
+                    if argv[1] != "bootstrap":
+                        return subprocess.CompletedProcess(argv, platform.NOT_FOUND, "", "Could not find service")
+                    job = Path(argv[-1]).parent
+                    with mock.patch.object(platform.os, "execv", side_effect=SystemExit("removed")), \
+                         self.assertRaisesRegex(SystemExit, "removed"):
+                        platform._supervise(job)
+                    kept.extend(path.name for path in job.iterdir())
+                    return subprocess.CompletedProcess(argv, 0, "", "")
+
+                streams = {0: None, 1: str(out), 2: str(err)}
+                with mock.patch.object(platform, "_fd_path", side_effect=streams.get), \
+                     mock.patch.object(platform.sys, "stdin", mock.Mock(buffer=io.BytesIO(sent))), \
+                     mock.patch.object(platform.subprocess, "run", side_effect=launchd):
+                    self.assertEqual(platform._launch(dict(spec)), 0, err.read_text())
+                self.assert_engine_read_only_the_prompt(out.read_bytes(), err.read_bytes())
+                self.assertIn("status", kept)
+                self.assertNotIn("stdin", kept, "the launcher's copy of the token is removed once read")
+
+    def test_the_reader_starts_no_engine_unless_its_input_is_a_pipe(self):
+        command, sent = self.launched("claude", "linux")
+        saved = self.tmp / "input"
+        saved.write_bytes(sent)
+        with saved.open("rb") as stream:
+            job = subprocess.run(command[command.index("--") + 1:], stdin=stream, capture_output=True, timeout=60)
+        self.assertEqual(job.returncode, 125)
+        self.assertEqual(job.stdout, b"")
+        self.assertNotIn(b"GH_TOKEN", job.stderr, "the engine never started")
+        self.assertIn(b"input is not a pipe", job.stderr)

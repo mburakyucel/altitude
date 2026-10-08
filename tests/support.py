@@ -16,19 +16,42 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
+
+
+@contextmanager
+def container_namespace_metadata(root: Path):
+    """Model image UID/GID 1000 without requiring CI's host account to have those IDs.
+
+    Real filesystem content/type/mode/link/time observations remain intact. Native
+    VM lanes separately verify actual user-namespace mapping and ownership changes.
+    """
+    original = Path.lstat
+    def observed(path):
+        value = original(path)
+        if not path.is_relative_to(root):
+            return value
+        fields = {name: getattr(value, name) for name in dir(value) if name.startswith('st_')}
+        fields.update(st_uid=1000, st_gid=1000)
+        return SimpleNamespace(**fields)
+    with mock.patch.object(Path, 'lstat', new=observed):
+        yield
 
 REPO = Path(__file__).resolve().parent.parent
 _NATIVE_SANDBOX_BINARY = shutil.which(os.environ.get("CODEX_BIN", "codex"))
 _native_sandbox_command = None
 # Resolved, so symlinked temporary roots (macOS /var -> /private/var) compare equal to resolved paths, and short,
-# so Unix sockets under a case directory stay within the 104-byte macOS limit ($TMPDIR there is ~50 bytes).
-SUITE = Path(tempfile.mkdtemp(prefix="altitude-tests-", dir="/tmp")).resolve()
+# so Unix sockets under a case directory stay within the 104-byte macOS limit ($TMPDIR there is ~50 bytes). A
+# validation run's own temporary folder is as short, and the only one its macOS profile admits.
+SUITE = Path(tempfile.mkdtemp(prefix="at-", dir=os.environ.get("ALTITUDE_VALIDATION") and
+                              os.environ.get("TMPDIR") or "/tmp")).resolve()
 tempfile.tempdir = str(SUITE)
 atexit.register(shutil.rmtree, SUITE, ignore_errors=True)
 OFFLINE_BIN = SUITE / "bin"
-OFFLINE_COMMANDS = ("claude", "codex", "gh", "systemctl", "systemd-run", "journalctl", "launchctl", "service", "ssh", "curl", "wget")
+OFFLINE_COMMANDS = ("claude", "codex", "gh", "systemctl", "systemd-run", "journalctl", "launchctl", "service", "ssh", "curl", "wget", "podman")
 
 
 def install_offline_guards() -> None:
@@ -45,13 +68,16 @@ def install_offline_guards() -> None:
                            "ALTITUDE_SESSION_KEY", "ALTITUDE_ROOTS", "ALTITUDE_TLS_DIR", "ALTITUDE_HOST",
                            "ALTITUDE_PORT", "ALTITUDE_OPERATOR", "ALTITUDE_PRIMARY_ENGINE", "ALTITUDE_CONFIG",
                            "ALTITUDE_UPSTREAM_ISSUE_REPOSITORY", "DBUS_SESSION_BUS_ADDRESS",
-                           "ALTITUDE_SERVICE", "ALTITUDE_PRIMARY_ENGINE", "ALTITUDE_BASE_BRANCH",
+                           "ALTITUDE_SERVICE", "ALTITUDE_PRIMARY_ENGINE", "ALTITUDE_BASE_BRANCH", "ALTITUDE_SOURCE_BRANCH",
+                           "NPM_CONFIG_CACHE", "NPM_CONFIG_STORE_DIR",
                            "SSH_AUTH_SOCK", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_SSH", "GIT_SSH_COMMAND",
                            "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"}):
             os.environ.pop(key, None)
     for key, name in {"HOME": "home", "CODEX_HOME": "home/.codex", "CLAUDE_CONFIG_DIR": "home/.claude",
                       "XDG_CONFIG_HOME": "home/.config", "XDG_DATA_HOME": "home/.local/share",
                       "XDG_STATE_HOME": "home/.local/state", "XDG_CACHE_HOME": "home/.cache",
+                      "COREPACK_HOME": "home/.cache/node/corepack", "npm_config_cache": "home/.cache/npm",
+                      "npm_config_store_dir": "home/.cache/pnpm", "PIP_CACHE_DIR": "home/.cache/pip",
                       "XDG_RUNTIME_DIR": "runtime", "ALTITUDE_HOME": "altitude"}.items():
         path = SUITE / name
         path.mkdir(parents=True, exist_ok=True)
@@ -113,6 +139,8 @@ sys.path.insert(0, str(REPO))
 from altitude import access, config, engines, incidents, monitor, platform  # noqa: E402
 
 ALT = REPO / "bin" / "alt"
+#: The kernel the suite runs on; a case's `host` replaces `sys.platform` for its duration.
+NATIVE_PLATFORM = sys.platform
 
 #: Fake gh: every call is logged; the answers come from files the test writes into $FAKE_GH_DIR.
 GH = r'''#!/usr/bin/env python3
@@ -267,9 +295,27 @@ elif cmd == ("run", "list"):
     print(read("runs.json", '[{"databaseId": 7, "status": "completed", "conclusion": "success"}]'))
 elif cmd == ("run", "view"):
     print(read("run.json", '{"status": "completed", "conclusion": "success"}'))
+elif cmd == ("auth", "token"):
+    # The keyring answers only where the session bus is reachable.
+    if read("token.txt") is None or not os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
+        fail("no oauth token found for github.com")
+    print(read("token.txt"))
+elif cmd == ("api", "user"):
+    # Signed in through the keyring on the session bus or an exported token; otherwise unauthenticated.
+    token = (read("token.txt") or "").strip()
+    if not token or not (os.environ.get("DBUS_SESSION_BUS_ADDRESS") or os.environ.get("GH_TOKEN") == token):
+        fail("HTTP 401: Requires authentication (https://api.github.com/graphql)")
+    print('{"login": "fixture-operator"}')
 else:
     fail("fake gh: unhandled " + " ".join(args), 64)
 '''
+
+
+def set_project_setting(project: str, setting: str, value) -> None:
+    """Save one project setting the way Settings and `alt project set` do: a reasoned request altd applies."""
+    from altitude import config, dispatch
+    dispatch.request_setting(project, setting, value, "Test setting", actor=config.OPERATOR_ACTOR)
+    dispatch._run_setting(project, setting)
 
 
 def fyi_rows(project: str) -> list[dict]:
@@ -313,10 +359,14 @@ def add_worktree(repo: Path, slug: str) -> Path:
 class AltitudeCase(unittest.TestCase):
     """A private project per test case in the shared runtime home, gone again afterwards. HTTP requests reach
     their routes as this machine's own CLI does; a case about pairing and the access gate sets `gated`. A case whose
-    fixtures stand in for one host's service manager (systemd-run and systemctl shims) names it in `host`."""
+    fixtures stand in for one host's service manager (systemd-run and systemctl shims) names it in `host`; on a
+    kernel without procfs, a Linux `host` also reads the case's own process from a procfs fixture. A worker
+    launch reads no GitHub sign-in unless the case sets `github` and supplies its own `gh` fixture. Public-text
+    sanitizing sees no machine host or account names unless the case supplies fixture names."""
 
     gated = False
     host: str | None = None
+    github = False
 
     def setUp(self) -> None:
         super().setUp()
@@ -325,8 +375,13 @@ class AltitudeCase(unittest.TestCase):
         config.ensure_root()
         if not self.gated:
             self.patch(access, "is_machine", return_value=True)
+        if not self.github:
+            self.patch(engines, "github_token", return_value="")
+        self.patch(platform, "local_names", return_value={"host": set(), "user": set()})
         self.tmp = Path(tempfile.mkdtemp(prefix="case-", dir=SUITE))
         self.addCleanup(shutil.rmtree, self.tmp, True)
+        if self.host == "linux" and NATIVE_PLATFORM != "linux":
+            self.linux_process_facts()
         self.repo = self.tmp / "repo"
         self.repo.mkdir()
         self.project = self._testMethodName.replace("_", "-")[:64]
@@ -339,6 +394,24 @@ class AltitudeCase(unittest.TestCase):
         config.save_projects(projects)
         self.addCleanup(self._forget, name)
         return projects[name]
+
+    def fixture_boot_identity(self) -> None:
+        """Resume integration uses a fixture boot; native PID/lifetime checks remain real.
+
+        The daemon reads the kernel boot identity outside worker confinement. Kernel-reader tests
+        supply their own observations instead of importing this integration fixture.
+        """
+        self.patch(platform, "_process_boot", return_value="fixture-boot")
+
+    def linux_process_facts(self) -> None:
+        """The case's own process as Linux procfs spells it: a resume claim records altd's process identity."""
+        proc, pid = self.tmp / "host-proc", os.getpid()
+        (proc / "sys/kernel/random").mkdir(parents=True)
+        (proc / "sys/kernel/random/boot_id").write_text("fixture-boot\n")
+        (proc / str(pid) / "ns").mkdir(parents=True)
+        (proc / str(pid) / "ns/pid").symlink_to("pid:[fixture]")
+        (proc / str(pid) / "stat").write_text(f"{pid} (python3) " + " ".join(["R", *["0"] * 18, "777"]) + "\n")
+        self.patch(platform, "PROC", proc)
 
     @staticmethod
     def _forget(name: str) -> None:
@@ -394,6 +467,12 @@ class AltitudeCase(unittest.TestCase):
         log = self.tmp / "gh-state" / "log.jsonl"
         return [json.loads(x) for x in log.read_text().splitlines()] if log.exists() else []
 
+    def serving(self, port: int, host: str = "127.0.0.1") -> None:
+        """Record a plain-HTTP altd at `port`, as the running service records itself for `alt` to reach."""
+        from altitude import tls
+        tls.publish({"host": host, "port": port, "tls": False, "tls_dir": config.TLS_DIR})
+        self.addCleanup(tls.record().unlink, missing_ok=True)
+
     def alt(self, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
         """Run `bin/alt` with empty input against this runtime home."""
         merged = {**os.environ, "ALTITUDE_HOME": str(config.ROOT), **(env or {})}
@@ -411,15 +490,7 @@ TERMINAL_LAUNCHER = ("import fcntl, os, sys, termios\nfd = os.open(sys.argv[1], 
 
 def terminal_session(leader: int) -> list[int]:
     """The processes still in a terminal's session."""
-    rows = subprocess.run(["ps", "-Ao", "pid=,stat="], capture_output=True, text=True, check=True).stdout
-    found = []
-    for pid, state in (line.split() for line in rows.splitlines()):
-        try:
-            if os.getsid(int(pid)) == leader and not state.startswith("Z"):
-                found.append(int(pid))
-        except OSError:
-            continue
-    return found
+    return platform.session_processes(leader)
 
 
 def local_terminal_launch(unit: str, tty: str, path: Path) -> subprocess.Popen:
@@ -448,3 +519,5 @@ def local_terminal_stop(unit: str) -> None:
         deadline = time.monotonic() + terminal.CLOSE_GRACE_SECONDS
         while terminal_session(term.proc.pid) and time.monotonic() < deadline:
             time.sleep(.02)
+    if terminal_session(term.proc.pid):
+        raise RuntimeError("Fixture terminal session is still running after SIGKILL")

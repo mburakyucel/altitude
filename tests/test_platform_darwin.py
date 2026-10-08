@@ -1,6 +1,10 @@
 """The macOS side of the platform seam against fixtures: a fake launchctl, fixture process tables, coalitions and
 sockets. It runs on any host; scripts/platform_probe.py exercises the same mechanisms natively on a Mac."""
+import contextlib
+import ctypes
 import ctypes.util
+import importlib.util
+import io
 import json
 import os
 import plistlib
@@ -13,6 +17,8 @@ from unittest import mock
 
 from tests.support import AltitudeCase
 from altitude import platform, server, terminal  # noqa: F401 server loads urllib before a test pretends to be darwin
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def described(label: str, *, state="running", pid=4242, exited="(never exited)", coalition=900, path=None) -> str:
@@ -63,6 +69,8 @@ class DarwinCase(AltitudeCase):
         self.home = self.tmp / "home"
         self.home.mkdir()
         self.patch(platform.Path, "home", return_value=self.home)
+        # The fixture home is the account's own, so the service is the account's LaunchAgent.
+        self.patch(platform.pwd, "getpwuid", return_value=mock.Mock(pw_dir=str(self.home)))
         self.launchd = Launchd()
         self.patch(platform.subprocess, "run", side_effect=self.launchd)
 
@@ -76,13 +84,47 @@ class Service(DarwinCase):
         self.assertEqual(agent["ProgramArguments"],
                          ["/opt/homebrew/bin/python3.12", "-B", '/tmp/A 100% "trial"/current/bin/alt', "serve"])
         self.assertEqual(agent["EnvironmentVariables"], {"ALTITUDE_CONFIG": "/tmp/install.json", "ALTITUDE_SERVICE": "1",
-                                                         "ALTITUDE_TLS": "1", "PATH": "/opt/homebrew/bin:/usr/bin"})
+                                                         "ALTITUDE_TLS": "1", "PATH": "/opt/homebrew/bin:/usr/bin",
+                                                         "HOME": str(self.home)})
         self.assertEqual((agent["RunAtLoad"], agent["KeepAlive"], agent["Umask"]), (True, {"SuccessfulExit": False}, 0o077))
         self.assertEqual(agent["StandardErrorPath"], str(self.home / "Library/Logs/altitude/altd.log"))
         self.assertEqual(platform.service_path(), self.home / "Library/LaunchAgents/dev.altitude.altd.plist")
         for value in ("/tmp/app\n", "/tmp/app\r", "/tmp/app\x00"):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 platform.definition(Path(value), Path("/usr/bin/python3"), Path("/tmp/install.json"), {"PATH": "/bin"})
+
+    def test_an_installation_under_another_home_has_its_own_label_and_never_addresses_the_accounts_service(self):
+        self.patch(platform.pwd, "getpwuid", return_value=mock.Mock(pw_dir="/Users/operator"))
+        label = platform.service_label()
+        self.assertRegex(label, r"^dev\.altitude\.altd\.[0-9a-f]{12}$")
+        self.assertEqual(platform.service_path(), self.home / f"Library/LaunchAgents/{label}.plist")
+        agent = plistlib.loads(platform.definition(Path("/tmp/prefix"), Path("/usr/bin/python3"), Path("/tmp/install.json"),
+                                                   {"PATH": "/bin"}).encode())
+        self.assertEqual((agent["Label"], agent["EnvironmentVariables"]["HOME"]), (label, str(self.home)))
+        self.launchd.jobs[platform.LABEL] = described(platform.LABEL)
+        self.assertEqual(platform.status()["ActiveState"], "inactive")
+        platform.control("restart")
+        platform.control("stop")
+        targets = {argument.rsplit("/", 1)[-1] for command in self.launchd.commands for argument in command[1:]}
+        self.assertIn(label, targets)
+        self.assertNotIn(platform.LABEL, targets)
+        self.assertIn(platform.LABEL, self.launchd.jobs)
+
+    def test_a_source_agent_under_another_home_keeps_that_home_and_its_own_label(self):
+        spec = importlib.util.spec_from_file_location("source_launch_agent", ROOT / "scripts/source_launch_agent.py")
+        script = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(script)
+        self.patch(platform.pwd, "getpwuid", return_value=mock.Mock(pw_dir="/Users/operator"))
+        self.patch(script.subprocess, "run", return_value=mock.Mock(stdout="main\n"))
+        self.patch(script.time, "sleep")
+        self.patch(platform, "control")
+        self.patch(platform, "status", return_value={"ActiveState": "active", "MainPID": "1"})
+        with mock.patch.dict(script.os.environ, {"PATH": "/opt/homebrew/bin:/usr/bin"}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(script.main(), 0)
+        agent = plistlib.loads(platform.service_path().read_bytes())
+        self.assertEqual((agent["Label"], agent["EnvironmentVariables"]["HOME"]), (platform.service_label(), str(self.home)))
+        self.assertNotEqual(agent["Label"], platform.LABEL)
 
     def test_status_speaks_the_installation_vocabulary(self):
         path = platform.service_path()
@@ -120,7 +162,7 @@ class Service(DarwinCase):
         platform.control("start")
         self.assertEqual(self.launchd.commands[-1], ["kickstart", target])
         platform.control("restart")
-        self.assertEqual(self.launchd.commands[-2:], [["bootout", target],
+        self.assertEqual(self.launchd.commands[-3:], [["bootout", target], ["print", target],
                                                       ["bootstrap", domain, str(platform.service_path())]])
         stopped.assert_called_once_with(900)
         self.launchd.jobs[platform.LABEL] = described(platform.LABEL)
@@ -129,7 +171,7 @@ class Service(DarwinCase):
         platform.control("stop")  # already stopped: nothing to do
         platform.control("reload")  # launchd reads the definition when bootstrapping
         platform.control("disable")
-        self.assertEqual(self.launchd.commands, [["print", target], ["bootout", target], ["print", target],
+        self.assertEqual(self.launchd.commands, [["print", target], ["bootout", target], ["print", target], ["print", target],
                                                  ["disable", target]])
         with self.assertRaisesRegex(ValueError, "Unknown application service operation"):
             platform.control("mask")
@@ -140,15 +182,107 @@ class Service(DarwinCase):
         with self.assertRaisesRegex(RuntimeError, "still running"):
             platform.control("stop")
 
-    def test_service_settings_come_from_the_running_service(self):
-        environment = self.patch(platform, "_environment", return_value=[b"ALTITUDE_PORT=9443", b"HOME=/Users/x"])
-        with self.assertRaisesRegex(RuntimeError, "No Altitude service is installed"):
-            platform.service_settings()
-        platform.service_path().parent.mkdir(parents=True)
-        platform.service_path().write_text("defined")
-        self.launchd.jobs[platform.LABEL] = described(platform.LABEL, path=platform.service_path())
-        self.assertEqual(platform.service_settings(), (4242, {"ALTITUDE_PORT": "9443"}))
-        environment.assert_called_with(4242)
+    def test_restart_waits_for_label_removal_after_the_processes_end_and_preserves_worker_jobs(self):
+        self.launchd.jobs[platform.LABEL] = described(platform.LABEL)
+        worker = "dev.altitude.job.worker"
+        self.launchd.jobs[worker] = described(worker, coalition=901)
+        stopped = self.patch(platform, "_stop_members", return_value=True)
+        sleep = self.patch(platform.time, "sleep")
+        removing = False
+        reads = 0
+
+        def delayed(argv, **kwargs):
+            nonlocal removing, reads
+            if argv[1] == "bootout":
+                removing = True  # acknowledgement precedes removal; no service processes remain
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            if argv[1] == "print" and removing:
+                reads += 1
+                if reads == 3:
+                    self.launchd.jobs.pop(platform.LABEL)
+            if argv[1] == "bootstrap" and platform.LABEL in self.launchd.jobs:
+                return subprocess.CompletedProcess(argv, 5, "", "Bootstrap failed: 5: Input/output error")
+            return self.launchd(argv, **kwargs)
+
+        platform.subprocess.run.side_effect = delayed
+        platform.control("restart")
+        self.assertEqual(reads, 3)
+        self.assertEqual(sleep.call_count, 2)
+        stopped.assert_called_once_with(900)
+        self.assertEqual(self.launchd.jobs[worker], described(worker, coalition=901))
+        self.assertEqual(self.launchd.commands[-1][0], "bootstrap")
+
+    def test_stalled_or_unreadable_label_removal_refuses_restart_and_stop(self):
+        for action in ("restart", "stop"):
+            for unreadable in (False, True):
+                with self.subTest(action=action, unreadable=unreadable):
+                    self.launchd.jobs[platform.LABEL] = described(platform.LABEL)
+                    self.launchd.commands.clear()
+                    removing = False
+
+                    def blocked(argv, **kwargs):
+                        nonlocal removing
+                        if argv[1] == "bootout":
+                            removing = True
+                            return subprocess.CompletedProcess(argv, 0, "", "")
+                        if argv[1] == "print" and removing and unreadable:
+                            return subprocess.CompletedProcess(argv, 5, "", "unreadable service")
+                        return self.launchd(argv, **kwargs)
+
+                    with mock.patch.object(platform.subprocess, "run", side_effect=blocked), \
+                            mock.patch.object(platform, "_stop_members", return_value=True), \
+                            mock.patch.object(platform.time, "monotonic", side_effect=[0, 0, 46]), \
+                            mock.patch.object(platform.time, "sleep"):
+                        expected = "unreadable service" if unreadable else "not removed"
+                        with self.assertRaisesRegex(RuntimeError, expected):
+                            platform.control(action)
+                    self.assertNotIn("bootstrap", [command[0] for command in self.launchd.commands])
+
+    def test_slow_removal_reads_share_the_deadline_and_late_absence_does_not_bootstrap(self):
+        for read_times_out in (False, True):
+            with self.subTest(read_times_out=read_times_out):
+                self.launchd.jobs[platform.LABEL] = described(platform.LABEL)
+                self.launchd.commands.clear()
+                now = 0
+                removing = False
+                budgets = []
+
+                def slow(argv, **kwargs):
+                    nonlocal now, removing
+                    if argv[1] == "bootout":
+                        removing = True
+                        return subprocess.CompletedProcess(argv, 0, "", "")
+                    if argv[1] == "print" and removing:
+                        budgets.append(kwargs["timeout"])
+                        now += 29 if len(budgets) == 1 else 17
+                        if len(budgets) == 2:
+                            if read_times_out:
+                                raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+                            self.launchd.jobs.pop(platform.LABEL)  # absence returned after the deadline
+                    return self.launchd(argv, **kwargs)
+
+                def sleep(seconds):
+                    nonlocal now
+                    now += seconds
+
+                with mock.patch.object(platform.subprocess, "run", side_effect=slow), \
+                        mock.patch.object(platform, "_stop_members", return_value=True), \
+                        mock.patch.object(platform.time, "monotonic", side_effect=lambda: now), \
+                        mock.patch.object(platform.time, "sleep", side_effect=sleep):
+                    with self.assertRaises(RuntimeError):
+                        platform.control("restart")
+                self.assertEqual(len(budgets), 2)
+                self.assertEqual(budgets[0], 30)
+                self.assertAlmostEqual(budgets[1], 15.9)
+                self.assertNotIn("bootstrap", [command[0] for command in self.launchd.commands])
+
+    def test_linux_service_restart_keeps_the_systemd_contract(self):
+        with mock.patch.object(platform.sys, "platform", "linux"), \
+                mock.patch.object(platform.host_platform, "machine", return_value="x86_64"), \
+                mock.patch.object(platform.subprocess, "run") as run:
+            run.return_value = subprocess.CompletedProcess([], 0, "", "")
+            platform.control("restart")
+        self.assertEqual(run.call_args.args[0], ["systemctl", "--user", "restart", "altitude.service"])
 
     def test_logs_read_the_service_log(self):
         self.assertEqual(platform.logs(), "")
@@ -262,6 +396,19 @@ class Jobs(DarwinCase):
         self.assertIn(["bootout", f"gui/{os.getuid()}/{label}"], self.launchd.commands)
         self.assertFalse((platform._jobs() / label).exists())
 
+    def test_a_pattern_stops_every_job_it_matches(self):
+        # Validation's startup cleanup stops whatever runs an earlier altd left, as systemctl stops a unit pattern.
+        labels = [f"dev.altitude.job.altitude-validation-{name}" for name in ("a1", "clean-b2")]
+        for label in (*labels, "dev.altitude.job.altitude-claude-c"):
+            (platform._jobs() / label).mkdir(parents=True)
+            (platform._jobs() / label / "coalition").write_text("31")
+        stopped = self.patch(platform, "_stop_members", return_value=True)
+        platform.job_stop("altitude-validation-*.service", {}, timeout=15)
+        self.assertEqual(stopped.call_count, 2)
+        self.assertEqual(sorted(c[1] for c in self.launchd.commands if c[0] == "bootout"),
+                         sorted(f"gui/{os.getuid()}/{label}" for label in labels))
+        self.assertEqual([path.name for path in platform._jobs().iterdir()], ["dev.altitude.job.altitude-claude-c"])
+
     def test_the_launcher_leaves_a_record_kept_for_survivors(self):
         job = platform._jobs() / "dev.altitude.job.altitude-machine-p-1"
         self.patch(platform, "_bsd", return_value=platform._BSDInfo(start_sec=1))
@@ -332,9 +479,21 @@ class Processes(DarwinCase):
             del self.table[pid]
 
     def test_identity_liveness_and_name(self):
+        # PID 1 is intentionally absent/unreadable to this ordinary account.
+        boot = "83297b09-775d-427b-8f7c-bda8d0a8c5dd"
+        query = self.patch(platform.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, boot + '\n'))
         self.add(40, start=7, name=b"zsh")
         self.assertEqual(platform.process_start(40), "7000000")
         self.assertTrue(platform.process_running(40, "7000000"))
+        identity = platform.process_identity(40)
+        self.assertEqual(identity['boot'], 'darwin:' + boot)
+        query.assert_called_with(['/usr/sbin/sysctl', '-n', 'kern.bootsessionuuid'],
+                                 capture_output=True, text=True, check=True, timeout=5)
+        self.assertEqual(identity['namespace'], 'darwin')
+        self.assertTrue(platform.process_identity_live(identity))
+        self.assertFalse(platform.process_identity_live({**identity, 'start': '8000000'}))
+        self.assertFalse(platform.process_identity_live({**identity, 'boot': 'darwin:old-boot'}))
+        self.assertFalse(platform.process_identity_live({**identity, 'namespace': 'pid:[linux]'}))
         self.assertFalse(platform.process_running(40, "8000000"))  # the pid was reused
         self.assertIsNone(platform.process_running(40, "unknown"))
         self.add(41, zombie=True)
@@ -343,6 +502,16 @@ class Processes(DarwinCase):
         self.assertIsNone(platform.process_name(99))
         with self.assertRaises(FileNotFoundError):
             platform.process_start(99)
+
+    def test_boot_identity_never_invents_a_value_when_kernel_query_fails(self):
+        for outcome in ('not-a-uuid', subprocess.CalledProcessError(1, 'sysctl')):
+            with self.subTest(outcome=outcome), mock.patch.object(platform.subprocess, 'run') as query:
+                if isinstance(outcome, Exception):
+                    query.side_effect = outcome
+                else:
+                    query.return_value = subprocess.CompletedProcess([], 0, outcome)
+                with self.assertRaises((ValueError, subprocess.CalledProcessError)):
+                    platform._process_boot()
 
     def test_stop_signals_every_member_checked_again_and_escalates_after_the_grace(self):
         self.add(1)  # launchd: another coalition
@@ -452,6 +621,29 @@ class Confinement(DarwinCase):
                      '(subpath "/private/var/folders/ab/cd")', '(subpath "/dev")'):
             self.assertIn(root, text)
 
+    def test_profile_refuses_the_services_that_start_programs_outside_it(self):
+        self.patch(platform, "_user_temp", return_value="/private/var/folders/ab/cd/T/")
+        text = platform.seatbelt_profile(["/private/tmp/work"])
+        for rule in ('(deny mach-lookup (global-name-prefix "com.apple.CoreSimulator.")'
+                     ' (xpc-service-name-prefix "com.apple.CoreSimulator."))', "(deny lsopen)"):
+            self.assertIn(rule, text)
+        self.assertTrue(text.endswith(platform.SERVICE_ESCAPES), "a later allow would reopen them")
+
+    def test_seatbelt_compiles_both_profiles_on_a_mac(self):
+        """Seatbelt rejects a whole profile over one unknown rule, which would stop every confined job."""
+        try:
+            library = ctypes.CDLL("/usr/lib/libsandbox.1.dylib")
+        except OSError:
+            self.skipTest("Seatbelt is macOS's")
+        library.sandbox_compile_string.restype = ctypes.c_void_p
+        library.sandbox_compile_string.argtypes = [ctypes.c_char_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_char_p)]
+        for text in (platform.seatbelt_profile([str(self.tmp)]),
+                     platform.validation_profile((self.tmp / "work",), self.tmp / "unit.log", 8890)):
+            error = ctypes.c_char_p()
+            compiled = library.sandbox_compile_string(text.encode(), None, ctypes.byref(error))
+            self.assertTrue(compiled, error.value)
+            library.sandbox_free_profile(ctypes.c_void_p(compiled))
+
     def test_limits_replace_the_address_space_cap_with_a_footprint_watcher(self):
         argv = platform.limited_command(["ffmpeg", "-i", "x"], memory=1 << 30, cpu=10, output=5)
         self.assertEqual(argv[3:], [str(1 << 30), "10", "5", "ffmpeg", "-i", "x"])
@@ -516,6 +708,21 @@ class Supervisor(DarwinCase):
         self.assertEqual(self.supervise(["/usr/bin/true"]), 0)
         self.assertEqual((self.job / "coalition").read_text(), "44")
         self.assertTrue((self.job / "survivors").exists())
+
+    def test_piped_input_reaches_the_command_as_a_pipe_and_its_saved_copy_is_removed(self):
+        saved = self.job / "stdin"
+        data = b"x" * (1 << 20)  # past any pipe's capacity
+        for command, status, output in (
+                (["/bin/sh", "-c", '[ -p /dev/stdin ] && wc -c | tr -d " "'], 0, f"{len(data)}\n"),
+                (["/bin/sh", "-c", "head -c 3"], 0, "xxx"),  # stops reading early
+                ([str(self.tmp / "missing")], 127, None)):  # never starts
+            with self.subTest(command=command[-1]):
+                saved.write_bytes(data)
+                self.out.write_text("")
+                self.assertEqual(self.supervise(command, stdin=str(saved), piped=True), status)
+                self.assertFalse(saved.exists())
+                if output is not None:
+                    self.assertEqual(self.out.read_text(), output)
 
     def test_a_command_that_cannot_start_reads_as_127(self):
         self.assertEqual(self.supervise([str(self.tmp / "missing")]), 127)

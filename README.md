@@ -14,7 +14,7 @@ any task. The work keeps going on your machine after you put the phone away.
 [Set up phone access and voice](docs/OPERATIONS.md#on-iphone) with private HTTPS and a supported
 browser.
 
-**Early preview · Linux x86_64 · [Get started](#get-started)**
+**Early preview · Linux x86_64 · macOS on Apple silicon (experimental) · [Get started](#get-started)**
 
 <img src="docs/images/project-desktop.png" alt="Desktop: discuss Atlas's architecture with L3 while three task owners work in parallel in the adjacent Work panel." width="1440">
 
@@ -60,26 +60,38 @@ One engine is enough, and each integration is
 
 Altitude runs for one person on a Linux x86_64 machine with a systemd user manager. Ubuntu 24.04
 is the initial target; clean-machine and provider acceptance remain pending. A Mac with Apple silicon
-on macOS 15 or newer runs Altitude from a source checkout while its native acceptance is pending. You need Python 3.12+,
+on macOS 15 or newer installs with the same command. Installation, updates, rollback, uninstall and
+starting again at login pass in fresh macOS virtual machines; the
+[native runtime's acceptance](docs/ROADMAP.md#native-macos-runtime) is pending, so macOS is
+experimental. You need Python 3.12+,
 Git, OpenSSL, an authenticated GitHub CLI and one authenticated coding CLI. Agent work uses your
 coding account's allowance and normal charges.
 
-1. Install the current release candidate as the account that will use Altitude:
+[Linux container support](docs/CONTAINERS.md) is under validation. Its rootless Podman candidate uses
+dedicated project volumes and an explicit security exception. Linux lifecycle and backup pass
+fixture checks; one live run verifies real sign-in, browser onboarding, an owner-created PR and
+issue, and authentication across restart and image replacement.
+[Recorded evidence](docs/CONTAINERS.md#live-linux-run) names the remaining platform and compatibility
+gaps; Mac acceptance remains unverified.
+
+1. Install the latest release as the account that will use Altitude:
 
    ```sh
-   curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/download/v0.1.0-rc.2/install.sh | sh
+   curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/latest/download/install.sh | sh
    ```
 
-   There is no stable release yet, so each preview installs from its own tag; check
-   [releases](https://github.com/mburakyucel/altitude/releases) for a newer candidate. The script
-   checks the machine, runs nothing it downloads unless it matches the release's checksums and
-   prints the next steps. The [installation steps](docs/SETUP.md#install-the-application) explain
-   what it trusts and how to verify attested releases. On macOS it stops before installing; a Mac runs
-   Altitude from a [source checkout](docs/SETUP.md#install-the-application) for now.
+   Releases are early previews: expect rough edges, and read the
+   [release notes](CHANGELOG.md) for known limitations. The script checks the machine, runs
+   nothing it downloads unless it matches the release's checksums and prints the next steps. The
+   [installation steps](docs/SETUP.md#install-the-application) explain what it trusts and how to
+   verify attested releases.
 2. Put `~/.local/bin` on your PATH and run `alt doctor`. The release includes the CLI, daemon and
    web app; installation enables a per-user service and saves its tool PATH.
-3. Follow the [certificate trust guide](docs/SETUP.md#trust-https-on-each-device) (`alt tls-share`
-   offers the certificate to a phone), open the printed HTTPS URL, [pair the browser](docs/SETUP.md#pair-each-device) with the code `alt pair` prints and
+3. Follow the [certificate trust guide for Linux, macOS and phones](docs/SETUP.md#trust-https-on-each-device).
+   On the hosting computer, use the public CA file reported by `alt doctor`; on another device,
+   use **Set up a device** or `alt tls-share` with your configured network address. Compare its
+   fingerprint, trust it deliberately, then verify the exact HTTPS URL without a warning.
+   [Pair the browser](docs/SETUP.md#pair-each-device) with the code `alt pair` prints and
    use [First run](docs/SETUP.md#first-run-in-the-browser) to add your project.
 
 <details>

@@ -63,11 +63,112 @@ class TestRestartCommand(AltitudeCase):
             with mock.patch.object(restart, "WEB", web), mock.patch.object(restart, "DIST", dist), \
                     mock.patch.object(restart, "unit_properties", return_value={"MainPID": "10"}), \
                     mock.patch.object(restart, "restart_unit", side_effect=restart_unit), \
+                    mock.patch.object(restart, "wait_healthy") as healthy, \
                     mock.patch.object(restart, "diagnostics"):
-                with self.assertRaises(restart.RestartError):
+                with self.assertRaisesRegex(restart.RestartError, "recovery API/UI health verified"):
                     restart.publish_and_restart(staging)
+            healthy.assert_called_once_with(10)
             self.assertEqual((dist / "version").read_text(), "old")
             self.assertFalse(staging.exists())
+
+    def test_activation_and_rollback_verify_health_from_each_new_process(self):
+        restart = load_script()
+        for activation_fails, recovery_fails in ((False, False), (True, False), (True, True)):
+            with self.subTest(activation_fails=activation_fails, recovery_fails=recovery_fails), \
+                    tempfile.TemporaryDirectory() as tmp:
+                web = Path(tmp)
+                dist, staging = web / "dist", web / ".dist-next-test"
+                dist.mkdir(); (dist / "version").write_text("old")
+                staging.mkdir(); (staging / "version").write_text("new")
+                pid = 10
+                observed = []
+                failure = restart.RestartError("candidate API failed")
+
+                def restart_unit():
+                    nonlocal pid
+                    pid += 10
+
+                def healthy(previous):
+                    observed.append((previous, pid, (dist / "version").read_text()))
+                    self.assertNotEqual(previous, pid)
+                    if len(observed) == 1 and activation_fails:
+                        raise failure
+                    if len(observed) == 2 and recovery_fails:
+                        raise restart.RestartError("recovery UI failed")
+
+                with mock.patch.object(restart, "WEB", web), mock.patch.object(restart, "DIST", dist), \
+                        mock.patch.object(restart, "unit_properties", side_effect=lambda: {"MainPID": str(pid)}), \
+                        mock.patch.object(restart, "restart_unit", side_effect=restart_unit), \
+                        mock.patch.object(restart, "wait_healthy", side_effect=healthy), \
+                        mock.patch.object(restart, "diagnostics"):
+                    if activation_fails:
+                        with self.assertRaises(restart.RestartError) as caught:
+                            restart.publish_and_restart(staging)
+                        self.assertIs(caught.exception.__cause__, failure)
+                        self.assertIn("candidate API failed", str(caught.exception))
+                        self.assertIn("recovery UI failed" if recovery_fails else "recovery API/UI health verified",
+                                      str(caught.exception))
+                    else:
+                        restart.publish_and_restart(staging)
+                self.assertEqual(observed, [(10, 20, "new"), (20, 30, "old")] if activation_fails
+                                 else [(10, 20, "new")])
+                self.assertFalse(staging.exists())
+                self.assertFalse((web / ".dist-previous").exists())
+                self.assertEqual((dist / "version").read_text(), "old" if activation_fails else "new")
+
+    def test_failed_recovery_restart_retains_both_errors_and_the_prior_bundle(self):
+        restart = load_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            web = Path(tmp)
+            dist, staging = web / "dist", web / ".dist-next-test"
+            dist.mkdir(); (dist / "version").write_text("old")
+            staging.mkdir(); (staging / "version").write_text("new")
+            with mock.patch.object(restart, "WEB", web), mock.patch.object(restart, "DIST", dist), \
+                    mock.patch.object(restart, "unit_properties", return_value={"MainPID": "10"}), \
+                    mock.patch.object(restart, "restart_unit", side_effect=[restart.RestartError("bootstrap failed"),
+                                                                           restart.RestartError("recovery failed")]), \
+                    mock.patch.object(restart, "wait_healthy") as healthy, \
+                    mock.patch.object(restart, "diagnostics"):
+                with self.assertRaisesRegex(restart.RestartError, "bootstrap failed.*recovery failed"):
+                    restart.publish_and_restart(staging)
+            healthy.assert_not_called()
+            self.assertEqual((dist / "version").read_text(), "old")
+            self.assertFalse(staging.exists())
+
+    def test_first_activation_failure_does_not_claim_a_prior_bundle_or_attempt_empty_recovery(self):
+        restart = load_script()
+        with tempfile.TemporaryDirectory() as tmp:
+            web = Path(tmp)
+            staging = web / ".dist-next-test"
+            staging.mkdir(); (staging / "version").write_text("new")
+            with mock.patch.object(restart, "WEB", web), mock.patch.object(restart, "DIST", web / "dist"), \
+                    mock.patch.object(restart, "unit_properties", return_value={"MainPID": "10"}), \
+                    mock.patch.object(restart, "restart_unit", side_effect=restart.RestartError("bootstrap failed")) as start, \
+                    mock.patch.object(restart, "diagnostics"):
+                with self.assertRaisesRegex(restart.RestartError, "no prior web bundle.*recovery not attempted"):
+                    restart.publish_and_restart(staging)
+            self.assertEqual(start.call_count, 1)
+            self.assertFalse((web / "dist").exists())
+            self.assertFalse(staging.exists())
+
+    def test_health_requires_new_running_process_valid_api_and_spa_shell(self):
+        restart = load_script()
+        for pid, api, page, failure in (("20", b'{"projects":[]}', b'<div id="root"></div>', None),
+                                        ("10", b'{"projects":[]}', b'<div id="root"></div>', "PID 10"),
+                                        ("20", b'{"projects":null}', b'<div id="root"></div>', "invalid payload"),
+                                        ("20", b'{"projects":[]}', b'not the app', "SPA shell")):
+            with self.subTest(pid=pid, api=api, page=page), \
+                    mock.patch.object(restart, "unit_properties", return_value={"MainPID": pid,
+                                                                               "ActiveState": "active"}), \
+                    mock.patch.object(restart, "fetch", side_effect=lambda path: api if path == "/api/overview" else page) as fetch, \
+                    mock.patch.object(restart.time, "monotonic", side_effect=[0, 0, 46]), \
+                    mock.patch.object(restart.time, "sleep"):
+                if failure:
+                    with self.assertRaisesRegex(restart.RestartError, failure):
+                        restart.wait_healthy(10)
+                else:
+                    restart.wait_healthy(10)
+                    self.assertEqual([call.args[0] for call in fetch.call_args_list], ["/api/overview", "/"])
 
     def test_the_checkout_is_checked_against_the_branch_the_service_runs(self):
         restart = load_script()

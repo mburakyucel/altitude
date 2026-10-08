@@ -10,7 +10,7 @@ from unittest import mock
 from pathlib import Path
 
 from tests.support import git, make_repo
-from altitude import config, git_policy
+from altitude import config, git_policy, platform
 
 
 class TestGitPolicy(unittest.TestCase):
@@ -270,6 +270,33 @@ class TestGitPolicy(unittest.TestCase):
         hook.write_text("#!/bin/sh\nexit 0\n")
         hook.chmod(0o755)
         return directory
+
+    def test_image_guards_and_consent_use_packaged_source_and_private_home(self):
+        with mock.patch.object(platform, "containerized", return_value=True), \
+             mock.patch.object(config, "RELEASE", {"version": "fixture"}), \
+             mock.patch.object(config, "INSTALL_PREFIX", Path("/")), \
+             mock.patch.object(config, "HOME", self.tmp / "image-home"), \
+             mock.patch.object(config, "INSTALL_CONFIG", self.tmp / "absent-install.json"):
+            result = git_policy.repair_hooks(self.repo)
+            self.assertEqual(result["status"], "ready")
+            self.assertEqual(git_policy.require_hooks_installed(self.repo), config.SOURCE / "hooks")
+            self.assertFalse(git_policy._owned_hooks(Path("/hooks")))
+            custom = self.custom_hooks()
+            self.git("config", "core.hooksPath", str(custom))
+            observed = git_policy.inspect_hooks(self.repo)
+            self.assertEqual(observed["status"], "conflict")
+            with self.assertRaises(git_policy.GitPolicyError):
+                git_policy.repair_hooks(self.repo)
+            result = git_policy.repair_hooks(self.repo, combine=True, expected=observed["fingerprint"])
+            wrapper = Path(result["hooks_path"])
+            self.assertTrue(wrapper.is_relative_to(config.HOME / ".config/altitude/git-guards"))
+            self.assertFalse(wrapper.is_relative_to(config.ROOT))
+            self.assertEqual(git_policy.require_hooks_installed(self.repo), wrapper)
+            text = (wrapper / "pre-commit").read_text()
+            self.assertIn("/usr/bin/python3", text)
+            self.assertIn(str(config.SOURCE), text)
+            self.assertNotIn("ALTITUDE_CONFIG", text)
+            self.assertNotIn("/current", text)
 
     def test_default_and_inherited_hooks_are_preserved_until_explicit_combination(self):
         default = self.custom_hooks(self.repo / ".git/hooks")

@@ -126,6 +126,33 @@ class TestTaskDesign(AltitudeCase):
         self.assertEqual((repeated["id"], repeated["revision"], repeated["design"], repeated["options"]),
                          (first["id"], 1, first["design"], first["options"]))
 
+    def test_saved_proposal_title_is_independent_of_question_revision_in_every_projection(self):
+        first = self.publish()
+        self.proposal.write_text("Tab choices for the settings proposal.")
+        self.publish()
+        self.selection["title"] = "Proposal v5: settings, model choice and menus"
+        current = self.publish()
+        self.assertEqual(current["revision"], 3)
+        self.assertEqual(self.publish(), current, "unchanged publication preserves the capture and revision")
+        for path in (f"/api/task/{self.project}/{self.slug}", "/api/overview"):
+            status, _, raw = self.request("GET", path)
+            self.assertEqual(status, 200, raw)
+            self.assertIn(self.selection["title"], raw.decode())
+        task = S.load_task(self.project, self.slug)
+        for question in (first, current):
+            with self.subTest(revision=question["revision"]):
+                view = T.question_view(self.project, task, question)
+                self.assertEqual(view["design_title"], question["design"]["title"])
+                self.assertEqual(view["design_url"], T.design_url(self.project, self.slug, question))
+                status, _, raw = self.request("GET", self.api(question))
+                self.assertEqual(status, 200, raw)
+                preview = json.loads(raw)
+                self.assertEqual(preview["title"], view["design_title"])
+                self.assertEqual(preview["revision"], question["revision"])
+                self.assertEqual(preview["superseded"], question == first)
+        with self.assertRaises(T.TransitionError):
+            T.accept_question(self.project, self.slug, first["id"], first["revision"])
+
     def test_existing_waiting_owner_attaches_preview_to_its_same_unanswered_question(self):
         task = T.block(self.project, self.slug, "May I implement this proposal?", actor="l2",
                        expected_attempt=1, updates={"waiting_on": "burak"},

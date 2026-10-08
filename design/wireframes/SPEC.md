@@ -1,5 +1,14 @@
 # Altitude UI specification
 
+Container deployment retains the existing First run and Settings layouts. It labels folder paths
+as container-volume paths and distinguishes host shell commands from tools/sign-ins inside the
+container. Terminal and image-managed version rows explain unavailability without enable/update
+switches; the host-voice choice is unavailable with its reason. Browser and external-service voice
+remain available. Empty folders, outside-volume refusal, retry and reload use the existing form
+states. Actual-daemon Linux phone/desktop onboarding passes with fictional external engines;
+Mac and real-device acceptance remain open. Walkthroughs live in `web/e2e/container.pw.ts`,
+`scripts/container_browser.mjs` and ignored runner artifacts.
+
 The operator approved [conversation-first Needs you and L2 decisions](CONVERSATION_FIRST.md)
 on 2026-09-08. The conversation-first boards define the decision experience; shared shell and
 composer boards define their existing layout and input behavior.
@@ -71,6 +80,14 @@ requirements, including accessible control names, minimum targets, and contrast 
 
 ## 2. Information architecture
 
+The container recovery notice uses the shell's existing status-banner treatment on phone and
+desktop. While globally paused it says new AI work is paused, messages/task requests stay queued,
+and Stop remains available. It labels the displayed Continue command as a host action and offers
+no browser mutation button. An unavailable instance shows repair guidance instead of a command.
+The notice is absent while loading, in native mode, and after the overview reports admitted work;
+no dismissal or additional browser storage is introduced. Container deployment walkthroughs remain
+distinct from the fictional local UI harness.
+
 ### 2.1 Routes
 
 | Route | Page | Replaces |
@@ -141,8 +158,8 @@ repeats the read; "Empty" is a sentence in `--text-muted`, never a blank area.
 
 Anatomy, top to bottom: brand; **Needs you** with a count badge; "Projects" section head with **+**
 (add a folder); one row per managed project with a state dot and the name;
-"N folders not managed" line; engine readout; **Monitor**; the operator row with the configured
-name and the theme toggle.
+"N folders not managed" line; engine readout; **New tasks**; **Monitor**; the operator row with the
+configured name and the theme toggle.
 
 The brand is the Altitude mark, 24px, then "Altitude" in card-title type. The mark is an A whose left
 side climbs in three steps (L1, L2, L3) to the summit, drawn as a white line on an `--accent` tile
@@ -170,6 +187,7 @@ hard-codes one, and one configured engine means one row.
 | Needs you badge | unanswered operator questions plus operational attention items across projects; hidden at known zero; unknown or stale reads are explicit |
 | Unmanaged folders line | N folders found in the projects folder; click opens First run for the picked folder; hidden at zero |
 | Engine readout | one row per engine: name, "N% of week", a 4px meter; the meter turns `--danger` past the 70% reserve line; "no reading" in muted text when `quota.known` is false; "reading 2h old" appended when `stale` |
+| New tasks | "New tasks · Auto", "New tasks · Fable · High", or "New tasks · Fable unavailable · Auto meanwhile" with a chevron, under the engine readout because quota belongs to the account; tinted while a choice is active; opens the Models dialog on its Tasks tab (§3.6.1); disabled while the overview loads |
 | Operator row | name from configuration; theme toggle (light default, dark, persisted per browser) |
 
 ### 3.2 Project header
@@ -188,16 +206,18 @@ part reads "L3 is answering" (or "L3 is handling <what>" for a system turn, §4.
 The phone combines project identity and a short **L3 Ready / Answering / Handling** status in its
 single 54px shell header. The project name opens the switcher; a non-Auto pin stays named in the
 compact status. There is no second status row. The three dots open the same project actions menu as
-desktop, above any keyboard. The engine pin, the last L3 turn and model/effort defaults live on the
-project's Settings page (§3.15).
+desktop, above any keyboard. L3's model choice is the button under the message box (§3.6.1); default
+models, routing and removal live on the project's Settings page (§3.15).
 A healthy project's header holds no Setup control. **Setup…** in the overflow menu always opens the
 configuration checklist without replacing the conversation or draft; the header shows Setup only
 while setup needs attention (§3.12).
 
-Overflow menu: **Settings…** (opens Settings with this project under **This project**), **Setup…** with
-the current setup status in muted text (§3.12), **Reset L3 conversation** (confirm inline; `POST /api/l3/reset`), **Remove project**
-(confirm inline; `POST /api/project/remove`), **Design boards** (present only when `GET /api/project/<name>`
-reports a design URL; opens in a new tab).
+Overflow menu: **Project settings…** (opens `/settings/projects/<name>`), **Setup…** with the current
+setup status in muted text (§3.12), **Reset L3 conversation…** (confirm inline; `POST /api/l3/reset`),
+**All settings…** (opens Settings with this project under **This project**), **Design boards ↗**
+(present only when `GET /api/project/<name>` reports a design URL; opens in a new tab). The menu
+holds no destructive item, so no tap there can remove a project; **Remove project** is on the
+project's Settings page (§3.15).
 
 The menu holds actions only; no engine, model or effort control appears in it. Opening it focuses
 the first item; arrow keys, Home and End move between items; an inline confirmation takes focus and
@@ -206,17 +226,9 @@ the first item; arrow keys, Home and End move between items; an inline confirmat
 States: normal; L3 never started ("L3 has not started" and a **Start L3** button); error reading
 the project (status line shows the error sentence; the conversation still renders from cache).
 
-Removing a project means detaching its L3. The inline confirmation explains: finish or reject
-unfinished tasks and wait for workers, L3 turns and task processing first; the repository,
-remaining worktrees, saved history and queued messages stay on disk. Add the same folder and name
-again to attach L3, restore its sessions and history and deliver waiting messages. No work is
-implicitly stopped or reassigned. **Cancel**, Escape and outside dismissal close a confirmation
-before submission. **Removing…** disables the confirmation and competing actions, with no
-dismissal until the request completes. Errors/refusals appear inside the confirmation with Remove
-and Cancel still available; a work refusal names the unfinished tasks.
-
-Success removes the managed row and cached project views, selects a remaining project, and opens
-Needs you, or First run when the last project leaves. A stale project, task or report URL shows
+Removing a project means detaching its L3 (§3.15 Remove project). Success removes the managed row and
+cached project views, selects a remaining project, and opens Needs you, or First run when the last
+project leaves. A stale project, task or report URL shows
 "Project not managed" with an Open projects link, or First run when no project remains. The folder
 is still offered under its configured root; the path field supports folders elsewhere.
 `ProjectLifecycleStates.html` illustrates the single removal-and-attachment flow at phone-sized
@@ -282,7 +294,7 @@ a task or project conversation offer Open in terminal; elsewhere (Live session, 
 | Tap | The terminal view appears, opening its shell or attaching to the running one (§3.10). |
 | Typed | Once the screen has drawn output and stayed quiet for 300 ms (the prompt), the page re-reads the terminal; with no program in the foreground it types the command as a paste and focuses the screen. |
 | A program is running | The terminal names a foreground program (vim, a build): nothing is typed; a notice above the screen, "<program> is running, so the command wasn't typed.", with **Copy command** and ×. The same notice explains a shell that shows no settled prompt within five seconds of the tap (nothing drawn, output that keeps coming, or a check that answers late), a failed check or stopped typing. A shell builtin reading input (`read`) is not a foreground program, so the command is typed into it; nothing presses Enter. |
-| Owner not told | In a task terminal the page first tells Altitude the command so its owner hears once it has run. When that fails, the command is still typed and the notice reads "Altitude couldn't tell the task's owner to watch this command, so reply in chat once it has run.", with **Copy command** and ×. |
+| Reader not told | The page first tells Altitude the command so the terminal's reader (a task's owner, or the coordinator for a project terminal) hears once it has run. When that fails, the command is still typed and the notice reads "Altitude couldn't tell the task's owner to watch this command, so reply in chat once it has run." (in a project terminal, "the coordinator"), with **Copy command** and ×. |
 | Terminal is off / couldn't open | The terminal's own card (§3.10); the command is dropped, so turning it on or Retry opens a plain shell. |
 | Enter | Only the operator's Enter runs it: the keyboard's, or on phone the key row's **Enter** (§3.10), which runs the typed command without opening the soft keyboard. |
 
@@ -387,6 +399,31 @@ timer or notification surface appears.
 `web/e2e/heads-up.pw.ts` walks the heads-up states, task navigation and scroll preservation at both
 viewports; `conversation.pw.ts` covers the unchanged listening/denied composer states.
 
+Coordinator information messages use separate system lines outside routine groups: **sender →
+recipient · summary · Sent/Incoming**, plus **Show**. Sent acknowledges inbox acceptance; pending
+information says **Queued · next ordinary turn**. Show replaces the line with a Coordinator message
+card containing direction, summary, the exchange reference and full diagnostic text; Hide restores
+the line. Diagnostic code stays read-only; link destinations appear literally, including beside
+Markdown labels, without inferred
+task, file, issue or terminal actions. Reply rows reverse direction on the same exchange. No send,
+reply, approval or removal control is added to this information surface.
+
+| Information state | What appears and disappears |
+| --- | --- |
+| Empty / initial loading | Existing empty text / skeleton; no placeholder exchange. |
+| Accepted | Source Sent row and one folded recipient inbox row appear. |
+| Show / Hide | Full text and exchange reference appear / disappear. |
+| Supplied on an ordinary turn | Inbox row leaves; one incoming history row appears before its receiving turn and reply. |
+| Receipt failure | Separate visible warning; the ordinary answer remains. Information without saved proof may repeat. |
+| Reply | A separately folded reverse-direction row joins the same exchange. |
+| Sensitive text refused | No message or inbox row appears. |
+| Registration changed | Pending line says Registration changed · not supplied; no action is offered. |
+| Read error | Existing error and Retry; already loaded rows retain their existing read-state behavior. |
+| Listening / denied | Existing composer behavior in §3.6; information rows request no permission. |
+
+`web/e2e/project-messages.pw.ts` specifies phone/desktop and emulated iPhone states. The unchanged
+listening/denied behavior remains covered by `conversation.pw.ts`; these messages have no composer.
+
 The report view has a back link to the task and a "Report" title. It reads the task's report and
 shows plain sections when present: Landed (PRs, main checks and deploy), Review, Blocked, Decisions,
 FYI, Follow-ups, Deviations, Spend, Report notes, and Digest. Report notes and the digest are prose;
@@ -438,25 +475,33 @@ fixtures, immutable snapshot/result, L2 initiation, failure/retry, unavailable, 
 Anatomy: state dot, title (600), meta line "<state> · <engine> · <age or wait>", chevron. Click
 opens the task conversation, at its current operator question when one is open (§3.7).
 
-States by task state: planned (a queued task with a planned wait: "Planned · waits for <reason>",
+States by task state: planned (a queued task with a planned wait: "Planned · Waiting for <reason>.",
 muted queue dot and a reason that wraps on phone and desktop); queued ("Queued · <hold>", where
 the hold is the queue's own reason: "waits
-for a slot · WIP limit N reached", "waits for an engine · <why>", "waits for the restart", "waits
+for a free task slot", "waits for an available coding engine", "waits for Altitude to restart", "waits
 for resume at <time>", or plain "waits for dispatch"; never a file lease, which the queue does not
 hold; see [concurrency](../../docs/ARCHITECTURE.md#task-lifecycle)); running ("Running · <model> on <engine> · started N min ago"); blocked waiting
-on L3 ("Waits for L3", the running dot: L3's answer is Altitude's own work, and the dot turns amber
+on L3 ("Waiting for the coordinator: <short prerequisite>.", the running dot: L3's answer is Altitude's own work, and the dot turns amber
 only when L3 escalates to the operator; the rail's §3.1 dot follows the same rule); blocked on the
-operator ("Your turn · N questions", "Your turn · review PR #N", or both, plus "Waiting for you",
+operator ("Your turn · N questions", "Your turn · review PR #N", or both, plus a sentence explaining the answer or review wait,
 amber dot); replying to the operator ("L2 replying to you", running dot); running ("L2 working");
-blocked by a fault ("Paused · <one sentence>", red dot); operator-stopped ("Stopped by you", red dot);
-owner/daemon-parked without a question, review, fault or operator stop ("Paused", idle dot);
-reported ("Report landed · waits for L3", running dot, or "waiting for you" with a held review);
+blocked by a fault (a short explanation of the interruption and the known coordinator prerequisite, red dot);
+operator-stopped (confirmed Stop explains Continue; a stop request alone points to the task for confirmation, red dot);
+owner/daemon-parked without a question, review, fault or operator stop (a short reason, or "Work is paused; no reason is recorded.", idle dot);
+reported ("Waiting for the coordinator to check the task’s report.", running dot, or a review wait);
 done ("Done · PR #N merged", shown under Done this week); rejected ("Rejected", under Done this
 week).
 
 Open operator questions remain visible while running or queued, independently of execution.
 A fault keeps its red dot and cause even when a separate question also needs an answer. An
 operational pause without a question uses its actual status, never an inferred request to decide.
+Rows and pages share the same read-only explanation. Authored prerequisite excerpts use at most
+120 characters, excluding diagnostic output and source identifiers; full reasons remain in Task
+details. A worker death reads **The task session ended before completion.** plus its current
+coordinator prerequisite, or **Waiting for the coordinator to check the blocker.** Other faults
+say **A system problem paused work.** without inventing a cause. No explanation claims a restart,
+recovery or retry without a corresponding record. Named planned prerequisites use their task title
+when available and explicitly identify a prerequisite task when only its slug remains.
 
 The same card is the row in the work panel and the card under an L3 reply that created the task
 (§5.2 note 4); a slug the project no longer lists renders as the row with the slug as its title.
@@ -465,11 +510,12 @@ The same card is the row in the work panel and the card under an L3 reply that c
 
 One composer everywhere (project chat and task conversation). Anatomy: rounded
 field (`--radius-composer`), placeholder naming the owner ("Message L3 about <project>",
-"Message the L2"); a left pill (engine pin on desktop L3 chat: Auto or an engine name; none on the
-task conversation or on phone, where the pin is in the project's Settings page); Add images button; microphone button; send control. The send control is the arrow in an accent circle
+"Message the L2"); on the project chat, the **L3** button on phone and desktop ("L3 · Auto",
+"L3 · Fable · Low"; none on the task conversation, because a started task keeps its model, §3.6.1; on
+phone it steps aside while recording and transcribing so the waveform fills the row); Add images button; microphone button; send control. The send control is the arrow in an accent circle
 in every state, with no visible text; its accessible name is "Send" ("Queue" while busy). A hint line under the field,
 12px muted on desktop. The structure is the same on both widths: the field spans the box on top
-and the controls (pill, Add images, microphone, send, and the recording cluster while listening or
+and the controls (L3 button, Add images, microphone, send, and the recording cluster while listening or
 transcribing) sit in one row beneath it, in every state. Phone fields and messages are 16px with
 44px control targets; the row keeps its place through recording and landing, so the send control
 never moves beside the text. No routine hint or engine toolbar adds a row on phone. Relevant send/access errors and voice/denied/unavailable explanations remain visible and
@@ -491,7 +537,7 @@ at both phone and desktop widths; `mobile-chat.pw.ts` walks the task page's pend
 | Sending | the bubble is in the conversation at once at 60%, a small progress ring beside it, until the server acknowledges it (stream accepted, queued receipt or stored row); the task page's receipt line reads "Sending…" | accepted: the same bubble settles to full opacity in place over 240ms, the ring leaves, and the stored copy replaces it without a duplicate row, re-layout or scroll jump; refused: the bubble leaves, the draft returns, hint reads "Not sent. Retry." in `--danger` |
 | Accepted; stream or refresh interrupted | sent bubble or saved queue row; the composer stays cleared and newly typed text stays | refresh reconstructs history, active turn and queue by their IDs; read-error Retry only reads; no unsent Retry or invented answer failure |
 | Delivery unconfirmed | submitted text followed by any newly typed draft on a new line; hint reads "Could not confirm delivery. Check the conversation before sending again." | no send Retry; the operator checks history before editing or sending; HTTP headers, server errors and matching text alone do not prove delivery |
-| Busy (L3 mid-turn) | the same arrow, enabled with a draft; header names the active work and queued rows say what runs next; desktop retains its mid-turn hint | the arrow appends to `queued[]`; a queued row appears in the conversation in muted text with a 44px **Remove** target on phone (`POST /api/chat/remove`) |
+| Busy (L3 mid-turn) | the same arrow, enabled with a draft; header names the active work and queued rows say what runs next; desktop retains its mid-turn hint | the arrow appends to `queued[]`; a queued row appears in the conversation in muted text with **Send now** beside **Remove**, both 44px targets on phone |
 | Opening microphone | "Opening microphone…" with an indeterminate spinner inside the composer box; existing text remains readable and read-only. A restart waits for recognizer shutdown (at most three seconds), followed by the waveform audio context's asynchronous close (at most three more seconds), before opening another microphone. Its waveform graph connects before capture starts, without waiting for graph activation | Cancel or Esc restores editing and prevents the waiting attempt from opening audio later; denial or failure preserves the draft |
 | Listening | Read-only, selectable draft; "Listening… Stop to add text, or Send." with activity indicator inside the box. With the browser backend, recognized words appear after the draft while speaking and the last phrase may still change; English phrases gain punctuation and capitals once final, while the phrase being heard shows as heard; once the text passes the field's height, the field follows the latest words. With either backend, new words flow in letter by letter at a steady pace timed to finish as the next update arrives (about speaking pace, faster while catching up); a revised word changes in place without the text backing up, and under reduced motion each update appears at once. Stop, Send and a recording that stops early use every recognized word, including any still flowing in. Cancel, Stop, arrow, waveform and timer share one control row: on desktop they sit together at the right beside the engine pill with a crisp 168px waveform; at 390px the waveform fills the row without wrapping | Cancel or Esc: back to editing, nothing added; the X leaves focus on the microphone so no phone keyboard opens, and Esc returns focus to the field; Stop or Ctrl/⌘+M: land the words in the draft; the arrow or Enter: land them, then send at once |
 | Transcribing | "Transcribing…" and an indeterminate spinner inside the box; draft stays readable and read-only, mic and arrow disabled, Cancel available. Desktop waveform and timer freeze. Host voice finishes its last words here; the browser backend only waits, at most three seconds, for the recognizer's last phrase and then, at most ten seconds (three while the model still loads), for its punctuation | after Stop: Landed; after Send: append and send once through Typing → Sending (Busy queues); Cancel, failure or timeout restores editing and preserves the draft; failure: "Could not transcribe. Typing works.", and a recognizer error keeps the words already shown; empty transcript: send nothing, return to Idle or Typing |
@@ -546,12 +592,55 @@ The approved [image interaction contract](IMAGE_INPUT.md) explains retention and
 agent delivery. `web/e2e/image-input.pw.ts` drives these states with real storage/API and deterministic
 engine fixtures at 390×844 and 1440×900; named screenshots live in `web/ui-artifacts/results/image-input*`.
 
+### 3.6.1 Models dialog
+
+One dialog chooses a model and effort ahead of routing, for two scopes, each where it lives. The **L3**
+button under the message box describes who answers what is typed there and opens the dialog on
+**L3 · <project> only**; the **New tasks** control beside the quota (rail, phone Monitor and Work) opens
+it on **Tasks · All projects**. Outside a project only the Tasks tab exists. Each tab's label says how
+far it reaches; the tabs are a tab list, and arrow keys, Home and End switch them. The dialog's name
+includes the open tab. On phone it is a bottom sheet; on desktop a centered dialog.
+
+Each tab starts with **In use: <choice>** and its scope: "who answers you in <project>'s chat", or
+"every project; tasks that start from now, including queued ones. Started tasks keep theirs." The
+models are a radio group: **Auto** (project routing and defaults), each alias and engine default the
+engine seam names with its engine, and **Other model…** with an engine and an exact model id (no
+spaces). **Effort** is a radio group of Default and the levels the chosen model's engine accepts; Auto
+offers every engine's levels and requests that effort on whichever engine routing picks. Focus starts
+on the current choice. The dialog holds one unsaved choice, owned by the open tab: switching tabs or
+closing drops it, and the tab shows its saved value again.
+
+**Use for L3 in <project>** or **Use for all new tasks** saves the model and effort together, only for
+that tab, and closes the dialog; the closed control then shows the new value. It is enabled only for
+a changed, valid choice. **Back to Auto**, shown while a choice is saved, removes it in one tap.
+The L3 tab says "Applies from L3's next reply." with the last reply's reported model and effort. The
+Tasks tab says that each project's Auto picks while the chosen model is unavailable, lists every
+project whose **Only <engine>** routing keeps its tasks elsewhere ("tutor runs tasks only on Codex,
+so it keeps its Codex model. Change", linking to its Routing), and ends with the hint "For one task,
+tell L3: “use Opus at Max for this”." The L3 tab names the project's own L3 Only engine the same way
+("This project keeps L3 only on Codex, so Fable can't be used here. Change in Routing").
+
+| State | What appears and what actions do |
+| --- | --- |
+| Loading | The closed control is disabled; an opened tab says Loading models…. |
+| Read failed | "Could not load models" with Retry. |
+| Saving | **Use** reads Saving…; choices and the other tab are locked. |
+| Save failed | The server's reason and Retry on the tab that saved; In use keeps the earlier value. |
+| Changed elsewhere | "Changed in another window." with Reload, which drops the draft and shows the current value. A save compares against the value the draft started from, so a refresh while editing does not hide another window's change. |
+| Unavailable | The closed control reads "Fable unavailable · Auto meanwhile"; the tab names the reason. |
+
+Escape, × and, on phone, the scrim close the dialog and return focus to the control that opened it.
+Data: `GET /api/overview` `new_tasks` and `POST /api/new-tasks`; `GET /api/defaults/<project>`
+`l3_choice` and `POST /api/defaults` with setting `l3_choice`. Both writes send the value shown as
+`expected`, so a change made elsewhere is refused instead of overwritten. `web/e2e/models.pw.ts` walks
+these states at 390×844 and 1440×900. Board: ModelsStates.
+
 ### 3.7 Work panel
 
 Work answers “What is happening in this project?” Anatomy: "Work" and "N current · N done this
 week"; **Current** with every unfinished task once as a compact status row; **Done this week**
 folded to a count, expanding to rows. On phone it is the selected project's Work tab with the
-same sections. Task totals are labelled text, not attention badges. Work contains no question
+same sections, under one **New tasks** line (§3.6.1). Task totals are labelled text, not attention badges. Work contains no question
 body, recommendation or answer control.
 
 Data: `GET /api/project/<name>` for the tasks, `GET /api/overview` `queue` filtered to the project.
@@ -708,6 +797,9 @@ A withdrawn question occupies one muted **Question withdrawn** disclosure row, c
 Expanding it reveals the question, owner's reason and former recommendation together, without answer
 controls or a second recommendation disclosure. Collapsing it restores the compact audit trail;
 independent open questions remain visible. Withdrawal records no operator decision or merge authority.
+While a group has an open member, its closed and withdrawn members fold into one collapsed
+**N earlier questions** row above it, so the card leads with what is open; a link to one of them opens
+the row. An open member waiting on L3 carries **L3 is handling this** and no controls.
 Recorded acceptance and execution are separate observations:
 show **Waiting to resume** while waiting for capacity, and **Work resumed** only after observing the
 worker running. An old question URL stays readable and links to the current revision when one exists.
@@ -730,13 +822,13 @@ every write names its exact question revision. Archived tasks retain history wit
 
 #### 3.9.1 Pending design preview
 
-A question with saved design content has a **View preview · vN** link in Needs you and its owning
+A question with saved design content has a **View preview · saved title** link in Needs you and its owning
 question. When the open question is offscreen, use its floating question jump, then View preview.
 Question navigation follows an open group member with an attachment before another open member,
 including after partial answers. Work's task row opens the exact owning question.
 Links open `/projects/:name/tasks/:slug/design/:questionId/:revision`
 in another browser tab, leaving the original route and draft intact. Closing it returns to that view.
-The page shows the captured title (identifying proposal or implementation review) and version,
+The page shows the captured title (identifying proposal or implementation review),
 named screenshots with **Full size** links, captured text and **Back to question**. Earlier proposal
 attachments remain with their historical questions. Screenshot links open the fixed image in a browser tab for
 native zoom. There is no added conversation, approval control or permanent task banner.
@@ -744,7 +836,8 @@ native zoom. There is no added conversation, approval control or permanent task 
 Each version contains explicitly selected PNG/JPEG screenshots and text. HTML simulations are shown
 as captured states; active HTML is never embedded. Changing the working files does not change the
 saved version. A replacement advances the existing question revision, and the prior preview is
-labelled **Earlier version** with **Open current question**. **Back to question** still targets the
+labelled **Earlier preview** with **Open current question**. Question revisions fence identity and
+answers, not displayed proposal numbering. **Back to question** still targets the
 exact version inspected. Viewing, opening a full-size screenshot and sending a follow-up leave the
 question unanswered. The existing decision controls record approval; merge holds remain unchanged.
 
@@ -756,17 +849,35 @@ unavailable**, **Retry** and **Back to question**, with saved content hidden. An
 Earlier versions retain their original text and screenshots. Existing conversation listening and
 decision states are reused; the viewer has no microphone, composer or empty publishing form.
 
+#### 3.9.2 Validation captures
+
+An L2 reply with attached validation captures shows an underlined **Watch capture · title** link (or
+**Watch N captures**) under its text, at least 44 px tall on phone. It opens
+`/projects/:name/tasks/:slug/captures/:messageId` in another browser tab, leaving the conversation and
+draft intact. The page shows **← Back to conversation**, **Captures from validation run N**, when the
+reply attached them, and each capture as its title, size, length and frame count above the GIF looping
+at its recorded size, narrowed to the page. A reply without captures has no link.
+
+Phone and desktop states are walked in `web/e2e/captures.pw.ts`: **Loading captures…** gives way to
+content; an unknown, denied or failed read shows **Capture unavailable** with **Retry** and Back. A
+capture starts at **Loading capture…**; a missing or altered one hides its meta and shows **Capture
+unavailable.** with **Retry capture**, and recovery removes the error.
+
 ### 3.10 Task page
 
 The [maintained task states](TaskStates.html) describe activity and steering. Task actions stay
 directly accessible in the compact header, with one consistent button treatment.
 
-Task details includes **Observed tokens** on phone and desktop,
-also present in the report view. The folded token row shows the cumulative observed total (unknown when
-unavailable), coverage, and collector freshness. Expanded details group engine and owner/delegated
-session rows, or say **Provider total · helpers unsplit**, with inclusive input/output and available
-cache-read, cache-write and reasoning subsets. Cache/reasoning fields are parts of input/output,
-never additional totals. Attempts survive resume and engine handoff; project L3 work is excluded.
+Task details includes **Tokens processed** on phone and desktop,
+also present in the report view. Above it, Task details shows **Current context** (Context at last
+request once the task stops): tokens, share of the window and observation age, or "unavailable · no
+reliable reading for the current session". The folded token row shows the cumulative processed total
+(unknown when unavailable), model requests, coverage, and collector freshness. Expanded details first
+explain that each request re-sends the conversation, so processed input is mostly cached and is not
+a bill, quota use or the current context; then **Input processed**, its cache subsets, **Output
+generated**, reasoning and **Model requests**. Engine and owner/delegated session rows, or **Provider
+total · helpers unsplit**, follow. Cache/reasoning fields are parts of input/output, never additional
+totals. Attempts survive resume and engine handoff; project L3 work is excluded.
 The display is separate from the context line and quota readouts and makes no cost claim.
 
 Expanded details also show **L1 helpers observed**, the total unique observed count across recorded
@@ -795,9 +906,13 @@ Stop, Continue and Check status share one 104px-wide header button; its position
 fixed across state changes. Tabs retain an active underline to identify navigation.
 Left is the operator's conversation with
 the L2 (same bubbles and composer as §3.3 and §3.6); right the live session panel (480px, toggled by
-the header button). Task details contains the muted line "attempt 1 · started 32 min ago · 18% of its context used"
-when those values are available; a finished task reads "done 2h ago" or "rejected 2h ago". Engine
-and model appear in their chip. The PR chip reads "PR #N merged · main checks passed" or its open
+the header button). Task details contains the muted line "attempt 1 · started 32 min ago"
+when those values are available; a finished task reads "done 2h ago" or "rejected 2h ago". The model
+chip says only what is known: "Requested · Opus 5 on Claude · Max" until the engine reports, then
+what it reported ("Opus 5 on Claude · High"), with "(requested Max)" when the levels differ. Task
+details holds **Model and effort**: Requested (what L3 set for this task, or the project choice and
+defaults), Launched, Engine reports ("not reported" when absent) and routing's recorded reason, with
+"Messages and resumes keep this model and effort; to redo the work on another one, ask L3." The PR chip reads "PR #N merged · main checks passed" or its open
 and check states, in danger tone when main checks failed. It links to the PR when the repository
 URL is known, otherwise it is a plain chip. **Merge held** is concise and independent of execution
 or question state. Its complete reason opens in task details and wraps without truncation.
@@ -808,8 +923,8 @@ restoration remain covered alongside the task state and composer walkthroughs.
 **Stop** is directly accessible in the task header on phone and desktop, serving both views.
 One click requests termination immediately. **Reject** is in phone task details and the desktop header,
 with inline confirmation:
-"Reject this task? Its worker ends and the task is archived." with "Reason (optional)", Reject and
-Cancel. Stop appears while running; Reject appears while queued, running, blocked or reported.
+"Reject this task? Its worker ends and the task is archived." with "Reason (optional)", then
+**Cancel**, focused, and a red **Reject task**; Escape cancels. Stop appears while running; Reject appears while queued, running, blocked or reported.
 An operationally blocked task without an open question also offers **Resume**, using the existing
 daemon operation. The button becomes **Resuming…** during the request, then disappears when running.
 A failed request leaves Resume available and places its error on a separate line under the actions,
@@ -856,8 +971,8 @@ details. Desktop retains its direct operational actions and
 live-panel control while disclosing long reasons. Closing details restores the opener, draft,
 selection and reading position. A failure remains visible, not only inside details.
 
-Compact task states use the §3.5 labels (**L2 working**, **Waits for L3**, **Your turn · …**,
-**L2 replying to you**, **Paused · fault**, **Paused**, **Stopped by you**); **Merge held** can
+Compact task states use the §3.5 labels (**L2 working**, **Waiting for coordinator**, **Your turn · …**,
+**L2 replying to you**, **Work interrupted**, **Paused**, **Stopped by you**); **Merge held** can
 accompany any of these. Details separates each full reason. Waiting on L3 adds no operator badge.
 An operator question sits at the end of the chat with no generic Resume while the question is open.
 When it is offscreen, **1 question ↓** (or its count) floats above the composer. **Latest ↓** appears
@@ -874,7 +989,7 @@ away until the owner resolves the question, including while a submitted response
 Resolution restores the fallback when merge approval is still needed; a PR mention alone grants no
 approval. Independent questions and ordinary chat remain available. After **Approve merge**, a later park
 on another dependency shows that wait and no card (the CLI and queue add "PR #N approved"), including after routine integration
-gives the PR a new head; a new hold or a later operator message naming the PR brings the card back. A fault retains a visible short cause and **L3 has been told**. Operational
+gives the PR a new head; a new hold or a later operator message naming the PR brings the card back. A fault retains a red explanation of the interruption and its known wait. Operational
 pauses without questions retain Resume/Reject. No disclosure or reply releases a merge hold.
 
 Navigation states: Conversation and Live session are local views of the same task. On phone they
@@ -936,17 +1051,25 @@ Accepted messages stay sent through wake or refresh errors. The composer appears
 blocked tasks.
 The existing message bubble shows **Queued · waiting for a checkpoint**, **Queued · held until you
 continue**, **Delivered to session** only with handoff evidence, or **Delivery unconfirmed** when
-evidence is missing. Each eligible queued operator bubble has **Remove**; quick-choice receipts and
+evidence is missing. Each eligible queued operator bubble has a bordered **Send now** beside **Remove**;
+Send now explains **Stops work and reviews to deliver now.** It requests the
+existing Stop and same-session continuation for that message. Quick-choice receipts and
 messages already used by recorded decisions keep their evidence. **Removing…** disables removal until
 the response; success replaces only that bubble's text with **Message removed** and **Removed · not
 sent to the session**. Original text remains in durable evidence. Claim shows **Sending to session ·
 cannot remove**, and uncertain handoff shows **Delivery unconfirmed · cannot remove**, with no Remove.
 A prelaunch failure restores the queued controls. A refused removal refreshes delivery and names the
 refusal beside that message; denied and unconfirmed requests show their own inline error. Saved or
-loading reads disable removal. The empty queue has no removal control; listening and transcription
+loading reads disable both actions. **Sending now…** disables repeated sends and removal while the
+request or server delivery is pending. The server's receipt establishes delivery; the UI does not move
+the message optimistically. Stopped, question-waiting, faulted or unavailable owners show the server's
+reason beside a disabled Send now. Denied, conflict and unconfirmed requests refresh the row and show
+their inline explanation. Claimed, delivered and removed messages have no Send now control.
+The empty queue has no queued controls; listening and transcription
 keep the existing composer behavior. Removal does not undo a lifecycle request or recorded decision.
 `web/e2e/queued-messages.pw.ts` walks queue, removal, handoff, recovery and failure states on phone and
-desktop; `l2-progress.pw.ts` covers listening, denied microphone and Stop states.
+desktop; `send-now.pw.ts` walks immediate delivery, ordering and its row states;
+`l2-progress.pw.ts` covers listening, denied microphone and Stop states.
 Delivery does not claim understanding or action. Finished conversations remain
 readable with the activity area, composer and Stop gone.
 
@@ -960,7 +1083,25 @@ carry no diff counts. **Raw events** toggles the transcript to the raw list; its
 the server's redaction rule. There is no transcript search field. Footer states are "Following live
 · new steps appear at the bottom", "Paused · Follow to catch up", "Session paused until the task
 resumes", or "Session ended"; scrolling up pauses following, and Follow returns to the newest output.
-Pause also stops following while the worker runs. Paused position and expanded tool output survive
+The panel starts with recent activity. Scrolling upward near the top loads older rows into the same
+transcript, preserving the first visible row and its pixel offset. There is no paging toolbar.
+An upward wheel, touch or keyboard gesture also loads history when the recent content is shorter
+than the panel. A completed page needs fresh upward intent; opening the panel does not cascade
+through history. A muted **Loading earlier activity…** line appears above existing rows. Failure
+keeps the transcript and shows **Could not load earlier activity.** with a 44px Retry control there.
+The exhausted top says **Beginning of session**. Neither history status nor updates move focus.
+
+Pause also stops following while the worker runs; new activity continues arriving below. Live read
+failures retain the text and replace the footer with **Could not update the session.** and Retry.
+**Reconnecting to the session…** and **Catching up…** likewise take precedence over Following/Paused.
+A following reader returns to the recent tail after a long absence or a lost server index; a paused
+reader keeps their position while the loaded history reconciles. Earlier rows remain accessible by
+scrolling upward. Background browser tabs suspend reads and refresh when shown again.
+Raw events opens its own recent tail with the same scrolling. Each source record has a bounded
+preview and **Full record** disclosure: **Loading record…**, Cancel, a local error and Retry, then
+**Show more** for another chunk or **Hide full record**. Closing or leaving cancels its request.
+Changing task, session, attempt or representation discards the previous viewer's rows and reading
+state. Paused position and expanded tool output survive
 phone view switches. While
 running, the same activity line sits under the footer without the words, and the header
 dot pulses only while that cue shows recent output; quiet, unavailable, waiting and ended sessions
@@ -973,9 +1114,9 @@ Data: `GET /api/task/<project>/<slug>`, `GET /api/transcript/<project>/<slug>`,
 States: loading (header and conversation skeletons); error ("Could not load the task." and Retry);
 planned (the wait reason replaces the live panel; the conversation accepts messages without release);
 queued ("Waits for dispatch" or "Waits for resume" replaces the live panel); running; blocked on the
-operator (the question at the end of the chat); blocked on L3 ("Waits for L3"
-with the full reason in details); blocked by a fault (a red line with the first sentence, at most 100 characters,
-and "L3 has been told"); held for resume (Queued chip, "Waits for resume · <reason>" in place of
+operator (the question at the end of the chat); blocked on L3 ("Waiting for coordinator"
+and the short prerequisite, with the full reason in details); blocked by a fault (a red explanation
+from the same projection as task rows, never a raw-log excerpt); held for resume (Queued chip, the queue's recorded wait in place of
 the session); done or rejected (read-only conversation, composer gone, PR chip in the header).
 Empty conversations read "No messages yet." on an active task and "No messages on this task." on
 a finished one. The live session is connecting (skeleton and "Connecting to the session…";
@@ -1030,7 +1171,7 @@ selection Ctrl+C interrupts. Escape and Tab belong to the shell, also when the p
 | Off | "Terminal is off", what it does, **Open Settings** (returns here with Back, which opens the shell). |
 | Starting | Skeleton lines and "Starting the terminal…". |
 | Running | The screen with the cursor focused; **Close** / ×; the phone key row. |
-| Running, task terminal | Also a grey note above the screen: "This task's owner can read this terminal's output." A project terminal has no note. |
+| Running, reader note | Also a grey note above the screen: "This task's owner can read this terminal's output, and what it reads reaches its AI provider." A project terminal names the coordinator instead: "The coordinator can read this terminal's output, …". |
 | Restart pending | A grey note above the screen: "Altitude restarts at its next quiet point to apply an update. This terminal will close then." |
 | Reconnecting | A small "Reconnecting…" badge over the screen's top right, so the shell keeps its size; it disappears when output resumes and missed output appears. |
 | Typing stopped | Input failed (a program not reading it, Altitude unreachable), so part of it may not have arrived: an amber alert "Typing stopped: <reason> Part of what you typed may not have arrived; check the screen." with **Resume typing**. Keys typed meanwhile are dropped, not queued. |
@@ -1207,7 +1348,8 @@ their existing recovery, answer and navigation controls remain visible.
 
 ### 3.14 Monitor
 
-Anatomy: **Monitor** title; **Altitude update** (§3.13); **Seats**, one card per configured engine in the API's order and under
+Anatomy: **Monitor** title; on phone the **New tasks** control (§3.6.1) beside the same quota;
+**Altitude update** (§3.13); **Seats**, one card per configured engine in the API's order and under
 its label; **Routing now**; **Sessions (N)**. Each seat shows the windows it reports, their
 percentages and reset times in relative and clock terms, a meter with the 70% reserve line, the
 plan when supplied, and "reading 3m old". Exact reading times appear on hover.
@@ -1220,8 +1362,9 @@ a reading with model rows but no account windows says "No account windows report
 
 Routing rows show the role, project and pin separated by "·" ("L3 · <project> · Auto" or "L3 ·
 <project> · pinned to <engine>"); the chosen engine is right-aligned in semibold, or "No engine"
-in `--danger`, with the router's reason below. Rows wrap within the card. Session rows show their
-kind and task, engine and model when supplied, context meter and recorded status, and a snapshot
+in `--danger`, with the router's reason below. Rows wrap within the card. Sessions are only the ones
+Altitude runs: each project's coordinator (L3) and its live task owners (L2). Session rows show their
+kind and project or task, engine and model when supplied, context meter and recorded status, and a snapshot
 age such as "3 min ago". Sessions are the process information on this page; there is no raw worker
 process list.
 
@@ -1264,18 +1407,29 @@ report deletes the in-memory evidence. No audio or conversation text is collecte
 sent. Collection survives in-app navigation and ends on reload. Controls and report work at both
 phone and desktop widths.
 
-Settings at `/settings` opens from **Settings…** in the project's three-dot menu on both widths,
-or the desktop rail's operator row. The row highlights on every Settings route; theme switching
+Settings at `/settings` opens from **All settings…** in the project's three-dot menu on both widths,
+or the desktop rail's operator row; **Project settings…** opens that project's page directly. The row highlights on every Settings route; theme switching
 remains independently accessible. Phone keeps a labelled Back button and the existing four tabs.
 A direct overview visit returns to `/projects`; entry from another view returns there.
 
-Under **This machine**, one bordered **Voice input** row shows the saved backend and a chevron.
+The overview groups rows by where a setting applies, in two columns on desktop and one on phone.
+**Your name** comes first: the name, or "Not set · screens say “you”", opening `/settings/name`.
+**This project**, present only when Settings opens from a project, has one row naming it with its L3
+choice and routing ("L3: Fable · Low · tasks prefer Codex"), opening `/settings/projects/<name>`.
+**Models** holds **New tasks**, the same value and Models dialog as the control beside the quota
+(§3.6.1). **Projects** holds **All projects** ("2 projects · folder ~/Projects"), opening
+`/settings/projects`: every managed project, each opening its page, then **Projects folder**.
+**Voice** holds **Voice input**. **Devices and access** holds Devices, the Terminal switch and the
+read-only Network row (address and HTTPS). **Coding agents** holds Prerequisites, the Validation
+runs switch and Incident reports. **About** holds the Version rows on an installed copy. Every row
+that opens a page has a chevron; switches save in place.
+
+One bordered **Voice input** row shows the saved backend and a chevron.
 Its whole area opens `/settings/voice`; no backend options or credentials occupy the overview.
-A **Projects folder** row shows the current folder and opens `/settings/projects-folder`: an
+The **Projects folder** row shows the current folder and opens `/settings/projects-folder`: an
 explanation that First run offers the folders directly inside it, the current value and the §3.12
 folder browser with **Use "<folder>"** (Home allowed). Saving shows Saving…, then Saved. with the
 new folder; a failure shows the server explanation and Retry. First run reads the change at once.
-**Your name** shows the name, or "Not set · screens say “you”", and opens `/settings/name`;
 **Prerequisites** opens `/settings/prerequisites`; **Incident reports** shows "Published to
 <repository>" or "Kept on this computer" and opens `/settings/incident-reports`. Each page is the
 First run step's content with **Save** in place of the step buttons (Prerequisites has **Check
@@ -1284,47 +1438,59 @@ A **Devices** row shows how many devices are paired and opens `/settings/devices
 browsers, each with its name ("Safari on iPhone", "Home Screen app on iPhone", "Chrome on Mac"), a
 **This device** badge beside the current one, and "Paired <date> · last used <date>". **Remove** asks
 once in the row ("It will need a new code to open Altitude again.", or "This browser will need…" for
-the current one) with **Cancel** and a red **Remove**; removing the current device shows §3.16. Below,
+the current one) with **Cancel**, focused, and a red **Remove device**; Escape cancels. Removing the
+current device shows §3.16. Below,
 **Pair another device** makes a code: the code large in monospace, "Works once, for the next 10
 minutes", the copyable `/pair?code=` link and **Make a new code**.
-With HTTPS, a **Certificate** card follows: "Each device trusts Altitude through this certificate
-once. Add a phone shows a QR code for its camera, or run `alt tls-share` on the computer running
-Altitude.", the primary **Add a phone** button, "Before installing it on the phone, check that its
+With HTTPS, a **Certificate** card follows: "Set up HTTPS trust on Linux, macOS, iPhone, iPad or Android.
+Open a setup link and QR code here, or run `alt tls-share` on the computer running
+Altitude.", the primary **Set up a device** button, "Before trusting the downloaded certificate, check that its
 name and SHA-256 match these.", then Name, SHA-256 (monospace, four rows of eight pairs, as iOS groups
 them), Trusting it allows (the scope read from the certificate, "No limits: …" for an unconstrained
 CA) and Expires. An unreadable certificate shows "Could not read the certificate: <reason>" in red;
 without HTTPS or a CA file the card is absent.
 
-| Add a phone state | What appears and what actions do |
+| Set up a device state | What appears and what actions do |
 | --- | --- |
-| Ready | **Add a phone**. |
+| Ready | **Set up a device**. |
 | Opening | **Opening…**, disabled. |
-| Open | In place of the button: the QR code (232 px, black on white with its quiet zone), "Scan it with the phone’s camera. The page it opens has the download and the steps.", the link in small monospace, "Closes in 9:41" counting down each second and **Close**. The name and SHA-256 stay below for the check. |
-| Closing | **Closing…**, disabled, while the service closes the link. |
+| Open | In place of the button: the QR code (232 px, black on white with its quiet zone), "Open setup on this device, enter the link on another computer, or scan the QR with a phone. Keep this Settings page open while downloading.", a primary **Open setup page** link, the address in small monospace, "Closes in 9:41" counting down each second and **Close**. Opening setup creates a new tab without opener access; the original page keeps the QR, timer, name and SHA-256 for the check. |
+| Closing | **Closing…**, disabled, while the service closes the link; **Open setup page** is absent. |
 | Close failed | The QR code stays with **Close** enabled for a retry and, in red, "The link is still open: <reason>". |
-| Closed | A confirmed **Close**, or the end of the ten minutes, closes the link: the QR code, timer and link disappear; **Add a phone** returns with "The link is closed.". A new window replaces an earlier one, and leaving the page, even while it is opening, closes the link. |
-| Refused | The service's reason in red under **Add a phone**, such as a loopback-only or plain-HTTP service. |
+| Closed | A confirmed **Close**, or the end of the ten minutes, closes the link: the QR code, timer and link disappear; **Set up a device** returns with "The link is closed.". A new window replaces an earlier one, and leaving the page, even while it is opening, closes the link. |
+| Refused | The service's reason in red under **Set up a device**, such as a loopback-only or plain-HTTP service. |
 
-The phone page the QR code opens is served by the share link itself, light or dark with the phone:
-**Add this phone to Altitude**, "This lets the phone recognise your Altitude as genuine. Your phone
-asks you to approve each step.", a grey card with the CA name, its SHA-256 in four monospace rows and
-"It must match the SHA-256 on the screen that showed the QR code. If it differs, stop here.", then
-**iPhone or iPad** with a full-width blue **Download the profile** and four numbered steps (Allow and
+The setup page is served by the share link itself, light or dark with the device:
+**Set up this device for Altitude**, deliberate trust guidance, and a grey card with the CA name
+and SHA-256 in four monospace rows. It requires comparison with the trusted original Settings page
+or terminal, because the HTTP page alone proves no identity. Bordered navigation links jump to
+**Linux**, **macOS**, **iPhone or iPad** and **Android**. The desktop download section offers the
+public `ca.crt`, its read-only OpenSSL fingerprint command, and a single-certificate contents check.
+Linux instructions cover current/older Chromium certificate managers and Firefox Authorities;
+macOS uses the login keychain with explicit SSL trust, plus Firefox's separate import where needed.
+**iPhone or iPad** has a full-width blue **Download the profile** and four numbered steps (Allow and
 Close; Settings › Profile Downloaded, check the certificate name and More Details SHA-256, Install
 with the passcode, or Remove; Certificate Trust Settings; open the HTTPS address in a new Private tab
-with no warning, then pair), and **Android and other devices** with a grey **Download the
-certificate** and two steps. It names no step as automatic. `web/e2e/certificate.pw.ts` walks the
-card, every Add a phone state and the phone page at both widths.
+with no warning, then pair), and **Android** has **Download the Android certificate** and two steps.
+The final section verifies the exact HTTPS URL without a warning before pairing, distinguishing
+host-local and remote addresses and private-window pairing. It names no trust step as automatic.
+`web/e2e/certificate.pw.ts` walks the card, every sharing state, platform navigation, downloads,
+identity checks and verification instructions at both widths. Listening is inapplicable to this flow.
 A **Terminal** switch row (off after install) says "Every paired browser can run commands as you
 on this computer. Terminals close when Altitude restarts or when you turn this off." It saves on
 change, disables itself while saving and shows the server's reason under the copy on failure; turning
 it off closes every open terminal.
+A **Validation runs** switch row (on after install) follows it and says "Agents test installs,
+containers and browsers in throwaway containers on this computer, and each run is recorded on its task.
+Turning this off stops a running one." It saves like Terminal; turning it off stops the running run and
+refuses new ones. Where the runner is unavailable the switch is off and disabled and the copy reads "Not
+available here: <reason>." `web/e2e/validation-switch.pw.ts` walks on, off, a refused change and
+unavailable at both widths.
 An installed copy adds a **Version** row: the installed version, then "· Up to date" after a check,
 or "· <version> is available · What’s new" with the copyable `alt update` command. A **Check for
 new versions** switch (on after install) says "Twice a day Altitude asks GitHub for the latest
 release. Nothing else is sent, and nothing installs without you." It saves on change like Terminal;
 off hides the Version row's newer release and the notice. Source deployments show neither row.
-The overview also shows read-only address and HTTPS details.
 Voice input has a labelled **Settings** back button at both widths. It returns
 to the overview even on a direct visit; browser Back retains normal history. The phone header stays
 visible while the content scrolls. Opening a Settings page does not change a setting or probe a service.
@@ -1348,42 +1514,62 @@ next capture; a recording keeps the selection it started with and stops when it 
 | Saving | Saving… and disabled choices until the request answers. |
 | Failed/denied save | Server explanation and Retry; the saved choice is preserved. A choice changed elsewhere offers Reload settings. |
 
-Under **This project**, opened from a project, one row names that project and opens
-`/settings/projects/<name>`; a direct visit lists every managed project under **Projects** instead.
-The project page has a labelled **Settings** back button and three cards. **L3 engine** holds the
-Auto/engine pin (the same pin as the desktop composer pill) and the last L3 turn: engine, observed
-model, requested effort and the effort the engine reported, each saying "not reported" when unknown.
-**L2 · task owners** opens with **Provider priority**, a select offering Auto and Prefer <engine>
-for each engine, saved on choice with its own status. The line below it says what the saved choice
-does: Auto with the default tiers names the default distribution by weekly headroom; Auto with
-custom routing names that routing; a preference says fresh tasks start on that engine when it is
-available and which engine takes over when it is not, or that the custom routing omits it; a project
-L2 engine pin says the pin wins. The L3 engine is unaffected.
-**L3 · project conversation** and **L2 · task owners** each hold one row per engine with **Model**
-and **Effort**: the model is free text with alias suggestions and a "Default: <model>" placeholder,
-saved on Enter or leaving the field, restored by Escape and cleared to Default when empty; effort
-offers "Default (<level>)", Native and only the levels that engine accepts, saved on choice. Each
-field saves alone and shows its own status; changing one pair never changes another. Copy says L3
-changes apply from its next turn, L2 defaults apply to fresh attempts while started tasks keep
-theirs, a choice made for one launch wins, and choices request rather than confirm what the engine
-used. At 390px each row stacks model above effort.
+The project page `/settings/projects/<name>` has a labelled **Settings** back button, the line
+"Applies to this project only. A model or effort L3 sets for one task wins over these." and four
+sections, in the order a choice is applied:
 
-| State | What appears and what actions do |
+- **L3**: the closed L3 choice ("Fable · Low", "Auto", or "Fable unavailable · Auto meanwhile" with
+  the reason), "Until you choose Auto" or "Project routing and defaults", and what L3's last reply
+  reported ("L3 has not replied yet" before one). **Back to Auto** while a choice is saved, and
+  **Change…**, which opens the Models dialog on its L3 tab.
+- **Auto defaults**: one row per role and engine ("Tasks · Codex", "L3 · Claude") with **Model** and
+  **Effort**, used under Auto and as the fallback. The model is free text with alias suggestions and
+  a "Default: <model>" placeholder, saved on Enter or leaving the field, restored by Escape and
+  cleared to Default when empty; effort offers "Default (<level>)", Native and only the levels that
+  engine accepts, saved on choice. Each field saves alone with its own status. While New tasks holds
+  a choice the copy names it. At 390px each row stacks model above effort.
+- **Routing** (`#routing`): **Tasks** is Auto, Prefer <engine> or Only <engine>; **L3** is Auto or
+  Only <engine>. The copy names the order Auto tries (the default weekly-headroom split or the custom
+  routing), that Only keeps the role on that engine even with a model choice and waits while it is
+  unavailable, and when a preferred engine is missing from custom routing. A change saves on choice
+  with the value shown as `expected`; one changed elsewhere says "Changed in another window." and
+  the page shows the current routing.
+- **Project**: **Setup** with its status, opening §3.12, and **Remove project** ("Detach L3. Files
+  and history stay; its settings here don't.") with an outlined red **Remove…**. This section stays
+  usable when the model settings cannot be read.
+
+**Remove…** opens a centered dialog at both widths: **Remove <name> from
+Altitude?**, "L3 is detached and Altitude stops managing this folder.", then what stays on disk (the
+repository, worktrees, history and queued messages), what is not kept (its settings here, such as
+models and routing), how to undo (add the same folder as <name> again to reattach L3 with its
+history), and that unfinished tasks and a running L3 reply must finish first. **Cancel** comes first
+and has focus; Escape, × and the scrim cancel. The red **Remove <name>** sends `POST
+/api/project/remove`.
+
+| Remove state | What appears and what actions do |
 | --- | --- |
-| Loading | Loading settings…; no fields. |
-| Read failed | Could not load settings and Retry. |
-| Saving | That field is disabled with Saving…; other fields stay editable. |
+| Removing | "Removing… Closing doesn't cancel removal."; both buttons disabled. |
+| Removed | §3.2's success navigation. |
+| Refused | The server's reason in red, such as unfinished tasks; the project stays and Cancel works. |
+| Response lost | "Checking whether it was removed…" while the project list is read again: a project that is gone counts as removed; otherwise "Couldn't confirm removal; <name> is still in Altitude." with **Retry**. |
+| List unreadable too | "Couldn't confirm removal, and the project list could not be read." with **Check again**, which reads the list again; removal is offered again only once the project is known to be present. |
+
+| Project page state | What appears and what actions do |
+| --- | --- |
+| Loading | Loading settings…; the Project section is usable. |
+| Read failed | Could not load settings and Retry; the Project section is usable. |
+| Saving | That field or select is disabled with Saving…; other fields stay editable. |
 | Saved | That field shows the persisted value and Saved. |
 | Failed/denied save | Server explanation and Retry save; the field keeps the saved value. |
-| Not started | L3 engine card says L3 has not started. |
 
 Maintained boards: Settings/MobileSettings, VoiceSettings/MobileVoiceSettings and SettingsStates.
 Application walkthroughs: `web/e2e/voice-settings.pw.ts` at 390×844 and 1440×900, including navigation,
 typed draft preservation, all three choices, key replacement/removal and loading/saving/failure.
-`web/e2e/project-settings.pw.ts` walks the menu entry, This project row, independent saves, reload
-persistence, restoring Default, the engine pin, the L2 provider priority (Auto, a preference, reload
-persistence, L3 unchanged, saving, denied save and restoring Auto), loading/read failure and
-saving/denied states at both sizes, with the project draft preserved.
+`web/e2e/project-settings.pw.ts` walks the menu entries, the This project row, the grouped overview,
+All projects, independent default saves, reload persistence, restoring Default, routing (Prefer,
+Only, a change made elsewhere), loading/read failure and saving/denied states at both sizes, with the
+project draft preserved. `web/e2e/project-lifecycle.pw.ts` walks the Remove dialog's cancel, refused,
+lost-response and removed outcomes. `web/e2e/models.pw.ts` walks §3.6.1.
 Composer listening, denied, unavailable, cancellation and transcript states remain §3.6.
 
 ### 3.16 Pair this device
@@ -1394,8 +1580,10 @@ a terminal or over SSH, run:", the copyable `alt pair` command, "Then type the c
 that is already paired can also make a code in Settings › Devices.", a large monospace **Pairing code**
 field (uppercase, one-time-code autofill), a full-width **Pair** button, disabled while the field is
 empty, and under it "Did the browser warn about the certificate before showing this page? Pair only
-after it opens without a warning. To set up a phone, use Add a phone in Settings › Devices on a paired
-device, or run `alt tls-share` on that computer." A `/pair?code=` link fills the field, submits once and removes the code from the address bar.
+after it opens without a warning." The guidance points container users to the host launcher's public
+certificate export, and native users to **Set up a device** in trusted, paired Settings or `alt tls-share`
+on the hosting computer. For localhost it directs the operator to `alt doctor` and the public `ca_cert`
+file. A `/pair?code=` link fills the field, submits once and removes the code from the address bar.
 Pairing opens the route the browser asked for.
 
 | State | What appears and what actions do |
@@ -1435,7 +1623,18 @@ week. This is a rendering rule over data the chat log already stores; slice 2 ad
 Messages sent while L3 is mid-turn queue and run at the next turn boundary in order; the composer
 keeps its accent circle with the arrow. Phone names the active work in the header and the run order
 on queued rows; desktop also shows "L3 is mid-turn · runs next" under the field. Queued rows stay
-inside the message area until they run, with Remove available while permitted. A running turn shows
+inside the message area until they run, with bordered **Send now** beside **Remove** while permitted.
+Send now puts that row first, interrupts an active chat at its engine's safe boundary, and runs the
+selected message next. System work finishes before the selected message runs. Pending rows say
+**Sending now…**, with **Waiting for current turn to stop** or **Runs next after system work** as
+appropriate; Send now is disabled. Remove is disabled while the HTTP request is pending and remains
+available after acceptance until claim, even when an engine becomes unavailable. Removal does not
+undo an interruption already requested. An unavailable engine, active chat still starting or operator
+wait disables Send now with the server's explanation. Denied, conflict and unconfirmed requests retain the row
+and show their own inline error after refreshing canonical state. The row becomes its turn bubble
+only when the server admits it; claimed, delivered or removed rows have no queued actions.
+Both controls have 44px phone targets and wrap with their explanations on narrow screens.
+A running turn shows
 either a system line in progress (§3.4) or, for a `chat` turn, a typing indicator under the
 operator's bubble. `GET /api/chat` is the authority for what is running and what is queued; the UI
 polls it and never guesses.
@@ -1492,7 +1691,8 @@ retain phone/desktop state verification and accessible review evidence.
 | Surface | Reads | Writes |
 | --- | --- | --- |
 | Rail, Needs you, badges | `GET /api/overview` | `POST /api/project/add`, `POST /api/project/remove` |
-| Project conversation | `GET /api/chat/<project>` | `POST /api/chat` (message, queue, engine pin), `POST /api/chat/remove`, `POST /api/l3/reset` |
+| Project conversation | `GET /api/chat/<project>` | `POST /api/chat` (message, queue), `POST /api/chat/remove`, `POST /api/l3/reset` |
+| Models and settings | `GET /api/overview` `new_tasks`, `GET /api/defaults/<project>` | `POST /api/new-tasks`, `POST /api/defaults` (choice, defaults, routing; each with `expected`) |
 | Project setup | `GET /api/setup/<project>` | `POST /api/project/setup` (check, repair, operator-approved hook integration) |
 | Work panel | `GET /api/project/<name>`, `GET /api/overview` `queue` | none; rows open the owning conversation |
 | Needs you | `GET /api/overview` plus project reference context | `POST /api/decide` |

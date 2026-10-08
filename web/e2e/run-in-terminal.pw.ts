@@ -90,7 +90,9 @@ test("a task's chat command opens its terminal typed, and runs only on Enter", {
   await page.keyboard.press("Control+C");
 
   // Output that never settles has no prompt to type at: refused after five seconds, typed later by nothing.
-  await page.keyboard.type("bash -c 'while :; do echo tick; sleep 0.1; done'");
+  // It prints far faster than the page's 300 ms settle time, so a loaded runner never opens a quiet gap in which
+  // the page checks the terminal and reports bash as the running program instead.
+  await page.keyboard.type("bash -c 'while :; do echo tick; sleep 0.02; done'");
   await page.keyboard.press("Enter");
   await conversation();
   await openIt.click();
@@ -99,7 +101,15 @@ test("a task's chat command opens its terminal typed, and runs only on Enter", {
   await walk.state("05b-kept-printing", { visible: [printing, printing.getByRole("button", { name: "Copy command" })], hidden: [] });
   await printing.getByRole("button", { name: "Dismiss" }).click();
   await page.locator(".terminal-screen").click();
-  await page.keyboard.press("Control+C");
+  // The next chat command needs the shell's prompt. On a loaded runner an interrupt pressed into a screen that is
+  // still scrolling can miss the shell, so it is pressed again until the prompt is back (an extra one only reprompts).
+  const lastRow = async () => (await output.locator(":scope > div").allInnerTexts()).map((row) => row.trimEnd())
+    .filter(Boolean).at(-1);
+  await expect(async () => {
+    await page.keyboard.press("Control+C");
+    await expect.poll(lastRow, { timeout: 2_000 }).toMatch(/prepare-index-migration \$$/);
+  }).toPass({ timeout: 20_000 });
+  await settled(page);
 
   // When Altitude can't tell the owner, the command is still typed and the operator is asked to reply instead.
   await page.route("**/api/terminal/*/command", (route) => route.fulfill({
@@ -178,5 +188,11 @@ test("a project chat command opens the project terminal; other blocks copy only"
     hidden: [output.getByText("project-25", { exact: true })],
   });
   await page.keyboard.press("Enter");
-  await walk.state("14-project-enter-runs", { visible: [output.getByText("project-25", { exact: true })], hidden: [] });
+  await walk.state("14-project-enter-runs", {
+    visible: [output.getByText("project-25", { exact: true }), page.getByText("The coordinator can read this terminal's output, and what it reads reaches its AI provider.")],
+    hidden: [],
+  });
+  // Once the shell is back at its prompt, the coordinator is told the command it handed over has run.
+  await expect.poll(async () => (await (await request.post("/fixture/notices")).json()).coordinator, { timeout: 10_000 })
+    .toEqual([expect.stringContaining("looks finished in the project terminal: `echo project-$((5*5))`")]);
 });

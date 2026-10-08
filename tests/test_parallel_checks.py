@@ -16,6 +16,17 @@ from altitude.land import _test_counts
 
 
 class TestParallelChecks(AltitudeCase):
+    def make_fixture(self):
+        (self.tmp / "Makefile").write_text((REPO / "Makefile").read_text())
+        (self.tmp / "scripts").mkdir()
+        (self.tmp / "scripts/time_command.py").write_text((REPO / "scripts/time_command.py").read_text())
+        (self.tmp / "web").mkdir()
+        bindir = self.tmp / "bin"
+        bindir.mkdir()
+        (bindir / "node").write_text("#!/bin/sh\necho 2\n")
+        (bindir / "node").chmod(0o755)
+        return bindir
+
     def runner(self, *sources):
         directory = self.tmp / "modules"
         directory.mkdir()
@@ -114,16 +125,16 @@ class TestParallelChecks(AltitudeCase):
             process.communicate(timeout=5)
 
     def test_make_overlaps_phases_preserves_order_and_propagates_each_failure(self):
-        (self.tmp / "Makefile").write_text((REPO / "Makefile").read_text())
-        (self.tmp / "web").mkdir()
-        bindir = self.tmp / "bin"
-        bindir.mkdir()
-        (bindir / "node").write_text("#!/bin/sh\necho 2\n")
-        (bindir / "node").chmod(0o755)
+        bindir = self.make_fixture()
         shim = f"#!{sys.executable}\n" + textwrap.dedent('''
             import os, pathlib, sys, time
+            if pathlib.Path(sys.argv[0]).name == "python3" and sys.argv[1:2] != ["tests/run_parallel.py"]:
+                # Execute the copied production timer with the real interpreter. Only the
+                # Python test phase is fictional; its timing and process ownership are real.
+                os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
             root = pathlib.Path(os.environ["CHECK_FIXTURE"])
             phase = "python" if pathlib.Path(sys.argv[0]).name == "python3" else sys.argv[1]
+            assert phase in ("python", "test", "build", "ui", "ui:shell")
             (root / phase).touch()
             if phase == "python": assert sys.argv[-2:] == ["--workers", "2"]
             if phase in ("python", "test"):
@@ -134,15 +145,17 @@ class TestParallelChecks(AltitudeCase):
                     time.sleep(.01)
             if phase == "build": assert (root / "test").exists()
             if phase == "ui": assert (root / "build").exists()
+            if phase == "ui:shell": assert (root / "ui").exists()
             sys.exit(int(phase == os.environ["FAIL_PHASE"]))
         ''')
         for command in ("python3", "pnpm"):
             path = bindir / command
             path.write_text(shim)
             path.chmod(0o755)
-        for failed in ("", "python", "test", "build", "ui"):
+        phases = ("python", "test", "build", "ui", "ui:shell")
+        for failed in ("", *phases):
             with self.subTest(failed=failed):
-                for phase in ("python", "test", "build", "ui"):
+                for phase in phases:
                     (self.tmp / phase).unlink(missing_ok=True)
                 result = subprocess.run(
                     ["make", "check"], cwd=self.tmp,
@@ -154,24 +167,24 @@ class TestParallelChecks(AltitudeCase):
                 self.assertTrue((self.tmp / "test").exists())
                 self.assertEqual((self.tmp / "build").exists(), failed != "test")
                 self.assertEqual((self.tmp / "ui").exists(), failed not in ("test", "build"))
+                self.assertEqual((self.tmp / "ui:shell").exists(), failed not in ("test", "build", "ui"))
                 # Each phase that ran reports one intact timing summary.
-                timed = sum((self.tmp / phase).exists() for phase in ("python", "test", "build", "ui"))
+                timed = sum((self.tmp / phase).exists() for phase in phases)
                 summaries = re.findall(r"^real [\d.]+\nuser [\d.]+\nsys [\d.]+$", result.stderr, re.M)
                 self.assertEqual(len(summaries), timed, result.stderr)
 
     def test_interrupt_stops_both_make_branches(self):
-        (self.tmp / "Makefile").write_text((REPO / "Makefile").read_text())
-        (self.tmp / "web").mkdir()
-        bindir = self.tmp / "bin"
-        bindir.mkdir()
-        (bindir / "node").write_text("#!/bin/sh\necho 2\n")
-        (bindir / "node").chmod(0o755)
+        bindir = self.make_fixture()
         for command in ("python3", "pnpm"):
             path = bindir / command
             # The handler is installed before `.started` appears: under sibling load the interrupt arrived in
             # the gap between touching the marker and entering a try block, losing one green candidate.
             path.write_text(f"#!{sys.executable}\n" + textwrap.dedent(f'''
-                import pathlib, signal, sys, time
+                import os, pathlib, signal, sys, time
+                if "{command}" == "python3" and sys.argv[1:2] != ["tests/run_parallel.py"]:
+                    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+                if "{command}" == "python3": assert sys.argv[-2:] == ["--workers", "2"]
+                else: assert sys.argv[1:] == ["test"]
                 root = pathlib.Path({str(self.tmp)!r})
                 def stopped(*_):
                     (root / "{command}.stopped").touch()
@@ -191,9 +204,11 @@ class TestParallelChecks(AltitudeCase):
                 self.assertLess(time.monotonic(), deadline)
                 time.sleep(.01)
             os.killpg(process.pid, signal.SIGINT)
-            process.communicate(timeout=5)
+            _, stderr = process.communicate(timeout=5)
             self.assertNotEqual(process.returncode, 0)
             self.assertEqual(len(list(self.tmp.glob("*.stopped"))), 2)
+            summaries = re.findall(r"^real [\d.]+\nuser [\d.]+\nsys [\d.]+$", stderr, re.M)
+            self.assertEqual(len(summaries), 2, stderr)
         finally:
             try:
                 os.killpg(process.pid, signal.SIGKILL)

@@ -45,6 +45,8 @@ HELD_OPTIONS = {
                 {"key": "changes", "label": "Request changes", "text": "Hold PR #42 for copy changes."}],
     "recommended_key": "merge", "why": "The fix passed its checks and review.",
 }
+WAIT_RC = "Waiting for L3 to publish rc.2."
+WAIT_CI = "Waiting for the next mirror CI run."
 WITHDRAWAL = "I withdrew the merge question while I assess the requested audit. Your rollback choice remains useful."
 
 
@@ -286,6 +288,36 @@ def main():
             if self.path == "/fixture/group":
                 slug = task("Rollout decisions", "Three choices for the rollout.",
                             questions={"questions": [RETENTION, REGION, OWNER]})
+                return self._json({"slug": slug})
+            if self.path in ("/fixture/waits", "/fixture/waits-reworded"):
+                # The owner closes two operator members, then rewords operator questions into waits on L3.
+                if self.path.endswith("reworded"):
+                    slug = self._body()["slug"]
+                    row = S.load_task("atlas", slug)
+                    retention = next(q for q in T.question_group_view("atlas", row)["questions"]
+                                     if q["status"] == "open" and q["audience"] == "operator")
+                    T.resume("atlas", slug)
+                    T.block("atlas", slug, "Release waits.", actor="l2", expected_attempt=row["attempt"],
+                            updates={"waiting_on": "l3"},
+                            questions={"questions": [{"id": retention["id"], "question": WAIT_CI}]})
+                    return self._json(T.question_group_view("atlas", S.load_task("atlas", slug)))
+                slug = task("Release decisions", "Three release choices.",
+                            questions={"questions": [RETENTION, REGION, OWNER]})
+                row = S.load_task("atlas", slug)
+                members = {q["question"]: q for q in T.question_group_view("atlas", row)["questions"]}
+                region = members[REGION["question"]]
+                answer = T.message("atlas", slug, T.OPERATOR_MESSAGE_ROLE, "Use the west region.",
+                                   question_id=region["id"], revision=region["revision"])
+                T.resolve_question("atlas", slug, region["id"], region["revision"], answer["id"], disposition="answered",
+                                   reason="Use the west region for backups.", expected_attempt=row["attempt"])
+                owner = members[OWNER["question"]]
+                T.resolve_question("atlas", slug, owner["id"], owner["revision"], None, disposition="withdrawn",
+                                   reason="The release team receives every report.", expected_attempt=row["attempt"])
+                T.resume("atlas", slug)
+                T.block("atlas", slug, "Release decisions.", actor="l2", expected_attempt=row["attempt"],
+                        updates={"waiting_on": "l3"},
+                        questions={"questions": [{"id": members[RETENTION["question"]]["id"], "question": RETENTION["question"]},
+                                                 {"question": WAIT_RC}]})
                 return self._json({"slug": slug})
             if self.path == "/fixture/checkpoint":
                 return self._json(fake.checkpoint(self._body()["slug"]))

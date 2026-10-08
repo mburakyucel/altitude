@@ -40,7 +40,7 @@ test("expanded L2 monitoring: available, partial, unknown, empty, retained error
   const noEvidence = page.getByText("Helper evidence unavailable.", { exact: true });
 
   await walk.open("/monitor");
-  await walk.state("01-collapsed", { visible: [toggle, page.getByText(`${l2.project} / ${l2.slug}`, { exact: true })], hidden: [details, helpers, page.getByText("1,300 observed tokens", { exact: true })] });
+  await walk.state("01-collapsed", { visible: [toggle, page.getByText(`${l2.project} / ${l2.slug}`, { exact: true })], hidden: [details, helpers, page.getByText("1,300 tokens processed", { exact: true })] });
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
   await walk.state("02-expanded-available", {
     action: async () => {
@@ -101,7 +101,7 @@ test("expanded L2 monitoring: available, partial, unknown, empty, retained error
       await page.clock.fastForward(20_001);
       await details.getByText("Usage collection unavailable; prior observations retained.", { exact: true }).scrollIntoViewIfNeeded();
     },
-    visible: [helpers, direct, details.locator(".token-readout").getByText("1,900 observed tokens", { exact: true }), details.getByText("Usage collection unavailable; prior observations retained.", { exact: true })], hidden: [noEvidence],
+    visible: [helpers, direct, details.locator(".token-readout").getByText("1,900 tokens processed", { exact: true }), details.getByText("Usage collection unavailable; prior observations retained.", { exact: true })], hidden: [noEvidence],
   });
   observation = usage([], { helpers: { status: "partial", observed_count: 0, direct_count: 0, descendant_count: 0, unclassified_count: 0, total_tokens: null, sessions: [] } });
   await walk.state("05-observed-empty", {

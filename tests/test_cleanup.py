@@ -1,10 +1,14 @@
-"""cleanup_after_done removes a task's worktree once its branch is on origin/main and nothing still uses it (real git)."""
+"""cleanup_task frees a finished task's worktree and branch once nothing needs them, and
+prune_source_exports removes launch exports nothing names (real git, disposable repositories)."""
+import os
+import subprocess
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from tests.support import AltitudeCase, git, make_repo
-from altitude import config, dispatch, engines, server, state as S
+from altitude import config, dispatch, engines, project_setup, server, state as S
 
 
 class TestCleanup(AltitudeCase):
@@ -49,7 +53,7 @@ class TestCleanup(AltitudeCase):
     def test_merged_branch_is_removed_with_its_worker(self):
         task = self.task()
         self.merge(task["branch"])
-        notes = dispatch.cleanup_after_done(self.project, task)
+        notes = dispatch.cleanup_task(self.project, task)
         self.assertFalse(self.listed(task), notes)
         self.assertFalse(self.branch_exists(task))
         engines.remove_l2_worker.assert_called_once()
@@ -57,39 +61,174 @@ class TestCleanup(AltitudeCase):
         self.assertIn("removed merged worktree task-one", notes)
 
     def test_squash_merge_needs_a_verified_merged_pr(self):
+        unverified = self.task("unverified")
+        self.merge(unverified["branch"], squash=True)
+        with mock.patch.object(dispatch, "_pr_merged_at", return_value=False):
+            notes = dispatch.cleanup_task(self.project, unverified)
+        self.assertFalse(self.listed(unverified), notes)
+        self.assertTrue(self.branch_exists(unverified))
+        self.assertIn("not on origin/main", self.last_event("unverified")["reason"])
         task = self.task(verified={"verdict": "ok", "prs": [7]})
         self.merge(task["branch"], squash=True)
         tip = git("rev-parse", task["branch"], cwd=self.repo).strip()
-        with mock.patch.object(dispatch, "_pr_merged_at", return_value=False):
-            notes = dispatch.cleanup_after_done(self.project, task)
-        self.assertTrue(self.listed(task), notes)
-        self.assertIn("branch is not on origin/main", self.last_event(task["slug"])["reason"])
         with mock.patch.object(dispatch, "_pr_merged_at", return_value=True) as receipt:
-            dispatch.cleanup_after_done(self.project, task)
-        self.assertFalse(self.listed(task))
+            dispatch.cleanup_task(self.project, task)
+        self.assertFalse(self.listed(task) or self.branch_exists(task))
         self.assertEqual(receipt.call_args.args[2], tip)  # asked about the branch tip, not main
 
-    def test_unmerged_dirty_and_live_worktrees_are_kept(self):
-        unmerged = self.task("unmerged")
+    def test_dirty_and_live_worktrees_are_kept(self):
         dirty = self.task("dirty")
         self.merge(dirty["branch"])
         (Path(dirty["worktree"]) / "notes.txt").write_text("mine\n")
         live = self.task("live")
         self.merge(live["branch"])
-        for task, reason in ((unmerged, "not on origin/main"), (dirty, "uncommitted changes")):
-            notes = dispatch.cleanup_after_done(self.project, task)
-            self.assertTrue(self.listed(task) and self.branch_exists(task), notes)
-            self.assertIn(reason, self.last_event(task["slug"])["reason"])
-            self.assertTrue(any(reason in n for n in notes), notes)
+        notes = dispatch.cleanup_task(self.project, dirty)
+        self.assertTrue(self.listed(dirty) and self.branch_exists(dirty), notes)
+        self.assertEqual(self.last_event("dirty")["action"], "skipped")
+        self.assertIn("kept worktree dirty: worktree has uncommitted changes", notes)
         with mock.patch.object(engines, "worker_live", return_value=True):
-            notes = dispatch.cleanup_after_done(self.project, live)
+            notes = dispatch.cleanup_task(self.project, live)
         self.assertTrue(self.listed(live), notes)
-        self.assertIn("still running", self.last_event("live")["reason"])
+        self.assertEqual(self.last_event("live")["action"], "deferred")
+        self.assertIn("deferred worktree live: L2 worker is still running", notes)
         engines.remove_l2_worker.assert_not_called()
         self.assertTrue((Path(dirty["worktree"]) / "notes.txt").exists())
 
-    def test_no_worktree_means_nothing_to_clean(self):
-        self.assertEqual(dispatch.cleanup_after_done(self.project, {"slug": "x", "state": "done"}), [])
+    def test_a_git_timeout_retries(self):
+        task = self.task("slow", state="rejected")
+        self.merge(task["branch"])
+        run = dispatch.subprocess.run
+
+        def fetch_times_out(args, **kwargs):
+            if args[:2] == ["git", "fetch"]:
+                raise dispatch.subprocess.TimeoutExpired(args, 120)
+            return run(args, **kwargs)
+        with mock.patch.object(dispatch.subprocess, "run", side_effect=fetch_times_out):
+            notes = dispatch.cleanup_task(self.project, task)
+        self.assertTrue(self.listed(task), notes)
+        self.assertTrue(notes[0].startswith("deferred worktree slow: git timed out:"), notes)
+        self.assertEqual(self.last_event("slow")["action"], "deferred")
+
+    def test_rejected_task_with_merged_branch_is_removed_without_self_deploy(self):
+        task = self.task("rejected", state="rejected")
+        self.merge(task["branch"])
+        with mock.patch.object(dispatch, "pull_after_done") as pull:
+            notes = dispatch.cleanup_task(self.project, task)
+        self.assertFalse(self.listed(task) or self.branch_exists(task), notes)
+        self.assertEqual(notes, ["claude worker a1: removed", "removed merged worktree rejected"])
+        pull.assert_not_called()
+
+    def test_local_only_commits_keep_their_branch(self):
+        task = self.task("abandoned", state="rejected")
+        tip = git("rev-parse", task["branch"], cwd=self.repo).strip()
+        notes = dispatch.cleanup_task(self.project, task)
+        self.assertFalse(self.listed(task), notes)
+        self.assertFalse(Path(task["worktree"]).exists())
+        self.assertEqual(git("rev-parse", task["branch"], cwd=self.repo).strip(), tip)
+        event = self.last_event("abandoned")
+        self.assertEqual((event["action"], event["branch"]), ("removed", "kept"))
+        self.assertIn("kept branch worktree-abandoned: 1 commit(s) not on origin/main", notes[-1])
+
+    def test_commits_on_no_branch_keep_the_worktree(self):
+        task = self.task("detached", state="rejected")
+        self.merge(task["branch"])
+        wt = Path(task["worktree"])
+        git("switch", "-q", "--detach", cwd=wt)
+        (wt / "doc.md").write_text("detached work\n")
+        git("commit", "-qam", "detached change", cwd=wt)
+        notes = dispatch.cleanup_task(self.project, task)
+        self.assertTrue(self.listed(task) and self.branch_exists(task), notes)
+        self.assertIn("kept worktree detached: worktree has commits on no branch", notes)
+
+    def test_maintenance_sweeps_terminal_tasks_and_retries_a_live_worker(self):
+        rejected = self.task("rejected", state="rejected")
+        self.merge(rejected["branch"])
+        running = self.task("running", state="running")
+        self.merge(running["branch"])
+        for name in ("project_setup", "images"):
+            self.patch(getattr(server, name), "maintain" if name == "project_setup" else "collect")
+        for name in ("self_deploy", "request_l3_drain", "resume_stranded_reports", "dispatch_waiting", "spawn"):
+            self.patch(server, name)
+        self.patch(dispatch, "run_settings")
+        self.patch(dispatch, "poll", return_value=[])
+        with mock.patch.object(engines, "worker_live", return_value=True):
+            server.tick_project(self.project)
+        self.assertTrue(self.listed(rejected))
+        self.assertIsNone(S.load_task(self.project, "rejected").get("cleaned"))
+        server.tick_project(self.project)
+        self.assertFalse(self.listed(rejected))
+        self.assertTrue(S.load_task(self.project, "rejected").get("cleaned"))
+        self.assertTrue(self.listed(running))
+        self.assertIsNone(S.load_task(self.project, "running").get("cleaned"))
+
+    def test_no_worktree_means_nothing_to_clean_once_the_worker_ends(self):
+        self.assertEqual(dispatch.cleanup_task(self.project, {"slug": "x", "state": "done"}), [])
+        task = {"slug": "y", "state": "rejected", "agent_id": "a2"}
+        with mock.patch.object(engines, "worker_live", return_value=True):
+            self.assertEqual(dispatch.cleanup_task(self.project, task), ["deferred worktree y: L2 worker is still running"])
+        self.assertEqual(dispatch.cleanup_task(self.project, task), [])
+
+
+class TestSourceExports(AltitudeCase):
+    RUNNING, CURRENT, BRIEF, SETTINGS, ENDED, STALE = (c * 40 for c in "abcdef")
+
+    def setUp(self):
+        super().setUp()
+        self.root = self.tmp / "deploy" / ".altitude-source"
+        for sha in (self.RUNNING, self.CURRENT, self.BRIEF, self.SETTINGS, self.ENDED, self.STALE):
+            (self.root / sha / "bin").mkdir(parents=True)
+        (self.root / "git-guards").mkdir()
+        (self.root / "current").symlink_to(self.CURRENT, target_is_directory=True)
+        self.activated(hours_ago=2)
+        self.patch(config, "RELEASE", None)
+        self.patch(config, "SOURCE", self.root / self.RUNNING)
+        self.save("open-task", "blocked", brief=self.BRIEF)
+        self.save("ending-task", "rejected", settings=self.SETTINGS)
+        self.save("ended-task", "done", settings=self.ENDED, cleaned=S.now())
+
+    def activated(self, *, hours_ago):
+        at = time.time() - hours_ago * 3600
+        os.utime(self.root / "current", (at, at), follow_symlinks=False)
+
+    def save(self, slug, state, *, brief=None, settings=None, **extra):
+        folder = S.task_dir(self.project, slug)
+        folder.mkdir(parents=True, exist_ok=True)
+        if brief:
+            (folder / "brief.md").write_text(f"Schema: `{self.root / brief}/schemas/report.json`\n")
+        if settings:
+            (folder / "settings.json").write_text(f'{{"hooks": "{self.root / settings}/hooks/inbox.py"}}\n')
+        S.save_task(self.project, {"slug": slug, "title": slug, "state": state, "created": S.now(), "updated": S.now(),
+                                   **extra})
+
+    def test_unreferenced_exports_are_removed_and_named_ones_kept(self):
+        notes = dispatch.prune_source_exports()
+        self.assertEqual(sorted(notes), [f"removed source export {self.ENDED}", f"removed source export {self.STALE}"])
+        left = sorted(path.name for path in self.root.iterdir())
+        self.assertEqual(left, sorted([self.RUNNING, self.CURRENT, self.BRIEF, self.SETTINGS, "current", "git-guards"]))
+        self.assertEqual(os.readlink(self.root / "current"), self.CURRENT)
+        self.assertEqual(dispatch.prune_source_exports(), [])
+
+    def test_an_unreadable_reference_defers_pruning(self):
+        settings = S.task_dir(self.project, "ending-task") / "settings.json"
+        settings.chmod(0)
+        self.addCleanup(settings.chmod, 0o600)
+        notes = dispatch.prune_source_exports()
+        self.assertEqual(len(notes), 1)
+        self.assertTrue(notes[0].startswith("deferred source export pruning: cannot read "), notes)
+        self.assertTrue(all((self.root / sha).is_dir() for sha in (self.SETTINGS, self.ENDED, self.STALE)))
+
+    def test_a_recent_activation_defers_pruning(self):
+        self.activated(hours_ago=0.5)
+        self.assertEqual(dispatch.prune_source_exports(), [])
+        self.assertTrue((self.root / self.STALE).is_dir())
+
+    def test_versioned_and_checkout_runs_have_no_exports_to_prune(self):
+        self.patch(config, "SOURCE", self.repo)
+        self.assertEqual(dispatch.prune_source_exports(), [])
+        self.patch(config, "SOURCE", self.root / self.RUNNING)
+        self.patch(config, "RELEASE", {"version": "1.0.0"})
+        self.assertEqual(dispatch.prune_source_exports(), [])
+        self.assertTrue((self.root / self.STALE).is_dir())
 
 
 class TestSelfDeploy(AltitudeCase):
@@ -165,20 +304,20 @@ class TestSelfDeploy(AltitudeCase):
         return fault, log
 
     def test_tick_logs_a_failed_fetch_that_recovers_without_a_fault(self):
-        self.addCleanup(server._fetch_failing_since.pop, "altitude", None)
+        self.addCleanup(server._failing_since.pop, "[altitude] self-deploy", None)
         restore = self.unreachable_origin()
         fault, log = self.tick_self_deploy(1000.0)
         fault.assert_not_called()
-        self.assertIn("self-deploy fetch failed; retrying next tick: git fetch origin main:", log.call_args.args[0])
+        self.assertIn("[altitude] self-deploy failed; retrying next tick: git fetch origin main:", log.call_args.args[0])
         restore()
         fault, _ = self.tick_self_deploy(1030.0)
         fault.assert_not_called()
-        self.assertNotIn("altitude", server._fetch_failing_since)
+        self.assertNotIn("[altitude] self-deploy", server._failing_since)
 
     def test_tick_faults_once_fetches_keep_failing_past_the_grace_period(self):
-        self.addCleanup(server._fetch_failing_since.pop, "altitude", None)
+        self.addCleanup(server._failing_since.pop, "[altitude] self-deploy", None)
         self.unreachable_origin()
-        grace = server.SELF_DEPLOY_FETCH_GRACE_SECONDS
+        grace = server.TICK_GRACE_SECONDS
         for now in (1000.0, 1000.0 + grace - 1):
             fault, _ = self.tick_self_deploy(now)
             fault.assert_not_called()
@@ -188,13 +327,13 @@ class TestSelfDeploy(AltitudeCase):
         self.assertIn("altitude: git fetch origin main:", fault.call_args.args[1])
 
     def test_tick_faults_a_policy_refusal_immediately(self):
-        self.addCleanup(server._fetch_failing_since.pop, "altitude", None)
-        server._fetch_failing_since["altitude"] = 1000.0  # an earlier fetch failure does not delay a refusal
+        self.addCleanup(server._failing_since.pop, "[altitude] self-deploy", None)
+        server._failing_since["[altitude] self-deploy"] = 1000.0  # an earlier fetch failure does not delay a refusal
         (self.repo / "README.md").write_text("dirty deployment\n")
         fault, _ = self.tick_self_deploy(1001.0)
         fault.assert_called_once()
         self.assertIn("uncommitted changes", fault.call_args.args[1])
-        self.assertNotIn("altitude", server._fetch_failing_since)
+        self.assertNotIn("[altitude] self-deploy", server._failing_since)
 
     def test_pull_after_done_leaves_a_failed_fetch_to_the_tick(self):
         self.unreachable_origin()
@@ -203,6 +342,66 @@ class TestSelfDeploy(AltitudeCase):
         fault.assert_not_called()
         self.assertTrue(notes[0].startswith("self-deploy fetch failed; the tick retries: git fetch origin main:"), notes)
 
+
+
+class TestTickOnABusyHost(AltitudeCase):
+    """#724: on an overloaded host a Git call outlives its limit; the tick retries it before it is a system fault."""
+
+    def setUp(self):
+        super().setUp()
+        make_repo(self.repo)
+        self.slow = subprocess.TimeoutExpired(["git", "-C", str(self.repo), "rev-parse", "--show-toplevel"], 10)
+        self.patch(server.images, "collect")
+        for name in ("self_deploy", "request_l3_drain", "resume_stranded_reports", "spawn"):
+            self.patch(server, name)
+        self.waiting = self.patch(server, "dispatch_waiting")
+        self.patch(dispatch, "run_settings")
+        self.patch(dispatch, "poll", return_value=[])
+        self.addCleanup(server._failing_since.clear)
+
+    def tick(self, now: float) -> tuple[mock.Mock, mock.Mock]:
+        with mock.patch("altitude.incidents.system_fault") as fault, mock.patch.object(server, "log") as log, \
+             mock.patch.object(server.time, "monotonic", return_value=now):
+            server.tick_project(self.project)
+        return fault, log
+
+    def test_a_setup_check_whose_git_call_times_out_is_logged_and_the_tick_goes_on(self):
+        self.patch(project_setup, "_repository", side_effect=self.slow)
+        fault, log = self.tick(1000.0)
+        fault.assert_not_called()
+        self.assertEqual(log.call_args_list[0].args[0], f"[{self.project}] setup check failed; retrying next tick: "
+                         f"Command '{self.slow.cmd}' timed out after 10 seconds")
+        self.waiting.assert_called_once_with(self.project)   # coordination carries on in the same tick
+        fault, _ = self.tick(1000.0 + server.TICK_GRACE_SECONDS - 1)
+        fault.assert_not_called()
+        self.patch(project_setup, "maintain")   # the host recovers
+        fault, _ = self.tick(1000.0 + server.TICK_GRACE_SECONDS)
+        fault.assert_not_called()
+        self.assertEqual(server._failing_since, {})
+
+    def test_a_git_call_that_keeps_timing_out_past_the_grace_period_is_a_system_fault(self):
+        self.patch(project_setup, "_repository", side_effect=self.slow)
+        for now in (1000.0, 1000.0 + server.TICK_GRACE_SECONDS - 1):
+            self.tick(now)[0].assert_not_called()
+        fault, _ = self.tick(1000.0 + server.TICK_GRACE_SECONDS)
+        fault.assert_called_once()
+        self.assertEqual(fault.call_args.args, ("tick", f"{self.project}: {self.slow}"))
+
+    def test_a_timed_out_command_elsewhere_in_the_tick_waits_out_the_same_grace(self):
+        self.patch(server.project_setup, "maintain")
+        self.patch(dispatch, "poll", side_effect=self.slow)
+        fault, log = self.tick(1000.0)
+        fault.assert_not_called()
+        self.assertIn(f"[{self.project}] tick failed; retrying next tick: Command", log.call_args.args[0])
+        fault, _ = self.tick(1000.0 + server.TICK_GRACE_SECONDS)
+        self.assertEqual(fault.call_args.args[0], "tick")
+        with mock.patch.object(server.time, "sleep", side_effect=KeyboardInterrupt), \
+             mock.patch.object(server, "tick", side_effect=self.slow), \
+             mock.patch("altitude.incidents.system_fault") as fault, mock.patch.object(server, "log") as log:
+            with self.assertRaises(KeyboardInterrupt):
+                server.timer_loop()   # the timer still sleeps before its next tick
+        fault.assert_not_called()
+        self.assertIn("tick failed; retrying next tick: Command", log.call_args.args[0])
 
 if __name__ == "__main__":
     unittest.main()

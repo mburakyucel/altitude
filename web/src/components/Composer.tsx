@@ -130,7 +130,7 @@ export interface ComposerProps {
   busy?: boolean;
   /** The desktop hint under the field when no state claims it (12px muted). */
   hint?: ReactNode;
-  /** The desktop pill: the engine pin on L3 chat; phone uses project details. */
+  /** The control beside the message box, such as L3's model button. */
   pill?: ReactNode;
   disabled?: boolean;
   /** A worker stop can hold sending while the operator continues editing or dictating. */

@@ -11,7 +11,7 @@ from unittest import mock
 
 from tests.support import REPO, AltitudeCase, git, make_repo
 from tests.fakes import FakeL2
-from altitude import config, dispatch, engines, git_policy, project_setup, server, state as S, tasks as T
+from altitude import config, dispatch, engines, git_policy, platform, project_setup, server, state as S, tasks as T
 
 
 class InstalledRuntime(AltitudeCase):
@@ -76,6 +76,20 @@ class InstalledRuntime(AltitudeCase):
         self.assertEqual(observed["TLS_DIR"], str(self.tmp / "own-tls"))
         self.assertFalse((self.source / ".git").exists())
 
+    def test_saved_proxy_and_ca_bundle_reach_the_cli_and_other_saved_settings_refuse(self):
+        settings_file = self.tmp / "install.json"
+        env = {**os.environ, "PYTHONPATH": str(self.source), "ALTITUDE_CONFIG": str(settings_file)}
+        for key in ("HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy", "SSL_CERT_FILE"):
+            env.pop(key, None)
+        code = "import os; from altitude import config; print(os.environ['HTTPS_PROXY'], os.environ['SSL_CERT_FILE'])"
+        settings_file.write_text(json.dumps({"environment": {"HTTPS_PROXY": "http://127.0.0.1:3128",
+                                                             "SSL_CERT_FILE": "/tmp/proxy-ca.pem"}}))
+        result = subprocess.run([sys.executable, "-c", code], cwd=self.tmp, env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual((result.returncode, result.stdout), (0, "http://127.0.0.1:3128 /tmp/proxy-ca.pem\n"), result.stderr)
+        settings_file.write_text(json.dumps({"environment": {"PYTHONSTARTUP": "/tmp/elsewhere.py"}}))
+        result = subprocess.run([sys.executable, "-c", code], cwd=self.tmp, env=env, capture_output=True, text=True, timeout=30)
+        self.assertIn("invalid installation environment setting: PYTHONSTARTUP", result.stderr)
+
     def test_fresh_defaults_and_source_checkout_ignore_install_settings(self):
         defaults = self.read_config()
         self.assertEqual((defaults["HOST"], defaults["TLS"]), ("127.0.0.1", "True"))
@@ -98,7 +112,20 @@ class InstalledRuntime(AltitudeCase):
             git_policy.install_hooks(self.repo)
 
     def test_task_dispatch_and_resume_keep_owner_hold_and_packaged_resources(self):
-        expected = self.prefix / "hooks"
+        self.assert_dispatch_and_resume(self.prefix / "hooks")
+
+    def test_image_task_dispatch_and_resume_keep_owner_hold_and_image_guards(self):
+        # Real Git, setup, state and dispatch; only the image identity and engine are fixtures.
+        # This does not establish native units, confinement or recreation admission.
+        self.patch(platform, "containerized", return_value=True)
+        self.patch(platform, "CONTAINER_PROJECTS", self.repo.parent)
+        self.patch(config, "INSTALL_PREFIX", Path("/"))
+        self.patch(config, "HOME", self.tmp / "image-home")
+        self.patch(platform, "_container_instance", return_value="a" * 32)
+        platform._lifecycle_write("a" * 32, False)
+        self.assert_dispatch_and_resume(self.source / "hooks")
+
+    def assert_dispatch_and_resume(self, expected):
         self.assertEqual(git_policy.install_hooks(self.repo), expected)
         task = T.new(self.project, "Installed task", "Use the packaged installation.", hold_merge="Operator review")
         dispatch.run(self.project, task["slug"])
@@ -117,6 +144,35 @@ class InstalledRuntime(AltitudeCase):
         self.assertEqual(resumed["worktree"], running["worktree"])
         self.assertEqual(resumed["hold_merge"], running["hold_merge"])
         self.assertEqual(work.read_text(), "Unfinished work stays here.\n")
+        dispatch.stop(self.project, task["slug"], reason="Pause the fixture task")
+        stopped = S.load_task(self.project, task["slug"])
+        self.assertEqual(stopped["state"], "blocked")
+        self.assertEqual(stopped["session_id"], resumed["session_id"])
+        self.assertEqual(stopped["hold_merge"], "Operator review")
+        self.assertTrue(stopped["stop_id"])
+        self.assertFalse(engines.worker_live(stopped["l2_engine"], stopped, job_root=None))
+        self.assertEqual(work.read_text(), "Unfinished work stays here.\n")
+
+    def test_image_pause_keeps_stop_available_and_global_continue_does_not_release_task_stop(self):
+        self.patch(platform, "containerized", return_value=True)
+        self.patch(platform, "CONTAINER_PROJECTS", self.repo.parent)
+        self.patch(config, "INSTALL_PREFIX", Path("/"))
+        self.patch(config, "HOME", self.tmp / "image-home")
+        self.patch(platform, "_container_instance", return_value="a" * 32)
+        self.patch(platform, "status", return_value={"ActiveState": "active"})
+        self.patch(platform, "container_ready")
+        platform._lifecycle_write("a" * 32, False)
+        task = T.new(self.project, "Image Stop", "Preserve task authority", hold_merge="Operator review")
+        dispatch.run(self.project, task["slug"])
+        platform.change_container_lifecycle("pause", "a" * 32)
+        stopped = dispatch.stop(self.project, task["slug"], reason="Stop this task")
+        self.assertTrue(stopped["stop_id"])
+        self.assertFalse(engines.worker_live(stopped["l2_engine"], stopped, job_root=None))
+        platform.change_container_lifecycle("continue", "a" * 32)
+        self.assertEqual(dispatch.resume(self.project, task["slug"]), {"waiting": True})
+        current = S.load_task(self.project, task["slug"])
+        self.assertEqual(current["stop_id"], stopped["stop_id"])
+        self.assertEqual(current["hold_merge"], "Operator review")
 
     def test_missing_guard_resources_refuse_dispatch_before_launch(self):
         (self.prefix / "hooks/pre-commit").unlink()

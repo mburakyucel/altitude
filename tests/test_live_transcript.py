@@ -13,7 +13,7 @@ def _stamp(minutes: int, seconds: int = 0) -> str:
     return (datetime.now(timezone.utc).replace(microsecond=0) + timedelta(minutes=minutes, seconds=seconds)).isoformat()
 
 
-class TestCodexTranscript(AltitudeCase):
+class _CodexTranscriptCase(AltitudeCase):
     def setUp(self):
         super().setUp()
         task = T.new(self.project, "Observed work", "Do it")
@@ -39,8 +39,10 @@ class TestCodexTranscript(AltitudeCase):
         return path
 
     def _view(self, **kwargs):
-        return transcript.view(self.project, self.slug, **{"engine": "codex", "session_id": "thread-1", **kwargs})
+        return transcript.view(self.project, self.slug, **{"engine": "codex", "session_id": "thread-1", "attempt": 1, **kwargs})
 
+
+class TestCodexTranscript(_CodexTranscriptCase):
     def test_every_turn_in_time_order_with_prompts_commands_and_file_changes(self):
         T.brief(self.project, self.slug, "# Brief\nDo it")
         message = T.message(self.project, self.slug, "burak", "Prefer the smaller diff")
@@ -61,26 +63,25 @@ class TestCodexTranscript(AltitudeCase):
         first = self._view()
         self.assertEqual([(e["source"], e["kind"], e["role"]) for e in first["events"]], [
             ("platform", "message", "user"), ("codex", "command", "assistant"),  # turn 1: the brief, then its work
-            ("platform", "platform", "system"), ("platform", "boundary", "system"),  # new, queued → running
-            ("platform", "platform", "system"), ("platform", "platform", "system"),  # brief, task-message
+            ("platform", "boundary", "system"),
             ("platform", "message", "user"),  # turn 2: the message the resume delivered
-            ("codex", "engine", "system"), ("codex", "engine", "system"), ("codex", "command", "assistant"),
+            ("codex", "command", "assistant"),
             ("codex", "message", "assistant"), ("codex", "file", "assistant")])
         events = first["events"]
         self.assertEqual(events[0]["text"], "# Brief\nDo it\n")
         self.assertEqual(events[0]["at"], json.loads((self.root / "w1.json").read_text())["started_at"])
-        self.assertEqual(events[3]["text"], "queued → running · altd")
-        self.assertRegex(events[6]["text"], r"^Message from Operator \(.*\):\nPrefer the smaller diff$")
+        self.assertEqual(events[2]["text"], "queued → running · altd")
+        self.assertRegex(events[3]["text"], r"^Message from Operator \(.*\):\nPrefer the smaller diff$")
         self.assertEqual({k: events[1][k] for k in ("tool", "summary", "text", "output", "tool_use_id", "status", "error")},
                          {"tool": "command", "summary": "make test", "text": "make test", "output": "ok\n",
                           "tool_use_id": "item_1", "status": "completed", "error": False})
-        self.assertEqual((events[9]["summary"], events[9]["status"], events[9]["output"]), ("ls", "in_progress", ""))
-        self.assertEqual((events[10]["text"], events[11]["summary"], events[11]["tool_use_id"]), ("done", "update a.py", "item_4"))
+        self.assertEqual((events[4]["summary"], events[4]["status"], events[4]["output"]), ("ls", "in_progress", ""))
+        self.assertEqual((events[5]["text"], events[6]["summary"], events[6]["tool_use_id"]), ("done", "update a.py", "item_4"))
         for raw in (False, True):
             page = json.dumps(self._view(raw=raw))
             self.assertNotIn("other thread", page)
             self.assertNotIn("private plan", page)
-        self.assertEqual(self._view(cursor=first["cursor"])["events"], [])
+        self.assertEqual(self._view(mode="delta", cursor=first["cursor"])["events"], [])
 
     def test_a_resume_that_delivered_nothing_shows_the_continue_prompt(self):
         self.new.write_text(json.dumps({"type": "thread.started", "thread_id": "thread-1"}) + "\n")
@@ -97,7 +98,7 @@ class TestCodexTranscript(AltitudeCase):
         self.assertEqual(errors, ["corrupt record 1", "partial record; waiting for completion"])
 
     def test_session_fence_rejects_stale_or_incomplete_identity(self):
-        for changed in ({"engine": "claude"}, {"session_id": "old"}, {"session_id": ""}):
+        for changed in ({"engine": "claude"}, {"session_id": "old"}, {"session_id": ""}, {"attempt": 2}):
             with self.assertRaisesRegex(transcript.TranscriptAccessError, "generation changed"):
                 self._view(**changed)
 
@@ -105,10 +106,11 @@ class TestCodexTranscript(AltitudeCase):
         self.assertIsNone(engines._claude_path("../../etc/passwd"))
         for project, slug in (("../etc", self.slug), (self.project, "../status"), ("unmanaged", "task")):
             with self.assertRaises(transcript.TranscriptAccessError):
-                transcript.view(project, slug, engine="codex", session_id="x")
+                transcript.view(project, slug, engine="codex", session_id="x", attempt=1)
         self.old.write_text(json.dumps({"type": "item.completed", "authorization": "Bearer abcdefghijklmnop",
                                         "output": "token ghp_abcdefghijklmnop"}) + "\n")
-        raw = next(e for e in self._view(raw=True)["events"] if e["source"] == "codex")["raw"]
+        event = next(e for e in self._view(raw=True)["events"] if e["source"] == "codex")
+        raw = json.loads(self._view(raw=True, mode="record", record=event["id"])["text"])
         self.assertEqual(raw["authorization"], "[REDACTED]")
         self.assertNotIn("ghp_", raw["output"])
 
@@ -127,11 +129,12 @@ class TestClaudeTranscript(AltitudeCase):
         self.addCleanup(self.path.unlink, True)
 
     def _view(self, **kwargs):
-        return transcript.view(self.project, self.slug, **{"engine": "claude", "session_id": "sess-1", **kwargs})
+        return transcript.view(self.project, self.slug, **{"engine": "claude", "session_id": "sess-1", "attempt": 1, **kwargs})
 
     def test_blocks_become_prompts_replies_calls_and_results_without_reasoning(self):
+        started_at = datetime.fromisoformat(_stamp(10))
         def at(seconds):
-            return _stamp(10, seconds)
+            return (started_at + timedelta(seconds=seconds)).isoformat()
         message = "Message from Operator (2026-09-03T10:00:07+00:00):\nPrefer the smaller diff"
         self.path.write_text("".join(json.dumps(r) + "\n" for r in (
             {"type": "user", "timestamp": at(1), "message": {"role": "user", "content": "# Brief\nDo it"}},
@@ -156,37 +159,61 @@ class TestClaudeTranscript(AltitudeCase):
                 {"type": "tool_use", "id": "toolu_3", "name": "Agent", "input": {"description": "Survey routes", "prompt": "long"}}]}},
         )))
         events = self._view()["events"]
-        self.assertEqual([e["kind"] for e in events if e["source"] == "platform"], ["platform", "boundary"])
-        self.assertLess(max(e["seq"] for e in events if e["source"] == "platform"),
-                        min(e["seq"] for e in events if e["source"] == "claude"))  # the task's events came first
+        self.assertEqual([e["kind"] for e in events if e["source"] == "platform"], ["boundary"])
+        self.assertLess(max(e["order"] for e in events if e["source"] == "platform"),
+                        min(e["order"] for e in events if e["source"] == "claude"))
         rows = [e for e in events if e["source"] == "claude"]
         self.assertEqual([(e["kind"], e["role"], e.get("tool"), e.get("summary"), e.get("tool_use_id"), e["text"]) for e in rows], [
             ("message", "user", None, None, None, "# Brief\nDo it"),
-            ("engine", "system", None, None, None, ""),  # the thinking block is gone, the record's shell remains
             ("message", "assistant", None, None, None, "Checking the tree."),
             ("command", "assistant", "Bash", "git status", "toolu_1", "git status\n"),
-            ("result", "tool", None, None, "toolu_1", "clean"),
             ("file", "assistant", "Edit", "altitude/tasks.py", "toolu_2", "- a\n+ b"),
-            ("result", "tool", None, None, "toolu_2", "edited"),
             ("message", "user", None, None, None, message),
-            ("engine", "system", None, None, None, "<local-command-caveat>injected</local-command-caveat>"),
-            ("engine", "system", None, None, None, ""),
             ("tool", "assistant", "Agent", "Survey routes", "toolu_3", '{\n  "description": "Survey routes",\n  "prompt": "long"\n}'),
         ])
-        self.assertEqual([e["error"] for e in rows if e["kind"] == "result"], [False, True])
+        self.assertEqual([(e["output"], e["error"]) for e in rows if e["kind"] in {"command", "file"}],
+                         [("clean", False), ("edited", True)])
         self.assertEqual(rows[0]["at"], at(1))
         for raw in (False, True):
             self.assertNotIn("private plan", json.dumps(self._view(raw=raw)))
-        raw_rows = [e["raw"] for e in self._view(raw=True)["events"] if e["source"] == "claude"]
+        raw_rows = [json.loads(self._view(raw=True, mode="record", record=e["id"])["text"])
+                    for e in self._view(raw=True)["events"] if e["source"] == "claude"]
+        self.assertEqual(len(raw_rows), 11)
         self.assertEqual(raw_rows[1]["message"]["content"], [])
 
-    def test_long_output_is_bounded_unless_raw(self):
+    def test_result_is_folded_with_its_call_before_history_is_selected(self):
+        call = {"type": "assistant", "timestamp": _stamp(1), "message": {"content": [
+            {"type": "tool_use", "id": "call", "name": "Bash", "input": {"command": "true"}}]}}
+        filler = [{"type": "assistant", "timestamp": _stamp(2, index),
+                   "message": {"content": [{"type": "text", "text": f"message {index}"}]}} for index in range(80)]
+        result = {"type": "user", "timestamp": _stamp(5), "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "call", "content": "complete"}]}}
+        self.path.write_text("".join(json.dumps(row) + "\n" for row in [call, *filler, result]))
+        first = self._view()
+        self.assertFalse(any(row["kind"] in {"command", "result"} for row in first["events"]))
+        older = self._view(mode="history", before=first["lower"], cursor=first["cursor"])
+        shown = next(row for row in older["events"] if row["kind"] == "command")
+        self.assertEqual(shown["output"], "complete")
+        result["message"]["content"][0]["content"] = "late output"
+        with self.path.open("a") as stream:
+            stream.write(json.dumps(result) + "\n")
+        delta = self._view(mode="delta", cursor=first["cursor"], lower=older["lower"])
+        self.assertEqual(len(delta["events"]), 1)
+        self.assertEqual(delta["events"][0]["id"], shown["id"])
+        self.assertEqual(delta["events"][0]["output"], "complete\nlate output")
+
+    def test_long_output_and_raw_preview_are_bounded_with_full_raw_access(self):
         self.path.write_text(json.dumps({"type": "user", "timestamp": _stamp(10), "message": {"role": "user", "content": [
             {"type": "tool_result", "tool_use_id": "toolu_1", "content": "x" * (transcript.MAX_DEFAULT_TEXT + 5)}]}}) + "\n")
         row = next(e for e in self._view()["events"] if e["kind"] == "result")
         self.assertTrue(row["truncated"])
         self.assertTrue(row["text"].endswith("… output collapsed"))
-        self.assertFalse(next(e for e in self._view(raw=True)["events"] if e["kind"] == "result")["truncated"])
+        raw = next(e for e in self._view(raw=True)["events"] if e["kind"] == "result")
+        self.assertTrue(raw["truncated"])
+        first = self._view(raw=True, mode="record", record=raw["id"])
+        second = self._view(raw=True, mode="record", record=raw["id"], offset=first["next_offset"])
+        self.assertEqual(json.loads(first["text"] + second["text"])["message"]["content"][0]["content"],
+                         "x" * (transcript.MAX_DEFAULT_TEXT + 5))
 
 
 if __name__ == "__main__":

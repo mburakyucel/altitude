@@ -1,5 +1,14 @@
 # Set up Altitude
 
+The [container candidate](CONTAINERS.md) uses container-local tools, sign-ins and project volumes.
+Native installation commands below do not install into that image. Linux container onboarding
+passes on phone/desktop with real GitHub and one coding-engine sign-in. Credentials in the
+persistent home survive the observed reboot and image replacement; see the
+[live run and its limits](CONTAINERS.md#live-linux-run). Mac acceptance remains unverified.
+After container replacement, the browser explains that new AI work is paused and shows the host
+Continue command. It retains messages and setup requests until that action; an ordinary restart
+of the same container retains its previous admission. See [container recovery](CONTAINERS.md#lifecycle-and-recovery).
+
 Altitude targets one operator on a Linux x86_64 machine with a systemd user manager, or on a Mac with
 Apple silicon running macOS 15 or newer. The release archive includes the CLI, daemon and built UI;
 Ubuntu 24.04 is the initial validation target. The macOS runtime is implemented and its native
@@ -14,6 +23,9 @@ installation command for your own machine. It covers real user-service activatio
 also checks the service starts again after a restart and runs the built `install.sh` against a
 release server inside the VM),
 without establishing browser/device certificate trust, live provider readiness or a minimal OS install.
+On an Apple silicon Mac, the [macOS VM run](DEVELOPMENT.md#macos-vm-run) checks in fresh, offline
+macOS guests that the built `install.sh` stops with its documented fix for each missing prerequisite,
+installs, updates, recovers and uninstalls, and that the service starts again at login after a restart.
 See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](DEVELOPMENT.md#coverage-and-limits).
 
 ## Prerequisites
@@ -33,7 +45,10 @@ See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](D
   package manager, application source checkout or UI build. The backend uses Python's standard library.
 - Access to this repository and to a GitHub project you can fetch, push and open PRs in.
   Authenticate GitHub CLI, verify `gh auth status`, and configure Git name/email and your
-  SSH or HTTPS Git credentials. Altitude's delivery path expects a clean primary `main`
+  SSH or HTTPS Git credentials. For HTTPS with GitHub CLI credentials, run `gh auth setup-git`
+  and verify `git fetch origin main` in the selected repository: CLI sign-in alone can succeed
+  while Git authentication is still unset. In a container, run both commands inside its shell;
+  see [container sign-in](CONTAINERS.md#first-use). Altitude's delivery path expects a clean primary `main`
   checkout with an `origin/main` branch and the project's applicable checks.
 - At least one installed, authenticated **Codex or Claude Code CLI**, usable from the same
   Linux account that runs Altitude. Authenticate using the engine's native setup. CLI versions must support the headless,
@@ -45,19 +60,26 @@ See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](D
 
 ## Install the application
 
-On Linux x86_64 with Python 3.12 or newer and a systemd user manager, one command installs a
-published release as the account that will use Altitude. The preview has no stable release yet, so
-install the newest release candidate from its own tag:
+On Linux x86_64 with Python 3.12 or newer and a systemd user manager, or on macOS 15 or newer on
+Apple silicon with Python 3.12, Homebrew's OpenSSL 3 and a logged-in desktop session, one command
+installs the latest published release as the account that will use Altitude:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/download/v0.1.0-rc.2/install.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/latest/download/install.sh | sh
 ```
+
+The command downloads anonymously, so it needs the repository to be public; until then,
+[install by hand](#install-by-hand) from files downloaded while signed in. `latest` names the
+newest stable release and skips release candidates; to install one exact release,
+replace `latest/download` with `download/<tag>`, for example `download/v0.1.0`. On the Mac, installation,
+updates, rollback, uninstall and starting again at login pass in fresh macOS virtual machines, while
+native runtime acceptance is pending, so macOS is experimental.
 
 `v0.1.0-rc.1` cannot start its service: systemd refuses the working directory its unit names, so
 installation fails at service start and leaves that unit and an interrupted activation behind.
 Until they are cleared, `alt recover`, updates and uninstall stop at the refused unit. On a machine
-that ran it, remove the unit and complete the activation's recovery, then run the command above;
-configuration, TLS identity and data are kept:
+that ran it, remove the unit and complete the activation's recovery, then install again; the
+failed installation left no version to update, and configuration, TLS identity and data are kept:
 
 ```sh
 systemctl --user disable altitude.service
@@ -67,44 +89,43 @@ systemctl --user daemon-reload
 ```
 
 `install.sh` belongs to one published release. It checks the machine first and stops with the fix
-when something is missing: Linux x86_64, not root, Python 3.12 or newer, `curl`, a SHA-256 tool,
-`openssl` and `systemctl --user`. It then downloads that release's archive and `install.py`, checks
+when something is missing: Linux x86_64 or a Mac with Apple silicon, not root, Python 3.12 or newer,
+`curl`, a SHA-256 tool and `openssl`; on Linux `systemctl --user`, on a Mac macOS 15 or newer,
+OpenSSL 3 ahead of macOS's LibreSSL on PATH and launchd's domain of the logged-in desktop session.
+Releases before `v0.1.0` stop on a Mac before downloading anything. It then downloads that release's archive and `install.py`, checks
 each against the SHA-256 written into the script when the release was built, runs
 `install.py --archive … --sha256 …` and prints the address, the certificate fingerprint and the next
 steps: put `~/.local/bin` on PATH, run `alt doctor`, trust the certificate and open the address.
 Nothing is run from a download that does not match, and nothing runs as root. The script is one
-function called on its last line, so a download cut off midway does nothing. Once a stable
-release exists, `https://github.com/mburakyucel/altitude/releases/latest/download/install.sh`
-names the newest one; `latest` skips release candidates.
+function called on its last line, so a download cut off midway does nothing.
+
+An installed copy checks for a newer release and offers it in the app, in `alt doctor` and through
+`alt update` ([operations](OPERATIONS.md#installed-application-lifecycle)); nothing updates until you
+confirm. A copy installed from a release candidate is offered newer candidates and stable releases;
+a copy installed from a stable release is offered stable releases only.
 
 The command trusts GitHub's HTTPS and the published, immutable release for `install.sh` itself.
 Releases that the release workflow publishes from the public repository attest every release file.
-A release published while the repository was private, including `v0.1.0-rc.1`, has no attestation,
-so this check applies to releases published once it is public. To verify an attested release's script before running it, set `VERSION`
-to its tag:
+A release published while the repository was private, including `v0.1.0` and its release candidates,
+has no attestation, so this check applies to releases published once it is public. To verify an
+attested release's script before running it, set `VERSION` to its tag:
 
 ```sh
-VERSION=v0.1.0   # an attested release
+VERSION=v0.1.1   # replace with an attested release's tag
 curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/mburakyucel/altitude/releases/download/$VERSION/install.sh" &&
   gh attestation verify install.sh --repo mburakyucel/altitude &&
   sh install.sh
 ```
 
-On macOS the command stops before downloading anything and reports the macOS version, chip and
-Python it found: macOS installation waits for native acceptance ([#551](https://github.com/mburakyucel/altitude/issues/551)).
-A Mac runs Altitude from a source checkout instead: build the web app, run `bin/alt tls-init`, then
-`make install-service`, which installs a LaunchAgent of your login ([operations](OPERATIONS.md)).
-
-The same installer runs by hand from the release files, for example offline or with a private
-archive: download `install.py`, the versioned `.tar.gz` archive and its `.sha256` from the release,
-and verify the checksum's source; a checksum from the same untrusted download does not establish
-authenticity.
-
-```sh
-python3.12 install.py --archive altitude-v0.1.0-rc.2.tar.gz --sha256 '<release SHA-256>'
-export PATH="$HOME/.local/bin:$PATH"
-alt doctor
-```
+On a Mac the service is the LaunchAgent `~/Library/LaunchAgents/dev.altitude.altd.plist` of your
+login, logging to `~/Library/Logs/altitude/altd.log`; the application lives in
+`~/.local/share/altitude` and its settings in `~/.config/altitude`, as on Linux. A failed update
+restores the previous version by itself. If an installation or update is interrupted (the Mac
+sleeps, the terminal closes), `~/.local/bin/alt recover` finishes restoring the previous version; when
+`alt` itself is missing, the release's `install.py` does the same with
+`python3.12 install.py --recover`. Configuration, TLS identity and data are kept either way. A Mac can
+also run Altitude from a source checkout: build the web app, run `bin/alt tls-init`, then
+`make install-service`, which installs the same LaunchAgent from the checkout ([operations](OPERATIONS.md)).
 
 Installation starts and enables an owned per-user service and prints its HTTPS URL and public
 CA fingerprint. It refuses an existing customized service or conflicting `alt` launcher;
@@ -122,6 +143,30 @@ For engines outside their default locations, the existing `CODEX_BIN` or `CLAUDE
 select absolute paths. [Configuration](#configuration-and-limits) describes saved settings.
 For nvm installations, Altitude discovers the installed default when Node is absent from PATH;
 enable its Corepack pnpm shim for project builds. See [noninteractive toolchain setup](DEVELOPMENT.md#noninteractive-toolchain).
+
+### Install by hand
+
+The same installer runs by hand from the release files, for example offline or while the repository
+is private: download `install.py`, the versioned `.tar.gz` archive and its `.sha256` from the release
+(signed in, `gh release download v0.1.0 --repo mburakyucel/altitude`), and verify the checksum's
+source; a checksum from the same untrusted download does not establish authenticity.
+
+```sh
+python3.12 install.py --archive altitude-v0.1.0.tar.gz --sha256 '<release SHA-256>'
+export PATH="$HOME/.local/bin:$PATH"
+alt doctor
+```
+
+### Update from a release candidate
+
+A copy installed from `v0.1.0-rc.2` follows stable releases only and is offered `v0.1.0` and later
+stable releases. The lookup and download are anonymous requests to GitHub, which find nothing while
+the repository is private; until then, download the archive while signed in to GitHub and install it:
+
+```sh
+gh release download v0.1.0 --repo mburakyucel/altitude --pattern 'altitude-v0.1.0.tar.gz*'
+alt update --archive altitude-v0.1.0.tar.gz --sha256 "$(cat altitude-v0.1.0.tar.gz.sha256)"
+```
 
 ### Installation with a coding agent
 
@@ -143,14 +188,14 @@ The [README prompt](../README.md#get-started) provides a short starting point fo
 
 ### Trust HTTPS on each device
 
-Trusting Altitude's own certificate authority (CA) once on each device removes the browser warning
-for good: the device then treats Altitude like any trusted site. `alt doctor` shows the URL, the
+Trust Altitude's own certificate authority (CA) in each browser you use, including on the computer
+hosting Altitude. `alt doctor` shows the URL, public `ca.crt` path, the
 CA's name, expiry, SHA-256 fingerprint and what trusting it allows, all read from the certificate
 itself, with these steps in short form (`trust_steps`); **Settings → Devices** shows the same
 certificate facts on a device that already trusts Altitude.
 
 Only `ca.crt` goes to a device, over any channel: cable, AirDrop, your own email or cloud, or
-`alt tls-share` for a phone. Never transfer `ca.key` or `server.key`. The channel does not have to
+`alt tls-share` for a desktop or phone. Never transfer `ca.key` or `server.key`. The channel does not have to
 be trusted; the check before installing is what counts. Confirm the file holds only that certificate,
 with the expected name and SHA-256 fingerprint, and delete it if anything differs. Never click through
 a browser warning to reach Altitude. Trust grants the CA authority to identify sites, and its name is
@@ -164,9 +209,21 @@ created without these limits, or supplied externally, keeps its original scope. 
 scope as read from the certificate: "No limits" when it has none, and "Any website name" or "any IP
 address" for a type of name its limits leave open.
 
-#### Set up a phone
+#### Get the public certificate
 
-On a device that already trusts Altitude, open **Settings → Devices** and tap **Add a phone** in the
+**On the computer hosting Altitude:** run `alt doctor` in your terminal and use the public `ca.crt`
+at the path it reports. Copy just that file to a convenient folder if your browser's file picker
+cannot reach it. This works with the default loopback-only installation: sharing is unnecessary,
+and there is no need to expose Altitude to the network. Continue with [Linux](#linux-desktop) or
+[macOS](#macos-desktop) below.
+
+**On another computer or a phone:** the service must already have a reachable private-network
+HTTPS address configured. Use the sharing window below or transfer only `ca.crt` by another channel.
+Keep `alt doctor` or an already-trusted Settings page available as the independent identity reference.
+
+#### Share with a desktop or phone
+
+On a device that already trusts Altitude, open **Settings → Devices** and choose **Set up a device** in the
 Certificate card. Or, on the computer running Altitude, locally or over SSH, run:
 
 ```sh
@@ -174,74 +231,154 @@ alt tls-share
 ```
 
 Both show a QR code for a ten-minute plain-HTTP link on the service's address, beside the CA's name
-and SHA-256 fingerprint. Scan it with the phone's camera: the page it opens shows the same name and
-fingerprint, an iPhone profile download, a plain certificate download for Android and other
-devices, and the steps below. The link serves only that page and the public CA certificate, as a
+and SHA-256 fingerprint. Open the printed link on the destination desktop, or scan its QR code with
+a phone. The page offers separate Linux, macOS, iPhone/iPad and Android instructions, an iPhone
+profile download and a plain public certificate download. On the same device, choose **Open setup page** in Settings; it opens a
+new tab while the original tab keeps the QR code, certificate details and sharing timer. Keep that
+original Settings page open during setup. Close and expiry remove the setup link as well as the QR.
+The link serves only that page and the public CA certificate, as a
 configuration profile holding only the certificate or as the certificate file; it never serves a
 key or Altitude itself. Settings shows the time left and **Close**; closing it, leaving the page or
 the end of the ten minutes closes the link, and Ctrl-C closes the command's link sooner. A new
-**Add a phone** replaces an earlier one. A firewall on that computer can block the link's port;
+**Set up a device** replaces an earlier one. A firewall on that computer can block the link's port;
 then use another channel.
 
-`alt tls-share` reads the address, port and certificate folder from the running Altitude service
-itself, so the shell needs none of the service's settings; a shell `ALTITUDE_HOST`, `ALTITUDE_PORT`,
-`ALTITUDE_TLS` or `ALTITUDE_TLS_DIR` that disagrees with the service is refused. Before offering
+`alt tls-share` reads the address, port and certificate folder the running Altitude service
+recorded when it started, so the shell's own `ALTITUDE_HOST`, `ALTITUDE_PORT`, `ALTITUDE_TLS` and
+`ALTITUDE_TLS_DIR` play no part. Before offering
 anything it fetches the service's health over HTTPS, trusting only that folder's CA for the
-service's address, and offers only a certificate the service proves it serves under. **Add a phone**
+service's address, and offers only a certificate the service proves it serves under. **Set up a device**
 is opened by the service itself and offers the CA it serves under. Its QR code prints black on white
 in any terminal, including Altitude's own.
 
 Both stop with the reason when the service serves plain HTTP or listens only on loopback
-(`ALTITUDE_HOST` must be the private-network address the phone opens, which takes effect when the
-service restarts). `alt tls-share` also stops when the service is not installed or not running,
-does not answer, or answers without proving that certificate. It reads the Linux user service or,
-on a Mac, the source service's LaunchAgent, whose address comes from `ALTITUDE_HOST` when it is
-installed: `ALTITUDE_HOST=<address> make install-service`.
+(`ALTITUDE_HOST` must be the private-network address the destination device opens, which takes effect when the
+service restarts). `alt tls-share` also stops when no service has recorded its address, or the
+service does not answer or answers without proving that certificate. On a Mac, the source
+service's LaunchAgent takes its address from `ALTITUDE_HOST` when it is installed:
+`ALTITUDE_HOST=<address> make install-service`.
 
-The link is unauthenticated, so the check against the trusted screen is what counts. On an iPhone or
-iPad:
+#### Check the desktop download before trusting it
 
-1. Tap **Download the profile**, then **Allow**. Open Settings → **Profile Downloaded**.
+Choose **Download the certificate** on the setup page and save `ca.crt`. On either Linux or macOS,
+inspect the file before importing it. From the folder containing the file, run:
+
+```sh
+openssl x509 -in ca.crt -noout -subject -fingerprint -sha256
+```
+
+Compare the subject's name and the entire SHA-256 fingerprint with `alt doctor` on the hosting
+computer or **Settings → Devices** in an already-trusted browser. The setup page is unauthenticated;
+matching its own displayed fingerprint alone does not establish identity. The command reads the
+certificate and installs nothing. Inspect `ca.crt` in a text editor as well: it must contain exactly
+one `BEGIN CERTIFICATE` / `END CERTIFICATE` block and no other payload. A file checksum is not the
+certificate fingerprint. If the name, fingerprint or contents differ, delete the download and stop.
+[OpenSSL certificate inspection](https://docs.openssl.org/3.0/man1/openssl-x509/).
+
+#### Linux desktop
+
+After [checking the file](#check-the-desktop-download-before-trusting-it), import it in the browser
+you will use:
+
+- **Chrome/Chromium:** open `chrome://certificate-manager`, choose **Local certificates**, then
+  **Custom → Installed by you**. Under **Trusted Certificates**, choose **Import** and select
+  `ca.crt`. On builds with the older manager, open `chrome://settings/certificates` and use
+  **Authorities → Import**, enabling trust for identifying websites. Do not use **Your certificates**,
+  which is for client identities. Browser versions and distribution packaging can change labels;
+  [Chrome's certificate manager](https://chromium.googlesource.com/chromium/src/+/main/net/data/ssl/chrome_root_store/faq.md)
+  and [Chromium's Linux guidance](https://chromium.googlesource.com/chromium/src/+/HEAD/docs/linux/cert_management.md)
+  describe the available managers; the [current manager's navigation](https://chromium.googlesource.com/chromium/src/+/HEAD/chrome/browser/resources/certificate_manager/local_certs_section.html.ts)
+  and [control labels](https://chromium.googlesource.com/chromium/src/+/HEAD/chrome/app/certificate_manager.grdp)
+  identify the import route.
+- **Firefox:** open **Settings → Privacy & Security → Certificates → View Certificates →
+  Authorities → Import**, select `ca.crt`, and enable **Trust this CA to identify websites**.
+  Confirm with **OK**. Firefox on Linux can need this separate import even when another browser
+  or the OS already trusts the CA. [Mozilla's manual import instructions](https://wiki.mozilla.org/CA/Changing_Trust_Settings).
+
+Quit and reopen the browser, then [verify HTTPS before pairing](#verify-https-before-pairing).
+Repeat for each browser/profile you intend to use; importing in one browser does not prove trust
+in another. These steps do not require a system-wide Linux trust-store change.
+
+#### macOS desktop
+
+1. Download the plain `ca.crt` file, then [check its name, fingerprint and contents](#check-the-desktop-download-before-trusting-it).
+2. Open **Keychain Access** using Spotlight. Select the **login** keychain for your account and
+   drag `ca.crt` into it. Use **System** only if you deliberately want trust for all users and can
+   authorize the Mac's administrator prompt. [Apple's import instructions](https://support.apple.com/guide/keychain-access/kyca2431/mac).
+3. Double-click the imported certificate, expand **Trust**, and set **Secure Sockets Layer (SSL)**
+   to **Always Trust**. Leave other uses at their defaults. Close the certificate window and
+   authorize saving if macOS prompts. Safari and Chrome use this explicit SSL trust.
+   [Apple's trust controls](https://support.apple.com/guide/keychain-access/kyca11871/mac) and
+   [Chrome's macOS trust behavior](https://chromium.googlesource.com/chromium/src/+/main/net/data/ssl/chrome_root_store/faq.md).
+4. Quit and reopen Safari or Chrome, then [verify HTTPS before pairing](#verify-https-before-pairing).
+
+For **Firefox**, use the **Authorities → Import** steps in the Linux section with the same verified
+file if it does not already trust the CA. Firefox normally recognizes roots from the **System**
+keychain when **Allow Firefox to automatically trust third-party root certificates you install**
+is enabled in Privacy & Security; do not assume a login-keychain import reaches Firefox.
+[Mozilla's platform behavior](https://support.mozilla.org/en-US/kb/setting-certificate-authorities-firefox).
+
+#### Set up a phone
+
+Open the [sharing window](#share-with-a-desktop-or-phone), then follow the device steps. The link
+is unauthenticated, so compare with the trusted terminal or Settings screen before installing.
+
+**iPhone or iPad:**
+
+1. Open the share link in **Safari**, even if scanning the QR code opened another browser.
+   Tap **Download the profile**, then **Allow**. After the download completes, open Settings →
+   **Profile Downloaded**. Scanning the QR code alone does not download a profile.
 2. Before tapping **Install**, check that it contains only a **Certificate** with the name shown on
    the trusted screen, and that **More Details** → that certificate shows the same SHA-256. If
-   anything differs, tap **Remove** and stop: someone else answered the link.
+   anything differs, tap **Remove** and stop: someone else answered the link. If the certificate
+   details cannot be viewed, stop before installing and report what the phone shows.
 3. Tap **Install**, then turn the certificate on under Settings → General → About → **Certificate
    Trust Settings**. Installing the profile alone does not enable TLS trust.
    [Apple guidance](https://support.apple.com/en-us/102390).
 4. Open the HTTPS address in a new Private tab. It must load with no warning; then
    [pair](#pair-each-device) and add the Home Screen app.
 
+**No Profile Downloaded?** The shortcut appears after a profile download; it is not a permanent
+Settings item. Check **Settings → General → VPN & Device Management** for profiles as well.
+[Apple deletes an uninstalled profile after eight minutes](https://support.apple.com/en-us/102400).
+If no profile is present, return to the share page in Safari and download again; open a new sharing
+window if the ten-minute link has closed. If no **Allow** prompt appears or the download fails,
+report the browser, iOS version and exact message. A working download link does not establish that
+iOS accepted a profile. Do not change certificate trust or disable device protections to diagnose this.
+
 Safari may remember an earlier "visit this website" exception, which can hide missing trust in an
 ordinary tab. Settings → Safari → **Clear History and Website Data** removes it, and also signs out
 every site and unpairs Safari.
 
-On Android, tap **Download the certificate** in Chrome and install the file under Settings → Security → Encryption &
+On Android, tap **Download the Android certificate** in Chrome and install the file under Settings → Security → Encryption &
 credentials → Install a certificate → **CA certificate** (names vary by device), comparing the
-fingerprint where the device shows it. Firefox for Android also needs its third-party CA setting.
+name and full fingerprint with the trusted terminal or Settings screen before trusting it; stop if you
+cannot inspect them. Firefox for Android also needs its third-party CA setting.
 [Android guidance](https://android.googlesource.com/platform/cts/+/35dfb1c0b8d%5E%21/).
 
-#### Other devices
+#### Verify HTTPS before pairing
 
-- **Linux Chrome/Chromium:** import the CA as a trusted website authority in the browser's
-  certificate manager (`chrome://certificate-manager` in current Chrome). **Firefox:** Settings →
-  Privacy & Security → Certificates → View Certificates → Authorities → Import; enable website
-  trust. Firefox on Linux may need this separate import even when the OS already trusts the CA.
-  [Chromium guidance](https://chromium.googlesource.com/chromium/src/+/HEAD/docs/linux/cert_management.md),
-  [Firefox guidance](https://wiki.mozilla.org/CA/Changing_Trust_Settings).
-- **Mac clients:** import the CA in Keychain Access and set its SSL trust explicitly. Safari and
-  Chrome honor that setting; Firefox normally imports trusted roots from the System keychain,
-  otherwise use its Authorities import.
-  [Apple guidance](https://support.apple.com/en-gb/guide/keychain-access/kyca11871/mac),
-  [Firefox platform behavior](https://support.mozilla.org/en-US/kb/setting-certificate-authorities-firefox).
+Open the exact HTTPS URL reported by `alt doctor` or the trusted Settings screen in a new private
+or Incognito window in the browser you will use, and reload it. Check the scheme, address and port;
+a second computer or phone needs the configured network address, not `localhost` or `127.0.0.1`.
+The Altitude page must load without any certificate warning. Only then [pair the browser](#pair-each-device).
+Verify the regular window as well before pairing there for everyday use; a private window's pairing
+does not persist after it closes.
+
+If a warning remains, stop before pairing. Check that this browser trusts the verified CA, the URL
+matches the running service, the device clock is correct, and the CA has not expired or changed.
+Record the OS/browser versions and exact warning for diagnosis; do not bypass it or disable checks.
 
 The CA is valid for ten years; Altitude renews its one-year server certificate automatically and
 reissues it when the listening address changes, so devices keep their trust. A device trusts again
 only when the CA expires or is replaced, for example after a new installation or a lost key.
 
 Open the exact HTTPS URL without a warning, in a new private window, and reload it before adding a home-screen app. Check
-the installed app separately: a shortcut or cached page does not prove TLS works. A phone needs
-the explicitly configured remote address, not `localhost`. Device/browser acceptance remains
-pending until observed. Remove this CA in the same browser/OS certificate manager when retiring
+the installed app separately: a shortcut or cached page does not prove TLS works. Native Linux,
+macOS and phone browser acceptance remains pending until observed on each platform; fixture and
+emulated browser checks establish application behavior only. The independent macOS/iOS trust and
+Home Screen acceptance in [#645](https://github.com/mburakyucel/altitude/issues/645) remains pending.
+Remove this CA in the same browser/OS certificate manager when retiring
 the installation; on iOS remove its profile under General → VPN & Device Management. Do not
 clear unrelated credentials. Uninstalling Altitude does not remove trust from your devices.
 
@@ -296,7 +433,7 @@ Declining permission, or a browser without notifications, leaves Needs you and t
 
 ## First run in the browser
 
-After [pairing](#pair-each-device), with no project managed, the web app opens First run. Its four steps are skippable, go **‹ Back**
+After [pairing](#pair-each-device), with no project managed, the web app opens First run. Its five steps are skippable, go **‹ Back**
 without saving, keep their place in the URL across reloads and are each a row in
 **Settings → This machine** afterwards:
 
@@ -305,6 +442,7 @@ without saving, keep their place in the URL across reloads and are each a row in
 | **Your name**, filled in from `ALTITUDE_OPERATOR` or Git's global `user.name` | `operator_name` in `$ALTITUDE_HOME/settings.json`. Screens, agent prompts and incident sanitization use it; clearing it returns to the environment value or Git's name, and with neither, screens say “you”. |
 | **What the agents need**: the GitHub CLI and a coding agent signed in, Git installed | Nothing. Each unmet check shows the command to run in a terminal on this computer, the install command for a missing tool or the sign-in command (`gh auth login`, the agent's own) for an installed one, with **Copy** and **Check again**. One signed-in agent is enough; the others read as optional. The browser never asks for a password or token. |
 | **Report Altitude’s own faults?**, off by default | `incident_repository`: off keeps incidents on this computer; on stores the repository, Altitude's own filled in or a fork you name, after the signed-in GitHub CLI confirms it can see it. |
+| **Voice** | Saves the speech backend when selected and starts host voice setup where available. Host voice is unavailable in a container; browser recognition remains an option in supported browsers. Skipping does not block project setup. |
 | **Add your projects** | `projects_folder` when **Change…** picks another folder, and one registration per **Add project** or **Add all**. Only the folders directly inside the projects folder are listed; nothing is created, cloned or scanned. Adding opens the project's Setup and ends First run. |
 
 The environment variables in [configuration](#configuration-and-limits) remain the
@@ -441,10 +579,9 @@ repair cannot make this choice for you. See the
 | `alt machine set --voice` | Transcription backend: `host` (this computer transcribes live after `alt voice setup`; the default where its model runs) or `browser` (no setup; the default elsewhere, including macOS for now). See [voice input](OPERATIONS.md#voice-input). |
 
 Quota telemetry is optional. The Monitor shows missing or stale readings rather than assuming
-zero usage. Codex readings come from its app-server integration. For Claude usage readings,
-`alt install-statusline` installs a global CLI statusline hook and an interactive session supplies
-the snapshot; inspect your existing settings before choosing that optional installation. Unknown
-readings leave options eligible in Auto and for explicit pins. Within a tied tier, Auto uses
+zero usage. The daemon reads both accounts itself: Codex through its app-server integration and
+Claude through its headless usage command. Neither needs an interactive session or a change to your
+global CLI settings. Unknown readings leave options eligible in Auto and for explicit pins. Within a tied tier, Auto uses
 configured order when weekly readings are unknown or incomparable, retaining a current L3 option
 in that tier. It never invents separate model allowances from a shared account reading.
 

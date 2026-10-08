@@ -87,11 +87,13 @@ const marks = { met: "✓", unmet: "!", optional: "–" } as const;
 /** What the agents need, from the doctor checks; `actions` receives Check again and whether everything required is met. */
 export function PrerequisiteList({ actions }: { actions: (check: ReactNode, ready: boolean) => ReactNode }) {
   const checks = usePrerequisites();
+  const machine = useMachine();
   const checking = checks.isFetching;
   const check = <button type="button" className="btn" disabled={checking} onClick={() => void checks.refetch()}>
     {checking ? "Checking…" : "Check again"}
   </button>;
   return <>
+    {machine.data?.container_shell ? <div className="onboarding-note">Run on the host to open the container shell:<Command text={machine.data.container_shell} /></div> : null}
     <div className="settings-card onboarding-checks" aria-busy={checking}>
       {checks.isPending ? <p role="status" className="text-meta text-muted">Checking this computer…</p>
         : checks.isError ? <p role="alert" className="text-meta text-danger">Could not check this computer: {checks.error.message}</p>
@@ -225,6 +227,7 @@ type Step = (typeof steps)[number]["key"];
  * Settings row afterwards. Adding a project opens its Setup and ends the flow.
  */
 export default function Onboarding({ projects }: { projects: ReactNode }) {
+  const inContainer = useMachine().data?.deployment === "container";
   const [params, setParams] = useSearchParams();
   const index = Math.max(0, steps.findIndex((step) => step.key === params.get("step")));
   const current = steps[index]!;
@@ -242,10 +245,10 @@ export default function Onboarding({ projects }: { projects: ReactNode }) {
     </ol>
     <p className="onboarding-step-count text-meta">Step {index + 1} of {steps.length} · {current.title}</p>
     {step === "name" ? <>
-      <header><h1>Welcome to Altitude</h1><p className="onboarding-lead">Altitude runs coding agents on your projects on this computer. Agents and screens use your name wherever they would otherwise say “the operator”.</p></header>
+      <header><h1>Welcome to Altitude</h1><p className="onboarding-lead">Altitude runs coding agents on your projects {inContainer ? "inside this Linux container" : "on this computer"}. Agents and screens use your name wherever they would otherwise say “the operator”.</p></header>
       <NameForm onSaved={next} actions={(submit) => nav(<span key="skip">{skip}</span>, <span key="submit">{submit}</span>)} />
     </> : step === "agents" ? <>
-      <header><h1>What the agents need</h1><p className="onboarding-lead">Agents use the command-line tools on this computer. Run any missing command in a terminal there, then check again. Altitude never asks for a password or token in the browser.</p></header>
+      <header><h1>What the agents need</h1><p className="onboarding-lead">{inContainer ? "These checks run inside the container. Open its shell from a host terminal, run the commands below there, then check again. Host tools and sign-ins do not count." : "Agents use the command-line tools on this computer. Run any missing command in a terminal there, then check again."} Altitude never asks for a password or token in the browser.</p></header>
       <PrerequisiteList actions={(check, ready) => nav(<span key="check">{check}</span>,
         <button key="next" type="button" className={ready ? "btn btn-primary" : "btn"} onClick={next}>{ready ? "Continue" : "Continue anyway"}</button>)} />
     </> : step === "incidents" ? <>
@@ -256,7 +259,7 @@ export default function Onboarding({ projects }: { projects: ReactNode }) {
       <VoiceStep onDone={next} actions={(controls, settled) => nav(settled ? null : <span key="skip">{skip}</span>, <span key="controls">{controls}</span>,
         settled ? <button key="next" type="button" className="btn btn-primary" onClick={next}>Continue</button> : null)} />
     </> : <>
-      <header><h1>Add your projects</h1><p className="onboarding-lead">A project is a folder on this computer, usually a Git checkout. Choose the folder that holds your projects; Altitude lists the folders directly inside it and nothing deeper.</p></header>
+      <header><h1>Add your projects</h1><p className="onboarding-lead">{inContainer ? "Clone or import your repositories into /home/altitude/Projects from the container shell. These folders live in a persistent volume; host folders are not shared." : "A project is a folder on this computer, usually a Git checkout. Choose the folder that holds your projects; Altitude lists the folders directly inside it and nothing deeper."}</p></header>
       {projects}
       {nav()}
     </>}

@@ -4,7 +4,7 @@ import shutil
 from service_support import configure, serve
 from tests.support import REPO, add_worktree, git, make_repo
 from tests.fakes import FakeL2
-from altitude import config, engines, server, state as S, tasks as T
+from altitude import config, engines, l3, server, state as S, tasks as T
 
 
 QUESTION = "May I implement this conversation layout?"
@@ -42,10 +42,10 @@ def main():
               "images": [{"title": "Phone conversation", "path": "design/wireframes/captures/phone.png"},
                          {"title": "Desktop conversation", "path": "design/wireframes/desktop.png"}]}
 
-    def present():
+    def present(title=design["title"]):
         T.block("atlas", slug, QUESTION, actor="l2", expected_attempt=1,
                 updates={"waiting_on": "burak"}, recommendation="Use the captured conversation layout.",
-                recommendation_label="Use this design", design=design)
+                recommendation_label="Use this design", design={**design, "title": title})
 
     def later_updates():
         for index in range(20):
@@ -58,6 +58,12 @@ def main():
 
     class Handler(server.Handler):
         def do_POST(self):
+            if self.path == "/fixture/project-preview":
+                saved = S.load_task("atlas", slug)
+                question = T.question_view("atlas", saved, saved["questions"][-1])
+                url = f"http://{self.headers['Host']}{question['design_url']}"
+                l3.chat_log("atlas", "assistant", f"[Review the layout]({url})", trigger="chat")
+                return self._json({"ok": True})
             if self.path == "/fixture/checkpoint":
                 question = S.load_task("atlas", slug)["questions"][-1]
                 response = question["response"]
@@ -108,6 +114,17 @@ def main():
                 T.resume("atlas", slug)
                 proposal.write_text("The revised proposal keeps replies together and moves the question below the explanation.")
                 present()
+                return self._json({"ok": True})
+            if self.path == "/fixture/proposal-v5":
+                T.resume("atlas", slug)
+                proposal.write_text("Proposal v5 uses tabs for settings, model choice and menus.")
+                T.block("atlas", slug, "Approve the tabbed design (v5)?", actor="l2", expected_attempt=1,
+                        updates={"waiting_on": "burak"}, recommendation="Build the v5 tabbed proposal.",
+                        recommendation_label="Build v5", design={**design, "title": "Proposal v5: settings, model choice and menus"})
+                return self._json({"ok": True})
+            if self.path == "/fixture/long-title":
+                T.resume("atlas", slug)
+                present("Settings" * 20)
                 return self._json({"ok": True})
             if self.path == "/fixture/damage-snapshot":
                 question = S.load_task("atlas", slug)["questions"][-1]

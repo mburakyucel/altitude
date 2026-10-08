@@ -2,6 +2,8 @@ import { useMonitor, useOverview } from "../data/api";
 import type { EngineReadout, MonitorSeat, RoutingRow, Session } from "../data/api";
 import { TokenUsage } from "../components/TokenUsage";
 import { RestartDetails } from "../shell/RestartBanner";
+import { NewTasksButton } from "../components/Models";
+import { useViewport } from "../shell/breakpoints";
 import { age, agoText, exactTime, modelName, older, RESERVE_PERCENT, SESSION_STALE_MS, when } from "../data/observed";
 
 /**
@@ -12,7 +14,7 @@ import { age, agoText, exactTime, modelName, older, RESERVE_PERCENT, SESSION_STA
  *
  * `/api/monitor` sends one seat row per configured engine, in the seam's order and under the seam's
  * own label, so the page ties no reading to an engine key and spells no provider: a seat reports
- * either the two windows a statusline snapshot names or windows that name their own length, and the
+ * either a five-hour and a seven-day window or windows that name their own length, and the
  * card renders whichever it is given.
  *
  * A seat also lists each model its routing can launch with that model's own evidence: a
@@ -21,8 +23,8 @@ import { age, agoText, exactTime, modelName, older, RESERVE_PERCENT, SESSION_STA
  *
  * Age is the point of the page. A figure with no data at all says "No reading" and what produces one;
  * a figure whose snapshot has aged past what the router itself trusts is stale: shown, dimmed,
- * labelled. `/api/monitor` session rows are passthrough, so the fields only some kinds carry (cwd,
- * edits, agent, model, rotate_next) arrive typed `unknown` and are narrowed here rather than in api.ts.
+ * labelled. `/api/monitor` lists only the sessions Altitude runs (L3 and L2). Its rows are passthrough, so
+ * the fields only some kinds carry (edits, agent, model, rotate_next) arrive typed `unknown` and are narrowed here rather than in api.ts.
  */
 
 function str(value: unknown): string {
@@ -255,21 +257,15 @@ function RoutingCard({ rows, label }: { rows: RoutingRow[]; label: (engine: unkn
   );
 }
 
-/** "L2", "L3", "Statusline": the kind the monitor reports, in sentence case. */
-function kindLabel(kind: string): string {
-  return /^l[23]$/.test(kind) ? kind.toUpperCase() : capitalize(kind);
-}
-
 function SessionRow({ session, label, engines }: { session: Session; label: (engine: unknown) => string; engines: EngineReadout[] }) {
   const project = str(session.project);
   const slug = str(session.slug);
-  const cwd = str(session["cwd"]);
   const model = str(session["model"]);
   const context = num(session.context_percent);
   const agent = dict(session["agent"]);
   // A worker that is running should report every few minutes; anything else is as old as it says.
   const stale = str(session.state) === "running" && older(session.at, SESSION_STALE_MS);
-  const title = project ? `${project}${slug ? ` / ${slug}` : ""}` : cwd;
+  const title = slug ? `${project} / ${slug}` : project;
 
   const meta: string[] = [];
   if (session.engine) meta.push(label(session.engine));
@@ -285,7 +281,7 @@ function SessionRow({ session, label, engines }: { session: Session; label: (eng
   return (
     <li className="card monitor-card monitor-session" data-stale={stale || undefined}>
       <div className="monitor-row">
-        <span className="chip">{kindLabel(session.kind)}</span>
+        <span className="chip">{session.kind.toUpperCase()}</span>
         <b className="monitor-session-title" title={title}>
           {title}
         </b>
@@ -323,10 +319,12 @@ export default function Monitor() {
   const engines = overview.data?.engines ?? [];
   const labels = new Map(engines.map((row) => [row.engine, row.label]));
   const label = (engine: unknown) => labels.get(str(engine)) ?? str(engine);
+  const { phone } = useViewport();
 
   return (
     <div className="page">
       <h1 className="text-page-title font-semibold">Monitor</h1>
+      {phone ? <NewTasksButton overview={overview.data} wide /> : null}
       <section className="monitor-section" aria-labelledby="monitor-update">
         <h2 id="monitor-update" className="monitor-head">Altitude update</h2>
         {overview.isPending ? <p role="status">Loading update status…</p> : overview.isError ?

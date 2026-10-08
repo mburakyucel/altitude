@@ -3,13 +3,16 @@ import type { Dispatch, ReactNode, RefObject, SetStateAction } from "react";
 import { Link, NavLink, useLocation, useMatch, useNavigate, useParams } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { ApiError, imageSendRefused, removeL2Message, sendL2Message, taskAction, useOverview, useTask } from "../data/api";
+import { ApiError, imageSendRefused, removeL2Message, sendL2Message, taskAction, useOverview, useTask, useSendNow } from "../data/api";
+import { SendNow } from "../components/SendNow";
 import type { Decision, L2MessageInput, Overview, TaskMessage, TaskView } from "../data/api";
 import { InlineProse, ProseScope } from "../components/Prose";
 import { ProseTerminal } from "../components/CodeBlock";
 import { requestCommand } from "../data/terminalCommand";
-import { agoText, when } from "../data/observed";
+import { agoText, modelName, when } from "../data/observed";
 import { questionPath, turnLabel } from "../data/decisions";
+import { taskExplanation } from "../data/taskStatus";
+import { holdText } from "../components/TaskCard";
 import { Bubble, Coordination, DayDivider, Reply, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
 import { TaskActivity } from "../components/TaskActivity";
@@ -20,7 +23,7 @@ import type { ImageSubmission } from "../components/ImageDraft";
 import { MessageImages, PendingImages } from "../components/MessageImages";
 import type { ImagePreview } from "../components/MessageImages";
 import { Question, QuestionSet, ReviewDecision } from "../components/DecisionCard";
-import { TokenUsage } from "../components/TokenUsage";
+import { TaskContext, TokenUsage } from "../components/TokenUsage";
 import { ReviewFeedback, ReviewMenu, ReviewRow, useTaskReview } from "../components/TaskReview";
 import type { ReviewControls } from "../components/TaskReview";
 import { useTaskBack } from "../components/useTaskBack";
@@ -71,13 +74,16 @@ interface Facts {
   dot: "running" | "waiting" | "danger" | "idle";
   /** Compact state, engine/model and PR with its checks state; full reasons are disclosed. */
   chips: Chip[];
-  /** Task details: attempt, when it started or finished, context used. */
+  /** What the task requested, launched with and what its engine reported (SPEC.md §3.10). */
+  selection: ModelFacts;
+  /** Task details: attempt and when it started or finished. */
   sub: string;
   /** What a queued task waits for; shown where the live panel would be. */
   waiting: string | null;
-  /** A block that is a fault: the one-sentence reason, and L3 has been told. */
-  fault: string | null;
+  /** The known wait, with raw technical evidence confined to details. */
+  explanation: string | null;
   blockReason: string;
+  queueReason: string;
   holdReason: string;
   engineLabel: string;
   finished: boolean;
@@ -92,11 +98,36 @@ interface Facts {
   repository?: string | null;
 }
 
-function faultSummary(text: string): string {
-  const first = text.trim().split(/(?<=[.!?])\s+/)[0] ?? "";
-  // The complete fault remains in Task details; its permanent notice leaves room for messages.
-  if (first.length > 100) return `${first.slice(0, 100).replace(/\s+\S*$/, "")}…`;
-  return /[.!?]$/.test(first) ? first : `${first}.`;
+const effortName = (value: string) => value === "xhigh" ? "Extra High" : value === "native" ? "engine default" : sentence(value);
+
+interface ModelFacts { chip: string; rows: [string, string][]; note: string }
+
+/**
+ * The chip says only what is known: "Requested · Opus on Claude · Max" before the engine reports, then what
+ * it reported, with "(requested Max)" when the two differ. Details keep the requested, launch and reported
+ * values and routing's recorded reason.
+ */
+function modelFacts(task: TaskView, engineLabel: string): ModelFacts {
+  const launchModel = str(task["launch_model"]) || str(task["model"]);
+  const launchEffort = str(task["launch_effort"]);
+  const reportedEffort = str(task["engine_reasoning_effort"]);
+  const engineModel = str(task["engine_model"]);
+  const reportedModel = engineModel && engineModel !== launchModel ? engineModel : "";
+  const reported = Boolean(reportedModel || reportedEffort);
+  const model = reportedModel || launchModel;
+  const name = [model ? modelName(model) : "", engineLabel].filter(Boolean).join(" on ");
+  const effort = reportedEffort ? effortName(reportedEffort) + (launchEffort && launchEffort !== reportedEffort ? ` (requested ${effortName(launchEffort)})` : "")
+    : launchEffort ? `${effortName(launchEffort)}${reported ? " requested" : ""}` : "";
+  const chip = !name ? "" : [reported || !(launchModel || launchEffort) ? "" : "Requested", name, effort].filter(Boolean).join(" · ");
+  const asked = [str(task["model"]), str(task["effort"]) ? effortName(str(task["effort"])) : ""].filter(Boolean).join(" · ");
+  const rows: [string, string][] = !name ? [] : [
+    ["Requested", asked ? `${asked} · set for this task` : "Project choice or defaults"],
+    ["Launched", [launchModel || "engine default model", launchEffort ? effortName(launchEffort) : "engine default effort"].join(" · ")],
+    ["Engine reports", [engineModel && reportedModel ? engineModel : "model not reported", reportedEffort ? effortName(reportedEffort) : "effort not reported"].join(" · ")],
+    ...(str(task["routing"]) ? [["Routing", sentence(str(task["routing"]))] as [string, string]] : []),
+  ];
+  const differs = Boolean(reportedEffort && launchEffort && reportedEffort !== launchEffort);
+  return { chip, rows, note: `${differs ? "The engine reported a different level. " : ""}Messages and resumes keep this model and effort; to redo the work on another one, ask L3.` };
 }
 
 export function taskFacts(task: TaskView, overview: Overview | undefined, project: string, repository?: string | null): Facts {
@@ -117,8 +148,7 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
 
   const engineId = str(task["l2_engine"]) || str(task["engine"]);
   const engineLabel = overview?.engines.find((e) => e.engine === engineId)?.label ?? engineId;
-  const model = str(task["engine_model"]) || str(task["model"]);
-  const engineChip = [model ? sentence(model) : "", engineLabel].filter(Boolean).join(" on ");
+  const selection = modelFacts(task, engineLabel);
 
   const prs = arr(task["prs"]).map((n) => num(n)).filter((n): n is number => n != null);
   const number = prs[prs.length - 1];
@@ -139,42 +169,39 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
   const hold = str(task["hold_merge"]);
 
   const label = task.steering?.state === "stopped" ? "Stopped by you" : task.steering?.state === "stopping" ? "Stopping…"
-    : faultKind && state === "blocked" ? "Paused · fault" : turn ?? (replying ? "L2 replying to you"
+    : faultKind && state === "blocked" ? "Work interrupted" : turn ?? (replying ? "L2 replying to you"
     : task.steering?.state === "resuming" ? "Waiting to resume" : planned ? "Planned" : held ? "Queued" : state === "blocked"
-    ? waitsOnL3 ? "Waits for L3" : "Paused" : state === "running" ? "L2 working" : sentence(state || "unknown"));
+    ? waitsOnL3 ? "Waiting for coordinator" : "Paused" : state === "running" ? "L2 working" : sentence(state || "unknown"));
   const dot: Facts["dot"] =
     faultKind || state === "rejected" ? "danger" : state === "running" ? "running" : state === "blocked" && !held ? "waiting" : "idle";
 
   const attempt = num(task["attempt"]) ?? 0;
-  const context = num(rec(task.live)["context_percent"]);
   const sub = [
     attempt > 0 ? `attempt ${attempt}` : "",
     state === "running" && agoText(task["dispatched"]) ? `started ${agoText(task["dispatched"])}` : "",
     finished && agoText(task["updated"]) ? `${state} ${agoText(task["updated"])}` : "",
-    state === "running" && context != null ? `${Math.round(context)}% of its context used` : "",
   ]
     .filter(Boolean)
     .join(" · ");
 
-  const why = overview?.wip.waiting.find((w) => w.project === project && w.slug === task.slug)?.why;
-  const waiting =
-    state === "queued"
-      ? `Waits for ${planned?.reason ?? (why === "resume" ? "resume" : "dispatch")}`
-      : held
-        ? `Waits for resume${reason ? ` · ${reason}` : ""}`
-        : null;
+  const wait = overview?.wip.waiting.find((w) => w.project === project && w.slug === task.slug);
+  const explanation = taskExplanation(task, turnRows.find((row) => row.kind === "review"));
+  const waiting = state === "queued" || held
+    ? planned ? explanation : sentence(holdText(wait?.hold, wait?.why ?? (held ? "resume" : "dispatch"))) : null;
 
   return {
     state,
     label,
     dot,
-    chips: [{ text: label }, ...(engineChip ? [{ text: engineChip }] : []), ...(prChip ? [prChip] : []), ...(hold ? [{ text: "Merge held", tone: "held" as const }] : [])],
+    chips: [{ text: label }, ...(selection.chip ? [{ text: selection.chip }] : []), ...(prChip ? [prChip] : []), ...(hold ? [{ text: "Merge held", tone: "held" as const }] : [])],
     sub,
     waiting,
-    fault: faultKind ? `${faultSummary(reason || `A ${faultKind} fault blocked the task`)} L3 has been told.` : null,
+    explanation: !faultKind && (state === "queued" || held) ? waiting : explanation,
     blockReason: state === "blocked" ? reason : "",
+    queueReason: state === "queued" || held ? wait?.hold ?? "" : "",
     holdReason: hold,
     engineLabel,
+    selection,
     finished,
     canMessage: state === "running" || state === "blocked" || task["can_continue"] === true || (state === "queued" && (!task["dispatched"] || Boolean(task.question))),
     canStop: state === "running",
@@ -196,6 +223,15 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
 // ---- the conversation (SPEC.md §3.3 bubbles and prose, §3.6 composer, §3.10 states) ------------
 
 interface PendingMessage { id: string; text: string; images?: ImagePreview[] }
+
+/** An L2 reply's validation captures open in their own tab, leaving the conversation and draft in place. */
+function CaptureLink({ project, slug, message }: { project: string; slug: string; message: TaskMessage }) {
+  const captures = message.captures ?? [];
+  if (!captures.length) return null;
+  return <a className="text-meta prose-link capture-link" href={`/projects/${project}/tasks/${slug}/captures/${message.id}`} target="_blank" rel="noopener noreferrer">
+    {captures.length > 1 ? `Watch ${captures.length} captures` : `Watch capture · ${captures[0]?.title}`}
+  </a>;
+}
 
 function TaskConversation({ project, task, facts, readOnly, checking, refresh, draft, setDraft, pending, setPending, steering, active, denied, setDenied, questionVisit, selection, onEscapeOwnership, reviewControls }: {
   project: string; task: TaskView; facts: Facts; readOnly: boolean; checking: boolean; refresh: () => void;
@@ -253,6 +289,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["task", project, task.slug] }),
   });
+  const sendNow = useSendNow(project, task.slug);
   const anchorKey = `${questionVisit}:${questionId ?? ""}:${revision ?? ""}`;
   const updateQuestionVisibility = useCallback((node: HTMLDivElement) => {
     const anchor = current && anchors.current.get(`${current.id}:${current.revision}`);
@@ -306,6 +343,12 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     observer.observe(node);
     return () => observer.disconnect();
   }, [active, updateQuestionVisibility]);
+  useLayoutEffect(() => {
+    // A removed preview can clamp scrollTop before a queued scroll event sees its
+    // replacement. Restore following during the commit, before that event can pause it.
+    const node = scroller.current;
+    if (active && following.current && node) node.scrollTop = node.scrollHeight;
+  });
   const prepareSend = () => {
     const currentNode = current && anchors.current.get(`${current.id}:${current.revision}`);
     const bounds = scroller.current?.getBoundingClientRect();
@@ -387,7 +430,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         });
       }}>
         {!withdrawn ? <p className="text-meta text-muted">{group.questions.some((q) => q.asked_by === "l3") ? "L3 brought these questions to the L2" : "L2"}</p> : null}
-        <QuestionSet key={group.id} decisions={group.questions} group={group} refreshKey={accessRefresh} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
+        <QuestionSet key={group.id} decisions={group.questions} group={group} target={target} refreshKey={accessRefresh} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
       </div>);
     } else if (!question && message.review_id) {
       const review = task.review?.history.find((entry) => entry.id === message.review_id);
@@ -400,14 +443,20 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     } else if (!question) {
       rows.push(!REPLIERS.has(message.role) ? <Bubble key={key} text={message.delivery?.state === "removed" ? "Message removed" : message.text} at={message.at}
         images={message.delivery?.state !== "removed" ? <MessageImages project={project} images={message.images} /> : undefined}
-        receipt={message.delivery ? message.delivery.state === "removed" ? "Removed · not sent to the session" : message.delivery.state === "sending" ? "Sending to session · cannot remove" : message.delivery.state === "delivered" ? "Delivered to session" : message.delivery.state === "queued" ?
+        receipt={message.delivery ? message.delivery.send_now_pending ? "Sending now · waiting for the session" : message.delivery.state === "removed" ? "Removed · not sent to the session" : message.delivery.state === "sending" ? "Sending to session · cannot remove" : message.delivery.state === "delivered" ? "Delivered to session" : message.delivery.state === "queued" ?
           ["stopping", "stopped", "stop_unconfirmed"].includes(steering.state) ? "Queued · held until you continue" : task.state === "queued" && !task["dispatched"] ? "Queued · waiting for the L2 to start" : "Queued · waiting for a checkpoint" : "Delivery unconfirmed · cannot remove" : undefined}>
-        {message.delivery?.removable ? <button type="button" className="link" disabled={readOnly || checking || denied || removal.isPending}
+        {message.delivery?.removable || message.delivery?.send_now_pending || (sendNow.isError && sendNow.variables === message.id) || (removal.isError && removal.variables === message.id) ? <div className="queued-actions">
+        <SendNow visible={message.delivery?.state === "queued" && Boolean(message.delivery.removable || message.delivery.send_now_pending)} task
+          pending={Boolean(message.delivery?.send_now_pending || (sendNow.isPending && sendNow.variables === message.id))}
+          disabled={readOnly || checking || denied || removal.isPending || sendNow.isPending || !message.delivery?.send_now}
+          reason={message.delivery?.send_now_reason} error={sendNow.variables === message.id ? sendNow.error : null} onClick={() => sendNow.mutate(message.id)} />
+        {message.delivery?.removable ? <button type="button" className="link" disabled={readOnly || checking || denied || removal.isPending || sendNow.isPending || message.delivery.send_now_pending}
           onClick={() => removal.mutate(message.id)}>{removal.isPending && removal.variables === message.id ? "Removing…" : "Remove"}</button> : null}
         {removal.isError && removal.variables === message.id ? <span role="alert">{removal.error instanceof ApiError && [401, 403].includes(removal.error.status) ? "You do not have permission to remove this message." : removal.error instanceof ApiError && removal.error.status === 409 ? removal.error.message : "Removal unconfirmed. Check this message’s status before trying again."}</span> : null}
+        </div> : null}
       </Bubble> :
         message.role === "l3" ? <Coordination key={key} text={message.text} summary={message.summary} at={message.at} images={message.images?.length} onOpen={() => { following.current = false; }}><MessageImages project={project} images={message.images} /></Coordination>
-        : <Reply key={key} text={message.text} at={message.at} role={message.role}><MessageImages project={project} images={message.images} /></Reply>);
+        : <Reply key={key} text={message.text} at={message.at} role={message.role}><MessageImages project={project} images={message.images} /><CaptureLink project={project} slug={task.slug} message={message} /></Reply>);
     }
   });
   if (pending && !messages.some((message) => message.id === pending.id)) {
@@ -418,7 +467,6 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   }
   return (
     <section className="convo" aria-label="Task conversation">
-      {task.state === "queued" && task.planned_wait ? <p className="conversation-notice" role="status">{facts.waiting}</p> : null}
       {(readOnly || denied) ? <p className="conversation-notice" role="alert">
         {denied ? "You cannot send messages or answers here." : "Showing saved conversation. Refresh before replying or deciding."}{" "}
         <button className="link" onClick={restoreAccess}>Refresh</button>
@@ -448,7 +496,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
           }}>
             {turn.length || !(handedBack || group.questions.some((q) => q.response)) ? <>
               <p className="conversation-turn">{turn.length ? turnText : "L3 is answering"}</p>
-              <QuestionSet key={group.id} decisions={group.questions} group={group} refreshKey={accessRefresh} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
+              <QuestionSet key={group.id} decisions={group.questions} group={group} target={target} refreshKey={accessRefresh} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
             </> : <p className="text-meta text-muted" role="status">{task.state === "queued" ? "Sent · waiting for the L2 to start." : "Sent · the L2 has your reply."}</p>}
           </div> : (task.question?.status === "resolved" || task.question?.response) && !facts.finished ? <p className="text-meta text-muted" role="status">{task.state === "running" ? "Work resumed" : task.state === "queued" ? "Waiting for the L2 to start" : "Waiting to resume"}</p>
           : handedBack && !facts.finished && !facts.review ? <p className="text-meta text-muted" role="status">{task.state === "queued" ? "Sent · waiting for the L2 to start." : "Sent · the L2 has your reply."}</p> : null}
@@ -531,7 +579,8 @@ function ConfirmRow({ actions }: { actions: ReturnType<typeof useTaskActions> })
   if (!actions.confirm) return null;
   const question = "Reject this task?";
   return (
-    <div className="task-confirm" role="group" aria-label={question}>
+    <div className="task-confirm" role="group" aria-label={question}
+      onKeyDown={(event) => { if (event.key === "Escape" && !actions.pending) { event.stopPropagation(); actions.open(""); } }}>
       <p className="task-confirm-text">
         Reject this task? Its worker ends and the task is archived.
       </p>
@@ -545,12 +594,12 @@ function ConfirmRow({ actions }: { actions: ReturnType<typeof useTaskActions> })
         />
       )}
       <div className="task-confirm-actions">
-        <button type="button" className="btn btn-primary" disabled={actions.pending} onClick={actions.run}>
-          {actions.pending ? <span className="spinner" aria-hidden /> : null}
-          Reject
-        </button>
-        <button type="button" className="btn btn-ghost" disabled={actions.pending} onClick={() => actions.open("")}>
+        <button type="button" className="btn" autoFocus disabled={actions.pending} onClick={() => actions.open("")}>
           Cancel
+        </button>
+        <button type="button" className="btn btn-danger" disabled={actions.pending} onClick={actions.run}>
+          {actions.pending ? <span className="spinner" aria-hidden /> : null}
+          Reject task
         </button>
       </div>
       {actions.error ? (
@@ -646,7 +695,7 @@ function TaskPage({
   const base = `/projects/${project}/tasks/${task.slug}`;
   const title = task.title || task.slug;
   const detailsButton = <button type="button" className="icon-btn" aria-label="Task details" aria-haspopup="dialog" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(true)}>⋯</button>;
-  const faultNotice = facts.fault ? <p className="task-line task-fault text-danger" role="status">{facts.fault}</p> : null;
+  const statusNotice = facts.explanation ? <p className={`task-line task-explanation${task["fault"] ? " task-fault text-danger" : ""}`} role="status">{facts.explanation}</p> : null;
   const details = detailsOpen ? <Overlay label="Task details" side={phone ? "bottom" : "right"} onClose={closeDetails}>
     <div className="task-details">
       <div className="task-details-heading"><h2>Task details</h2><button type="button" className="icon-btn" aria-label="Close task details" onClick={closeDetails}>×</button></div>
@@ -659,8 +708,14 @@ function TaskPage({
         search.delete("question"); search.delete("revision"); search.set("review", id);
         void navigate(`${base}?${search}`, { replace: true, state: location.state });
       }} />
+      <TaskContext context={task.token_usage?.context} running={task.state === "running"} />
       <TokenUsage usage={task.token_usage} running={task.state === "running"} engines={overview.data?.engines} />
+      {facts.selection.rows.length ? <section aria-label="Model and effort"><h3>Model and effort</h3>
+        <dl className="task-model">{facts.selection.rows.map(([term, value]) => <div key={term}><dt>{term}</dt><dd>{value}</dd></div>)}</dl>
+        <p className="text-meta text-muted">{facts.selection.note}</p>
+      </section> : null}
       {facts.blockReason ? <section><h3>{facts.label}</h3><p>{facts.blockReason}</p></section> : null}
+      {facts.queueReason ? <section><h3>Start condition</h3><p>{facts.queueReason}</p></section> : null}
       {facts.holdReason ? <section><h3>Merge held</h3><p>{facts.holdReason}</p></section> : null}
       {decision ? <Link className="btn" to={questionPath(decision)} state={location.state} replace onClick={() => { setQuestionVisit((visit) => visit + 1); closeDetails(); }}>View question</Link> : null}
       {phone ? <>
@@ -729,7 +784,7 @@ function TaskPage({
         <span className="task-state-line" role="status"><span className="dot" data-state={facts.dot} aria-hidden /><span>{facts.label}</span>{facts.holdReason ? <span data-tone="held"> · Merge held</span> : null}</span>
       }>{control}</PhoneHeader>
       <div className="task-page" data-phone>
-        {faultNotice}
+        {statusNotice}
         <SteeringNotice steering={steering} />
         {!detailsOpen ? resumeError : null}
         {!detailsOpen && actions.error && actions.confirm ? <p className="task-line text-danger" role="alert">Could not {actions.confirm} the task. <button type="button" className="link" onClick={() => setDetailsOpen(true)}>Retry</button></p> : null}
@@ -777,7 +832,7 @@ function TaskPage({
         <SteeringNotice steering={steering} />
         <ConfirmRow actions={actions} />
         {resumeError}
-        {faultNotice}
+        {statusNotice}
       </header>
       <div className="task-body">
         <div className="task-main">{conversation}</div>

@@ -251,6 +251,6 @@ class TestContinuationJourney(AltitudeCase):
         self.assertIn("PR #101", digest)
         self.assertIn("PR #102", digest)
         self.assertEqual(len(self.engine.calls), 3, "one launch and two resumes of the same provider conversation")
-        notes = dispatch.cleanup_after_done(self.project, archived)
+        notes = dispatch.cleanup_task(self.project, archived)
         self.assertTrue(any("removed merged worktree" in note for note in notes), notes)
         self.assertFalse(self.worktree.exists())

@@ -47,7 +47,8 @@ turn; unchanged/owned/corrected findings create no additional notifications. Ord
 
 `alt task status <slug>` and `alt task report <slug> --json` include `token_usage`: the daemon's
 persisted local token observation, independent of the report's agent-authored spend. It contains
-inclusive input/output and their observed total, optional cache/reasoning subsets, session rows with
+inclusive input/output and their processed total, distinct request counts, the current owner
+session's `context`, optional cache/reasoning subsets, session rows with
 engine/attempt/owner or delegated attribution, coverage notes, and checked/observed/finalized times.
 These commands do not rescan provider logs. Missing counters remain null or partial; archived tasks
 retain their final observation. See [token semantics](SESSION_LIFECYCLE.md#task-token-accounting).
@@ -86,10 +87,10 @@ An L3 process is read-only on the deployment checkout and Altitude home. Native 
 trusted shims; the CLI, broker and shims authorize their operations. Git log/diff/show include full patches
 and historical files, with external diff/text-conversion helpers disabled and output-file options refused.
 The altitude user journal is also readable. Runtime shims carry every `alt` invocation plus
-`gh pr` view/list/diff/checks, GitHub issue/run inspection, and altitude service status over that project's
+[read-only `gh` commands](#coordinator-github-reads) and altitude service status over that project's
 same-user altd Unix socket. The socket fixes the project independently of request data. The broker re-applies the
-L3 command door, accepts flat task identifiers and stdin rather than `--file`, and binds GitHub reads to the project's
-repository; source editing, Git writes, direct GitHub mutations, service control, direct command networking, and cross-project verbs are unavailable.
+L3 command door and accepts flat task identifiers and stdin rather than `--file`. Source editing, Git writes, direct GitHub mutations, service control,
+direct command networking, and cross-project task verbs are unavailable.
 
 Input bodies go on stdin with `-` (`task new … -`, `task message <slug> -`, `issue new … -`,
 `issue comment <number> -`, `--questions-file -`); the `alt` shim reads stdin only when an argument is `-`,
@@ -288,6 +289,45 @@ restores the compact line. Other FYIs and historical rows without selection rema
 grouping. This command changes no task state and creates no operator decision.
 The [L3 persona](../personas/l3.md) defines when and how the coordinator uses this mechanism.
 
+## Coordinator information messages
+
+Inside a registered project's coordinator, send deliberately written local diagnostic information:
+
+```sh
+alt project message peer 'The local probe failed before provider execution; review fixture-review.' --summary 'Local probe result' --request-id probe-1
+alt project message source 'The fix is merged; activation is still pending.' --summary 'Fix status' --request-id reply-1 --reply-to <exchange-id>
+```
+
+The coordinator socket fixes the sender. The ordinary CLI, task owners and HTTP clients cannot send
+these messages. `--request-id` is a stable identifier per sender/recipient pair (1–100 letters,
+digits, dots, underscores or hyphens); retry an interrupted acknowledgement with the same identifier
+and identical arguments.
+The acknowledgement supplies the exchange identifier for a reply. A reply must address the other
+participant of an incoming exchange. Both projects must remain registered to the same resolved
+checkouts; changed registration refuses reuse and leaves pending information unsupplied. These rows
+stay visible without expiration or a removal control; reattaching the same checkout permits supply.
+For diagnostic text beginning with a dash, put options before `--`, then the literal text:
+`alt project message peer --summary 'Flag refusal' --request-id probe-2 -- '-p flag rejected'`.
+
+Text is limited to 4 KiB and the summary to one plain line of 100 characters. Local incident IDs,
+task slugs, review IDs and public issue/PR URLs may cross. Files, attachments, private record/home
+paths, recognized credentials and recognizable conversation transcripts are refused. Diagnostic
+code excerpts are allowed. Unknown secrets and prose transcripts cannot be classified universally:
+the coordinator writes and checks the sanitized text. The recipient's configured provider processes
+it. No new access to another project's records is granted.
+
+Sent means accepted into the recipient's inbox. Delivery waits for its next ordinary coordinator
+turn; an idle project waits and no additional AI turn launches. Messages create no task, grant no
+authority, resume or steer no owner and change no task state. They appear as separate folded
+information rows in both chats; Show reveals text and the exchange reference, Hide folds it.
+Pending information has no Send now, Remove or approval control. `alt l3 search` finds supplied
+and sent information with peer attribution; it does not turn it into operator evidence.
+Delivery is at least once: a provider failure or daemon crash before receipt proof is saved can repeat information.
+Use the retained message identity when triaging and the same stable request identity for a repeated
+reply. Receipt failures show a separate warning and preserve the ordinary coordinator turn.
+Expanded links display their actual HTTP/HTTPS destination, including next to a Markdown label.
+The coordinator includes public URLs deliberately; clickable text does not certify a destination as public or trustworthy.
+
 ## Superseded PR closure
 
 ```text
@@ -319,6 +359,41 @@ A verified `CLOSED` state also appends one `pr-closed` event to each task whose 
 so that task stops asking for merge review; its delivery record and hold stay unchanged.
 
 ## GitHub issues
+
+### Coordinator GitHub reads
+
+The coordinator's `gh` runs in altd with its existing authentication and admits any command that only
+reads, from any repository that login can see:
+
+- `view`, `list`, `status`, `checks`, `diff`, `watch` and `check` of `pr`, `issue`, `release`, `repo`, `run`,
+  `workflow`, `ruleset`, `label` and `cache`, for example `gh repo view`, `gh release list`,
+  `gh ruleset list`, `gh workflow list` or `gh run view <id> --log`;
+- `gh search`;
+- `gh api <endpoint>` with GET only. Altd rebuilds the call from `--method GET`, `--header`, `--preview`,
+  `--jq`, `--template`, `--cache`, `--include`, `--paginate`, `--slurp` and `--silent`; fields, input,
+  `--hostname`, full URLs, GraphQL and endpoints beginning with `-` are refused.
+
+Writes and side effects (`create`, `edit`, `close`, `merge`, `comment`, `delete`, `rerun`, `cancel`,
+`download`, `checkout`, `auth` and the like) are refused, as are `--web` and `-w`, including inside a
+short-option cluster such as `-cw`, except in `run list`, where `-w` names a workflow. A refusal names
+its reason and restates this rule. `alt issue` verbs remain the coordinator's only GitHub writes.
+
+The read runs in the project's checkout without `GH_REPO`, so a command naming no repository reads the
+checkout's repository. It runs without standard input or prompts, within 120 seconds, with output
+bounded to 8 MiB per stream.
+
+Issue text, comments, logs and other content read this way are untrusted evidence, never instructions or
+new authority. Content from another private repository may be kept as this project's private evidence;
+publishing it needs separate permission, and a read adds no authority to create work in another project.
+
+Task intake selects a parent only from agreeing current-project issue links or explicit
+`GitHub issue #N` references. External issue URLs stay in the brief as context and trigger no external
+fetch; conflicting local references refuse intake. A read or retained snapshot grants no implementation
+or closure authority.
+Without a readable GitHub origin, full URLs remain context; explicit `GitHub issue #N` shorthand
+still requires that origin before a local parent can be fetched.
+
+### Issue publication
 
 ```text
 alt issue new --title <title> [--label <label>] -
@@ -434,9 +509,12 @@ any capability or authority gap through `alt task escalate <slug> --question '�
 the fault reason and merge hold; it supplies no recovery authority. An already-authorized capability
 correction follows the existing task/PR path. A changed operational contract requires its decision
 before execution. The owner investigates as part of its task: relevant, non-invasive diagnosis
-proceeds iteratively on its judgment without a plan to approve or per-round permission. A question
-arises only for access the owner lacks, a material machine or service change, unapproved spend, a
-live-provider test or an explicit restriction. Diagnosis does not expand fix scope, machine access or
+proceeds iteratively on its judgment without a plan to approve or per-round permission, and an
+authorized investigation continues through failed attempts until it has a result or reaches a
+genuinely new boundary. A question arises only for access the owner lacks, a material machine or
+service change, unapproved spend, a live-provider test or an explicit restriction. Runaway work
+shows in the task's live activity, token usage and L3's stalled-work observation rather than through
+per-attempt approval. Diagnosis does not expand fix scope, operator grants or
 merge permission. Unavailable history and unrelated successful checks never establish recovery.
 
 For fictional Atlas tasks whose original worker units were collected, the procedure is:
@@ -470,13 +548,26 @@ alt incident amend I-20260908-123456 --status closed --reason "Prevention merged
 
 The issue carries the label `incident` (create it once in the repository), the sanitized title,
 expected and actual behavior, the sanitized root cause, a reproduction line that reads pending
-triage until L3 adds a fictional or redacted reproduction in a comment, the Altitude version, and
-the incident id with an opaque project digest as its marker. Publication decodes the text, then
+triage until L3 adds a fictional or redacted reproduction in a comment, a System section, and
+the incident id with an opaque project digest as its marker. A system fault's actual behavior is its
+summary: the fault kind, the step that failed when the kind alone does not say it, and the last
+error line from the worker or Altitude, where an error inside a JSON event or printed mapping counts
+and raw stream chunks and event lines never do. An incident L3 files reports its own what-happened
+text. The System section lists what the record captured when the incident was filed: platform, OS
+name and version, kernel, architecture, machine model (the Mac model identifier, or the DMI vendor
+and product family on Linux), Altitude version (with the release commit) and deployment kind
+(source checkout, installed release or container image), and for an incident with a task the engine
+with its CLI version and the worker's confinement. Host and account names, home paths, addresses,
+serial numbers and hardware UUIDs are never collected. Publication decodes the text, then
 rewrites home paths, `.altitude` and incident file references, long hex ids and UUIDs, email
-addresses, credentials and private key blocks, task references, the names of other managed projects
-and the configured operator name to `[path]`, `[id]`, `[email]`, `[REDACTED]`, `[task]`, `[project]`
-and "the operator", then applies the same private-evidence and credential refusal as project-local
-issues plus the operator name. Evidence, task, project, message ids, logs, transcripts and the fault
+addresses, IP and MAC addresses other than loopback, credentials, private key blocks and values
+named as serial numbers, task references, the names of other managed projects, this machine's host
+and account names in any letter case (outside the container, whose names are the image's, and
+except a name that is a word of the OS name, such as a cloud image's `ubuntu`) and the configured
+operator name to `[path]`, `[id]`, `[email]`, `[address]`, `[REDACTED]`, `[task]`, `[project]`,
+`[host]`, `[user]` and "the operator", then applies the same private-evidence, network-address,
+serial-number and credential refusal as project-local issues plus the operator name and this
+machine's host and account names. Evidence, task, project, message ids, logs, transcripts and the fault
 ledger never leave the machine. System faults publish after their fault lock is released; the FYI
 and L3 message name the issue. One publisher or amender runs per project at a time, so a retry
 cannot race the daemon into a second issue.
@@ -487,7 +578,8 @@ project log gets an `incident-issue` event; nothing retries on its own. `alt inc
 retries: it reuses the repository's `incident` issue whose body carries this incident's marker
 before creating, so an interrupted create never produces two issues. A record whose issue is
 already a URL returns it without GitHub. `alt incident list`, project API incident rows and
-`STATE.md` show the link or the pending reason.
+`STATE.md` show the link or the pending reason; `alt incident list` and the API rows also carry the
+record's `summary` and `system`, so the coordinator sees them before publication.
 
 `--issue <url>` attaches an existing issue in the same repository when L3 judges the cause is the
 same: altd verifies it with a GitHub read, comments the occurrence there, and closes the issue this
@@ -620,14 +712,19 @@ Every other `alt` command that calls altd sends the machine key from the same st
 [pair each device](SETUP.md#pair-each-device) and [lockout recovery](OPERATIONS.md#devices-and-lockout-recovery).
 
 `alt tls-share` (operator only) reads the running service's address, port and certificate folder
-from the service itself, refuses a shell setting that disagrees, and checks over HTTPS that the
+from the record the service wrote when it started, and checks over HTTPS that the
 service proves its identity with that folder's CA. It then offers that public CA certificate to a
-phone for ten minutes at a plain-HTTP link on the service's non-loopback address, and prints the
+desktop or phone for ten minutes at a plain-HTTP link on the service's non-loopback address, and prints the
 link as a QR code (black on white, legible in any terminal) with the CA's name, scope, expiry and
-SHA-256 fingerprint that the phone checks before installing it. The link serves only a guided page,
+SHA-256 fingerprint to compare with the downloaded certificate before installing it. The link serves only a guided page,
 an iPhone configuration profile holding only the certificate, and the certificate file; it closes
-when the time is up or on Ctrl-C. Settings → Devices → **Add a phone** opens the same kind of link
-from the service. See [set up a phone](SETUP.md#set-up-a-phone).
+when the time is up or on Ctrl-C. Settings → Devices → **Set up a device** opens the same kind of link
+from the service, with **Open setup page** for the current device and a QR/link for another one.
+The page guides Linux browser imports, macOS Keychain trust, iPhone/iPad profiles and Android trust.
+Both sharing routes refuse loopback-only service addresses; on the hosting computer, use the public
+`ca.crt` path reported by `alt doctor` directly. Neither route installs trust or changes network
+exposure. Verify the exact HTTPS URL without a warning before pairing.
+See [certificate setup](SETUP.md#trust-https-on-each-device).
 
 ## Project lifecycle
 
@@ -696,7 +793,9 @@ alt machine set --unset-wip --reason 'Restore the machine default of 80'
 ```
 
 `machine show` reports the effective machine `wip`, its `override` (null when inherited), `default`
-(80), and `request.status` showing whether a change is still `pending` or has completed.
+(80), and `request.status` showing whether a change is still `pending` or has completed. It also
+reports `machine_runs`, how many [granted commands](#operator-grant) run at once on this computer: a
+quarter of its cores, at least one, not a setting.
 Project registration and settings expose no concurrency cap. Stored project `wip` overrides
 impose no limit.
 
@@ -787,8 +886,8 @@ alt project set example --l2-preference claude --reason 'Use Claude more for L2'
 alt project set example --unset-l2-preference --reason 'Back to Auto'
 ```
 
-The same choice is **Provider priority** (Auto, or Prefer each engine) in the project's Settings
-page. A preference moves every option on that engine above the other options, keeping their tier
+The same choice is **Tasks** under **Routing** (Auto, Prefer or Only each engine) in the project's
+Settings page. A preference moves every option on that engine above the other options, keeping their tier
 order: with the default tiers, Prefer Claude tries Claude on Opus before Codex, and Prefer Codex
 tries Codex before Claude. The preferred engine is chosen whenever it is eligible; the other engine remains
 its fallback under the usual installation, quota and rejection handling. It applies only to fresh
@@ -797,6 +896,40 @@ L3 keeps the tiers as written, explicit task and project pins still win, and run
 attempts keep their engine. With custom routing the preference reorders only the options that
 routing lists, and an engine it omits stays unused. Auto (unset) is the routing tiers alone: the
 Settings page says whether that is the default distribution or names the custom routing.
+
+**Only** keeps a role on one engine, the Settings page's Only <engine> routing:
+
+```sh
+alt project set example --l2-engine codex --reason 'Keep tasks on Codex'
+alt project set example --unset-l3-engine --reason 'Let routing choose L3'
+```
+
+### Model choices
+
+A model choice is tried ahead of a role's routing tiers: **New tasks** for every project's fresh L2
+attempts, and each project's **L3** choice for its L3 turns. These are the Models dialog's two tabs
+(the [UI spec](../design/wireframes/SPEC.md#361-models-dialog)). A choice is `[engine][:model][@effort]`;
+a Claude alias alone names Claude:
+
+```sh
+alt machine set --new-tasks fable@high --reason 'Fable for new work this week'
+alt machine set --new-tasks @max --reason 'Max effort on whichever engine Auto picks'
+alt machine set --unset-new-tasks --reason 'Back to Auto'
+alt project set example --l3-choice codex@low --reason 'Light coordination on Codex'
+alt project set example --unset-l3-choice --reason 'Back to Auto'
+```
+
+Precedence, highest first: a task's or turn's explicit engine, model or effort (`alt task new
+--engine/--model/--effort`, `alt chat --engine`); a project's Only engine, which keeps its engine and
+uses the choice's model and effort only when they are on it; the choice; then the routing tiers with
+each project's Auto defaults. A choice whose engine or model is unavailable (missing CLI, exhausted
+window or a recent rejection) leaves the tiers to pick meanwhile, and its controls say so. An effort
+alone applies to whichever engine the tiers pick that accepts it; an engine that does not keeps its
+default. New tasks applies to tasks that start from then on, including queued ones; started tasks and
+resumes keep their model and effort. L3 uses its choice from the next turn. Reviewer selection and
+explicit engine handoff ignore choices. Routing explanations read "chosen for new tasks" or "chosen
+for L3". New tasks is a machine setting, so only the operator sets it; the L3 choice is a project
+setting.
 
 The daemon collects account quota every five minutes without an interactive session. The native
 headless usage reader requires CLI 2.1.277+ with a subscription login and structured live account
@@ -825,8 +958,8 @@ the two launchers can use different default models. Each alternative is tried at
 eligible, the explanation identifies installation, authentication, reset or configuration actions.
 
 Preferences are distinct from explicit pins. `alt task new --engine claude --model opus …` pins
-one task; project `--l2-engine`/`--l3-engine` pins, the L3 engine choice in the composer or Settings and
-`alt chat --engine …` take precedence over Auto and never silently fall back. An explicit model pin
+one task; project `--l2-engine`/`--l3-engine` pins (Only) and `alt chat --engine …` take precedence
+over Auto and never silently fall back. An explicit model pin
 also remains strict. A project default model is a preference, not a pin: it names the model an
 Auto option on that engine uses and leaves the engine choice to the tiers. Changing preferences does not unpin them or change a running L2: resume keeps
 that attempt's engine, provider session and recorded launch model. A quota fallback is a recorded
@@ -840,15 +973,18 @@ replaying tool logs. See [session lifecycle](SESSION_LIFECYCLE.md#messages-resum
 alt task new --title <title> [--wait <reason> | --after <task>] [--effort <level>] [--paths a.py,b/] [--hold-merge <reason>] [--image <id>] -
 alt task release <slug> --reason <reason>
 alt task message <slug> <text>|- [--file <path>] [--image <id>] [--summary <line>]
-alt task reply [<slug>] <text>|- [--file <path>]
+alt task reply [<slug>] <text>|- [--file <path>] [--capture <run>]
 alt task block <slug> --reason <question> [--recommendation <approach> --label <action> --why <reason>] [--for-operator | --fault]
 alt task escalate <slug> --question <question> [--recommendation <approach> --label <action> --why <reason>]
 alt task resume|stop <slug> --reason <reason>
 alt task hold-merge <slug> --why <reason>  # the operator alone may use --off
-alt task machine <slug> --grant --approval <message-id> --question <id> --revision <n> --reason <why>
-alt task machine <slug> --revoke --reason <why>
+alt task grant <slug> --approval <message-id> --question <id> --revision <n> --reason <why>
+alt task grant <slug> --standing-policy <heading> --source project --approval <message-id> --question <id> --revision <n> --attempt <n> --reason <why>
+alt task grant <slug> --from-task <earlier-slug> --approval <message-id> --question <id> --revision <n> --attempt <n> [--source task|project] --reason <why>
+alt task grant <slug> --revoke --reason <why>
 alt task run <slug> <command>
 alt task terminal [<slug>] [--json]
+alt project terminal [--json]  # the coordinator, through its project socket
 alt task done <slug> --digest <text> [--findings-tracked <reference>]
 alt task reject <slug> --reason <reason>
 ```
@@ -857,7 +993,8 @@ alt task reject <slug> --reason <reason>
 `alt task reply - <<'EOF'` keeps amounts such as $1.20, quotes and line breaks literal; a single-quoted
 argument suffices for one line. A reply always goes to the current task; like the sibling verbs it may
 lead with that task's slug (`alt task reply "$ALTITUDE_TASK" -`), and any other extra argument is
-refused. Without `--questions-file`, a block's reason is its question: a different reason revises the
+refused. `--capture <run>` attaches that validation run's [captures](DEVELOPMENT.md#validation-captures)
+as fixed copies; the reply shows **Watch capture** under its text. Without `--questions-file`, a block's reason is its question: a different reason revises the
 open question, and the saved reason re-parks it unchanged.
 
 Repository changes use `alt land --message <message> [--merge]`. Project, incident, service, TLS,
@@ -894,6 +1031,8 @@ Preserve all previous deliveries, exact remaining scope and holds; chat acknowle
 completion. Old verifier or archive callbacks cannot finish its
 continuation. Done, archived and rejected tasks cannot be resumed or messaged through this path.
 Archived restoration remains a separate product decision because execution context may be removed.
+The maintenance tick removes a done or rejected task's worktree and merged branch under the
+[retention rule](OPERATIONS.md#worktree-and-source-export-retention).
 
 An L2 block that publishes or revises questions queues one coordinator notification with the open group,
 including operator-directed blocks. The operator flag places those decisions in Needs you without waiting for L3; it does not
@@ -1062,7 +1201,10 @@ in its reply/checkpoint, and withdraws only the redundant current question with 
 decisions still require their own answer; original authority, existing receipts and merge holds
 remain intact. A later reaffirmation already recorded needs no further reconciliation.
 
-`block` is the current L2's question to L3; its operator flag uses the operator audience. L3 can
+`block` is the current L2's question to L3; its operator flag uses the operator audience. Each block
+sets the audience of the members it publishes or rewords: re-parking an unchanged operator question
+keeps it the operator's, and a member reworded without the flag, such as a wait on L3 or an external
+event, leaves the operator's turn. The task waits on the operator only while an open member is theirs. L3 can
 `escalate` the actual dilemma and explicit recommendation. Both publish into the owning L2 human
 conversation with their source attribution. The model chooses a plain question, one recommended
 quick action, or two to three explicit options with one recommendation. A fault is operational and
@@ -1156,7 +1298,8 @@ operator chat `turn_id`, available from the project's recorded chat; an L3-autho
 operator source. The existing CLI door checks owning task and attempt, and the resolution checks
 source provenance and timing. An operator message sent after the question was first asked can settle
 its current revision, including after re-publication; the owner judges whether it still answers the
-question. A message tagged to another question refuses. L3 sources must name the exact revision. An L3 answer can settle an L3-audience question. For an
+question. A message tagged to another question refuses. L3 sources must name the exact revision. An L3 answer, including L3's resume reason, can settle an L3-audience question; a resume reason
+never answers an operator question or approves a merge. For an
 unnecessary operator escalation already settled within delegated L3 authority, the owner adds
 `--l3-authority` with the specific brief/rule/recorded-decision evidence and why it applies. This requires
 an authentic L3 task message bound to that exact question revision. The owner judges the substance;
@@ -1191,9 +1334,11 @@ check, with or without `--merge`. It waits before fetching, publishing or checki
 when waiting and when its turn starts, and returns seconds waited as `waited` (zero without a
 wait). This preserves shared candidate admission from I-20260923-062538 while CI runs the suite.
 Keep the command and owner session alive; ordinary contention needs no L3 landing-window request.
-Admission waits at most 3600 seconds, independently of `--wait`, which bounds the shared CI and
-owner-assessment wait (600 seconds by default). An admission timeout refuses without selecting a
-candidate or publishing changes; retry explicitly when ready.
+Admission waits at most 3600 seconds. The shared CI and owner-assessment wait that follows has the
+same 3600-second bound, so a merging candidate keeps the turn while its fresh required check is
+queued or running and one green check leads to one merge; `--wait` only shortens it. Landing prints
+the remaining bound when it first sees pending checks. An admission timeout refuses without selecting
+a candidate or publishing changes; retry explicitly when ready.
 
 Each admitted invocation rechecks ownership and holds, fetches current main, and merges it into
 the task branch when needed before pushing and checking the fresh candidate. This preserves
@@ -1342,6 +1487,13 @@ same worktree. Follow-up merge commits require manual reconciliation first becau
 could drop merge-resolution edits. Unseen remote changes also require incorporation before
 continuation. Failures after reconciliation or push can be retried with `alt land`.
 
+A task PR closed without merging stays closed. The next `alt land` from the same task opens a fresh
+PR from the same branch with its own title and description, replacing the closed PR's remote commits
+under the recorded-tip lease; the owner rebases or resets the branch first so it carries only
+the intended work. The closed PR stays in `prs` and in the delivery event, and the fresh PR becomes
+the current delivery with its own checks, review and hold release. A closed PR whose branch is
+not the task's is refused.
+
 Task `prs` and delivery events preserve earlier PR/head/merge evidence. The current `delivery`
 receipt is recorded before waiting for checks; an unpublished delivery cannot complete the task.
 The landing result names no main run: the merged commit's push-triggered run rarely exists at that
@@ -1425,7 +1577,7 @@ L2 selects the original proposal message; missing concrete proposal input preven
 Changes review captures the task branch merged onto current `origin/main`. When the branch conflicts
 with main, `request`, `run` and `assess` refuse with the conflicted files; reconcile the branch with
 main and commit before retrying.
-`run` is a fixed daemon operation, not a machine-access grant. It accepts repeated `--context-message`
+`run` is a fixed daemon operation, not an operator grant. It accepts repeated `--context-message`
 IDs to select L2 proposal/test evidence; original operator/L3 messages and later corrections remain
 included. Default capture includes all L2 messages. The captured context holds one copy of each input and
 fails explicitly beyond 256 KiB, naming its size; when authority, corrections and decisions alone exceed
@@ -1470,7 +1622,7 @@ acceptance, transfers ownership or access, or releases an approval question or m
 ### Task design previews
 
 Before requesting visual approval, the current L2 publishes the proposal's selected screenshots and
-explanation with its ordinary question. The resulting **View preview · vN** link in Needs you and the task
+explanation with its ordinary question. The resulting **View preview · saved title** link in Needs you and the task
 conversation opens a browser tab over Altitude's normal connection. Use a title that identifies
 whether the captures show a proposal or an implementation review. Phone and desktop readers can
 inspect the screenshots at full size and use **Back to question** for feedback or the existing quick
@@ -1515,8 +1667,9 @@ publish them before any repository commit. Follow the [capture guidance](../AGEN
 The response includes `design_url`, for example
 `/projects/example/tasks/chat-layout/design/<question-id>/1`. This is a path on the current Altitude
 connection, not a filesystem path or an external upload. Use the returned reference; the same
-**View preview · v1** entry is rendered in Needs you, beside the question in its conversation and
-in the open question's navigation when it is offscreen. Publication follows
+**View preview · Compact chat proposal** entry is rendered in Needs you and beside the question in
+its conversation. The offscreen question jump returns to that entry. The link and viewer heading use
+the captured title, not the question revision as a proposal version. Publication follows
 the ordinary L3-first audience rules unless explicitly directed to the operator.
 
 The question contains the captured text and titles, and the task retains the selected image bytes.
@@ -1526,7 +1679,8 @@ For an existing design question, use its same reason and add `--design-file`; it
 when replacement recommendation flags are omitted. An ordinary block with no design file parks the
 existing question and retains its saved preview.
 
-Old links remain bound to the old capture and identify a newer question when one exists. Missing or
+Old links retain their captured title and content, say **Earlier preview** when superseded, and
+identify a newer question when one exists. Missing or
 altered saved content shows **Design unavailable**, with Retry and Back to question; it never serves
 different content at that version. First acceptance refuses unavailable evidence. Feedback remains a
 normal message, and explicit acceptance uses the existing question/revision checks. Neither viewing,
@@ -1671,43 +1825,123 @@ Failed reconciliation follows L3's recovery path.
 Approval mode requires an active hold and runs through L3's daemon transport. Ordinary `--off` is
 operator-only; approval mode cannot combine with it or `--why`.
 
-### Machine access
+### Operator grant
 
-A worker's own shell covers builds, tests and installs inside its workspace. A change the workspace
-or sandbox cannot make, such as a service unit, a reload/restart or a user-level toolchain, runs
-under a machine grant:
+A worker's own shell covers builds, tests and installs inside its workspace. Anything else the
+operator asks a task to do and permits, such as changing a service unit, reloading or restarting it,
+installing a user-level toolchain, deploying, publishing a release or package, or writing to an external
+service, runs under one operator grant: the operator's yes to a stated purpose, after which the owner runs
+each command as the operator with `alt task run`. Disposable installation VMs, containers,
+browser and other candidate checks run through [validation runs](#validation-runs) instead,
+with no grant. The approved Mac fictional harness uses the existing Seatbelt runner without
+Chromium's inner sandbox; dual-protection checks use the Linux container. A grant never substitutes
+an outside-worker browser run or changes worker permissions. Host
+container deployment work uses the [standing container approval](../AGENTS.md#container-operations-on-this-machine):
 
 ```text
-alt task machine <slug> --grant --approval <message-id> --question <id> --revision <n> [--source task|project] --reason <why>
-alt task machine <slug> --revoke --reason <why>
+alt task grant <slug> --approval <message-id> --question <id> --revision <n> [--source task|project] --reason <why>
+alt task grant <slug> --standing-policy <heading> --source project --approval <message-id> --question <id> --revision <n> --attempt <n> --reason <why>
+alt task grant <slug> --from-task <earlier-slug> --approval <message-id> --question <id> --revision <n> --attempt <n> [--source task|project] --reason <why>
+alt task grant <slug> --revoke --reason <why>
 alt task run <slug> <command>
 ```
 
-The owner asks the operator a plain question naming the purpose and its verification and resolves
-the operator's answer with `alt task resolve`. L3 or the operator then records the grant citing that
-same message after judging that the answer is a yes; the owner cannot record its own. The rest is
-mechanical: the cited message must be the operator's own and must have answered the current
+A granted command runs with the operator's access, including their user services and their GitHub
+login. altd records every command but does not judge intent from shell text, so the grant trusts the
+owner to stay inside the approved purpose. No grant is asked or recorded for loosening confinement
+(a worker sandbox, engine permission settings, Altitude's guards or hooks, the operator's user-level
+engine settings), for other tasks' worktrees or other projects' data, for releasing Altitude's own
+gates (merge holds, review findings, proposal checkpoints keep their own answers), or for entering or
+printing credentials, which stays a step in the operator's [task terminal](#reading-the-task-terminal).
+Owners and L3 keep to this list, and the per-command record makes any departure visible.
+
+The grant reaches each engine's own guard through the engine seam. A Claude owner's session
+settings carry one allow rule, `Bash(alt task run <slug> *)`, which Claude Code resolves before its
+auto-mode classifier, so a granted command is not judged again; without a current grant altd refuses
+the call, so the rule adds nothing, and a grant or revocation takes effect in the running session.
+A Codex owner's sandbox is unchanged: its shell reaches altd as for any `alt` verb, and the granted
+command runs outside the sandbox, so the worker's own shell still never reaches the user service bus.
+Whether Claude Code admits a particular call is observed on use, not by the provider-free tests; when
+a guard still refuses, the owner puts that one command in a `run` block for the operator's terminal
+rather than rewording it. Rules Altitude does not control, such as a repository ruleset or billing, are
+reported as the operator's remaining step.
+
+Without applicable standing project approval, the owner asks the operator once per purpose,
+in a plain question naming the purpose and its bounds
+(what may run and what may not, limits, cleanup, verification and when the purpose ends), and
+resolves the operator's answer with `alt task resolve`. Whoever records the grant cites that same
+message after judging that the answer is a yes: the running owner for its own current attempt from a
+task-chat answer, as it applies a merge approval, or L3 or the operator from either chat (`--source
+project` for project chat, after which L3 resumes the owner). The rest is mechanical: the cited message must be the operator's own and must have answered the current
 revision of that operator question with no remainder. The grant binds to the task's current
-attempt; the owner, L3 or the operator may revoke it. Success stores `machine_access` (purpose,
-answer, approval, question/revision, attempt, actor, time) and a `machine-grant` event; refusals
-record `machine-grant-refused` and change nothing.
+attempt; the owner, L3 or the operator may revoke it. Success stores `grant` (id, purpose,
+answer, approval, question/revision, attempt, actor, time) and a `grant` event; refusals
+record `grant-refused` and change nothing. Each command's row names the grant id it ran under;
+recording the same answer again keeps that id. Revocation records `grant-revoke` and refuses every
+later command; altd asks the service manager to stop a command still running under the revoked grant
+on every poll until it has ended, including after a restart. Whatever the command already did stays
+done, and its row says the grant was revoked while it ran.
 
-The purpose grant covers relevant run/inspect/adjust iteration without approval for each command;
-one command at a time is an execution limit. Broader access or purpose still needs its own authority,
-and explicit one-run restrictions remain binding. Retain evidence and revoke the grant when done.
+The operator's yes to a purpose also covers another task of the same project that needs that
+identical purpose, for example when the task that asked has closed and a new task carries on its
+remaining work. Only L3 applies it, with `--from-task <earlier-slug>` naming the task whose question
+the operator answered and `--attempt` naming this task's current attempt. The same mechanical checks
+run against that earlier question and answer; the grant records the purpose as the operator approved
+it and `from_task`, binds this task's current attempt and is revoked as usual. L3 judges later
+corrections and whether the new work is the same purpose; any narrower or wider purpose is asked again.
 
-`alt task run` is the current owner's verb for its own task. altd records the run in `machine.jsonl`
+For standing approval, the owner copies the complete paragraph under **Container operations on this
+machine** in the project's committed `AGENTS.md` into an L3-directed `alt task block --reason`
+(without `--for-operator`). Task-specific steps, cleanup and verification belong in the preceding
+reply. L3 reads the original approval and later corrections, then records the grant with
+`--standing-policy 'Container operations on this machine'`, the paragraph's approval ID, the current
+question/revision and `--attempt`. No new operator answer is required. The owner cannot self-record
+a standing grant. L3 resumes the owner with the recorded purpose; the owner resolves that dependency
+from L3's message using the ordinary question flow.
+
+The grant reads only `refs/heads/main:AGENTS.md` in the registered project checkout, pinned to a
+commit. The heading must be unique and contain exactly one paragraph citing the backtick-quoted
+approval ID. That ID must name an original operator message in the same project's chat. The current
+open question must be owner-authored, directed to L3 and match the paragraph's raw Markdown apart
+from whitespace. Missing or ambiguous policy, another project's approval, a stale attempt/revision,
+and a wider or paraphrased purpose refuse. The record and event retain the policy file, heading,
+commit and full text alongside the original operator approval, exact question and L3 rationale.
+This checks the recorded purpose; it does not classify shell commands or infer consent from prose.
+
+One grant occupies the task's grant slot. Revoke it before switching to or from a different standing
+purpose; the standing grant grants the entire policy scope, while its `--reason` retains the task's
+plan and limits. L3 stops applying a revoked approval immediately, revokes active grants with
+`--revoke`, and assigns removal of the policy paragraph. Existing grants do not automatically reread
+policy or interpret later chat. Widening a standing policy is a security decision under the project's
+review rules; another project needs its own operator approval and committed policy.
+
+The purpose grant covers iteration until the purpose is done: run, inspect, correct and retest,
+including after a failed attempt, without approval for each command or attempt. One command at a time
+is an execution limit. The grant records the purpose as approved, no narrower; a one-run limit exists
+only when the operator's answer sets one, because a single run is itself the risk. A materially
+different access, service change, spend or live-provider test still needs its own answer. Retain
+evidence and revoke the grant when done.
+
+`alt task run` is the current owner's verb for its own task. altd accepts it only from a process in
+that owner's current worker job, as it does for `alt task validate`, so another agent holding the
+machine key cannot run commands under this task's grant. It records the run in `machine.jsonl`
 first, then runs the command as the operator in a transient user unit outside every worker sandbox,
 in the task worktree, through a login shell, with the user service manager reachable and the
 owner's task identity in the environment, so `alt` inside the command acts as that L2. One command
-runs at a time per task, for at most `MACHINE_COMMAND_TIMEOUT` (600 seconds); the unit itself
+runs at a time per task, for at most `MACHINE_COMMAND_TIMEOUT` (600 seconds), and at most a quarter
+of the computer's cores (at least one) run at once across the machine; `alt machine show` reports
+that number as `machine_runs`. A command that finds every place taken waits its turn in arrival
+order, for up to 30 minutes, and prints what it waits for on standard error: the commands holding
+the places, when their limits end and how many requests are ahead. Stopping or interrupting the CLI,
+or losing its connection, takes the command out of the line, or stops it and records why, and frees
+its place ([machine runs](DEVELOPMENT.md#validation-runner)). The unit itself
 writes its output to `<unit>.log` and its exit status to `<unit>.exit` in the task folder, so the
 result outlives altd. The CLI prints the output and a status line, then exits with the command's
 status (124 on timeout). Each run completes its `machine.jsonl` row, with the finish time the unit
 recorded, and adds a `machine-run` task event and a `machine-run` project event with the command,
 unit, exit status and purpose. When Altitude restarts during a command, including one the command
-restarts itself, the next altd follows every unfinished row's unit to its end and completes the
-row and events from that saved status; the CLI tags its call with a request id, reconnects with it
+restarts itself, the next altd follows every unfinished row's unit to its end, stopping it if its
+grant was revoked meanwhile, and completes the row and events from that saved status; the CLI tags its call with a request id, reconnects with it
 and prints the same command's result without running it again. A missing grant, a non-running
 task, a stale attempt, a grant from an earlier attempt or a revoked grant refuses with the reason,
 as does a request id from an earlier attempt. A unit stopped at the limit is reported as a timeout,
@@ -1719,6 +1953,36 @@ The door is altd's operator-trusted HTTP surface, which every worker on this sin
 can reach, the same surface that answers questions and posts messages. altd checks the task record,
 not which local process calls; the grant record and its per-command log are the boundary.
 
+### Validation runs
+
+```text
+alt task validate [--kvm] [--publish PORT] [--simulator [--capture]] -- <command>
+```
+
+The current owner runs one command against a throwaway clone of its task's committed `HEAD`, isolated
+from the operator's runtime: a disposable rootless container that altd starts from its own image on
+Linux, and a job under the validation sandbox profile on macOS. No grant is needed; the Settings switch
+**Validation runs** turns the verb off for the whole computer. On Linux, `--kvm` adds `/dev/kvm`, and
+`--publish` forwards a container port to a free loopback port and prints it; a macOS run refuses both
+and binds free loopback ports itself. On a Mac, `--simulator` adds a disposable iOS Simulator iPhone
+whose Safari the command reaches through the relay socket in `$SIMULATOR_INSPECTOR`, kept as a
+screenshot and removed when the run ends ([iOS Simulator runs](DEVELOPMENT.md#ios-simulator-runs)); `--capture`
+also records its screen as `validation/<n>.simulator.gif` ([validation captures](DEVELOPMENT.md#validation-captures)).
+The command starts in the clone, and whatever it writes to
+`$VALIDATION_RESULTS` (`/results` in the container) is copied to the task folder's `validation/<n>/`,
+and its output to `validation/<n>.log`. The run is recorded in `machine.jsonl` with purpose
+`validation`, its commit and tree, the host's OS and architecture, what isolated it, how it ended and
+whether cleanup finished, and adds the same `machine-run` events as `alt task run`. The CLI prints the
+output and a status line with these, and exits with the command's status (124 on timeout) only when
+the run also ended cleanly; a stop, failure or failed cleanup exits 1. altd accepts the request only
+from a process in the task's current worker job. A non-running task, a stale attempt, another caller,
+a turned-off switch, missing KVM, a host without an iOS Simulator for `--simulator` or low disk refuses with the
+reason. One run uses the machine at a time: a request that finds it busy waits its turn in arrival order, for up to
+70 minutes, and prints what it waits for (the task whose run holds the machine, when that run's limit ends and how
+many requests are ahead) on standard error. Stopping or interrupting the command, or losing its connection, takes
+the request out of the line or stops its run at once, recorded as `stopped`, and frees the machine. The
+[validation runner](DEVELOPMENT.md#validation-runner) describes the isolation, its limits and cleanup.
+
 ### Reading the task terminal
 
 `alt task terminal` prints the current owner's own task terminal output: a status line (`terminal running`,
@@ -1728,8 +1992,8 @@ only: nothing it does types into, resizes or closes the terminal. altd answers o
 current attempt, and only a connection made from a process in that owner's own worker job, so another
 task's agent cannot read it. The last ended terminal's output stays readable until a new terminal opens
 for the task, the task finishes or Altitude restarts; after a restart the command says no output is
-available. Project terminals have no reader. Output the owner reads becomes part of its session and
-provider record; save only what the task's evidence needs.
+available. Output the owner reads becomes part of its session and provider record; save only what the
+task's evidence needs.
 
 When the operator opens the owner's `run` command in the task terminal, altd tells the owner how it went
 with a Terminal notice at its next checkpoint, waking it when blocked: the command looks finished (the shell
@@ -1740,3 +2004,17 @@ carries no exit status, and a command waiting for input, such as `read`, can loo
 output with `alt task terminal` and verifies that the command ended and how. Ctrl+C before Enter drops the command without a notice. The
 notice is not a chat message and grants no approval, access or authority; a stopped or faulted task keeps
 it for its next resume.
+
+### Reading the project terminal
+
+`alt project terminal` prints the project terminal's output for the project's coordinator, in the same form and
+with the same limits as `alt task terminal`: a status line, then up to the last 256 KB as plain text, or the
+record with `--json`; it never types into, resizes or closes the terminal. altd answers it only on the project's
+coordinator socket, so the ordinary CLI, task owners and other projects' coordinators cannot read it. Output stays
+readable until a new project terminal opens, the project is removed or Altitude restarts.
+
+When the operator opens the coordinator's project-chat `run` command in the project terminal, altd follows it as
+it does an owner's and queues a Terminal notice as a coordinator turn once the command looks finished or the
+terminal ended first. The notice is the same prompt to check, naming `alt project terminal`; a command the
+operator types without a `run` block sends none. Output the coordinator reads becomes part of its session and
+provider record.

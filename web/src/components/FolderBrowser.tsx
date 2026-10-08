@@ -41,7 +41,9 @@ export default function FolderBrowser({
   const current = trail.at(-1);
   const listing = useFolders(current?.path);
   const view = listing.data;
-  const here = current?.name ?? "Home";
+  const inContainer = view?.location === "container";
+  const rootName = inContainer ? "Projects" : "Home";
+  const here = current?.name ?? rootName;
   const chooseDisabled = busy || !view || !view.readable || (!current && !allowHome);
   const cancel = onCancel ? <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={busy}>Cancel</button> : null;
 
@@ -55,11 +57,11 @@ export default function FolderBrowser({
           if (folder && folderName(folder)) onChoose(folder, folderName(folder));
         }}
       >
-        <label className="text-meta text-muted" htmlFor="folder-typed-path">A folder on the computer running Altitude</label>
+        <label className="text-meta text-muted" htmlFor="folder-typed-path">{inContainer ? "A folder in the container projects volume" : "A folder on the computer running Altitude"}</label>
         <input
           id="folder-typed-path"
           className="field"
-          placeholder="/srv/work/my-project"
+          placeholder={inContainer ? "/home/altitude/Projects/my-project" : "/srv/work/my-project"}
           value={typed}
           onChange={(event) => setTyped(event.target.value)}
           disabled={busy}
@@ -80,9 +82,9 @@ export default function FolderBrowser({
   return (
     <section className="folder-browser" aria-label="Choose a folder">
       <div className="folder-top">
-        <p className="text-meta text-muted">Folders on the computer running Altitude</p>
+        <p className="text-meta text-muted">{inContainer ? "Folders in the container projects volume" : "Folders on the computer running Altitude"}</p>
         <nav aria-label="Folder path" className="folder-crumbs">
-          {[{ name: "Home", path: "" }, ...trail].map((crumb, index) => index === trail.length ? (
+          {[{ name: rootName, path: "" }, ...trail].map((crumb, index) => index === trail.length ? (
             <span key={crumb.path} aria-current="location" className="folder-crumb-here">{crumb.name}</span>
           ) : (
             <span key={crumb.path} className="folder-crumb">

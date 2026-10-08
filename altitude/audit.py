@@ -212,7 +212,9 @@ def findings(text: str, evidence: dict) -> list[dict]:
 def run(project: str) -> None:
     # Optional private evidence must not generate recurring incidents when unreadable.
     try:
-        _run(project)
+        with config.provider_admission() as held:
+            if not held:
+                _run(project)
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return
 

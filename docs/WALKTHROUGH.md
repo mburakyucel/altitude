@@ -91,6 +91,12 @@ to submit them; even a single choice stays staged until you send it. You can als
 that decision against your message. A follow-up keeps the question open, and a saved answer does
 not by itself mean work has resumed or a merge hold has been released.
 
+**View preview** opens captured design evidence in a separate tab. **Back to question** takes you
+to that capture's question and revision; an earlier capture also offers **Open current question**.
+Either return replaces the preview in that tab's history, so the task's **Back** opens the
+owning project conversation. Browser Back/Forward follows the tab's remaining history.
+The original tab and its unsent draft remain available.
+
 <picture>
   <source media="(max-width: 600px)" srcset="images/decision-phone.png">
   <img src="images/decision-desktop.png" alt="Needs you: L3 brings the old-index retention decision to the operator, with seven-day and thirty-day choices." width="1440">

@@ -283,7 +283,7 @@ class TestAccess(AltitudeCase):
         phone, _ = self.paired()
         with mock.patch.object(terminal, "agent_connection", return_value=True):
             status, reply, _ = self.request("POST", "/api/devices/share", {}, device=phone)
-        self.assertEqual((status, reply), (403, {"error": "Add a phone requests from Altitude's own agents are refused."}))
+        self.assertEqual((status, reply), (403, {"error": "Set up a device requests from Altitude's own agents are refused."}))
         self.patch(terminal, "agent_connection", new=lambda *_: False)
         status, reply, _ = self.request("POST", "/api/devices/share", {}, device=phone)
         self.assertEqual(status, 409)

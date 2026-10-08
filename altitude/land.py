@@ -11,7 +11,7 @@ Explicit adoption pins an existing external PR's original history. Its task bran
 fast-forward updates to the original branch; merging preserves history and requests no branch deletion.
 
 Precondition: a working, authenticated `gh` before alt land commits anything. The branch's PR is looked up
-first — a merged PR can start another delivery; a closed PR is refused — so
+first — a merged or closed-unmerged PR starts another delivery on a fresh PR — so
 a missing or logged-out `gh` ends the run with the worktree untouched, nothing staged and nothing committed."""
 from __future__ import annotations
 import contextlib
@@ -37,6 +37,8 @@ PR_VIEW_SETTLE_SECONDS = 30
 PR_VIEW_POLL_SECONDS = 2
 LOCAL_TEST_TIMEOUT = 1800
 DEFAULT_TEST_CMD = "make test"
+#: Bounds both admission to the repository turn and, by default, the CI and owner-assessment wait inside it,
+#: so a merging candidate keeps its turn through its fresh required check; `--wait` only shortens the latter.
 LAND_WAIT_TIMEOUT = 3600
 
 
@@ -458,7 +460,8 @@ def _ensure_pr(root: Path, branch: str, base: str, message: str, pr_title: str |
     finally:
         if tmp:
             Path(tmp).unlink(missing_ok=True)
-    pr = _pr_view(root, branch)
+    # By its printed URL: the branch may also name an earlier closed or merged PR.
+    pr = _pr_view(root, ((c.stdout or "").strip().splitlines() or [branch])[-1])
     if pr is None:
         raise LandError("gh pr create succeeded but the PR cannot be read back")
     _note(f"PR #{pr.get('number')} created")
@@ -928,7 +931,7 @@ def _required_pr_check(root: Path, base_sha: str) -> bool:
 def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority, deadline):
     """Keep the repository turn while the owner assesses an integrated head and CI runs."""
     from . import reviews
-    notified = None
+    notified, announced = None, False
     actor = authority.get("actor") if authority is not None else os.environ.get("ALTITUDE_ACTOR")
     while True:
         stale = None
@@ -954,6 +957,10 @@ def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority, de
                   "Keep this command running in a background/tool session and collect its result. "
                   f"Cancel landing if code needs edits.\n{stale}")
         notified = notice
+        if checks == "pending" and not announced:
+            _note(f"PR checks pending on head {pair['head_sha']}; polling for up to "
+                  f"{max(0, round(deadline - time.monotonic()))}s")
+            announced = True
         if checks not in ("pending", "pass", "none-configured"):
             return checks
         if stale is None and checks != "pending":
@@ -989,7 +996,7 @@ def _repository_turn(function):
                     break
                 except BlockingIOError:
                     if not waiting:
-                        _note("waiting for another landing in this repository (up to 3600 seconds)")
+                        _note(f"waiting for another landing in this repository (up to {LAND_WAIT_TIMEOUT} seconds)")
                         waiting = True
                     if time.monotonic() >= started + LAND_WAIT_TIMEOUT:
                         raise LandError("landing wait timed out; no candidate selected — re-run alt land when ready")
@@ -1003,7 +1010,7 @@ def _repository_turn(function):
 
 @_repository_turn
 def land(message: str, *, project: str | None = None, pr_title: str | None = None, pr_body_file: str | None = None,
-         merge: bool = False, wait: int = 600, base: str = "main",
+         merge: bool = False, wait: int | None = None, base: str = "main",
          dry_run: bool = False, test_cmd: str = DEFAULT_TEST_CMD, cwd: Path | None = None,
          authority: dict | None = None, adopt_pr: int | None = None,
          expected_head: str | None = None, reason: str | None = None,
@@ -1116,13 +1123,14 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             recorded_tip = _fetch_remote_tip(root, branch)
         adoption, pr, publish_branch = None, None, branch
         _note(f"continuing after PR #{previous['number']} in the same task")
-    if pr is not None and pr.get("state") == "CLOSED":
-        raise LandError(f"PR #{pr.get('number')} for {branch!r} is closed without being merged — refusing to "
-                        f"commit or push onto a closed PR: reopen it (`gh pr reopen {pr.get('number')}`) "
-                        f"and re-run alt land, or start a new task branch")
+    closed = None
+    if pr is not None and pr.get("state") == "CLOSED":  # it stays closed; the next delivery is its own PR
+        closed = {"number": pr["number"], "head": pr.get("headRefOid"), "url": pr.get("url"), "state": "CLOSED"}
+        pr = None
+        _note(f"PR #{closed['number']} closed without merging — opening a fresh PR from {branch!r}")
     if changed or not pr or (task.get("delivery") or {}).get("head") != _need(_git(root, "rev-parse", "HEAD"), "head"):
         task = _record_delivery(project, slug, task, authority, branch=publish_branch,
-                                base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"))
+                                base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"), previous=closed)
     if changed:
         _need(_git(root, "commit", "-m", message), "git commit")
         commit = _need(_git(root, "rev-parse", "HEAD"), "git rev-parse HEAD")
@@ -1162,7 +1170,8 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                             head=pushed_head, base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"))
     hold_merge = task.get("hold_merge")
     pair = _snapshot_pair(root, publish_branch, number, base, pushed_head)
-    deadline = time.monotonic() + max(wait, 0)
+    wait = LAND_WAIT_TIMEOUT if wait is None else min(max(wait, 0), LAND_WAIT_TIMEOUT)
+    deadline = time.monotonic() + wait
     checks = _wait_for_candidate(root, project, slug, pair, merge=merge, wait=wait,
                                  authority=authority, deadline=deadline)
     _require_closing_issues(root, number, closes_issues)

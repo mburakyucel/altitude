@@ -201,8 +201,8 @@ class TestPrClose(AltitudeCase):
 
     def test_operator_cli_and_http_fix_actor_and_reject_payload_expansion(self):
         http = self.http()
-        env = {"ALTITUDE_ACTOR": "burak", "ALTITUDE_PROJECT": self.project, "ALTITUDE_HOST": "127.0.0.1",
-               "ALTITUDE_PORT": str(http.server_port), "ALTITUDE_TLS": "0"}
+        self.serving(http.server_port)
+        env = {"ALTITUDE_ACTOR": "burak", "ALTITUDE_PROJECT": self.project}
         result = self.alt("pr", "close", "42", env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), self.record("CLOSED") | {"outcome": "closed"})

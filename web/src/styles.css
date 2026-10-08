@@ -127,6 +127,17 @@
     background: var(--accent-hover);
     border-color: var(--accent-hover);
   }
+  /* The confirming action of a destructive dialog (SPEC.md §3.10): red, naming its object, after Cancel. */
+  .btn-danger {
+    background: var(--danger);
+    border-color: var(--danger);
+    color: var(--on-accent);
+    font-weight: 600;
+  }
+  .btn-outline-danger {
+    border-color: var(--danger);
+    color: var(--danger);
+  }
   .btn-ghost {
     border-color: transparent;
     background: transparent;
@@ -435,12 +446,21 @@
 .design-page { max-width: 64rem; gap: 28px; }
 .design-heading, .design-unavailable, .design-text { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
 .design-heading h1, .design-unavailable h1 { font-size: 22px; font-weight: 600; line-height: 1.3; }
+.design-heading h1, .question-preview { overflow-wrap: anywhere; }
 .design-text h2 { font-size: 16px; font-weight: 600; }
 .design-text { max-width: 44rem; }
 .design-screenshot { display: flex; flex-direction: column; gap: 12px; margin: 0; min-width: 0; }
 .design-screenshot figcaption { display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: 13px; }
 .design-screenshot figcaption a { flex-shrink: 0; }
 .design-screenshot img { display: block; width: 100%; max-height: 72vh; object-fit: contain; border: 1px solid var(--hairline); border-radius: 8px; }
+/* Validation captures play at their recorded size, narrowed to the page; the link sits under its reply. */
+.capture { display: flex; flex-direction: column; gap: 10px; margin: 0; min-width: 0; }
+.capture figcaption { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; font-size: 13px; }
+.capture figcaption b { overflow-wrap: anywhere; }
+.capture figcaption span { font-variant-numeric: tabular-nums; }
+.capture img { display: block; max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 0 0 1px var(--hairline); background: var(--card); }
+.capture-link { align-self: flex-start; overflow-wrap: anywhere; }
+.shell[data-phone] .capture-link { display: inline-flex; align-items: center; min-height: 44px; }
 .page-body {
   display: flex;
   min-width: 0;
@@ -830,7 +850,14 @@
 .menu.project-menu { width: min(320px, calc(100vw - 24px)); }
 .shell[data-phone] .project-menu .menu-item { min-height: 44px; }
 .queued-status { display: block; font-size: var(--text-meta); }
-.shell[data-phone] .queued-row > .link { min-width: 44px; min-height: 44px; }
+.shell[data-phone] .queued-actions > button { min-width: 44px; min-height: 44px; }
+.queued-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 12px; }
+.queued-actions:empty { display: none; }
+.msg-row:has(.queued-actions) > .msg-time { position: absolute; right: 0; bottom: -18px; }
+.send-now { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; background: transparent; color: var(--text-primary); font: inherit; cursor: pointer; white-space: nowrap; }
+.send-now:disabled { opacity: .55; cursor: default; }
+.send-now-help { flex-basis: 100%; font-size: var(--text-meta); }
+.queued-actions .send-now-help { order: 1; }
 .shell[data-phone] .message-delivery > .link { min-width: 44px; min-height: 44px; }
 /* Inline phone text controls keep their line and reach the 44px touch target (§6). */
 .shell[data-phone] .sys-line .link,
@@ -1483,6 +1510,8 @@
 
 /* Task consumption stays folded in task details on phone and desktop. */
 .token-usage { min-width: 0; font-size: var(--text-meta); }
+.task-context { margin: 0; font-size: var(--text-meta); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.task-context > span { margin-right: 6px; color: var(--text-muted); }
 .token-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; width: 100%; min-height: var(--target-min); padding: 4px 0; text-align: left; color: var(--text-secondary); }
 .token-summary-value { color: var(--text-primary); font-variant-numeric: tabular-nums; }
 .token-coverage, .token-freshness { color: var(--text-muted); }
@@ -1881,6 +1910,7 @@
 }
 .queued-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: flex-end;
   gap: 12px;
@@ -2082,22 +2112,6 @@
   padding: 0;
   border: 0;
 }
-.composer-pill-select {
-  height: 32px;
-  padding: 0 24px 0 12px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-pill);
-  background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' width='14' height='14'%3E%3Cpath d='M5 8l5 5 5-5' fill='none' stroke='%2364748b' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 6px center;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: var(--text-meta);
-  font-weight: 500;
-  appearance: none;
-  cursor: pointer;
-}
-.composer-pill-select:hover {
-  background-color: var(--hairline);
-}
 .composer-icon {
   display: inline-flex;
   width: 36px;
@@ -2209,7 +2223,6 @@
   width: 44px;
   height: 44px;
 }
-.shell[data-phone] .composer-pill,
 .shell[data-phone] .composer-hint[data-routine],
 .shell[data-phone] .composer-voice[data-frozen] .composer-wave,
 .shell[data-phone] .composer-voice[data-frozen] .composer-timer {
@@ -2393,6 +2406,29 @@
   padding: 12px 16px 16px;
   overflow-y: auto;
   overflow-x: hidden;
+  overflow-anchor: none;
+}
+.live-history-status {
+  /* Keep loading and its Retry visible without moving the reader's row anchor. */
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 0 12px;
+  color: var(--text-muted);
+  font-size: var(--text-meta);
+  text-align: center;
+}
+.live-record-control {
+  min-height: 44px;
+}
+.live-history-status > span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.live-history-status .btn {
+  border: 1px solid var(--border);
 }
 .live-line {
   margin: 0;
@@ -2490,3 +2526,56 @@
     font-size: 16px !important;
   }
 }
+
+/* The Models dialog and its closed controls (SPEC.md §3.6). */
+.models { display: flex; flex-direction: column; gap: 12px; padding: 16px 20px 20px; }
+.models-head { display: flex; align-items: center; justify-content: space-between; }
+.models-head h2 { font-size: var(--text-card-title); font-weight: 600; }
+.models-tabs { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--hairline); }
+.models-tabs [role="tab"] { display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 52px; padding: 6px 8px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--text-secondary); cursor: pointer; }
+.models-tabs [role="tab"] small { font-size: var(--text-meta); color: var(--text-muted); }
+.models-tabs [role="tab"][aria-selected="true"] { border-bottom-color: var(--accent); color: var(--text-primary); }
+.models-tabs [role="tab"][aria-selected="true"] small { color: var(--accent-text); }
+.models-tabs [role="tab"]:disabled { opacity: .5; cursor: default; }
+.models-in-use { font-size: var(--text-meta); color: var(--text-secondary); }
+.models-in-use strong { color: var(--text-primary); }
+.models-note { font-size: var(--text-meta); padding: 8px 12px; border-radius: 8px; background: var(--card); }
+.models-list { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius-card); overflow: hidden; margin: 0; padding: 0; }
+.models-option { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 12px; cursor: pointer; }
+.models-option + .models-option { border-top: 1px solid var(--hairline); }
+.models-option[data-checked] { background: var(--accent-tint); }
+.models-option input { accent-color: var(--accent); width: 18px; height: 18px; flex: none; }
+.models-option > span { flex: 1; min-width: 0; }
+.models-option small { color: var(--text-muted); font-size: var(--text-meta); }
+.models-engine { flex: none; }
+.models-other { display: grid; grid-template-columns: 9rem 1fr; gap: 10px; padding: 4px 12px 12px 42px; background: var(--accent-tint); }
+.models-other label { display: flex; flex-direction: column; gap: 4px; font-size: var(--text-meta); color: var(--text-muted); }
+.models-other input, .models-other select { min-width: 0; min-height: 44px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--surface); color: var(--text-primary); font-size: 16px; }
+.models-effort { margin: 0; padding: 0; border: 0; }
+.models-effort legend { margin-bottom: 6px; font-size: var(--text-label); font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); }
+.segmented { display: flex; flex-wrap: wrap; border: 1px solid var(--border); border-radius: var(--radius-control); overflow: hidden; }
+.segmented label { position: relative; flex: 1 1 auto; display: flex; align-items: center; justify-content: center; min-height: 40px; padding: 0 10px; font-size: var(--text-meta); cursor: pointer; white-space: nowrap; }
+.segmented label + label { border-left: 1px solid var(--hairline); }
+.segmented input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.segmented label[data-checked] { background: var(--accent); color: var(--on-accent); font-weight: 600; }
+.segmented label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
+.models-list:disabled, .models-effort:disabled { opacity: .6; }
+.models-kept { font-size: var(--text-meta); padding-left: 10px; border-left: 3px solid var(--border); }
+.models-actions { display: flex; gap: 10px; }
+.models-actions .btn { flex: 1; min-height: 44px; }
+.models-hint { font-size: var(--text-meta); color: var(--text-muted); padding: 8px 12px; border-radius: 8px; background: var(--card); }
+.overlay:has(.models) .overlay-panel { width: min(440px, 100%); }
+.shell[data-phone] .overlay:has(.models) .overlay-panel { width: 100%; }
+.shell[data-phone] .models-other { grid-template-columns: 1fr; padding-left: 12px; }
+.models-pill { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); color: var(--text-secondary); font-size: var(--text-meta); cursor: pointer; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.models-pill strong { color: var(--text-primary); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.models-pill:hover:not(:disabled) { border-color: var(--text-muted); }
+.shell[data-phone] .models-pill { min-height: 40px; }
+/* At 390px the waveform fills the row while recording (SPEC.md §3.6); the L3 button returns afterwards. */
+.shell[data-phone] .composer:is([data-phase="listening"], [data-phase="starting"], [data-phase="transcribing"]) .composer-pill { display: none; }
+.new-tasks { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 44px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--text-primary); font-size: var(--text-meta); text-align: left; cursor: pointer; }
+.new-tasks > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.new-tasks:hover:not(:disabled) { border-color: var(--accent); }
+.new-tasks[data-active] { border-color: var(--accent); background: var(--accent-tint); }
+.new-tasks[data-wide] { min-height: 48px; padding: 10px 14px; font-size: var(--text-body); }
+.rail-new-tasks { padding: 0 12px 8px; }

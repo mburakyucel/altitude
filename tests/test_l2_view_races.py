@@ -78,11 +78,15 @@ class TestL2ViewRaces(AltitudeCase):
                     view = self.race(task, action)
                     self.assertEqual([(row["id"], row["text"]) for row in view["messages"]],
                                      [(message["id"], message["text"])])
-                    self.assertEqual(view["messages"][0]["delivery"], {"state": "queued", "at": None, "removable": True})
+                    self.assertEqual(view["messages"][0]["delivery"], {
+                        "state": "queued", "at": None, "removable": True,
+                        "send_now": operation != "claim", "send_now_pending": False,
+                        "send_now_reason": "Send now needs a running owner." if operation == "claim" else None})
                     settled = server.task_view(self.project, task["slug"])
                     self.assertEqual(settled["messages"][0]["delivery"]["state"],
                                      "sending" if operation == "claim" else "queued" if operation == "archive" else "unconfirmed")
                     self.assertFalse(settled["messages"][0]["delivery"]["removable"])
+                    self.assertFalse(settled["messages"][0]["delivery"].get("send_now", False))
                     with self.assertRaises(T.TransitionError):
                         T.remove_message(self.project, task["slug"], message["id"])
                     if operation == "archive":

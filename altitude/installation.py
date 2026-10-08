@@ -126,12 +126,23 @@ def release_repository() -> str:
     return match[1]
 
 
-def latest_release(repository: str) -> dict:
-    """The newest stable published release: its version and release notes page."""
-    data = json.loads(_get(f"https://api.github.com/repos/{repository}/releases/latest", 1024 * 1024))
-    version = data.get("tag_name") if isinstance(data, dict) else None
-    if not isinstance(version, str) or not VERSION.fullmatch(version) or data.get("prerelease") or data.get("draft"):
-        raise ValueError("The latest published release has no valid version")
+def latest_release(repository: str, current: str) -> dict | None:
+    """The newest published release this installation follows, with its release notes page; None when there is none.
+
+    A stable installation follows stable releases: GitHub's latest release, never a draft or prerelease. One installed
+    from a release candidate also follows newer candidates, read from the thirty newest releases."""
+    follows_candidates = "-rc." in current
+    path = "releases?per_page=30" if follows_candidates else "releases/latest"
+    data = json.loads(_get(f"https://api.github.com/repos/{repository}/{path}", 4 * 1024 * 1024))
+    releases = data if follows_candidates else [data]
+    if not isinstance(releases, list) or not all(isinstance(release, dict) for release in releases):
+        raise ValueError("GitHub's release lookup returned no releases")
+    versions = [release["tag_name"] for release in releases
+                if isinstance(release.get("tag_name"), str) and VERSION.fullmatch(release["tag_name"])
+                and not release.get("draft") and (follows_candidates or "-rc." not in release["tag_name"])]
+    if not versions:
+        return None
+    version = max(versions, key=version_key)
     return {"version": version, "notes": f"https://github.com/{repository}/releases/tag/{version}"}
 
 
@@ -163,15 +174,16 @@ def _changing_update_record():
 
 def check_for_update(now: float | None = None) -> None:
     """The daemon's release lookup: at startup, then every 12 hours; offline retries after an hour."""
-    from . import config
-    if config.RELEASE is None or config.machine_settings().get("update_check") is False:
+    from . import config, platform
+    if platform.containerized() or config.RELEASE is None or config.machine_settings().get("update_check") is False:
         return
     now = time.time() if now is None else now
     _, record = _update_record()
     if now < record.get("next", 0):
         return
     try:
-        found = {"latest": latest_release(release_repository()), "checked": now, "next": now + UPDATE_CHECK_SECONDS}
+        found = {"latest": latest_release(release_repository(), config.RELEASE["version"]), "checked": now,
+                 "next": now + UPDATE_CHECK_SECONDS}
     except (OSError, ValueError, RuntimeError):
         found = {"next": now + UPDATE_RETRY_SECONDS}
     with _changing_update_record() as record:
@@ -180,7 +192,11 @@ def check_for_update(now: float | None = None) -> None:
 
 def update_status() -> dict | None:
     """What the app, `alt doctor` and the CLI notice show; None for a source deployment."""
-    from . import config
+    from . import config, platform
+    if platform.containerized():
+        return {"current": (config.RELEASE or {}).get("version"), "available": None, "check": False,
+                "command": None, "checked": None, "attempt": None, "managed": "image",
+                "reason": platform.IMAGE_MANAGED}
     if config.RELEASE is None:
         return None
     current = config.RELEASE["version"]
@@ -219,6 +235,8 @@ class UpdateRefused(ValueError):
 def request_update(version: str) -> dict:
     """The app's Update button: the exact newer release it showed, run as `alt update --version` in its own unit."""
     from . import platform
+    if platform.containerized():
+        raise UpdateRefused(platform.IMAGE_MANAGED)
     # One locked step checks and records the attempt, so a second click cannot start a second update, and the
     # attempt exists before the detached update starts, so that update's own failure always finds it.
     with _changing_update_record() as record:
@@ -249,7 +267,9 @@ def _fail_attempt(version: str) -> None:
 
 
 def update(version: str | None = None) -> dict:
-    """Install the named or latest published release through the same verification and activation."""
+    """Install the named release, or the newest one this installation follows, through the same verification and activation."""
+    from . import platform
+    platform.require_native_application()
     try:
         return _update(version)
     except (OSError, ValueError, RuntimeError):
@@ -263,7 +283,8 @@ def _update(version: str | None) -> dict:
     repository = release_repository()
     current = config.RELEASE["version"]
     if version is None:
-        version = latest_release(repository)["version"]
+        found = latest_release(repository, current)
+        version = found["version"] if found else current
         if version_key(version) <= version_key(current):
             return {"version": current, "updated": False, "detail": f"Altitude {current} is up to date"}
     elif not VERSION.fullmatch(version):
@@ -378,14 +399,16 @@ def prerequisites() -> list[dict]:
               "state": "met" if gh and _gh_signed_in() else "unmet",
               "detail": "Agents push branches and open pull requests through the GitHub CLI."
               + ("" if gh else " Install it, then sign in with gh auth login."),
-              "command": "gh auth login" if gh else platform.INSTALL["gh"]}]
+              "command": "gh auth login" if gh else None if platform.containerized() else platform.INSTALL["gh"]}]
+    if not gh and platform.containerized():
+        items[0]["detail"] = "GitHub CLI is bundled in the image. Replace this incomplete image from the host."
     agents = []
     for engine in config.ENGINES:
         label = config.ENGINE_LABELS[engine]
         if engines.installation(engine)["available"] is False:
             agents.append({"key": engine, "label": f"{label} not installed", "state": "unmet",
                            "detail": f"Install {label} (or set its binary in the service environment), then sign in.",
-                           "command": engines.INSTALL[engine]})
+                           "command": engines.install_command(engine)})
             continue
         signed = engines.sign_in(engine)
         agents.append({"key": engine, "label": f"{label} signed in" if signed["signed_in"] else f"{label} installed",
@@ -400,6 +423,8 @@ def prerequisites() -> list[dict]:
     git = shutil.which("git")
     items.append({"key": "git", "label": "Git installed" if git else "Git not installed", "state": "met" if git else "unmet",
                   "detail": None if git else "Agents work in Git checkouts.", "command": None if git else platform.INSTALL["git"]})
+    if not git and platform.containerized():
+        items[-1].update(detail="Git is bundled in the image. Replace this incomplete image from the host.", command=None)
     return items
 
 
@@ -434,7 +459,8 @@ def doctor() -> dict:
 
 
 def recover(prefix: Path | None = None) -> dict:
-    from . import config
+    from . import config, platform
+    platform.require_native_application()
     prefix = prefix or _prefix()
     _require_saved_environment(json.loads(_settings().read_text()))
     with _lock(prefix), config.restart_lock(exclusive=True) as quiet:
@@ -515,9 +541,10 @@ def require_service_owner() -> Path:
 
 def service(operation: str) -> dict | str:
     from . import config, platform
-    prefix = _prefix()
     if operation in ("status", "logs"):
         return platform.status() if operation == "status" else platform.logs()
+    platform.require_native_application()
+    prefix = _prefix()
     require_service_owner()
     with _lock(prefix), config.restart_lock(exclusive=True) as quiet:
         if not quiet or (prefix / "pending.json").exists():
@@ -535,6 +562,9 @@ def install(archive: Path, checksum: str, prefix: Path | None = None, *, newer: 
     """Verify, stage and activate an archive. `newer` names the published release an update expects:
     the verified archive must be that version, and newer than the one installed when the lock is held."""
     global __package__
+    if __package__ not in (None, ""):
+        from . import platform
+        platform.require_native_application()
     prefix = (prefix or Path.home() / ".local/share/altitude").expanduser().resolve()
     if sys.version_info < (3, 12):
         raise RuntimeError("Install Python 3.12 or newer before installing Altitude")
@@ -549,6 +579,7 @@ def install(archive: Path, checksum: str, prefix: Path | None = None, *, newer: 
             sys.path.insert(0, str(stage))
             __package__ = "altitude"
         from altitude import config, platform, tls
+        platform.require_native_application()
         platform.require_supported()
         registered = json.loads(config.PROJECTS_FILE.read_text()) if config.PROJECTS_FILE.exists() else {}
         settings = _settings().resolve()
@@ -646,11 +677,12 @@ def install(archive: Path, checksum: str, prefix: Path | None = None, *, newer: 
                 time.sleep(0.25)
             return {"version": release["version"], "prefix": str(prefix), "url": tls.url(),
                     "service": "running" if previous_service is None or receipt["active"] else "stopped",
-                    "trust": tls.info(), "retained": "previous versions and all user data", "next": "Follow trust.trust_steps on each device (alt tls-share offers the certificate to a phone), comparing the CA name and fingerprint before installing, then open the URL and pair the browser with the code `alt pair` prints."}
+                    "trust": tls.info(), "retained": "previous versions and all user data", "next": "Follow trust.trust_steps in each desktop or phone browser. Use the public ca_cert file locally, or alt tls-share on a configured private network. Compare the CA name and full fingerprint before trusting it, then verify the exact HTTPS URL without a warning and pair with the code `alt pair` prints."}
 
 
 def uninstall() -> dict:
     from . import config, platform, state as S
+    platform.require_native_application()
     prefix = _prefix()
     _require_saved_environment(json.loads(_settings().read_text()))
     with _lock(prefix), config.restart_lock(exclusive=True) as quiet:

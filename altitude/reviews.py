@@ -466,6 +466,14 @@ def review_prompt(snapshot, focus, subject="changes"):
 
 
 def run(project, slug, review_id, *, actor, expected_attempt, context_ids=None, proposal_id=None, on_wait=None):
+    with config.provider_admission() as held:
+        if held:
+            raise T.TransitionError(held)
+        return _run(project, slug, review_id, actor=actor, expected_attempt=expected_attempt,
+                    context_ids=context_ids, proposal_id=proposal_id, on_wait=on_wait)
+
+
+def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None, proposal_id=None, on_wait=None):
     from . import dispatch, route
     if context_ids is not None and (not isinstance(context_ids, list) or any(not isinstance(item, str) for item in context_ids)):
         raise T.TransitionError("Selected review context must be a list of original message IDs.")
@@ -550,6 +558,8 @@ def run(project, slug, review_id, *, actor, expected_attempt, context_ids=None, 
             current = S.load_task(project, slug)
             live = _find(current, review_id)
             result = result or {"error": "Review execution interrupted.", "termination_confirmed": False}
+            if result.get("diagnostics") is not None:
+                live["diagnostics"] = result["diagnostics"]
             confirmed = result.get("termination_confirmed", False)
             if not confirmed:
                 live.update(error="Reviewer termination is unconfirmed; capacity remains reserved.", cancel_requested=True)

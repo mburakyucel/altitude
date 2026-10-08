@@ -31,18 +31,18 @@ test("Settings navigation keeps voice options nested and preserves the project d
   await draft.fill("Keep my typed project draft");
   await page.getByRole("button", { name: "More actions" }).click();
   await walk.state("01-settings-menu-entry", {
-    visible: [page.getByRole("menuitem", { name: "Settings…", exact: true })], hidden: [row],
+    visible: [page.getByRole("menuitem", { name: "All settings…", exact: true })], hidden: [row],
   });
   await walk.state("02-compact-overview", {
-    action: () => page.getByRole("menuitem", { name: "Settings…", exact: true }).click(),
-    visible: [row, main.getByRole("region", { name: "Network" })],
+    action: () => page.getByRole("menuitem", { name: "All settings…", exact: true }).click(),
+    visible: [row, main.getByRole("region", { name: "Devices and access", exact: true })],
     hidden: [page.getByRole("radio")],
   });
   await row.focus();
   await walk.state("03-keyboard-opens-voice-options", {
     action: () => page.keyboard.press("Enter"),
     visible: [host, browser],
-    hidden: [row, main.getByRole("region", { name: "Network" })],
+    hidden: [row, main.getByRole("region", { name: "Devices and access", exact: true })],
   });
   await expect(page.getByRole("radio")).toHaveCount(2);
   await expect(host).toBeChecked();

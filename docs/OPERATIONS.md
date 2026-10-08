@@ -1,5 +1,15 @@
 # Operations
 
+The [container lifecycle](CONTAINERS.md#lifecycle-and-recovery) uses host image replacement instead
+of native application updates or source activation. Browser terminal and host voice are explicitly
+unavailable. The recorded Ubuntu fixture passes launcher lifecycle, private backup/recovery and
+phone/desktop onboarding, registered-project backup and matching-image recovery. The version-swap
+fixture uses one application schema; arbitrary migrations, Mac and final delivery acceptance remain
+pending. Real-provider and physical-device compatibility are unverified.
+The host launcher exposes `status`, `pause` and `continue`. Replacement pauses new provider work;
+Continue releases eligible queued work without clearing task holds. Pause leaves Stop and already
+admitted work available. Stop the controller for a consistent backup; status alone cannot certify one.
+
 This is the runtime guide for an already configured installation. New users should start with
 [setup](SETUP.md); contributors should use [development and checks](DEVELOPMENT.md).
 The shipped [service unit](../systemd/altitude.service) is a maintainer deployment template:
@@ -14,7 +24,7 @@ Private archives generate their own user service; they do not install that sourc
 
 `altitude/` is a standard-library Python package. `bin/alt` is the CLI; `personas/` contains the
 project coordinator (L3) and task owner (L2) instructions, `schemas/` defines delivery reports,
-and `hooks/` contains managed-repository Git hooks, inbox delivery and statusline telemetry.
+and `hooks/` contains managed-repository Git hooks, and inbox delivery.
 `web/` builds into ignored `web/dist/`, served by the same Python process as the API.
 See [architecture](ARCHITECTURE.md) for authorization and engine containment.
 
@@ -39,7 +49,8 @@ Add `--json` where supported for the full record. The [CLI reference](CLI.md) de
 inspection and task lifecycle verbs.
 
 Project verbs include `alt project add <name> [--path PATH]`, `list`, `discover`,
-`remove <name>` and `set <name>` for routing preferences and the L2 provider priority. All projects share one machine cap,
+`remove <name>` and `set <name>` for routing preferences, the L2 provider priority, Only engines and
+the L3 model choice. All projects share one machine cap,
 defaulting to 80; the operator can use `alt machine set --wip N --reason '…'` (including N above 80),
 `alt machine set --unset-wip --reason '…'`, and `alt machine show` to set, reset and inspect it.
 Machine changes, project add and remove are operator-only. See [concurrency examples](CLI.md#concurrency-limits).
@@ -66,14 +77,14 @@ running in the terminal, nothing is typed and a notice offers Copy instead. On L
 terminal asks for your password there, as in a desktop terminal. If the terminal cannot start, it shows
 why and closes; a desktop or SSH terminal on this computer runs the same command.
 
-A task's owner can read its task terminal's output, and the task terminal says so. When you press
-Enter on a step its owner handed you, Altitude tells the owner once the command looks finished (or the
-terminal ended first), and the owner reads the result to check that it did and continues; no reply is needed unless the terminal
-says Altitude couldn't tell the owner. The owner reads what the terminal printed, never what
-you typed at a hidden password prompt, and cannot type into or close the terminal. Output stays readable
-until a new terminal opens for the task, the task finishes or Altitude restarts; if a restart lost it,
-tell the owner what the command printed. Use a project terminal or a desktop terminal for work the owner
-should not see: what the owner reads also reaches its provider.
+A task's owner can read its task terminal's output, and the project's coordinator its project terminal's;
+each terminal says who. When you press Enter on a step the owner or coordinator handed you, Altitude tells
+it once the command looks finished (or the terminal ended first), and it reads the result to check that it
+did and continues; no reply is needed unless the terminal says Altitude couldn't tell it. It reads what the
+terminal printed, never what you typed at a hidden password prompt, and cannot type into or close the
+terminal. Output stays readable until a new terminal opens there, its task finishes or Altitude restarts;
+if a restart lost it, tell the owner or coordinator what the command printed. Use a desktop or SSH terminal
+for work neither should see: what they read also reaches their provider.
 
 L3 and the operator file requested backlog through altd with `alt issue new --title '…' -`
 or `alt issue comment <number> -` (body on stdin). Authorized complete deliveries use reviewed
@@ -97,6 +108,15 @@ computer running Altitude, locally or over SSH, and run `alt pair`; it writes a 
 to `~/.config/altitude/access/`, so it works whatever address Altitude listens on and whether or not
 a browser is open. To sign out every browser, remove `~/.config/altitude/access/devices.json`. Back up
 the folder only to a place as private as `~/.config`.
+
+## Engine sign-in recovery
+
+When an engine's login expires, its turns hold with "provider rejected authentication or account
+access; sign in, then Retry or Resume". Sign in with the engine's own CLI, then press **Retry** on the
+coordinator's failed turn (or send it a message) or **Resume** on a held task. That attempt launches;
+once it succeeds, held tasks and report turns on the engine continue on their next tick. While the
+login is still invalid, the attempt records the rejection again and automatic retries keep waiting
+for up to thirty minutes. A usage limit is not cleared this way; it waits for its reset.
 
 ## Refused decision alerts
 
@@ -125,6 +145,22 @@ resume waiting messages. Removing the last project opens First run; otherwise a 
 project is selected. `alt project remove <name>` uses the same checks. See
 [project lifecycle](CLI.md#project-lifecycle).
 
+## Worktree and source export retention
+
+Altitude removes what it created for finished work; the operator does not clean these by hand.
+For each done or rejected task, the maintenance tick removes `.claude/worktrees/<slug>` once no worker
+runs, the tree is clean and its commits are on a branch or remote, and deletes `worktree-<slug>` once
+its commits are on `origin/main` or a verified PR merged it. A branch with commits found only on this
+machine stays; `alt task events <slug> --json` shows the `cleanup-worktree` event with its reason and
+unmerged commit count. Uncommitted changes or commits on no branch keep the worktree with a recorded
+reason. Inspect them in that worktree, then remove it with `git worktree remove` once nothing is needed.
+
+A source deployment removes `.altitude-source/<sha>` exports that nothing names: the running service's
+export, the target of `current` and exports named by an unfinished or not yet cleaned-up task's brief
+or session settings stay. Pruning starts an hour after an activation and waits while a task's launch
+files cannot be read. `altd.log` records each removal as `[source] removed source export <sha>`.
+Other entries under `.altitude-source`, such as `git-guards`, are never touched.
+
 ## Incident publication
 
 Altitude records its own failures as sanitized incidents under the runtime directory. They stay
@@ -132,7 +168,10 @@ there until **Settings → Incident reports** (also a First run step) turns publ
 GitHub `owner/repository`, Altitude's own filled in or a fork you name, or
 `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` in altd's environment names one for a non-interactive
 install. Every incident then becomes one sanitized issue there, and `alt incident list` shows the
-link or the pending reason. The saved setting outranks the environment, including when it turns
+link or the pending reason. An issue publishes the failure summary and a System section (platform,
+OS, kernel, architecture, machine model, Altitude version and deployment kind, and the failed
+worker's engine, CLI version and confinement); the raw worker output, evidence and host identities
+stay in the local record. The saved setting outranks the environment, including when it turns
 publishing off. Altitude's repository is public, so its issues are public; a fork you manage keeps
 them under your control. An installed application keeps the environment value in its saved settings, so `alt install` from a shell where
 it is exported carries it into the service; a source deployment sets it in the user service unit's
@@ -178,28 +217,34 @@ alt update
 ```
 
 The daemon makes the same lookup at startup and every twelve hours and records what it finds.
-`alt doctor`, Settings › This machine and a notice in the app show a newer stable release, and an
+`alt doctor`, Settings › This machine and a notice in the app show a newer release, and an
 `alt` command you run in a terminal prints one line about it at most once a day. The app's
 **Update** button, after a confirm, runs `alt update --version` for exactly the version it shows,
 in a job of its own so the update survives the restart. **Check for new versions** in Settings
 turns the lookup off. Nothing updates on its own.
 
-`alt update` asks GitHub for the newest stable release of the repository the installed release
-was built from (one anonymous request to `api.github.com`) and does nothing when the installed
-version is current or newer. Otherwise it downloads that release's archive and its `.sha256`
+`alt update` makes one anonymous request to `api.github.com` for the repository the installed
+release was built from and picks the newest release the installation follows. A stable copy follows
+stable releases only: it asks for GitHub's latest release, which is never a draft or prerelease. A
+copy installed from a `-rc.N` candidate also follows newer candidates: it reads the thirty newest
+releases and takes the highest version that is not a draft. It does nothing when no followed
+release is newer than the installed version. Otherwise it downloads that release's archive and its `.sha256`
 from the release, then installs it exactly as an archive update does. `alt update --version
 v0.1.1` installs a named newer published release, including a `-rc.N` candidate, without the
 lookup; it refuses an older version, which `alt recover` restores. Every download hop stays on
 HTTPS, the verified archive must be the requested version, and the version is compared with the
 installed one again under the installation lock, so a concurrent update cannot cause a downgrade.
 `alt update --archive altitude-v0.1.1.tar.gz --sha256 '<release SHA-256>'` installs an archive
-you already have, with no network access. Installation checks the archive and manifest before
+you already have, with no network access. The service keeps the `HTTPS_PROXY`, `NO_PROXY` and
+`SSL_CERT_FILE` settings of the shell that installed it, so the lookup and downloads work behind an
+HTTPS proxy. Installation checks the archive and manifest before
 selecting an immutable version. Activation waits for dispatch,
 resume, L3 and report verification to be quiet, then verifies the selected version/commit, native
 service PID, HTTPS health and built UI. An already stopped installation stays stopped on update.
 Use `alt service start` or `alt service stop` only when deliberately changing its lifecycle;
 independent task workers are not stopped with the daemon. On a Mac the service is the LaunchAgent
-`dev.altitude.altd`: `alt service stop` boots it out until the next login or `alt service start`,
+`dev.altitude.altd` (an installation under another `HOME` gets a label derived from that home, so it
+never addresses the account's own service): `alt service stop` boots it out until the next login or `alt service start`,
 and `alt service logs` reads `~/Library/Logs/altitude/altd.log`; an in-app update logs to
 `altitude-update-<version>.log` beside it. Projects continue using ordinary checked
 PR delivery; a managed source clone does not update the installed application. Project Git guards
@@ -215,7 +260,8 @@ incomplete, use `alt recover`; if the launcher is unavailable, use the same trus
 receipt remains until restoration succeeds and prevents new dispatch/coordinator work while activation is unverified. Changed service ownership or unconfirmed stop refuses
 further mutation. Retain the failing archive/version and sanitized error for diagnosis.
 
-`alt uninstall` stops/removes only the owned service and launcher. It refuses unfinished tasks
+`alt uninstall` stops/removes only the owned service and launcher; on a Mac launchd keeps its
+disabled record for the label. It refuses unfinished tasks
 that still own worker inputs. Registered projects keep installed hook resources; otherwise
 application versions are removed. Configuration, certificate trust, histories, provider sessions
 and project worktrees remain. Updates do not prune prior versions. Removing retained data or
@@ -231,14 +277,17 @@ and runtime-state recovery. Never reset the deployment checkout to a release tag
 
 Ordinary development and code agents must not start, stop, mask, unmask, or restart the service.
 Source-deployed Altitude activates merged backend and web changes itself. The regular thirty-second tick discovers
-merges even while their workers run. A failed fetch of `origin/main` is logged and retried on the next
-tick, and becomes a `self-deploy` system fault only after five minutes without a successful fetch.
+merges even while their workers run. A failed fetch of `origin/main`, or a Git call that outlives its
+time limit on a busy host, is logged and retried on the next tick, and becomes a system fault only after
+the same step has failed for five minutes without a success.
 Other self-deploy refusals fault immediately. A self-deploy fast-forward marks activation
 pending for loaded backend paths (`altitude/`, `bin/`, `systemd/`) or tracked web build inputs
 (`web/src/`, `web/design/tokens.css`, `web/index.html`, `web/package.json`, `web/pnpm-lock.yaml`,
 `web/tsconfig.json`, `web/vite.config.ts`). Web docs and other non-build files do not trigger it.
-Dispatch continues while activation is pending. Once no dispatch or resume claim, L3 turn, or report
-verification is in flight, `altd` runs the guarded restart script below as a transient user unit.
+Dispatch continues while activation is pending. Once no dispatch or resume claim, L3 turn,
+adversarial review, validation run, or report verification is in flight, `altd` runs the guarded
+restart script below as a transient user unit. Validation holds the quiet point through its
+one-hour execution limit, evidence recording and cleanup. New validation runs wait once restart is requested.
 A failing restart unit files a system fault naming its reason for L3 immediately. While its
 request is still pending it also records the reason as `error` in `monitor/restart-pending.json`
 and marks it `failed`, and the hold lifts. A restart that has not happened
@@ -251,14 +300,25 @@ An explicitly authorized operator can restart sooner by pressing Restart on the 
 (shown only at the narrow quiet point, including while workers run) or running `make restart`
 from the deployed primary checkout. The command refuses another clone/worktree, a non-exact or
 dirty `main`, and an in-flight dispatch,
-L3 turn, or report verification. Both engines run L2 workers in independent transient user units,
+L3 turn, adversarial review, validation run, or report verification. Both engines run L2 workers in independent transient user units,
 so workers survive and are adopted after restart. Dispatch and
 L3 turns wait only from the restart request until the replacement daemon is ready.
 It installs the locked web dependencies, builds and validates a staged bundle, swaps it into the
 ignored runtime `web/dist`, restarts the user-level `altitude.service`, and waits for both its API and
-web page to answer from a new process. The prior bundle is restored if verification fails. There is
+web page to answer from a new process. On macOS, Stop and restart confirm that the service's processes
+end and its launchd label disappears before completing Stop or bootstrapping a replacement; removal
+has a 45-second limit and unreadable state fails explicitly. Independent worker jobs retain their
+own coalitions. The prior bundle is restored if verification fails, then recovery restarts the service
+and verifies API and UI health from another new process. The failure retains the activation error
+and states whether recovery is verified or fails; restored files alone do not establish healthy
+recovery. Without a prior bundle, it reports that recovery is unavailable. There is
 no separate web service and no `sudo` is required. Node 22.22.2+ (22.x) or 24.15+ (24.x) and `pnpm` are required; dependency
 retrieval may be needed when the local pnpm store is cold. Refresh the browser after it succeeds.
+
+Deterministic restart fixtures establish removal ordering, worker isolation and activation/rollback
+health handling. Native prevention acceptance separately requires a successful guarded activation
+with a new service PID, API/UI health and worker/session survival. A running service or an absent
+pending flag establishes neither the cause of a prior bootstrap failure nor that acceptance.
 
 ## Preserve source TLS before upgrading
 
@@ -301,6 +361,35 @@ If interrupted after writing the override, inspect that file and any other pendi
 before running `systemctl --user daemon-reload` from the operator terminal. This reloads definitions
 without restarting services. Repeat check-only preparation and then `--apply`; an ambiguous state
 never counts as successful preservation.
+
+## Validation runs
+
+Task owners run installation VMs, containers and ordinary sandboxed-browser checks through the
+[validation runner](DEVELOPMENT.md#validation-runner): one disposable rootless Podman container at a
+time, started by altd as the operator's account. Its image, image layers and the cached Ubuntu cloud
+image live in `~/.altitude-validation`, beside Altitude's home. A run needs 20 GiB free there, and its own area is removed
+when it ends; the first run builds the image, which takes several minutes. Settings → **Validation
+runs** turns the runner off: a running run stops and its container and scratch files are removed
+after its log and results are retained. Each run appears on its task as a machine run with purpose
+`validation`. Activation waits for admitted validation to finish recording evidence. After an
+unexpected daemon exit or host reboot, startup stops abandoned runs, retains their logs and results,
+and records them as interrupted. If copying evidence fails, the ledger names the original paths
+in the runner area; that area stays intact and new runs stay refused pending recovery. A run area
+that cleanup cannot remove also keeps new runs refused; each later request retries its removal and
+its refusal names what stayed and why.
+
+Fictional browser checks use `alt task validate -- make ui-validate`: the existing Mac Seatbelt
+runner with the approved inner-browser-sandbox exception, or the Linux container with Chromium's
+sandbox. The command installs tools only in the disposable run and records finite preflight,
+journey and cleanup evidence. Stock workers and executable selection stay unchanged. This route
+grants no native service operation, Simulator/GUI capability or private/live-content acceptance.
+See [fictional browser validation](DEVELOPMENT.md#fictional-browser-validation).
+
+On a Mac, `--simulator` runs add a disposable iOS Simulator iPhone that altd creates in the run's area,
+about 3 GB while the run lasts, and removes when it ends, after keeping a screenshot
+([iOS Simulator runs](DEVELOPMENT.md#ios-simulator-runs)). The operator's own Simulator devices are not
+touched. A phone that cannot be removed keeps its run area and new runs refused, like other leftovers;
+each later request and the next start retry its removal.
 
 ## Voice input
 
@@ -403,11 +492,23 @@ The delivered browser checks verify served files and icon geometry at phone and 
 Native iOS/Safari and Android/Chrome installation and refresh behavior require device observation;
 browser fixtures do not establish it.
 
+### Desktop certificate trust
+
+Use the [Linux and macOS trust guide](SETUP.md#trust-https-on-each-device) for each desktop browser,
+including on the computer hosting Altitude. `alt doctor` reports the public `ca.crt` path and its
+identity; use that local file when the service listens only on loopback. For another desktop at an
+already-configured network address, **Settings → Devices → Set up a device** or `alt tls-share`
+offers the public certificate for ten minutes. Open the link on that computer; no camera is needed.
+Compare the downloaded certificate's full SHA-256 with the trusted terminal or Settings screen,
+then deliberately import it in the browser or macOS Keychain as the guide describes. Restart the
+browser and verify the exact HTTPS URL in a fresh private window without a warning before pairing.
+Sharing changes neither host trust stores nor the service's network exposure.
+
 ### On iPhone
 
 Open your configured Altitude HTTPS URL through your private network. Safari exposes the microphone only in a
 secure context, so the phone must trust the local CA used by Altitude's certificate. Follow the
-[phone setup](SETUP.md#set-up-a-phone): **Add a phone** in Settings → Devices on a device that
+[phone setup](SETUP.md#set-up-a-phone): **Set up a device** in Settings → Devices on a device that
 already trusts Altitude, or `alt tls-share` on the computer running Altitude, shows a QR code that
 offers the certificate for ten minutes, and the phone checks its name and SHA-256 before installing. The microphone button remains a typing-only hint on plain
 HTTP or an unsupported browser. Safari's Share → Add to Home Screen gives Altitude a Home Screen
@@ -417,8 +518,8 @@ For your own installation, set `ALTITUDE_HOST`/`ALTITUDE_PORT` to its private-ne
 On the next start Altitude reissues its server certificate for that address under the same CA, so
 trusted devices need no new step. A generated CA refuses public addresses and names.
 `ALTITUDE_TLS_DIR` selects a private certificate directory separate from runtime/project data.
-Install the CA on the phone with **Add a phone** or `alt tls-share`, which reads these settings from
-the running service rather than from the shell, and enable its trust in Certificate Trust Settings. Arrange the
+Install the CA on the phone with **Set up a device** or `alt tls-share`, which reads these settings from
+the running service's record rather than from the shell, and enable its trust in Certificate Trust Settings. Arrange the
 private tunnel and any firewall rule for your chosen interface/port separately, and bind Altitude to
 that interface directly. A forwarder on this machine in front of Altitude (an SSH tunnel, a reverse
 proxy, a container's published port) hides which process connects, so the terminal cannot tell an
@@ -426,7 +527,9 @@ agent behind it from your browser; keep the terminal off while one serves Altitu
 service template's tunnel address and checkout path are not defaults to copy to another machine.
 Generated server certificates renew automatically while the original CA remains valid; an expired
 or replaced CA needs explicit new trust on every device. External certificate pairs are not renewed
-or overwritten. Existing configured TLS paths and exposure remain operator choices.
+or overwritten. A new certificate folder, CA, address or port reaches running task workers when the
+service next starts: their `alt` calls follow the address and CA the service records, so they need
+no relaunch and no per-command setting. Existing configured TLS paths and exposure remain operator choices.
 
 With the `browser` backend, recognized words appear in the draft while you speak, and the field keeps
 the latest words in view. English dictation gets sentence punctuation and capitals on every browser

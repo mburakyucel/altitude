@@ -10,7 +10,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import config, engines, git_policy, l3, state as S, tasks as T
+from . import config, engines, git_policy, l3, platform, state as S, tasks as T
 
 
 class SetupError(git_policy.GitPolicyError):
@@ -250,8 +250,8 @@ def _fault(project: str, detail: str) -> None:
 
 def run(project: str) -> None:
     from . import server
-    with config.project_activity(project) as attached, config.restart_lock() as active, operation_lock(project, wait=True):
-        if not attached or not active or config.restart_in_progress() or not config.is_managed(project):
+    with config.provider_admission() as held, config.project_activity(project) as attached, config.restart_lock() as active, operation_lock(project, wait=True):
+        if held or not attached or not active or config.restart_in_progress() or not config.is_managed(project):
             return
         operation = read(project).get("operation") or {}
         if operation.get("state") not in ("pending", "running"):
@@ -307,7 +307,9 @@ def maintain(project: str) -> None:
     if (record.get("operation") or {}).get("state") == "failed":
         return
     view = observe(project)
-    if any(s.get("action") == "repair" and (s["id"].startswith("guards") or
+    first_turn_pending = platform.containerized() and not record.get("intro") and any(
+        s["id"] == "coordinator" and s["status"] == "pending" for s in view["steps"])
+    if first_turn_pending or any(s.get("action") == "repair" and (s["id"].startswith("guards") or
            s["id"] == "coordinator" and not record.get("intro")) for s in view["steps"]):
         request(project, "repair", actor="altd")
         run(project)

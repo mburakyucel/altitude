@@ -5,11 +5,137 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
-- Altitude runs on a Mac with Apple silicon on macOS 15 or newer from a source checkout, without administrator
-  rights: `make install-service` makes it a background service of your login (it starts when you log in and
-  keeps running with the screen locked). Each agent job runs as its own background job that Stop ends
-  completely, and Claude Code jobs may write only in their task's worktree and their own state. `install.sh`
-  still stops on macOS: native acceptance is pending, so macOS is not yet a supported platform.
+## v0.1.0 — 2026-10-08
+
+First stable release of the early preview: alpha quality, with rough edges and the known limitations
+below. "Stable" means it is GitHub's latest release, which the one-line install and stable
+installations' update check follow; it is not a stability promise. It runs on Linux x86_64 with a
+systemd user service (target: Ubuntu 24.04) and, experimentally, on macOS 15 or newer on Apple
+silicon. Install it with
+`curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/latest/download/install.sh | sh`
+([setup](docs/SETUP.md#install-the-application)). It is published while the repository is private,
+so its files carry no build attestation. Until the repository is public, that command and the update
+check cannot download anything; download `install.py`, `altitude-v0.1.0.tar.gz` and its `.sha256`
+signed in (`gh release download v0.1.0 --repo mburakyucel/altitude`) and
+[run the installer by hand](docs/SETUP.md#install-by-hand).
+
+Known limitations:
+
+- macOS is experimental. Installation, updates, rollback of a failing update, uninstall and starting
+  again at login pass in fresh, offline macOS 26.6 virtual machines and under a throwaway home on
+  one Mac. A physical second Mac, other macOS versions, logout/login, sleep, confinement, Stop and
+  restart adoption on a spare account (#225), certificate trust in browsers and on devices (#645)
+  and the download from GitHub itself are not verified. The installer needs Homebrew's `python@3.12`
+  and `openssl@3`; voice on a Mac uses the browser's recognition.
+- On Linux, a clean physical machine and an update from one published release to another are not
+  verified; the update from `v0.1.0-rc.2` to this release has not been run.
+- The Linux container deployment remains a candidate under validation; on a Mac it is unverified
+  (#643). See [its limits](docs/CONTAINERS.md).
+- Live engine providers are not tested; engine behavior rests on deterministic fixtures.
+- Adding a phone (certificate profile, QR scan, Home Screen app) is walked in browsers and the iOS
+  Simulator, not yet on a physical iPhone or Android device (#645).
+- What a coordinator or owner reads from a terminal reaches its AI provider. Use a desktop or SSH
+  terminal for work neither should see.
+
+Updating from a release candidate:
+
+- An installation from `v0.1.0-rc.2` follows stable releases and is offered this release. Its
+  lookup and download are anonymous, so while the repository is private they find nothing: download `altitude-v0.1.0.tar.gz` and its `.sha256` signed in (`gh release download`) and
+  run `alt update --archive … --sha256 …` ([setup](docs/SETUP.md#update-from-a-release-candidate)).
+  Configuration, TLS identity and data are kept, and the Linux service unit is unchanged.
+- A machine whose `v0.1.0-rc.1` installation failed at service start has no installed version to
+  update: clear its refused service unit, run `alt recover` as setup describes, then install this
+  release.
+- Operator grants recorded with `alt task machine` are not carried over; record them again with
+  `alt task grant` when a task needs one.
+- `alt install-statusline` is removed. If you ran it, restore Claude Code's own `statusLine` in
+  `~/.claude/settings.json`; the replaced command is in that file's `env.ALTITUDE_ORIG_STATUSLINE`.
+- The first maintenance after updating also removes clean worktrees of rejected tasks and deletes
+  their merged branches; commits that exist only on this machine are kept.
+
+Recovery: a failed activation restores the previous version and keeps configuration, TLS identity
+and data; `alt recover` (or the release's `python3.12 install.py --recover`) completes an interrupted
+one. A faulty release is followed by a new version; tags and release files are never replaced.
+
+Installation and updates:
+
+- `install.sh` installs on a Mac with Apple silicon and macOS 15 or newer, without administrator
+  rights. Before downloading it checks for Python 3.12, OpenSSL 3 ahead of macOS's LibreSSL on PATH
+  and a logged-in desktop session, and prints the fix for anything missing. The service is the
+  LaunchAgent `dev.altitude.altd` of your login and starts again when you log in; updates, rollback,
+  `alt recover` and uninstall work as on Linux.
+- An installation from a stable release is offered newer stable releases only; one from a `-rc.N`
+  candidate is also offered newer candidates. Drafts are never offered.
+- A fresh installation keeps the installing shell's `HTTPS_PROXY`, `NO_PROXY` and `SSL_CERT_FILE`, so
+  update checks and updates work behind an HTTPS proxy; it then trusts that proxy for the release
+  checksums too.
+- The service starts without looking up its own address's name, which stalled a start or update on
+  a machine without network access.
+- `alt` finds the running service through the record it writes when it starts, so a shell's own
+  TLS settings no longer make `alt` refuse.
+
+Phones, devices and voice:
+
+- **Settings → Devices → Set up a device** guides certificate trust on Linux, macOS, iPhone/iPad and
+  Android. It shows a QR code for a ten-minute setup link with a countdown, which a phone scans or
+  opens itself; the phone gets a guided page, an iPhone configuration profile holding only
+  Altitude's public CA, and the fingerprint to compare before pairing. `alt tls-share` prints the
+  same QR code.
+- Dictated words flow into the message box at a steady pace.
+- Chat accepts images with Display P3, BT.2020, grayscale or PNG gamma color information and converts
+  them to sRGB; images whose color has no conversion, such as HDR, upload as decoded.
+
+Conversations and tasks:
+
+- **Send now** delivers a queued message next, in project and task chats.
+- A **Models** dialog chooses the model and effort for L3 (per project) and for new tasks (all
+  projects). Settings is organized by destination, and **Remove project** moved from the ⋯ menu to the
+  project's settings, in a dialog that explains what is kept and offers Cancel first. An earlier L3
+  engine choice becomes the project's L3 "Only" engine.
+- Task details show the current context size and "N tokens processed · M model requests", with what
+  those figures do and do not mean.
+- Live activity loads older entries as you scroll up and keeps your place through refreshes.
+- Paused and blocked tasks say why in plain language; question cards show only the operator's open
+  questions; design previews carry their proposal's title, and Back from a preview no longer loops.
+- After a provider rejects a sign-in, signing in again and pressing **Retry** or resuming the task
+  clears the hold at once.
+- Monitor lists only the sessions Altitude runs.
+
+Coordinator, owners and grants:
+
+- One operator grant covers anything the operator permits a task to do, such as a service change, a
+  deploy or a release publication. `alt task grant` records the operator's yes to a stated purpose,
+  each command runs as the operator through `alt task run` and is recorded, a command's result
+  survives an Altitude restart, and revoking the grant stops a running command. L3 can apply the
+  same yes to another task with the identical purpose.
+- The coordinator can run read-only `gh` commands against any repository your GitHub login can see,
+  read its project terminal, and hear when a command it handed you finishes there. Coordinators of
+  projects on the same installation can exchange messages, which show folded in both chats.
+- L3 follows authorized work and explains a stalled task. A task whose PR closed without merging can
+  deliver a fresh PR, and landing waits through the fresh required check.
+- Owners run their candidates' checks in disposable validation runs (`alt task validate`): a Linux
+  container with VMs and sandboxed browsers, a validation profile on a Mac, and a disposable iOS
+  Simulator iPhone, with optional screen captures linked from chat.
+- Failed independent reviews keep sanitized diagnostics, and incident issues get a System section and
+  a clean failure summary.
+- Finished tasks' worktrees are swept whether the task was done or rejected.
+
+macOS from a source checkout:
+
+- Altitude runs from a source checkout on a Mac: `make install-service` makes it a LaunchAgent of
+  your login, each agent job runs as its own launchd job that Stop ends completely, and Claude Code
+  jobs may write only in their task's worktree and their own state.
+- Security fixes for task jobs on a Mac, whose profiles also refuse Simulator and app launches.
+  Claude reviews on a Mac find their Keychain sign-in, and task files open on a Mac without
+  listing hidden folders.
+
+Linux container (candidate):
+
+- A rootless Podman container packages the release with real user services and persistent home and
+  project volumes; replacement pauses new AI work until you continue on the host. The image pins a
+  GitHub CLI that can open PRs, and one live Linux run records sign-in, an owner-created PR and
+  issue, and authentication across restart and image replacement. See
+  [the container boundary and validation limits](docs/CONTAINERS.md).
 
 ## v0.1.0-rc.2 — 2026-09-29
 

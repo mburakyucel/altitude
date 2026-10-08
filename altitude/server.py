@@ -21,13 +21,24 @@ import threading
 import time
 import traceback
 import uuid
+from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from http.cookies import CookieError, SimpleCookie
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import http.server
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, verify
+from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, line, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, validation, verify
+
+
+class ThreadingHTTPServer(http.server.ThreadingHTTPServer):
+    def server_bind(self) -> None:
+        # http.server names itself by a reverse lookup of the address, which held a Mac guest without a network in mDNS
+        # past the installation's health deadline; nothing reads that name.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
@@ -41,11 +52,14 @@ _report_retries: dict[tuple[str, str], tuple[str, int, float]] = {}
 REPORT_RETRY_DELAYS = (60, 300, 900, 3600)
 L3_VERB_MAX_REQUEST = 4 << 20
 L3_VERB_MAX_OUTPUT = 8 << 20
-L3_GH_READS = {
-    ("pr", "view"), ("pr", "list"), ("pr", "diff"), ("pr", "checks"),
-    ("issue", "list"), ("issue", "view"),
-    ("run", "list"), ("run", "view"), ("run", "watch"),
-}
+# The coordinator's `gh` only reads, from any repository its login can see; `alt issue` verbs are its only writes.
+L3_GH_GROUPS = {"pr", "issue", "release", "repo", "run", "workflow", "ruleset", "label", "cache"}
+L3_GH_VERBS = {"view", "list", "status", "checks", "diff", "watch", "check"}
+L3_GH_RULE = (
+    "The coordinator's gh only reads, from any repository its login can see: view/list/status/checks/diff/watch/"
+    "check of pr, issue, release, repo, run, workflow, ruleset, label and cache; gh search; and gh api GET of a "
+    "REST endpoint path, without fields, input or another host. Writes, downloads, auth and --web or -w "
+    "(outside run list) are refused; use alt issue to write.")
 L3_TASK_TARGETS = {
     "handoff", "release",
     "reject", "escalate", "events", "messages", "report", "show", "resume", "message", "stop",
@@ -255,6 +269,19 @@ def _l3_verb_request(project: str, request: dict) -> dict:
                 or any(not isinstance(arg, str) or len(arg) > 16384 for arg in args)
                 or not isinstance(stdin, str) or len(stdin.encode()) > L3_VERB_MAX_REQUEST):
             raise ValueError("invalid alt verb arguments")
+        if args[:2] == ["project", "message"]:
+            if stdin:
+                raise ValueError("project messages accept deliberately written literal text, not stdin")
+            options = l3.project_message_parser().parse_args(args[2:])
+            result = l3.project_message(project, options.target, options.text, summary=options.summary,
+                                        request_id=options.request_id, reply_to=options.reply_to)
+            return {"returncode": 0, "stdout": json.dumps(result) + "\n", "stderr": ""}
+        if args[:2] == ["project", "terminal"]:
+            if stdin or args[2:] not in ([], ["--json"]):
+                raise ValueError("alt project terminal: the only option is --json")
+            record = coordinator_terminal_output(project)
+            text = json.dumps(record) if args[2:] else terminal.describe(record, "project")
+            return {"returncode": 0, "stdout": text + "\n", "stderr": ""}
         project_options = {"--p", "--pr", "--pro", "--proj", "--proje", "--projec", "--project"}
         file_options = {"--f", "--fi", "--fil", "--file"}
         if any(arg.split("=", 1)[0] in project_options | file_options
@@ -318,27 +345,62 @@ def _l3_verb_request(project: str, request: dict) -> dict:
     if (not isinstance(args, list) or len(args) < 2 or len(args) > 64
             or any(not isinstance(arg, str) or len(arg) > 4096 for arg in args)):
         raise ValueError("invalid gh read arguments")
-    redirected = any(
-        arg in ("--repo", "-R") or arg.startswith(("--repo=", "-R="))
-        or (arg.startswith("-R") and len(arg) > 2)
-        or "://" in arg or "/" in arg
-        for arg in args[2:]
-    )
-    if (tuple(args[:2]) not in L3_GH_READS
-            or any(arg == "--web" or arg.startswith("--web=") for arg in args[2:])
-            or redirected):
-        raise ValueError("L3 may only use the documented gh read commands")
+    command = _l3_gh_command(args)
     env = engines.clean_env()
-    env.pop("GH_REPO", None)  # cwd plus rejected repo selectors binds reads to this project's checkout
-    env["GH_PAGER"] = "cat"
+    env.pop("GH_REPO", None)  # a read naming no repository resolves from this project's checkout
+    env.update({"GH_PAGER": "cat", "GH_PROMPT_DISABLED": "1"})
     try:
-        result = subprocess.run(["gh", *args], cwd=str(config.project_path(project)), env=env,
-                                capture_output=True, text=True, timeout=120)
+        result = subprocess.run(["gh", *command], cwd=str(config.project_path(project)), env=env,
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.SubprocessError) as exc:
         return {"returncode": 1, "stdout": "", "stderr": f"gh read failed: {exc}\n"}
 
     return {"returncode": result.returncode, "stdout": _l3_bounded(result.stdout or ""),
             "stderr": _l3_bounded(result.stderr or "")}
+
+
+def _l3_gh_command(args: list[str]) -> list[str]:
+    """Admit a gh command that only reads, without opening a browser or prompting."""
+    def refuse(reason: str):
+        raise ValueError(f"L3 gh read refused: {reason}. {L3_GH_RULE}")
+
+    if args[0] == "api":
+        return _l3_gh_api(args[1:], refuse)
+    if args[0] != "search" and (args[0] not in L3_GH_GROUPS or args[1] not in L3_GH_VERBS):
+        refuse(f"gh {args[0]} {args[1]} is not a read")
+    for arg in args[2:]:
+        # Short options may cluster (`-cw`); `-w` is --web except in `run list`, where it is --workflow.
+        if (arg.partition("=")[0] == "--web"
+                or args[:2] != ["run", "list"] and re.match(r"-[A-Za-z]*w", arg)):
+            refuse(f"{arg} opens a browser")
+    return list(args)
+
+
+def _l3_gh_api(args: list[str], refuse) -> list[str]:
+    """Rebuild a GET from validated options, so gh never sees a body, a method or another host."""
+    class Parser(argparse.ArgumentParser):
+        def error(self, message):
+            refuse(f"gh api {message}")
+    parser = Parser(prog="gh api", allow_abbrev=False, add_help=False)
+    parser.add_argument("endpoint")
+    parser.add_argument("-X", "--method", type=str.upper, choices=["GET"])
+    parser.add_argument("-H", "--header", action="append", default=[])
+    parser.add_argument("-p", "--preview", action="append", default=[])
+    parser.add_argument("-q", "--jq")
+    parser.add_argument("-t", "--template")
+    parser.add_argument("--cache")
+    parser.add_argument("-i", "--include", action="store_true")
+    for flag in ("--paginate", "--slurp", "--silent"):
+        parser.add_argument(flag, action="store_true")
+    options = parser.parse_args(args)
+    # `gh api -- -XPOST` would rebuild into a flag; GraphQL can carry a mutation in its query.
+    if "://" in options.endpoint or re.match(r"-|/?graphql\b", options.endpoint):
+        refuse("gh api reads one REST endpoint path on github.com")
+    return ["api", options.endpoint, "--method=GET",
+            *(f"--header={value}" for value in options.header), *(f"--preview={value}" for value in options.preview),
+            *(f"--{name}={value}" for name in ("jq", "template", "cache")
+              if (value := getattr(options, name)) is not None),
+            *(f"--{name}" for name in ("include", "paginate", "slurp", "silent") if getattr(options, name))]
 
 
 def _note_created_task(project: str, stdout: str) -> None:
@@ -581,9 +643,17 @@ def server_l3_turn(project: str, prompt: str, **kwargs) -> dict:
 
 
 def start_l3(project: str) -> None:
+    with config.provider_admission() as held:
+        if held:
+            project_setup.save(project, start_requested=True)
+            return  # Setup maintenance retries this unclaimed first turn after host continuation.
+        _start_l3(project)
+
+
+def _start_l3(project: str) -> None:
     if ((project_setup.read(project).get("intro") or {}).get("state") not in ("failed", "running")
             and (l3.info(project).get("turns") or any(row.get("role") == "assistant" for row in l3.chat_history(project)))):
-        if l3.queue_path(project).exists():
+        if l3.has_queued_turn(project):
             request_l3_drain(project)
         return
     # The start reply belongs to the operator's conversation.
@@ -608,6 +678,8 @@ def request_project_setup(project: str, action: str, *, actor: str, expected: st
 
 def restart_notice() -> None:
     """Give L3 the active tasks and their explicit waits after a restart."""
+    if platform.containerized():
+        return  # #543: daemon startup neither activates main nor authorizes an image recovery turn.
     for project in config.load_projects():
         if not config.is_managed(project):
             continue
@@ -778,7 +850,8 @@ def _on_l2_finished(project: str, item: dict) -> None:
             request_task_resume(project, slug)
         else:
             incidents.system_fault("l2-died", detail, project=project, task=slug,
-                                   expected_block_id=blocked.get("block_id"), expected_task=blocked)
+                                   expected_block_id=blocked.get("block_id"), expected_task=blocked,
+                                   step=f"the L2 worker run (attempt {t.get('attempt')})")
             log(f"[{project}/{slug}] L2 died → blocked; fault raised")
         return
     v = verify.verify(project, slug)
@@ -961,6 +1034,9 @@ def _report_turn(project: str, t: dict, v: dict) -> None:
 
 def resume_stranded_reports(project: str) -> None:
     """Reports that landed (state reported/blocked with report.json) but whose L3 turn never finished get it again."""
+    lifecycle = platform.container_lifecycle()
+    if lifecycle is not None and not lifecycle['ready']:
+        return  # Keep reports due, without spawning/logging a refused turn every tick (#543).
     for t in S.list_tasks(project):
         if t["state"] not in ("reported", "blocked") or t.get("l3_handled"):
             continue
@@ -969,6 +1045,10 @@ def resume_stranded_reports(project: str) -> None:
             continue
         if t.get("report_after") and not T.report_current(t, report_path):
             continue
+        last_block = next((ev for ev in reversed(S.read_events(project, t["slug"]))
+                           if ev.get("kind") == "state" and ev.get("to") == "blocked"), None)
+        if t["state"] == "blocked" and last_block and last_block.get("by") == "l2":
+            continue  # The owner's own block, even beside a report file, is a question, not a landed report.
         retry = _report_retries.get((project, t["slug"]))
         if (retry and retry[0] == json.dumps(T.report_owner(t), sort_keys=True)
                 and time.monotonic() < retry[2]):
@@ -984,8 +1064,6 @@ def resume_stranded_reports(project: str) -> None:
         except (OSError, ValueError) as e:
             log(f"[{project}/{t['slug']}] cannot read stranded report: {e}")
             report = None
-        last_block = next((ev for ev in reversed(S.read_events(project, t["slug"]))
-                           if ev.get("kind") == "state" and ev.get("to") == "blocked"), None)
         if (t["state"] == "blocked" and v.get("verdict") == "ok" and isinstance(report, dict)
                 and not report.get("blocked") and "attempt" in v and v.get("attempt") == t.get("attempt")
                 and last_block and last_block.get("frm") == "running"):
@@ -1000,7 +1078,10 @@ def resume_stranded_reports(project: str) -> None:
 
 
 def dispatch_waiting(project: str) -> None:
-    if config.restart_in_progress():
+    # Keep a replacement's queued work untouched without logging a refused
+    # launch per task on every timer tick. Dispatch still rechecks under its lease.
+    lifecycle = platform.container_lifecycle()
+    if config.restart_in_progress() or lifecycle is not None and not lifecycle['ready']:
         return
     queued = [T.release_dependency(project, t["slug"]) if t.get("planned_wait") else t
               for t in S.list_tasks(project) if t["state"] == "queued"]
@@ -1053,6 +1134,11 @@ def tick() -> None:
             if ready and config.is_managed(project):
                 tick_project(project)
     try:
+        for note in dispatch.prune_source_exports():
+            log(f"[source] {note}")
+    except Exception as e:  # noqa: BLE001
+        log(f"[source] export pruning failed: {e}")
+    try:
         auto_restart()
     except Exception as e:  # noqa: BLE001
         log(f"auto-restart: {e}\n{traceback.format_exc()}")
@@ -1063,26 +1149,34 @@ def tick() -> None:
     morning_digest()
 
 
-SELF_DEPLOY_FETCH_GRACE_SECONDS = 300
-_fetch_failing_since: dict[str, float] = {}  # project → monotonic time its self-deploy fetches started failing
+TICK_GRACE_SECONDS = 300
+_failing_since: dict[str, float] = {}  # a tick step that keeps failing → monotonic time its failures began
+
+
+def _retry_next_tick(step: str, exc: BaseException) -> bool:
+    """Whether `step` failing with `exc` is only logged: a fetch (#602), or a command that timed out on a busy host
+    (#724), often succeeds on a later tick, so it is retried until the same step has kept failing for
+    TICK_GRACE_SECONDS. Past that the caller files a system fault. A step that succeeds pops its `_failing_since`."""
+    since = _failing_since.setdefault(step, time.monotonic())
+    if time.monotonic() - since >= TICK_GRACE_SECONDS:
+        return False
+    log(f"{step} failed; retrying next tick: {exc}")
+    return True
 
 
 def self_deploy(project: str) -> None:
     # Activation: a sole running worker's merge must activate without another dispatch or report.
+    step = f"[{project}] self-deploy"
     try:
         with dispatch.publication_settlement(project):
             dispatch.self_deploy_fast_forward(project)
-    except git_policy.FetchError as e:
-        # #602: a fetch that recovers on a later tick is not an incident; one failing past the grace period is.
-        since = _fetch_failing_since.setdefault(project, time.monotonic())
-        if time.monotonic() - since < SELF_DEPLOY_FETCH_GRACE_SECONDS:
-            log(f"[{project}] self-deploy fetch failed; retrying next tick: {e}")
-        else:
+    except (git_policy.FetchError, subprocess.TimeoutExpired) as e:
+        if not _retry_next_tick(step, e):
             incidents.system_fault("self-deploy", f"{project}: {e}", project=project)
         return
     except (git_policy.GitPolicyError, subprocess.SubprocessError, OSError) as e:
         incidents.system_fault("self-deploy", f"{project}: {e}", project=project)
-    _fetch_failing_since.pop(project, None)
+    _failing_since.pop(step, None)
 
 
 def tick_project(project: str) -> None:
@@ -1090,8 +1184,12 @@ def tick_project(project: str) -> None:
         spawn(f"audit:{project}", audit.run, project)
     try:
         project_setup.maintain(project)
+        _failing_since.pop(f"[{project}] setup check", None)
     except (OSError, ValueError, RuntimeError) as exc:
         log(f"[{project}] setup check unavailable: {exc}")
+    except subprocess.TimeoutExpired as exc:
+        if not _retry_next_tick(f"[{project}] setup check", exc):
+            incidents.system_fault("tick", f"{project}: {exc}", project=project)
     self_deploy(project)
     try:
         images.collect(project)
@@ -1113,15 +1211,18 @@ def tick_project(project: str) -> None:
             request_task_resume(project, slug)
         dispatch_waiting(project)
         for t in S.list_tasks(project, include_archive=True):
-            if t["state"] == "done" and not t.get("cleaned"):
-                notes = dispatch.cleanup_after_done(project, t)
-                deferred = any(note.startswith(("deferred ", "skipped ", "could not ")) for note in notes)
+            if t["state"] not in S.OPEN_STATES and not t.get("cleaned"):
+                notes = dispatch.cleanup_task(project, t)
+                deferred = any(note.startswith("deferred ") for note in notes)
                 if not deferred:
                     with S.project_lock(project):
                         t2 = S.load_task(project, t["slug"]); t2["cleaned"] = S.now(); S.save_task(project, t2)
                 S.append_event(project, t["slug"], "cleanup", notes=notes)
                 log(f"[{project}/{t['slug']}] cleanup{' deferred' if deferred else ''}: {notes}")
+        _failing_since.pop(f"[{project}] tick", None)
     except Exception as e:  # noqa: BLE001
+        if isinstance(e, subprocess.TimeoutExpired) and _retry_next_tick(f"[{project}] tick", e):
+            return
         log(f"[{project}] tick failed: {e}\n{traceback.format_exc()}")
         incidents.system_fault("tick", f"{project}: {e}", project=project)
 
@@ -1147,12 +1248,14 @@ def timer_loop(tls_context: ssl.SSLContext | None = None, tls_host: str | None =
             next_tls_check = time.monotonic() + 86400
         try:
             tick()
+            _failing_since.pop("tick", None)
         except Exception as e:  # noqa: BLE001
-            log(f"tick: {e}\n{traceback.format_exc()}")
-            try:
-                incidents.system_fault("tick", str(e))
-            except Exception as e2:  # noqa: BLE001 — the fault channel itself is broken: the journal is the last resort
-                log(f"tick: could not record fault: {e2}")
+            if not (isinstance(e, subprocess.TimeoutExpired) and _retry_next_tick("tick", e)):
+                log(f"tick: {e}\n{traceback.format_exc()}")
+                try:
+                    incidents.system_fault("tick", str(e))
+                except Exception as e2:  # noqa: BLE001 — the fault channel itself is broken: the journal is the last resort
+                    log(f"tick: could not record fault: {e2}")
         time.sleep(config.AGENT_POLL_SECONDS)
 
 
@@ -1352,6 +1455,35 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "Design unavailable"}, 404)
         self.send_response(200)
         self.send_header("Content-Type", "image/png" if asset.endswith(".png") else "image/jpeg")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _captures(self, parts: list[str]) -> None:
+        """A reply's validation captures: the reply lists them by digest, and only those saved bytes cross this route."""
+        asset = unquote(parts[3]) if len(parts) == 4 else None
+        try:
+            if len(parts) not in (3, 4):
+                raise ValueError("capture unavailable")
+            project, slug, identity = [unquote(part) for part in parts[:3]]
+            row = T.task_captures(project, slug, identity)
+            if asset is None:
+                prefix = f"/api/captures/{quote(project, safe='')}/{slug}/{identity}"
+                return self._json({"run": row.get("capture_run"), "at": row.get("at"),
+                    "conversation_url": f"/projects/{quote(project, safe='')}/tasks/{slug}",
+                    "captures": [{**{key: item[key] for key in ("title", "bytes", "width", "height", "frames", "seconds")},
+                                  "url": f"{prefix}/{item['name']}"} for item in row["captures"]]})
+            data = T.capture_image(project, slug, row, asset)
+        except (T.TransitionError, OSError, ValueError, KeyError, TypeError):
+            if asset is not None:
+                return self._plain("Capture unavailable", 404)
+            return self._json({"error": "Capture unavailable"}, 404)
+        self.send_response(200)
+        self.send_header("Content-Type", "image/gif")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -1603,7 +1735,7 @@ class Handler(BaseHTTPRequestHandler):
         if action == "code":
             return self._json(access.issue_code())
         if action in ("share", "share-close"):
-            denied = self._terminal_denied(json_body=True, subject="Add a phone")
+            denied = self._terminal_denied(json_body=True, subject="Set up a device")
             if denied:
                 return self._json({"error": denied}, 403)
             if action == "share-close":
@@ -1630,6 +1762,9 @@ class Handler(BaseHTTPRequestHandler):
     def _terminal_denied(self, *, json_body: bool, subject: str = "Terminal") -> str | None:
         """Why a terminal or update request is refused: a cross-site page (both run commands, so a page
         elsewhere must not be able to start them) or one of Altitude's own agents."""
+        unavailable = platform.container_unavailable(subject)
+        if unavailable:
+            return unavailable
         if self._cross_site() or json_body and self.headers.get_content_type() != "application/json":
             return f"{subject} requests must come from Altitude's own page."
         # One connection keeps one client socket, so its first terminal or update request decides for the rest.
@@ -1706,6 +1841,71 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001 — record, lock and launch failures name private paths; they stay in the log
             log(f"update request failed: {exc!r}")
             return self._json({"error": "Altitude could not complete the update request. Run alt update in a terminal to see why."}, 503)
+
+    def _in_line(self, call) -> None:
+        """`alt task validate` and `alt task run`: `call(waiting, gone)` answered as JSON. A client that accepts NDJSON
+        hears what a busy machine makes its request wait for, one line at a time, then gets the answer as the last
+        line. Once its request is read, the client sends nothing more: a connection at its end, or failed, means the
+        client closed it or went away, which takes a waiting request out of the line and stops an admitted run
+        (docs/DEVELOPMENT.md#validation-runner)."""
+        streaming, started = "application/x-ndjson" in (self.headers.get("Accept") or ""), False
+
+        def waiting(text: str) -> None:
+            nonlocal started
+            if not streaming:
+                return
+            if not started:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/x-ndjson")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                started = True
+            self.wfile.write(json.dumps({"waiting": text}).encode() + b"\n")
+
+        def gone() -> bool:
+            # Only what arrives is read: TLS handles its own records (a key update reads as no data), the end of the
+            # connection reads as empty, and anything else the client sends is dropped.
+            try:
+                poller = select.poll()
+                poller.register(self.connection, select.POLLIN)
+                if not poller.poll(0):
+                    return False
+                self.connection.settimeout(0)
+                try:
+                    return not self.connection.recv(65536)
+                finally:
+                    self.connection.settimeout(None)
+            except (ssl.SSLWantReadError, ssl.SSLWantWriteError, BlockingIOError):
+                return False
+            except (OSError, ValueError):
+                return True
+        try:
+            answer, code = call(waiting, gone), 200
+        except PermissionError as exc:
+            answer, code = {"error": str(exc)}, 403
+        except (ValueError, KeyError, OSError, RuntimeError) as exc:
+            answer, code = {"error": str(exc)}, 400
+        if not started:
+            return self._json(answer, code)
+        try:
+            self.wfile.write(json.dumps(answer, default=str).encode() + b"\n")
+        except OSError as exc:
+            log(f"{self.command} {self.path}: client went away ({type(exc).__name__}: {exc})")
+
+    def _validation_post(self, body: dict) -> None:
+        """The validation switch, behind the terminal's request checks: an agent cannot turn its own runner back on."""
+        denied = self._terminal_denied(json_body=True, subject="Validation")
+        if denied:
+            return self._json({"error": denied}, 403)
+        if body.keys() - {"enabled"} or not isinstance(body.get("enabled"), bool):
+            return self._json({"error": "Choose on or off."}, 400)
+        try:
+            validation.set_enabled(body["enabled"])
+        except OSError as exc:
+            return self._json({"error": f"Could not save the validation switch: {exc.strerror}"}, 400)
+        log(f"validation runs turned {'on' if body['enabled'] else 'off'} by the operator")
+        return self._json(machine_view())
 
     def _terminal_post(self, parts: list[str], body: dict) -> None:
         denied = self._terminal_denied(json_body=True)
@@ -1839,6 +2039,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, exc.status)
             if api == "design":
                 return self._task_design(parts[2:])
+            if api == "captures":
+                return self._captures(parts[2:])
             if api == "images":
                 return self._images(parts, q)
             if api == "access":
@@ -1891,9 +2093,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(transcript.view(
                         parts[2], parts[3],
                         engine=q.get("engine", [""])[0], session_id=q.get("session_id", [""])[0],
-                        cursor=int(q.get("cursor", ["0"])[0]), raw=q.get("raw", ["0"])[0] == "1"), compress=True)
+                        attempt=int(q.get("attempt", ["0"])[0]), raw=q.get("raw", ["0"])[0] == "1",
+                        mode=q.get("mode", ["initial"])[0], cursor=q.get("cursor", [""])[0],
+                        before=q.get("before", [""])[0], lower=q.get("lower", [""])[0],
+                        after=q.get("after", [""])[0], record=q.get("record", [""])[0],
+                        offset=int(q.get("offset", ["0"])[0])), compress=True)
                 except (KeyError, transcript.TranscriptAccessError):
                     return self._json({"error": "transcript unavailable for this task generation"}, 404)
+                except ValueError as exc:
+                    return self._json({"error": str(exc)}, 400)
             if api == "monitor":
                 return self._json({"seats": route.seats(), "routing": monitor.routing(),
                                    "sessions": monitor.sessions()})
@@ -1975,6 +2183,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._devices_post(parts[2], o)
             if api in ("update", "update-check"):
                 return self._update_post(parts, o)
+            if parts == ["api", "validation-access"]:
+                return self._validation_post(o)
             if parts == ["api", "task", "review", "run"]:
                 try:
                     if o.keys() - {"project", "slug", "attempt", "review_id", "context_ids", "proposal_id"}:
@@ -2020,16 +2230,25 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, 403)
                 except (ValueError, KeyError, OSError, RuntimeError) as exc:
                     return self._json({"error": str(exc)}, 400)
-            if parts == ["api", "task", "run"]:
-                try:
-                    if o.keys() - {"project", "slug", "attempt", "command", "request"}:
-                        raise ValueError("alt task run: unsupported fields")
-                    return self._json(run_machine_command(o["project"], o["slug"], o.get("attempt"), o.get("command"),
-                                                          o.get("request")))
-                except PermissionError as exc:
-                    return self._json({"error": str(exc)}, 403)
-                except (ValueError, KeyError, OSError) as exc:
-                    return self._json({"error": str(exc)}, 400)
+            if parts in (["api", "task", "validate"], ["api", "task", "run"]):
+                peer, local = self.client_address, self.connection.getsockname()
+
+                def owner(task: dict) -> bool:
+                    return task_owner_connection(o["project"], o["slug"], task, peer, local)
+
+                def call(waiting, gone) -> dict:
+                    if parts[-1] == "run":
+                        if o.keys() - {"project", "slug", "attempt", "command", "request"}:
+                            raise ValueError("alt task run: unsupported fields")
+                        return run_machine_command(o["project"], o["slug"], o.get("attempt"), o.get("command"),
+                                                   o.get("request"), owner=owner, waiting=waiting, gone=gone)
+                    if o.keys() - {"project", "slug", "attempt", "command", "kvm", "publish", "simulator", "capture"}:
+                        raise ValueError("alt task validate: unsupported fields")
+                    return validation.run(o["project"], o["slug"], o.get("attempt"), o.get("command"),
+                                          kvm=o.get("kvm", False), publish=o.get("publish"),
+                                          simulator=o.get("simulator", False), capture=o.get("capture", False),
+                                          owner=owner, waiting=waiting, gone=gone)
+                return self._in_line(call)
             if parts == ["api", "pr", "close"]:
                 try:
                     if o.keys() - {"project", "number", "body"}:
@@ -2060,14 +2279,29 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, 409)
             if parts == ["api", "defaults"]:
                 try:
-                    if o.get("setting") not in (*config.DEFAULT_SETTINGS, "l2_preference"):
+                    if o.get("setting") not in set(config.PROJECT_SETTINGS) - {"routing"}:
                         raise ValueError("unknown project default")
-                    dispatch.request_setting(o["project"], o["setting"], o.get("value"), "Settings", actor=config.OPERATOR_ACTOR)
+                    dispatch.request_setting(o["project"], o["setting"], o.get("value"), "Settings", actor=config.OPERATOR_ACTOR,
+                                             **({"expected": o["expected"]} if "expected" in o else {}))
                     result = dispatch._run_setting(o["project"], o["setting"])
+                    if result.get("changed"):
+                        return self._json({"error": CHANGED_ELSEWHERE, "changed": True}, 409)
                     if result["status"] != "done":
                         raise ValueError(result["note"])
                     return self._json(config.defaults_view(o["project"]))
                 except (ValueError, KeyError, T.TransitionError) as exc:
+                    return self._json({"error": str(exc)}, 400)
+            if parts == ["api", "new-tasks"]:
+                try:
+                    dispatch.request_setting(None, "new_tasks", o.get("value"), "Settings", actor=config.OPERATOR_ACTOR,
+                                             **({"expected": o["expected"]} if "expected" in o else {}))
+                    result = dispatch._run_setting(None, "new_tasks")
+                    if result.get("changed"):
+                        return self._json({"error": CHANGED_ELSEWHERE, "changed": True}, 409)
+                    if result["status"] != "done":
+                        raise ValueError(result["note"])
+                    return self._json(new_tasks_view())
+                except (ValueError, T.TransitionError) as exc:
                     return self._json({"error": str(exc)}, 400)
             if parts == ["api", "projects-folder"]:
                 try:
@@ -2145,6 +2379,18 @@ class Handler(BaseHTTPRequestHandler):
                 except T.TransitionError as exc:
                     return self._json({"error": str(exc)}, 409)
                 return self._json({"ok": True, "state": S.load_task(project, slug)["state"]})
+            if api == "l2" and len(parts) > 2 and parts[2] == "send-now":
+                project, slug = o["project"], o["slug"]
+                try:
+                    result = dispatch.request_send_now(project, slug, str(o.get("id") or ""))
+                except T.TransitionError as exc:
+                    return self._json({"error": str(exc)}, 409)
+                if result.get("queued"):
+                    try:
+                        spawn(f"task-operation:{project}:{slug}", dispatch.run_task_operation, project, slug)
+                    except Exception as exc:
+                        log(f"[{project}/{slug}] Send now saved; immediate wake failed: {exc}")
+                return self._json(result)
             if api == "l2" and len(parts) > 2 and parts[2] == "remove":
                 try:
                     T.remove_message(o["project"], o["slug"], str(o.get("id") or ""))
@@ -2192,15 +2438,14 @@ class Handler(BaseHTTPRequestHandler):
             if api == "l3" and len(parts) > 2 and parts[2] == "start":
                 name = config.project(o["project"]) and o["project"]
                 return self._json({"ok": True, "started": spawn(f"start:{name}", start_l3, name)})
-            if api == "l3" and len(parts) > 2 and parts[2] == "engine":
-                engine = o.get("engine") or None
-                if engine and engine not in config.ENGINES:
-                    return self._json({"error": f"engine must be one of {', '.join(config.ENGINES)}"}, 400)
+            if api == "chat" and len(parts) > 2 and parts[2] == "send-now":
+                project = o["project"]
                 try:
-                    config.set_l3_engine(o["project"], engine)
+                    result = l3.send_now(project, str(o.get("id") or ""))
                 except ValueError as exc:
-                    return self._json({"error": str(exc)}, 400)
-                return self._json({"ok": True, "engine": engine})
+                    return self._json({"error": str(exc)}, 409)
+                request_l3_drain(project)
+                return self._json(result)
             if api == "chat" and len(parts) > 2 and parts[2] == "remove":
                 project = o["project"]
                 if not l3.drop_queued(project, str(o.get("id") or "")):
@@ -2294,6 +2539,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._stream_close()
                 return
             if api == "restart":
+                if platform.containerized():
+                    return self._json({"error": platform.IMAGE_MANAGED}, 409)
                 status = restart_status()
                 if not status:
                     return self._json({"error": "no restart is pending"}, 409)
@@ -2319,7 +2566,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def restart_status() -> dict | None:
     """Pending backend/web activation plus what the page's early Restart button waits for."""
-    if config.RELEASE is not None:
+    if platform.containerized() or config.RELEASE is not None:
         return None  # Installed archives activate only through the explicit update transaction.
     pending = S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING)
     if not pending:
@@ -2337,7 +2584,7 @@ def restart_waiting_for(*, check_activity: bool = True) -> list[str]:
     if check_activity:
         with config.restart_lock(exclusive=True) as quiet:
             if not quiet:
-                waiting.append("dispatch, L3 turn or report verification in flight")
+                waiting.append("dispatch, L3 turn, validation or report verification in flight")
     return waiting
 
 
@@ -2346,7 +2593,7 @@ RESTART_GRACE_SECONDS = 600  # the restart unit builds the web bundle first; the
 
 def auto_restart() -> None:
     """Activate merged backend or web changes at the quiet point (operator, 2026-09-03: a merged fix is not a fix
-    until the deployed service and bundle contain it). Activation: dispatch, L3, review and report handling
+    until the deployed service and bundle contain it). Activation: dispatch, L3, review, validation and report handling
     hold activation; detached running workers survive it. The unit rechecks before touching the service."""
     status = restart_status()
     if not status or status.get("failed"):
@@ -2385,11 +2632,12 @@ class RestartBusy(RuntimeError):
 
 
 def restart_service() -> dict:
+    platform.require_native_application()
     if config.RELEASE is not None:
         raise RuntimeError("Installed releases use alt update; source activation is unavailable")
     with config.restart_lock(exclusive=True) as quiet:
         if not quiet or restart_waiting_for(check_activity=False):
-            raise RestartBusy("restart waits for dispatch, L3 turn, adversarial review or report verification")
+            raise RestartBusy("restart waits for dispatch, L3 turn, adversarial review, validation or report verification")
         flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
         pend = S.read_json(flag, {}) or {}
         if pend.get("requested_at") and not pend.get("failed"):
@@ -2455,9 +2703,25 @@ def overview() -> dict:
             p["l3"] = l3.info(p["name"])
             p["hold"] = S.read_json(config.project_dir(p["name"]) / "hold.json")
     return {"projects": projects, "queue": digest.queue(), "wip": digest.wip(), "quota": monitor.quota(),
-            "engines": route.engine_readouts(), "roots": [home_relative(r) for r in config.project_roots()],
+            "lifecycle": platform.container_lifecycle(),
+            "deployment": "container" if platform.containerized() else "native",
+            "engines": route.engine_readouts(), "new_tasks": new_tasks_view(),
+            "roots": [home_relative(r) for r in config.project_roots()],
             "operator": config.operator_name(), "restart": restart_status(),
             "update": installation.update_status(), "now": S.now()}
+
+
+CHANGED_ELSEWHERE = "Changed in another window."
+
+
+def new_tasks_view() -> dict:
+    """The New tasks choice beside the quota: its value, why it cannot start now, and the projects whose
+    Only engine keeps their tasks elsewhere."""
+    choice = config.machine_settings().get("new_tasks")
+    return {"value": choice, "unavailable": route.choice_unavailable("l2", choice),
+            "only": [{"project": name, "engine": entry["l2_engine"]}
+                     for name, entry in sorted(config.load_projects().items()) if entry.get("l2_engine")],
+            **config.choice_options()}
 
 
 def home_relative(path: Path) -> str:
@@ -2480,16 +2744,18 @@ def folders(raw: str | None) -> dict:
 
     Browsing starts at the home folder and stays inside it after following links; hidden folders stay out.
     """
-    home = config.HOME.resolve()
+    home = (platform.CONTAINER_PROJECTS if platform.containerized() else config.HOME).resolve()
     target = Path(raw).expanduser() if raw else home
     if not target.is_absolute():
         raise FolderError("Choose an absolute folder path.", 400)
     target = target.resolve()
     if not target.is_relative_to(home) or any(part.startswith(".") for part in target.relative_to(home).parts):
-        raise FolderError("Browsing stays inside your home folder. Type the path to add a folder elsewhere.", 403)
+        raise FolderError("Choose a folder inside the container projects volume." if platform.containerized()
+                          else "Browsing stays inside your home folder. Type the path to add a folder elsewhere.", 403)
     if not target.is_dir():
         raise FolderError("This folder no longer exists.", 404)
-    view = {"path": str(target), "parts": list(target.relative_to(home).parts), "readable": True, "folders": []}
+    view = {"path": str(target), "parts": list(target.relative_to(home).parts), "readable": True, "folders": [],
+            **({"location": "container"} if platform.containerized() else {})}
     try:
         entries = sorted(os.scandir(target), key=lambda entry: entry.name.lower())
     except PermissionError:
@@ -2519,11 +2785,15 @@ def save_projects_folder(body: dict) -> dict:
 
 
 def machine_view() -> dict:
-    """The operator's name, incident publication, the terminal and update-check switches, as First run and
+    """The operator's name, incident publication, the terminal, validation and update-check switches, as First run and
     Settings show them."""
-    return {"operator": config.operator_name(), "incident_repository": config.incident_repository(),
+    return {"lifecycle": platform.container_lifecycle(), "operator": config.operator_name(), "incident_repository": config.incident_repository(),
             "altitude_repository": config.ALTITUDE_REPOSITORY, "terminal": terminal.enabled(),
-            "update_check": config.machine_settings().get("update_check") is not False}
+            "terminal_unavailable": platform.container_unavailable("Terminal"),
+            "container_shell": platform.container_shell_command(),
+            "validation": validation.enabled(), "validation_unavailable": platform.validation_unavailable(),
+            "deployment": "container" if platform.containerized() else "native",
+            "update_check": not platform.containerized() and config.machine_settings().get("update_check") is not False}
 
 
 def _save_machine(setting: str, value, reason: str) -> dict:
@@ -2581,14 +2851,23 @@ def _machine_rows(runs: Path) -> list[dict]:
     return [json.loads(line) for line in runs.read_text().splitlines() if line.strip()] if runs.exists() else []
 
 
-def run_machine_command(project: str, slug: str, attempt: object, command: object, request: object) -> dict:
-    """One command under the task's recorded machine grant, executed by altd outside the worker sandbox.
+MACHINE_LINE = line.Line(config.MACHINE_RUNS, "a machine-run place")   # concurrent `alt task run` commands
+MACHINE_REVOKED = "the grant was revoked while this ran, so Altitude stopped it; effects it already had remain"
+MACHINE_CLIENT_GONE = f"{line.CLIENT_GONE}, so Altitude stopped it; effects it already had remain"
+_client_stopped: dict[str, str] = {}   # unit → why a client awaiting a command from before a restart stopped it
 
-    Only the running owner's current attempt may call it, and only while a grant is recorded. The command, unit,
-    exit status and output land in the task folder (`machine.jsonl` and the unit's own log), the task events and
-    the project log, so the operator can read exactly what ran under their grant. `request` names the caller's
+
+def run_machine_command(project: str, slug: str, attempt: object, command: object, request: object, *,
+                        owner=lambda task: False, waiting=lambda text: None, gone=lambda: False) -> dict:
+    """One command under the task's recorded operator grant, executed by altd outside the worker sandbox.
+
+    Only the running owner's current attempt may call it, from its own worker job (`owner(task)`), so another agent
+    holding this machine's key cannot run commands under this task's grant, and only while a grant is recorded. The
+    command, unit, exit status and output land in the task folder (`machine.jsonl` and the unit's own log), the task
+    events and the project log, so the operator can read exactly what ran under their grant. `request` names the caller's
     command: calling again with it, after a restart ended the connection, waits for that command's result
-    instead of running it again.
+    instead of running it again. A command that finds every machine-run place taken waits its turn, telling
+    `waiting(text)` what it waits for; `gone()` says its client stopped, which takes it out of the line or stops it.
     """
     S.require_task_slug(slug)
     if not isinstance(command, str) or not command.strip() or len(command) > MACHINE_COMMAND_LIMIT:
@@ -2597,55 +2876,108 @@ def run_machine_command(project: str, slug: str, attempt: object, command: objec
         raise ValueError("alt task run: name the request with 32 lowercase hexadecimal characters")
     folder = S.task_dir(project, slug)
     runs = folder / "machine.jsonl"
-    with S.project_lock(project):
-        task = S.load_task(project, slug)
-        if task.get("state") != "running" or str(task.get("attempt")) != str(attempt):
-            raise PermissionError("alt task run: only the running owner's current attempt may run machine commands")
-        rows = _machine_rows(runs)
-        earlier = next((r for r in rows if r.get("request") == request), None)
-        if earlier is not None and earlier.get("attempt") != task.get("attempt"):
-            raise PermissionError("alt task run: this request belongs to an earlier attempt")
-        if earlier is None:
-            grant = task.get("machine_access")
+
+    def admit(start: bool) -> tuple[dict, dict | None, dict | None]:
+        """The task, the request's earlier row and, when `start`, the row it records; refuses a request that may
+        not run."""
+        with S.project_lock(project):
+            task = S.load_task(project, slug)
+            if task.get("state") != "running" or str(task.get("attempt")) != str(attempt):
+                raise PermissionError("alt task run: only the running owner's current attempt may run machine commands")
+            if not owner(task):
+                raise PermissionError("alt task run: only this task's owner may run its granted commands")
+            rows = _machine_rows(runs)
+            earlier = next((r for r in rows if r.get("request") == request), None)
+            if earlier is not None and earlier.get("attempt") != task.get("attempt"):
+                raise PermissionError("alt task run: this request belongs to an earlier attempt")
+            if earlier is not None:
+                if earlier["command"] != command:
+                    raise ValueError("alt task run: this request already ran a different command")
+                return task, earlier, None
+            grant = task.get("grant")
             if not grant:
-                raise PermissionError("alt task run: this task has no machine grant; ask the operator for access for "
-                                      "a concrete purpose, resolve their answer, then have L3 record it with "
-                                      "alt task machine --grant")
+                raise PermissionError("alt task run: this task has no operator grant; ask the operator for access for "
+                                      "a concrete purpose, resolve their answer, then record it with "
+                                      "alt task grant")
             if grant.get("attempt") != task.get("attempt"):
-                raise PermissionError("alt task run: the machine grant belongs to an earlier attempt; ask again")
+                raise PermissionError("alt task run: the operator grant belongs to an earlier attempt; ask again")
             if any(r["finished"] is None for r in rows):  # one at a time keeps the record readable
                 raise ValueError("alt task run: one command at a time; the previous command is still running")
+            if not start:
+                return task, None, None
             # The row exists before the unit starts, so a command that restarts altd keeps its number and unit.
             sequence = len(rows) + 1
             row = {"n": sequence, "request": request, "attempt": task.get("attempt"), "purpose": grant["purpose"],
-                   "command": command,
+                   "granted": grant["id"], "command": command,
                    "unit": engines.machine_unit(project, slug, sequence), "exit": None, "timed_out": False,
                    "started": datetime.now(timezone.utc).isoformat(), "finished": None,
                    "error": "still running or interrupted with altd"}
             T._append_jsonl(runs, row)
-        elif earlier["command"] != command:
-            raise ValueError("alt task run: this request already ran a different command")
-    if earlier is not None:
-        return _await_machine_row(project, slug, earlier["n"])
+            return task, None, row
+
+    task, earlier, _ = admit(False)
+    if earlier is None:
+        with MACHINE_LINE.turn(f"the command of {project}/{slug} holds a place", config.MACHINE_COMMAND_TIMEOUT,
+                               command="alt task run", wait=config.MACHINE_COMMAND_WAIT, watch=MACHINE_POLL_SECONDS,
+                               waiting=waiting, gone=gone):
+            task, earlier, row = admit(True)   # the task, its grant and its commands may have changed while it waited
+            if row is not None:
+                return _start_machine_command(project, slug, task, row, gone)
+    return _await_machine_row(project, slug, earlier["n"], gone)
+
+
+def _start_machine_command(project: str, slug: str, task: dict, row: dict, gone) -> dict:
+    """Run the command whose row was just recorded and settle it, stopping it when its grant is revoked or its client
+    goes away."""
+    folder, finished, stopped = S.task_dir(project, slug), threading.Event(), []
+
+    def stop_when_revoked() -> None:  # the launcher waits for the job, so revocation and the client are watched beside it
+        while not finished.wait(MACHINE_POLL_SECONDS):
+            if not stopped and _grant_revoked(project, slug, row):
+                stopped.append(MACHINE_REVOKED)
+            elif not stopped and gone():
+                stopped.append(MACHINE_CLIENT_GONE)
+            if stopped:
+                engines.machine_stop(row["unit"])  # again each poll: the job may not exist yet, or a stop may fail
+
+    watcher = threading.Thread(target=stop_when_revoked, name="machine-client", daemon=True)
+    watcher.start()
     try:  # a launch that fails still settles its row, so it never holds the next command
-        launch_error = engines.machine_command(command, cwd=Path(task.get("worktree") or config.project_path(project)),
-                                               folder=folder, unit=row["unit"], timeout=config.MACHINE_COMMAND_TIMEOUT,
+        launch_error = engines.machine_command(row["command"], folder=folder, unit=row["unit"],
+                                               cwd=Path(task.get("worktree") or config.project_path(project)),
+                                               timeout=config.MACHINE_COMMAND_TIMEOUT,
                                                identity=dispatch.l2_env(project, slug, task["attempt"]))
     except (OSError, RuntimeError, ValueError, KeyError) as exc:
         launch_error = str(exc)[:300]
-    return settle_machine_command(project, slug, row, watched=True, launch_error=launch_error)
+    finally:
+        finished.set()
+        watcher.join()   # it reads the client's connection, which the answer is written to next
+    return settle_machine_command(project, slug, row, watched=True, launch_error=launch_error,
+                                  stopped=stopped[0] if stopped else None)
+
+
+def _grant_revoked(project: str, slug: str, row: dict) -> bool:
+    """The grant a command runs under is no longer the task's current grant."""
+    try:
+        grant = S.load_task(project, slug).get("grant") or {}
+    except (OSError, ValueError):
+        return False
+    return grant.get("id") != row.get("granted")
 
 
 def settle_machine_command(project: str, slug: str, row: dict, *, watched: bool,
-                           launch_error: str | None = None) -> dict:
+                           launch_error: str | None = None, stopped: str | None = None) -> dict:
     """Follow the row's unit to its end and complete its row, task event and project log entry once; return the
     completed row with the unit's output. The altd that started the command settles it, and the next altd settles
-    one that a restart interrupted. The row is written last, so a restart between the writes settles it again,
-    and the task event, found by unit, is not repeated."""
+    one that a restart interrupted, stopping it if its grant was revoked meanwhile; `stopped` says why its altd
+    already stopped it. The row is written last, so a
+    restart between the writes settles it again, and the task event, found by unit, is not repeated."""
     folder = S.task_dir(project, slug)
     outcome = engines.machine_outcome(folder, row["unit"], row["started"], watched=watched,
                                       timeout=config.MACHINE_COMMAND_TIMEOUT, launch_error=launch_error,
-                                      poll=MACHINE_POLL_SECONDS)
+                                      poll=MACHINE_POLL_SECONDS, stopped=stopped,
+                                      stop=lambda: MACHINE_REVOKED if _grant_revoked(project, slug, row)
+                                      else _client_stopped.pop(row["unit"], None))
     runs = folder / "machine.jsonl"
     with S.project_lock(project):
         rows = _machine_rows(runs)
@@ -2661,14 +2993,19 @@ def settle_machine_command(project: str, slug: str, row: dict, *, watched: bool,
     return {**current, **engines.machine_output(folder, current["unit"])}
 
 
-def _await_machine_row(project: str, slug: str, sequence: int) -> dict:
-    """The row once it is complete, or as it stands when the command's limit has long passed."""
+def _await_machine_row(project: str, slug: str, sequence: int, gone=lambda: False) -> dict:
+    """The row once it is complete, or as it stands when the command's limit has long passed. A client that goes
+    away meanwhile has the command stopped by whoever settles it, with that reason."""
     folder = S.task_dir(project, slug)
     deadline = time.monotonic() + config.MACHINE_COMMAND_TIMEOUT + 90
     while True:
         row = next(r for r in _machine_rows(folder / "machine.jsonl") if r["n"] == sequence)
         if row["finished"] is not None or time.monotonic() >= deadline:
             return {**row, **engines.machine_output(folder, row["unit"])}
+        if gone():
+            _client_stopped[row["unit"]] = MACHINE_CLIENT_GONE
+            engines.machine_stop(row["unit"])
+            gone = lambda: False   # noqa: E731 — stop once; the settler records the end
         time.sleep(MACHINE_POLL_SECONDS)
 
 
@@ -2679,29 +3016,61 @@ def settle_interrupted_machine_commands() -> list[threading.Thread]:
     for project in config.load_projects():
         for runs in [*S.tasks_dir(project).glob("*/machine.jsonl"), *S.archive_dir(project).glob("*/machine.jsonl")]:
             try:
-                rows = [row for row in _machine_rows(runs) if row["finished"] is None]
+                # the validation runner records its own interrupted runs (validation.reconcile)
+                rows = [row for row in _machine_rows(runs) if row["finished"] is None
+                        and not row["unit"].startswith(validation.UNIT_PREFIX)]
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 log(f"machine commands: cannot read {runs}: {exc}")
                 continue
             for row in rows:
-                thread = threading.Thread(target=settle_machine_command, args=(project, runs.parent.name, row),
-                                          kwargs={"watched": False}, name=f"machine-{row['unit']}", daemon=True)
+                # It keeps a place, beyond the line's places if need be, taken before altd serves any request.
+                held = ExitStack()
+                place = held.enter_context(MACHINE_LINE.turn(f"the command of {project}/{runs.parent.name} holds a "
+                                                             "place", None, command="alt task run", force=True))
+                MACHINE_LINE.ends(place, config.MACHINE_COMMAND_TIMEOUT - int(
+                    (datetime.now(timezone.utc) - datetime.fromisoformat(row["started"])).total_seconds()))
+                thread = threading.Thread(target=_settle_interrupted, args=(project, runs.parent.name, row, held),
+                                          name=f"machine-{row['unit']}", daemon=True)
                 thread.start()
                 threads.append(thread)
     return threads
 
 
+def _settle_interrupted(project: str, slug: str, row: dict, held: ExitStack) -> None:
+    """Settle a command that runs on from before a restart, then free the machine-run place it `held`."""
+    with held:
+        settle_machine_command(project, slug, row, watched=False)
+
+
+def task_owner_connection(project: str, slug: str, task: dict, peer: tuple, local: tuple) -> bool:
+    """Whether this connection comes from a process in the task's current worker job, so another agent holding this
+    machine's key cannot act as the owner."""
+    return bool(task.get("agent_id")) and terminal.owner_connection(
+        peer, local, engines.worker_unit(task["agent_id"], job_root=dispatch.l2_job_root(project, slug)))
+
+
 def owner_terminal_output(project: str, slug: str, attempt: object, peer: tuple, local: tuple) -> dict:
     """The task terminal's output for the task's running owner: read-only, and only to a connection from a process in
     that owner's current worker job, so another agent holding this machine's key cannot read it."""
+    unavailable = platform.container_unavailable("Terminal")
+    if unavailable:
+        raise PermissionError(unavailable)
     S.require_task_slug(slug)
     task = S.load_task(project, slug)
     if task.get("state") != "running" or str(task.get("attempt")) != str(attempt) or not task.get("agent_id"):
         raise PermissionError("alt task terminal: only the running owner's current attempt may read its terminal")
-    unit = engines.worker_unit(task["agent_id"], job_root=dispatch.l2_job_root(project, slug))
-    if not terminal.owner_connection(peer, local, unit):
+    if not task_owner_connection(project, slug, task, peer, local):
         raise PermissionError("alt task terminal: only this task's owner may read its terminal")
-    return terminal.owner_output(project, slug)
+    return terminal.output(project, slug)
+
+
+def coordinator_terminal_output(project: str) -> dict:
+    """The project terminal's output for the project's coordinator. Only the project-bound coordinator socket calls
+    this, so neither a task worker nor another project's coordinator can read it."""
+    unavailable = platform.container_unavailable("Terminal")
+    if unavailable:
+        raise ValueError(unavailable)
+    return terminal.output(project, None)
 
 
 def pr_close(project: str, number: int, *, actor: str, body: str = "") -> dict:
@@ -2851,12 +3220,27 @@ def issue_write(project: str, operation: str, body: str, *, actor: str, title: s
     return url
 
 
+def task_wait_view(project: str, task: dict) -> dict:
+    """Resolve a planned prerequisite's title without changing the saved wait."""
+    wait = task.get("planned_wait")
+    if not wait:
+        return task
+    title = None
+    if wait.get("after"):
+        try:
+            title = S.load_task(project, wait["after"]).get("title")
+        except S.TaskNotFound:
+            pass
+    return {**task, "planned_wait": {**wait, "after_title": title}}
+
+
 def project_view(name: str) -> dict:
     proj = config.project(name)
     week = (datetime.now(timezone.utc) - timedelta(days=7)).replace(microsecond=0).isoformat()  # S.now()'s form
     live = {s["slug"]: s for s in monitor.sessions() if s.get("kind") == "l2" and s.get("project") == name}
     tasks = []
     for t in S.list_tasks(name):
+        t = task_wait_view(name, t)
         d = S.task_dir(name, t["slug"])
         prog = (d / "progress.md").read_text()[-1500:] if (d / "progress.md").exists() else ""
         tasks.append({**t, "live": live.get(t["slug"]), "progress_tail": prog, "has": {f: (d / f"{f}.md").exists() for f in ("request", "brief", "report", "digest", "progress")}})
@@ -2868,7 +3252,8 @@ def project_view(name: str) -> dict:
             "archive": sorted(({k: t.get(k) for k in ("slug", "state", "title", "updated", "prs")} for t in S.list_tasks(name, True)
                                if t["state"] in ("done", "rejected") and (t["updated"] or "") >= week),
                               key=lambda t: t["updated"], reverse=True),
-            "decisions": T.decisions(name), "log": S.read_project_log(name, 40),
+            "decisions": T.decisions(name), "log": [event for event in S.read_project_log(name, 40)
+                                                  if event.get("kind") != "project-message-received"],
             "incidents": incidents.index(name)[-10:], "hold": S.read_json(config.project_dir(name) / "hold.json"),
             "state_md": (config.project_dir(name) / "STATE.md").read_text() if (config.project_dir(name) / "STATE.md").exists() else ""}
 
@@ -2892,7 +3277,7 @@ TASK_VIEW_EVENTS = 20      # the newest events, as many as the task page shows
 def task_view(project: str, slug: str) -> dict:
     questions = T.question_views(project, slug)
     with S.project_lock(project):
-        t = S.load_task(project, slug)
+        t = task_wait_view(project, S.load_task(project, slug))
         d = S.task_dir(project, slug)
         report = S.read_json(d / "report.json")
         files = {f: (d / f"{f}.md").read_text() for f in ("request", "brief", "report", "digest", "progress") if (d / f"{f}.md").exists()}
@@ -2916,22 +3301,6 @@ def task_view(project: str, slug: str) -> dict:
             "report_json": report, "live": next((s for s in monitor.sessions() if s.get("kind") == "l2" and s.get("slug") == slug and s.get("project") == project), None)}
 
 
-def install_statusline() -> dict:
-    """Wrap the global statusline so interactive sessions feed the quota monitor. Edits ~/.claude/settings.json."""
-    settings = Path.home() / ".claude" / "settings.json"
-    cur = S.read_json(settings, {}) or {}
-    sl = cur.get("statusLine") or {}
-    wrapper = str(config.HOOKS / "statusline-monitor.sh")
-    if sl.get("command") == wrapper:
-        return {"ok": True, "already": True}
-    orig = sl.get("command")
-    cur["statusLine"] = {"type": "command", "command": wrapper}
-    if orig:
-        cur.setdefault("env", {})["ALTITUDE_ORIG_STATUSLINE"] = orig
-    S.write_json(settings, cur)
-    return {"ok": True, "wrapped": orig}
-
-
 def main(host: str | None = None, port: int | None = None) -> None:
     config.ensure_root()
     dispatch.forget_speech_service()
@@ -2949,7 +3318,8 @@ def main(host: str | None = None, port: int | None = None) -> None:
         log(f"cannot prepare the private access store ({exc}); refusing to start")
         raise SystemExit(1) from exc
     try:
-        context = tls.check(host) if config.TLS else None
+        certificate_host = config.PUBLIC_HOST if platform.containerized() else host
+        context = tls.check(certificate_host) if config.TLS else None
     except (tls.TLSFailure, OSError) as exc:
         log(f"HTTPS startup refused: {exc}")
         raise SystemExit(1) from exc
@@ -2966,10 +3336,13 @@ def main(host: str | None = None, port: int | None = None) -> None:
         for project in config.load_projects():
             if config.is_managed(project):
                 ensure_l3_verb_broker(project)
+        if os.environ.get("ALTITUDE_SERVICE"):  # clients reach the service it records, not their launch settings
+            tls.publish({"host": host, "public_host": certificate_host, "port": srv.server_port,
+                         "tls": context is not None, "tls_dir": config.TLS_DIR})
     except (OSError, RuntimeError) as e:
         stop_l3_verb_brokers()
         srv.server_close()
-        log(f"cannot initialize HTTPS or the L3 verb broker ({e}); refusing to start")
+        log(f"cannot initialize HTTPS, the L3 verb broker or the service record ({e}); refusing to start")
         raise SystemExit(1) from e
     scheme = "https" if context is not None else "http"
     # Activation: do not release waiting launches if the replacement cannot bind its API or brokers.
@@ -2978,7 +3351,8 @@ def main(host: str | None = None, port: int | None = None) -> None:
     if os.environ.get("ALTITUDE_TIMERS", "1") != "0":
         restart_notice()
         settle_interrupted_machine_commands()
-        threading.Thread(target=timer_loop, args=(context, host), name="timers", daemon=True).start()
+        threading.Thread(target=timer_loop, args=(context, certificate_host), name="timers", daemon=True).start()
+        threading.Thread(target=validation.reconcile, name="validation-reconcile", daemon=True).start()
     else:
         log("timers disabled (ALTITUDE_TIMERS=0): serve-only instance, no polling/dispatch — for smoke tests against a shared ALTITUDE_HOME")
     log(f"altd listening on {scheme}://{host}:{port}")
@@ -2997,7 +3371,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
 
 
 def certificate_view() -> dict | None:
-    """The CA a device trusts, as Settings › Devices shows it for adding a phone; None without HTTPS or
+    """The CA a device trusts, as Settings › Devices shows it for device setup; None without HTTPS or
     without a CA file of its own."""
     ca = config.TLS_DIR / "ca.crt"
     if not config.TLS or not ca.exists():
@@ -3014,8 +3388,8 @@ _SHARE_LOCK = threading.Lock()
 
 
 def open_share() -> dict:
-    """Settings › Devices › Add a phone: one share window of the CA this service serves under, replacing an
-    earlier one, with its QR code and what the phone must match."""
+    """Settings › Devices › Set up a device: one share window of the CA this service serves under, replacing an
+    earlier one, with its QR code and what the device must match."""
     global _SHARE
     found = tls.located({"host": config.HOST, "port": config.PORT, "tls": config.TLS, "tls_dir": config.TLS_DIR})
     ca = config.TLS_DIR / "ca.crt"
@@ -3025,7 +3399,7 @@ def open_share() -> dict:
         tls.phone_address(found)
         _SHARE = tls.Share(found, ca.read_bytes(), tls.identity(ca))
         window = _SHARE
-    log("opened a ten-minute certificate share for a phone")
+    log("opened a ten-minute certificate share for device setup")
     return {"link": window.link, "seconds": round(window.remaining()), "name": window.authority["name"],
             "sha256": window.authority["sha256"],
             "qr": ["".join("1" if dark else "0" for dark in row) for row in qr.matrix(window.link)]}

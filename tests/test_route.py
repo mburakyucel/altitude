@@ -214,6 +214,32 @@ class TestPickEngine(AltitudeCase):
         self.codex = codex(100, short=20)
         self.assertIsNone(route.pick_engine("l2")["engine"])
 
+    def test_retry_withdraws_only_a_sign_in_rejection_on_the_named_engine(self):
+        sign_in = engines.rejection("claude", {"error": "Not logged in"})
+        self.assertEqual(sign_in["scope"], "engine")
+        self.assertIn("sign in, then Retry or Resume", sign_in["why"])
+        for engine in config.ENGINES:
+            route.note_rejection({"engine": engine}, sign_in)
+        self.assertIn("sign in, then Retry or Resume", route.pick_engine("l2", forced="claude")["why"])
+        self.assertEqual(route.pick_engine("l2", forced="claude", retry_sign_in=True)["engine"], "claude")
+        self.assertTrue(route.retry_sign_in("claude"))
+        self.assertFalse(route.retry_sign_in("claude"))
+        self.assertEqual(route.pick_engine("l2", forced="claude")["engine"], "claude")
+        self.assertIsNone(route.pick_engine("l2", forced="codex")["engine"])
+
+        # A usage window's cure is time and a model rejection's is configuration: Retry keeps both,
+        # even beside a sign-in rejection on the same engine.
+        route.note_rejection({"engine": "claude"}, sign_in)
+        route.note_limit("claude", engines.usage_limit_in("You've hit your usage limit"))
+        route.note_rejection({"engine": "codex", "model": "gpt-test"},
+                             engines.rejection("codex", {"error": "model_not_found"}, "gpt-test"))
+        self.assertIsNone(route.pick_engine("l2", forced="claude", retry_sign_in=True)["engine"])
+        self.assertTrue(route.retry_sign_in("claude"))
+        self.assertTrue(route.retry_sign_in("codex"))
+        self.assertIn("usage window exhausted", route.pick_engine("l2", forced="claude")["why"])
+        self.assertIsNone(route.pick_engine("l2", forced="codex", model="gpt-test")["engine"])
+        self.assertEqual(route.pick_engine("l2", forced="codex")["engine"], "codex")
+
     def test_a_session_stays_on_its_engine_under_the_switch_margin(self):
         # Two close quotas would otherwise alternate every turn, paying a cold cache and a handoff each time.
         self.claude = {"known": True, "five_hour": 10, "seven_day": 20}
@@ -234,6 +260,80 @@ class TestPickEngine(AltitudeCase):
         self.codex = codex(30, short=100)
         self.assertEqual(route.pick_engine("l3", current="codex")["engine"], "claude")
         self.assertEqual(route.pick_engine("l3", forced="claude", current="codex")["engine"], "claude")
+
+
+    def test_new_tasks_is_tried_first_and_routing_takes_over_while_it_is_unavailable(self):
+        self.patch(config, "machine_settings", return_value={"new_tasks": {"engine": "claude", "model": "fable", "effort": "max"}})
+        project = {"routing": config.parse_routing("codex>claude:opus")}
+        choice = route.pick_engine("l2", project=project)
+        self.assertEqual((choice["engine"], choice["model"], choice["effort"]), ("claude", "fable", "max"))
+        self.assertIn("chosen for new tasks", choice["why"])
+        self.assertIsNone(route.choice_unavailable("l2", config.machine_settings()["new_tasks"]))
+        route.note_rejection({"engine": "claude", "model": "fable"}, {"scope": "model", "why": "model not accessible"})
+        fallback = route.pick_engine("l2", project=project)
+        self.assertEqual((fallback["engine"], fallback["effort"]), ("codex", "high"))
+        self.assertIn("Auto tier 1", fallback["why"]); self.assertIn("claude:fable unavailable", fallback["why"])
+        self.assertIn("model not accessible", route.choice_unavailable("l2", config.machine_settings()["new_tasks"]))
+        self.assertEqual(project, {"routing": config.parse_routing("codex>claude:opus")})
+
+    def test_l3_choice_is_per_project_and_new_tasks_never_steers_l3(self):
+        self.patch(config, "machine_settings", return_value={"new_tasks": {"engine": "claude", "model": "fable"}})
+        self.assertEqual(route.pick_engine("l3", project={"routing": config.parse_routing("codex")})["engine"], "codex")
+        project = {"routing": config.parse_routing("claude:opus>codex"), "l3_choice": {"engine": "claude", "model": "sonnet"}}
+        self.assertEqual(route.pick_engine("l3", project=project)["model"], "sonnet")
+        self.assertIn("chosen for L3", route.pick_engine("l3", project=project)["why"])
+        self.assertEqual(route.pick_engine("l2", project=project)["model"], "fable")
+
+    def test_explicit_task_or_turn_selection_outranks_the_choice(self):
+        self.patch(config, "machine_settings", return_value={"new_tasks": {"engine": "claude", "model": "fable", "effort": "max"}})
+        self.assertEqual(route.pick_engine("l2", forced="codex")["engine"], "codex")
+        explicit = route.pick_engine("l2", model="opus")
+        self.assertEqual((explicit["model"], explicit["effort"]), ("opus", None))
+        self.assertEqual(route.pick_engine("l2", effort="low")["effort"], "low")
+        task = route.pick_task({}, {"engine": None, "model": None, "effort": "medium"})
+        self.assertEqual((task["model"], task["effort"]), ("fable", "medium"))
+
+    def test_only_engine_keeps_its_engine_and_takes_a_choice_made_on_it(self):
+        settings = {"new_tasks": {"engine": "claude", "model": "fable", "effort": "max"}}
+        self.patch(config, "machine_settings", side_effect=lambda: settings)
+        same = route.pick_engine("l2", project={"l2_engine": "claude"})
+        self.assertEqual((same["engine"], same["model"], same["effort"], same["pinned"]), ("claude", "fable", "max", True))
+        other = route.pick_engine("l2", project={"l2_engine": "codex", "l2_codex_effort": "low"})
+        self.assertEqual((other["engine"], other["effort"]), ("codex", "low"))
+        route.note_rejection({"engine": "claude", "model": "fable"}, {"scope": "model", "why": "model not accessible"})
+        defaults = route.pick_engine("l2", project={"l2_engine": "claude"})
+        self.assertEqual((defaults["engine"], defaults["model"], defaults["effort"]), ("claude", "opus", None))
+        self.installation.side_effect = lambda engine: {"available": False if engine == "claude" else None, "why": "missing"}
+        self.assertIsNone(route.pick_engine("l2", project={"l2_engine": "claude"})["engine"])
+        settings["new_tasks"] = {"effort": "ultra"}
+        self.installation.side_effect = None
+        auto = route.pick_engine("l2", project={"l2_engine": "codex"})
+        self.assertEqual((auto["engine"], auto["effort"]), ("codex", "ultra"))
+
+    def test_an_effort_an_engine_rejects_falls_back_to_its_default_and_never_skips_it(self):
+        self.patch(config, "machine_settings", return_value={"new_tasks": {"effort": "ultra"}})
+        project = {"routing": config.parse_routing("claude:opus>codex")}
+        choice = route.pick_engine("l2", project=project)
+        self.assertEqual((choice["engine"], choice["effort"]), ("claude", None))
+        self.claude = {"known": True, "seven_day": 100}
+        self.assertEqual(route.pick_engine("l2", project=project)["effort"], "ultra")
+
+    def test_reviewer_selection_and_explicit_handoff_ignore_new_tasks(self):
+        self.patch(config, "machine_settings", return_value={"new_tasks": {"engine": "claude", "model": "fable"}})
+        self.patch(engines, "review_capability", return_value={"available": True, "why": ""})
+        review = route.pick_review({"l2_engine": "claude"}, {})
+        self.assertEqual(review["engine"], "codex")
+        handoff = route.pick_task({}, {"next_engine": "codex"})
+        self.assertEqual(handoff["engine"], "codex")
+
+    def test_choice_cli_spelling_names_engine_model_and_effort(self):
+        self.assertEqual(config.parse_choice("fable@high"), {"engine": "claude", "model": "fable", "effort": "high"})
+        self.assertEqual(config.parse_choice("codex@ultra"), {"engine": "codex", "effort": "ultra"})
+        self.assertEqual(config.parse_choice("codex:gpt-test"), {"engine": "codex", "model": "gpt-test"})
+        self.assertEqual(config.parse_choice("@max"), {"effort": "max"})
+        for bad in ("", "gpt-test", "claude@ultra", "gemini:x", "claude:two words"):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                config.parse_choice(bad)
 
 
 if __name__ == "__main__":

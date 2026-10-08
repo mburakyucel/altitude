@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from "react";
-import type { EngineReadout, TaskTokenUsage, TokenSession } from "../data/api";
+import type { EngineReadout, TaskTokenUsage, TokenContext, TokenSession } from "../data/api";
 import { agoText, exactTime, when } from "../data/observed";
 
 const count = (value: number | null | undefined) => value == null ? "Unknown" : value.toLocaleString("en-US");
@@ -8,11 +8,12 @@ const roles: Record<string, string> = { owner: "L2 owner", delegated: "Delegated
 
 function Counters({ usage }: { usage: Partial<TaskTokenUsage> }) {
   const rows = [
-    ["Input", usage.input_tokens],
-    ["Output", usage.output_tokens],
+    ["Input processed", usage.input_tokens],
     ["Cache read · in input", usage.cache_read_tokens],
     ["Cache write · in input", usage.cache_write_tokens],
+    ["Output generated", usage.output_tokens],
     ["Reasoning · in output", usage.reasoning_tokens],
+    ["Model requests", usage.requests],
   ] as const;
   return <dl className="token-counters">{rows.map(([label, value]) => (
     <div key={label}><dt>{label}</dt><dd>{count(value)}</dd></div>
@@ -47,6 +48,17 @@ function Helpers({ helpers, label }: {
   </section>;
 }
 
+/** The current owner session's newest request input; never derived from cumulative totals. */
+export function TaskContext({ context, running }: { context: TokenContext | null | undefined; running: boolean }) {
+  const label = running ? "Current context" : "Context at last request";
+  if (!context) return <p className="task-context"><span>{label}</span> unavailable · no reliable reading for the current session</p>;
+  const size = context.window == null ? "window not reported"
+    : `${context.percent == null || context.percent >= 1 ? Math.round(context.percent ?? 0) : "<1"}% of ${count(context.window)}`;
+  return <p className="task-context" title={exactTime(context.observed_at)}>
+    <span>{label}</span> {count(context.tokens)} tokens · {size}{context.observed_at ? ` · ${agoText(context.observed_at)}` : ""}
+  </p>;
+}
+
 /** Reads the server's observed sum; never substitutes report spend or guesses missing helpers. */
 export function TokenUsage({ usage, running = false, engines = [], disclosureLabel }: {
   usage: TaskTokenUsage | null | undefined;
@@ -75,7 +87,8 @@ export function TokenUsage({ usage, running = false, engines = [], disclosureLab
   const engineLabel = (engine: string) => engines.find((e) => e.engine === engine)?.label ?? engine;
   const helperIds = new Set(usage?.helpers?.sessions.map((s) => `${s.engine}:${s.session_id}`));
   const summary = <>
-    <span className="token-summary-value">{usage?.total_tokens == null ? "Token usage unknown" : `${count(usage.total_tokens)} observed tokens`}</span>
+    <span className="token-summary-value">{usage?.total_tokens == null ? "Token usage unknown" : `${count(usage.total_tokens)} tokens processed`}</span>
+    {usage?.requests != null ? <span className="token-coverage">{count(usage.requests)} model requests</span> : null}
     <span className="token-coverage">{coverage(usage?.status)}</span>
     <span className="token-freshness" title={exactTime(usage?.finalized_at || usage?.checked_at)}>{freshness}</span>
   </>;
@@ -88,18 +101,18 @@ export function TokenUsage({ usage, running = false, engines = [], disclosureLab
       </button>
       {open ? <div className="token-details" id={detailsId}>
         {disclosureLabel ? <div className="token-readout">{summary}</div> : null}
-        <Helpers helpers={usage?.helpers} label={engineLabel} />
-        <p>Observed input + output. Cache is counted once in input; reasoning is included in output.</p>
+        <p>Each model request sends the conversation so far again, so processed input grows with every step and is mostly cached. Output is what the model generated, including reasoning. This is an activity count, not a bill, quota use or the current context.</p>
         {usage?.status === "partial" ? <p>Partial totals sum available counters and are a lower bound.</p> : null}
         <Counters usage={usage ?? {}} />
         <p title={exactTime(usage?.observed_at)}>{when(usage?.observed_at) == null ? "No usage observation recorded." : `Usage observed ${agoText(usage?.observed_at)}.`}</p>
         {usage?.finalized_at ? <p title={exactTime(usage.checked_at)}>Last checked {agoText(usage.checked_at) || "at an unknown time"}.</p> : null}
         {usage?.notes.map((note, index) => <p key={index}>{note}</p>)}
+        <Helpers helpers={usage?.helpers} label={engineLabel} />
         {!usage || usage.sessions.length === 0 ? <p>No attributable session counters available.</p> : null}
         {Array.from(byEngine, ([engine, sessions]) => {
           const totals = sessions.map((s) => s.total_tokens).filter((n): n is number => n != null);
           return <section className="token-engine" key={engine} aria-label={`${engineLabel(engine)} usage`}>
-            <h3>{engineLabel(engine)} <span>{totals.length ? `${count(totals.reduce((a, b) => a + b, 0))} observed tokens` : "Token usage unknown"}</span></h3>
+            <h3>{engineLabel(engine)} <span>{totals.length ? `${count(totals.reduce((a, b) => a + b, 0))} tokens processed` : "Token usage unknown"}</span></h3>
             {sessions.filter((s) => s.role === "provider" || !helperIds.has(`${s.engine}:${s.session_id}`)).map((session) => <div className="token-session" key={`${session.attempt}:${session.session_id}`}>
               <p className="token-session-label">{roles[session.role] ?? session.role} · attempt {session.attempt ?? "unknown"} · {session.total_tokens == null ? "tokens unknown" : `${count(session.total_tokens)} tokens`} · {coverage(session.status)}</p>
               <Counters usage={session} />

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import type { QueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useReducer, useRef } from "react";
 import { z } from "zod";
 import { readAlertState } from "./alerts";
 import { useOptimisticMutation } from "./useOptimisticMutation";
@@ -101,7 +102,7 @@ export async function makePairingCode(): Promise<PairingCode> {
 export const PhoneShareSchema = z.object({ link: z.string(), seconds: z.number(), name: z.string(), sha256: z.string(), qr: z.array(z.string()) }).passthrough();
 export type PhoneShare = z.infer<typeof PhoneShareSchema>;
 
-/** Add a phone: open the service's ten-minute certificate share window, replacing an earlier one. */
+/** Set up a device: open the service's ten-minute certificate share window, replacing an earlier one. */
 export async function openPhoneShare(): Promise<PhoneShare> {
   return PhoneShareSchema.parse(await post("/api/devices/share", {}));
 }
@@ -176,8 +177,8 @@ export function useChangeStream() {
 // ---- schemas (mirror server.py responses; lenient at the edges) ------------------------
 
 /**
- * One seat's reading, as that seat reports it. A seat names either the two windows a statusline
- * snapshot carries or windows that name their own length in minutes; a window the seat does not
+ * One seat's reading, as that seat reports it. A seat names either a five-hour and a seven-day
+ * window or windows that name their own length in minutes; a window the seat does not
  * report is absent, never zero. `known` is the routing contract — false once the snapshot behind it
  * passes its freshness age; `stale` then says the figures are still here, only old, and a reading
  * with no figure at all is genuinely unknown, with `why` saying what would produce one.
@@ -236,6 +237,7 @@ export const DecisionSchema = z
     id: z.string().nullish(),
     revision: z.number().nullish(),
     design_url: z.string().nullish(),
+    design_title: z.string().nullish(),
     anchor_id: z.string().nullish(),
     group_id: z.string().nullish(),
     group_revision: z.number().nullish(),
@@ -336,25 +338,58 @@ export const EngineReadoutSchema = z
   .passthrough();
 
 /**
- * An installed copy's version and the newer stable release its daemon last found (null for a source
+ * A model choice tried ahead of routing (config.validate_choice): an engine with an optional model, an
+ * effort, or both. Null is Auto. New tasks holds one for every project; each project holds one for its L3.
+ */
+export const ChoiceSchema = z.object({
+  engine: z.string().nullish(), model: z.string().nullish(), effort: z.string().nullish(),
+}).nullable();
+export type Choice = z.infer<typeof ChoiceSchema>;
+/** config.choice_options(): what a choice offers, in the seam's words. */
+const ChoiceOptionsSchema = z.object({
+  models: z.array(z.object({ engine: z.string(), model: z.string().nullable(), label: z.string() })),
+  efforts: z.record(z.string(), z.array(z.object({ value: z.string(), label: z.string() }))),
+});
+export type ChoiceOptions = z.infer<typeof ChoiceOptionsSchema>;
+/** server.new_tasks_view(): the choice for every project's new tasks, why it cannot start now, and Only-engine projects. */
+export const NewTasksSchema = ChoiceOptionsSchema.extend({
+  value: ChoiceSchema,
+  unavailable: z.string().nullish(),
+  only: z.array(z.object({ project: z.string(), engine: z.string() })),
+});
+export type NewTasks = z.infer<typeof NewTasksSchema>;
+
+/**
+ * An installed copy's version and the newer release it follows that its daemon last found (null for a source
  * deployment). `attempt` is an update started from the app that has not reached its version yet.
  */
 export const UpdateSchema = z.object({
   current: z.string(),
   available: z.object({ version: z.string(), notes: z.string() }).nullish(),
   check: z.boolean(),
-  command: z.string(),
+  command: z.string().nullable(),
+  managed: z.literal("image").optional(),
+  reason: z.string().optional(),
   checked: z.string().nullish(),
   attempt: z.object({ version: z.string(), state: z.enum(["running", "failed"]), error: z.string().nullish() }).passthrough().nullish(),
 });
 
+const ContainerLifecycleSchema = z.object({
+  ready: z.boolean(), reason: z.string().nullable(), instance: z.string().nullable(),
+  continue_command: z.string().optional(), admitted_calls_active: z.boolean().optional(),
+});
+export type ContainerLifecycle = z.infer<typeof ContainerLifecycleSchema>;
+
 export const OverviewSchema = z
   .object({
+    deployment: z.enum(["native", "container"]).optional(),
+    lifecycle: ContainerLifecycleSchema.nullish(),
     projects: z.array(ProjectRowSchema),
     queue: z.array(DecisionSchema),
     wip: WipSchema,
     quota: SeatQuotaSchema,
     engines: z.array(EngineReadoutSchema).default([]),
+    new_tasks: NewTasksSchema.nullish(),
     /** The folders First run scans, named relative to home. */
     roots: z.array(z.string()).default([]),
     /** The operator's name (saved, ALTITUDE_OPERATOR or Git's user.name), shown in the rail's operator row; absent reads “You”. */
@@ -365,7 +400,7 @@ export const OverviewSchema = z
   })
   .passthrough();
 
-const PlannedWaitSchema = z.object({ reason: z.string(), after: z.string().nullable() });
+const PlannedWaitSchema = z.object({ reason: z.string(), after: z.string().nullable(), after_title: z.string().nullish() });
 
 export const TaskRowSchema = z
   .object({
@@ -443,8 +478,11 @@ export const TaskMessageSchema = z
     text: z.string(),
     summary: z.string().nullish(),
     review_id: z.string().nullish(),
-    delivery: z.object({ state: z.enum(["queued", "sending", "removed", "delivered", "unconfirmed"]), at: z.string().nullable(), removable: z.boolean().optional() }).nullish(),
+    delivery: z.object({ state: z.enum(["queued", "sending", "removed", "delivered", "unconfirmed"]), at: z.string().nullable(), removable: z.boolean().optional(), send_now: z.boolean().optional(), send_now_reason: z.string().nullish(), send_now_pending: z.boolean().optional() }).nullish(),
     images: z.array(MessageImageSchema).nullish(),
+    /** An L2 reply's GIFs from one validation run, opened on the task's captures page. */
+    captures: z.array(z.object({ name: z.string(), title: z.string() }).passthrough()).nullish(),
+    capture_run: z.number().nullish(),
   })
   .passthrough();
 
@@ -457,7 +495,19 @@ const tokenCounters = {
   cache_read_tokens: z.number().nullish(),
   cache_write_tokens: z.number().nullish(),
   reasoning_tokens: z.number().nullish(),
+  /** Distinct model requests behind the counters; unknown for provider aggregates. */
+  requests: z.number().nullish(),
 };
+
+/** A session's newest own request input against its window; absent when no reliable reading exists. */
+export const TokenContextSchema = z.object({
+  tokens: z.number(),
+  window: z.number().nullish(),
+  percent: z.number().nullish(),
+  observed_at: z.string().nullish(),
+  engine: z.string().nullish(),
+  session_id: z.string().nullish(),
+});
 
 export const TokenSessionSchema = z.object({
   engine: z.string(),
@@ -493,6 +543,7 @@ export const HelperUsageSchema = z.object({
 export const TokenUsageSchema = z.object({
   status: z.string().default("unknown"),
   ...tokenCounters,
+  context: TokenContextSchema.nullish(),
   checked_at: z.string().nullish(),
   observed_at: z.string().nullish(),
   finalized_at: z.string().nullish(),
@@ -565,14 +616,17 @@ export const TaskViewSchema = z
 // carries its tool, a one-line summary, and the tool_use_id its result row shares; a Codex command carries
 // its own output.
 export const TranscriptEventSchema = z.object({
-  seq: z.number(), source: z.string(), kind: z.string(), type: z.string(), role: z.string().nullish(),
+  id: z.string(), order: z.string(), version: z.number(),
+  source: z.string(), kind: z.string(), type: z.string(), role: z.string().nullish(),
   at: z.string().nullish(), session_id: z.string().nullish(), text: z.string(),
   tool: z.string().nullish(), summary: z.string().nullish(), tool_use_id: z.string().nullish(),
   output: z.string().nullish(), status: z.string().nullish(), error: z.boolean().nullish(),
-  truncated: z.boolean().nullish(), raw: z.unknown().nullish(),
+  truncated: z.boolean().nullish(),
 }).passthrough();
 export const TranscriptSchema = z.object({
-  project: z.string(), slug: z.string(), engine: z.string(), session_id: z.string(), cursor: z.number(),
+  project: z.string(), slug: z.string(), engine: z.string(), session_id: z.string(), attempt: z.number(), cursor: z.string(),
+  lower: z.string(), next: z.string(), more: z.boolean(), reset: z.boolean(),
+  has_earlier: z.boolean(), has_engine_records: z.boolean(), deleted: z.array(z.string()),
   events: z.array(TranscriptEventSchema), redaction: z.string(),
 }).passthrough();
 
@@ -606,11 +660,20 @@ export const DigestSchema = z
   })
   .passthrough();
 
+const ProjectMessageSchema = z.object({
+  sender: z.string(), recipient: z.string(), exchange_id: z.string(), message_id: z.string(),
+  summary: z.string(), reply_to: z.string().nullish(),
+  supplied_turn_id: z.string().optional(),
+  direction: z.enum(["sent", "incoming"]),
+  status: z.enum(["sent", "queued", "supplied", "registration-changed"]),
+});
+
 export const ChatMessageSchema = z
   .object({
     at: z.string().nullish(),
     role: z.string(),
     text: z.string(),
+    project_message: ProjectMessageSchema.optional(),
     images: z.array(MessageImageSchema).nullish(),
     trigger: z.string().nullish(),
     /** Explicit L3 selection recorded by tasks.fyi; historical authorship alone is ambiguous. */
@@ -633,9 +696,12 @@ export const QueuedMessageSchema = z
     trigger: z.string().nullish(),
     role: z.string().nullish(),
     text: z.string(),
+    project_message: ProjectMessageSchema.optional(),
     images: z.array(MessageImageSchema).nullish(),
     /** Only on the acknowledgement of a message just queued: its place in the queue, 1 first. */
     position: z.number().nullish(),
+    send_now: z.boolean().optional(),
+    send_now_reason: z.string().nullish(),
     /** A follow-up on a decision names its task (SPEC.md §5.2 note 6). */
     slug: z.string().nullish(),
   })
@@ -659,9 +725,9 @@ export const ChatViewSchema = z
     busy: z.boolean(),
     /** Messages queued while L3 was busy, oldest first; they run in order at the next turn boundary. */
     queued: z.array(QueuedMessageSchema).nullish(),
+    send_now_reason: z.string().nullish(),
     l3: z.record(z.string(), z.unknown()).nullish(),
-    /** The project's L3 engine pin, one of the overview's engine names; null or absent means the
-     * weekly quota decides. */
+    /** The engine the project's L3 routing is Only on; null or absent means Auto. */
     engine: z.string().nullish(),
   })
   .passthrough();
@@ -681,6 +747,7 @@ export type ProjectView = z.infer<typeof ProjectViewSchema>;
 export type TaskMessage = z.infer<typeof TaskMessageSchema>;
 export type TokenSession = z.infer<typeof TokenSessionSchema>;
 export type TaskTokenUsage = z.infer<typeof TokenUsageSchema>;
+export type TokenContext = z.infer<typeof TokenContextSchema>;
 export type TaskView = z.infer<typeof TaskViewSchema>;
 export type TranscriptEvent = z.infer<typeof TranscriptEventSchema>;
 export type Transcript = z.infer<typeof TranscriptSchema>;
@@ -717,6 +784,7 @@ export async function saveVoiceSettings(value: VoiceUpdate): Promise<VoiceSettin
 
 const FoldersSchema = z.object({
   path: z.string(), parts: z.array(z.string()), readable: z.boolean(),
+  location: z.enum(["native", "container"]).optional(),
   folders: z.array(z.object({ name: z.string(), path: z.string(), project: z.string().nullish(), git: z.boolean() })),
 });
 export type Folders = z.infer<typeof FoldersSchema>;
@@ -738,8 +806,12 @@ export async function saveProjectsFolder(path: string): Promise<{ roots: string[
 }
 
 const MachineSchema = z.object({
+  lifecycle: ContainerLifecycleSchema.nullish(),
   operator: z.string().nullish(), incident_repository: z.string().nullish(), altitude_repository: z.string(),
   terminal: z.boolean().default(false), update_check: z.boolean().default(true),
+  terminal_unavailable: z.string().nullish(), deployment: z.enum(["native", "container"]).optional(),
+  container_shell: z.string().nullish(),
+  validation: z.boolean().default(true), validation_unavailable: z.string().nullish(),
 });
 export type Machine = z.infer<typeof MachineSchema>;
 
@@ -761,6 +833,11 @@ export async function saveIncidentReports(repository: string | null): Promise<Ma
 /** Turn the operator's terminal on or off for this computer; off also closes every open terminal. */
 export async function saveTerminalAccess(enabled: boolean): Promise<Machine> {
   return MachineSchema.parse(await post("/api/terminal-access", { enabled }));
+}
+
+/** Let task owners run validation containers on this computer, or not; off also stops a running one. */
+export async function saveValidationAccess(enabled: boolean): Promise<Machine> {
+  return MachineSchema.parse(await post("/api/validation-access", { enabled }));
 }
 
 /** Turn the daemon's twice-daily check for a newer release on or off; off also hides the notice. */
@@ -811,8 +888,8 @@ export async function terminalOpen(project: string, task?: string): Promise<Term
   return TerminalStatusSchema.parse(await post(`${terminalPath(project)}/open`, { task }));
 }
 
-/** Input, resize and close for terminal `id`, and `command`: the chat command about to be typed, which the task's owner
- * hears about once it has run. Each answers ok or the server's error (410 once it was replaced). */
+/** Input, resize and close for terminal `id`, and `command`: the chat command about to be typed, which the terminal's
+ * reader (the task's owner, or the coordinator) hears about once it has run. Each answers ok or the server's error (410 once it was replaced). */
 export function terminalSend(project: string, action: "input" | "command" | "resize" | "close", body: { task?: string; id: string; data?: string; text?: string; cols?: number; rows?: number }) {
   return post(`${terminalPath(project)}/${action}`, body);
 }
@@ -868,12 +945,14 @@ export function usePrerequisites() {
 
 // ---- query hooks (20s polling) ---------------------------------------------------------
 
+/** The one overview read every page shares; also read directly to confirm a removal whose response was lost. */
+export const overviewQuery = {
+  queryKey: ["overview"],
+  queryFn: async () => OverviewSchema.parse(await api("/api/overview")),
+};
+
 export function useOverview() {
-  return useQuery({
-    queryKey: ["overview"],
-    queryFn: async () => OverviewSchema.parse(await api("/api/overview")),
-    refetchInterval: pollInterval,
-  });
+  return useQuery({ ...overviewQuery, refetchInterval: pollInterval });
 }
 
 export function useProject(name: string, enabled = true) {
@@ -909,9 +988,41 @@ export function useTaskDesign(project: string, slug: string, question: string, r
   });
 }
 
-/** The worker's session as a timeline. `live` (the task is running) polls every 2s; a finished or
- * paused session refreshes at the page's ordinary rate. A 404 is the server saying this attempt has
- * no session file; the page reads that from `ApiError.status`. */
+const TaskCapturesSchema = z.object({
+  run: z.number(), at: z.string().nullable(), conversation_url: z.string(),
+  captures: z.array(z.object({ title: z.string(), url: z.string(), bytes: z.number(), width: z.number(), height: z.number(), frames: z.number(), seconds: z.number() })),
+});
+export type TaskCapture = z.infer<typeof TaskCapturesSchema>["captures"][number];
+
+/** One reply's validation captures; kept only while their page is open. */
+export function useTaskCaptures(project: string, slug: string, message: string) {
+  return useQuery({
+    queryKey: ["task-captures", project, slug, message],
+    queryFn: async () => TaskCapturesSchema.parse(await api(`/api/captures/${project}/${slug}/${message}`)),
+    retry: false,
+    gcTime: 0,
+  });
+}
+
+type TranscriptSync = { rows: Map<string, TranscriptEvent>; cursor: string; after: string; lower: string };
+type TranscriptReader = {
+  data?: Transcript; cursor: string; error: unknown; historyError: unknown;
+  fetching: boolean; historyPending: boolean; catchingUp: boolean; sync?: TranscriptSync;
+  tail: boolean; lastRead: number;
+};
+
+function mergeTranscript(rows: TranscriptEvent[], page: Transcript): TranscriptEvent[] {
+  const merged = new Map(rows.map(row => [row.id, row]));
+  for (const id of page.deleted) merged.delete(id);
+  for (const row of page.events) {
+    const previous = merged.get(row.id);
+    if (!previous || previous.version <= row.version) merged.set(row.id, row);
+  }
+  return [...merged.values()].sort((a, b) => a.order < b.order ? -1 : a.order > b.order ? 1 : 0);
+}
+
+/** Only the mounted viewer retains rows. One serialized reader owns history, deltas and epoch
+ * reconciliation; aborted requests never publish into a different task, attempt or representation. */
 export function useTranscript(
   project: string,
   slug: string,
@@ -920,17 +1031,179 @@ export function useTranscript(
   raw: boolean,
   live = true,
   enabled = true,
+  attempt = 0,
+  following = true,
 ) {
-  const query = new URLSearchParams({ engine, session_id: sessionId, raw: raw ? "1" : "0" });
-  return useQuery<Transcript>({
-    queryKey: ["transcript", project, slug, engine, sessionId, raw],
-    queryFn: async () => TranscriptSchema.parse(await api(`/api/transcript/${project}/${slug}?${query}`)),
-    refetchInterval: live ? 2_000 : pollInterval,
-    // The poll is the retry: a failed read shows at once (a 404 is the server's answer, no session
-    // file for this task generation) and the next interval reads again.
-    retry: false,
-    enabled: enabled && Boolean(project && slug && engine && sessionId),
-  });
+  const reader = useMemo<TranscriptReader>(() => ({ cursor: "", error: null, historyError: null,
+    fetching: false, historyPending: false, catchingUp: false, tail: false, lastRead: 0 }), [project, slug, engine, sessionId, attempt, raw]);
+  const follows = useRef(following);
+  follows.current = following;
+  const [, redraw] = useReducer(n => n + 1, 0);
+  const actions = useRef({ refetch: () => {}, loadOlder: () => {} });
+
+  useEffect(() => {
+    if (!enabled || !project || !slug || !engine || !sessionId) {
+      actions.current = { refetch: () => {}, loadOlder: () => {} };
+      return;
+    }
+    let stopped = false;
+    let busy = false;
+    let historyWanted = false;
+    let continuations = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let controller: AbortController | undefined;
+    // A cancelled multi-page reconciliation restarts from its original loaded boundary.
+    reader.sync = undefined;
+    reader.catchingUp = Boolean(reader.data);
+    const publish = () => { if (!stopped) redraw(); };
+    const beginSync = () => {
+      if (follows.current) {
+        reader.sync = undefined;
+        reader.tail = true;
+      } else reader.sync = { rows: new Map(), cursor: "", after: "", lower: reader.data?.lower ?? "" };
+      reader.catchingUp = true;
+    };
+    const schedule = (delay: number) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => void read(), delay);
+    };
+    const read = async () => {
+      if (stopped || busy || document.visibilityState === "hidden") return;
+      clearTimeout(timer);
+      busy = true;
+      if (follows.current && reader.data && (reader.sync || Date.now() - reader.lastRead >= 60_000)) {
+        reader.sync = undefined;
+        reader.tail = true;
+        reader.catchingUp = true;
+      }
+      const history = historyWanted && !reader.sync && !reader.tail && !!reader.data?.has_earlier;
+      if (history || !reader.data?.has_earlier) historyWanted = false;
+      const sync = reader.sync;
+      const mode = sync ? "reconcile" : history ? "history" : reader.data && !reader.tail ? "delta" : "initial";
+      const query = new URLSearchParams({ engine, session_id: sessionId, attempt: String(attempt), raw: raw ? "1" : "0", mode });
+      if (sync) {
+        query.set("lower", sync.lower);
+        query.set("after", sync.after);
+        query.set("cursor", sync.cursor);
+      } else if (reader.data && mode !== "initial") {
+        query.set("cursor", reader.cursor);
+        query.set("lower", reader.data.lower);
+        if (history) query.set("before", reader.data.lower);
+      }
+      controller = new AbortController();
+      reader.fetching = true;
+      reader.historyPending = history;
+      if (history) reader.historyError = null;
+      publish();
+      let again = false;
+      try {
+        const page = TranscriptSchema.parse(await api(`/api/transcript/${project}/${slug}?${query}`, { signal: controller.signal }));
+        if (stopped) return;
+        if (page.project !== project || page.slug !== slug || page.engine !== engine || page.session_id !== sessionId || page.attempt !== attempt) {
+          throw new ApiError(404, "The session changed. Refresh the task.");
+        }
+        reader.lastRead = Date.now();
+        if (page.reset) {
+          beginSync();
+          again = true;
+        } else if (mode === "initial" && reader.data && !follows.current) {
+          // Pause can arrive while a following-tail refresh is in flight. Preserve the
+          // reading window and reconcile it instead of replacing its visible anchor.
+          reader.tail = false;
+          beginSync();
+          again = true;
+        } else if (sync) {
+          if (!sync.cursor) sync.cursor = page.cursor;
+          for (const row of page.events) sync.rows.set(row.id, row);
+          sync.after = page.next;
+          if (!page.more) {
+            reader.data = { ...page, lower: page.has_earlier ? sync.lower : "",
+              events: mergeTranscript([], { ...page, events: [...sync.rows.values()] }), cursor: sync.cursor };
+            reader.cursor = sync.cursor;
+            reader.sync = undefined;
+          }
+          again = true; // The baseline watermark catches writes that raced the forward traversal.
+        } else if (history && reader.data) {
+          reader.data = { ...reader.data, events: mergeTranscript(reader.data.events, page),
+            lower: page.lower, has_earlier: page.has_earlier, has_engine_records: page.has_engine_records };
+          // A history page does not acknowledge changes to already-loaded rows.
+          reader.historyError = null;
+        } else {
+          reader.data = { ...page, events: mergeTranscript(mode === "initial" ? [] : reader.data?.events ?? [], page),
+            lower: mode === "initial" ? page.lower : page.has_earlier ? reader.data?.lower ?? "" : "" };
+          reader.cursor = page.cursor;
+          if (mode === "initial") reader.historyError = null;
+          reader.tail = false;
+          reader.catchingUp = page.more;
+          again = page.more;
+        }
+        if (!history) reader.error = null;
+      } catch (error) {
+        if (stopped) return;
+        if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
+          reader.data = undefined;
+          reader.cursor = "";
+          reader.sync = undefined;
+          reader.error = error;
+          reader.historyError = null;
+        } else if (history) reader.historyError = error;
+        else reader.error = error;
+      } finally {
+        busy = false;
+        if (!stopped) {
+          reader.fetching = false;
+          reader.historyPending = false;
+          publish();
+          if (historyWanted || again) {
+            continuations += 1;
+            schedule(continuations >= 2 ? (continuations = 0, 250) : 0);
+          } else {
+            continuations = 0;
+            schedule(live ? 2_000 : 20_000);
+          }
+        }
+      }
+    };
+    const refresh = () => { if (!busy) void read(); };
+    actions.current = {
+      refetch: refresh,
+      loadOlder: () => {
+        if (!reader.data?.has_earlier || reader.historyPending || reader.sync) return;
+        historyWanted = true;
+        if (!busy) void read();
+      },
+    };
+    const visible = () => { if (document.visibilityState === "visible") refresh(); };
+    window.addEventListener("online", refresh);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", visible);
+    void read();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      controller?.abort();
+      reader.fetching = false;
+      reader.historyPending = false;
+      actions.current = { refetch: () => {}, loadOlder: () => {} };
+      window.removeEventListener("online", refresh);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, [reader, project, slug, engine, sessionId, attempt, raw, enabled, live]);
+
+  return { data: reader.data, error: reader.error, isPending: !reader.data && !reader.error,
+    isError: Boolean(reader.error), isFetching: reader.fetching,
+    historyPending: reader.historyPending, historyError: reader.historyError,
+    reconnecting: Boolean(reader.sync), catchingUp: reader.catchingUp,
+    refetch: () => actions.current.refetch(), loadOlder: () => actions.current.loadOlder() };
+}
+
+const TranscriptRecordSchema = z.object({ text: z.string(), next_offset: z.number().nullable() });
+export async function fetchTranscriptRecord(project: string, slug: string, engine: string, sessionId: string,
+  attempt: number, record: string, offset: number, signal: AbortSignal) {
+  const query = new URLSearchParams({ engine, session_id: sessionId, attempt: String(attempt),
+    raw: "1", mode: "record", record, offset: String(offset) });
+  return TranscriptRecordSchema.parse(await api(`/api/transcript/${project}/${slug}?${query}`, { signal }));
 }
 
 export function useMonitor() {
@@ -1101,21 +1374,24 @@ export function useProjectRemove() {
   const queryClient = useQueryClient();
   return useMutation<unknown, Error, { name: string }>({
     mutationFn: (input) => post("/api/project/remove", input),
-    onSuccess: async (_out, { name }) => {
-      await queryClient.cancelQueries({ queryKey: ["overview"] });
-      queryClient.setQueryData<Overview>(["overview"], (cached) => cached && {
-        ...cached,
-        projects: cached.projects.map((row) => row.name === name ? { ...row, managed: false } : row),
-        queue: cached.queue.filter((row) => row.project !== name),
-      });
-      for (const kind of ["project", "chat", "task", "transcript"]) {
-        await queryClient.cancelQueries({ queryKey: [kind, name] });
-        queryClient.removeQueries({ queryKey: [kind, name] });
-      }
-      void queryClient.invalidateQueries({ queryKey: ["overview"] });
-      void queryClient.invalidateQueries({ queryKey: ["monitor"] });
-    },
+    onSuccess: (_out, { name }) => forgetProject(queryClient, name),
   });
+}
+
+/** Drop a removed project from the shared reads, so no page acts on it as still managed. */
+export async function forgetProject(queryClient: QueryClient, name: string) {
+  await queryClient.cancelQueries({ queryKey: ["overview"] });
+  queryClient.setQueryData<Overview>(["overview"], (cached) => cached && {
+    ...cached,
+    projects: cached.projects.map((row) => row.name === name ? { ...row, managed: false } : row),
+    queue: cached.queue.filter((row) => row.project !== name),
+  });
+  for (const kind of ["project", "chat", "task", "transcript"]) {
+    await queryClient.cancelQueries({ queryKey: [kind, name] });
+    queryClient.removeQueries({ queryKey: [kind, name] });
+  }
+  void queryClient.invalidateQueries({ queryKey: ["overview"] });
+  void queryClient.invalidateQueries({ queryKey: ["monitor"] });
 }
 
 export interface L2MessageInput {
@@ -1170,7 +1446,7 @@ export function useL3Reset(project: string) {
   });
 }
 
-/** Drop a message that has not started yet — the only edit a queued message allows. */
+/** Drop a message that has not started yet. */
 export function useChatDequeue(project: string) {
   return useOptimisticMutation<string, unknown, ChatView>({
     mutationFn: (id) => post("/api/chat/remove", { project, id }),
@@ -1180,35 +1456,36 @@ export function useChatDequeue(project: string) {
   });
 }
 
-/**
- * Pin the project's L3 to one engine (a name from the overview's engine readout), or clear the pin
- * with null so the weekly quota decides. The pin covers chat and server-triggered turns alike and
- * stays until changed.
- */
-export function useL3Engine(project: string) {
+/** Request immediate delivery; only the next canonical read establishes its outcome. */
+export function useSendNow(project: string, slug?: string) {
   const client = useQueryClient();
-  return useOptimisticMutation<string | null, unknown, ChatView>({
-    mutationFn: async (engine) => {
-      const result = await post("/api/l3/engine", { project, engine });
-      await client.invalidateQueries({ queryKey: ["defaults", project] });
-      return result;
-    },
-    queryKey: ["chat", project],
-    update: (cached, engine) => cached && { ...cached, engine },
-    failureMessage: "Couldn't change the L3 engine.",
+  return useMutation({
+    mutationFn: (id: string) => post(slug ? "/api/l2/send-now" : "/api/chat/send-now", { project, ...(slug ? { slug } : {}), id }),
+    onSettled: () => client.invalidateQueries({ queryKey: slug ? ["task", project, slug] : ["chat", project] }),
   });
 }
 
-/** config.defaults_view(): the project's requested model/effort per role and engine, in the seam's order. */
+/** Save New tasks; `expected` is the value the dialog showed, so a change made elsewhere is refused, not overwritten. */
+export function useSaveNewTasks() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { value: Choice; expected: Choice }) => NewTasksSchema.parse(await post("/api/new-tasks", input)),
+    onSuccess: (result) => client.setQueryData<Overview>(["overview"], (old) => old && { ...old, new_tasks: result }),
+  });
+}
+
+/** config.defaults_view(): the project's pins, L3 choice, routing and requested model/effort per role and engine. */
 const DefaultFieldSchema = z.object({
   setting: z.string(), value: z.string().nullable(), default: z.string(),
 });
-const ProjectDefaultsSchema = z.object({
+const ProjectDefaultsSchema = ChoiceOptionsSchema.extend({
   l3_engine: z.string().nullish(),
-  l2_preference: z.object({
-    setting: z.string(), value: z.string().nullable(), pin: z.string().nullish(), routing: z.string().nullable(),
-    choices: z.array(z.object({ value: z.string(), label: z.string(), routed: z.boolean() })),
-  }),
+  l2_engine: z.string().nullish(),
+  l3_choice: ChoiceSchema.optional().transform((value) => value ?? null),
+  l3_unavailable: z.string().nullish(),
+  l2_preference: z.string().nullish(),
+  routing: z.string().nullish(),
+  engines: z.array(z.object({ value: z.string(), label: z.string(), routed: z.boolean(), efforts: z.array(z.string()) })),
   roles: z.array(z.object({
     role: z.enum(["l3", "l2"]),
     engines: z.array(z.object({
@@ -1224,22 +1501,30 @@ export function useProjectDefaults(project: string) {
   return useQuery({
     queryKey: ["defaults", project],
     queryFn: async () => ProjectDefaultsSchema.parse(await api(`/api/defaults/${project}`)),
+    enabled: Boolean(project),
     retry: false,
     refetchOnMount: "always",
   });
 }
 
-/** One saved default; each field owns its mutation so its Saving/Saved/error state stays beside it. */
+/** The project settings a page or dialog saves whole, outside the per-engine model/effort table. */
+const PROJECT_FIELDS = ["l2_preference", "l2_engine", "l3_engine", "l3_choice"] as const;
+
+/**
+ * One saved project setting; each field owns its mutation so its Saving/Saved/error state stays beside it.
+ * `expected`, when given, is the value shown: a change made elsewhere meanwhile is refused with 409.
+ */
 export function useSetDefault(project: string) {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { setting: string; value: string | null }) =>
+    mutationFn: async (input: { setting: string; value: string | Choice; expected?: string | Choice }) =>
       ProjectDefaultsSchema.parse(await post("/api/defaults", { project, ...input })),
     onMutate: () => client.cancelQueries({ queryKey: ["defaults", project] }),
     // Merge only the acknowledged field: a slower response to another field's save must not restore its old value.
     onSuccess: (result, { setting }) => client.setQueryData<ProjectDefaults>(["defaults", project], (old) => {
       if (!old) return result;
-      if (setting === result.l2_preference.setting) return { ...old, l2_preference: result.l2_preference };
+      if (setting === "l3_choice") return { ...old, l3_choice: result.l3_choice, l3_unavailable: result.l3_unavailable };
+      if ((PROJECT_FIELDS as readonly string[]).includes(setting)) return { ...old, [setting]: result[setting as typeof PROJECT_FIELDS[number]] };
       const saved = result.roles.flatMap((row) => row.engines).flatMap((e) => [e.model, e.effort]).find((f) => f.setting === setting);
       return { ...old, roles: old.roles.map((row) => ({ ...row, engines: row.engines.map((e) => ({
         ...e,

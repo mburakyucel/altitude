@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useLocation, useMatch, useNavigate, useParams, useSearchParams } from "react-router";
-import { useQueryClient, type UseQueryResult } from "@tanstack/react-query";
-import { useChat, useL3Reset, useL3Start, useOverview, useProject, useProjectRemove } from "../data/api";
+import type { UseQueryResult } from "@tanstack/react-query";
+import { useChat, useL3Reset, useL3Start, useOverview, useProject } from "../data/api";
 import type { ChatView, Decision, EngineReadout, Overview, ProjectView, TaskRow } from "../data/api";
 import { agoText } from "../data/observed";
 import { attentionSummary } from "../data/decisions";
 import { TaskCard } from "../components/TaskCard";
+import { NewTasksButton } from "../components/Models";
 import { handling } from "../components/SystemLine";
 import { useViewport } from "../shell/breakpoints";
 import { Overlay } from "../shell/Overlay";
@@ -46,6 +47,7 @@ export function WorkPanel({
   project: UseQueryResult<ProjectView>;
 }) {
   const overview = useOverview();
+  const { phone } = useViewport();
   const decisions = decisionsFor(overview.data, name);
   const tasks = project.data?.tasks ?? [];
   // Overview and project reads can arrive in either order; retain newly published waiting tasks.
@@ -83,6 +85,7 @@ export function WorkPanel({
           {current.length} current · {doneThisWeek.length} done this week{project.isError ? " · saved" : ""}
         </p> : null}
       </div>
+      {phone ? <NewTasksButton overview={overview.data} project={name} wide /> : null}
       {project.isError ? <p className="text-meta text-danger" role="alert">
         {project.data ? "Showing saved work." : "Could not read the project's work."}{" "}
         <button type="button" className="link" onClick={() => project.refetch()}>Retry</button>
@@ -151,17 +154,16 @@ export function statusParts(
 
 function HeaderMenu({ name, designViewer, starting }: { name: string; designViewer: string; starting: boolean }) {
   const [open, setOpen] = useState(false);
-  const [confirm, setConfirm] = useState<"" | "reset" | "remove">("");
+  const [confirm, setConfirm] = useState<"" | "reset">("");
   const [error, setError] = useState("");
   const ref = useRef<HTMLDivElement>(null);
   const opener = useRef<HTMLButtonElement>(null);
   const shown = useRef<typeof confirm>("");
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const reset = useL3Reset(name);
-  const remove = useProjectRemove();
   const setup = useSetupReading(name);
-  const pending = reset.isPending || remove.isPending || starting;
+  const pending = reset.isPending || starting;
+  const settings = (path: string) => navigate(path, { state: { settingsFrom: window.location.pathname + window.location.search } });
 
   const close = useCallback((refocus = false) => {
     if (pending) return;
@@ -235,7 +237,7 @@ function HeaderMenu({ name, designViewer, starting }: { name: string; designView
 
   const menu = (
         <div role="menu" className="menu project-menu" aria-label="Project actions" onKeyDown={onMenuKey}>
-          <button type="button" role="menuitem" className="menu-item" disabled={pending} onClick={() => navigate("/settings", { state: { settingsFrom: window.location.pathname + window.location.search } })}>Settings…</button>
+          <button type="button" role="menuitem" className="menu-item" disabled={pending} onClick={() => settings(`/settings/projects/${name}`)}>Project settings…</button>
           <button type="button" role="menuitem" className="menu-item" data-action="setup" aria-label={`Setup: ${setup.label}`} aria-haspopup="dialog" disabled={pending} onClick={() => { close(true); setup.open(); }}>
             Setup…<span className="menu-item-meta">{setup.label}</span>
           </button>
@@ -248,29 +250,13 @@ function HeaderMenu({ name, designViewer, starting }: { name: string; designView
             )
           ) : (
             <button type="button" role="menuitem" className="menu-item" data-action="reset" disabled={pending} onClick={() => choose("reset")}>
-              Reset L3 conversation
+              Reset L3 conversation…
             </button>
           )}
-          {confirm === "remove" ? (
-            confirmRow(
-              `Remove ${name} from Altitude?`,
-              "Removing this project detaches L3 and stops Altitude management. The repository, remaining worktrees, saved history and queued messages stay on disk. Add the same folder with the same project name again to attach L3 and restore history and queued messages. Finish or reject existing tasks first; an L3 turn already running must finish.",
-              remove.isPending ? "Removing…" : "Remove",
-              () =>
-                void remove.mutateAsync({ name }).then(() => {
-                  completed();
-                  const remaining = managedProjects(queryClient.getQueryData<Overview>(["overview"]));
-                  navigate(remaining.length ? "/" : "/projects", { replace: true });
-                }).catch(failed),
-            )
-          ) : (
-            <button type="button" role="menuitem" className="menu-item" data-action="remove" disabled={pending} onClick={() => choose("remove")}>
-              Remove project
-            </button>
-          )}
+          <button type="button" role="menuitem" className="menu-item" disabled={pending} onClick={() => settings("/settings")}>All settings…</button>
           {designViewer ? (
             <a role="menuitem" className="menu-item" href={designViewer} target="_blank" rel="noreferrer">
-              Design boards
+              Design boards <span aria-hidden>↗</span>
             </a>
           ) : null}
         </div>
@@ -460,7 +446,7 @@ export default function ProjectPage() {
     ? <Terminal key={name} project={name} keys={false} onLeave={() => void navigate(home, { replace: true })}
       head={(close) => <header className="live-head"><h2 className="live-title">Terminal</h2>{close}</header>} />
     : <WorkPanel name={name} project={project} />;
-  const conversation = <Conversation key={name} name={name} chat={chat} project={project} engines={overview.data?.engines ?? []} />;
+  const conversation = <Conversation key={name} name={name} chat={chat} project={project} />;
   return (
     <div className="project-page">
       <ProjectHeader

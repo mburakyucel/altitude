@@ -83,7 +83,7 @@ test("compact chat keeps bottom and older reading anchors through keyboard, deta
   if (phone) {
     const opener = page.getByRole("button", { name: "More actions" });
     const menu = page.getByRole("menu", { name: "Project actions" });
-    await walk.state("05-project-actions-above-keyboard", { action: () => opener.click(), visible: [menu, menu.getByRole("menuitem", { name: "Settings…" })], hidden: [] });
+    await walk.state("05-project-actions-above-keyboard", { action: () => opener.click(), visible: [menu, menu.getByRole("menuitem", { name: "Project settings…", exact: true }), menu.getByRole("menuitem", { name: "All settings…", exact: true })], hidden: [] });
     const bounds = await menu.boundingBox();
     expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(511);
     await page.keyboard.press("Escape");

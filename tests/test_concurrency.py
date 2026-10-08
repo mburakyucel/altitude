@@ -1,5 +1,6 @@
 """One persistent machine concurrency cap with operator-owned live changes."""
 import json
+import os
 import unittest
 from unittest import mock
 
@@ -31,6 +32,7 @@ class TestConcurrency(AltitudeCase):
     def test_persistent_machine_override_reset_audit_and_retry(self):
         initial = self.show()
         self.assertEqual((initial["wip"], initial["default"]), (80, 80))
+        self.assertEqual(initial["machine_runs"], max(1, (os.cpu_count() or 4) // 4), "a quarter of the cores")
         self.assertNotIn("default_project", initial)
         self.assertNotIn("projects", initial)
         request = self.machine(120)["request"]

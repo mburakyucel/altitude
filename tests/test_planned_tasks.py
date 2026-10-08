@@ -182,3 +182,45 @@ class TestPlannedTasks(AltitudeCase):
         dispatch.run(self.project, slug)
         self.assertEqual([row["id"] for row in T.pending(self.project, slug)], [message["id"]])
         self.assertEqual(T.message_views(self.project, slug, [])[0]["delivery"]["state"], "unconfirmed")
+
+
+class TestPlannedWaitViews(AltitudeCase):
+    """Both API projections name the same recorded prerequisite, without releasing the wait."""
+
+    def assert_wait_views(self, task, title):
+        path = S.status_path(self.project, task["slug"])
+        saved = path.read_bytes()
+        row = next(t for t in server.project_view(self.project)["tasks"] if t["slug"] == task["slug"])
+        detail = server.task_view(self.project, task["slug"])
+        expected = {**task["planned_wait"], "after_title": title}
+        self.assertEqual(row["planned_wait"], expected)
+        self.assertEqual(detail["planned_wait"], expected)
+        self.assertEqual(path.read_bytes(), saved)
+
+    def test_live_and_archived_prerequisite_keep_title_and_original_wait(self):
+        prerequisite = T.new(self.project, "Publish the installation package", "Fictional brief")
+        dependent = T.new(self.project, "Verify installation", "Fictional brief", after=prerequisite["slug"])
+        self.assert_wait_views(dependent, prerequisite["title"])
+        T.reject(self.project, prerequisite["slug"], "The release remains on hold")
+        self.assertTrue((S.archive_dir(self.project) / prerequisite["slug"]).is_dir())
+        self.assert_wait_views(dependent, prerequisite["title"])
+
+    def test_missing_prerequisite_is_unknown_without_rewriting_saved_reason(self):
+        prerequisite = T.new(self.project, "Publish the installation package", "Fictional brief")
+        dependent = T.new(self.project, "Verify installation", "Fictional brief", after=prerequisite["slug"])
+        S.status_path(self.project, prerequisite["slug"]).unlink()
+        self.assert_wait_views(dependent, None)
+
+    def test_manual_wait_has_no_prerequisite_title(self):
+        task = T.new(self.project, "Verify installation", "Fictional brief", wait="the release window")
+        self.assert_wait_views(task, None)
+
+    def test_corrupt_archived_prerequisite_is_not_hidden_as_unknown(self):
+        prerequisite = T.new(self.project, "Publish the installation package", "Fictional brief")
+        dependent = T.new(self.project, "Verify installation", "Fictional brief", after=prerequisite["slug"])
+        T.reject(self.project, prerequisite["slug"], "The release remains on hold")
+        S.status_path(self.project, prerequisite["slug"]).write_text('{"title":')
+        for read in (lambda: server.project_view(self.project),
+                     lambda: server.task_view(self.project, dependent["slug"])):
+            with self.subTest(read=read), self.assertRaisesRegex(ValueError, "corrupt JSON"):
+                read()

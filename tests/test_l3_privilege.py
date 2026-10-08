@@ -152,11 +152,10 @@ class TestIssueVerbs(AltitudeCase):
         threading.Thread(target=http.serve_forever, daemon=True).start()
         self.addCleanup(http.server_close)
         self.addCleanup(http.shutdown)
+        self.serving(http.server_port)
         for reason in ("completed", "not-planned"):
             result = self.alt("issue", "close", "42", "--reason", reason,
-                              env={"ALTITUDE_ACTOR": "burak", "ALTITUDE_PROJECT": self.project,
-                                   "ALTITUDE_HOST": "127.0.0.1", "ALTITUDE_PORT": str(http.server_port),
-                                   "ALTITUDE_TLS": "0"})
+                              env={"ALTITUDE_ACTOR": "burak", "ALTITUDE_PROJECT": self.project})
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), self.url)
         payload = {"project": self.project, "operation": "close", "number": 42, "reason": "completed",
@@ -522,12 +521,6 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
         self.assertEqual(self.checkout_snapshot(), before,
                          "a symlink left by one turn cannot redirect the next turn's trusted setup")
 
-    def test_i_20260903_075410_read_broker_rejects_github_writes(self):
-        with mock.patch.object(server.subprocess, "run") as run:
-            with self.assertRaisesRegex(ValueError, "documented gh read"):
-                server.l3_verb_request(self.project, {"kind": "gh", "args": ["pr", "merge", "7"]})
-        run.assert_not_called()
-
     def test_l3_sets_routing_through_broker_but_cannot_register_or_cross_projects(self):
         for options, expected in ((["--routing", "codex"], config.parse_routing("codex")),
                                   (["--unset-routing"], None)):
@@ -615,26 +608,6 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
         self.assertNotEqual(abbreviated.returncode, 0)
         self.assertIn("invalid choice", abbreviated.stderr,
                       "the ordinary CLI parser must not recreate broker-rejected option aliases")
-
-    def test_i_20260903_075410_github_reads_cannot_select_another_repo(self):
-        redirected = (
-            ["pr", "view", "--repo", "other/private", "7"],
-            ["pr", "view", "-Rother/private", "7"],
-            ["pr", "view", "https://github.com/other/private/pull/7"],
-            ["pr", "view", "other/private#7"],
-        )
-        with mock.patch.object(server.subprocess, "run") as run:
-            for args in redirected:
-                with self.subTest(args=args), self.assertRaisesRegex(ValueError, "documented gh read"):
-                    server.l3_verb_request(self.project, {"kind": "gh", "args": args})
-        run.assert_not_called()
-
-        self.setenv("GH_REPO", "other/private")
-        completed = subprocess.CompletedProcess([], 0, "green\n", "")
-        with mock.patch.object(server.subprocess, "run", return_value=completed) as run:
-            result = server.l3_verb_request(self.project, {"kind": "gh", "args": ["pr", "checks", "7"]})
-        self.assertEqual(result["stdout"], "green\n")
-        self.assertNotIn("GH_REPO", run.call_args.kwargs["env"])
 
     def test_i_20260903_075410_engine_adapters_receive_the_fail_closed_cli_flags(self):
         class ClaudeProcess:

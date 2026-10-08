@@ -10,18 +10,20 @@ import shutil
 import subprocess
 import sys
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
+from . import platform
 
 HOME = Path.home()
 SOURCE = Path(__file__).resolve().parent.parent
 RELEASE = json.loads((SOURCE / "release.json").read_text()) if (SOURCE / "release.json").is_file() else None
 INSTALL_PREFIX = SOURCE.parent.parent if RELEASE is not None else None
 INSTALL_CONFIG = Path(os.environ.get("ALTITUDE_CONFIG", HOME / ".config/altitude/install.json")).expanduser()
-#: What this process's own environment sets, before a release installation's saved settings fill the rest.
-SHELL_SETTINGS = frozenset(os.environ)
-if RELEASE is not None and INSTALL_CONFIG.exists():
+#: The installing shell's HTTPS proxy and CA bundle, which an installed service keeps for its release checks and updates.
+NETWORK = ("HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy", "SSL_CERT_FILE")
+if RELEASE is not None and not platform.containerized() and INSTALL_CONFIG.exists():
     for key, value in json.loads(INSTALL_CONFIG.read_text()).get("environment", {}).items():
-        if not isinstance(value, str) or not (key.startswith("ALTITUDE_") or key in ("PATH", "CLAUDE_BIN", "CODEX_BIN")):
+        if not isinstance(value, str) or not (key.startswith("ALTITUDE_") or key in ("PATH", "CLAUDE_BIN", "CODEX_BIN", *NETWORK)):
             raise ValueError(f"invalid installation environment setting: {key}")
         os.environ.setdefault(key, value)
 ROOT = Path(os.environ.get("ALTITUDE_HOME", HOME / ".altitude"))
@@ -62,11 +64,13 @@ CODEX_BIN = os.environ.get("CODEX_BIN", "codex")
 def network(environment) -> dict:
     """Where a server started with this environment listens and which HTTPS identity it serves."""
     return {"host": environment.get("ALTITUDE_HOST", "127.0.0.1"), "port": int(environment.get("ALTITUDE_PORT", "8890")),
+            "public_host": environment.get("ALTITUDE_PUBLIC_HOST", "localhost"),
             "tls_dir": Path(environment.get("ALTITUDE_TLS_DIR", HOME / ".config/altitude/tls")).expanduser(),
             "tls": environment.get("ALTITUDE_TLS", "1") != "0"}
 
 
 HOST, PORT, TLS_DIR, TLS = map(network(os.environ).get, ("host", "port", "tls_dir", "tls"))
+PUBLIC_HOST = network(os.environ)["public_host"]
 # The projects folder's initial value; `alt machine set --projects-folder` replaces it (project_roots()).
 PROJECT_ROOTS = [Path(p).expanduser() for p in os.environ.get("ALTITUDE_ROOTS", str(HOME / "Projects")).split(":")]
 
@@ -77,7 +81,7 @@ def installation_environment() -> dict[str, str]:
             "ALTITUDE_TLS_DIR": str(TLS_DIR), "ALTITUDE_TLS": "1", "PATH": subprocess_env().get("PATH", ""),
             "ALTITUDE_ROOTS": ":".join(map(str, PROJECT_ROOTS)),
             **{key: os.environ[key] for key in ("CLAUDE_BIN", "CODEX_BIN", "ALTITUDE_OPERATOR",
-               "ALTITUDE_PRIMARY_ENGINE", "ALTITUDE_UPSTREAM_ISSUE_REPOSITORY") if key in os.environ}}
+               "ALTITUDE_PRIMARY_ENGINE", "ALTITUDE_UPSTREAM_ISSUE_REPOSITORY", *NETWORK) if key in os.environ}}
 
 # Context lines per engine: Claude quality degrades past
 # ~25–30% of the window in the operator's experience. Every Claude 5 alias Altitude uses (opus, fable, sonnet) reports a
@@ -126,10 +130,14 @@ def model_family(name: str | None) -> str | None:
 #: Every project default: registry key -> (role, engine, kind). Each is independent of the others.
 DEFAULT_SETTINGS = {role_setting(role, engine, kind): (role, engine, kind)
                     for role in ROLES for engine in ENGINES for kind in ("model", "effort")}
-PROJECT_SETTINGS = ("routing", "l2_preference", *DEFAULT_SETTINGS)
+#: A model choice tried ahead of a role's routing: New tasks for every project's L2, and each project's L3 choice.
+CHOICE_SETTINGS = {"l2": "new_tasks", "l3": "l3_choice"}
+PROJECT_SETTINGS = ("routing", "l2_preference", "l2_engine", "l3_engine", "l3_choice", *DEFAULT_SETTINGS)
 WIP_PER_MACHINE = 80
 L3_TURN_TIMEOUT = 900             # seconds
-MACHINE_COMMAND_TIMEOUT = 600     # seconds; one command under a task's machine grant
+MACHINE_COMMAND_TIMEOUT = 600     # seconds; one command under a task's operator grant
+MACHINE_COMMAND_WAIT = 1800       # seconds such a command waits in line for a machine-run place
+MACHINE_RUNS = max(1, (os.cpu_count() or 4) // 4)   # such commands running at once: a quarter of the cores
 L3_CODEX_TURN_TIMEOUT = 1200
 AGENT_POLL_SECONDS = 30
 
@@ -171,7 +179,8 @@ def effort_label(value: str | None) -> str:
 
 
 def defaults_view(name: str) -> dict:
-    """Requested project defaults for the settings UI: one model/effort pair per role and engine."""
+    """A project's settings page: Only pins, the L3 choice, routing, and one model/effort pair per role and engine."""
+    from . import route
     entry = project(name)
     def field(role, engine, kind):
         key = role_setting(role, engine, kind)
@@ -180,13 +189,13 @@ def defaults_view(name: str) -> dict:
                     "choices": list(MODEL_ALIASES) if engine == "claude" else []}
         return {"setting": key, "value": entry.get(key), "default": effort_label(task_effort(engine, None, role=role)),
                 "choices": [{"value": v, "label": effort_label(v)} for v in ENGINE_EFFORTS[engine]]}
-    return {"l3_engine": entry.get("l3_engine"),
-            "l2_preference": {"setting": "l2_preference", "value": entry.get("l2_preference"),
-                              "pin": entry.get("l2_engine"),
-                              "routing": format_routing(entry["routing"]) if "routing" in entry else None,
-                              "choices": [{"value": e, "label": ENGINE_LABELS[e],
-                                           "routed": any(o["engine"] == e for tier in entry.get("routing", AUTO_ROUTING) for o in tier)}
-                                          for e in ENGINES]},
+    return {"l3_engine": entry.get("l3_engine"), "l2_engine": entry.get("l2_engine"), "l3_choice": entry.get("l3_choice"),
+            "l2_preference": entry.get("l2_preference"),
+            "l3_unavailable": route.choice_unavailable("l3", entry.get("l3_choice"), entry), **choice_options(),
+            "routing": format_routing(entry["routing"]) if "routing" in entry else None,
+            "engines": [{"value": e, "label": ENGINE_LABELS[e], "efforts": list(ENGINE_EFFORTS[e]),
+                         "routed": any(o["engine"] == e for tier in entry.get("routing", AUTO_ROUTING) for o in tier)}
+                        for e in ENGINES],
             "roles": [{"role": role, "engines": [{"engine": engine, "label": ENGINE_LABELS[engine],
                                                    "model": field(role, engine, "model"),
                                                    "effort": field(role, engine, "effort")} for engine in ENGINES]}
@@ -223,6 +232,10 @@ def machine_settings() -> dict:
 def project_roots() -> list[Path]:
     """The folders First run lists the immediate subfolders of: the chosen projects folder, else ALTITUDE_ROOTS."""
     folder = machine_settings().get("projects_folder")
+    if platform.containerized():
+        root = Path(folder) if folder else platform.CONTAINER_PROJECTS
+        platform.require_container_project(root, folder=True)
+        return [root]
     return [Path(folder)] if folder else PROJECT_ROOTS
 
 
@@ -277,6 +290,7 @@ def validate_projects_folder(value) -> None:
         return
     if not isinstance(value, str) or not Path(value).is_absolute():
         raise ValueError("the projects folder must be an absolute path")
+    platform.require_container_project(Path(value), folder=True)
     if not Path(value).is_dir():
         raise ValueError(f"{value} is not a directory")
     if not os.access(value, os.R_OK | os.X_OK):
@@ -333,6 +347,52 @@ def validate_preference(value) -> None:
         raise ValueError(f"a provider preference is one of {', '.join(ENGINES)}, or unset for Auto")
 
 
+def validate_engine_pin(value) -> None:
+    if value is not None and value not in ENGINES:
+        raise ValueError(f"an Only engine is one of {', '.join(ENGINES)}, or unset for Auto")
+
+
+def parse_choice(value: str) -> dict:
+    """The CLI spelling of a model choice: ``[engine][:model][@effort]``, or a Claude alias such as ``fable@high``."""
+    head, _, effort = value.partition("@")
+    engine, _, model = head.partition(":")
+    if engine and engine not in ENGINES and not model:
+        engine, model = ("claude", engine) if engine in MODEL_ALIASES else ("", engine)
+    choice = {key: item for key, item in (("engine", engine), ("model", model), ("effort", effort)) if item}
+    validate_choice(choice)
+    return choice
+
+
+def validate_choice(value) -> None:
+    """A choice names an engine (optionally its model), an effort, or both; None is Auto."""
+    if value is None:
+        return
+    if not isinstance(value, dict) or value.keys() - {"engine", "model", "effort"}:
+        raise ValueError("a model choice has only an engine, a model and an effort")
+    engine, model, effort = value.get("engine"), value.get("model"), value.get("effort")
+    if not engine and not effort:
+        raise ValueError("a model choice names an engine or an effort; unset it for Auto")
+    if engine is not None and engine not in ENGINES:
+        raise ValueError(f"engine must be one of {', '.join(ENGINES)}")
+    if model is not None and (not engine or not valid_model(model)):
+        raise ValueError("a chosen model is one alias or model id without spaces, on a named engine")
+    if effort is not None and effort not in ENGINE_EFFORTS.get(engine, TASK_EFFORTS):
+        raise ValueError(f"{ENGINE_LABELS.get(engine, 'Altitude')} does not support reasoning effort {effort}")
+
+
+def choice_options() -> dict:
+    """What a model choice offers: each Claude alias, every other engine's own default model, and each engine's efforts."""
+    return {"models": [{"engine": "claude", "model": alias, "label": alias.title()} for alias in MODEL_ALIASES]
+            + [{"engine": e, "model": None, "label": f"{ENGINE_LABELS[e]} default"} for e in ENGINES if e != "claude"],
+            "efforts": {e: [{"value": v, "label": effort_label(v)} for v in ENGINE_EFFORTS[e] if v != "native"]
+                        for e in ENGINES}}
+
+
+def role_choice(role: str, project: dict) -> dict | None:
+    """The choice tried ahead of this role's routing: New tasks is one installation setting, L3's is per project."""
+    return machine_settings().get(CHOICE_SETTINGS[role]) if role == "l2" else project.get(CHOICE_SETTINGS[role])
+
+
 def format_routing(tiers: list[list[dict]]) -> str:
     """The operator syntax parse_routing reads."""
     return ">".join(",".join(o["engine"] + (":" + o["model"] if o.get("model") else "") for o in tier) for tier in tiers)
@@ -376,10 +436,10 @@ def pinned_option(role: str, project: dict, *, engine: str | None = None,
 
 @contextmanager
 def restart_lock(*, exclusive: bool = False):
-    """Fence the short activation windows (2026-09-07: running workers starved activation).
+    """Fence activation against daemon work and bounded validation, never detached workers.
 
-    Shared holders are dispatch, review admission, L3 and report handling, never detached workers. The exclusive
-    requester checks quiet and records requested_at before another holder can enter, across processes.
+    Shared holders are dispatch, review admission, L3, validation and report handling. The exclusive requester
+    checks quiet and records requested_at before another holder can enter, across processes.
     """
     MONITOR_DIR.mkdir(parents=True, exist_ok=True)
     with (MONITOR_DIR / "restart.lock").open("a") as handle:
@@ -394,7 +454,41 @@ def restart_lock(*, exclusive: bool = False):
             fcntl.flock(handle, fcntl.LOCK_UN)
 
 
+_provider_admitted = ContextVar("provider_admitted", default=None)
+
+
+class AdmissionPaused(RuntimeError):
+    """No provider was invoked; caller state must remain eligible for deliberate continuation."""
+
+
+@contextmanager
+def provider_admission():
+    if _provider_admitted.get() == os.getpid():
+        yield None
+        return
+    with platform.container_admission() as why:
+        token = _provider_admitted.set(os.getpid() if not why else None)
+        try:
+            yield why
+        finally:
+            _provider_admitted.reset(token)
+
+
+def admitted_provider(function):
+    """Last common gate, including callers outside the daemon's ordinary work queues."""
+    @functools.wraps(function)
+    def admitted(*args, **kwargs):
+        with provider_admission() as why:
+            if why:
+                raise AdmissionPaused(why)
+            return function(*args, **kwargs)
+    return admitted
+
+
 def restart_in_progress() -> bool:
+    from . import platform
+    if platform.containerized():
+        return False  # Image replacement owns activation; stale native receipts cannot fence admission.
     if RELEASE is not None:
         return (INSTALL_PREFIX / "pending.json").exists()
     from . import state as S
@@ -464,6 +558,7 @@ def add_project(name: str, *, path=None, approval="default", l2_engine=None, l3_
     """CLI/HTTP registration, including rollback if the caller's setup fails."""
     from . import state as S
     path = Path(path or (project_roots()[0] / name)).expanduser()
+    platform.require_container_project(path)
     if not path.is_dir():
         raise ValueError(f"{path} is not a directory")
     entry = {"path": str(path), "approval": approval,
@@ -541,21 +636,6 @@ def project(name: str) -> dict:
     if not p:
         raise KeyError(f"unknown project {name!r}; register it first (alt project add)")
     return p
-
-
-def set_l3_engine(name: str, engine: str | None) -> dict:
-    """Pin the project's L3 to one engine, or clear the pin with None; the next L3 turn follows it."""
-    if engine and engine not in ENGINES:
-        raise ValueError(f"engine must be one of {ENGINES}, not {engine!r}")
-    from . import state as S
-    with S.project_lock(name), edit_projects() as projects:
-        if name not in projects:
-            raise KeyError(f"unknown project {name!r}; register it first (alt project add)")
-        if engine:
-            projects[name]["l3_engine"] = engine
-        else:
-            projects[name].pop("l3_engine", None)
-        return projects[name]
 
 
 def project_path(name: str) -> Path:

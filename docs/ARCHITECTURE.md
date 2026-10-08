@@ -1,5 +1,40 @@
 # Altitude architecture
 
+## Container deployment boundary
+
+The host launcher checks that Podman's runtime bus resolves to the local user's owned bus socket.
+Disposable fixture runtimes retain private storage/process metadata and link only that same user
+bus into their runtime directory. The host controller selects cgroupfs and distribution crun;
+its system-bus address names an unavailable fictional endpoint. A delegated user service owns each
+application lifetime. Disposable VM acceptance independently observes service-manager calls and
+their senders, including forced cleanup. It allows systemd's verified same-user delegated process
+attachment, which does not use polkit, and fails on unexpected management attempts. This is
+validation of the selected runtime clients, not hostile-process confinement. The
+[container evidence](CONTAINERS.md#evidence) records the tested boundaries.
+
+The [container candidate](CONTAINERS.md) retains the user-manager and independent worker contract
+inside a rootless Linux image. `platform.py` reads image identity outside writable volumes and owns
+runtime/bootstrap operations. Its protected image-path check recognizes root ownership through a
+worker's single-user namespace without accepting worker-writable identity. Marker and instance use
+the same check; invalid identity fails closed. Container editing guidance uses bundled Python through
+confined exec on launch and resume. Browser terminal, host speech and native activation/update routes
+refuse every peer in that deployment. Source merges remain ordinary project delivery; application
+activation uses image replacement. Bootstrap locks both persistent volumes before starting the user
+manager. Immutable resources and persistent home/projects have separate lifetimes. The reusable
+Linux image/launcher lanes establish startup, published local HTTPS, elevation-file inventory,
+the native diagnostic permission matrix, restart/replacement/descendant cleanup and private
+backup/restore. [Container evidence](CONTAINERS.md#evidence) names the tested runtime and limits.
+The actual daemon's phone/desktop onboarding and queued task continuation pass with fictional
+external engines. Provider-session confinement parity, real-device access and Mac runtime evidence
+remain pending. Resume-claim ownership
+uses platform process lifetime, boot and PID-namespace evidence instead of a bare PID check.
+Container admission has one persistent receipt and a root-owned container-instance identity.
+The platform seam serializes receipt changes and admitted-call leases; the config/engine seams
+gate every provider launch, with early checks before queue/claim consumption. A replacement waits
+for host-side Continue. Same-container restarts retain admission. Existing task holds, Stop and
+reconciliation remain independent of this global gate. The read-only browser notice uses the
+existing overview poll; it adds no retained browser state or host command route.
+
 Altitude keeps a persistent project-level conversation with L3, the project's orchestrator. L3
 discusses direction, architecture and priorities, dispatches directly reachable L2 task owners,
 and receives their questions and reports needing follow-up. Several tasks can proceed in isolated
@@ -36,7 +71,11 @@ checkout on either engine; source changes always belong to one L2 worktree and P
 
 The [L3 persona](../personas/l3.md) owns roadmap sequencing, targeted handoffs, durable feedback,
 capability-gap recommendations and authorized continuation. L3 judges who needs context and when
-based on its effect on their responsibilities, decisions or work.
+based on its effect on their responsibilities, decisions or work. Active follow-through is the
+default for unfinished authorized work: L3 checks ownership, readiness and dependencies, moves
+ready delivery through its owner and continues authorized dependent work through supported operations.
+Significant stalls receive a visible project-chat heads-up naming why and the next step/trigger
+or exact missing operator action; legitimate waits and running workers need no repeated nudges.
 Its task briefs convey the actual problem, intended outcome, acceptance and material project context;
 brainstorming stays distinct from requirements. The [L2 persona](../personas/l2.md) owns investigation,
 approach, relevant system implications, source assessment, questions and verified delivery within that outcome.
@@ -47,7 +86,9 @@ remain governed by the existing boundaries.
 L2 receives the request, repository context, expected files, worktree, branch, and merge policy, and chooses
 the lightest useful execution shape. Its conversation with the operator is stored apart from tool logs, so
 the operator messages it directly without routing through L3. Messages queue on the task and reach the
-worker at its next checkpoint; an explicit Stop ends a worker. Task message writers hold the project
+worker at its next checkpoint; an explicit Stop ends a worker. **Send now** on an inbox-owned operator
+message interrupts current work through the same Stop path and resumes the saved session with that
+message as its next input. The remaining inbox rows retain their order for later checkpoints. Task message writers hold the project
 lock and atomically replace each conversation or inbox file, so concurrent readers see complete records.
 Appending a message to a blocked
 task also persists a due `resume_after` request, except non-waking coordinator discussion on a
@@ -57,6 +98,11 @@ observed; explicit Continue releases the same held inbox. An L3 CLI process stop
 request with timer and capacity-available wakes, then owns Git isolation validation and provider relaunch. A
 durable resume claim fences competing wakes, holds service restart, and records the exact inbox batch and
 replacement worker so a restarted daemon adopts rather than launches it again.
+An unavailable worker-unit identity or status stays an unknown observation during polling.
+Reconciliation retains the running task and its capacity reservation, records a deduplicated incident
+for L3, and continues other tick work. Unknown status authorizes neither completion nor relaunch or
+an unnamed stop; existing claims, sessions, inboxes and holds remain intact. Engine ownership and
+platform termination checks remain the authority for recovery.
 An inbox-owned operator message offers Remove until the exact batch is claimed. Cancellation uses
 the same project lock as resume and hook pickup, records removal in the existing message delivery
 metadata, and excludes only that ID from pending input. Original text stays in conversation evidence;
@@ -154,7 +200,8 @@ a missing task returns HTTP 404 without a failure traceback. Archival only renam
 folder into the archive, so a status read that misses the live record reads the archived one; polls
 and action responses crossing the move return the archived task and state.
 Task status, documents and events share the archive lock while their snapshot is read.
-`GET /api/monitor` session rows expose `model` beside `engine`, with `engine_reasoning_effort`
+`GET /api/monitor` and `alt monitor` list only sessions Altitude runs: each project's L3 and its
+running, blocked or reported L2 tasks. Other sessions on the machine are not read. Session rows expose `model` beside `engine`, with `engine_reasoning_effort`
 when available. An unknown Monitor model is an absent key rather than null.
 
 `config.DEFAULT_SETTINGS` names one requested model and one requested effort per role and engine
@@ -175,12 +222,18 @@ Both roles clear observed `engine_reasoning_effort` for a new turn; absent obser
 Model compatibility and provider caps remain native decisions. Effort failures do not trigger
 application-side downgrading or engine fallback. No model capability catalog or session migration exists.
 
-`GET /api/defaults/<project>` returns the L3 engine pin and each role's model/effort pair per engine
-with its setting key, default and engine-owned choices; `POST /api/defaults` saves one setting through
-the existing settings request/apply mechanism under project/registry locks. The project Settings page
+`GET /api/defaults/<project>` returns the project's Only engines, L3 choice (with why it is unavailable,
+if it is), routing, the model choices on offer and each role's model/effort pair per engine with its
+setting key, default and engine-owned choices; `POST /api/defaults` saves one setting through
+the existing settings request/apply mechanism under project/registry locks. The machine-wide New
+tasks choice reads in `GET /api/overview` and saves through `POST /api/new-tasks`, operator only.
+Both writes accept the value the client showed as `expected` and refuse with 409 when the stored
+value differs at the moment the setting is applied, under the same lock, so a second window cannot silently overwrite a change it never saw.
+`route.pick_engine` tries a role's choice ahead of its routing tiers (CLI
+[model choices](CLI.md#model-choices) gives the precedence). The project Settings page
 applies its request immediately; CLI `alt project set` requests are applied on the daemon tick,
 independently of worker capacity. A conflicting pending request refuses another save until applied.
-Neither path mutates engine pins or running tasks. Native L1 helpers inherit or override effort
+Neither path mutates Only engines or running tasks. Native L1 helpers inherit or override effort
 through their own engine controls; Altitude does not create helper workers or promise a uniform L1
 override.
 
@@ -193,7 +246,11 @@ rule file. Managed projects retain their own policy.
 Source deployments export their committed installation HEAD on successful service startup into the ignored
 deployment-local `.altitude-source/<sha>` directory. `config.REPO` identifies the deployment checkout;
 `config.SOURCE` identifies the activated source for CLI code, personas, hooks, templates and schemas.
-These exports sit outside worker writable roots and remain available to existing workers. Managed
+These exports sit outside worker writable roots. The maintenance tick removes an export nothing names:
+the running service's export, the target of `current` and every export named in the brief or session
+settings of a task that is unfinished or not yet cleaned up stay, so live workers keep theirs. Pruning
+waits an hour after `current` moves, while the restart helper may still run from the previous export,
+and skips a pass when a task's launch files cannot be read. Managed
 Git guards use `.altitude-source/current/hooks`; setup and launch preflight refresh recognized
 Altitude-owned paths from earlier exports, including skipped versions, and preserve custom hooks.
 Task inputs use activated source independently of
@@ -226,8 +283,9 @@ cleared environment leaves. The job's program is a supervisor outside any sandbo
 enforces the time limit, and when the command exits stops whatever remains in the coalition, records the
 status and removes its own job; while the command runs it holds an idle-sleep assertion (a closed lid
 still sleeps). A caller's input and output reach the job as `systemd-run --pipe` passes
-them: a regular file or device by path, a pipe through a relayed FIFO, and piped input (always a whole
-prompt) through a private file. Stop signals every coalition member, checking each one's start time and
+them: a regular file or device by path, output pipes through relayed FIFOs, and piped input (always a
+whole prompt) through a private file that the supervisor removes once read and hands to the command as a
+pipe, so a line one reader has taken cannot be read again. Stop signals every coalition member, checking each one's start time and
 coalition again right before the signal since macOS has no process handle, until none is left. A member
 that outlives the stop, or cannot be read, keeps the job's record, so the job stays active, as a unit whose
 processes have not ended does, until they have gone. The seam
@@ -242,9 +300,11 @@ containment remain in the common engine contract. macOS runtime acceptance on a 
 ([roadmap](ROADMAP.md#native-macos-runtime)) remains pending.
 
 An installed copy's daemon checks for a newer release at startup and every twelve hours, off the
-timer thread: one anonymous request to GitHub's latest-release endpoint for the repository in
-`release.json`, retried after an hour when offline. `update.json` in the runtime home keeps the
-newest stable release found and any update the app started, and the daemon, the app's request and
+timer thread: one anonymous request to GitHub for the repository in `release.json`, retried after
+an hour when offline. A stable installation reads GitHub's latest release, so it follows stable
+releases only; an installation from a release candidate reads the thirty newest releases and also
+follows newer candidates. Drafts never count. `update.json` in the runtime home keeps the newest followed release found and
+any update the app started, and the daemon, the app's request and
 the update itself change it under one lock; source deployments neither check nor record. The `update_check` machine setting turns the check off and hides what it found. The
 overview's `update` field and `alt doctor` report the installed version and a newer one; an
 interactive `alt` command prints one line about it at most once a day from that record, never to
@@ -281,26 +341,31 @@ only itself and never delays other requests. External
 certificates are validated without replacement. Browser/device trust stays explicitly unknown
 until the user imports the public CA and verifies it; `alt doctor`, the installer and Settings › Devices
 report the CA's name, SHA-256 fingerprint, expiry and scope, read from the certificate's own name
-constraints ("No limits" when it has none), with the URL and per-platform trust steps. A phone gets
+constraints ("No limits" when it has none), with the URL and per-platform trust steps. A desktop or phone gets
 the public CA through a share window (`tls.Share`): for ten minutes it answers plain HTTP on the
 service's non-loopback address and an ephemeral port with a guided page, an iPhone configuration
 profile whose only payload is the CA certificate (`com.apple.security.root`, identifiers derived
 from the fingerprint so reinstalling replaces it), and the `ca.crt` bytes; nothing else, with no
 Altitude API or page. It closes at its deadline or on demand and cuts any open connection. The
 channel is unauthenticated, so the trusted screen that opened it shows the CA's name and
-fingerprint for the phone to compare before installing. `altitude/qr.py` draws its link as a QR
+fingerprint to compare with the downloaded certificate before installing. The guided page separates
+Linux browser imports, macOS Keychain trust, iPhone/iPad profiles and Android trust, with a common
+warning-free HTTPS check before pairing. `altitude/qr.py` draws its link as a QR
 code (byte mode, level M) for terminals and the browser. `alt tls-share` (operator only) opens a
 window in the CLI process, not in altd. It takes the address, port and TLS directory from the
-running service's own process environment through the platform seam (`platform.service_settings`),
-since the service manager, not the operator's shell, configures the service; a disagreeing shell
-setting is refused. It fetches `/api/health` over HTTPS trusting only that directory's CA and
-requires the answer from the service's main process before offering those bytes. Settings → Devices
-→ **Add a phone** asks altd to open one window (`POST /api/devices/share`, refused to agents and
+service record (below), not from the operator's shell. It fetches `/api/health` over HTTPS trusting
+only that directory's CA and requires the answer from the process that wrote the record before
+offering those bytes. Settings → Devices → **Set up a device** asks altd to open one window (`POST /api/devices/share`, refused to agents and
 cross-site pages like the terminal); altd offers the `ca.crt` of the TLS directory it serves from,
 keeps one window at a time, and closes it at its deadline or on `share-close` with its link, which
 the page sends on Close (confirming only once it succeeds) or when it is left, including while the
 window is still opening. The page keeps the window only in component state, never in a
-query cache. `alt pair` takes its link from the same discovery. Remote binding and trust remain explicit;
+query cache. **Open setup page** opens that same share URL in a new tab without opener access,
+retaining the original Settings page, certificate facts and sharing timer. The link is available
+only while sharing is open and disappears during closing or after expiry. `alt pair` takes its link
+from the same discovery. Sharing refuses loopback-only addresses; a browser on the hosting computer
+imports the public `ca.crt` reported by `alt doctor` directly. Trust installation stays a deliberate
+operator action in the browser or OS. Remote binding and trust remain explicit;
 HTTPS identifies Altitude, and pairing (below) decides who may use it. See
 [setup](SETUP.md#trust-https-on-each-device).
 
@@ -321,7 +386,15 @@ Then `access.py` decides who is asking. The page and its files, `GET /api/health
 needs a paired browser or this machine's key, and otherwise gets 401 with `"pair": true`. Everything
 lives in `~/.config/altitude/access/` (mode 0700, beside the TLS material, outside every runtime,
 source and project root). altd creates `machine.key` there when it starts; the `alt` CLI and the
-restart script send it as `X-Altitude-Key`, and it is compared in constant time. Only the operator's
+restart script send it as `X-Altitude-Key`. The CLI finds altd through the service record: as the
+service instance (`ALTITUDE_SERVICE=1`) starts serving, it writes `service.json` beside the key with
+its PID, address, port, scheme and TLS directory, replacing the previous record. It decides where
+`alt` sends the key and which CA it trusts, so it lives in this store rather than in the runtime home
+that task folders share. `alt` reads it for its altd calls instead of its own launch environment, so a worker started before a restart onto
+another certificate folder or port reaches the new service without relaunching. It verifies altd with
+that folder's `ca.crt` (the system trust store when the folder has none) and refuses, naming the CA,
+an altd that does not prove its identity; there is no unverified fallback, and a missing record is
+named. Serve-only instances write no record. The key is compared in constant time. Only the operator's
 account can read it, so it proves a caller runs on this machine as the operator; Altitude's workers
 share that account, as they share its files. `alt pair` (operator only) writes one pairing code
 straight to `devices.json`: eight characters from an alphabet without look-alikes, valid ten minutes,
@@ -348,16 +421,23 @@ Everything above the platform seam is the same on both hosts. These are the beha
 | Service logs | the user journal | `~/Library/Logs/altitude/`, also for detached jobs such as updates | Operations |
 | A job (worker, review, machine command, update) | transient user unit; systemd holds every descendant in its cgroup and enforces the time limit | its own launchd job; a supervisor enforces the time limit, holds an idle-sleep assertion, and stops the job's kernel coalition when the command exits | above |
 | Stop | stop the unit; the cgroup takes every descendant; pidfd pins each signal | kill every coalition member, rechecking start time and coalition just before each signal (no process handle exists) | above |
-| Claude confinement | Claude's permission boundary only | also Altitude's Seatbelt profile: writes only under its roots, signals only its own processes, no launchd control; a nested sandbox cannot start, so a browser the worker runs needs its own sandbox off (Chromium's crashes) | Isolation and landing |
-| Codex confinement | Codex's own sandbox (bwrap) | Codex's own sandbox (Seatbelt); the two profiles cannot nest | Isolation and landing |
-| Machine-grant commands | outside the worker sandbox with the user bus reachable, so a command can stop or reconfigure its own unit and its time limit | outside any sandbox with launchd reachable, so a command can signal its own supervisor; on both hosts the time limit bounds an ordinary command, not one that works against it | Isolation and landing |
+| Claude confinement | Claude's permission boundary only | also Altitude's Seatbelt profile: writes only under its roots, signals only its own processes, no launchd control, Simulator service or app launches; browser checks run in validation | Isolation and landing |
+| Codex confinement | Codex's own sandbox (bwrap) | Codex's own sandbox (Seatbelt), which admits neither the Simulator service nor app launches; the two profiles cannot nest | Isolation and landing |
+| Candidate browser checks, both engines | `alt task validate` runs the disposable rootless container with Chromium's own sandbox (two layers) | `alt task validate` runs a job under the validation Seatbelt profile with Chromium's inner sandbox off because profiles cannot nest (one layer, fictional fixtures only); stock engines need no custom runtime | [Browser verification](DEVELOPMENT.md#browser-verification) |
+| Operator-grant commands | outside the worker sandbox with the user bus reachable, so a command can stop or reconfigure its own unit and its time limit | outside any sandbox with launchd reachable, so a command can signal its own supervisor; on both hosts the time limit bounds an ordinary command, not one that works against it | Isolation and landing |
 | Terminal Close | the shell is a transient unit; stopping it hangs up its cgroup | the shell is a launchd job; stopping it hangs up its coalition | Operator terminal |
 | Terminal agent check | `/proc/net/tcp` and cgroups | this user's processes' sockets (libproc) and job coalitions | Operator terminal |
 | Image conversion memory cap | `RLIMIT_AS` | a watcher that kills the converter past its memory footprint | above |
 | Native libraries, tools | system packages (apt) | Homebrew; `openssl` must be OpenSSL 3, not macOS's LibreSSL | Setup |
 | Temporary directory in jobs | `/tmp` | the user's own `$TMPDIR` | above |
 | Source-checkout deployment | systemd unit (`make install-service`); TLS drop-in; self-restart | LaunchAgent (`make install-service`); self-restart through the seam; TLS drop-in refused with an explicit message | Operations |
+| Installer checks | x86_64, not root, Python 3.12+, `curl`, a SHA-256 tool, `openssl`, `systemctl --user` | Apple silicon, macOS 15+, not root, Python 3.12+, `curl`, a SHA-256 tool, OpenSSL 3 ahead of LibreSSL on PATH, launchd's domain of the logged-in desktop session; on both hosts each missing item stops with its fix before anything downloads | Setup |
+| Installed service | `~/.config/systemd/user/altitude.service`, enabled and started | `~/Library/LaunchAgents/dev.altitude.altd.plist`, bootstrapped into the `gui` domain; its definition sets `HOME`, and an installation under another `HOME` gets a label derived from that home | Setup, Operations |
+| Update from the app | `alt update --version` in a transient user unit; its output is in the user journal | `alt update --version` as the launchd job `dev.altitude.job.altitude-update-<version>`, logging to `~/Library/Logs/altitude/altitude-update-<version>.log` | Operations |
+| Failed update, interrupted activation | the previous version is restored and its unit restarted; `alt recover` (or `install.py --recover`) finishes an interrupted one | the same, restarting the LaunchAgent | Setup, Operations |
+| Uninstall | stops, disables and removes the unit and launcher; settings, TLS identity and data stay | boots out and removes the LaunchAgent and launcher; launchd keeps its enable/disable record for the label; settings, TLS identity and data stay | Operations |
 | L3 journal reading | `journalctl` shim | not available; L3 reads service status through the broker | Isolation and landing |
+| Incident system facts | `os-release` name, kernel release, DMI vendor and product family (product name when the family is a placeholder) | macOS version, Darwin release, `hw.model` identifier | [Incident issues](CLI.md#incident-issues) |
 
 Case-insensitive project names are refused on both hosts, because macOS disks are case-insensitive by
 default and runtime folders are named after projects.
@@ -448,6 +528,14 @@ setup is supported today. A new engine may
 have different session, authentication, capability and usage-reporting models. Adapt the boundary
 to preserve its native behavior rather than treating today's two launchers as a universal contract.
 
+Stock engine execution and role permissions stay unchanged. Fictional candidate browser checks
+use the existing [validation runner](DEVELOPMENT.md#fictional-browser-validation): Mac uses its
+Seatbelt profile without Chromium's inner sandbox; Linux uses the container and Chromium sandbox.
+The custom runtime patch and trial/restore mechanism are retired without ever selecting a custom
+runtime. Native metadata enforcement remains separately tracked; deletion is not a stock repair.
+The full Chromium suite remains the default and required CI preserves full-distribution features;
+the locked headless-shell recovery lane covers only its supported fictional journeys.
+
 Auto uses the highest-priority configured tier with an eligible option. The default ties Codex and
 Claude on their role defaults, so a Claude L2 launches on Opus and L3 on Fable, with Opus below as
 L3's fallback when Fable is rejected; a lower tier never repeats an option a higher tier already
@@ -456,7 +544,11 @@ configured order, and L3 retains its current engine/model within that tier unles
 at least fifteen percentage points more weekly headroom. A higher available tier takes precedence.
 Missing executables, exhausted windows and explicit provider rejections exclude the affected option;
 unknown access remains eligible. Authentication rejections exclude the engine and model rejections
-exclude only that model for thirty minutes. A current model-specific weekly reading at 100% also
+exclude only that model for thirty minutes. Signing in cures an authentication rejection at once, so
+it has its own record: an operator coordinator message or Retry that finds no engine withdraws it for
+the engine that turn then attempts, and each explicit task resume request withdraws it for the task's
+engine. A credential still invalid records it again on that attempt, and automatic turns and resumes
+keep waiting. A current model-specific weekly reading at 100% also
 excludes only that model. The router never derives model allowances from an
 account-wide meter or subscription entitlement from a plan name. Safe pre-output rejection retries
 are bounded to configured alternatives. Explicit pins never fall back, and an L2 resume retains its
@@ -488,6 +580,18 @@ verification; it is not a registration-only plug-in operation. The [roadmap](ROA
 records these follow-up candidates without expanding this documentation milestone into a rewrite.
 
 Engines retain responsibility for their execution tools, context management and native helpers.
+Every L2 launch and resume supplies the same task-local tool-cache environment on Linux and Mac.
+GitHub CLI logs and package-tool caches live under `l2-engine/tool-cache` inside the task's existing
+writable runtime root; installed Corepack managers retain their original location. Tool-native
+validation/invalidation rules apply, and live delivery checks remain authoritative. Archival removes
+this disposable cache subtree while retaining worker and review evidence. Cache cleanup precedes
+the terminal state change under the project lock; failure retains the task's prior state and location.
+Deletion walks from the runtime root through open directories without following links, and removes
+only the cache subtree relative to the held job-directory descriptor.
+Rejection stops the attached worker through the engine seam before disposal, so no live writer
+recreates the cache after archival.
+[Development](DEVELOPMENT.md#local-checks)
+describes frozen-install handling for worktrees with an existing pnpm store and native evidence limits.
 Altitude supplies focused [role instructions](../personas/), repository context and delivery
 boundaries. Execution strategy stays adaptable because a fixed sequence of stages and specialist
 roles can outlive the model/tool assumptions behind it. Customization belongs in repository
@@ -563,9 +667,17 @@ built-in tools, no skills and no safe mode, which disables every MCP server. Bot
 properties established by recorded reviewer runs, not by the suite. The adapter records the first
 content-bearing read in the review runtime; a reviewer that read no content fails with that reason
 instead of completing with no coverage. CLI-internal authentication uses
-the configured account. Deterministic fixtures verify application behavior and adapter configuration;
+the configured account. The reviewer environment keeps only home, login name, path, locale and engine
+configuration directories; the login name lets Claude find its macOS Keychain sign-in. Deterministic fixtures verify application behavior and adapter configuration;
 live-provider compatibility remains unverified under the standing testing decision.
 
+Failed review executions retain bounded sanitized stderr, launcher exit status and capture-completeness
+evidence in the existing task-owned record. Recognized structured stdout error fields yield fixed
+diagnostic categories, and a Claude result's allowlisted failure facts (subtype, terminal reason, API
+error kind and status) locate failures no category recognizes; stdout transcripts and arbitrary error
+prose are not copied into diagnostics.
+Unknown, malformed, incomplete and truncated stdout remain explicit evidence states.
+The [failure-evidence contract](SESSION_LIFECYCLE.md#cross-engine-review) describes bounds and privacy.
 Review records retain original findings and separate owner dispositions for each subject. Exact
 source/authority freshness and selected-input hashes are distinct. Changes assessment records the final
 candidate and evidence for every finding; code, base or conversation changes require reassessment.
@@ -596,7 +708,9 @@ handoff; findings stay in the task conversation. The project view's archive list
 rejected task finished in the last seven days, newest first by finish time, whatever their slugs.
 
 Queued tasks with `planned_wait: {reason, after}` are **Planned**: `reason` is one short wait and
-`after` optionally names one existing task in this project. `alt task new --wait` or `--after`
+`after` optionally names one existing task in this project. Project and task reads add
+`after_title` from the live or archived prerequisite; unavailable evidence remains null without
+changing the saved wait. `alt task new --wait` or `--after`
 creates the existing task record and written brief without a worker, worktree or WIP slot.
 Dispatch skips it until that dependency is archived done, or L3/the operator explicitly clears
 the wait with `alt task release <slug> --reason '…'`. An already archived-done dependency is satisfied at
@@ -664,7 +778,8 @@ them without a PR, restart or free task slot. Altd applies the request on its ne
 actor, reason and outcome. The project setting serves both L3 and fresh L2 routing; it changes no
 explicit pin or existing L2 attempt. The L2 provider priority (`--l2-preference <engine>`, or
 Auto with `--unset-l2-preference`, also in the project's Settings page) lifts one engine's options
-above the others for fresh L2 only; L3 keeps the tiers as written. [CLI examples](CLI.md#automatic-routing-preferences) cover
+above the others for fresh L2 only; L3 keeps the tiers as written. `--l2-engine`/`--l3-engine` (Only)
+keep a role on one engine and `--l3-choice` sets L3's model choice. [CLI examples](CLI.md#automatic-routing-preferences) cover
 single-model accounts, different orders and ties, and the provider priority.
 
 Project removal is L3 detachment: one operator action through `config.remove_project`, shared by
@@ -710,6 +825,14 @@ pins the current base/head pair, waits for configured checks, and merges only
 when requested and allowed. After the push, the fetched branch tip must equal the pushed head;
 a different tip refuses immediately. A lagging PR view is re-read every two seconds within a
 30-second polling window before pinning that head. A task may carry an explicit merge hold for operator review.
+
+A finished task's worktree and branch are retained only while something needs them. Every maintenance
+tick revisits each done or rejected task that is not yet cleaned up. Its worktree is removed once no
+worker runs, the tree has no uncommitted changes and every commit in it is on a branch or remote. Its
+branch is deleted once the tip is on `origin/main` or a verified PR merged it; a branch holding commits
+found only on this machine stays and the `cleanup-worktree` event names it and its unmerged commit count.
+A running worker or failed fetch retries on the next tick; any other refusal is a recorded note, not a
+fault. A done task's cleanup then fast-forwards a self-deploying checkout.
 Invocations that merge or target this repository’s required PR check hold a separate `flock`
 on `altitude-land.lock` in the repository's common Git directory, from before ownership reads and
 fetch through checks and merge. All its worktrees share the lock; task-state locks remain short,
@@ -719,10 +842,12 @@ into the task branch before pushing when needed, preserving adopted ancestry and
 head checks. A conflicting integration is aborted with local work retained for owner reconciliation.
 For a completed review whose assessment is stale, the current L2's merging invocation retains the
 turn while the owner explicitly reassesses the pinned candidate through the existing review command.
-CI and assessment share the `--wait` deadline. Polls hold the task review lock only for local review
-reads; network reads and sleeps leave review requests available. Assessment fetches preserve landing's
-`FETCH_HEAD` receipt. A notice names every stale review and subject with the assessed/current values
-of its changed evidence, so the owner posts explanations together before assessing each request.
+CI and assessment share one deadline, an hour after publication unless `--wait` shortens it, so a
+merging candidate keeps the turn through its fresh required check. Polls hold the task review lock
+only for local review reads; network reads and sleeps leave review requests available. Assessment
+fetches preserve landing's `FETCH_HEAD` receipt. A notice names every stale review and subject with
+the assessed/current values of its changed evidence, so the owner posts explanations together before
+assessing each request.
 Proposal and changes findings remain separate; a changes assessment does not retire a proposal.
 Fresh context invalidation, including during final merge validation, uses the same wait and original
 deadline. Final candidate, checks, ownership and hold validation repeats after assessment.
@@ -761,6 +886,8 @@ reconciliation. Dirty working files can prevent Git's rebase; landing does not a
 Conflicts and raised rebase errors abort back to the task branch with committed and working edits
 retained. Follow-up merge commits require owner reconciliation before landing, preserving edits
 made in merge resolutions. Work already present on main produces a truthful merged retry.
+A task PR closed without merging is not reopened: the next `alt land` opens a fresh PR from the
+task branch and records the closed PR as the preceding delivery evidence.
 
 The task's `delivery` records the current PR number/head, base SHA, publication branch and precise
 timestamp; a publication in progress has no number/head. `prs` retains every delivery number, and
@@ -817,8 +944,10 @@ resume action. Owners need no file-list update to finish the authorized objectiv
 the objective and explicit exclusions remain binding.
 
 Issue intake fetches a single explicit project-local issue once and retains its URL and acceptance
-text in `request.md`; it does not infer closure authority or scan backlog. The owner compares the full
-issue scope and required acceptance with cumulative authorized deliveries. For a complete resolution it
+text in `request.md`. Agreeing local links and explicit `GitHub issue #N` references select that
+parent; conflicting local references refuse intake. External issue URLs remain contextual brief
+text and trigger no external fetch. Intake does not infer closure authority or scan backlog. The
+owner compares the full issue scope and required acceptance with cumulative authorized deliveries. For a complete resolution it
 supplies native closing keywords through `--pr-body-file` and repeats `--closes-issue N` on landing and
 resumed merge calls.
 The PR body is the durable closing link. Landing reads GitHub's `closingIssuesReferences` after PR
@@ -910,12 +1039,13 @@ failure; otherwise valid isolated tasks continue. Publication retains its curren
 ownership boundaries and review holds.
 
 A failing `git fetch origin main` for self-deploy raises `git_policy.FetchError`. The tick logs each
-such failure and retries it on the next tick. It raises the `self-deploy` system fault only once fetches
-have failed for five minutes without a success in between, carrying the latest fetch error. The
-post-delivery fast-forward returns a note for a failed fetch and leaves the retry to the tick. Every
-other self-deploy failure, including a dirty, diverged, ahead or off-main checkout and a failed
-fast-forward, raises the fault immediately. The failure start is held in daemon memory, so a restart
-starts a new grace period.
+such failure, and each command of the tick that outlives its time limit on a busy host (#724), and
+retries it on the next tick. It raises the system fault (`self-deploy`, or `tick` for the setup check
+and the rest of the tick) only once the same step has failed for five minutes without a success in
+between, carrying the latest error. The post-delivery fast-forward returns a note for a failed fetch
+and leaves the retry to the tick. Every other self-deploy failure, including a dirty, diverged, ahead
+or off-main checkout and a failed fast-forward, raises the fault immediately. The failure start is
+held in daemon memory, so a restart starts a new grace period.
 
 Base fetching tolerates one competing update of the same remote-tracking ref across linked
 worktrees, including ordinary Git commands and landing fetches. `git_policy.fetch_origin` uses
@@ -963,10 +1093,24 @@ recovery; its fresh dispatch still requires a fetched current base and a valid i
 
 Every worker is an untrusted process in its worktree, whichever engine runs it. Its only door into
 Altitude is the `alt` CLI; the backend validates each command against the task record under the
-project lock. Neither engine's worker reaches the user service manager or sudo. A change outside the
-workspace runs only under a recorded machine grant: the operator's answer to the owner's purpose
-question, recorded by L3 or the operator and verified mechanically against that question revision,
-opens `POST /api/task/run` for the running owner's current attempt. altd writes the run's row, then
+project lock. Neither engine's worker reaches the user service manager or sudo. Anything outside the
+workspace that the operator permits (a service change, a deploy, a publication, an external write) runs
+only under the one recorded [operator grant](CLI.md#operator-grant): altd executes each command as the
+operator outside the worker sandbox and records it. The grant reaches the engines' own guards through the
+engine seam: a Claude owner's session settings allow its own `alt task run` call ahead of the auto-mode
+classifier, while altd refuses that call without a current grant; a Codex owner's sandbox is unchanged. A
+granted command runs with the operator's access and is trusted to stay inside the approved purpose; the
+record, not command parsing, makes it accountable. An operator's answer to the owner's purpose
+question is recorded by the running owner from its task chat or by L3 or the operator and verified
+against that question revision. Alternatively, L3 applies an original operator approval from the
+same project's chat to an exact policy-purpose request: a unique, single-paragraph heading in the
+registered checkout's `refs/heads/main:AGENTS.md`, pinned to its commit, must cite the approval and
+match the current open owner-authored L3 question apart from whitespace. The standing path fences
+the observed attempt and stores the original approval, policy text/commit and question revision;
+task branches and dirty policy files supply no authority. L3 judges later corrections and revocations,
+revokes active grants and assigns policy removal; neither shell commands nor chat consent are
+classified automatically. Switching standing purposes requires revocation of the existing grant.
+Either grant opens `POST /api/task/run` for the running owner's current attempt. altd writes the run's row, then
 executes the command in a job of its own through `engines.machine_command`, with the service manager
 reachable (no Seatbelt profile on macOS, since launchd refuses service control to sandboxed processes) and
 the owner's task identity, one at a time, bounded by `MACHINE_COMMAND_TIMEOUT`. Because the command reaches
@@ -977,14 +1121,52 @@ altd follows every unfinished row's unit to its end (`server.settle_interrupted_
 from the saved status, or as uncertain without one, and the owner's CLI reconnects with its request id for the result. The owner, L3 and the operator can revoke
 the grant; nobody can widen it. The endpoint shares the operator-trusted HTTP surface every worker
 on this single-account host can reach; the task record and the per-command log are the boundary,
-not caller identity. Both engines share the verb; only the launcher is host-specific. Claude Code runs as a foreground CLI inside an independent job with Altitude's
+not caller identity. Both engines share the verb; only the launcher is host-specific.
+Candidate checks, installation VMs, containers and sandboxed-browser checks need no grant:
+`POST /api/task/validate` lets the running owner's current attempt, from a process in its own worker
+job, run one command against a throwaway clone of its committed `HEAD`. On Linux the command runs in a
+disposable rootless Podman container that altd starts from its own deployed image, with fixed flags and
+limits. On macOS it runs as a job under the platform's validation Seatbelt profile, stricter than a
+worker's: it writes and reads only its own folders in the run area, reads nothing else in the operator's
+home or the shared temporary folders, reaches neither Altitude's port, other processes' Unix sockets,
+the keychain, the Simulator service nor LaunchServices, and launchd refuses it service control. The runner's storage sits beside Altitude's home, outside every worker's writable roots. The image prepares pinned Playwright
+Chromium and WebKit with both sets of system libraries, so required emulated-iPhone validation
+uses the supported runner without host package installation. Image corrections take effect after
+normal source activation and require a successful browser check through that effective runner;
+testing a nested candidate image alone does not establish recovery. The run is recorded like a machine run with
+purpose `validation`, its commit and tree, host OS and architecture and isolation, and results reach the
+task folder without following links. Cleanup precedes the record, so a run whose cleanup did not finish
+is recorded as `cleanup failed`, never as a success. The worker's own
+confinement is unchanged. The Settings switch **Validation runs** (on by default, kept in the runner's
+storage so a worker cannot turn it back on) stops running runs and refuses new ones. At startup, before
+admitting a run, altd stops abandoned runs, retains their logs and results, records them as interrupted
+and removes their scratch files. Failed evidence delivery retains the original area and keeps the
+runner closed for recovery. Validation holds the shared restart fence through its bounded execution,
+evidence recording and cleanup, and refuses admission once restart is requested. On a Mac,
+`--simulator` adds a disposable iOS Simulator iPhone (`altitude/simulator.py`): altd creates it in a
+private device set in the run's area and removes it afterwards, and the run, which stays refused the
+Simulator service, reaches only that phone's Safari pages through altd's filtering relay. See the
+[validation runner](DEVELOPMENT.md#validation-runner).
+Claude Code runs as a foreground CLI inside an independent job with Altitude's
 hooks for inbox delivery and telemetry. On macOS that job also runs under Altitude's Seatbelt profile: it
 may signal only processes in its own sandbox, never its supervisor, and write only under its worktree,
 the worktree's Git directories, Altitude's home, Claude's own state, the GitHub CLI's configuration and
-temporary directories; launchd refuses service control to any sandboxed process. A Claude L3 turn that
-runs as altd's child rather than as a job starts under the same profile. Codex keeps its native
-workspace-write sandbox inside the same job boundary (the two Seatbelt profiles cannot nest) and uses the
-same door; private worker records and output identify both engines' sessions
+temporary directories; launchd refuses service control to any sandboxed process. The profile also refuses
+the per-user services that start programs as the operator's account outside it: Apple's Simulator service,
+whose devices run what any client asks, and LaunchServices, which opens apps. A Claude L3 turn that
+runs as altd's child rather than as a job starts under the same profile. On Linux Codex uses the native `altitude-task` profile, with explicit worktree, Git and Altitude-state
+roots. The session bus and manager runtime directory (including its direct private socket) are denied;
+other runtime-directory paths retain their policy. The generated profile also supplies provider-free
+confinement checks. A task worker on either engine reaches GitHub with the operator's existing GitHub
+CLI sign-in without reaching the keyring that holds it: the launcher, which still reaches the session
+bus, reads the token with `gh auth token`, and the job receives it on the first line of its input,
+which a fixed shell reader exports as `GH_TOKEN` before it starts the engine. The reader starts nothing
+unless its input is a pipe, so the engine reads only what follows the token line. Altitude never puts
+the token among the job's settings (they form its command line) or in a log, and writes it to disk only
+in the macOS launcher's private input copy until the job's supervisor starts. The engine and its tools
+hold it as `GH_TOKEN`, so an engine's own record of its environment (a Codex shell snapshot) can hold it
+too. A launcher without a sign-in starts the worker without one. The coordinator's GitHub reads stay on its relay. On macOS Codex keeps its native workspace-write sandbox inside the same job boundary
+(the two Seatbelt profiles cannot nest). Both use the same door; private worker records and output identify both engines' sessions
 after restart. Worker status accepts systemd's `is-active` result `inactive` with exit code 4 for a
 collected transient unit as termination evidence; on macOS a job is active while launchd runs it or its
 recorded coalition has members. Unknown states, bus failures and query timeouts
@@ -1007,6 +1189,12 @@ The CLI, broker and read shims authorize their operations without a duplicate na
 Claude's runtime shims and the MCP coordinator tool send `alt` invocations plus authenticated GitHub
 and service-status reads through the project-bound Unix socket; altd supplies the project independently of the request,
 re-applies the L3 command door, accepts only flat task identifiers and stdin, and exposes no direct GitHub or service write command.
+Its [GitHub reads](CLI.md#coordinator-github-reads) admit any read-only `gh` command, including GET-only
+`gh api`, against any repository altd's login can see, and refuse writes and browser launches. Content
+read this way is untrusted evidence; retaining another private repository's content in this project's
+private records is an intentional coordinator role rule, public publication needs separate authority,
+and no taint enforcement is added.
+
 For the main Altitude service, `engines.service_status` projects one fixed native `show` read into
 process identity, definition-reload state, the two direct TLS environment assignments, a boolean
 for indirect environment sources, and exact owned source-TLS drop-in membership. A metadata-only
@@ -1115,20 +1303,22 @@ message's `run` block (one line with no control, invisible-formatting or line-se
 **Open in terminal** in its task or project conversation: the page holds the command in memory for that
 terminal, never in the URL or history, shows the terminal and, once its screen has drawn output and
 stayed quiet for 300 ms, re-reads the status and types the command through xterm's paste when no program
-holds the foreground. It never sends Enter, and the server sees ordinary input. Before typing it into a task
-terminal, the page names it with `command`, so altd follows that one command in memory: the first Enter the
+holds the foreground. It never sends Enter, and the server sees ordinary input. Before typing it, the page
+names it with `command`, so altd follows that one command in memory: the first Enter the
 operator types after it starts it, and a Ctrl+C before that Enter drops it. The command has finished once
 the shell has held the foreground (`tcgetpgrp` equal to the shell's session) for a second after that Enter and
 no process group that held the foreground since still exists, so a job suspended with Ctrl+Z or sent to the
 background has not. The reader looks every 0.2 seconds, so a job suspended sooner than that after it starts
-counts as finished. Then, or when the terminal ends first, `tasks.notify` leaves one Terminal notice in the
-task inbox, on its own thread so the reader keeps draining output while it waits for the project lock. It
-reaches the owner at its next checkpoint as any queued message does and wakes a blocked owner unless it is
-stopped or faulted; a task no longer running or blocked, or on a later attempt than the one current when the
-page named the command, gets none. It is no conversation entry and grants nothing. When naming the command
+counts as finished. Then, or when the terminal ends first, one Terminal notice goes to the terminal's reader,
+on its own thread so the reader keeps draining output while it waits for the project lock. For a task terminal,
+`tasks.notify` leaves it in the task inbox: it reaches the owner at its next checkpoint as any queued message
+does and wakes a blocked owner unless it is stopped or faulted; a task no longer running or blocked, or on a later
+attempt than the one current when the page named the command, gets none. It is no conversation entry and grants
+nothing. For a project terminal, `l3.queue_message` queues it for the coordinator as a `terminal` system turn,
+which the conversation shows as a system line; a project no longer managed gets none. When naming the command
 fails, the page still types it and asks the operator to reply in chat instead. altd does not see the command's exit status, so the notice sends the
-owner to `alt task terminal` to verify; a shell builtin that waits for input without a child looks finished.
-Project terminals send no notice. Input and output are never written anywhere; the notice holds only the command text. The task's `events.jsonl`, or the project's
+reader to `alt task terminal` or `alt project terminal` to verify; a shell builtin that waits for input without a child looks finished.
+A command the operator types without a `run` block sends no notice. Input and output are never written anywhere; the notice holds only the command text. The task's `events.jsonl`, or the project's
 `events.log` for a project terminal, records only `terminal` rows for `opened` and `closed`, with the
 folder, and the reason and exit code on close.
 
@@ -1138,12 +1328,17 @@ each line as its last carriage return left it), whether earlier output was dropp
 `running`, `exited` with its exit code and reason, or `none`. altd answers only the task's current attempt
 while it runs, and only when the client end of the connection is held by a process in that owner's worker job
 (`terminal.owner_connection`, from the same process and socket facts as the agent check), so another agent that
-holds this machine's key cannot read it. There is no owner path to input, resize, close or stream. The last
-ended task terminal's output stays readable in altd's memory until a new terminal opens for the task, the task
-finishes (the tick's sweep forgets it) or altd stops; nothing is written to disk. Project terminals have no
-reader. The task terminal says "This task's owner can read this terminal's output." Anything the terminal
-prints can reach the owner, its session record and its provider, where it stays after Altitude forgets it.
-A password typed at a prompt that does not echo, such as `sudo`'s, is not in the output.
+holds this machine's key cannot read it. The project's coordinator reads its project terminal's output, in the
+same form, with `alt project terminal`, which altd answers only on that project's coordinator socket (as it does
+`alt project message`): the socket's path, not the request, names the project, the ordinary CLI refuses the
+verb, and the owner's HTTP reader names a task, so neither a task worker nor another project's coordinator reads
+it. There is no reader path to input, resize, close or stream. The last ended terminal's output stays readable
+in altd's memory until a new terminal opens there, its task finishes or its project is removed (the tick's sweep
+forgets it) or altd stops; nothing is written to disk. Each terminal names its reader above the screen: "This
+task's owner can read this terminal's output" or "The coordinator can read this terminal's output", "and what it
+reads reaches its AI provider". Anything the terminal prints can reach the reader, its session record and its
+provider, where it stays after Altitude forgets it. A password typed at a prompt that does not echo, such as
+`sudo`'s, is not in the output. A desktop or SSH terminal has no reader.
 
 Every terminal request is refused unless it comes from a paired browser on Altitude's own page and
 not from Altitude itself. Its reads and streams pass the same-page rule every POST passes (see
@@ -1162,7 +1357,7 @@ A holder whose descriptors or unit cannot be read identifies nothing, so an agen
 its descriptors is refused. A client on another host is the operator's browser. The Vite dev server
 does not proxy any path altd could route to the terminal (`terminalRequest` reads the raw path as
 altd does, and also its decoded, dot-resolved form; a path with `;` parameters is not proxied), because altd would see the proxy as the client. This stops a worker from
-using the terminal to leave its sandbox and bypass the machine-grant flow. The check has known
+using the terminal to leave its sandbox and bypass the operator-grant flow. The check has known
 limits. A process an agent starts outside those units, through the user service manager or a
 scheduler, is not recognized. A forwarder on this machine in front of altd (an SSH tunnel, a reverse
 proxy, a container's published port) holds the socket altd sees, so a worker connecting through it
@@ -1174,6 +1369,40 @@ operator controls, and the Settings copy says so. That includes `sudo`: a paired
 the operator's password, or that uses a terminal while `sudo` still remembers an authentication there, can act
 as root. A password travels from the browser over TLS to altd and into the pseudo-terminal like any other input;
 Altitude stores nothing typed, and the operator's own shell keeps its history as it does in any terminal.
+
+## Same-installation coordinator information
+
+`alt project message` uses the existing per-project coordinator socket capability. The daemon
+binds the sender to that socket and handles the verb directly, using the same exact argument parser
+as CLI help. It adds no HTTP writer, file/record access capability, remote transport or automatic
+task creation. This uses the existing local capability trust, not a new same-user authentication
+scheme. The small workflow supports a development project and a separate installation-specific
+test project without turning their separation into an orchestration platform; targets come from
+existing project registration.
+
+Recipient queue acceptance, project-log receipts and system chat rows carry structured sender,
+recipient, exchange and summary metadata. Internal checkout bindings never enter prompts or chat
+API projections. Source Sent acknowledges acceptance, not handling; recipient pending rows become
+incoming history when supplied on an ordinary turn. Each information row stays separately folded
+outside routine system groups, with only Show/Hide. Existing literal history search attributes it
+as information; decision readers and human conversation handoffs exclude it.
+Provider text/tool output, a completed turn or a participant-bound in-turn reply proves supply;
+CLI launch alone does not. Incoming precedes its associated receiving turn and reply. Receipt failure reports
+a separate visible warning while preserving the ordinary turn; a saved incoming row reconciles interrupted queue
+removal, while information without a saved receipt remains pending and may repeat.
+Non-reply text/tool output is acknowledged after provider return; a provider failure or daemon crash before saving proof
+can repeat information. Delivery is at least once, and message/reply identities support careful triage.
+Expanded diagnostic code is read-only; message prose does not inherit the receiving project's
+terminal actions, file links or implicit issue-number links. Explicit HTTP/HTTPS destinations remain
+clickable and visibly spelled out, including beside Markdown labels; rendering does not certify a host.
+
+Both fields enforce size limits and refuse recognized credentials, private record/home paths,
+recognizable transcripts and reserved evidence markers. No files or transcripts are gathered for
+the sender. Unknown secrets and arbitrary prose transcripts remain the writing coordinator's
+responsibility, and the receiving provider processes the text. Receiving coordinators triage under
+their own project rules and operator authority. Public sanitized incident notifications and public
+issue records retain their existing independent path. A returned merged fix is distinct from
+verified activation before suggesting a retry.
 
 ## Faults
 
@@ -1214,7 +1443,7 @@ state enforces it. Irretrievable history remains unknown. L3 uses retained evide
 reads for remaining questions, then exposes the narrow gap if they cannot establish recovery.
 The owner investigates as part of its task, iterating non-invasive diagnosis without approval rounds;
 a changed operational contract, missing access, material machine change, unapproved spend or explicit
-restriction waits for its decision. Machine grants, fix scope and holds bind; no new privilege or
+restriction waits for its decision. Operator grants, fix scope and holds bind; no new privilege or
 automatic fault retry is introduced.
 Missing evidence and unrelated delivery establish no recovery. For newly investigated
 incidents it judges whether the cause matches an existing issue and attaches it, records
@@ -1305,6 +1534,9 @@ backend and launch-source paths (`altitude/`, `bin/`, `systemd/`, `scripts/`, `p
 regular thirty-second daemon tick discovers a merge while its worker still runs.
 Web docs, design boards, the unused npm lockfile, and other non-build files do not
 trigger activation. Launch-source changes become available through the activated committed export.
+Until then, the checkout's `alt` talks to the older running service, so it sends a service field
+only when its option is given: a new option reaches the service only when used, and handlers keep
+refusing fields they do not know.
 
 The web app shows a compact, dismissible update notice above the phone header and first in the
 desktop main pane, except in Monitor where **Altitude update** owns the full status. **Details**
@@ -1323,19 +1555,24 @@ coalition, so stopping a worker takes all its descendants. An exited or
 missing worker on a running task requires a report written since its latest launch or resume
 or an explicit completion; without one it blocks with a system fault and incident. An explicit
 question block remains waiting after worker exit and needs no completion report. Dispatch continues
-while activation is pending. When those short windows are quiet, altd runs
+while activation is pending. When dispatch/resume claims, L3 turns, adversarial reviews, report
+verification and bounded validation runs (including evidence recording and cleanup) are quiet, altd runs
 the one guarded restart script as a transient user unit outside its own cgroup. It installs the
 pnpm-locked dependencies, builds and validates the latest bundle in staging, rechecks the checkout and
 quiet point, swaps the bundle, restarts safely, and verifies both API and UI; verification failure
-restores the prior bundle. Monitor's Restart button runs the same path sooner by hand: it appears
+restores the prior bundle and verifies recovery API/UI health from another new process, retaining
+both the activation failure and recovery outcome. With no prior bundle, recovery is unavailable.
+On macOS, service Stop/restart confirms coalition cleanup and waits up to 45 seconds for launchd
+to remove the label before completing Stop or bootstrapping again; unreadable removal fails explicitly.
+Independent worker jobs retain their own coalitions. Monitor's Restart button runs the same path sooner by hand: it appears
 at that narrow quiet point, even while workers run, disappears once restart is under way, and
 the notice leaves when the new process answers with nothing pending. A restart unit that fails files a
 system fault naming its reason at once and, while its request is still pending, marks the record `failed`
 with that `error`, so the hold lifts; a restart that has not happened ten minutes after it was requested (the unit died without
 reporting) is the same fault. Dispatch, resume and
 L3 turns wait only from the unit request until the replacement daemon is ready; report verification
-also waits, leaving reports durable for the next tick. A shared activity lock fences these short
-operations against the exclusive restart request, including the launch-to-binding race. Ordinary source changes never
+also waits, leaving reports durable for the next tick. A shared activity lock fences these
+operations and validation against the exclusive restart request, including admission races. Ordinary source changes never
 start, stop, mask, unmask, or restart the service; a lifecycle action by hand needs separate
 authorization and post-change health verification.
 
@@ -1384,9 +1621,15 @@ deterministic fixtures establish application behavior only.
 
 Operator images belong to their durable project or task message. `images.py` validates PNG, JPEG
 and static WebP, bounds encoded bytes and decoded dimensions, and normalizes orientation and color
-into metadata-free PNG/JPEG using the optional local converter. RGB ICC conversion detects the
-local color library and runs in the same bounded child process. Unsupported color encodings fail
-with an exported-sRGB recovery instruction. The shared limits are four images, 10 MiB each,
+into metadata-free PNG/JPEG using the optional local converter. Color conversion to sRGB detects
+the local color library and runs in the same bounded child process. It reads RGB and grayscale ICC
+profiles, PNG `cICP` tags for sRGB, Display P3 and BT.2020 colors with SDR transfers, and PNG gamma and
+primaries, following PNG's precedence (`cICP`, `iCCP`, `sRGB`, then `gAMA`/`cHRM`); a `cICP` without an SDR
+conversion defers to the next description, as for a decoder that does not read it. Color information
+without an SDR conversion (HDR transfers, CMYK or Lab profiles, unreadable or oversized profiles) is
+ignored: the image keeps its decoded pixels, whose colors may be approximate. A conversion stopped by
+its memory, CPU or output bounds asks for a smaller image. Every canonical file is re-encoded from
+raw pixels, so it carries no metadata or color tag and reads as sRGB. The shared limits are four images, 10 MiB each,
 20 MiB total, 25 megapixels, 8192 pixels per side and a 28 MiB JSON request envelope.
 Completed codec checks are cached by converter path and modification time. Probe timeouts, OS errors
 and nonzero exits report unavailable for that attempt without caching the failure; later operations
@@ -1430,7 +1673,9 @@ resume or recovery replaces it, and asks `engines.py` for normalized local obser
 collects at most once per ten seconds per active task; HTTP and CLI reads serve the persisted
 `status.json.token_usage` snapshot and do no provider-log scanning. Engine adapters increment byte
 cursors over complete JSONL records and retain numeric response/message identities for deduplication
-in task-local `token-usage.json`. Discovery reads bounded provider metadata behind the engine seam.
+in task-local `token-usage.json`. Each session row also counts its distinct requests and carries its
+newest own request's input as context; the snapshot's `context` is the current owner session's.
+Discovery reads bounded provider metadata behind the engine seam.
 Neither telemetry nor helper discovery creates managed sessions, model calls, incidents, holds, or
 routing decisions. L3's project conversation is outside task accounting.
 
@@ -1499,13 +1744,15 @@ runs headlessly with a temporary profile and its browser sandbox disabled inside
 worker sandbox. [Development and checks](DEVELOPMENT.md) documents installation, commands,
 timings and candidate identity; [operations](OPERATIONS.md) covers service activation and mobile access.
 
-That sandbox-disabled launch belongs only to Altitude's fictional local UI harness. The shared worker
-launcher supplies fresh and resumed owners with a browser capability instruction: preflight required
-browser isolation in the intended worker before deployment verification, retaining both protections,
-and fault-block if unavailable. It is instruction delivery, not an automatic browser probe or an OS
-capability guarantee. Namespace-visible SUID helper ownership cannot establish host package ownership;
-host diagnosis follows existing machine authority. No browser broker or new permission path exists.
-See [browser verification and recovery](DEVELOPMENT.md#browser-verification-and-recovery).
+The sandbox-disabled configuration belongs only to Altitude's fictional UI harness. Fresh and
+resumed owners receive the distinction between the approved Mac validation exception and Linux
+dual-protection checks. `make ui-validate` repeats dependencies/build, finite full-Chromium preflight
+and named phone/desktop journeys with exact launch evidence in disposable storage. The daemon
+receipt identifies the tested tree and actual run profile; native context and cleanup evidence remain
+required. No worker permission, service or engine selection change is involved. Missing protection
+or failed preflight fault-blocks; a host grant does not substitute for browser acceptance. Fictional
+success establishes neither private/deployed-content, native worker nor Simulator acceptance.
+See [browser verification](DEVELOPMENT.md#browser-verification).
 
 [Release checkpoints](RELEASING.md) select an exact validated source SHA for an explicitly
 published private-preview version and release notes. Pushing the approved tag runs the release
@@ -1737,7 +1984,7 @@ tab preserves the source conversation and draft. This feature introduces no prov
 
 A message sent while L3 is busy is queued, never refused: the composer stays open, the send control
 keeps its arrow, the header names the active work, and the message shows as a muted queued row with
-its run order and Remove until
+its run order, **Send now** and **Remove** until
 its turn starts, when the row becomes the turn's bubble and typing indicator. Queue claim writes the
 user history row and publishes the active record under the same lifecycle guard used by the API's
 history/queue/active snapshot. Routing precedes claim; failed history admission restores the waiting
@@ -1748,6 +1995,27 @@ file in the project directory, so a reload, another device and a restart all see
 messages. Each turn drains it at its own boundary rather than at the next tick: consecutive text chat
 messages for the same conversation fold into one turn in arrival order, each on its own line, while
 image-bearing and server-triggered messages keep their own turn, and nothing runs while a turn holds the project's L3 lock.
+
+**Send now** promotes only the selected operator row and gives it its own next turn. Other queued
+rows keep their relative order and ordinary folding. Admission, removal and claim share the queue's
+writer lock; retries reuse the selected row or its history receipt. An accepted Send now row remains
+removable until claim, including when no engine is available after admission. Removal does not undo
+an interruption already requested. The daemon requests interruption
+of the captured active chat turn through the engine seam, retains partial output and session identity,
+and records **Interrupted for a queued message**. Its turn lock remains held until the engine job and
+its descendants have ended. A system turn finishes at its existing boundary to preserve notification,
+CI and report delivery; the promoted row says **Runs next after system work**. System queue rows
+cannot be promoted or removed. No available engine, an active chat still starting, or a launch pause
+explains why delivery cannot start. Pending priority is durable, and a queued row still neither holds nor is lost by a quiet-point
+restart. The browser requests this action by message ID; it never interrupts an engine itself.
+
+In the task chat, the same control uses the existing durable Stop and resume operation, fences hook
+pickup before interruption, and delivers only the selected inbox row through the usual resume claim
+and handoff receipt. Like Stop, it cancels attached reviews and does not undo completed external
+effects. Confirmed termination persists a due continuation; later launch holds show waiting to resume,
+with Stop and Reject still available. A new question or fault supersedes the wake. An explicit Stop,
+question wait, fault recovery or unavailable saved-session engine explains the required continuation,
+answer or recovery instead of interrupting. Operator grants and merge holds keep their existing rules.
 
 The project conversation and the task conversation use one
 composer component, `web/src/components/Composer.tsx`, with no page-specific props.
@@ -1921,13 +2189,13 @@ bordered card under an L3 reply that created the task and the row in the work pa
 comes from the task's state and, for a queued task, from `GET /api/overview` `wip.waiting[].hold`,
 the queue's own reason (a planned wait, the WIP limit, an engine hold, a restart in progress,
 a resume checkpoint or plain dispatch), so the card never names a file list. A queued task with `planned_wait` reads
-**Planned · waits for <reason>** with the muted queue dot; the reason wraps on phone and desktop.
+**Planned · Waiting for <prerequisite>.** with the muted queue dot; the explanation wraps on phone and desktop.
 Releasing it changes the same row to **Queued** with its ordinary dispatch hold, then **Running**
 only when launched. Planned tasks stay in Current without adding attention or a separate panel.
-A task blocked waiting on L3 reads "Waits for L3" with the running dot, and the rail's project dot
+A task blocked waiting on L3 names the coordinator and the recorded prerequisite with the running dot, and the rail's project dot
 counts it as running (`counts.waits_l3`);
 only a decision in the queue turns either dot amber. An owner/daemon park without a question, fault
-or operator stop reads "Paused" with the idle dot. Stop evidence, not the block recorder, identifies
+or operator stop explains the recorded reason, or its absence, with the idle dot. Stop evidence, not the block recorder, identifies
 "Stopped". Queue and restart inventory labels share `tasks.block_status`; an unset wait owner is
 a pause, never an inferred operator wait or attention item. The work panel (spec §3.7) reads the project's
 tasks and the overview queue filtered to the project. **Current** contains every unfinished task
@@ -2039,7 +2307,10 @@ If a provider limit queues a fresh attempt, the existing dilemma remains answera
 acceptance wait in the same inbox for normal dispatch; the fresh brief includes the current question
 or its recorded resolution. A queued task without a question retains its ordinary initial state.
 
-A direct L2 block publishes its question into that human thread. A block that publishes or revises
+A direct L2 block publishes its question into that human thread. A published or reworded member takes
+the block's audience; an unchanged operator member keeps the operator's, so re-parking never moves an
+escalation away, and `waiting_on` names the operator only while one of the group's open members is
+theirs. A block that publishes or revises
 questions queues one L3 notification, including operator-directed blocks. The message names
 open members, revisions and their required authority. Comparing existing question revisions keeps
 unchanged re-parking quiet without another receipt or tracker. L3 can coordinate record-backed and
@@ -2090,7 +2361,9 @@ recommendation. A remainder retains the question's audience without changing ind
 capacity or fault-recovery state. Report handoff, rejection and completion close obsolete controls without accepting
 their recommendations; report review can raise its own dilemma. Merge holds retain their own rules.
 
-The shared question component appears on Needs you and at its conversation anchor. Choices and custom
+The shared question component appears on Needs you and at its conversation anchor. While a group has
+an open member, its closed members fold into one collapsed **N earlier questions** row, open when a
+link targets one of them; an open member addressed to L3 reads **L3 is handling this**. Choices and custom
 text remain staged until **Send N answers**, including a single member. The send row follows the
 questions in normal flow and scrolls with them on phone and desktop. **Other…** opens that member's
 field; a plain question shows the field directly. Question fields use text; ordinary chat retains voice.
@@ -2266,25 +2539,43 @@ question revision; changing any selected content or label advances it, preservin
 and design. A normal block without design inputs retains the attached capture. There is no separate
 review conversation, approval state or artifact registry.
 
-`question_view` exposes `design_url` for **View preview · vN** in Needs you and the owning question.
+`question_view` exposes `design_url` and the captured `design_title` for **View preview · saved title**
+in Needs you and the owning question. Links and viewer headings identify the saved proposal by its
+title; the question revision is an identity and answer fence, not a displayed proposal version.
 The conversation's offscreen-question jump reaches that question, where its preview opens.
 Within a group it follows an open member with a preview, then another open member, including after
 partial answers. It uses that question's exact URL, never an earlier proposal's capture. Work reaches the same
 question through its task row. Preview headings use the captured title to distinguish a proposal
 from an implementation review. Opening a separate tab preserves the originating route and draft.
 `/projects/<project>/tasks/<slug>/design/<question>/<revision>` opens in a browser tab with the saved
-screenshots, full-size image links, explanation and **Back to question**. The page reads
+screenshots, full-size image links, explanation and **Back to question**, which returns to
+the exact captured question revision. Both **Back to question** and **Open current question**
+replace the preview's history entry, so the task's Back control opens the owning project conversation.
+Browser Back/Forward follows the remaining history; the originating tab and its draft stay intact.
+The preview reads
 `GET /api/design/<project>/<slug>/<question>/<revision>`; image bytes use
 `/design/<project>/tasks/<slug>/<question>/<revision>/<content-hash>.png` (or `.jpg`). These reads
 require a registered project, resolve the owning task and exact question revision, and verify the
 saved content hashes. Raster responses use explicit image types, `nosniff`, a restrictive CSP and
 no-store caching. Source paths and arbitrary task files are never URL inputs. Missing, altered,
 unsupported or inaccessible evidence returns **Design unavailable**, with no fallback to another
-version. Loading, Retry and Back remain in the ordinary preview page. Earlier captures identify
-their revision and link back to its historical question; current question metadata is polled without
+version. Loading, Retry and Back remain in the ordinary preview page. Superseded captures say
+**Earlier preview** and link back to their historical question; current question metadata is polled without
 replacing the displayed capture. First acceptance also verifies the saved evidence; identical retries
 of an already recorded decision retain their receipt. Viewing and follow-ups do not decide anything,
 and neither design acceptance nor publication releases a merge hold.
+
+Validation captures follow the same fixed-evidence path ([validation captures](DEVELOPMENT.md#validation-captures)).
+`alt task reply --capture <run>` reads that run's GIFs from the task's own `validation/` evidence through
+directory descriptors without following links, accepts only regular files that `capture.describe` parses as
+one GIF within 1 MiB, 1024 px a side and 300 frames (at most 12), and saves content-named copies in the task
+folder's `captures/` (at most 64 MiB per task) with their titles and shapes on the reply's conversation row.
+The conversation shows **Watch capture** under that reply, opening
+`/projects/<project>/tasks/<slug>/captures/<message>` in a new tab. The page reads
+`GET /api/captures/<project>/<slug>/<message>`, which resolves only that L2 reply; each GIF is
+`/api/captures/<project>/<slug>/<message>/<content-hash>.gif`, served to this machine or a paired browser
+only when the reply lists it, its bytes match the hash and it still parses as a capture, as `image/gif` with
+`nosniff`, a restrictive CSP, `no-referrer` and no-store caching. Anything else is **Capture unavailable**.
 
 ### Monitor and live sessions
 
@@ -2316,7 +2607,7 @@ skeleton in the page's shape, and a failed read is one sentence with Retry.
 The task page is the operator's conversation with the L2 beside the worker's live session
 (design spec §3.10). Its compact desktop header puts the crumb back to the project, wrapping title
 with its state dot, Reject with an inline confirm, details and live-panel controls in one row.
-Attempt, when the task started or finished, context used and token usage open in Task details at
+Attempt, when the task started or finished, current context and token usage open in Task details at
 both viewports. A second wrapping row keeps chips visible: the state, the model on
 its engine as the engine seam reports them, the last PR with whether it merged and how the main run
 concluded, and concise Merge held status. Complete block and merge reasons open in task details,
@@ -2331,12 +2622,20 @@ at their recorded message anchor), a held review card when one waits, no open op
 approved since its hold, and the composer
 while the task is running, blocked, reported with open-PR owner evidence, or queued before its first
 dispatch or with an existing question. Waiting on L3 stays a
-concise status with its complete reason in details; a fault retains a visible cause in red with
-"L3 has been told". One replacing two-line public update sits at the end of the conversation's
+concise explanation with its complete reason in details. Task rows and pages share a read-only
+explanation from current questions, fault, Stop and wait records. An interrupted session says it
+ended before completion; an open coordinator question supplies the known prerequisite even when
+the fault reason contains worker output. Other system faults remain a system problem without a
+guessed cause. Raw diagnostics, identifiers and complete reasons stay in details and incident
+evidence. Excerpts of authored wait prose are bounded; they do not claim recovery or schedule a retry.
+Operator questions and merge holds stay independent of the explanation, and Stop confirmation
+comes only from steering evidence. One replacing two-line public update sits at the end of the conversation's
 scrolling column and expands on request. It appears only while both its public words and recorded
 activity are less than 60 seconds old; missing, untimed and unavailable output leaves no preview.
 Tool output alone does not keep stale prose visible. Updates and removal preserve an older-message
-reader's position. Stop is one click in the task header at both viewports, serving Conversation and
+reader's position. Following stays at latest through preview expiration and replacement; React
+commits restore the bottom before queued layout-induced scroll events can change following.
+Stop is one click in the task header at both viewports, serving Conversation and
 Live session with one action. Stop, Continue and Check status share its button treatment and position.
 It remains Stopping until termination is evidenced; failed or unknown
 termination says Stop unconfirmed. Status rechecks read evidence without retrying Stop. After Stop,
@@ -2348,7 +2647,37 @@ in its own header while its scrim blocks the page header. It reads the worker's 
 and task-owned turn records together with Altitude's task events as one transcript: tinted prompt blocks, the
 worker's prose, each tool call as one compact row with its output folded under it, task boundaries
 as thin separators, each row with its recorded time or "time unavailable", hidden reasoning never shown, and Raw events behind a
-toggle for the complete redacted records, the task's other operational events among them. A queued
+toggle for redacted records, the task's other operational events among them. The panel opens its
+recent tail and loads older activity when the reader scrolls upward near the top. Each initial,
+history and update reply contains at most 50 rows and 64 KiB of serialized JSON. Tool calls and
+results fold on the server before paging; stable row identities are distinct from chronological
+order, so late events and updates to old commands merge into their correct positions. Raw events
+shows one preview per source record. Full record opens an explicit 4,000-character chunk, with
+Show more for subsequent chunks; the complete redacted record remains accessible.
+
+Transcript polling sends a scoped epoch/version cursor and the oldest loaded order boundary.
+The server retains only row signatures, order and change versions for active/recent viewer scopes.
+Indexes expire after 60 idle seconds, checked on access, without evicting other active readers;
+it retains no transcript bodies. Unchanged source fingerprints
+avoid parsing and return a small response. Changed inputs rebuild the canonical projection.
+Deletion history is bounded; index loss, source replacement or an expired cursor requests bounded
+reconciliation of a paused reader's loaded interval. A following reader reopens the recent tail
+after a lost index or a long absence; older rows remain available by scrolling upward. The browser
+preserves a paused reader's visible row while reconnecting. Source writes during a read leave its
+fingerprint stale so the next poll includes them without failing the current bounded read.
+Project/task/engine/session/attempt/mode define viewer isolation. Same-attempt worker resumes
+refresh the projection without resetting reading position. Before a render changes the transcript,
+a paused viewer captures native scrolling whose event has not arrived yet; that position and its
+upward-history intent survive the refresh. Access and generation are checked
+before and after reads. Transcript state never authorizes task actions.
+
+Only the mounted viewer retains loaded rows and reading state; navigation, generation changes and
+pairing loss cancel reads and discard them. There is no persistent browser storage or cross-task
+prefetch. Hidden documents and inactive phone panes suspend polling. One request at a time serializes history and live updates. Continuations yield after two
+requests so catch-up shares the connection with ordinary navigation. Loaded DOM and server metadata
+grow with history and active viewer scopes; this is not a virtualized or constant-memory transcript.
+Normal text/output previews use at most 4,000 characters and other strings at most 512, with further
+shortening when necessary for the serialized byte budget. Raw disclosure supplies the complete record. A queued
 task shows what it waits for in place of the session, a finished one says the session ended, and a
 missing session file says so. On a phone one header carries Back, a bordered title dropdown, the task
 action, L2 state and independent Merge held status. The title dropdown opens metadata, tokens, full
@@ -2373,7 +2702,11 @@ controls, the composer, recording, dialogs and horizontally scrollable content; 
 stays native. Tabs remain the accessible direct navigation. View switches preserve draft text,
 selection, images, conversation position and live reading state without reopening the keyboard;
 local history and deep links retain their navigation contract.
-Scrolling up in Live session pauses following; Follow catches up to the newest output. Switching
+Scrolling up in Live session pauses following while updates keep arriving below; Follow catches up
+to the newest output. Earlier-history loading and Retry appear inline at the top. A live-update
+failure retains readable text with its error in the footer; reconnecting or catching up takes
+precedence over Following/Paused. Prepends and changed rows preserve the visible row's pixel offset.
+Switching
 views cancels unsent dictation and releases the microphone; an explicit voice Send completes for its
 original conversation while hidden, without refocusing the composer.
 The read-only activity projection uses only the selected worker generation, existing redaction and
@@ -2385,6 +2718,5 @@ or the task is not running; Conversation hides the preview instead.
 
 Runtime files live under `ALTITUDE_HOME`; a task is a directory a person can read. Source-controlled
 personas, schemas, templates, and hooks describe current behaviour: `hooks/` holds the Git hooks
-that `git_policy` installs into every managed repository, the Claude inbox hook, and the statusline
-monitor. [AGENTS.md](../AGENTS.md) holds project and review rules; these current documentation pages
-retain the system's operating decisions and rationale. Git history preserves completed migrations.
+that `git_policy` installs into every managed repository and the Claude inbox hook.
+[AGENTS.md](../AGENTS.md) holds project and review rules; these current documentation pages retain the system's operating decisions and rationale. Git history preserves completed migrations.

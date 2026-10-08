@@ -9,7 +9,7 @@ _TASK_FIELDS = (
     "hold_merge", "planned_wait", "blocked_reason", "updated", "worktree", "branch", "l2_engine",
     "engine_model", "engine_reasoning_effort", "routing", "waiting_on", "resume_after", "fault", "verified",
     "spend", "paths", "created", "dispatched", "engine", "model", "token_usage", "daemon_request", "preserved_checkout", "ci_recheck",
-    "checkout_archive", "adopted_pr", "effort", "launch_effort", "launch_model", "machine_access",
+    "checkout_archive", "adopted_pr", "effort", "launch_effort", "launch_model", "grant",
 )
 _PR_FIELDS = "number,state,mergedAt,mergeCommit,headRefName,headRefOid,statusCheckRollup,files"
 _RUN_FIELDS = "databaseId,headSha,event,conclusion,status,workflowName"

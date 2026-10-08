@@ -49,7 +49,7 @@ def build(version: str, output: Path, source: str = "HEAD") -> Path:
         subprocess.run(["pnpm", "build"], cwd=source / "web", check=True)
         package = temp / "package"
         package.mkdir()
-        for name in ("altitude", "bin", "personas", "hooks", "schemas", "templates"):
+        for name in ("altitude", "bin", "personas", "hooks", "schemas", "templates", "container"):
             shutil.copytree(source / name, package / name)
         shutil.copytree(source / "web/dist", package / "web/dist")
         for name in ("LICENSE", "THIRD_PARTY_NOTICES.md"):

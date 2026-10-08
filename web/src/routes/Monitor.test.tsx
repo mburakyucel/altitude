@@ -90,14 +90,6 @@ const monitor = {
       rotate_next: true,
       at: ago(80),
     },
-    {
-      kind: "statusline",
-      session_id: "1111222233334444",
-      context_percent: 16,
-      cwd: "/home/operator/Projects/altitude",
-      model: "Fable 5.1",
-      at: agoEpoch(30),
-    },
   ],
   agents: [
     { id: "aaaaaaaabbbb", name: "worker-one", status: "active", state: "tool", cwd: "/home/b/alt" },
@@ -265,17 +257,16 @@ describe("Monitor", () => {
     mockFetch();
     renderApp({ route: "/monitor" });
 
-    expect(await screen.findByRole("heading", { name: "Sessions (3)" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sessions (2)" })).toBeInTheDocument();
     expect(screen.getByText("altitude / fix-timer")).toBeInTheDocument();
     expect(screen.getByText("L2")).toBeInTheDocument();
     expect(screen.getByText("Claude · context 44% · edits 7 · active tool")).toBeInTheDocument();
     expect(screen.getByText("3 min ago")).toBeInTheDocument();
     // The model rides next to the engine when reported (a Codex session), and nothing stands in when absent.
     expect(screen.getByText("Codex · gpt-5-codex · context 33% · rotating")).toBeInTheDocument();
-    // An interactive session has no task: its folder is the title, and its model is what it reports.
-    expect(screen.getByText("Statusline")).toBeInTheDocument();
-    expect(screen.getByText("/home/operator/Projects/altitude")).toBeInTheDocument();
-    expect(screen.getByText("Fable 5.1 · context 16%")).toBeInTheDocument();
+    // A project coordinator has no task: the project is its title.
+    expect(screen.getByText("L3")).toBeInTheDocument();
+    expect(screen.getByText("altitude")).toBeInTheDocument();
   });
 
   it("keeps task accounting behind each L2 disclosure, parses helper evidence, and removes it on collapse", async () => {
@@ -288,18 +279,18 @@ describe("Monitor", () => {
     const disclosure = await screen.findByRole("button", { name: "L2 usage details" });
     expect(screen.getAllByRole("button", { name: "L2 usage details" })).toHaveLength(1);
     expect(disclosure).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByText("500 observed tokens")).not.toBeInTheDocument();
+    expect(screen.queryByText("500 tokens processed")).not.toBeInTheDocument();
     expect(screen.queryByText("L1 helpers observed")).not.toBeInTheDocument();
     const calls = fetch.mock.calls.length;
     await user.click(disclosure);
     expect(disclosure).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText("500 observed tokens")).toBeVisible();
+    expect(screen.getByText("500 tokens processed")).toBeVisible();
     expect(screen.getByText("Session native-helper")).toBeVisible();
     expect(screen.getByText("Owner attempt context: 1, 2.")).toBeVisible();
     expect(fetch).toHaveBeenCalledTimes(calls);
     await user.click(disclosure);
     expect(screen.queryByText("Session native-helper")).not.toBeInTheDocument();
-    expect(screen.queryByText("500 observed tokens")).not.toBeInTheDocument();
+    expect(screen.queryByText("500 tokens processed")).not.toBeInTheDocument();
   });
 
   it("keeps an aged figure visible and labels it stale", async () => {
@@ -336,7 +327,7 @@ describe("Monitor", () => {
   it("explains a seat with no reading, a role with no engine, and an empty session list", async () => {
     mockFetch({
       seats: [
-        { ...claudeSeat, quota: { known: false, why: "needs the statusline wrapper (alt install-statusline) and one interactive session" } },
+        { ...claudeSeat, quota: { known: false, why: "Waiting for the daemon's quota refresh" } },
         { ...codexSeat, quota: { known: false, why: "Codex binary not found" } },
       ],
       routing: [
@@ -348,7 +339,7 @@ describe("Monitor", () => {
     });
     renderApp({ route: "/monitor" });
 
-    expect(await screen.findByText(/No reading\. Needs the statusline wrapper/)).toBeInTheDocument();
+    expect(await screen.findByText(/No reading\. Waiting for the daemon/)).toBeInTheDocument();
     expect(screen.getByText("No reading. Codex binary not found")).toBeInTheDocument();
     expect(screen.getByText("L3 · altitude · pinned to Codex")).toBeInTheDocument();
     expect(screen.getByText("No engine")).toBeInTheDocument();

@@ -7,7 +7,7 @@
 /** A session snapshot older than this, while its worker is live, is stale. */
 export const SESSION_STALE_MS = 5 * 60_000;
 
-/** Milliseconds for an instant stamped as epoch seconds (statusline, quota) or as an ISO string. */
+/** Milliseconds for an instant stamped as epoch seconds (quota) or as an ISO string. */
 export function when(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value * 1000;
   if (typeof value === "string" && value) {

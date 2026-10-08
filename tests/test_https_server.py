@@ -35,6 +35,17 @@ class TestHTTPSServer(AltitudeCase):
         worker.assert_not_called()
         self.assertIn("HTTPS startup refused", server.log.call_args.args[0])
 
+    def test_binding_needs_no_reverse_lookup_of_the_address(self):
+        # A Mac without a network held http.server's getfqdn in mDNS past the installation's health deadline.
+        with mock.patch.object(socket, "getfqdn", side_effect=AssertionError("reverse lookup")), \
+                mock.patch.object(socket, "gethostbyaddr", side_effect=AssertionError("reverse lookup")):
+            httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        try:
+            self.assertEqual(httpd.server_port, httpd.socket.getsockname()[1])
+            self.assertEqual(httpd.server_name, "127.0.0.1")
+        finally:
+            httpd.server_close()
+
     def test_devices_certificate_names_the_ca_a_phone_must_match(self):
         self.assertIsNone(server.certificate_view(), "no CA file of its own, nothing to match")
         server.tls_init()
@@ -88,6 +99,29 @@ class TestHTTPSServer(AltitudeCase):
         self.assertEqual(observed, [{"version": "trial.1", "commit": "a" * 40, "pid": os.getpid()},
                                     {"version": None, "commit": None, "pid": os.getpid()}])
         stop.assert_called_once()
+
+    def test_the_service_records_where_clients_reach_it_and_a_serve_only_instance_does_not(self):
+        server.tls_init()
+        tls.record().unlink(missing_ok=True)
+        self.addCleanup(tls.record().unlink, missing_ok=True)
+        factory, served = server.ThreadingHTTPServer, []
+
+        def create(address, handler):
+            httpd = factory(address, handler)
+            httpd.serve_forever = lambda: served.append(httpd.server_port)
+            return httpd
+
+        with mock.patch.object(server, "ThreadingHTTPServer", side_effect=create), \
+             mock.patch.object(server, "ensure_l3_verb_broker"), mock.patch.object(server, "stop_l3_verb_brokers"), \
+             mock.patch.object(server.git_policy, "activate_source"):
+            server.main()
+            self.assertFalse(tls.record().exists())
+            self.setenv("ALTITUDE_SERVICE", "1")
+            server.main()
+        found = tls.service()
+        self.assertEqual({key: found[key] for key in ("host", "port", "tls", "tls_dir", "pid", "url")},
+                         {"host": "127.0.0.1", "port": served[-1], "tls": True, "tls_dir": config.TLS_DIR,
+                          "pid": os.getpid(), "url": f"https://127.0.0.1:{served[-1]}"})
 
     def test_a_stalled_or_failed_handshake_never_delays_other_requests(self):
         """I-20260924-205802: one client that never sent its TLS hello timed out activation's quiet check."""
