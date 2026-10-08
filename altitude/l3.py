@@ -807,6 +807,16 @@ def queue_message(project: str, text: str, *, trigger: str, role: str = "server"
     return {**row, "position": waiting + 1}
 
 
+def queue_locked(project: str, text: str, *, trigger: str, slug: str | None = None) -> dict:
+    """queue_message for a caller already holding the project lock, so the notification lands together
+    with the record change it reports."""
+    path = queue_path(project)
+    row = {"at": S.now(), "id": uuid.uuid4().hex[:12], "trigger": trigger, "role": "server", "text": text,
+           **_slug_meta(slug)}
+    _write_queue(path, [*_queue_rows(path), row])
+    return row
+
+
 def _ci_storage_failure(project: str, task: dict, exc: Exception) -> dict:
     record = task["ci_recheck"]
     delivery = record.setdefault("delivery", {})

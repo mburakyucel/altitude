@@ -253,13 +253,12 @@ class TestPush(AltitudeCase):
                          ["/wake/device-1", "/wake/device-2"])
 
     def for_operator(self, title: str, question: str) -> str:
-        """An owner publishes an operator question, and L3 is told of the block as `alt task block` tells it."""
+        """An owner publishes an operator question through `alt task block --for-operator`, which tells L3."""
         task = T.new(self.project, title, "Do it.", actor="burak")
         task.update({"state": "running", "attempt": 1})
         S.save_task(self.project, task)
-        blocked = T.block(self.project, task["slug"], question, actor="l2", expected_attempt=1,
-                          updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE})
-        l3.queue_message(self.project, T.block_question(blocked), trigger="block", slug=task["slug"])
+        T.block(self.project, task["slug"], question, actor="l2", expected_attempt=1,
+                updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE}, tell_l3=True)
         return task["slug"]
 
     def l3_turn(self, during=lambda: None, *, limited: bool = False) -> None:
@@ -340,6 +339,51 @@ class TestPush(AltitudeCase):
         self.assertEqual(sorted(sent["path"] for sent in self.service.requests[2:]),
                          ["/wake/device-1", "/wake/device-1", "/wake/device-2", "/wake/device-2"])
         self.assertEqual(json.loads((self.tmp / "push.json").read_text())["seen"], [])
+
+    def test_a_reader_while_the_question_is_published_already_sees_it_held(self):
+        task = T.new(self.project, "Choose backup retention", "Do it.", actor="burak")
+        task.update({"state": "running", "attempt": 1})
+        S.save_task(self.project, task)
+        saving, readers, read = S.save_task, [], []
+
+        def save(project, record):
+            saving(project, record)
+            if record.get("state") == "blocked" and not readers:  # the question is visible, the lock still held
+                readers.append(threading.Thread(target=lambda: read.append(digest.queue())))
+                readers[0].start()
+
+        self.patch(S, "save_task", save)
+        T.block(self.project, task["slug"], "How long should backups stay?", actor="l2", expected_attempt=1,
+                updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE}, tell_l3=True)
+        readers[0].join(30)
+        self.assertEqual([row.get("alert_held") for row in read[0]], [True])
+
+    def test_a_device_that_misses_the_clearing_wake_is_tried_until_one_reaches_it(self):
+        second = self.endpoint.replace("device-1", "device-2")
+        push.subscribe(self.endpoint)
+        push.subscribe(second)
+        task = self.decision("Choose backup retention", "How long should backups stay?")
+        push.notify()
+        T.message(self.project, task["slug"], T.OPERATOR_MESSAGE_ROLE, "Thirty days.")  # answered
+        self.service.refusing = {"/wake/device-2": 503}
+        push.notify()  # the first device takes the clearing; the second is still owed it
+        push.notify()
+        self.assertEqual([sent["path"] for sent in self.service.requests[2:]],
+                         ["/wake/device-1", "/wake/device-2", "/wake/device-2"])
+
+        self.service.refusing = {}
+        sending = push._send
+
+        def unreachable_once(endpoint):  # no route to its push service this tick, then one
+            self.patch(push, "_send", sending)
+            raise OSError("network is unreachable")
+
+        self.patch(push, "_send", unreachable_once)
+        push.notify()
+        push.notify()
+        push.notify()
+        self.assertEqual([sent["path"] for sent in self.service.requests[5:]], ["/wake/device-2"])
+        self.assertEqual(push.refused(), [])
 
     def test_a_decision_settled_before_it_alerted_sends_no_clearing_wake(self):
         push.subscribe(self.endpoint)
