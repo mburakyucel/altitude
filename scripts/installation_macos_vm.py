@@ -909,6 +909,8 @@ def run_phase(name: str, release: Path, results: Path, record: dict) -> None:
         guest = Guest(work / "guest", work, folder / "vm.log")
         guest.wait_ssh(300)
         phase["guest"] = guest.ssh("sw_vers -productVersion; sw_vers -buildVersion").stdout.split()
+        # Spotlight's first indexing of a new clone takes the guest's CPUs while the installation starts.
+        guest.ssh("sudo -n mdutil -a -i off >/dev/null")
         note(f"{name}: checking the guest's network, then unplugging it")
         isolate(guest, phase)
         serve = work / "serve"
