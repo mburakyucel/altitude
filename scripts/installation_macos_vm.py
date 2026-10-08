@@ -795,6 +795,20 @@ def phase_prerequisites(guest: Guest, repository: str, results: Path, record: di
     cases["no-desktop-session"] = judged(attempt(guest, repository, SECOND, results, "no-desktop-session"), "no-desktop-session")
 
 
+# What launchd, the installation's processes and the guest were doing when a lifecycle step failed: HOME, then where.
+DIAGNOSE = r"""label=$(sed -n 's/.*"label": "\(.*\)".*/\1/p' "$1/results/service-label.json")
+launchctl print "gui/$(id -u)/$label" > "$2/launchd.txt" 2>&1
+ps -Ao pcpu,pmem,etime,comm -r | head -25 > "$2/processes.txt"
+ps -axo pid,ppid,pgid,stat,etime,command | grep -F "$1" | grep -v grep > "$2/installation-processes.txt"
+pid=$(sed -n 's/^\tpid = //p' "$2/launchd.txt")
+if [ -n "$pid" ]; then
+    sample "$pid" 3 -file "$2/sample.txt" >/dev/null 2>&1
+    lsof -p "$pid" > "$2/open-files.txt" 2>&1
+fi
+log show --last 10m --style compact --predicate "eventMessage CONTAINS '$label'" > "$2/system-log.txt" 2>&1
+"""
+
+
 def phase_lifecycle(guest: Guest, repository: str, results: Path, record: dict, release: Path, commit: str) -> None:
     """installation_lifecycle.py's `mac` phase, as installation_mac.py runs it on a configured Mac, in this fresh guest:
     install through the public command, health, doctor, updates to newer stable releases by `alt update` and by the
@@ -805,6 +819,8 @@ def phase_lifecycle(guest: Guest, repository: str, results: Path, record: dict, 
     settled(guest, record)
     guest.copy(release, f"{SHARED}/release")
     guest.copy(SCRIPTS / "installation_lifecycle.py", f"{SHARED}/installation_lifecycle.py")
+    (results / "diagnose.sh").write_text(DIAGNOSE)
+    guest.copy(results / "diagnose.sh", f"{SHARED}/diagnose.sh")
     # installation_mac.py's clean environment: the throwaway HOME, Homebrew's OpenSSL 3, Python and GitHub CLI first.
     script = (f'temp=$(getconf DARWIN_USER_TEMP_DIR); work="$temp/altitude-installation-mac"; '
               f'mkdir -m 700 "$work" "$work/home" && mkdir "$work/home/results" && cd "$work/home" && '
@@ -813,12 +829,7 @@ def phase_lifecycle(guest: Guest, repository: str, results: Path, record: dict, 
               f'/opt/homebrew/bin/python3.12 -I -B {SHARED}/installation_lifecycle.py {SHARED}/release {SHARED}/release '
               f'"$work/home/results" {commit} mac; code=$?; cp -R "$work/home/results" {SHARED}/lifecycle; '
               f'cp -R "$work/home/Library/Logs" {SHARED}/lifecycle/logs 2>/dev/null; '
-              # What launchd and the guest were doing when a step failed.
-              f'if [ $code != 0 ]; then label=$(sed -n \'s/.*"label": "\\(.*\\)".*/\\1/p\' "$work/home/results/service-label.json"); '
-              f'launchctl print "gui/$(id -u)/$label" > {SHARED}/lifecycle/launchd.txt 2>&1; '
-              f'ps -Ao pcpu,pmem,etime,comm -r | head -25 > {SHARED}/lifecycle/processes.txt; '
-              f'log show --last 10m --style compact --predicate "eventMessage CONTAINS \\"$label\\" OR '
-              f'process == \\"UserNotificationCenter\\"" > {SHARED}/lifecycle/system-log.txt 2>&1; fi; exit $code')
+              f'[ $code = 0 ] || sh {SHARED}/diagnose.sh "$work/home" {SHARED}/lifecycle; exit $code')
     result = guest.ssh(script, timeout=480, check=False)
     record["guest_load_at_end"] = float(guest.ssh("sysctl -n vm.loadavg").stdout.split()[1])
     (results / "lifecycle.log").write_text(result.stdout + result.stderr)
