@@ -23,6 +23,8 @@ installation command for your own machine. It covers real user-service activatio
 also checks the service starts again after a restart and runs the built `install.sh` against a
 release server inside the VM),
 without establishing browser/device certificate trust, live provider readiness or a minimal OS install.
+On an Apple silicon Mac, the [macOS VM run](DEVELOPMENT.md#macos-vm-run) checks in fresh macOS guests
+that the built `install.sh` stops with its documented fix for each missing prerequisite.
 See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](DEVELOPMENT.md#coverage-and-limits).
 
 ## Prerequisites
