@@ -24,6 +24,7 @@ import platform
 import pwd
 import pty
 import re
+import select
 import shutil
 import socket
 import ssl
@@ -658,10 +659,11 @@ class MacLifecycle(Lifecycle):
         return archive, checksum, package, release
 
     def versions(self, package: Path, release: dict) -> dict:
-        """Built baseline, then newer synthetic releases from its package: two healthy ones and one whose startup exits."""
+        """Built baseline, then the next stable patch releases from its package: two healthy ones and one whose startup
+        exits."""
         made = {}
         for offset, failing in ((1, False), (2, False), (3, True)):
-            version = re.sub(r"rc\.(\d+)$", lambda match: f"rc.{int(match[1]) + offset}", release["version"])
+            version = re.sub(r"\.(\d+)$", lambda match: f".{int(match[1]) + offset}", release["version"])
             folder = self.home / f"release-{version}"
             folder.mkdir()
             copy = self.home / f"package-{version}"
@@ -747,17 +749,10 @@ class MacLifecycle(Lifecycle):
         try:
             proc = subprocess.run(list(map(str, command)), cwd=self.home, env=self.env, stdout=subprocess.DEVNULL,
                                   stderr=secondary, timeout=60)
-            os.close(secondary)
-            secondary = None
+            # Read while this end stays open: macOS discards a terminal's unread output once its last writer closes.
             chunks = []
-            while True:
-                try:
-                    chunk = os.read(primary, 4096)
-                except OSError:
-                    break
-                if not chunk:
-                    break
-                chunks.append(chunk)
+            while select.select([primary], [], [], 0.2)[0]:
+                chunks.append(os.read(primary, 4096))
         finally:
             if secondary is not None:
                 os.close(secondary)

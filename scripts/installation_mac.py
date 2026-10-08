@@ -71,7 +71,7 @@ def missing_prerequisites() -> list[str]:
 
 def build(commit: str, output: Path, log: Path) -> None:
     with log.open("w") as stream:
-        subprocess.run([sys.executable, "-B", str(REPO / "scripts/build_release.py"), "--version", "v0.0.0-rc.1",
+        subprocess.run([sys.executable, "-B", str(REPO / "scripts/build_release.py"), "--version", "v0.0.1",
                         "--output", str(output), "--source", commit], stdout=stream, stderr=subprocess.STDOUT,
                        check=True, timeout=300)
 

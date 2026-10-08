@@ -922,12 +922,12 @@ Homebrew's Python 3.12 and OpenSSL 3 first on `PATH`, Git, GitHub CLI and `pnpm`
 make installation-mac RESULTS=/tmp/altitude-mac SOURCE=origin/main
 ```
 
-It builds `v0.0.0-rc.1` from the committed `SOURCE` (default `HEAD`) and runs the harness's `mac`
+It builds `v0.0.1` from the committed `SOURCE` (default `HEAD`) and runs the harness's `mac`
 phase as the running account under a throwaway `HOME` in the user temporary folder, with a clean
 environment. An installation under any `HOME` other than the account's own gets a LaunchAgent label
 derived from that home (`platform.service_label()`), so the lane's service and jobs never address
 the account's `dev.altitude.altd`. The service listens on a free loopback port. The phase serves
-releases from a local HTTPS proxy that answers only for `github.com` and `api.github.com`, with a
+ordinary stable releases, as users receive them, from a local HTTPS proxy that answers only for `github.com` and `api.github.com`, with a
 throwaway certificate authority; the installing shell's `HTTPS_PROXY` and `SSL_CERT_FILE` point at
 it and the installation keeps them, so no request reaches GitHub. It then:
 
@@ -935,11 +935,11 @@ it and the installation keeps them, so no request reaches GitHub. It then:
   byte is refused with nothing installed, and the unaltered one installs the LaunchAgent and a
   service whose HTTPS health on the generated CA reports the release's version and commit, with
   `alt doctor` passing apart from its expected findings;
-- publishes `v0.0.0-rc.2`; the installed daemon's check records it, and the app's overview, the
+- publishes `v0.0.2`; the installed daemon's check records it, and the app's overview, the
   once-a-day `alt` notice and `alt doctor` report it; `alt update` activates it;
-- publishes `v0.0.0-rc.3`; a paired device's Update button starts the detached
+- publishes `v0.0.3`; a paired device's Update button starts the detached
   `dev.altitude.job.altitude-update-…` launchd job, which activates it and is removed;
-- publishes `v0.0.0-rc.4`, whose startup exits; `alt update` restores `v0.0.0-rc.3`, which keeps
+- publishes `v0.0.4`, whose startup exits; `alt update` restores `v0.0.3`, which keeps
   serving;
 - uninstalls: the LaunchAgent, its launchd job and the update job are gone, settings, TLS identity
   and fictional history and project files remain.
