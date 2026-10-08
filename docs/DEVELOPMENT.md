@@ -401,6 +401,14 @@ alt task validate -- python3 -m unittest tests.test_container_workflow tests.tes
 - **Limits.** One run at a time per machine, for up to an hour. Each run gets 8 GiB of memory without
   swap, 4096 tasks and four CPUs, and needs 20 GiB free for the runner. Disk use is not otherwise
   bounded.
+- **Waiting and stopping.** A request that finds the machine busy waits for it, admitted in arrival
+  order, for up to 70 minutes (one run's hour and its cleanup, the client's budget); after that it is
+  refused with what still holds the machine. While it waits, `alt task validate` prints the task whose
+  run holds the machine, when that run's limit ends and how many requests are ahead. Every check is
+  repeated at admission. altd watches each request's connection: a client that stops, is interrupted
+  or loses its connection leaves the line, or, once admitted, has its run stopped at once and recorded
+  as `stopped`, which frees the machine for the next request. `alt task run` does not share this slot;
+  it is refused only while a command or run of its own task is unfinished.
 - **Storage.** The image, Podman's storage, the cloud-image cache and each run's area live in
   `~/.altitude-validation`, beside Altitude's home rather than in it. Workers can write Altitude's
   home, and a path a worker replaced must not become a mount or a place the run writes.
@@ -413,7 +421,8 @@ alt task validate -- python3 -m unittest tests.test_container_workflow tests.tes
   that stayed and why, and keeps its area. The runner's own files in the area (the run's identity,
   delivery receipt, log and exit status) sit outside the candidate's folders and go after the record.
   Activation waits through execution, evidence recording and cleanup; validation admission shares
-  the restart fence and refuses runs once restart is requested.
+  the restart fence and refuses runs once restart is requested. A request waiting for the machine
+  does not hold activation.
 - **Record.** Each run is recorded on its task like a [machine run](CLI.md#operator-grant), with
   purpose `validation`, the command, commit and tree, the host's OS and architecture, what isolated it
   (the image tag, or `seatbelt:` and the profile's digest), exit, how it ended and any cleanup failure.

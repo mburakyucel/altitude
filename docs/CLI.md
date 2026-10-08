@@ -1965,7 +1965,11 @@ whether cleanup finished, and adds the same `machine-run` events as `alt task ru
 output and a status line with these, and exits with the command's status (124 on timeout) only when
 the run also ended cleanly; a stop, failure or failed cleanup exits 1. altd accepts the request only
 from a process in the task's current worker job. A non-running task, a stale attempt, another caller,
-a turned-off switch, missing KVM, a host without an iOS Simulator for `--simulator`, low disk or a run already in progress refuses with the reason. The
+a turned-off switch, missing KVM, a host without an iOS Simulator for `--simulator` or low disk refuses with the
+reason. One run uses the machine at a time: a request that finds it busy waits its turn in arrival order, for up to
+70 minutes, and prints what it waits for (the task whose run holds the machine, when that run's limit ends and how
+many requests are ahead) on standard error. Stopping or interrupting the command, or losing its connection, takes
+the request out of the line or stops its run at once, recorded as `stopped`, and frees the machine. The
 [validation runner](DEVELOPMENT.md#validation-runner) describes the isolation, its limits and cleanup.
 
 ### Reading the task terminal
