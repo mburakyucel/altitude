@@ -110,7 +110,12 @@ only to the findings file, mode 0600, under the runtime home; the script refuses
 repository. The private word list stays outside the repository as well.
 
 A delta run takes the previous findings file and scans only objects and commits that none of its
-recorded ref heads reach, so re-checking shortly before publication costs seconds. Inspect the
+recorded ref heads reach, so re-checking shortly before publication costs seconds. A recorded head
+this clone lacks (pruned since, or recorded by another clone) is skipped and counted as
+`since_heads_missing`, which only widens the scan. GitHub keeps pull-request refs (`refs/pull/*`)
+that a normal clone does not fetch and that become visible with the repository; scan a temporary
+`git clone --mirror` of the repository with `scripts/audit_history.py --repo <mirror>` to cover
+them. Inspect the
 findings file directly; the audit record (task report, issue #233) carries the cutoff, the rules, the
 counts and the conclusion, never the matches. Regular expressions and a word list find shaped and
 known material, binary blobs get only path and size checks, and objects no ref reaches are not

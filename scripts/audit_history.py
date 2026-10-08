@@ -155,9 +155,12 @@ def line_of(text, index):
 
 def scan(findings_path, since, words):
     heads = refs()
-    negatives = []
+    recorded = []
     if since:
-        negatives = json.loads(Path(since).read_text())["heads"].values()
+        recorded = list(json.loads(Path(since).read_text())["heads"].values())
+    # A head recorded by another clone, or pruned since, is not an object here; skipping it only widens the scan.
+    present = git("cat-file", "--batch-check=%(objectname) %(objecttype)", input="".join(f"{sha}\n" for sha in recorded))
+    negatives = [line.split()[0] for line in present.splitlines() if not line.endswith(" missing")]
     blobs, commits = objects(negatives)
     where = {namespace: reachable(namespace, heads) for namespace in NAMESPACES}
 
@@ -203,6 +206,7 @@ def scan(findings_path, since, words):
         "scanned_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "cutoff": {"origin/main": heads.get("refs/remotes/origin/main"), "HEAD": git("rev-parse", "HEAD").strip()},
         "since": str(since) if since else None,
+        "since_heads_missing": len(recorded) - len(negatives),
         "refs": len(heads),
         "refs_by_namespace": {namespace: sum(name.startswith(namespace) for name in heads) for namespace in NAMESPACES},
         "commits": len(commits),
