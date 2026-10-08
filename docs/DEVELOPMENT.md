@@ -560,11 +560,12 @@ The voice journey walks the restart after the X of [issue
 troubleshooting diagnostics in Settings; then in the project's composer and a task's, without
 reloading, it types a draft and three times taps the microphone, receives words and cancels with the
 X, with a snapshot per state (`voice-1-` to `voice-4-`). Each round passes when the words and a
-moving waveform appear, the X restores the typed draft, focus stays on the microphone and the
-viewport keeps its height, and the recognizer, stream and waveform audio context are released.
-Focusing the field afterwards shows that the viewport does shrink for the keyboard
-(`dictation.json`). The diagnostic report (`voice-report.json`) must show six captures, each with a
-waveform signal, and none of the draft's or dictated words. A round that stops keeps the page state
+moving waveform appear (a tall bar, then a changed frame from a tone that swells twice a second),
+the X restores the typed draft, focus stays on the microphone and the viewport keeps its height, and
+the recognizer, stream and waveform audio context are released. Focusing the field afterwards must
+shrink the viewport for the keyboard, so these checks can see one (`dictation.json`). The diagnostic
+report (`voice-report.json`) must show six captures, each with a waveform signal in at least two
+samples, and none of the draft's or dictated words. A round that stops keeps the page state
 (`dictation-failure.json`) and the report so far.
 
 Simulator Safari's microphone request and speech recognizer stop at native permission dialogs that

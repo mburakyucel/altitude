@@ -289,13 +289,20 @@ window.AudioContext = class extends NativeAudioContext {
 };
 Object.defineProperty(__voice.devices, 'getUserMedia', {configurable: true, value: async () => {
   if (!__voice.tone) {
-    __voice.tone = new NativeAudioContext();
-    __voice.oscillator = __voice.tone.createOscillator();
+    // A tone that swells and fades twice a second, so a drawing waveform keeps changing.
+    const tone = __voice.tone = new NativeAudioContext(), swell = tone.createOscillator(), depth = tone.createGain();
+    __voice.oscillator = tone.createOscillator();
+    __voice.level = tone.createGain();
+    __voice.level.gain.value = depth.gain.value = 0.15;
+    swell.frequency.value = 2;
+    swell.connect(depth).connect(__voice.level.gain);
+    __voice.oscillator.connect(__voice.level);
+    swell.start();
     __voice.oscillator.start();
   }
   __voice.log.push(['microphone requested', __voice.tone.state, Math.round(performance.now())]);
   const destination = __voice.tone.createMediaStreamDestination();
-  __voice.oscillator.connect(destination);
+  __voice.level.connect(destination);
   await __voice.tone.resume();
   __voice.log.push(['microphone opened', __voice.tone.state, Math.round(performance.now())]);
   __voice.streams.push(destination.stream);
@@ -304,18 +311,18 @@ Object.defineProperty(__voice.devices, 'getUserMedia', {configurable: true, valu
 0
 """
 
-#: The tallest waveform bar as a share of the canvas height: the silent minimum is a few pixels.
-LOUDEST = """(() => {
+#: The waveform's drawn bars: each column's height as a share of the canvas height (the silent minimum is a few pixels).
+BARS = """(() => {
   const canvas = shown('.composer-wave');
   const data = canvas && canvas.height && canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
-  if (!data) return 0;
-  let tallest = 0;
+  if (!data) return [];
+  const bars = [];
   for (let x = 0; x < data.width; x++) {
     let column = 0;
     for (let y = 0; y < data.height; y++) if (data.data[(y * data.width + x) * 4 + 3] > 0) column++;
-    tallest = Math.max(tallest, column);
+    bars.push(Math.round(100 * column / data.height) / 100);
   }
-  return tallest / canvas.height;
+  return bars;
 })()"""
 
 
@@ -402,8 +409,13 @@ def dictation(safari: Safari, url: str, work: str, task: str, results: Path) -> 
                   f"__voice.recognizers.length === {capture + 1}", f"{where} listening, round {turn}")
             safari.evaluate(f"__voice.recognizers[{capture}].hear({json.dumps(words)}); 0")
             check(f"{field}.value === {json.dumps(f'{draft} {words}')}", f"{where} words, round {turn}")
-            loudest = check(f"{LOUDEST} > 0.5 && {LOUDEST}", f"{where} waveform, round {turn}", seconds=10)
-            time.sleep(1.2)  # a diagnostic waveform sample a second
+            # A moving waveform: a loud bar, then a different frame, while the trace samples the graph each second.
+            first = check(f"Math.max(...{BARS}) > 0.5 && {BARS}", f"{where} waveform, round {turn}", seconds=10)
+            time.sleep(2.2)
+            later = safari.evaluate(HELPERS + BARS)
+            if later == first:
+                raise RuntimeError(f"{where} waveform, round {turn}: the bars did not change in two seconds")
+            loudest = max(first)
             snap(f"voice-{2 if where == 'project' else 3}-{where}-{turn}-listening", f"{where} words and waveform, round {turn}")
             safari.evaluate(HELPERS + "shown('button[aria-label=\"Cancel voice input\"]').click(); 0", gesture=True)
             check(f"shown('button[aria-label=\"Start voice input\"]') && !shown('button[aria-label=\"Cancel voice input\"]') "
@@ -424,11 +436,11 @@ def dictation(safari: Safari, url: str, work: str, task: str, results: Path) -> 
                            "focus": focus, "viewport": [before, after]})
             safari.evaluate("document.activeElement && document.activeElement.blur(); 0")
 
-    # Whether this phone shows a keyboard the viewport reports: focus the field as a tap does.
+    # The viewport checks above see a keyboard: focusing the field as a tap does opens it and the viewport shrinks.
     resting = safari.evaluate("visualViewport.height")
     safari.evaluate(HELPERS + f"{field}.focus(); 0", gesture=True)
-    time.sleep(1)
-    keyboard = {"resting": resting, "field focused": safari.evaluate("visualViewport.height")}
+    keyboard = {"resting": resting, "field focused": check(f"visualViewport.height < {resting} - 100 && "
+                                                           "visualViewport.height", "the keyboard for the field", 10)}
     safari.evaluate("document.activeElement.blur(); 0")
 
     report = read_report()
@@ -438,12 +450,14 @@ def dictation(safari: Safari, url: str, work: str, task: str, results: Path) -> 
         raise RuntimeError("the diagnostic report contains draft or dictated text")
     events = json.loads(report)["events"]
     listening = sum(e["event"] == "capture.listening" for e in events)
-    heard = {e.get("source") for e in events if e["event"] == "waveform.sample" and e.get("signal")}
+    samples = [e.get("source") for e in events if e["event"] == "waveform.sample" and e.get("signal")]
+    heard = {source for source in samples if samples.count(source) >= 2}
     (results / "dictation.json").write_text(json.dumps({"rounds": rounds, "keyboard": keyboard,
                                                         "captures": listening, "graphs with signal": len(heard)},
                                                        indent=2) + "\n")
     if listening != 6 or len(heard) != 6:
-        raise RuntimeError(f"the report shows {listening} captures and {len(heard)} waveform graphs with signal, not 6")
+        raise RuntimeError(f"the report shows {listening} captures and {len(heard)} waveform graphs with signal in two "
+                           "samples, not 6")
     return steps
 
 
