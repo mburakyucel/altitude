@@ -246,7 +246,11 @@ rule file. Managed projects retain their own policy.
 Source deployments export their committed installation HEAD on successful service startup into the ignored
 deployment-local `.altitude-source/<sha>` directory. `config.REPO` identifies the deployment checkout;
 `config.SOURCE` identifies the activated source for CLI code, personas, hooks, templates and schemas.
-These exports sit outside worker writable roots and remain available to existing workers. Managed
+These exports sit outside worker writable roots. The maintenance tick removes an export nothing names:
+the running service's export, the target of `current` and every export named in the brief or session
+settings of a task that is unfinished or not yet cleaned up stay, so live workers keep theirs. Pruning
+waits an hour after `current` moves, while the restart helper may still run from the previous export,
+and skips a pass when a task's launch files cannot be read. Managed
 Git guards use `.altitude-source/current/hooks`; setup and launch preflight refresh recognized
 Altitude-owned paths from earlier exports, including skipped versions, and preserve custom hooks.
 Task inputs use activated source independently of
@@ -805,6 +809,14 @@ pins the current base/head pair, waits for configured checks, and merges only
 when requested and allowed. After the push, the fetched branch tip must equal the pushed head;
 a different tip refuses immediately. A lagging PR view is re-read every two seconds within a
 30-second polling window before pinning that head. A task may carry an explicit merge hold for operator review.
+
+A finished task's worktree and branch are retained only while something needs them. Every maintenance
+tick revisits each done or rejected task that is not yet cleaned up. Its worktree is removed once no
+worker runs, the tree has no uncommitted changes and every commit in it is on a branch or remote. Its
+branch is deleted once the tip is on `origin/main` or a verified PR merged it; a branch holding commits
+found only on this machine stays and the `cleanup-worktree` event names it and its unmerged commit count.
+A running worker or failed fetch retries on the next tick; any other refusal is a recorded note, not a
+fault. A done task's cleanup then fast-forwards a self-deploying checkout.
 Invocations that merge or target this repository’s required PR check hold a separate `flock`
 on `altitude-land.lock` in the repository's common Git directory, from before ownership reads and
 fetch through checks and merge. All its worktrees share the lock; task-state locks remain short,
