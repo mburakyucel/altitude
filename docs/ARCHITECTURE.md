@@ -831,10 +831,12 @@ into the task branch before pushing when needed, preserving adopted ancestry and
 head checks. A conflicting integration is aborted with local work retained for owner reconciliation.
 For a completed review whose assessment is stale, the current L2's merging invocation retains the
 turn while the owner explicitly reassesses the pinned candidate through the existing review command.
-CI and assessment share the `--wait` deadline. Polls hold the task review lock only for local review
-reads; network reads and sleeps leave review requests available. Assessment fetches preserve landing's
-`FETCH_HEAD` receipt. A notice names every stale review and subject with the assessed/current values
-of its changed evidence, so the owner posts explanations together before assessing each request.
+CI and assessment share one deadline, an hour after publication unless `--wait` shortens it, so a
+merging candidate keeps the turn through its fresh required check. Polls hold the task review lock
+only for local review reads; network reads and sleeps leave review requests available. Assessment
+fetches preserve landing's `FETCH_HEAD` receipt. A notice names every stale review and subject with
+the assessed/current values of its changed evidence, so the owner posts explanations together before
+assessing each request.
 Proposal and changes findings remain separate; a changes assessment does not retire a proposal.
 Fresh context invalidation, including during final merge validation, uses the same wait and original
 deadline. Final candidate, checks, ownership and hold validation repeats after assessment.

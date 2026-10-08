@@ -1333,9 +1333,11 @@ check, with or without `--merge`. It waits before fetching, publishing or checki
 when waiting and when its turn starts, and returns seconds waited as `waited` (zero without a
 wait). This preserves shared candidate admission from I-20260923-062538 while CI runs the suite.
 Keep the command and owner session alive; ordinary contention needs no L3 landing-window request.
-Admission waits at most 3600 seconds, independently of `--wait`, which bounds the shared CI and
-owner-assessment wait (600 seconds by default). An admission timeout refuses without selecting a
-candidate or publishing changes; retry explicitly when ready.
+Admission waits at most 3600 seconds. The shared CI and owner-assessment wait that follows has the
+same 3600-second bound, so a merging candidate keeps the turn while its fresh required check is
+queued or running and one green check leads to one merge; `--wait` only shortens it. Landing prints
+the remaining bound when it first sees pending checks. An admission timeout refuses without selecting
+a candidate or publishing changes; retry explicitly when ready.
 
 Each admitted invocation rechecks ownership and holds, fetches current main, and merges it into
 the task branch when needed before pushing and checking the fresh candidate. This preserves
