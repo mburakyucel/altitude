@@ -296,9 +296,11 @@ containment remain in the common engine contract. macOS runtime acceptance on a 
 ([roadmap](ROADMAP.md#native-macos-runtime)) remains pending.
 
 An installed copy's daemon checks for a newer release at startup and every twelve hours, off the
-timer thread: one anonymous request to GitHub's latest-release endpoint for the repository in
-`release.json`, retried after an hour when offline. `update.json` in the runtime home keeps the
-newest stable release found and any update the app started, and the daemon, the app's request and
+timer thread: one anonymous request to GitHub for the repository in `release.json`, retried after
+an hour when offline. A stable installation reads GitHub's latest release, so it follows stable
+releases only; an installation from a release candidate reads the thirty newest releases and also
+follows newer candidates. Drafts never count. `update.json` in the runtime home keeps the newest followed release found and
+any update the app started, and the daemon, the app's request and
 the update itself change it under one lock; source deployments neither check nor record. The `update_check` machine setting turns the check off and hides what it found. The
 overview's `update` field and `alt doctor` report the installed version and a newer one; an
 interactive `alt` command prints one line about it at most once a day from that record, never to
