@@ -1019,9 +1019,10 @@ publication, CI waiting and merge across Altitude owners, including nonmerging i
 For reviewed merging candidates, CI and explicit owner reassessment share one bounded wait while
 the same process retains the repository turn. `tests/test_land_contention.py` drives real competing
 landing processes, Git and fixture reviewers through main integration, in-turn assessment, fresh
-required checks, timeout, termination, ownership loss and material-edit refusal. Proposal followed by
-implementation review reports both stale assessments together; messages during admission, hosted CI
-or local validation require explicit assessment in the same landing invocation. Invalid dispositions
+required checks (one pending for more than ten minutes on a scaled landing clock), timeout,
+termination, ownership loss and material-edit refusal. Proposal followed by implementation review
+reports both stale assessments together; messages during admission, hosted CI or local validation
+require explicit assessment in the same landing invocation. Invalid dispositions
 leave the candidate unmerged and its operator hold intact, and final validation does not restart the
 assessment deadline. `tests/test_reviews.py` checks the review identity and changed evidence in refusals.
 Original review receipts remain unchanged. Fixtures establish the application protocol, not live engine support for
