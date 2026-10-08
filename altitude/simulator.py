@@ -226,14 +226,18 @@ class _Session:
         upstream.start()
         self._pump(self.run, self._from_run)
         upstream.join()
+        with self.lock:  # only once neither pump uses them, so no pump waits on or reaches a reused descriptor
+            self.run.close()
+            self.phone.close()
 
-    def close(self) -> None:
-        for sock in (self.run, self.phone):
-            try:
-                sock.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-            sock.close()
+    def end(self) -> None:
+        """Ends both directions: a pump waiting on either socket wakes, and `serve` then closes them."""
+        with self.lock:
+            for sock in (self.run, self.phone):
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:  # already ended or closed
+                    pass
 
     def _to_run(self, selector: str, argument: dict) -> None:
         with self.sending:
@@ -246,7 +250,7 @@ class _Session:
         except Exception:  # anything malformed or failing ends the connection
             pass
         finally:
-            self.close()
+            self.end()
 
     def _from_run(self, selector: str, argument: dict) -> bool:
         if selector == OPEN:
@@ -353,7 +357,8 @@ class Relay:
             session = _Session(run, phone, self.port, self.open_url)
             with self.lock:
                 if self.stopped.is_set():
-                    session.close()
+                    run.close()
+                    phone.close()
                     return
                 self.sessions.append(session)
             threading.Thread(target=self._serve, args=(session,), daemon=True).start()
@@ -371,4 +376,4 @@ class Relay:
         self.listener.close()
         with self.lock:
             for session in self.sessions:
-                session.close()
+                session.end()

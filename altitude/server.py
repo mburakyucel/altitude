@@ -41,11 +41,14 @@ _report_retries: dict[tuple[str, str], tuple[str, int, float]] = {}
 REPORT_RETRY_DELAYS = (60, 300, 900, 3600)
 L3_VERB_MAX_REQUEST = 4 << 20
 L3_VERB_MAX_OUTPUT = 8 << 20
-L3_GH_READS = {
-    ("pr", "view"), ("pr", "list"), ("pr", "diff"), ("pr", "checks"),
-    ("issue", "list"), ("issue", "view"),
-    ("run", "list"), ("run", "view"), ("run", "watch"),
-}
+# The coordinator's `gh` only reads, from any repository its login can see; `alt issue` verbs are its only writes.
+L3_GH_GROUPS = {"pr", "issue", "release", "repo", "run", "workflow", "ruleset", "label", "cache"}
+L3_GH_VERBS = {"view", "list", "status", "checks", "diff", "watch", "check"}
+L3_GH_RULE = (
+    "The coordinator's gh only reads, from any repository its login can see: view/list/status/checks/diff/watch/"
+    "check of pr, issue, release, repo, run, workflow, ruleset, label and cache; gh search; and gh api GET of a "
+    "REST endpoint path, without fields, input or another host. Writes, downloads, auth and --web or -w "
+    "(outside run list) are refused; use alt issue to write.")
 L3_TASK_TARGETS = {
     "handoff", "release",
     "reject", "escalate", "events", "messages", "report", "show", "resume", "message", "stop",
@@ -303,12 +306,6 @@ def _l3_verb_request(project: str, request: dict) -> dict:
             options = merge_approval_parser().parse_args(args[2:])
             receipt = apply_recorded_merge_approval(project, **vars(options))
             return {"returncode": 0, "stdout": json.dumps(receipt) + "\n", "stderr": ""}
-        if args[:2] == ["issue", "inspect"]:
-            from . import github_inspection
-            if stdin:
-                raise ValueError("alt issue inspect: no input body is accepted")
-            options = github_inspection.parser().parse_args(args[2:])
-            return {"returncode": 0, "stdout": github_inspection.inspect(project, **vars(options)), "stderr": ""}
         if args[:1] == ["issue"]:
             options = vars(issue_parser().parse_args(args[1:]))
             options.pop("text", None)
@@ -337,27 +334,62 @@ def _l3_verb_request(project: str, request: dict) -> dict:
     if (not isinstance(args, list) or len(args) < 2 or len(args) > 64
             or any(not isinstance(arg, str) or len(arg) > 4096 for arg in args)):
         raise ValueError("invalid gh read arguments")
-    redirected = any(
-        arg in ("--repo", "-R") or arg.startswith(("--repo=", "-R="))
-        or (arg.startswith("-R") and len(arg) > 2)
-        or "://" in arg or "/" in arg
-        for arg in args[2:]
-    )
-    if (tuple(args[:2]) not in L3_GH_READS
-            or any(arg == "--web" or arg.startswith("--web=") for arg in args[2:])
-            or redirected):
-        raise ValueError("L3 may only use the documented gh read commands")
+    command = _l3_gh_command(args)
     env = engines.clean_env()
-    env.pop("GH_REPO", None)  # cwd plus rejected repo selectors binds reads to this project's checkout
-    env["GH_PAGER"] = "cat"
+    env.pop("GH_REPO", None)  # a read naming no repository resolves from this project's checkout
+    env.update({"GH_PAGER": "cat", "GH_PROMPT_DISABLED": "1"})
     try:
-        result = subprocess.run(["gh", *args], cwd=str(config.project_path(project)), env=env,
-                                capture_output=True, text=True, timeout=120)
+        result = subprocess.run(["gh", *command], cwd=str(config.project_path(project)), env=env,
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.SubprocessError) as exc:
         return {"returncode": 1, "stdout": "", "stderr": f"gh read failed: {exc}\n"}
 
     return {"returncode": result.returncode, "stdout": _l3_bounded(result.stdout or ""),
             "stderr": _l3_bounded(result.stderr or "")}
+
+
+def _l3_gh_command(args: list[str]) -> list[str]:
+    """Admit a gh command that only reads, without opening a browser or prompting."""
+    def refuse(reason: str):
+        raise ValueError(f"L3 gh read refused: {reason}. {L3_GH_RULE}")
+
+    if args[0] == "api":
+        return _l3_gh_api(args[1:], refuse)
+    if args[0] != "search" and (args[0] not in L3_GH_GROUPS or args[1] not in L3_GH_VERBS):
+        refuse(f"gh {args[0]} {args[1]} is not a read")
+    for arg in args[2:]:
+        # Short options may cluster (`-cw`); `-w` is --web except in `run list`, where it is --workflow.
+        if (arg.partition("=")[0] == "--web"
+                or args[:2] != ["run", "list"] and re.match(r"-[A-Za-z]*w", arg)):
+            refuse(f"{arg} opens a browser")
+    return list(args)
+
+
+def _l3_gh_api(args: list[str], refuse) -> list[str]:
+    """Rebuild a GET from validated options, so gh never sees a body, a method or another host."""
+    class Parser(argparse.ArgumentParser):
+        def error(self, message):
+            refuse(f"gh api {message}")
+    parser = Parser(prog="gh api", allow_abbrev=False, add_help=False)
+    parser.add_argument("endpoint")
+    parser.add_argument("-X", "--method", type=str.upper, choices=["GET"])
+    parser.add_argument("-H", "--header", action="append", default=[])
+    parser.add_argument("-p", "--preview", action="append", default=[])
+    parser.add_argument("-q", "--jq")
+    parser.add_argument("-t", "--template")
+    parser.add_argument("--cache")
+    parser.add_argument("-i", "--include", action="store_true")
+    for flag in ("--paginate", "--slurp", "--silent"):
+        parser.add_argument(flag, action="store_true")
+    options = parser.parse_args(args)
+    # `gh api -- -XPOST` would rebuild into a flag; GraphQL can carry a mutation in its query.
+    if "://" in options.endpoint or re.match(r"-|/?graphql\b", options.endpoint):
+        refuse("gh api reads one REST endpoint path on github.com")
+    return ["api", options.endpoint, "--method=GET",
+            *(f"--header={value}" for value in options.header), *(f"--preview={value}" for value in options.preview),
+            *(f"--{name}={value}" for name in ("jq", "template", "cache")
+              if (value := getattr(options, name)) is not None),
+            *(f"--{name}" for name in ("include", "paginate", "slurp", "silent") if getattr(options, name))]
 
 
 def _note_created_task(project: str, stdout: str) -> None:
@@ -1091,6 +1123,11 @@ def tick() -> None:
             if ready and config.is_managed(project):
                 tick_project(project)
     try:
+        for note in dispatch.prune_source_exports():
+            log(f"[source] {note}")
+    except Exception as e:  # noqa: BLE001
+        log(f"[source] export pruning failed: {e}")
+    try:
         auto_restart()
     except Exception as e:  # noqa: BLE001
         log(f"auto-restart: {e}\n{traceback.format_exc()}")
@@ -1151,9 +1188,9 @@ def tick_project(project: str) -> None:
             request_task_resume(project, slug)
         dispatch_waiting(project)
         for t in S.list_tasks(project, include_archive=True):
-            if t["state"] == "done" and not t.get("cleaned"):
-                notes = dispatch.cleanup_after_done(project, t)
-                deferred = any(note.startswith(("deferred ", "skipped ", "could not ")) for note in notes)
+            if t["state"] not in S.OPEN_STATES and not t.get("cleaned"):
+                notes = dispatch.cleanup_task(project, t)
+                deferred = any(note.startswith("deferred ") for note in notes)
                 if not deferred:
                     with S.project_lock(project):
                         t2 = S.load_task(project, t["slug"]); t2["cleaned"] = S.now(); S.save_task(project, t2)

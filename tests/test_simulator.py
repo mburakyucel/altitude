@@ -100,21 +100,35 @@ class FakeInspector:
         self.listener = socket.socket(socket.AF_UNIX)
         self.listener.bind(str(path))
         self.listener.listen()
-        threading.Thread(target=self._accept, daemon=True).start()
+        self.listener.settimeout(0.05)
+        self.stopped, self.threads = threading.Event(), []
+        self.accepting = threading.Thread(target=self._accept, daemon=True)
+        self.accepting.start()
 
     def close(self):
-        self.listener.close()
+        """Every thread ends before the sockets it uses close: Linux wakes a blocked call only on shutdown, and a
+        descriptor closed under a thread can be reused by a later test's sockets."""
+        self.stopped.set()
+        self.accepting.join()
         for connection in self.connections:
-            connection.close()
+            try:
+                connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        for thread in self.threads:
+            thread.join()
+        for sock in (self.listener, *self.connections):
+            sock.close()
 
     def _accept(self):
-        while True:
+        while not self.stopped.is_set():
             try:
                 connection, _ = self.listener.accept()
-            except OSError:
-                return
+            except TimeoutError:
+                continue
             self.connections.append(connection)
-            threading.Thread(target=self._serve, args=(connection,), daemon=True).start()
+            self.threads.append(threading.Thread(target=self._serve, args=(connection,), daemon=True))
+            self.threads[-1].start()
 
     def listing(self, connection):
         sim._write(connection, "_rpc_applicationSentListing:", {"WIRApplicationIdentifierKey": SAFARI_APP, "WIRListingKey": {
@@ -330,6 +344,29 @@ class TestRelay(RelayCase):
                 client = self.client()
                 client.sock.sendall(partial)
                 self.assertTrue(client.closed())
+
+    def test_a_run_that_leaves_while_the_phone_sends_frees_its_place_at_once(self):
+        waiting, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+
+        class Held(sim.selectors.DefaultSelector):
+            def select(self, timeout=None):
+                waiting.set()
+                release.wait()
+                return super().select(timeout)
+
+        client = self.client()
+        with mock.patch.object(sim, "FRAME_SECONDS", 5), mock.patch.object(sim.selectors, "DefaultSelector", Held):
+            self.phone.navigate("1", "http://127.0.0.1:5555/next")
+            self.assertTrue(waiting.wait(5), "the relay waits for the rest of the phone's message")
+            client.sock.close()
+            for thread in self.phone.threads:
+                thread.join(5)  # the phone sees the relay end its side
+            release.set()
+            deadline = time.monotonic() + 2  # well inside the 5 s a lost wakeup would wait
+            while self.relay.sessions and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertEqual(self.relay.sessions, [], "the waiting side wakes as the connection ends")
 
     def test_a_malformed_request_closes_its_connection_and_frees_its_place(self):
         for _ in range(sim.SESSIONS + 1):

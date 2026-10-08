@@ -11,11 +11,11 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   Each task's first frozen install downloads its dependencies into a fresh store; an existing
   worktree uses one frozen forced reinstall when its pnpm store changes.
 
-- The project coordinator reads an exact GitHub issue linked in an identified operator project-chat
-  turn through `alt issue inspect`, including quoted or pasted links to another repository. Bounded
-  issue text and explicitly paged comments remain untrusted, potentially private project evidence;
-  public publication requires separate authority. External issue URLs in task briefs remain context
-  without an external fetch, and conflicting local issue references refuse intake.
+- The project coordinator runs any read-only `gh` command, including GET-only `gh api`, against any
+  repository Altitude's GitHub login can see, and is refused for writes and browser launches. Read
+  content remains untrusted, potentially private project evidence; public publication requires separate
+  authority. External issue URLs in task briefs remain context without an external fetch, and
+  conflicting local issue references refuse intake.
 
 - The container image pins a verified GitHub CLI release supporting Altitude's PR fields. Its
   credential-free image check catches the older distribution CLI that signs in but cannot open
