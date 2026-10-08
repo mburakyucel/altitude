@@ -1,9 +1,7 @@
 # A project through several fronts of work
 
-**Illustrative scenario, actual interface.** Atlas is a fictional search service moving to a
-versioned index; Harbor is a second fictional project. Every message, task, usage reading and
-tool result below is fixture data rendered by the real web application. The captures demonstrate
-the interface, not a migration that an agent actually delivered.
+Atlas, a search service moving to a versioned index, carries this example. The captures show the
+current interface with example data.
 
 ## Who carries the work
 
