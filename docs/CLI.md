@@ -1336,8 +1336,12 @@ wait). This preserves shared candidate admission from I-20260923-062538 while CI
 Keep the command and owner session alive; ordinary contention needs no L3 landing-window request.
 Admission waits at most 3600 seconds. The shared CI and owner-assessment wait that follows has the
 same 3600-second bound, so a merging candidate keeps the turn while its fresh required check is
-queued or running and one green check leads to one merge; `--wait` only shortens it. Landing prints
-the remaining bound when it first sees pending checks. An admission timeout refuses without selecting
+queued or running and one green check leads to one merge; `--wait` only shortens it. GitHub registers
+a head's checks one at a time, so a required check absent from the head is waited for within the same
+bound rather than read as skipped; landing names it and the checks that have registered, such as a
+nonrequired skipped hosted job. Landing prints the remaining bound when it first sees pending or
+unregistered required checks. A required check that never registers within the bound ends the wait as
+`missing` with that observation and does not merge. An admission timeout refuses without selecting
 a candidate or publishing changes; retry explicitly when ready.
 
 Each admitted invocation rechecks ownership and holds, fetches current main, and merges it into
