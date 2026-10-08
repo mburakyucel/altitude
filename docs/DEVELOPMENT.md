@@ -511,14 +511,14 @@ make ui-simulator   # inside a task: alt task validate --simulator -- sh -c 'mak
   Altitude's port is hidden and closes any connection inspecting it. A run holds at most four connections
   at once, and a message that stops arriving partway closes its connection after 30 seconds. The page's
   address is read from Safari's listing, which updates shortly after a navigation, so a page can answer
-  briefly before its connection closes (0.3 to 0.7 seconds on this Mac). Simulator Safari holds no pairing,
-  and Altitude answers an unpaired browser only with its page, files, health, access status and pairing.
-  One request of the relay's own, `_rpc_altitudeOpenURL:`, opens an `http(s)` loopback address with a
-  port, never Altitude's, in Safari: that is how a run puts its first page on the phone. Safari runs as
-  the operator's account outside the run's profile, like a browser on this Mac: its pages reach the
-  internet and loopback, and it has no Altitude pairing.
-  The phone's inspector can drop a connection opened in the moment another one closes; a script that
-  reconnects waits a second or two first.
+  briefly before its connection closes (under a second: 0.3 to 0.8 s measured here). Simulator Safari
+  holds no pairing, and Altitude answers an unpaired browser only with its page, files, health, access
+  status and pairing. One request of the relay's own, `_rpc_altitudeOpenURL:`, opens an `http(s)` loopback
+  address with a port, never Altitude's, in Safari: that is how a run puts its first page on the phone.
+  Safari runs as the operator's account outside the run's profile, like a browser on this Mac: its pages
+  reach the internet and loopback, and it has no Altitude pairing. The phone's inspector can drop a
+  connection opened in the moment another one closes; a script that reconnects waits a second or two
+  first.
 - **Removal.** When the command ends, including after a failure, a timeout or a stop, altd keeps one
   screenshot of the whole screen as the task folder's `validation/<n>.simulator.png`, then shuts down
   and deletes every device in the run's set and removes the set. A set that stays keeps the run area,
