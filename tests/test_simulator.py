@@ -484,6 +484,14 @@ json.dump({"apps": sorted(apps), "opened": opened, "socket": os.environ["SIMULAT
         self.assertIn(["shutdown", "all"], [call[3:] for call in self.calls()])
         self.assertEqual(self.runs(), [])
 
+    def test_a_run_stopped_while_its_clone_is_made_boots_no_phone(self):
+        clone = validation._clone
+        with mock.patch.object(validation, "_clone", side_effect=lambda *a: (validation.stop_all(), clone(*a))[1]):
+            result = self.drive()
+        self.assertEqual((result["ended"], result["simulator"]), ("turned off", None))
+        self.assertNotIn("boot", [call[3] for call in self.calls() if len(call) > 3])
+        self.assertEqual(self.runs(), [])
+
     def test_a_phone_that_cannot_be_deleted_keeps_the_area_and_closes_the_runner_until_it_goes(self):
         self.setenv("FAKE_SIMCTL_FAIL", "delete")
         result = self.drive()
