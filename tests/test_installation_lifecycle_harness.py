@@ -544,6 +544,14 @@ class TestInstallationMacosVm(AltitudeCase):
                         {"exit": 1, "output": "Altitude cannot be installed on this Mac yet.", "unchanged": True}):
             self.assertFalse(vm.judged(outcome, "missing-python")["passed"])
 
+    def test_public_command_trusts_the_test_authority_for_its_own_and_install_shs_downloads(self):
+        from scripts import installation_macos_vm as vm
+        command = vm.public_command("example/altitude")
+        trust, _, public = command.partition("; ")
+        self.assertEqual(trust, f"export SSL_CERT_FILE={vm.SHARED}/ca.pem CURL_CA_BUNDLE={vm.SHARED}/ca.pem")
+        self.assertEqual(public, "curl --proto '=https' --tlsv1.2 -fsSL "
+                                 "https://github.com/example/altitude/releases/latest/download/install.sh | sh")
+
     def test_release_is_served_where_the_public_command_and_installer_look_on_github(self):
         from scripts import installation_macos_vm as vm
         release = self.tmp / "release"
