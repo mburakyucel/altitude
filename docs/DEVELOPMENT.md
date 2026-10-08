@@ -517,6 +517,8 @@ make ui-simulator   # inside a task: alt task validate --simulator -- sh -c 'mak
   port, never Altitude's, in Safari: that is how a run puts its first page on the phone. Safari runs as
   the operator's account outside the run's profile, like a browser on this Mac: its pages reach the
   internet and loopback, and it has no Altitude pairing.
+  The phone's inspector can drop a connection opened in the moment another one closes; a script that
+  reconnects waits a second or two first.
 - **Removal.** When the command ends, including after a failure, a timeout or a stop, altd keeps one
   screenshot of the whole screen as the task folder's `validation/<n>.simulator.png`, then shuts down
   and deletes every device in the run's set and removes the set. A set that stays keeps the run area,
