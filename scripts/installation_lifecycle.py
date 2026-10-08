@@ -514,18 +514,10 @@ class ReleaseServer:
 
     HOSTS = ("github.com", "api.github.com")
 
-    def __init__(self, folder: Path, repository: str, run):
+    def __init__(self, folder: Path, repository: str):
+        """FOLDER is Lifecycle.release_authority(*HOSTS)."""
         self.repository, self.latest, self.files, self.requests = repository, None, {}, []
-        folder.mkdir()
         self.ca = folder / "ca.crt"
-        run("release-authority", "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
-            "-subj", "/CN=Lifecycle test release authority", "-keyout", folder / "ca.key", "-out", self.ca)
-        run("release-request", "openssl", "req", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=github.com",
-            "-keyout", folder / "server.key", "-out", folder / "server.csr")
-        (folder / "names").write_text("subjectAltName=" + ",".join(f"DNS:{host}" for host in self.HOSTS) + "\n")
-        run("release-certificate", "openssl", "x509", "-req", "-in", folder / "server.csr", "-CA", self.ca,
-            "-CAkey", folder / "ca.key", "-CAcreateserial", "-days", "1", "-extfile", folder / "names",
-            "-out", folder / "server.crt")
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(folder / "server.crt", folder / "server.key")
         release = self
@@ -783,7 +775,7 @@ class MacLifecycle(Lifecycle):
         second, third, broken = list(made)
         repository = re.search(r"^REPOSITORY='https://github\.com/([^']+)'$", (self.baseline / "install.sh").read_text(), re.M)
         self.repository = repository.group(1)
-        server = ReleaseServer(self.home / "release-server", self.repository, self.run)
+        server = ReleaseServer(self.release_authority(*ReleaseServer.HOSTS), self.repository)
         bundle = str(server.ca)
         self.env.update(HTTPS_PROXY=server.proxy, NO_PROXY="127.0.0.1,localhost", SSL_CERT_FILE=bundle,
                         CURL_CA_BUNDLE=bundle)

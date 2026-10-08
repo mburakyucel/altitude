@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import time
+import types
 from unittest import mock
 
 from tests.support import AltitudeCase, REPO
@@ -267,9 +268,10 @@ class TestMacLifecycle(AltitudeCase):
     """The macOS lane's parts that need no launchd: its release server, its refusals and its cleanup's reach."""
 
     def test_release_server_answers_githubs_release_addresses_and_refuses_every_other_host(self):
-        from scripts.installation_lifecycle import ReleaseServer
+        from scripts.installation_lifecycle import Lifecycle, ReleaseServer
         run = lambda label, *command: subprocess.run(list(map(str, command)), capture_output=True, check=True)
-        server = ReleaseServer(self.tmp / "server", "example/altitude", run)
+        authority = Lifecycle.release_authority(types.SimpleNamespace(home=self.tmp, run=run), *ReleaseServer.HOSTS)
+        server = ReleaseServer(authority, "example/altitude")
         self.addCleanup(server.stop)
         published = self.tmp / "published"
         published.mkdir()
