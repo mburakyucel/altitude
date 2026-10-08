@@ -25,7 +25,9 @@ def main() -> int:
                             check=True).stdout.strip()
     environment = {"ALTITUDE_HOST": os.environ.get("ALTITUDE_HOST") or "127.0.0.1", "ALTITUDE_PORT": "8890", "ALTITUDE_SERVICE": "1",
                    # This installation's own choice: its incidents become issues on the public tracker.
-                   "ALTITUDE_UPSTREAM_ISSUE_REPOSITORY": "mburakyucel/altitude", "PATH": os.environ["PATH"]}
+                   "ALTITUDE_UPSTREAM_ISSUE_REPOSITORY": "mburakyucel/altitude", "PATH": os.environ["PATH"],
+                   # launchd starts an agent in the account's home; the service keeps this one, where its label lives.
+                   "HOME": str(Path.home())}
     if branch != "main":
         environment["ALTITUDE_SOURCE_BRANCH"] = branch
     agent = {

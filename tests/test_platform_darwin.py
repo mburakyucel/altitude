@@ -1,7 +1,10 @@
 """The macOS side of the platform seam against fixtures: a fake launchctl, fixture process tables, coalitions and
 sockets. It runs on any host; scripts/platform_probe.py exercises the same mechanisms natively on a Mac."""
+import contextlib
 import ctypes
 import ctypes.util
+import importlib.util
+import io
 import json
 import os
 import plistlib
@@ -14,6 +17,8 @@ from unittest import mock
 
 from tests.support import AltitudeCase
 from altitude import platform, server, terminal  # noqa: F401 server loads urllib before a test pretends to be darwin
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def described(label: str, *, state="running", pid=4242, exited="(never exited)", coalition=900, path=None) -> str:
@@ -104,6 +109,22 @@ class Service(DarwinCase):
         self.assertIn(label, targets)
         self.assertNotIn(platform.LABEL, targets)
         self.assertIn(platform.LABEL, self.launchd.jobs)
+
+    def test_a_source_agent_under_another_home_keeps_that_home_and_its_own_label(self):
+        spec = importlib.util.spec_from_file_location("source_launch_agent", ROOT / "scripts/source_launch_agent.py")
+        script = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(script)
+        self.patch(platform.pwd, "getpwuid", return_value=mock.Mock(pw_dir="/Users/operator"))
+        self.patch(script.subprocess, "run", return_value=mock.Mock(stdout="main\n"))
+        self.patch(script.time, "sleep")
+        self.patch(platform, "control")
+        self.patch(platform, "status", return_value={"ActiveState": "active", "MainPID": "1"})
+        with mock.patch.dict(script.os.environ, {"PATH": "/opt/homebrew/bin:/usr/bin"}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(script.main(), 0)
+        agent = plistlib.loads(platform.service_path().read_bytes())
+        self.assertEqual((agent["Label"], agent["EnvironmentVariables"]["HOME"]), (platform.service_label(), str(self.home)))
+        self.assertNotEqual(agent["Label"], platform.LABEL)
 
     def test_status_speaks_the_installation_vocabulary(self):
         path = platform.service_path()

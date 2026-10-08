@@ -945,8 +945,8 @@ it and the installation keeps them, so no request reaches GitHub. It then:
   and fictional history and project files remain.
 
 The lane makes the next check due by rewriting `update.json` under its lock instead of waiting 12
-hours, and removes the once-a-day notice marker between versions. Afterwards, also after a failure or
-a stop, the runner boots out what remains of the lane's own labels, copies the evidence into
+hours, and removes the once-a-day notice marker between versions. Afterwards, also after a failure, a
+timeout or a stop, the runner stops every process the phase started, boots out what remains of the lane's own labels, copies the evidence into
 `RESULTS` and deletes the throwaway home. Results hold `build.log`, `lifecycle.log`, the harness's
 `result.json` and `mac.json` (source and harness commits, macOS version and chip, the account
 service's state before and after, each step's outcome and the cleanup). A lock refuses a second run

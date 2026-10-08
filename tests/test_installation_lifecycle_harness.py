@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from unittest import mock
 
 from tests.support import AltitudeCase, REPO
@@ -340,6 +341,31 @@ class TestMacLifecycle(AltitudeCase):
         self.assertEqual(outcome["left_loaded"], [])
         self.assertEqual(loaded, {"dev.altitude.altd", "dev.altitude.job.altitude-review-elsewhere"})
         self.assertNotIn("dev.altitude.altd", {command[1].rsplit("/", 1)[1] for command in commands})
+
+    def test_a_stopped_lifecycle_takes_the_installer_processes_it_started_with_it(self):
+        from scripts import installation_mac as mac
+        marker = self.tmp / "descendant.pid"
+        # A lifecycle whose installer outlives it, as sh, curl or install.py would after a timeout.
+        lifecycle = subprocess.Popen([sys.executable, "-c", "import subprocess, sys, time\n"
+                                      "child = subprocess.Popen(['sleep', '300'])\n"
+                                      "open(sys.argv[1], 'w').write(str(child.pid))\ntime.sleep(300)\n", str(marker)],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        deadline = time.monotonic() + 30
+        while not (marker.exists() and marker.read_text()) and time.monotonic() < deadline:
+            time.sleep(.05)
+        descendant = int(marker.read_text())
+        self.assertTrue(mac.stop_group(lifecycle))
+        self.assertIsNotNone(lifecycle.poll())
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            try:
+                os.kill(descendant, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(.05)
+        else:
+            self.fail("The installer process survived its lifecycle")
+        self.assertFalse(mac.stop_group(lifecycle))
 
     def test_the_runner_refuses_off_a_mac_or_inside_a_sandbox_before_building(self):
         from scripts import installation_mac as mac

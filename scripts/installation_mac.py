@@ -96,6 +96,24 @@ def leftover_jobs(home: Path, label: str | None) -> list[str]:
     return [name for name in labels if name != ACCOUNT_LABEL]
 
 
+def stop_group(process: subprocess.Popen) -> bool:
+    """Stop whatever is left of the lifecycle's process group; whether anything was still running."""
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return False
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    process.wait()
+    return True
+
+
 def clean_up(work: Path) -> dict:
     """Boot out what is left of the throwaway installation's own labels and delete its HOME."""
     home = work / "home"
@@ -133,6 +151,7 @@ def run(results: Path, commit: str) -> int:
         record["stale_run"] = clean_up(work)
         shutil.rmtree(work)
     work.mkdir(mode=0o700)
+    lifecycle = None
     try:
         home.mkdir(mode=0o700)
         (home / "results").mkdir()
@@ -140,16 +159,19 @@ def run(results: Path, commit: str) -> int:
         build(commit, work / "baseline", results / "build.log")
         note("running the lifecycle under the throwaway HOME")
         with (results / "lifecycle.log").open("w") as log:
-            lifecycle = subprocess.run([sys.executable, "-I", "-B", str(REPO / "scripts/installation_lifecycle.py"),
-                                        str(work / "baseline"), str(work / "baseline"), str(home / "results"), commit, "mac"],
-                                       cwd=home, env=clean_environment(home), stdout=log, stderr=subprocess.STDOUT,
-                                       timeout=420)
-        record["lifecycle_exit"] = lifecycle.returncode
+            # Its own process group, so the installer processes it starts stop with it before cleanup.
+            lifecycle = subprocess.Popen([sys.executable, "-I", "-B", str(REPO / "scripts/installation_lifecycle.py"),
+                                          str(work / "baseline"), str(work / "baseline"), str(home / "results"), commit,
+                                          "mac"], cwd=home, env=clean_environment(home), stdout=log,
+                                         stderr=subprocess.STDOUT, start_new_session=True)
+            record["lifecycle_exit"] = lifecycle.wait(timeout=420)
     except subprocess.TimeoutExpired:
         record["lifecycle_exit"] = "timeout"
     except subprocess.CalledProcessError as error:
         record["build_exit"] = error.returncode
     finally:
+        if lifecycle is not None:
+            record["stopped_processes"] = stop_group(lifecycle)
         record["cleanup"] = clean_up(work)
         if (home / "results").is_dir():
             for path in (home / "results").iterdir():
