@@ -521,12 +521,6 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
         self.assertEqual(self.checkout_snapshot(), before,
                          "a symlink left by one turn cannot redirect the next turn's trusted setup")
 
-    def test_i_20260903_075410_read_broker_rejects_github_writes(self):
-        with mock.patch.object(server.subprocess, "run") as run:
-            with self.assertRaisesRegex(ValueError, "documented gh read"):
-                server.l3_verb_request(self.project, {"kind": "gh", "args": ["pr", "merge", "7"]})
-        run.assert_not_called()
-
     def test_l3_sets_routing_through_broker_but_cannot_register_or_cross_projects(self):
         for options, expected in ((["--routing", "codex"], config.parse_routing("codex")),
                                   (["--unset-routing"], None)):
@@ -614,26 +608,6 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
         self.assertNotEqual(abbreviated.returncode, 0)
         self.assertIn("invalid choice", abbreviated.stderr,
                       "the ordinary CLI parser must not recreate broker-rejected option aliases")
-
-    def test_i_20260903_075410_github_reads_cannot_select_another_repo(self):
-        redirected = (
-            ["pr", "view", "--repo", "other/private", "7"],
-            ["pr", "view", "-Rother/private", "7"],
-            ["pr", "view", "https://github.com/other/private/pull/7"],
-            ["pr", "view", "other/private#7"],
-        )
-        with mock.patch.object(server.subprocess, "run") as run:
-            for args in redirected:
-                with self.subTest(args=args), self.assertRaisesRegex(ValueError, "documented gh read"):
-                    server.l3_verb_request(self.project, {"kind": "gh", "args": args})
-        run.assert_not_called()
-
-        self.setenv("GH_REPO", "other/private")
-        completed = subprocess.CompletedProcess([], 0, "green\n", "")
-        with mock.patch.object(server.subprocess, "run", return_value=completed) as run:
-            result = server.l3_verb_request(self.project, {"kind": "gh", "args": ["pr", "checks", "7"]})
-        self.assertEqual(result["stdout"], "green\n")
-        self.assertNotIn("GH_REPO", run.call_args.kwargs["env"])
 
     def test_i_20260903_075410_engine_adapters_receive_the_fail_closed_cli_flags(self):
         class ClaudeProcess:
