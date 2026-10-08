@@ -59,7 +59,7 @@ test("a task terminal opens in its worktree, closes when its shell exits and fol
   await run(page, "echo hello-$((6*7)); basename $PWD");
   await expect(output).toContainText("hello-42");
   await walk.state("03-running", {
-    visible: [output.getByText("prepare-index-migration", { exact: false }).last(), close, panel.getByText("This task's owner can read this terminal's output.")],
+    visible: [output.getByText("prepare-index-migration", { exact: false }).last(), close, panel.getByText("This task's owner can read this terminal's output, and what it reads reaches its AI provider.")],
     hidden: [panel.getByText(/L2's worktree/), panel.getByRole("button", { name: "Open terminal" }), ...(phone ? [] : [keys])],
   });
   if (phone) await expect(keys).toBeVisible();
