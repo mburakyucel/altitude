@@ -41,21 +41,14 @@ _report_retries: dict[tuple[str, str], tuple[str, int, float]] = {}
 REPORT_RETRY_DELAYS = (60, 300, 900, 3600)
 L3_VERB_MAX_REQUEST = 4 << 20
 L3_VERB_MAX_OUTPUT = 8 << 20
-# The coordinator's `gh` reads this project's repository or a public one; `alt issue` verbs are its only writes.
+# The coordinator's `gh` only reads, from any repository its login can see; `alt issue` verbs are its only writes.
 L3_GH_GROUPS = {"pr", "issue", "release", "repo", "run", "workflow", "ruleset", "label", "cache"}
 L3_GH_VERBS = {"view", "list", "status", "checks", "diff", "watch", "check"}
-L3_GH_SEARCHES = {"code", "commits", "issues", "prs"}
 L3_GH_RULE = (
-    "The coordinator's gh only reads, from this project's repository or a public one: "
-    "view/list/status/checks/diff/watch/check of pr, issue, release, repo, run, workflow, ruleset, label and cache; "
-    "`gh search <type>` scoped with --repo OWNER/REPO; and `gh api repos/OWNER/REPO/...` with GET and "
-    "no fields or input. Writes, downloads, --web or -w, owner-wide reads (`repo list`, --owner, --org, "
-    "org:/user:/owner:, OR) and other private repositories are refused; use `alt issue` to write and `alt issue inspect` for an "
-    "operator-linked issue elsewhere.")
-_GH_NAME = r"[A-Za-z0-9_.-]+"
-_GH_REPO = re.compile(rf"(?:(?:https://)?(?:www\.)?github\.com/)?({_GH_NAME})/({_GH_NAME}?)(?:\.git)?", re.I)
-_GH_URL = re.compile(rf"(?:https://)?(?:www\.)?github\.com/({_GH_NAME})/({_GH_NAME})(?:[/?#]\S*)?", re.I)
-_GH_QUALIFIER = re.compile(r"(?<![\w-])-?(repo|org|user|owner):(\S*)", re.I)
+    "The coordinator's gh only reads, from any repository its login can see: view/list/status/checks/diff/watch/"
+    "check of pr, issue, release, repo, run, workflow, ruleset, label and cache; gh search; and gh api with GET "
+    "and no fields, input or other host. Writes, downloads, auth and --web or -w (outside run list) are refused; "
+    "use alt issue to write.")
 L3_TASK_TARGETS = {
     "handoff", "release",
     "reject", "escalate", "events", "messages", "report", "show", "resume", "message", "stop",
@@ -313,12 +306,6 @@ def _l3_verb_request(project: str, request: dict) -> dict:
             options = merge_approval_parser().parse_args(args[2:])
             receipt = apply_recorded_merge_approval(project, **vars(options))
             return {"returncode": 0, "stdout": json.dumps(receipt) + "\n", "stderr": ""}
-        if args[:2] == ["issue", "inspect"]:
-            from . import github_inspection
-            if stdin:
-                raise ValueError("alt issue inspect: no input body is accepted")
-            options = github_inspection.parser().parse_args(args[2:])
-            return {"returncode": 0, "stdout": github_inspection.inspect(project, **vars(options)), "stderr": ""}
         if args[:1] == ["issue"]:
             options = vars(issue_parser().parse_args(args[1:]))
             options.pop("text", None)
@@ -347,29 +334,13 @@ def _l3_verb_request(project: str, request: dict) -> dict:
     if (not isinstance(args, list) or len(args) < 2 or len(args) > 64
             or any(not isinstance(arg, str) or len(arg) > 4096 for arg in args)):
         raise ValueError("invalid gh read arguments")
-    command, repositories = _l3_gh_command(args)
-    deadline = time.monotonic() + 120
-    from . import github_intake
-    try:
-        own = "/".join(github_intake.project_repo(project))
-    except github_intake.IssueIntakeError as exc:
-        raise ValueError(f"L3 gh read refused: {exc}") from exc
+    command = _l3_gh_command(args)
     env = engines.clean_env()
-    # GH_REPO binds every read that names no repository, and API placeholders, to the checkout origin.
-    env.update({"GH_REPO": own, "GH_PAGER": "cat", "GH_PROMPT_DISABLED": "1"})
-    def gh(argv: list[str]) -> subprocess.CompletedProcess:
-        if (remaining := deadline - time.monotonic()) <= 0:
-            raise subprocess.TimeoutExpired(["gh", *argv], 120)
-        return subprocess.run(["gh", *argv], cwd=str(config.project_path(project)), env=env,
-                              stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=remaining)
+    env.pop("GH_REPO", None)  # a read naming no repository resolves from this project's checkout
+    env.update({"GH_PAGER": "cat", "GH_PROMPT_DISABLED": "1"})
     try:
-        if repositories:
-            for repository in sorted(repositories - {own.lower()}):
-                seen = gh(["api", "--method=GET", f"repos/{repository}", "--jq=.visibility"])
-                if seen.returncode != 0 or seen.stdout.strip() != "public":
-                    raise ValueError(f"L3 gh read refused: {repository} is neither this project's repository "
-                                     f"nor public. {L3_GH_RULE}")
-        result = gh(command)
+        result = subprocess.run(["gh", *command], cwd=str(config.project_path(project)), env=env,
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.SubprocessError) as exc:
         return {"returncode": 1, "stdout": "", "stderr": f"gh read failed: {exc}\n"}
 
@@ -377,66 +348,25 @@ def _l3_verb_request(project: str, request: dict) -> dict:
             "stderr": _l3_bounded(result.stderr or "")}
 
 
-def _l3_gh_command(args: list[str]) -> tuple[list[str], set[str]]:
-    """Admit a gh command that only reads; return it with every other repository it names, lowercased."""
+def _l3_gh_command(args: list[str]) -> list[str]:
+    """Admit a gh command that only reads, without opening a browser or prompting."""
     def refuse(reason: str):
         raise ValueError(f"L3 gh read refused: {reason}. {L3_GH_RULE}")
-    def repository(value: str, pattern: re.Pattern = _GH_REPO) -> str:
-        match = pattern.fullmatch(value)
-        if not match or {".", ".."} & set(match.group(1, 2)):
-            refuse(f"{value!r} is not a github.com OWNER/REPO")
-        repositories.add(name := f"{match.group(1)}/{match.group(2)}".lower())
-        return name
 
-    repositories: set[str] = set()
     if args[0] == "api":
-        return _l3_gh_api(args[1:], repository, refuse), repositories
-    if args[0] == "search":
-        if args[1] not in L3_GH_SEARCHES:
-            refuse(f"gh search {args[1]} is not a search type")
-    elif args[0] not in L3_GH_GROUPS or args[1] not in L3_GH_VERBS or args[:2] == ["repo", "list"]:
-        refuse(f"gh {args[0]} {args[1]} is not a repository read")
-    selector, scope = False, []
+        return _l3_gh_api(args[1:], refuse)
+    if args[0] != "search" and (args[0] not in L3_GH_GROUPS or args[1] not in L3_GH_VERBS):
+        refuse(f"gh {args[0]} {args[1]} is not a read")
     for arg in args[2:]:
-        if selector:
-            scope.append(repository(arg))
-            selector = False
-            continue
-        flag, equals, value = arg.partition("=")
         # Short options may cluster (`-cw`); `-w` is --web except in `run list`, where it is --workflow.
-        if (flag in ("--web", "--owner", "--org") or args[:2] != ["run", "list"] and re.match(r"-[A-Za-z]*w", arg)
-                or args[0] == "ruleset" and re.match(r"-[A-Za-z]*o", arg)):
-            refuse(f"{flag} opens a browser or spans an owner")
-        if flag == "--repo" or re.match(r"-[A-Za-z]*R", arg):
-            if flag != "--repo" and not arg.startswith("-R"):
-                refuse("give -R on its own")
-            value = value if flag == "--repo" else arg[2:].removeprefix("=")
-            if value or equals:
-                scope.append(repository(value))
-            selector = not (value or equals)
-            continue
-        for match in _GH_QUALIFIER.finditer(arg):
-            if match.group(1).lower() != "repo":
-                refuse(f"search qualifier {match.group(0)!r} spans an owner")
-            repository(match.group(2))
-        if re.search(r"(?<!\S)OR(?!\S)", arg):
-            refuse("OR can widen a search beyond its repositories")
-        if "://" in arg or "github.com/" in arg.lower():
-            repository(arg, _GH_URL)
-        elif re.fullmatch(rf"{_GH_NAME}/{_GH_NAME}(?:#\d+)?", arg):
-            repository(arg.partition("#")[0])
-    if selector:
-        refuse("--repo needs OWNER/REPO")
-    if args[0] != "search":
-        return list(args), repositories
-    if not scope:
-        refuse("gh search needs --repo OWNER/REPO")
-    # gh could read a --repo given here as another option's value; leading copies always scope the search.
-    return ["search", args[1], *(f"--repo={name}" for name in scope), *args[2:]], repositories
+        if (arg.partition("=")[0] == "--web"
+                or args[:2] != ["run", "list"] and re.match(r"-[A-Za-z]*w", arg)):
+            refuse(f"{arg} opens a browser")
+    return list(args)
 
 
-def _l3_gh_api(args: list[str], repository, refuse) -> list[str]:
-    """Rebuild a GET of one repository endpoint, so gh sees only the options validated here."""
+def _l3_gh_api(args: list[str], refuse) -> list[str]:
+    """Rebuild a GET from validated options, so gh never sees a body, a method or another host."""
     class Parser(argparse.ArgumentParser):
         def error(self, message):
             refuse(f"gh api {message}")
@@ -452,12 +382,8 @@ def _l3_gh_api(args: list[str], repository, refuse) -> list[str]:
     for flag in ("--paginate", "--slurp", "--silent"):
         parser.add_argument(flag, action="store_true")
     options = parser.parse_args(args)
-    match = re.fullmatch(r"/?repos/([^/?#]+)/([^/?#]+)((?:/[^/?#]+)*/?)(\?[^#]*)?", options.endpoint)
-    if (not match or "%" in options.endpoint or "\\" in options.endpoint
-            or {".", ".."} & set(match.group(3).split("/"))):
-        refuse("gh api reads one repos/OWNER/REPO/... endpoint")
-    if match.group(1, 2) != ("{owner}", "{repo}"):
-        repository(f"{match.group(1)}/{match.group(2)}")
+    if "://" in options.endpoint:
+        refuse("gh api takes an endpoint path on github.com")
     return ["api", options.endpoint, "--method=GET",
             *(f"--header={value}" for value in options.header), *(f"--preview={value}" for value in options.preview),
             *(f"--{name}={value}" for name in ("jq", "template", "cache")

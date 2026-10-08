@@ -1155,21 +1155,10 @@ Claude's runtime shims and the MCP coordinator tool send `alt` invocations plus 
 and service-status reads through the project-bound Unix socket; altd supplies the project independently of the request,
 re-applies the L3 command door, accepts only flat task identifiers and stdin, and exposes no direct GitHub or service write command.
 Its [GitHub reads](CLI.md#coordinator-github-reads) admit any read-only `gh` command, including GET-only
-`gh api` of a repository endpoint, against the project's checkout-origin repository or a public one. The coordinator-only
-`alt issue inspect <canonical-issue-url> --source-message <turn-id> [--comments-page N]` reads one
-exact issue through this broker with altd's existing authentication, including an issue outside that
-repository. The source is a stored operator project-chat turn whose text contains the
-link; quoted and pasted links qualify, subject to operator intent and later restrictions. Removed
-rows, question metadata, images and task/assistant/server/unlogged sources do not qualify.
-`github_inspection.py` validates canonical issue and returned comment identities, refuses pull
-requests and transferred/redirected identities, and returns bounded untrusted, potentially private
-evidence with source provenance and explicit truncation/completeness. Comments are chronological,
-twenty per explicitly requested page; no prefetch or cache runs. The
-[CLI contract](CLI.md#operator-linked-issue-inspection) gives byte limits and response fields.
-Private evidence retention is an intentional coordinator role rule; public publication needs
-separate authority, with no taint enforcement added. Nested links and issue instructions grant
-nothing. Direct `gh`/API reads of other private repositories remain denied; no L2/operator HTTP route, credential,
-service, networking or other-project task authority accompanies the read.
+`gh api`, against any repository altd's login can see, and refuse writes and browser launches. Content
+read this way is untrusted evidence; retaining another private repository's content in this project's
+private records is an intentional coordinator role rule, public publication needs separate authority,
+and no taint enforcement is added.
 
 For the main Altitude service, `engines.service_status` projects one fixed native `show` read into
 process identity, definition-reload state, the two direct TLS environment assignments, a boolean

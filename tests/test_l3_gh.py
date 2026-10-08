@@ -1,37 +1,19 @@
-"""The coordinator's gh reads this project's repository or a public one and never writes."""
+"""The coordinator's gh reads any repository its login can see and never writes or opens a browser."""
 import subprocess
 from unittest import mock
 
 from tests.support import AltitudeCase, git, make_repo
-from altitude import server
-
-VISIBILITY = {"cli/cli": "public", "other/private": "private"}
+from altitude import l3, server
 
 ALLOWED = (
-    (["pr", "view", "7", "--comments", "--json", "title,body"], set()),
-    (["pr", "checks", "7", "--watch"], set()),
-    (["pr", "diff", "7"], set()),
-    (["pr", "list", "--search", "is:open review:required"], set()),
-    (["issue", "status"], set()),
-    (["repo", "view"], set()),
-    (["repo", "view", "cli/cli"], {"cli/cli"}),
-    (["release", "view", "v1.0", "--repo", "cli/cli"], {"cli/cli"}),
-    (["release", "list", "-R", "Team/Project"], set()),
-    (["run", "view", "123", "--log"], set()),
-    (["run", "list", "-w", "checks.yml"], set()),
-    (["workflow", "list"], set()),
-    (["ruleset", "list"], set()),
-    (["ruleset", "check", "main"], set()),
-    (["label", "list"], set()),
-    (["cache", "list"], set()),
-    (["issue", "view", "https://github.com/cli/cli/issues/1"], {"cli/cli"}),
-    (["pr", "view", "cli/cli#1"], {"cli/cli"}),
-    (["search", "issues", "flaky", "--repo", "Team/Project"], set(),
-     ["search", "issues", "--repo=team/project", "flaky", "--repo", "Team/Project"]),
-    (["search", "prs", "-R", "team/project", "repo:cli/cli", "-repo:cli/cli", "is:open"], {"cli/cli"},
-     ["search", "prs", "--repo=team/project", "-R", "team/project", "repo:cli/cli", "-repo:cli/cli", "is:open"]),
-    (["search", "code", "token", "--json", "path", "--template", "--repo", "cli/cli"], {"cli/cli"},
-     ["search", "code", "--repo=cli/cli", "token", "--json", "path", "--template", "--repo", "cli/cli"]),
+    ["pr", "view", "7", "--comments", "--json", "title,body"], ["pr", "checks", "7", "--watch"],
+    ["pr", "diff", "7"], ["pr", "list", "--search", "is:open org:other OR label:bug"], ["issue", "status"],
+    ["repo", "view"], ["repo", "view", "other/private"], ["repo", "list", "other"],
+    ["release", "view", "v1.0", "--repo", "other/private"], ["release", "list", "-R", "cli/cli"],
+    ["run", "view", "123", "--log"], ["run", "list", "-w", "checks.yml"], ["workflow", "list"],
+    ["ruleset", "list", "--org", "other"], ["ruleset", "check", "main"], ["label", "list"], ["cache", "list"],
+    ["issue", "view", "https://github.com/other/private/issues/1"], ["pr", "view", "other/private#1"],
+    ["search", "issues", "secret"], ["search", "code", "--owner", "other", "token"], ["search", "repos", "topic:x"],
 )
 
 REFUSED = (
@@ -42,31 +24,17 @@ REFUSED = (
     ["release", "download", "v1"], ["run", "rerun", "1"], ["run", "cancel", "1"], ["run", "download", "1"],
     ["run", "delete", "1"], ["workflow", "run", "ci"], ["workflow", "disable", "ci"], ["cache", "delete", "x"],
     ["label", "create", "x"], ["repo", "edit"], ["repo", "clone", "cli/cli"], ["ruleset", "--help", "x"],
-    ["auth", "status"], ["auth", "token"], ["secret", "list"], ["status", "--org"], ["browse", "7"],
-    # Non-GET or bodied API calls, and endpoints outside one repository.
+    ["auth", "status"], ["auth", "token"], ["secret", "set", "x"], ["browse", "7"], ["extension", "install", "x"],
+    # Non-GET, bodied or off-host API calls.
     ["api", "repos/team/project/issues", "-X", "POST"], ["api", "repos/team/project", "--method=PATCH"],
     ["api", "repos/team/project/issues", "-iXPOST"], ["api", "repos/team/project/issues", "-f", "title=x"],
     ["api", "repos/team/project/issues", "-F", "title=x"], ["api", "repos/team/project", "--raw-field=a=b"],
     ["api", "repos/team/project", "--input", "-"], ["api", "repos/team/project", "--hostname", "example.com"],
-    ["api", "graphql", "-f", "query=x"], ["api", "user/repos"], ["api", "search/issues?q=x"],
-    ["api", "https://api.github.com/repos/team/project"], ["api", "repos/team/project/../../search/issues"],
-    ["api", "repos/team/project/%2e%2e/x"], ["api", "repos/other/private/contents/README.md"],
-    ["api", "repos/{owner}/private"], ["api", "--method", "GET"],
-    # Browser, owner-wide and other private repositories.
+    ["api", "graphql", "-f", "query=x"], ["api", "https://example.com/repos/team/project"],
+    ["api", "--method", "GET"],
+    # Browser.
     ["pr", "view", "7", "--web"], ["repo", "view", "--web=true"], ["pr", "view", "7", "-w"],
-    ["pr", "view", "7", "-cw"], ["search", "issues", "cli/cli"], ["search", "code", "token", "--json=repository"],
-    ["search", "prs", "repo:cli/cli", "is:open"], ["search", "repos", "--repo", "team/project"], ["search", "issues", "secret -repo:cli/cli"],
-    ["search", "issues", "secret", "--json", "body", "--template", "repo:cli/cli {{.body}}"], ["repo", "list"], ["repo", "list", "team"],
-    ["ruleset", "list", "--org", "team"], ["ruleset", "view", "1", "-po", "team"],
-    ["search", "issues", "secret"], ["search", "code", "--owner", "team", "token"],
-    ["search", "issues", "--repo", "team/project", "org:other"], ["pr", "list", "--search", "user:other"],
-    ["issue", "list", "--search", "x OR is:private"], ["pr", "list", "--search=repo:other/private"],
-    ["pr", "view", "--repo", "other/private", "7"], ["pr", "view", "-Rother/private", "7"],
-    ["pr", "view", "-R=other/private", "7"], ["pr", "view", "-cR", "other/private", "7"],
-    ["pr", "view", "https://github.com/other/private/pull/7"], ["pr", "view", "other/private#7"],
-    ["repo", "view", "other/private"], ["pr", "view", "https://example.com/team/project/pull/7"],
-    ["pr", "view", "7", "--repo", "example.com/team/project"], ["pr", "view", "7", "--repo"],
-    ["pr", "view", "7", "-R", "../.."], ["pr", "view", "7", "--repo=missing/repository"],
+    ["pr", "view", "7", "-cw"], ["search", "issues", "x", "-w"],
 )
 
 
@@ -82,55 +50,40 @@ class TestCoordinatorGhReads(AltitudeCase):
             if args[0] != "gh":
                 return real_run(args, **kwargs)
             self.calls.append((args, kwargs))
-            if args[1:3] == ["api", "--method=GET"] and args[-1] == "--jq=.visibility":
-                seen = VISIBILITY.get(args[3].removeprefix("repos/"))
-                return subprocess.CompletedProcess(args, 0 if seen else 1, f"{seen}\n" if seen else "",
-                                                   "" if seen else "HTTP 404: Not Found\n")
             return subprocess.CompletedProcess(args, 0, self.output, "")
 
         self.enterContext(mock.patch.object(server.subprocess, "run", side_effect=run))
 
-    def test_a_project_without_a_github_origin_reads_nothing(self):
-        git("remote", "set-url", "origin", "https://example.com/team/project.git", cwd=self.repo)
-        with self.assertRaisesRegex(ValueError, "L3 gh read refused: project origin is not a GitHub repository"):
-            self.read(["repo", "view"])
-        self.assertEqual(self.calls, [])
-
     def read(self, args):
         return server.l3_verb_request(self.project, {"kind": "gh", "args": args})
 
-    def test_reads_of_this_project_and_public_repositories_run(self):
-        for args, checked, *rebuilt in ALLOWED:
+    def test_reads_of_any_repository_run_unchanged(self):
+        self.setenv("GH_REPO", "other/unrelated")
+        for args in ALLOWED:
             self.calls.clear()
             with self.subTest(args=args):
                 self.assertEqual(self.read(args), {"returncode": 0, "stdout": "read\n", "stderr": ""})
-                *checks, (command, kwargs) = self.calls
-                self.assertEqual(command, ["gh", *(rebuilt[0] if rebuilt else args)],
-                                 "a search always carries its validated --repo scope first")
-                self.assertEqual({check[0][3].removeprefix("repos/") for check in checks}, checked)
+                [(command, kwargs)] = self.calls
+                self.assertEqual(command, ["gh", *args])
                 self.assertEqual(kwargs["cwd"], str(self.repo))
                 self.assertIs(kwargs["stdin"], subprocess.DEVNULL)
-                self.assertEqual(kwargs["env"]["GH_REPO"], "team/project",
-                                 "a read naming no repository reaches the checkout origin, not another remote")
+                self.assertNotIn("GH_REPO", kwargs["env"], "a read naming no repository uses this checkout")
+                self.assertEqual(kwargs["env"]["GH_PROMPT_DISABLED"], "1")
 
-    def test_writes_owner_wide_reads_and_other_private_repositories_are_refused(self):
+    def test_writes_browser_and_bodied_api_calls_are_refused_before_gh(self):
         for args in REFUSED:
-            self.calls.clear()
             with self.subTest(args=args), self.assertRaisesRegex(ValueError, "L3 gh read refused: .+ only reads"):
                 self.read(args)
-            self.assertTrue(all(call[0][-1] == "--jq=.visibility" for call in self.calls),
-                            f"{args} ran more than a visibility check")
+        self.assertEqual(self.calls, [])
 
     def test_api_get_is_rebuilt_from_validated_options(self):
         self.read(["api", "repos/{owner}/{repo}/rulesets", "-X", "get", "-H", "Accept: application/json",
                    "--paginate", "-q", ".[].name"])
-        self.assertEqual(self.calls[-1][0], ["gh", "api", "repos/{owner}/{repo}/rulesets", "--method=GET",
-                                             "--header=Accept: application/json", "--jq=.[].name", "--paginate"])
-        self.calls.clear()
-        self.read(["api", "/repos/cli/cli/releases/latest", "--include"])
+        self.read(["api", "/repos/other/private/contents/README.md", "--include"])
         self.assertEqual([call[0] for call in self.calls], [
-            ["gh", "api", "--method=GET", "repos/cli/cli", "--jq=.visibility"],
-            ["gh", "api", "/repos/cli/cli/releases/latest", "--method=GET", "--include"]])
+            ["gh", "api", "repos/{owner}/{repo}/rulesets", "--method=GET", "--header=Accept: application/json",
+             "--jq=.[].name", "--paginate"],
+            ["gh", "api", "/repos/other/private/contents/README.md", "--method=GET", "--include"]])
 
     def test_argument_and_output_bounds_hold(self):
         for args in (["pr"], ["pr", "view", *["7"] * 63], ["pr", "view", "x" * 4097], ["pr", 7], "pr view"):
@@ -142,3 +95,17 @@ class TestCoordinatorGhReads(AltitudeCase):
             self.assertEqual(self.read(["pr", "view", "7"])["stdout"], "read\n")
             self.output = "x" * 20
             self.assertEqual(self.read(["pr", "view", "7"])["stdout"], "x" * 8 + "\n[output truncated by altd]\n")
+
+    def test_runtime_shim_reaches_the_real_project_broker(self):
+        broker = server.start_l3_verb_broker(self.project)
+        self.addCleanup(server.stop_l3_verb_broker, broker)
+        runtime = l3._l3_runtime(self.project, "claude")
+        self.addCleanup(l3._remove_runtime, runtime)
+        shim = str(runtime / "bin" / "gh")
+        read = subprocess.run([shim, "repo", "view", "other/private"], input="", capture_output=True, text=True,
+                              timeout=30)
+        self.assertEqual((read.returncode, read.stdout), (0, "read\n"), read.stderr)
+        merge = subprocess.run([shim, "pr", "merge", "7"], input="", capture_output=True, text=True, timeout=30)
+        self.assertNotEqual(merge.returncode, 0)
+        self.assertIn("L3 gh read refused", merge.stderr)
+        self.assertEqual([call[0] for call in self.calls], [["gh", "repo", "view", "other/private"]])
