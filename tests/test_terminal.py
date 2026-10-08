@@ -518,6 +518,17 @@ class TestCoordinatorCommand(TerminalCase):
         time.sleep(.2)
         self.assertEqual(self.notices(), [])
 
+    def test_a_project_removed_while_the_notice_waits_gets_none(self):
+        # Review finding: removal finishing between the notice's first check and its enqueue left a stale turn.
+        terminal.hand(self.project, None, self.ident, "echo raced")
+        term = self.current()
+        managed = iter([True, False])  # the notice's first check, then removal finished before its enqueue
+        self.patch(config, "is_managed", side_effect=lambda _name: next(managed, False))
+        terminal.close(self.project, None)
+        self.gone(term)
+        time.sleep(.2)
+        self.assertEqual(self.notices(), [])
+
 
 class TestOwnerOutput(TerminalCase):
     def test_the_owner_reads_its_task_terminal_as_text_until_a_new_terminal_or_the_task_ends(self):

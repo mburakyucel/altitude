@@ -365,7 +365,9 @@ def _notice(term: Terminal, what: str) -> None:
             if term.slug is not None:
                 T.notify(term.project, term.slug, text, by="terminal", attempt=command["attempt"])
             elif config.is_managed(term.project):
-                l3.queue_message(term.project, text, trigger="terminal")
+                with config.project_activity(term.project) as ready:  # removal waits for the notice, or it for removal
+                    if ready and config.is_managed(term.project):
+                        l3.queue_message(term.project, text, trigger="terminal")
         except (OSError, ValueError, KeyError, T.TransitionError) as exc:
             print(f"terminal: the notice for {term.project}/{term.slug or ''} failed: {exc}", file=sys.stderr, flush=True)
     threading.Thread(target=send, name=f"terminal-notice:{term.project}:{term.slug or ''}").start()
