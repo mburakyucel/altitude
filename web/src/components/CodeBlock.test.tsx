@@ -68,7 +68,7 @@ describe("code blocks in prose", () => {
     expect(await screen.findByText("Copied")).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Copied" }));
     expect(await screen.findByText("Couldn't copy")).toBeVisible();
-    await waitFor(() => expect(screen.getByText("Copy")).toBeVisible(), { timeout: 3_000 });
+    await waitFor(() => expect(screen.getByText("Copy")).toBeVisible());
   });
 });
 

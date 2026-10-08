@@ -64,7 +64,7 @@ describe("Host voice settings", () => {
     expect(await screen.findByText("Setting up… 0 MB of 698 MB")).toBeVisible();
     expect(screen.getByRole("progressbar", { name: "Voice setup" })).toBeVisible();
     host.advance({ state: "setting-up", download_bytes: 698435338, done_bytes: 349000000 });
-    expect(await screen.findByText("Setting up… 349 MB of 698 MB", {}, { timeout: 3000 })).toBeVisible();
+    expect(await screen.findByText("Setting up… 349 MB of 698 MB")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Cancel setup" }));
     expect(await screen.findByRole("button", { name: "Set up voice" })).toBeVisible();
     expect(host.actions).toEqual(["setup", "cancel"]);
@@ -320,7 +320,7 @@ describe("Set up a device", () => {
     const { user } = renderApp({ route: "/settings/devices" });
     await user.click(await screen.findByRole("button", { name: "Set up a device" }));
     await screen.findByRole("img", { name: /^QR code/ });
-    expect(await screen.findByText("The link is closed.", {}, { timeout: 4000 })).toBeInTheDocument();
+    expect(await screen.findByText("The link is closed.")).toBeInTheDocument();
     expect(screen.queryByRole("img", { name: /^QR code/ })).toBeNull();
     expect(posts.filter((post) => post.path === "/api/devices/share-close")).toHaveLength(0);
   });

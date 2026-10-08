@@ -14,7 +14,9 @@ from altitude import config
 
 class TestIsolation(unittest.TestCase):
     def test_git_and_cli_fixtures_finish_with_open_stdin_and_captured_output(self):
-        # Recurring validation stall: keep the writer open even during communicate().
+        # Recurring validation stall: keep the writer open even during communicate(). A stall never ends by
+        # itself, so the limit only has to outlast these fixtures on a busy Mac, where their ~120 hook processes
+        # run up to ten times slower than on an idle host (#617).
         read_fd, write_fd = os.pipe()
         with os.fdopen(read_fd, "rb") as reader, os.fdopen(write_fd, "wb"):
             with subprocess.Popen(
@@ -25,7 +27,7 @@ class TestIsolation(unittest.TestCase):
                 text=True, start_new_session=True,
             ) as child:
                 try:
-                    stdout, stderr = child.communicate(timeout=30)
+                    stdout, stderr = child.communicate(timeout=300)
                 except subprocess.TimeoutExpired:
                     os.killpg(child.pid, signal.SIGKILL)
                     stdout, stderr = child.communicate(timeout=5)

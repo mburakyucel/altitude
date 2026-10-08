@@ -603,6 +603,17 @@ def claude_settings() -> Path:
     return p
 
 
+def _feed(fd: int, data: bytes) -> None:
+    """Write all of `data` to a child's stdin pipe and close it, however late the child starts reading.
+    `communicate()` cannot be polled for this: a retry after its timeout never writes input still pending, so a
+    prompt larger than the pipe buffer (16 KiB on macOS) leaves a slow-starting child waiting on stdin (#617)."""
+    try:
+        with open(fd, "wb") as stream:
+            stream.write(data)
+    except BrokenPipeError:
+        pass  # the child ended without reading; its exit status and output report why
+
+
 def _chat_interrupted(resume: str | None) -> dict:
     return {"text": "", "session_id": resume or "", "usage": {}, "context_tokens": 0,
             "cost": 0.0, "turns": 0, "structured": None, "tools": [],
@@ -2129,10 +2140,18 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
     started_at = datetime.now(timezone.utc).isoformat()
     if interrupt is not None and interrupt.is_set():
         return _chat_interrupted(resume)
-    proc = subprocess.Popen(platform.job_command(unit, cmd, codex_env(extra_env),
-                            **({"runtime_max": timeout} if durable_timeout or interrupt is not None else {})), cwd=str(cwd),
-                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                            env=codex_env(extra_env, retain_user_bus=True), start_new_session=True)
+    prompt_read, prompt_write = os.pipe()
+    try:
+        proc = subprocess.Popen(platform.job_command(unit, cmd, codex_env(extra_env),
+                                **({"runtime_max": timeout} if durable_timeout or interrupt is not None else {})),
+                                cwd=str(cwd), stdin=prompt_read, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, env=codex_env(extra_env, retain_user_bus=True), start_new_session=True)
+    except BaseException:
+        os.close(prompt_write)
+        raise
+    finally:
+        os.close(prompt_read)
+    threading.Thread(target=_feed, args=(prompt_write, prompt.encode()), daemon=True).start()
     interrupted, finished = {}, threading.Event()
     watcher = None
     if interrupt is not None:
@@ -2151,17 +2170,15 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
         if metadata and on_session:
             on_session({"session_id": thread, **metadata})
     try:
-        pending_input = prompt
         while True:
             remaining = deadline - time.monotonic()
             try:
-                stdout, stderr = proc.communicate(pending_input, timeout=0.5 if interrupt is not None else
-                                                 remaining if metadata else min(0.5, remaining))
+                stdout, stderr = proc.communicate(timeout=0.5 if interrupt is not None else
+                                                  remaining if metadata else min(0.5, remaining))
                 break
             except subprocess.TimeoutExpired as exc:
                 if interrupt is None and time.monotonic() >= deadline:
                     raise
-                pending_input = None
                 observe((exc.output or b"").decode("utf-8", errors="replace"))
     except subprocess.TimeoutExpired:
         platform.job_stop(unit)

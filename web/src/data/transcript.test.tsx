@@ -202,7 +202,7 @@ describe("mounted transcript reader", () => {
     expect(bounds.get("after")).toBe("");
     expect(bounds.get("cursor")).toBe("");
     await act(async () => releaseHistory(response(page({ cursor: "new:901", events: [row("recent", "20", 1), row("latest", "90", 900)] }))));
-    await waitFor(() => expect(result.current.catchingUp).toBe(false), { timeout: 3500 });
+    await waitFor(() => expect(result.current.catchingUp).toBe(false));
     expect(result.current.reconnecting).toBe(false);
     expect(result.current.data?.events.map(e => e.id)).toEqual(older ? ["older", "recent", "latest"] : ["recent", "latest"]);
     expect(requests.map(request => request.searchParams.get("mode"))).toEqual(["initial", "initial", "reconcile", ...(older ? ["history"] : []), "delta"]);
