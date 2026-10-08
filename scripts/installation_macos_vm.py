@@ -55,6 +55,7 @@ IMAGES, RESTORE, RUNS = CACHE / "images", CACHE / "restore", CACHE / "runs"
 KEY = IMAGES / "id_ed25519"
 ACCOUNT, ACCOUNT_UID = "newcomer", 501
 SECOND = "second"
+SERVICE_LABEL = "dev.altitude.altd"  # the LaunchAgent of an installation in the account's own home
 CPUS, MEMORY_GIB, DISK_GIB = 4, 4, 64
 GIB = 1 << 30
 FLOOR = 10 * GIB
@@ -704,10 +705,15 @@ LISTING = ("find \"$HOME\" -path \"$HOME/Library\" -prune -o -print | LC_ALL=C s
            "ls -la \"$HOME/Library/LaunchAgents\" 2>/dev/null; launchctl list 2>/dev/null | grep -i altitude || true")
 
 
+def public_command(repository: str) -> str:
+    """The documented command, with the test's certificate authority trusted by it and by what install.sh runs."""
+    return (f"export SSL_CERT_FILE={SHARED}/ca.pem CURL_CA_BUNDLE={SHARED}/ca.pem; curl --proto '=https' --tlsv1.2 "
+            f"-fsSL https://github.com/{repository}/releases/latest/download/install.sh | sh")
+
+
 def attempt(guest: Guest, repository: str, user: str, results: Path, label: str) -> dict:
     """The public command as `user` in a login shell, with what it changed."""
-    public = (f"SSL_CERT_FILE={SHARED}/ca.pem CURL_CA_BUNDLE={SHARED}/ca.pem curl --proto '=https' --tlsv1.2 -fsSL "
-              f"https://github.com/{repository}/releases/latest/download/install.sh | sh")
+    public = public_command(repository)
     wrap = (lambda command: command) if user == ACCOUNT else (lambda command: f"sudo -n -u {user} -i zsh -c {quote(command)}")
     login = (lambda command: f"zsh -lc {quote(command)}") if user == ACCOUNT else (lambda command: command)
     before = guest.ssh(wrap(login(LISTING)), timeout=120).stdout
@@ -741,17 +747,33 @@ def prerequisites(guest: Guest) -> dict:
             "openssl": guest.ssh("zsh -lc 'openssl version'", check=False).stdout.strip()}
 
 
-def phase_fresh(guest: Guest, repository: str, results: Path, record: dict) -> None:
+def fix_openssl(guest: Guest) -> None:
+    """The fix the installer names for OpenSSL 3, written with Homebrew's resolved path so a login shell needs no lookup."""
+    guest.ssh("zsh -lc 'echo \"export PATH=\\\"$(brew --prefix openssl@3)/bin:\\$PATH\\\"\" >> ~/.zprofile'")
+
+
+def add_github_cli(guest: Guest, record: dict) -> None:
+    """GitHub CLI, which Altitude needs and `alt doctor` checks: this Mac's own Homebrew binary, copied, since the
+    guest downloads nothing during a run."""
+    found = shutil.which("gh")
+    if not found:
+        raise Stop("GitHub CLI (gh) is not installed on this Mac; the lane copies it into the guest")
+    guest.copy(Path(found).resolve(), f"{SHARED}/gh")
+    guest.ssh(f"sudo -n install -m 755 -o {ACCOUNT} -g admin {SHARED}/gh /opt/homebrew/bin/gh && rm {SHARED}/gh")
+    record["github_cli"] = guest.ssh("zsh -lc 'gh --version'").stdout.splitlines()[0]
+
+
+def phase_fresh(guest: Guest, repository: str, results: Path, record: dict, release: Path, commit: str) -> None:
     record["prerequisites"] = prerequisites(guest)
     record["cases"] = {"missing-python": judged(attempt(guest, repository, ACCOUNT, results, "missing-python"), "missing-python")}
 
 
-def phase_prerequisites(guest: Guest, repository: str, results: Path, record: dict) -> None:
+def phase_prerequisites(guest: Guest, repository: str, results: Path, record: dict, release: Path, commit: str) -> None:
     record["prerequisites"] = prerequisites(guest)
     cases = record["cases"] = {}
     cases["openssl-not-first"] = judged(attempt(guest, repository, ACCOUNT, results, "openssl-not-first"), "openssl-not-first")
     # The documented fix, then a second account with the same shell setup and no desktop session.
-    guest.ssh("zsh -lc 'echo \"export PATH=\\\"$(brew --prefix openssl@3)/bin:\\$PATH\\\"\" >> ~/.zprofile'")
+    fix_openssl(guest)
     password = secrets.token_urlsafe(18)
     guest.ssh(f"sudo -n sysadminctl -addUser {SECOND} -password {quote(password)} -home /Users/{SECOND} 2>&1 && "
               f"sudo -n createhomedir -c -u {SECOND} >/dev/null && sudo -n cp ~/.zprofile /Users/{SECOND}/.zprofile && "
@@ -759,7 +781,100 @@ def phase_prerequisites(guest: Guest, repository: str, results: Path, record: di
     cases["no-desktop-session"] = judged(attempt(guest, repository, SECOND, results, "no-desktop-session"), "no-desktop-session")
 
 
-PHASES = {"fresh": phase_fresh, "prerequisites": phase_prerequisites}
+def phase_lifecycle(guest: Guest, repository: str, results: Path, record: dict, release: Path, commit: str) -> None:
+    """installation_lifecycle.py's `mac` phase, as installation_mac.py runs it on a configured Mac, in this fresh guest:
+    install through the public command, health, doctor, updates to newer stable releases by `alt update` and by the
+    app's Update button, a failed update rolled back, and uninstall, under a throwaway HOME of the account."""
+    fix_openssl(guest)
+    add_github_cli(guest, record)
+    record["prerequisites"] = prerequisites(guest)
+    guest.copy(release, f"{SHARED}/release")
+    guest.copy(SCRIPTS / "installation_lifecycle.py", f"{SHARED}/installation_lifecycle.py")
+    # installation_mac.py's clean environment: the throwaway HOME, Homebrew's OpenSSL 3, Python and GitHub CLI first.
+    script = (f'temp=$(getconf DARWIN_USER_TEMP_DIR); work="$temp/altitude-installation-mac"; '
+              f'mkdir -m 700 "$work" "$work/home" && mkdir "$work/home/results" && cd "$work/home" && '
+              f'env -i HOME="$work/home" USER={ACCOUNT} LOGNAME={ACCOUNT} SHELL=/bin/zsh LANG=en_US.UTF-8 TMPDIR="$temp" '
+              f'PATH="$(/opt/homebrew/bin/brew --prefix openssl@3)/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" '
+              f'/opt/homebrew/bin/python3.12 -I -B {SHARED}/installation_lifecycle.py {SHARED}/release {SHARED}/release '
+              f'"$work/home/results" {commit} mac; status=$?; cp -R "$work/home/results" {SHARED}/lifecycle; exit $status')
+    result = guest.ssh(script, timeout=480, check=False)
+    (results / "lifecycle.log").write_text(result.stdout + result.stderr)
+    guest.fetch(f"{SHARED}/lifecycle", results / "lifecycle")
+    outcome = json.loads((results / "lifecycle/result.json").read_text())
+    record["cases"] = {"lifecycle": {"exit": result.returncode, "passed": result.returncode == 0 and outcome["passed"],
+                                     "steps": [step["step"] for step in outcome["steps"]], "limits": outcome["limits"],
+                                     **({"error": outcome["error"]} if "error" in outcome else {})}}
+
+
+def phase_login(guest: Guest, repository: str, results: Path, record: dict, release: Path, commit: str) -> None:
+    """The account's own installation through the public command, its LaunchAgent started again by the automatic login
+    after the guest restarts, and its uninstall."""
+    fix_openssl(guest)
+    add_github_cli(guest, record)
+    record["prerequisites"] = prerequisites(guest)
+    steps = record["steps"] = []
+    version = re.search(r"^VERSION='([^']+)'", (release / "install.sh").read_text(), re.M).group(1)
+    agent = f"/Users/{ACCOUNT}/Library/LaunchAgents/{SERVICE_LABEL}.plist"
+    alt = f"/Users/{ACCOUNT}/.local/bin/alt"
+
+    def step(name: str, command: str, timeout: int = 120) -> subprocess.CompletedProcess:
+        result = guest.ssh(f"zsh -lc {quote(command)}", timeout=timeout, check=False)
+        (results / f"{len(steps) + 1:02d}-{name}.log").write_text(f"$ {command}\n# exit {result.returncode}\n"
+                                                                    f"{result.stdout}{result.stderr}")
+        steps.append({"step": name, "exit": result.returncode})
+        return result
+
+    def check(condition: bool, what: str) -> None:
+        steps[-1]["passed"] = bool(condition)
+        if not condition:
+            raise Stop(f"{steps[-1]['step']}: {what}")
+
+    def running() -> dict:
+        """The account's service as launchd and its HTTPS health on the generated authority report it."""
+        health = f"curl -fsS --max-time 10 --cacert ~/.config/altitude/tls/ca.crt https://127.0.0.1:{port}/api/health"
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline and guest.ssh(
+                f"launchctl print gui/{ACCOUNT_UID}/{SERVICE_LABEL} | grep -q 'state = running' && {health} >/dev/null",
+                check=False).returncode:
+            time.sleep(5)
+        loaded = step("service", f"launchctl print gui/{ACCOUNT_UID}/{SERVICE_LABEL}")
+        health = step("health", health)
+        check(loaded.returncode == 0 and f"path = {agent}" in loaded.stdout and "state = running" in loaded.stdout,
+              "the LaunchAgent is not running from the account's LaunchAgents")
+        answer = json.loads(health.stdout)
+        check((answer["version"], answer["commit"]) == (version, commit) and f"pid = {answer['pid']}" in loaded.stdout,
+              f"health reports {answer}")
+        return answer
+
+    installed = step("install", public_command(repository), timeout=300)
+    check(installed.returncode == 0 and f"Altitude {version} is installed" in installed.stdout, "the installer failed")
+    port = int(re.search(r"Address: https://\S+:(\d+)", installed.stdout).group(1))
+    before = running()
+    doctor = step("doctor", f"{alt} doctor")
+    report = json.loads(doctor.stdout)
+    checks = {item["name"]: item["state"] for item in report["checks"]}
+    record["doctor"] = checks
+    check(doctor.returncode == 0 and report["version"] == version and checks["Python"] == checks["user service"] == "tested"
+          and all(checks[name] == "configured" for name in ("git", "gh", "openssl")), f"doctor reports {checks}")
+    booted = guest.ssh("sysctl -n kern.boottime").stdout.strip()
+    note("login: restarting the guest")
+    guest.ssh("sudo -n /sbin/shutdown -r now", timeout=30, check=False)
+    time.sleep(20)
+    guest.wait_ssh(300)
+    restarted = step("restarted", "sysctl -n kern.boottime")
+    check(restarted.returncode == 0 and restarted.stdout.strip() != booted, "the guest did not restart")
+    after = running()
+    check(after["pid"] != before["pid"], "the service was not started again after the restart")
+    removed = step("uninstall", f"{alt} uninstall")
+    check(removed.returncode == 0 and json.loads(removed.stdout)["uninstalled"], "uninstall failed")
+    gone = step("removed", f"test ! -e {agent} && ! launchctl print gui/{ACCOUNT_UID}/{SERVICE_LABEL} >/dev/null 2>&1 && "
+                           f"! curl -sk --max-time 5 https://127.0.0.1:{port}/api/health >/dev/null")
+    check(gone.returncode == 0, "the LaunchAgent or the service is still there")
+    record["cases"] = {"login": {"passed": True, "version": version, "service_label": SERVICE_LABEL,
+                                 "pids": [before["pid"], after["pid"]]}}
+
+
+PHASES = {"fresh": phase_fresh, "prerequisites": phase_prerequisites, "lifecycle": phase_lifecycle, "login": phase_login}
 
 
 def build(commit: str, output: Path, log: Path) -> None:
@@ -770,12 +885,12 @@ def build(commit: str, output: Path, log: Path) -> None:
 
 
 def run_phase(name: str, release: Path, results: Path, record: dict) -> None:
-    source = IMAGES / name
+    source = IMAGES / ("fresh" if name == "fresh" else "prerequisites")
     if not source.is_dir():
         raise Stop(f"the {name} guest is not built; run `installation_macos_vm.py image` first")
     need(8 * GIB, f"the {name} run")
     phase = record["phases"][name] = {"image": json.loads((source / "image.json").read_text()), "passed": False}
-    started, free_before = time.monotonic(), free()
+    started = time.monotonic()
     work = RUNS / f"{time.strftime('%H%M%S')}-{name}"
     folder = results / name
     folder.mkdir(parents=True)
@@ -797,20 +912,21 @@ def run_phase(name: str, release: Path, results: Path, record: dict) -> None:
             guest.copy(serve / name_, f"{SHARED}/{name_}")
         guest.ssh(f"chmod -R a+rX {SHARED}")
         guest.ssh(SERVE)
-        note(f"{name}: running the installer's refusals")
-        PHASES[name](guest, repository, folder, phase)
+        note(f"{name}: running the installer")
+        PHASES[name](guest, repository, folder, phase, release, record["source_commit"])
         phase["reachable"]["after"] = reachable(guest)
         if any(phase["reachable"]["after"].values()):
             raise Stop(f"the guest was not isolated at the end: {phase['reachable']}")
         phase["passed"] = all(case["passed"] for case in phase["cases"].values())
-    except (Stop, OSError, subprocess.SubprocessError) as error:
+    except Exception as error:  # the phase failed; the clone is still deleted and the record written
         phase["error"] = f"{type(error).__name__}: {error}"
     finally:
         if guest:
             guest.stop()
-        # The clone shares the image's blocks; what it wrote is what the disk lost while it ran.
-        phase["clone_gib"] = round((free_before - free()) / GIB, 1)
+        # The clone shares the image's blocks; deleting it frees what it wrote.
+        before = free()
         shutil.rmtree(work, ignore_errors=True)
+        phase["clone_gib"] = round((free() - before) / GIB, 2)
         phase["seconds"] = round(time.monotonic() - started)
         note(f"{name}: clone deleted; {'passed' if phase['passed'] else 'failed'}")
 
@@ -821,7 +937,7 @@ def lane(results: Path, commit: str, phases: list[str]) -> int:
     record = {"source_commit": commit, "harness": {"commit": git("rev-parse", "HEAD"),
               "modified": bool(git("status", "--porcelain", "--", "scripts"))},
               "host": {"macos": platform.mac_ver()[0], "machine": platform.machine(),
-                       "free_gib_before": round(free() / GIB, 1)},
+                       "free_gib_before": round(free() / GIB, 1), "load_before": os.getloadavg()},
               "vm": {"cpus": CPUS, "memory_gib": MEMORY_GIB, "disk_gib": DISK_GIB},
               "images_gib": round(sum(json.loads(path.read_text()).get("disk_gib", 0) for path in IMAGES.glob("*/image.json")), 1),
               "phases": {}, "passed": False}
@@ -833,12 +949,13 @@ def lane(results: Path, commit: str, phases: list[str]) -> int:
         for name in phases:
             run_phase(name, work / "release", results, record)
         record["passed"] = all(record["phases"][name]["passed"] for name in phases)
-    except Stop as error:
+    except (Stop, subprocess.SubprocessError) as error:
         record["error"] = str(error)
     finally:
         shutil.rmtree(work, ignore_errors=True)
         record["seconds"] = round(time.monotonic() - started)
         record["host"]["free_gib_after"] = round(free() / GIB, 1)
+        record["host"]["load_after"] = os.getloadavg()
         (results / "macos-vm.json").write_text(json.dumps(record, indent=2) + "\n")
         note(("passed" if record["passed"] else "failed") + f"; evidence in {results}")
     return 0 if record["passed"] else 1
