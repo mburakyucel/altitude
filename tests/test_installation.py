@@ -176,12 +176,18 @@ class Installation(InstallationCase):
             self.assertEqual(path.read_bytes(), data)
 
     def test_install_persists_application_choices_without_worker_authority(self):
-        with mock.patch.dict(os.environ, {"ALTITUDE_OPERATOR": "Trial user", "ALTITUDE_TASK": "unrelated-task"}):
+        network = {"HTTPS_PROXY": "http://127.0.0.1:3128", "NO_PROXY": "127.0.0.1,localhost",
+                   "SSL_CERT_FILE": str(self.home / "proxy-ca.pem")}
+        with mock.patch.dict(os.environ, {"ALTITUDE_OPERATOR": "Trial user", "ALTITUDE_TASK": "unrelated-task",
+                                          "PYTHONPATH": "/elsewhere", **network}):
             self.install()
         saved = json.loads(self.settings.read_text())["environment"]
         self.assertEqual(saved["ALTITUDE_OPERATOR"], "Trial user")
         self.assertEqual(saved["ALTITUDE_ROOTS"], str(self.home / "Projects"))
         self.assertNotIn("ALTITUDE_TASK", saved)
+        self.assertNotIn("PYTHONPATH", saved)
+        # Release checks and updates reach GitHub through the installing shell's proxy and CA bundle.
+        self.assertEqual({key: saved[key] for key in network}, network)
 
     def test_install_preserves_discovered_custom_nvm_tools_in_clean_service_environment(self):
         from tests.test_toolchain import nvm_fixture

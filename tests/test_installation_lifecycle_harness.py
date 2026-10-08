@@ -5,6 +5,8 @@ import os
 import shutil
 import subprocess
 import sys
+import time
+import types
 from unittest import mock
 
 from tests.support import AltitudeCase, REPO
@@ -260,3 +262,121 @@ class TestInstallationVm(AltitudeCase):
         (assets / (name + ".sha256")).write_text("0" * 64 + "\n")
         with self.assertRaisesRegex(SystemExit, ".sha256 differs"):
             attempt("checksum-file")
+
+
+class TestMacLifecycle(AltitudeCase):
+    """The macOS lane's parts that need no launchd: its release server, its refusals and its cleanup's reach."""
+
+    def test_release_server_answers_githubs_release_addresses_and_refuses_every_other_host(self):
+        from scripts.installation_lifecycle import Lifecycle, ReleaseServer
+        run = lambda label, *command: subprocess.run(list(map(str, command)), capture_output=True, check=True)
+        authority = Lifecycle.release_authority(types.SimpleNamespace(home=self.tmp, run=run), *ReleaseServer.HOSTS)
+        server = ReleaseServer(authority, "example/altitude")
+        self.addCleanup(server.stop)
+        published = self.tmp / "published"
+        published.mkdir()
+        (published / "install.sh").write_text("echo fictional installer\n")
+        (published / "altitude-v0.0.0-rc.2.tar.gz").write_bytes(b"fictional archive")
+        server.publish(published, "v0.0.0-rc.2")
+        fetch = ("import sys, urllib.request\n"
+                 "try:\n    print(urllib.request.urlopen(sys.argv[1], timeout=10).read().decode())\n"
+                 "except Exception as error:\n    print(type(error).__name__, error)\n")
+        env = {**os.environ, "HTTPS_PROXY": server.proxy, "SSL_CERT_FILE": str(server.ca)}
+        env.pop("https_proxy", None)
+        read = lambda url: subprocess.run([sys.executable, "-c", fetch, url], env=env, capture_output=True, text=True,
+                                          timeout=30).stdout.strip()
+        self.assertEqual(json.loads(read("https://api.github.com/repos/example/altitude/releases/latest")),
+                         {"tag_name": "v0.0.0-rc.2", "prerelease": False, "draft": False})
+        self.assertEqual(read("https://github.com/example/altitude/releases/latest/download/install.sh"),
+                         "echo fictional installer")
+        self.assertEqual(read("https://github.com/example/altitude/releases/download/v0.0.0-rc.2/altitude-v0.0.0-rc.2.tar.gz"),
+                         "fictional archive")
+        self.assertIn("404", read("https://github.com/example/altitude/releases/download/v0.0.0-rc.1/install.py"))
+        self.assertIn("403", read("https://example.com/"))
+        self.assertEqual(server.requests[-1], {"connect": "example.com:443", "status": 403})
+        # Without the throwaway authority the same answer is refused, so only the test's processes reach it.
+        env.pop("SSL_CERT_FILE")
+        self.assertIn("CERTIFICATE_VERIFY_FAILED", read("https://api.github.com/repos/example/altitude/releases/latest"))
+
+    def test_a_relabelled_release_changes_only_its_version(self):
+        from scripts.installation_lifecycle import synthetic_archive
+        archive, checksum = test_installation.Installation.archive(self, "v0.0.0-rc.1")
+        before = installation.extract(archive, checksum, self.tmp / "package")
+        relabelled, release = synthetic_archive(self.tmp / "package", self.tmp / "next.tar.gz", "v0.0.0-rc.2")
+        verified = installation.extract(relabelled, hashlib.sha256(relabelled.read_bytes()).hexdigest(), self.tmp / "verified")
+        self.assertEqual(verified, release)
+        self.assertEqual({**verified, "version": before["version"]}, before)
+
+    def test_outside_a_throwaway_home_nothing_runs(self):
+        from scripts.installation_lifecycle import MacLifecycle
+        results = self.tmp / "results"
+        results.mkdir()
+        harness = MacLifecycle(self.tmp / "baseline", results, "a" * 40)
+        with mock.patch("scripts.installation_lifecycle.subprocess.run") as run:
+            with self.assertRaises(AssertionError):
+                harness.execute()
+            run.assert_not_called()
+        self.assertFalse(json.loads((results / "result.json").read_text())["passed"])
+
+    def test_cleanup_boots_out_only_the_throwaway_installations_own_labels(self):
+        from scripts import installation_mac as mac
+        work = self.tmp / "altitude-installation-mac"
+        (work / "home/results").mkdir(parents=True)
+        (work / "home/results/service-label.json").write_text(json.dumps({"label": "dev.altitude.altd.0123456789ab"}))
+        for name in ("dev.altitude.job.altitude-update-v0.0.0-rc.3", "dev.altitude.altd"):
+            (work / "home/Library/Caches/dev.altitude/jobs" / name).mkdir(parents=True)
+        loaded = {"dev.altitude.altd", "dev.altitude.altd.0123456789ab", "dev.altitude.job.altitude-update-v0.0.0-rc.3",
+                  "dev.altitude.job.altitude-review-elsewhere"}
+        commands = []
+
+        def launchctl(command, **kwargs):
+            commands.append(command[1:])
+            label = command[2].rsplit("/", 1)[1]
+            if command[1] == "bootout":
+                loaded.discard(label)
+            return subprocess.CompletedProcess(command, 0 if label in loaded else 113, "\tstate = running\n", "")
+
+        with mock.patch.object(mac.subprocess, "run", side_effect=launchctl):
+            outcome = mac.clean_up(work)
+        self.assertEqual([item["label"] for item in outcome["bootout"]],
+                         ["dev.altitude.altd.0123456789ab", "dev.altitude.job.altitude-update-v0.0.0-rc.3"])
+        self.assertEqual(outcome["left_loaded"], [])
+        self.assertEqual(loaded, {"dev.altitude.altd", "dev.altitude.job.altitude-review-elsewhere"})
+        self.assertNotIn("dev.altitude.altd", {command[1].rsplit("/", 1)[1] for command in commands})
+
+    def test_a_stopped_lifecycle_takes_the_installer_processes_it_started_with_it(self):
+        from scripts import installation_mac as mac
+        marker = self.tmp / "descendant.pid"
+        # A lifecycle whose installer outlives it, as sh, curl or install.py would after a timeout.
+        lifecycle = subprocess.Popen([sys.executable, "-c", "import subprocess, sys, time\n"
+                                      "child = subprocess.Popen(['sleep', '300'])\n"
+                                      "open(sys.argv[1], 'w').write(str(child.pid))\ntime.sleep(300)\n", str(marker)],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        deadline = time.monotonic() + 30
+        while not (marker.exists() and marker.read_text()) and time.monotonic() < deadline:
+            time.sleep(.05)
+        descendant = int(marker.read_text())
+        self.assertTrue(mac.stop_group(lifecycle))
+        self.assertIsNotNone(lifecycle.poll())
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            try:
+                os.kill(descendant, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(.05)
+        else:
+            self.fail("The installer process survived its lifecycle")
+        self.assertFalse(mac.stop_group(lifecycle))
+
+    def test_the_runner_refuses_off_a_mac_or_inside_a_sandbox_before_building(self):
+        from scripts import installation_mac as mac
+        with mock.patch.object(mac.sys, "platform", "linux"), mock.patch.object(mac, "sandboxed", return_value=True):
+            missing = mac.missing_prerequisites()
+        self.assertIn("macOS 15 or newer on Apple silicon", missing)
+        self.assertIn("a process outside the worker sandbox (alt task run under an operator grant, or a terminal)", missing)
+        with mock.patch.object(mac, "missing_prerequisites", return_value=["fixture"]), \
+                mock.patch.object(mac, "run") as run, mock.patch.object(sys, "argv", ["installation_mac.py", str(self.tmp / "r")]):
+            self.assertEqual(mac.main(), 2)
+            run.assert_not_called()
+        self.assertFalse((self.tmp / "r").exists())
