@@ -378,13 +378,19 @@ this project's repository or a public one:
 Every repository a command names (`--repo`/`-R`, a `github.com` URL, an `OWNER/REPO` or `OWNER/REPO#N`
 argument, a `repo:` qualifier or the API path) must be the project's checkout origin or report `public`
 visibility to altd's GitHub read. Other private repositories, including other registered projects', stay
-behind [operator-linked issue inspection](#operator-linked-issue-inspection). Writes and side effects
-(`create`, `edit`, `close`, `merge`, `comment`, `delete`, `rerun`, `cancel`, `download`, `checkout`,
-`auth` and the like), `--web`, and owner-wide reads (`gh repo list`, `--owner`, organization rulesets,
-`org:`, `user:` or `owner:` search qualifiers, and `OR`) are refused. A refusal names its reason and restates this rule. Altd runs
-the read in the checkout without `GH_REPO`, standard input or prompts, makes any browser launch fail,
-shares one 120-second budget across the visibility checks and the command, and bounds its output to
-8 MiB per stream. `alt issue` verbs remain the coordinator's only GitHub writes.
+behind [operator-linked issue inspection](#operator-linked-issue-inspection).
+
+Refused are writes and side effects (`create`, `edit`, `close`, `merge`, `comment`, `delete`, `rerun`,
+`cancel`, `download`, `checkout`, `auth` and the like); `--web`, and `-w` outside `run list`, where it
+names a workflow; owner-wide reads (`gh repo list`, `--owner`, organization rulesets, `org:`, `user:` or
+`owner:` search qualifiers, and `OR`); and short-option clusters that hide `-w` or `-R` (`-cw`, `-cR`).
+A refusal names its reason and restates this rule. `alt issue` verbs remain the coordinator's only
+GitHub writes.
+
+Altd sets `GH_REPO` to the checkout origin, so a read naming no repository and `{owner}/{repo}`
+placeholders reach that repository rather than another configured remote; a project without a GitHub
+origin has no `gh` reads. The read runs without standard input or prompts, the visibility checks and
+the command share one 120-second budget, and output is bounded to 8 MiB per stream.
 
 ### Operator-linked issue inspection
 

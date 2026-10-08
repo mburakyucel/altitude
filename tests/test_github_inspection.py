@@ -456,7 +456,7 @@ class TestGithubInspection(AltitudeCase):
                                     input="", capture_output=True, text=True, timeout=30)
             self.assertEqual((result.returncode, result.stdout), (0, "current-project read\n"), result.stderr)
             self.assertEqual(self.gh_calls[-1][1]["cwd"], str(self.repo))
-            self.assertNotIn("GH_REPO", self.gh_calls[-1][1]["env"])
+            self.assertEqual(self.gh_calls[-1][1]["env"]["GH_REPO"], "fictional-team/current")
         calls = len(self.gh_calls)
         for request in self.denied_requests():
             kind, args = request["kind"], request.get("args", [])
@@ -466,7 +466,8 @@ class TestGithubInspection(AltitudeCase):
                 result = subprocess.run([str(runtime / "bin" / kind), *args],
                                         input="", capture_output=True, text=True, timeout=30)
                 self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(len(self.gh_calls), calls)
+        self.assertTrue(all(args[-1] == "--jq=.visibility" for args, _ in self.gh_calls[calls:]),
+                        "a denied read runs at most the repository visibility check")
 
     def test_coordinator_mcp_adapter_uses_real_broker_and_preserves_project_authority(self):
         runtime = self.start_transport("codex")
@@ -488,8 +489,9 @@ class TestGithubInspection(AltitudeCase):
         self.assertEqual(inspection["source"]["project"], self.project)
         self.assertEqual(inspection["issue"]["url"], self.url)
         self.assertEqual(json.loads(replies[1]["content"][0]["text"])["stdout"], "current-project read\n")
-        self.assertEqual(len(self.gh_calls), 3)
-        self.assertTrue(all("GH_REPO" not in kwargs["env"] for _, kwargs in self.gh_calls))
+        self.assertEqual(len([args for args, _ in self.gh_calls if args[-1] != "--jq=.visibility"]), 3)
+        self.assertTrue(all(kwargs["env"].get("GH_REPO") in (None, "fictional-team/current")
+                            for _, kwargs in self.gh_calls))
 
     def test_broker_transports_sanitize_authentication_failure(self):
         runtime = self.start_transport("codex")

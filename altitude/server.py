@@ -49,7 +49,7 @@ L3_GH_RULE = (
     "The coordinator's gh only reads, from this project's repository or a public one: "
     "view/list/status/checks/diff/watch/check of pr, issue, release, repo, run, workflow, ruleset, label and cache; "
     "`gh search <type>` scoped with --repo or repo:OWNER/REPO; and `gh api repos/OWNER/REPO/...` with GET and no "
-    "fields or input. Writes, downloads, --web, owner-wide reads (`repo list`, --owner, --org, org:/user:/owner:, OR) "
+    "fields or input. Writes, downloads, --web or -w, owner-wide reads (`repo list`, --owner, --org, org:/user:/owner:, OR) "
     "and other private repositories are refused; use `alt issue` to write and `alt issue inspect` for an "
     "operator-linked issue elsewhere.")
 _GH_NAME = r"[A-Za-z0-9_.-]+"
@@ -348,23 +348,23 @@ def _l3_verb_request(project: str, request: dict) -> dict:
             or any(not isinstance(arg, str) or len(arg) > 4096 for arg in args)):
         raise ValueError("invalid gh read arguments")
     command, repositories = _l3_gh_command(args)
-    env = engines.clean_env()
-    env.pop("GH_REPO", None)  # unnamed repositories resolve to this project's checkout
-    # `-w` means --web in most reads (and --workflow in `run list`), so a browser launch fails instead.
-    env.update({"GH_PAGER": "cat", "GH_BROWSER": "false", "GH_PROMPT_DISABLED": "1"})
     deadline = time.monotonic() + 120
+    from . import github_intake
+    try:
+        own = "/".join(github_intake.project_repo(project))
+    except github_intake.IssueIntakeError as exc:
+        raise ValueError(f"L3 gh read refused: {exc}") from exc
+    env = engines.clean_env()
+    # GH_REPO binds every read that names no repository, and API placeholders, to the checkout origin.
+    env.update({"GH_REPO": own, "GH_PAGER": "cat", "GH_PROMPT_DISABLED": "1"})
     def gh(argv: list[str]) -> subprocess.CompletedProcess:
+        if (remaining := deadline - time.monotonic()) <= 0:
+            raise subprocess.TimeoutExpired(["gh", *argv], 120)
         return subprocess.run(["gh", *argv], cwd=str(config.project_path(project)), env=env,
-                              stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                              timeout=max(1.0, deadline - time.monotonic()))
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=remaining)
     try:
         if repositories:
-            from . import github_intake
-            try:
-                own = "/".join(github_intake.project_repo(project)).lower()
-            except github_intake.IssueIntakeError:
-                own = None
-            for repository in sorted(repositories - {own}):
+            for repository in sorted(repositories - {own.lower()}):
                 seen = gh(["api", "--method=GET", f"repos/{repository}", "--jq=.visibility"])
                 if seen.returncode != 0 or seen.stdout.strip() != "public":
                     raise ValueError(f"L3 gh read refused: {repository} is neither this project's repository "
@@ -395,15 +395,17 @@ def _l3_gh_command(args: list[str]) -> tuple[list[str], set[str]]:
             refuse(f"gh search {args[1]} is not a search type")
     elif args[0] not in L3_GH_GROUPS or args[1] not in L3_GH_VERBS or args[:2] == ["repo", "list"]:
         refuse(f"gh {args[0]} {args[1]} is not a repository read")
-    selector = False
+    selector = scoped = False
     for arg in args[2:]:
         if selector:
             repository(arg)
             selector = False
             continue
         flag, equals, value = arg.partition("=")
-        if flag in ("--web", "--owner", "--org") or args[0] == "ruleset" and re.match(r"-[A-Za-z]*o", arg):
-            refuse(f"{flag} is not a repository read")
+        # Short options may cluster (`-cw`); `-w` is --web except in `run list`, where it is --workflow.
+        if (flag in ("--web", "--owner", "--org") or args[:2] != ["run", "list"] and re.match(r"-[A-Za-z]*w", arg)
+                or args[0] == "ruleset" and re.match(r"-[A-Za-z]*o", arg)):
+            refuse(f"{flag} opens a browser or spans an owner")
         if flag == "--repo" or re.match(r"-[A-Za-z]*R", arg):
             if flag != "--repo" and not arg.startswith("-R"):
                 refuse("give -R on its own")
@@ -411,11 +413,13 @@ def _l3_gh_command(args: list[str]) -> tuple[list[str], set[str]]:
             if value or equals:
                 repository(value)
             selector = not (value or equals)
+            scoped = True
             continue
         for match in _GH_QUALIFIER.finditer(arg):
             if match.group(1).lower() != "repo":
                 refuse(f"search qualifier {match.group(0)!r} spans an owner")
             repository(match.group(2))
+            scoped = True
         if re.search(r"(?<!\S)OR(?!\S)", arg):
             refuse("OR can widen a search beyond its repositories")
         if "://" in arg or "github.com/" in arg.lower():
@@ -424,7 +428,7 @@ def _l3_gh_command(args: list[str]) -> tuple[list[str], set[str]]:
             repository(arg.partition("#")[0])
     if selector:
         refuse("--repo needs OWNER/REPO")
-    if args[0] == "search" and not repositories:
+    if args[0] == "search" and not scoped:
         refuse("gh search needs --repo OWNER/REPO or a repo: qualifier")
     return list(args), repositories
 

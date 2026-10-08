@@ -50,7 +50,8 @@ REFUSED = (
     ["api", "repos/team/project/%2e%2e/x"], ["api", "repos/other/private/contents/README.md"],
     ["api", "repos/{owner}/private"], ["api", "--method", "GET"],
     # Browser, owner-wide and other private repositories.
-    ["pr", "view", "7", "--web"], ["repo", "view", "--web=true"], ["repo", "list"], ["repo", "list", "team"],
+    ["pr", "view", "7", "--web"], ["repo", "view", "--web=true"], ["pr", "view", "7", "-w"],
+    ["pr", "view", "7", "-cw"], ["search", "issues", "cli/cli"], ["search", "code", "token", "--json=repository"], ["repo", "list"], ["repo", "list", "team"],
     ["ruleset", "list", "--org", "team"], ["ruleset", "view", "1", "-po", "team"],
     ["search", "issues", "secret"], ["search", "code", "--owner", "team", "token"],
     ["search", "issues", "--repo", "team/project", "org:other"], ["pr", "list", "--search", "user:other"],
@@ -69,7 +70,7 @@ class TestCoordinatorGhReads(AltitudeCase):
         super().setUp()
         make_repo(self.repo)
         git("remote", "set-url", "origin", "git@github.com:team/project.git", cwd=self.repo)
-        self.calls = []
+        self.calls, self.output = [], "read\n"
         real_run = subprocess.run
 
         def run(args, **kwargs):
@@ -80,9 +81,15 @@ class TestCoordinatorGhReads(AltitudeCase):
                 seen = VISIBILITY.get(args[3].removeprefix("repos/"))
                 return subprocess.CompletedProcess(args, 0 if seen else 1, f"{seen}\n" if seen else "",
                                                    "" if seen else "HTTP 404: Not Found\n")
-            return subprocess.CompletedProcess(args, 0, "read\n", "")
+            return subprocess.CompletedProcess(args, 0, self.output, "")
 
         self.enterContext(mock.patch.object(server.subprocess, "run", side_effect=run))
+
+    def test_a_project_without_a_github_origin_reads_nothing(self):
+        git("remote", "set-url", "origin", "https://example.com/team/project.git", cwd=self.repo)
+        with self.assertRaisesRegex(ValueError, "L3 gh read refused: project origin is not a GitHub repository"):
+            self.read(["repo", "view"])
+        self.assertEqual(self.calls, [])
 
     def read(self, args):
         return server.l3_verb_request(self.project, {"kind": "gh", "args": args})
@@ -97,8 +104,8 @@ class TestCoordinatorGhReads(AltitudeCase):
                 self.assertEqual({check[0][3].removeprefix("repos/") for check in checks}, checked)
                 self.assertEqual(kwargs["cwd"], str(self.repo))
                 self.assertIs(kwargs["stdin"], subprocess.DEVNULL)
-                self.assertNotIn("GH_REPO", kwargs["env"])
-                self.assertEqual(kwargs["env"]["GH_BROWSER"], "false", "a -w cluster cannot open a browser")
+                self.assertEqual(kwargs["env"]["GH_REPO"], "team/project",
+                                 "a read naming no repository reaches the checkout origin, not another remote")
 
     def test_writes_owner_wide_reads_and_other_private_repositories_are_refused(self):
         for args in REFUSED:
@@ -127,7 +134,5 @@ class TestCoordinatorGhReads(AltitudeCase):
         self.assertEqual(self.read(["pr", "view", *["7"] * 62])["stdout"], "read\n")
         with mock.patch.object(server, "L3_VERB_MAX_OUTPUT", 8):
             self.assertEqual(self.read(["pr", "view", "7"])["stdout"], "read\n")
-            with mock.patch.object(server.subprocess, "run",
-                                   return_value=subprocess.CompletedProcess([], 0, "x" * 20, "")):
-                self.assertEqual(self.read(["pr", "view", "7"])["stdout"],
-                                 "x" * 8 + "\n[output truncated by altd]\n")
+            self.output = "x" * 20
+            self.assertEqual(self.read(["pr", "view", "7"])["stdout"], "x" * 8 + "\n[output truncated by altd]\n")
