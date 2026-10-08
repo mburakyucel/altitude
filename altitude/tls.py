@@ -463,6 +463,7 @@ def _guide(authority: dict, service_url: str, minutes: float) -> bytes:
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Set up this device for Altitude</title>
+<link rel="icon" href="data:,">
 <style>
 body{{font:16px/1.5 -apple-system,system-ui,sans-serif;margin:0 auto;max-width:34rem;padding:1.25rem;color:#1d1d1f;background:#fff}}
 h1{{font-size:1.5rem;margin:.25rem 0 .75rem}}h2{{font-size:1.1rem;margin:1.75rem 0 .5rem}}
@@ -599,7 +600,7 @@ class Share:
                 self.send_header("Content-Length", str(len(content)))
                 self.send_header("Cache-Control", "no-store")
                 self.send_header("X-Content-Type-Options", "nosniff")
-                self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
+                self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:")
                 self.send_header("Referrer-Policy", "no-referrer")
                 self.end_headers()
                 if self.command == "GET":

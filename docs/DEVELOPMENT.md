@@ -540,15 +540,46 @@ make ui-simulator   # inside a task: alt task validate --simulator -- sh -c 'mak
 
 `scripts/ios_simulator.py` is the walkthrough: it serves the built app with the fixture engines and
 fictional data of `web/e2e/acceptance-service.py` on loopback, pairs Safari as the fixture's device,
-opens a project's work in the phone layout, taps into a task and goes Back. It keeps a page snapshot
-per step (`01-work.png`, `02-task.png`, `03-back.png`), Safari's console (`console.log`), the fixture
-service's log, the steps and the browser's user agent, viewport and speech-recognition support
-(`walkthrough.json`) in `$VALIDATION_RESULTS/simulator`. A step that does not reach its state,
-horizontal overflow, a console error or a fixture service that does not end cleanly fails it.
+opens a project's work in the phone layout, taps into a task and goes Back, then walks voice input's
+restart after the X (below). It then checks what Add to Home Screen takes from the app: at the root, project and task addresses Safari finds the title
+Altitude, the approved Climb `apple-touch-icon.png` (byte for byte, decoded at 180×180) and the
+manifest's name and standalone display. Last, it opens the [device setup page](SETUP.md#share-with-a-desktop-or-phone)
+for a fictional CA, as `alt tls-share` offers it, checks the CA's name and SHA-256 there and taps
+**Download the profile**; Safari must fetch the profile, which the page sends in full. Each address
+and file must answer without an error or a redirect. It keeps a page snapshot per step
+(`01-work.png`, `02-task.png`, `03-back.png`, `04-icon.png`, `05-setup.png`), Safari's console
+(`console.log`), the fixture service's log, the steps and the browser's user agent, viewport and
+speech-recognition support (`walkthrough.json`) in `$VALIDATION_RESULTS/simulator`. A step that does
+not reach its state, horizontal overflow, a console error or a fixture service that does not end
+cleanly fails it. The walkthrough leaves the app only between its requests, since Safari logs a
+request cut off by leaving as a console error. Whether Safari accepts the profile shows only in the
+run's final screenshot, as its own prompt to allow it; `tests/test_tls.py` checks the profile's contents.
+
+The voice journey walks the restart after the X of [issue
+698](https://github.com/mburakyucel/altitude/issues/698) with browser recognition. It starts voice
+troubleshooting diagnostics in Settings; then in the project's composer and a task's, without
+reloading, it types a draft and three times taps the microphone, receives words and cancels with the
+X, with a snapshot per state (`voice-1-` to `voice-4-`). Each round passes when the words and a
+moving waveform appear (a tall bar, then a changed frame from a tone that swells twice a second),
+the X restores the typed draft, focus stays on the microphone and the viewport keeps its height, and
+the recognizer, stream and waveform audio context are released. Focusing the field afterwards must
+shrink the viewport for the keyboard, so these checks can see one (`dictation.json`). The diagnostic
+report (`voice-report.json`) must show six captures, each with a waveform signal in at least two
+samples, and none of the draft's or dictated words. A round that stops keeps the page state
+(`dictation-failure.json`) and the report so far.
+
+Simulator Safari's microphone request and speech recognizer stop at native permission dialogs that
+the relay cannot answer, and granting them would record this Mac's room and send it to Apple. The
+journey therefore uses a tone from Safari's own audio engine as the microphone and a scripted
+recognizer. It establishes the composer's capture lifecycle, waveform graph, timers, focus and
+keyboard behavior in iOS Safari, but not native audio capture, the native recognizer or spoken
+words. Those remain a physical-iPhone observation with the diagnostics on.
 
 Taps are page events marked as user gestures, not touches on the screen. The lane establishes iOS
 Safari's rendering, layout and WebKit APIs in a phone-layout journey on the Simulator's iOS version; it
-is not physical-iPhone acceptance (see [device evidence](#device-evidence)). The relay depends on
+is not physical-iPhone acceptance (see [device evidence](#device-evidence)). Safari's own controls
+and other apps stay out of its reach: it cannot allow, install or trust a profile, open Settings,
+add the app to the Home Screen or open it from there. The relay depends on
 Safari's unpublished inspector protocol, so an Xcode update can break it; the run then fails with the
 versions recorded. `tests/test_simulator.py` covers the relay's filtering, the device lifecycle and
 its recovery with a fixture `xcrun` and inspector; a real phone is recorded evidence from a Mac.

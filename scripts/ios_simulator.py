@@ -2,9 +2,12 @@
 """The phone UI in iOS Safari on a validation run's Simulator iPhone.
 
 Serves this checkout's built web app with fixture engines and fictional data on loopback, pairs the phone's Safari,
-opens a project's work in the phone layout, taps into a task and back, and keeps a page snapshot at each step,
-Safari's console and the browser's versions. A step that does not reach its state, horizontal overflow or a console
-error fails the walkthrough.
+opens a project's work in the phone layout, taps into a task and back, walks voice input's restart after the X (issue
+#698) with diagnostics on, checks what Add to Home Screen would take from the app, then opens the device setup page of
+a fictional CA and taps Download the profile. It keeps a page snapshot at each step, Safari's console, the browser's
+versions and the voice diagnostic report. A step that does not reach its state, horizontal overflow, a console error
+or a profile Safari does not fetch fails the walkthrough. The run's final screenshot shows Safari's answer to the
+profile.
 
 It runs inside `alt task validate --simulator` (`make ui-simulator`): altd's relay to that iPhone's Safari is the socket
 in $SIMULATOR_INSPECTOR, and nothing here reaches the Simulator service. Evidence goes to RESULTS, by default
@@ -14,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -22,10 +26,15 @@ import socket
 import struct
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 import uuid
 
 REPO = Path(__file__).resolve().parent.parent
+FAILURES = (OSError, RuntimeError, TimeoutError, ValueError, KeyError)
+sys.path.insert(0, str(REPO))
+from altitude import tls
 SAFARI = "com.apple.mobilesafari"
 OPEN, OPENED = "_rpc_altitudeOpenURL:", "_rpc_altitudeOpenedURL:"
 PHONE_WIDTH = 500   # widest viewport this walkthrough accepts as the phone layout
@@ -181,6 +190,38 @@ class Safari:
         path.write_bytes(base64.b64decode(data.split(",", 1)[1]))
 
 
+#: Counts the app's requests from the first step on, and once `__leaving` is set starts no more, so the walkthrough
+#: leaves the app between requests. Safari logs a request cut off by leaving as a console error.
+REQUESTS = """
+if (!window.__requests) {
+  window.__requests = new Map();
+  const original = window.fetch;
+  window.fetch = function (...args) {
+    if (window.__leaving) return new Promise(() => {});
+    const key = {};
+    window.__requests.set(key, String(args[0]?.url ?? args[0]));
+    return original.apply(this, args).then((response) => response.clone().arrayBuffer().then(() => response))
+      .finally(() => window.__requests.delete(key));
+  };
+}
+0
+"""
+
+
+def leave(safari: Safari, address: str) -> None:
+    """Open `address` once the app has no request under way."""
+    safari.evaluate("window.__leaving = true; 0")
+    try:
+        safari.wait("!window.__requests?.size", "the app's requests to end")
+    except TimeoutError as exc:
+        try:
+            under_way = safari.evaluate("[...window.__requests.values()]", seconds=5)
+        except FAILURES:
+            under_way = "unknown"
+        raise TimeoutError(f"{exc}; under way: {under_way}") from None
+    safari.evaluate(f"location.href = {json.dumps(address)}; 0")
+
+
 #: Page helpers, evaluated before each check: a labelled element that is laid out, and whether the page overflows.
 HELPERS = """
 var shown = (selector) => [...document.querySelectorAll(selector)].find((e) => e.getClientRects().length > 0);
@@ -216,12 +257,290 @@ def walkthrough(safari: Safari, url: str, device: str, results: Path) -> list[di
     safari.evaluate(f"location.href = {json.dumps(url + work + '?tab=work')}; 0")
     task_link = f"shown('section[aria-label=\"Work\"] a[href^=\"{work}/tasks/\"]')"
     state("01-work", f"{task_link} && innerWidth <= {PHONE_WIDTH}", "the project's work in the phone layout")
+    safari.evaluate(REQUESTS)
     state("02-task", "shown('section[aria-label=\"Task conversation\"]') && shown('button[aria-label=\"Back\"]') "
                      "&& !shown('section[aria-label=\"Work\"]')", "a task's conversation with Back",
           action=f"{task_link}.click(); 0")
     state("03-back", f"{task_link} && !shown('section[aria-label=\"Task conversation\"]')",
           "the project's work again", action="shown('button[aria-label=\"Back\"]').click(); 0")
+    task = safari.evaluate(f"{task_link}.getAttribute('href')")
+    steps += dictation(safari, url, work, task.split("?")[0], results)
+    steps.append(home_screen(safari, url, ["/", work, task], results))
     return steps
+
+
+#: Simulator Safari's microphone and speech recognizer stop at native permission dialogs the inspector cannot answer,
+#: and granting them would record this Mac's room. A tone from Safari's own audio engine stands in for the microphone
+#: and a scripted recognizer for the native one; the waveform graph, timers, focus and layout are iOS Safari's.
+VOICE_FIXTURES = """
+// Held, so WebKit keeps this wrapper and its stand-in instead of collecting it and offering the native request again.
+window.__voice = {recognizers: [], graphs: [], streams: [], log: [], devices: navigator.mediaDevices};
+window.SpeechRecognition = class {
+  constructor() { this.onresult = this.onerror = this.onend = null; this.ended = false; __voice.recognizers.push(this); }
+  start() { __voice.log.push(['recognizer started', Math.round(performance.now())]); this.onstart && this.onstart(); this.onaudiostart && this.onaudiostart(); }
+  stop() { setTimeout(() => this.end(), 0); }
+  abort() { setTimeout(() => this.end(), 0); }
+  end() { if (this.ended) return; this.ended = true; this.onaudioend && this.onaudioend(); this.onend && this.onend(); }
+  hear(words) { this.onresult && this.onresult({results: [{isFinal: false, 0: {transcript: words}, length: 1}]}); }
+};
+var NativeAudioContext = window.AudioContext;
+window.AudioContext = class extends NativeAudioContext {
+  constructor(...args) { super(...args); __voice.graphs.push(this); }
+};
+Object.defineProperty(__voice.devices, 'getUserMedia', {configurable: true, value: async () => {
+  if (!__voice.tone) {
+    // A tone that swells and fades twice a second, so a drawing waveform keeps changing.
+    const tone = __voice.tone = new NativeAudioContext(), swell = tone.createOscillator(), depth = tone.createGain();
+    __voice.oscillator = tone.createOscillator();
+    __voice.level = tone.createGain();
+    __voice.level.gain.value = depth.gain.value = 0.15;
+    swell.frequency.value = 2;
+    swell.connect(depth).connect(__voice.level.gain);
+    __voice.oscillator.connect(__voice.level);
+    swell.start();
+    __voice.oscillator.start();
+  }
+  __voice.log.push(['microphone requested', __voice.tone.state, Math.round(performance.now())]);
+  const destination = __voice.tone.createMediaStreamDestination();
+  __voice.level.connect(destination);
+  await __voice.tone.resume();
+  __voice.log.push(['microphone opened', __voice.tone.state, Math.round(performance.now())]);
+  __voice.streams.push(destination.stream);
+  return destination.stream;
+}});
+0
+"""
+
+#: The waveform's drawn bars: each column's height as a share of the canvas height (the silent minimum is a few pixels).
+BARS = """(() => {
+  const canvas = shown('.composer-wave');
+  const data = canvas && canvas.height && canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+  if (!data) return [];
+  const bars = [];
+  for (let x = 0; x < data.width; x++) {
+    let column = 0;
+    for (let y = 0; y < data.height; y++) if (data.data[(y * data.width + x) * 4 + 3] > 0) column++;
+    bars.push(Math.round(100 * column / data.height) / 100);
+  }
+  return bars;
+})()"""
+
+
+STATE = """({phase: [...document.querySelectorAll('.composer')].map(c => c.dataset.phase),
+  hint: [...document.querySelectorAll('.composer-hint, .composer-feedback, [role="status"]')].map(e => e.textContent),
+  buttons: [...document.querySelectorAll('.composer button')].filter(b => b.getClientRects().length)
+    .map(b => (b.getAttribute('aria-label') || b.textContent) + (b.disabled ? ' (disabled)' : '')),
+  focus: document.activeElement && (document.activeElement.getAttribute('aria-label') || document.activeElement.tagName),
+  log: window.__voice && __voice.log, tone: window.__voice && __voice.tone && __voice.tone.state,
+  graphs: window.__voice && __voice.graphs.map(g => [g.state, g.currentTime]),
+  recognizers: window.__voice && __voice.recognizers.map(r => r.ended),
+  streams: window.__voice && __voice.streams.map(s => s.getTracks().map(t => t.readyState))})"""
+
+
+def dictation(safari: Safari, url: str, work: str, task: str, results: Path) -> list[dict]:
+    """Issue #698's journey with diagnostics on: dictate, cancel with the X and tap the microphone again, three times
+    in the project's composer and three in a task's, without reloading; then the diagnostic report."""
+    steps = []
+    rounds = []
+
+    def go(path: str) -> None:  # within the app, so the page's diagnostics survive
+        safari.evaluate(f"history.pushState(null, '', {json.dumps(path)}); dispatchEvent(new PopStateEvent('popstate')); 0")
+
+    def snap(name: str, what: str) -> None:
+        safari.snapshot(results / f"{name}.png")
+        steps.append({"step": name, "url": safari.evaluate("location.href"), "reached": what})
+
+    def check(expression: str, what: str, seconds: float = 20):
+        try:
+            return safari.wait(HELPERS + f"(v => v instanceof Node || v)(fits() && ({expression}))", what, seconds)
+        except TimeoutError:
+            # Where it stopped: the composer, the stand-ins' log and the audio graphs, never the draft's words.
+            (results / "dictation-failure.json").write_text(json.dumps(safari.evaluate(HELPERS + STATE), indent=2) + "\n")
+            safari.snapshot(results / "dictation-failure.png")
+            if not reporting:
+                reporting.append(True)
+                try:
+                    (results / "dictation-failure-report.json").write_text(read_report())
+                except (RuntimeError, TimeoutError) as exc:
+                    print(f"ios_simulator: no diagnostic report after the failure: {exc}", file=sys.stderr)
+            raise
+
+    def read_report() -> str:
+        go("/settings/voice")
+        check(summary, "Voice input settings again")
+        safari.evaluate(f"{summary}.parentElement.open || {summary}.click(); 0", gesture=True)
+        safari.evaluate(f"{button.format('View report')}.click(); 0", gesture=True)
+        return check("[...document.querySelectorAll('textarea')].find(t => t.value.includes('altitude-voice-diagnostic'))"
+                     "?.value", "the diagnostic report")
+
+    reporting: list = []
+    summary = "[...document.querySelectorAll('summary')].find(s => s.textContent === 'Voice troubleshooting')"
+    button = "[...document.querySelectorAll('button')].find(b => b.textContent === {!r} && b.getClientRects().length)"
+    # The installation answers browser recognition, the backend whose restart #698 reports.
+    status = safari.wait("window.__backend || (window.__saving ||= fetch('/api/voice').then(r => r.json()).then(v => "
+                         "fetch('/api/voice', {method: 'POST', headers: {'Content-Type': 'application/json'}, "
+                         "body: JSON.stringify({backend: 'browser', selection: v.selection})})).then(r => "
+                         "window.__backend = r.status), 0)", "the browser recognition setting")
+    if status != 200:
+        raise RuntimeError(f"saving browser recognition answered {status}")
+    leave(safari, url + "/settings/voice")
+    check(summary, "Voice input settings")
+    safari.evaluate(REQUESTS)  # this page's, for leaving it later
+    safari.evaluate(f"{summary}.click(); 0", gesture=True)
+    safari.evaluate(f"{button.format('Start diagnostics')}.click(); 0", gesture=True)
+    check(button.format("Stop diagnostics"), "diagnostics collecting")
+    snap("voice-1-diagnostics-on", "voice diagnostics collecting")
+    safari.evaluate(VOICE_FIXTURES)
+
+    field = "shown('textarea.composer-field')"
+    for where, path, draft in (("project", work, "Typed project draft"), ("task", task, "Typed task draft")):
+        go(path)
+        check(f"{field} && !{field}.readOnly && shown('button[aria-label=\"Start voice input\"]')", f"the {where} composer")
+        safari.evaluate(HELPERS + f"var f = {field}; Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "
+                        f"'value').set.call(f, {json.dumps(draft)}); f.dispatchEvent(new Event('input', {{bubbles: true}})); "
+                        f"f.blur(); 0")
+        check(f"{field}.value === {json.dumps(draft)} && document.activeElement !== {field}", f"the typed {where} draft")
+        for turn in range(1, 4):
+            words = f"{where} words {turn}"
+            capture = safari.evaluate("__voice.recognizers.length")
+            before = safari.evaluate("visualViewport.height")
+            safari.evaluate(HELPERS + "shown('button[aria-label=\"Start voice input\"]').click(); 0", gesture=True)
+            check(f"shown('.composer[data-phase=\"listening\"]') && shown('.composer-wave') && "
+                  f"__voice.recognizers.length === {capture + 1}", f"{where} listening, round {turn}")
+            safari.evaluate(f"__voice.recognizers[{capture}].hear({json.dumps(words)}); 0")
+            check(f"{field}.value === {json.dumps(f'{draft} {words}')}", f"{where} words, round {turn}")
+            # A moving waveform: a loud bar, then a different frame, while the trace samples the graph each second.
+            first = check(f"Math.max(...{BARS}) > 0.5 && {BARS}", f"{where} waveform, round {turn}", seconds=10)
+            time.sleep(2.2)
+            later = safari.evaluate(HELPERS + BARS)
+            if later == first:
+                raise RuntimeError(f"{where} waveform, round {turn}: the bars did not change in two seconds")
+            loudest = max(first)
+            snap(f"voice-{2 if where == 'project' else 3}-{where}-{turn}-listening", f"{where} words and waveform, round {turn}")
+            safari.evaluate(HELPERS + "shown('button[aria-label=\"Cancel voice input\"]').click(); 0", gesture=True)
+            check(f"shown('button[aria-label=\"Start voice input\"]') && !shown('button[aria-label=\"Cancel voice input\"]') "
+                  f"&& !shown('.composer-wave') && {field}.value === {json.dumps(draft)} && !{field}.readOnly",
+                  f"{where} X keeps the draft, round {turn}")
+            ended = check(f"__voice.recognizers[{capture}].ended && __voice.streams[{capture}].getTracks().every(t => "
+                          f"t.readyState === 'ended') && __voice.graphs[{capture}].state === 'closed' && "
+                          f"__voice.graphs[{capture}].state", f"{where} capture released, round {turn}")
+            focus = safari.evaluate("document.activeElement && (document.activeElement.getAttribute('aria-label') || "
+                                    "document.activeElement.tagName)")
+            if focus != "Start voice input":
+                raise RuntimeError(f"{where} X, round {turn}: focus went to {focus}, not the microphone")
+            after = safari.evaluate("visualViewport.height")
+            if after < before:
+                raise RuntimeError(f"{where} X, round {turn}: the viewport shrank from {before} to {after}")
+            snap(f"voice-{2 if where == 'project' else 3}-{where}-{turn}-cancelled", f"{where} X, round {turn}")
+            rounds.append({"composer": where, "round": turn, "waveform": round(loudest, 2), "graph": ended,
+                           "focus": focus, "viewport": [before, after]})
+            safari.evaluate("document.activeElement && document.activeElement.blur(); 0")
+
+    # The viewport checks above see a keyboard: focusing the field as a tap does opens it and the viewport shrinks.
+    resting = safari.evaluate("visualViewport.height")
+    safari.evaluate(HELPERS + f"{field}.focus(); 0", gesture=True)
+    keyboard = {"resting": resting, "field focused": check(f"visualViewport.height < {resting} - 100 && "
+                                                           "visualViewport.height", "the keyboard for the field", 10)}
+    safari.evaluate("document.activeElement.blur(); 0")
+
+    report = read_report()
+    snap("voice-4-diagnostic-report", "the voice diagnostic report")
+    (results / "voice-report.json").write_text(report)
+    if "Typed" in report or "words" in report:
+        raise RuntimeError("the diagnostic report contains draft or dictated text")
+    events = json.loads(report)["events"]
+    listening = sum(e["event"] == "capture.listening" for e in events)
+    samples = [e.get("source") for e in events if e["event"] == "waveform.sample" and e.get("signal")]
+    heard = {source for source in samples if samples.count(source) >= 2}
+    (results / "dictation.json").write_text(json.dumps({"rounds": rounds, "keyboard": keyboard,
+                                                        "captures": listening, "graphs with signal": len(heard)},
+                                                       indent=2) + "\n")
+    if listening != 6 or len(heard) != 6:
+        raise RuntimeError(f"the report shows {listening} captures and {len(heard)} waveform graphs with signal in two "
+                           "samples, not 6")
+    return steps
+
+
+#: What Add to Home Screen takes from each address, read as Safari parses the page, and the files it names.
+HOME_SCREEN = """
+window.__home || (window.__home = (async () => {
+  const pages = {};
+  const read = async (path) => {
+    const response = await fetch(path);
+    if (!response.ok || response.redirected) throw new Error(`${path} answered ${response.status} at ${response.url}`);
+    return response;
+  };
+  for (const path of %s) {
+    const page = new DOMParser().parseFromString(await (await read(path)).text(), 'text/html');
+    pages[path] = {title: page.title, icon: page.querySelector('link[rel="apple-touch-icon"]')?.getAttribute('href'),
+                   manifest: page.querySelector('link[rel="manifest"]')?.getAttribute('href')};
+  }
+  const icon = await read(pages['/'].icon), bytes = new Uint8Array(await icon.arrayBuffer());
+  const image = new Image();
+  image.src = pages['/'].icon;
+  await image.decode();
+  const manifest = await (await read(pages['/'].manifest)).json();
+  return {pages, manifest, icon: {type: icon.headers.get('content-type'), size: [image.naturalWidth, image.naturalHeight],
+                                  bytes: btoa(String.fromCharCode(...bytes))}};
+})().then((value) => window.__homeResult = value, (error) => window.__homeResult = {error: String(error)}));
+window.__homeResult
+"""
+
+
+def home_screen(safari: Safari, url: str, paths: list[str], results: Path) -> dict:
+    """At the app's root, project and task addresses Safari finds the approved Climb icon, the manifest's name and
+    standalone display: what Add to Home Screen uses. Adding the app is Safari's own menu, out of the relay's reach."""
+    found = safari.wait(HOME_SCREEN % json.dumps(paths), "the Home Screen icon and manifest")
+    if "error" in found:
+        raise RuntimeError(f"Safari could not read the Home Screen files: {found['error']}")
+    icon, approved = found["icon"], (REPO / "web" / "public" / "apple-touch-icon.png").read_bytes()
+    wrong = [path for path, page in found["pages"].items()
+             if page != {"title": "Altitude", "icon": "/apple-touch-icon.png", "manifest": "/manifest.webmanifest"}]
+    manifest = {key: found["manifest"].get(key) for key in ("name", "short_name", "display", "start_url")}
+    if wrong or icon["type"] != "image/png" or icon["size"] != [180, 180] or base64.b64decode(icon["bytes"]) != approved \
+            or manifest != {"name": "Altitude", "short_name": "Altitude", "display": "standalone", "start_url": "/"}:
+        raise RuntimeError(f"Safari found other Home Screen files: pages {found['pages']}, manifest {manifest}, "
+                           f"icon {icon['type']} {icon['size']} sha256 "
+                           f"{hashlib.sha256(base64.b64decode(icon['bytes'])).hexdigest()}")
+    # The icon as Safari draws it, which also leaves the app so its change stream ends.
+    leave(safari, url + "/apple-touch-icon.png")
+    safari.wait("document.images[0] && document.images[0].complete && document.images[0].naturalWidth === 180",
+                "the icon on its own")
+    safari.snapshot(results / "04-icon.png")
+    return {"step": "04-icon", "url": safari.evaluate("location.href"), "pages": found["pages"], "manifest": manifest,
+            "icon": {"type": icon["type"], "size": icon["size"], "sha256": hashlib.sha256(approved).hexdigest()},
+            "reached": "the approved Climb icon, name and standalone display at the root, project and task addresses"}
+
+
+def certificate_setup(safari: Safari, app: str, results: Path) -> dict:
+    """The device setup page for a fictional CA, as `alt tls-share` offers it: it names the CA and its SHA-256, and
+    Download the profile makes Safari fetch the profile, which the share sends in full. Whether Safari accepts it shows
+    only in its own prompt in the run's final screenshot; allowing, installing and trusting it are Safari's and
+    Settings' controls, out of the relay's reach. tests/test_tls.py checks the profile's contents."""
+    with tempfile.TemporaryDirectory() as folder:
+        ca = Path(folder) / "ca.crt"
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes",
+                        "-keyout", str(Path(folder) / "ca.key"), "-out", str(ca), "-days", "1",
+                        "-subj", "/CN=Fixture Altitude CA", "-addext", "basicConstraints=critical,CA:TRUE"],
+                       check=True, capture_output=True)
+        authority, sent = tls.identity(ca), threading.Event()
+        share = tls.Share({"name": "127.0.0.1", "kind": "IP", "url": app}, ca.read_bytes(), authority, 5,
+                          sent=lambda message: message.startswith("Sent the profile") and sent.set())
+    try:
+        safari.evaluate(f"location.href = {json.dumps(share.link + '#ios')}; 0")
+        rows = tls.fingerprint_rows(authority["sha256"])
+        safari.wait(f"document.body && [{json.dumps(authority['name'])}, ...{json.dumps(rows)}]"
+                    ".every((text) => document.body.innerText.includes(text))", "the setup page with the CA's SHA-256")
+        safari.snapshot(results / "05-setup.png")
+        safari.evaluate("[...document.links].find((a) => a.textContent === 'Download the profile').click(); 0",
+                        gesture=True)
+        if not sent.wait(30):
+            raise TimeoutError("Safari did not fetch the profile")
+        time.sleep(3)  # for Safari's prompt to appear in the final screenshot
+    finally:
+        share.close()
+    return {"step": "05-profile", "url": share.link, "ca": authority["name"], "sha256": authority["sha256"],
+            "reached": "the setup page's CA and SHA-256, and the profile sent to Safari in full"}
 
 
 def main() -> int:
@@ -247,15 +566,23 @@ def main() -> int:
         safari = Safari(inspector)
         try:
             record["steps"] = walkthrough(safari, ready["url"], ready["device"], args.results)
-        finally:
+        except FAILURES as exc:
+            record["error"] = str(exc)
+        # Recorded beside a failure, never in its place.
+        try:
             if safari.target:
                 record["browser"] = safari.evaluate(
                     "({userAgent: navigator.userAgent, viewport: [innerWidth, innerHeight], "
                     "devicePixelRatio, speechRecognition: typeof webkitSpeechRecognition})")
-                # Leave the app, so its change stream ends before the service stops.
-                safari.evaluate("location.href = 'about:blank'; 0")
-                safari.wait("location.href === 'about:blank'", "a blank page")
-    except (OSError, RuntimeError, TimeoutError, ValueError, KeyError) as exc:
+                if record["error"]:  # a finished walkthrough has left the app
+                    # Leave the app, so its change stream ends before the service stops.
+                    leave(safari, "about:blank")
+                    safari.wait("location.href === 'about:blank'", "a blank page")
+        except FAILURES as exc:
+            record["cleanup"] = str(exc)
+        if not record["error"]:
+            record["steps"].append(certificate_setup(safari, ready["url"], args.results))
+    except FAILURES as exc:
         record["error"] = str(exc)
     finally:
         service.terminate()
@@ -265,6 +592,8 @@ def main() -> int:
             service.kill()
             service.wait()
         service_log.close()
+    if record.get("cleanup") and not record["error"]:
+        record["error"] = record["cleanup"]
     console = safari.console if safari else []
     errors = [m for m in console if m.get("level") == "error"]
     (args.results / "console.log").write_text("".join(
