@@ -45,6 +45,5 @@ each capture. No speech recognition or coding agent runs.
   paths and anchors, then inspect both widths. Open the original images to review details that are
   small in a desktop README column.
 
-The curated app captures use application source at `SOURCE_COMMIT`. Task token readings are absent
-from the example, so the app shows its unknown state. Current decision behavior lives in the
-[decision boards and spec](../wireframes/CONVERSATION_FIRST.md).
+Task token readings are absent from the example, so the app shows its unknown state. Current
+decision behavior lives in the [decision boards and spec](../wireframes/CONVERSATION_FIRST.md).
