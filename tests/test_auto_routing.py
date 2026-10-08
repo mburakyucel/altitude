@@ -367,3 +367,55 @@ class TestAutoIntegration(AltitudeCase):
         self.assertFalse(result["completed"])
         self.assertTrue(any(row["role"] == "error" and REJECTION["why"] in row["text"]
                             for row in l3.chat_history(self.project)))
+
+    def test_sign_in_rejection_waits_for_the_operator_and_clears_on_their_successful_retry(self):
+        self.policy("claude:opus")
+        sign_in = engines.rejection("claude", {"error": "Failed to authenticate: OAuth session expired and could not be refreshed"})
+        route.note_rejection({"engine": "claude", "model": "opus"}, sign_in)
+        signed_in = []
+        def answer(prompt, **kwargs):
+            if signed_in:
+                return {"session_id": "conversation", "text": "Answered", "tools": [], "error": None,
+                        "usage": {}, "context_tokens": 1, "cost": 0, "turns": 1}
+            return {"session_id": None, "text": "", "error": "Not logged in", "rejection": sign_in,
+                    "safe_to_retry": True, "tools": []}
+        with mock.patch.object(engines, "claude_print", side_effect=answer) as execute:
+            held = l3.turn(self.project, "Report landed", trigger="report-landed")
+            self.assertTrue(held["held"])
+            self.assertIn("sign in, then Retry or Resume", held["error"])
+            # Still signed out: the operator's Retry tries once and the rejection is recorded again,
+            # so automatic turns keep waiting instead of launching.
+            failed = l3.turn(self.project, "Are you there?")
+            self.assertFalse(failed["completed"])
+            self.assertEqual(execute.call_count, 1)
+            self.assertTrue(l3.turn(self.project, "Report landed", trigger="report-landed")["held"])
+            self.assertEqual(execute.call_count, 1)
+            signed_in.append(True)
+            self.assertTrue(l3.turn(self.project, "Are you there?")["completed"])
+            self.assertEqual(execute.call_count, 2)
+            self.assertIsNone(route.choice_unavailable("l2", {"engine": "claude"}))
+            self.assertNotIn("held", l3.turn(self.project, "Report landed", trigger="report-landed"))
+            self.assertEqual(execute.call_count, 3)
+
+    def test_operator_retry_withdraws_only_the_engine_it_attempts(self):
+        self.policy("claude:opus > codex")
+        for engine in config.ENGINES:
+            route.note_rejection({"engine": engine}, engines.rejection(engine, {"error": "authentication_error"}))
+        answer = {"session_id": "conversation", "text": "Answered", "tools": [], "error": None,
+                  "usage": {}, "context_tokens": 1, "cost": 0, "turns": 1}
+        with mock.patch.object(engines, "claude_print", return_value=answer) as execute, \
+             mock.patch.object(engines, "codex_exec") as other:
+            self.assertTrue(l3.turn(self.project, "Signed in again")["completed"])
+        execute.assert_called_once()
+        other.assert_not_called()
+        self.assertIsNone(route.choice_unavailable("l2", {"engine": "claude"}))
+        self.assertIn("sign in, then Retry or Resume", route.choice_unavailable("l2", {"engine": "codex"}))
+
+    def test_operator_retry_keeps_a_usage_limit_cooldown(self):
+        self.policy("claude:opus")
+        route.note_limit("claude", engines.usage_limit_in("You've hit your usage limit"))
+        with mock.patch.object(engines, "claude_print") as execute:
+            result = l3.turn(self.project, "Are you there?")
+        execute.assert_not_called()
+        self.assertIn("engine hold", result["error"])
+        self.assertIn("usage window exhausted", result["error"])

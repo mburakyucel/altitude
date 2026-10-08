@@ -184,14 +184,17 @@ def _rejection_path(option: dict, scope: str, model: str | None = None):
 
 
 def note_rejection(option: dict, rejection: dict) -> None:
-    """A confirmed provider denial is a temporary observation, never a subscription inference."""
-    S.write_json(_rejection_path(option, rejection["scope"]), {**rejection, "at": S.now()})
+    """A confirmed provider denial is a temporary observation, never a subscription inference. A sign-in
+    rejection keeps its own record, so withdrawing it never touches a usage limit on the same engine."""
+    scope = "sign-in" if rejection.get("sign_in") else rejection["scope"]
+    S.write_json(_rejection_path(option, scope), {**rejection, "at": S.now()})
 
 
-def _rejected(option: dict) -> str | None:
+def _rejected(option: dict, *, retry_sign_in: bool = False) -> str | None:
     # A usage limit names the model family ("fable"); a configured model id shares its exclusion.
     family = config.model_family(option.get("model"))
-    paths = [_rejection_path(option, "engine"), _rejection_path(option, "model"),
+    paths = [*([] if retry_sign_in else [_rejection_path(option, "sign-in")]),
+             _rejection_path(option, "engine"), _rejection_path(option, "model"),
              *([_rejection_path(option, "model", family)] if family and family != option.get("model") else [])]
     for path in paths:
         data = S.read_json(path, {})
@@ -202,6 +205,18 @@ def _rejected(option: dict) -> str | None:
             if active:
                 return data["why"] + ("" if data.get("until") else "; availability observation expires after 30 minutes")
     return None
+
+
+def retry_sign_in(engine: str) -> bool:
+    """Withdraw the engine's sign-in rejection for an explicit operator Retry or Resume about to launch on it.
+
+    Signing in cures it at once, unlike a usage window. Automatic retries still honor it; a credential that
+    is still invalid records it again on the attempt. True when a rejection was withdrawn."""
+    try:
+        _rejection_path({"engine": engine}, "sign-in").unlink()
+    except FileNotFoundError:
+        return False
+    return True
 
 
 def note_limit(engine: str, limit: dict) -> None:
@@ -308,7 +323,7 @@ def pick_review(task: dict, project: dict, *, engine: str | None = None, model: 
 def pick_engine(role: str, *, forced: str | None = None, model: str | None = None,
                 project: dict | None = None, current: str | None = None,
                 current_model: str | None = None, excluded: tuple = (), effort: str | None = None,
-                steer: bool = True) -> dict:
+                steer: bool = True, retry_sign_in: bool = False) -> dict:
     """One policy for fresh L2, L3 and explanations. Never used to change an L2 resume.
 
     An explicit task or turn engine/model wins outright. Otherwise the role's choice (New tasks for L2, the
@@ -316,6 +331,7 @@ def pick_engine(role: str, *, forced: str | None = None, model: str | None = Non
     takes the choice's model and effort when they are on it. An explicit launch ``effort`` wins over the choice's,
     which wins over each option's per-role, per-engine project default; an engine that rejects the chosen effort
     uses its default. ``steer=False`` ignores the choice (reviewer selection, explicit engine handoff).
+    ``retry_sign_in`` looks past sign-in rejections for an operator's explicit retry.
     Unknown access/quota is eligible. Tiers outrank headroom; a tied tier compares only
     known named weekly windows. Continuity retains the current option inside that tier.
     """
@@ -354,7 +370,8 @@ def pick_engine(role: str, *, forced: str | None = None, model: str | None = Non
             installed = engines.installation(engine)
             unavailable = ("already tried in this dispatch/turn" if option_key(option) in excluded else
                            installed["why"] if installed["available"] is False else
-                           _rejected(option) or _unavailable(*usage[engine]) or _model_exhausted(option, readings))
+                           _rejected(option, retry_sign_in=retry_sign_in) or _unavailable(*usage[engine])
+                           or _model_exhausted(option, readings))
             if unavailable:
                 skipped.append(f"{option_label(option)} unavailable: {unavailable}")
             else:

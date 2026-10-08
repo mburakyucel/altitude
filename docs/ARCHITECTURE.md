@@ -528,7 +528,11 @@ configured order, and L3 retains its current engine/model within that tier unles
 at least fifteen percentage points more weekly headroom. A higher available tier takes precedence.
 Missing executables, exhausted windows and explicit provider rejections exclude the affected option;
 unknown access remains eligible. Authentication rejections exclude the engine and model rejections
-exclude only that model for thirty minutes. A current model-specific weekly reading at 100% also
+exclude only that model for thirty minutes. Signing in cures an authentication rejection at once, so
+it has its own record: an operator coordinator message or Retry that finds no engine withdraws it for
+the engine that turn then attempts, and each explicit task resume request withdraws it for the task's
+engine. A credential still invalid records it again on that attempt, and automatic turns and resumes
+keep waiting. A current model-specific weekly reading at 100% also
 excludes only that model. The router never derives model allowances from an
 account-wide meter or subscription entitlement from a plan name. Safe pre-output rejection retries
 are bounded to configured alternatives. Explicit pins never fall back, and an L2 resume retains its

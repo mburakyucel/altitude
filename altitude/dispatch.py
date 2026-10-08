@@ -312,13 +312,22 @@ def handoff(project: str, slug: str, request: dict) -> dict:
                      previous_session_id=task["session_id"], attempt=task["attempt"])
 
 
-def request_task_operation(project: str, slug: str, operation: str, reason: str, *, actor: str,
-                           engine: str | None = None, expected_attempt: int | None = None,
-                           generation: object = T._UNSET, stop_id: object = T._UNSET,
-                           deliver_reason: bool = True, send_now: str | None = None) -> dict:
+def request_task_operation(project: str, slug: str, operation: str, reason: str, *, actor: str, **options) -> dict:
     """Persist one L3/operator request for altd; this process never touches Git or a worker.
 
-    A resume's authored reason reaches the resumed owner; the UI's buttons send fixed text and deliver none.
+    Each explicit resume, including a repeat of a pending one, retries a sign-in rejection on the task's engine.
+    """
+    result = _request_task_operation(project, slug, operation, reason, actor=actor, **options)
+    if operation == "resume" and result.get("request"):
+        route.retry_sign_in(l2_engine(S.load_task(project, slug)))
+    return result
+
+
+def _request_task_operation(project: str, slug: str, operation: str, reason: str, *, actor: str,
+                            engine: str | None = None, expected_attempt: int | None = None,
+                            generation: object = T._UNSET, stop_id: object = T._UNSET,
+                            deliver_reason: bool = True, send_now: str | None = None) -> dict:
+    """A resume's authored reason reaches the resumed owner; the UI's buttons send fixed text and deliver none.
 
     I-20260904-062512: the request and its audit event land under the project lock before the daemon acts. The
     worker identity snapshot prevents a delayed resume, stop, or reject from applying to a replacement session.
