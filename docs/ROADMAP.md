@@ -142,10 +142,13 @@ Remaining before public release:
 - Maintainer actions on release day, in this order: review the
   [history audit](https://github.com/mburakyucel/altitude/issues/233) result and its latest delta,
   apply the repository description and topics below and flip visibility, which lets the
-  GitHub-hosted required `check` run without billing. Then enable private vulnerability
-  reporting, review branch protection, add a tag ruleset reserving `v*` tags to the maintainer and
-  confirm fork-workflow approval; the free plan offers rulesets and these settings only for public repositories. Immutable releases are on
-  ([publish a release](RELEASING.md#publish-a-release)).
+  GitHub-hosted required `check` run without billing. Once that check is green on the head of the
+  pull request moving it to hosted runners, merge that pull request on GitHub (the deployed gate
+  still selects the workflow it deletes), then stop the machine's former CI runner and remove it
+  under Settings → Actions → Runners. Then enable private vulnerability reporting, review branch
+  protection, add a tag ruleset reserving `v*` tags to the maintainer and confirm fork-workflow
+  approval; the free plan offers rulesets and these settings only for public repositories. Immutable
+  releases are on ([publish a release](RELEASING.md#publish-a-release)).
 - Recommended description: **“Persistent project orchestration for coding agents: project direction,
   directly reachable task owners, isolated worktrees and checked PRs.”** Recommended topics:
   `ai-development`, `coding-agents`, `developer-tools`, `developer-workspace`, `git-worktrees`.
