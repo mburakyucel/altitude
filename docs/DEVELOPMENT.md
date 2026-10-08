@@ -511,7 +511,7 @@ make ui-simulator   # inside a task: alt task validate --simulator -- sh -c 'mak
   Altitude's port is hidden and closes any connection inspecting it. A run holds at most four connections
   at once, and a message that stops arriving partway closes its connection after 30 seconds. The page's
   address is read from Safari's listing, which updates shortly after a navigation, so a page can answer
-  briefly before its connection closes (about 0.4 seconds on this Mac). Simulator Safari holds no pairing,
+  briefly before its connection closes (0.3 to 0.7 seconds on this Mac). Simulator Safari holds no pairing,
   and Altitude answers an unpaired browser only with its page, files, health, access status and pairing.
   One request of the relay's own, `_rpc_altitudeOpenURL:`, opens an `http(s)` loopback address with a
   port, never Altitude's, in Safari: that is how a run puts its first page on the phone. Safari runs as
