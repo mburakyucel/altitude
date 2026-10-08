@@ -371,7 +371,7 @@ reads, from any repository that login can see:
 - `gh search`;
 - `gh api <endpoint>` with GET only. Altd rebuilds the call from `--method GET`, `--header`, `--preview`,
   `--jq`, `--template`, `--cache`, `--include`, `--paginate`, `--slurp` and `--silent`; fields, input,
-  `--hostname` and full URLs are refused.
+  `--hostname`, full URLs, GraphQL and endpoints beginning with `-` are refused.
 
 Writes and side effects (`create`, `edit`, `close`, `merge`, `comment`, `delete`, `rerun`, `cancel`,
 `download`, `checkout`, `auth` and the like) are refused, as are `--web` and `-w`, including inside a

@@ -46,9 +46,9 @@ L3_GH_GROUPS = {"pr", "issue", "release", "repo", "run", "workflow", "ruleset", 
 L3_GH_VERBS = {"view", "list", "status", "checks", "diff", "watch", "check"}
 L3_GH_RULE = (
     "The coordinator's gh only reads, from any repository its login can see: view/list/status/checks/diff/watch/"
-    "check of pr, issue, release, repo, run, workflow, ruleset, label and cache; gh search; and gh api with GET "
-    "and no fields, input or other host. Writes, downloads, auth and --web or -w (outside run list) are refused; "
-    "use alt issue to write.")
+    "check of pr, issue, release, repo, run, workflow, ruleset, label and cache; gh search; and gh api GET of a "
+    "REST endpoint path, without fields, input or another host. Writes, downloads, auth and --web or -w "
+    "(outside run list) are refused; use alt issue to write.")
 L3_TASK_TARGETS = {
     "handoff", "release",
     "reject", "escalate", "events", "messages", "report", "show", "resume", "message", "stop",
@@ -382,8 +382,9 @@ def _l3_gh_api(args: list[str], refuse) -> list[str]:
     for flag in ("--paginate", "--slurp", "--silent"):
         parser.add_argument(flag, action="store_true")
     options = parser.parse_args(args)
-    if "://" in options.endpoint:
-        refuse("gh api takes an endpoint path on github.com")
+    # `gh api -- -XPOST` would rebuild into a flag; GraphQL can carry a mutation in its query.
+    if "://" in options.endpoint or re.match(r"-|/?graphql\b", options.endpoint):
+        refuse("gh api reads one REST endpoint path on github.com")
     return ["api", options.endpoint, "--method=GET",
             *(f"--header={value}" for value in options.header), *(f"--preview={value}" for value in options.preview),
             *(f"--{name}={value}" for name in ("jq", "template", "cache")

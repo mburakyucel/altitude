@@ -31,7 +31,8 @@ REFUSED = (
     ["api", "repos/team/project/issues", "-F", "title=x"], ["api", "repos/team/project", "--raw-field=a=b"],
     ["api", "repos/team/project", "--input", "-"], ["api", "repos/team/project", "--hostname", "example.com"],
     ["api", "graphql", "-f", "query=x"], ["api", "https://example.com/repos/team/project"],
-    ["api", "--method", "GET"],
+    ["api", "--method", "GET"], ["api", "--", "-XPOST"], ["api", "graphql?query=mutation"], ["api", "/graphql"],
+    ["api", "repos/team/project", "-XGET", "-X", "DELETE"],
     # Browser.
     ["pr", "view", "7", "--web"], ["repo", "view", "--web=true"], ["pr", "view", "7", "-w"],
     ["pr", "view", "7", "-cw"], ["search", "issues", "x", "-w"],
