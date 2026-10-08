@@ -154,7 +154,8 @@ class Guest:
             self.process = subprocess.Popen([str(helper()), "run", str(bundle), str(self.socket), str(CPUS),
                                              str(MEMORY_GIB)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                             stderr=subprocess.STDOUT, text=True)
-            threading.Thread(target=self._read, args=(self.process, self.events), daemon=True).start()
+            self.reader = threading.Thread(target=self._read, args=(self.process, self.events), daemon=True)
+            self.reader.start()
             try:
                 self.mac = self.expect("started", 120).split()[1]
                 break
@@ -270,6 +271,7 @@ class Guest:
                 self.process.wait(10)
         if self.listener:
             self.listener.close()
+        self.reader.join(10)  # the helper's last lines, then its log
         self.log.close()
 
 
