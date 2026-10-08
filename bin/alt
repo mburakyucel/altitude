@@ -550,11 +550,22 @@ def main(argv=None) -> None:
             service_url = f"https://localhost:{found['port']}" if platform.containerized() else found["url"]
             request = urllib.request.Request(f"{service_url}/api/{endpoint}",
                                              data=None if setup_command and not args.repair else json.dumps(payload).encode(),
-                                             headers={"Content-Type": "application/json", access.KEY_HEADER: access.machine_key() or ""})
+                                             headers={"Content-Type": "application/json", access.KEY_HEADER: access.machine_key() or "",
+                                                      **({"Accept": "application/x-ndjson"} if validation_run else {})})
             context = ssl.create_default_context(cafile=str(ca) if ca.exists() else None) if found["tls"] else None
             try:
                 with urllib.request.urlopen(request, context=context, timeout=None if review_run else config.MACHINE_COMMAND_TIMEOUT + 60 if machine_run else validation.TIMEOUT + 600 + (validation.SIMULATOR_SECONDS if args.simulator else 0) if validation_run else 130) as response:
-                    result = json.load(response)
+                    if validation_run:  # what a busy machine makes the request wait for, a line at a time, then the answer
+                        result, shown = {}, None
+                        for line in response:
+                            result = json.loads(line)
+                            if result.keys() == {"waiting"} and result["waiting"] != shown:
+                                shown = result["waiting"]
+                                print(f"[altitude] {shown}", file=sys.stderr, flush=True)
+                        if "unit" not in result:
+                            sys.exit(result.get("error") or "alt task validate: altd ended the connection before the run's result")
+                    else:
+                        result = json.load(response)
                     if review_run and not result.get("ok"):
                         sys.exit(result.get("error", "Review execution failed"))
                     if terminal_read:

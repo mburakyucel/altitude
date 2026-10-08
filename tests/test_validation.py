@@ -24,7 +24,7 @@ from pathlib import Path
 from unittest import TestCase, mock
 
 from tests.support import AltitudeCase, make_repo
-from tests.test_grant import SHIM
+from tests.test_grant import SHIM, wait_for
 from altitude import config, dispatch, engines, platform, server, state as S, tasks as T, terminal, validation
 
 RUNNER_HOME = validation.home
@@ -81,6 +81,7 @@ class RunnerCase(AltitudeCase):
         self.bin_dir.mkdir(exist_ok=True)
         self.patch(platform, "validation_unavailable", return_value=None)
         self.patch(validation, "FREE_DISK", 0)   # the host's free disk is not the fixture's
+        self.patch(validation, "WATCH_SECONDS", .02)
         self.owner = self.patch(terminal, "owner_connection", return_value=True)
         self.runner = self.tmp / "runner"
         self.patch(validation, "home", return_value=self.runner)
@@ -116,12 +117,52 @@ class RunnerCase(AltitudeCase):
         return self.request("/api/task/validate", {"project": self.project, "slug": self.slug, "attempt": attempt,
                                                    "command": command, **options}, status=status)
 
+    def send(self, command, *, lines=True):
+        """A validate request left open, from a client that hears what it waits for when `lines`."""
+        connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=60)
+        self.addCleanup(connection.close)
+        connection.request("POST", "/api/task/validate", body=json.dumps({
+            "project": self.project, "slug": self.slug, "attempt": "1", "command": command}),
+            headers={"Content-Type": "application/json", **({"Accept": "application/x-ndjson"} if lines else {})})
+        return connection
+
+    def holding(self):
+        """A run that holds the machine until the returned file exists, started in the background once it runs."""
+        started, release = self.tmp / "holding", self.tmp / "release"
+        answers = []
+        thread = threading.Thread(target=lambda: answers.append(self.validate(
+            ["sh", "-c", f"touch {started}; until [ -e {release} ]; do sleep .02; done"])))
+        thread.start()
+        self.addCleanup(thread.join)
+        self.addCleanup(release.touch)
+        wait_for(started.exists, "the holding run to start")
+        return release, thread, answers
+
     def rows(self):
         return [json.loads(line) for line in (S.task_dir(self.project, self.slug) / "machine.jsonl").read_text()
                 .splitlines()]
 
 
-class TestValidationRunner(RunnerCase):
+class ClientStop:
+    """Both hosts: the service manager's stop is a fixture that ends the command, as stopping its unit does."""
+
+    def test_a_client_that_stops_ends_its_run_and_frees_the_machine_for_the_next_request(self):
+        started, release = self.tmp / "started", self.tmp / "release"
+        self.stops.side_effect = lambda unit, env: release.touch()   # the service manager stops the unit
+        client = self.send(["sh", "-c", f"touch {started}; until [ -e {release} ]; do sleep .02; done; exit 143"])
+        wait_for(started.exists, "the run to start")
+        client.close()   # the client is stopped, interrupted or loses its connection
+        wait_for(lambda: self.rows()[0]["finished"], "the stopped run's record")
+        [row] = self.rows()
+        self.assertEqual({key: row[key] for key in ("ended", "error", "timed_out", "cleanup")},
+                         {"ended": "stopped", "error": "its client stopped or lost its connection", "timed_out": False,
+                          "cleanup": None})
+        self.assertEqual(self.stops.call_args.args[0], row["unit"])
+        self.assertEqual(self.validate(["true"])["exit"], 0, "the next request has the machine")
+        self.assertEqual(list((validation.home() / "runs").iterdir()), [])
+
+
+class TestValidationRunner(ClientStop, RunnerCase):
     host = "linux"  # the fixtures are systemd-run and Podman
 
     def setUp(self):
@@ -231,12 +272,56 @@ class TestValidationRunner(RunnerCase):
             self.assertIn("need podman", self.validate(["true"], status=400)["error"])
         with mock.patch.object(validation, "FREE_DISK", 1 << 62):
             self.assertIn("GiB free", self.validate(["true"], status=400)["error"])
-        with validation._lock:
-            self.assertIn("another validation run", self.validate(["true"], status=400)["error"])
+        with validation._lock, mock.patch.object(validation, "WAIT", 0):
+            self.assertIn("not admitted within 0 minutes, waiting for the validation slot: the runner is removing "
+                          "what earlier runs left", self.validate(["true"], status=400)["error"])
+        self.assertEqual(validation._queue, [])
         T.block(self.project, self.slug, "Waiting", actor="l2", expected_state="running", expected_attempt=1)
         self.assertIn("running owner", self.validate(["true"], status=403)["error"])
         self.assertFalse(self.record.exists())
         self.assertFalse((S.task_dir(self.project, self.slug) / "machine.jsonl").exists())
+
+    def test_a_request_for_a_busy_machine_waits_its_turn_in_arrival_order(self):
+        release, holder, answers = self.holding()
+        second = self.send(["echo", "second"]).getresponse()
+        self.assertEqual((second.status, second.headers["Content-Type"]), (200, "application/x-ndjson"))
+        with validation._line:
+            ends = f"{validation._holder['ends']:%Y-%m-%d %H:%M:%S} UTC"
+        self.assertEqual(json.loads(second.readline()), {"waiting": (
+            f"waiting for the validation slot: the validation run of {self.project}/{self.slug} holds this machine "
+            f"until its limit at {ends}")})
+        third = self.send(["echo", "third"]).getresponse()
+        self.assertIn(f"until its limit at {ends}; 1 request(s) ahead of this one", json.loads(third.readline())["waiting"])
+        leaving = self.send(["echo", "leaving"])
+        self.assertIn("2 request(s) ahead", json.loads(leaving.getresponse().readline())["waiting"])
+        leaving.close()   # a waiting client that stops leaves the line
+        wait_for(lambda: len(validation._queue) == 2, "the stopped client to leave the line")
+        silent = self.send(["echo", "silent"], lines=False)   # a client that reads one JSON reply waits without lines
+        wait_for(lambda: len(validation._queue) == 3, "the silent request to wait")
+        release.touch()
+        holder.join()
+        self.assertEqual(answers[0]["exit"], 0)
+        *waits, answer = [json.loads(line) for line in second.read().splitlines()]
+        self.assertEqual((answer["exit"], answer["output"]), (0, "second\n"))
+        *waits, answer = [json.loads(line) for line in third.read().splitlines()]
+        self.assertEqual((answer["exit"], answer["output"]), (0, "third\n"))
+        self.assertIn("the validation run of", waits[-1]["waiting"], "the line moved up behind the second run")
+        self.assertNotIn("ahead", waits[-1]["waiting"])
+        self.assertEqual(json.loads(silent.getresponse().read())["output"], "silent\n")
+        self.assertEqual([(row["command"], row["ended"]) for row in self.rows()],
+                         [(f"sh -c 'touch {self.tmp / 'holding'}; until [ -e {release} ]; do sleep .02; done'", "exit"),
+                          ("echo second", "exit"), ("echo third", "exit"), ("echo silent", "exit")])
+        self.assertEqual(validation._queue, [])
+
+    def test_a_request_that_waited_is_checked_again_when_admitted(self):
+        release, _, _ = self.holding()
+        waiting = self.send(["true"]).getresponse()
+        waiting.readline()
+        T.block(self.project, self.slug, "Waiting", actor="l2", expected_state="running", expected_attempt=1)
+        release.touch()
+        self.assertEqual(json.loads(waiting.read()), {
+            "error": "alt task validate: only the running owner's current attempt may run validation"})
+        self.assertEqual(len(self.rows()), 1)
 
     def test_the_switch_is_the_operators_and_off_stops_the_running_run(self):
         self.assertTrue(server.machine_view()["validation"])
@@ -428,6 +513,29 @@ class TestValidationRunner(RunnerCase):
         self.assertIn("exit 3", result.stdout)
         self.assertIn(f"results {S.task_dir(self.project, self.slug) / 'validation' / '1'}", result.stdout)
 
+        told, describe, done = [], validation._waiting_for, []
+        validation._lock.acquire()
+        try:
+            with validation._line:
+                validation._holder.update(task="other/task", ends=datetime(2026, 10, 8, 2, 8, 48, tzinfo=timezone.utc))
+            with mock.patch.object(validation, "_waiting_for", side_effect=lambda ahead: (told.append(ahead),
+                                                                                          describe(ahead))[1]):
+                waiting = threading.Thread(target=lambda: done.append(self.alt("task", "validate", "--", "echo", "after",
+                                                                               env=owner)))
+                waiting.start()
+                wait_for(lambda: len(told) > 1, "the request to say what it waits for")   # it printed, then looked again
+        finally:
+            with validation._line:
+                validation._holder.clear()
+                validation._lock.release()
+                validation._line.notify_all()
+        waiting.join()
+        [result] = done
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "[altitude] waiting for the validation slot: the validation run of other/task "
+                                        "holds this machine until its limit at 2026-10-08 02:08:48 UTC\n")
+        self.assertIn("after\n", result.stdout)
+
     def test_a_failed_cleanup_keeps_the_area_until_a_request_removes_it_and_an_unrecorded_outcome_keeps_its_record(self):
         with mock.patch.object(T, "finish_machine_run", side_effect=OSError("disk full")):
             self.assertIn("disk full", self.validate(["true"], status=400)["error"])
@@ -559,7 +667,7 @@ class MacRunnerCase(RunnerCase):
         self.patch(platform, "XCODE_SELECT", str(select))
 
 
-class TestMacValidationRunner(MacRunnerCase):
+class TestMacValidationRunner(ClientStop, MacRunnerCase):
     def test_a_run_uses_the_committed_head_under_the_validation_profile_with_its_own_environment(self):
         (self.repo / "uncommitted.txt").write_text("not tested\n")
         result = self.validate(["sh", "-c", 'git rev-parse HEAD > "$VALIDATION_RESULTS/head"; '

@@ -12,13 +12,16 @@ altd creates and removes and the run reaches only through a relay to its Safari 
 The runner's storage sits beside Altitude's home, outside every worker's writable roots, and what a run produces
 reaches the task folder only through no-follow descriptors. Runs are recorded in the task's `machine.jsonl` like
 machine commands.
+One run uses the machine at a time: a request that finds it busy waits its turn in arrival order, and a request whose
+client goes away leaves the line or has its run stopped.
 The operator's switch (on unless turned off) stops running runs and refuses new ones; its state lives in the runner's
 storage, where a worker cannot turn it back on.
 See docs/DEVELOPMENT.md#validation-runner.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import logging
@@ -31,11 +34,14 @@ import socket
 import stat
 import subprocess
 import threading
+import time
 import uuid
 
 from . import config, engines, platform, simulator as sim, state as S, tasks as T
 
 TIMEOUT = 3600                   # seconds for one run, image build included
+WAIT = TIMEOUT + 600             # seconds a request waits in line for the machine: the client's budget for one run
+WATCH_SECONDS = 2                # how often a waiting or admitted request checks that its client is still there
 SIMULATOR_SECONDS = 900          # beside it, for a run's iPhone: creation, boot, screenshot and removal
 MEMORY_MAX = "8G"                # the unit's memory, swap and process caps hold Podman and the container together
 TASKS_MAX = 4096
@@ -47,14 +53,19 @@ USER = "1000:1000"               # the image's `ubuntu` user, mapped to the oper
 IMAGE_CACHE = "/home/ubuntu/.cache/altitude-installation-vm"
 
 OFF = "alt task validate: the operator has turned validation runs off in Settings"
+RESTARTING = "alt task validate: Altitude is restarting; retry when it is ready"
+CLIENT_GONE = "its client stopped or lost its connection"
 
 UNIT_PREFIX = "altitude-validation-"   # every unit the runner starts; its rows are recorded by reconcile()
 
 LOG = logging.getLogger(__name__)
 _lock = threading.Lock()         # one run on the machine at a time, and removal of earlier runs' areas before any
+_line = threading.Condition()    # guards the requests waiting for `_lock`, admitted in arrival order, and its holder
+_queue: list = []
+_holder: dict = {}               # the task whose run holds `_lock` and when that run's limit ends
 _state = threading.Lock()        # orders admission against turning the runner off
 _ready = threading.Event()       # no earlier run's area remains; until then each request retries their removal
-_active: dict = {}               # the admitted run's area and unit, and whether turning the runner off stopped it
+_active: dict = {}               # the admitted run's area and unit, and how it was stopped, if it was
 
 
 def enabled() -> bool:
@@ -460,30 +471,97 @@ def _recover() -> str | None:
 
 
 def stop_all() -> None:
-    """Stop the admitted run, if any. Called after the setting is saved off, so a request admitted later is refused.
-    The marker covers a unit not created yet: its script checks the marker first, and the marker exists before the
-    stop, so the unit either already exists and is stopped or starts, finds the marker and exits."""
+    """Stop the admitted run, if any. Called after the setting is saved off, so a request admitted later is refused."""
+    _stop("turned off")
+
+
+def _stop(ended: str, unit: str | None = None) -> None:
+    """Stop the admitted run (only `unit`'s, when named) and record how it `ended`. The marker covers a unit not
+    created yet: its script checks the marker first, and the marker exists before the stop, so the unit either already
+    exists and is stopped or starts, finds the marker and exits."""
     with _state:
-        if not _active:
+        if not _active or unit and _active["unit"] != unit or _active["stopped"]:
             return
-        _active["stopped"] = True
+        _active["stopped"] = ended
         (_active["area"] / "stopped").touch()
         unit = _active["unit"]
     platform.job_stop(unit, platform.manager_env(engines.clean_env()))
 
 
+def _waiting_for(ahead: int) -> str:
+    """What a request in line waits for, with `_line` held."""
+    held = (f"the validation run of {_holder['task']} holds this machine until its limit at "
+            f"{_holder['ends']:%Y-%m-%d %H:%M:%S} UTC" if _holder else
+            "the runner is removing what earlier runs left")
+    return f"waiting for the validation slot: {held}" + (f"; {ahead} request(s) ahead of this one" if ahead else "")
+
+
+@contextmanager
+def _turn(task: str, limit: int, waiting, gone):
+    """Hold this machine's one validation slot for `task`, whose run's limit ends `limit` seconds from admission.
+    A request that finds it busy waits in arrival order for up to WAIT seconds, telling `waiting(text)` what it waits
+    for when that changes and at least every minute, and leaves the line when `gone()` says its client stopped."""
+    ticket, deadline, told, last = object(), time.monotonic() + WAIT, None, 0.0
+    with _line:
+        _queue.append(ticket)
+    try:
+        while True:
+            with _line:
+                if _queue[0] is ticket and _lock.acquire(blocking=False):
+                    _holder.update(task=task, ends=datetime.now(timezone.utc) + timedelta(seconds=limit))
+                    break
+                text = _waiting_for(_queue.index(ticket))
+            if gone():
+                raise ValueError(f"alt task validate: {CLIENT_GONE} while it waited")
+            if time.monotonic() >= deadline:
+                raise ValueError(f"alt task validate: not admitted within {WAIT // 60} minutes, {text}; try again")
+            if text != told or time.monotonic() - last >= 60:
+                waiting(text)
+                told, last = text, time.monotonic()
+            with _line:
+                _line.wait(WATCH_SECONDS)
+    finally:
+        with _line:
+            _queue.remove(ticket)
+            _line.notify_all()
+    try:
+        yield
+    finally:
+        with _line:
+            _holder.clear()
+            _lock.release()
+            _line.notify_all()
+
+
 def run(project: str, slug: str, attempt: object, argv: object, *, kvm: object = False, publish: object = None,
-        simulator: object = False, owner=lambda task: False) -> dict:
+        simulator: object = False, owner=lambda task: False, waiting=lambda text: None, gone=lambda: False) -> dict:
     """One validation run for the running owner's current attempt; returns the command's exit status and output.
-    `owner(task)` says whether the request comes from that task's own worker."""
+    `owner(task)` says whether the request comes from that task's own worker. A request that finds the machine busy
+    waits its turn, telling `waiting(text)` what it waits for. `gone()` says the request's client stopped: a waiting
+    request leaves the line, and an admitted run is stopped and recorded as stopped."""
+    def check() -> dict:
+        return _check(project, slug, attempt, argv, kvm=kvm, publish=publish, simulator=simulator, owner=owner)
     with config.restart_lock() as ready:
-        if not ready or config.restart_in_progress():
-            raise ValueError("alt task validate: Altitude is restarting; retry when it is ready")
-        return _run(project, slug, attempt, argv, kvm=kvm, publish=publish, simulator=simulator, owner=owner)
+        if not ready:
+            raise ValueError(RESTARTING)
+        check()
+    try:
+        phone = sim.plan() if simulator else None
+    except ValueError as exc:
+        raise ValueError(f"alt task validate: {exc}") from exc
+    with _turn(f"{project}/{slug}", TIMEOUT + (SIMULATOR_SECONDS if phone else 0), waiting, gone):
+        with config.restart_lock() as ready:
+            if not ready:
+                raise ValueError(RESTARTING)
+            task = check()  # the task, the switch and the host may have changed while the request waited
+            return _run(project, slug, task, argv, kvm=kvm, publish=publish, phone=phone, gone=gone)
 
 
-def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object, publish: object, simulator: object,
-         owner) -> dict:
+def _check(project: str, slug: str, attempt: object, argv: object, *, kvm: object, publish: object,
+           simulator: object, owner) -> dict:
+    """Refuse a request this runner cannot or may not run; returns its task."""
+    if config.restart_in_progress():
+        raise ValueError(RESTARTING)
     S.require_task_slug(slug)
     if (not isinstance(argv, list) or not argv or not all(isinstance(a, str) and a for a in argv)
             or sum(len(a) + 1 for a in argv) > COMMAND_LIMIT):
@@ -503,10 +581,6 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
     if kvm and not os.access(platform.KVM, os.R_OK | os.W_OK):
         raise ValueError("alt task validate: no KVM access; /dev/kvm is usable while the operator's desktop login "
                          "is active")
-    try:
-        phone = sim.plan() if simulator else None
-    except ValueError as exc:
-        raise ValueError(f"alt task validate: {exc}") from exc
     task = S.load_task(project, slug)
     if task.get("state") != "running" or str(task.get("attempt")) != str(attempt) or not task.get("worktree"):
         raise PermissionError("alt task validate: only the running owner's current attempt may run validation")
@@ -515,21 +589,26 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
     home().mkdir(mode=0o700, parents=True, exist_ok=True)
     if shutil.disk_usage(home()).free < FREE_DISK:
         raise ValueError(f"alt task validate: less than {FREE_DISK >> 30} GiB free for the validation runner")
-    if not _lock.acquire(blocking=False):
-        raise ValueError("alt task validate: another validation run is using this machine; try again when it ends"
-                         if _ready.is_set() else "alt task validate: the runner is removing what earlier runs left; "
-                         "try again shortly")
-    try:
-        left = None if _ready.is_set() else _recover()
-    except BaseException:
-        _lock.release()
-        raise
+    return task
+
+
+def _run(project: str, slug: str, task: dict, argv: list[str], *, kvm: bool, publish: int | None, phone: dict | None,
+         gone) -> dict:
+    """The admitted run, with `_lock` held."""
+    left = None if _ready.is_set() else _recover()
     if left:
-        _lock.release()
         raise ValueError(f"alt task validate: the runner has not finished removing what earlier runs left: {left}")
     ident = uuid.uuid4().hex[:12]
     area, unit = home() / "runs" / ident, f"{UNIT_PREFIX}{ident}.service"
-    row, result, failure, stopped, target, skipped, device, relay = None, None, None, False, None, [], None, None
+    row, result, failure, stopped, target, skipped, device, relay = None, None, None, None, None, [], None, None
+    watched = threading.Event()
+
+    def watch() -> None:  # the job's launcher waits for the job, so the client is watched beside it
+        while not watched.wait(WATCH_SECONDS):
+            if gone():
+                _stop("stopped", unit)
+                return
+
     try:
         for folder in candidate_dirs(area):
             folder.mkdir(mode=0o700, parents=True)
@@ -538,7 +617,8 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
         with _state:
             if not enabled():
                 raise PermissionError(OFF)
-            _active.update(area=area, unit=unit, stopped=False)
+            _active.update(area=area, unit=unit, stopped=None)
+        threading.Thread(target=watch, name="validation-client", daemon=True).start()
         try:
             commit, tree = _clone(Path(task["worktree"]), area / "work", project)
         except (OSError, subprocess.SubprocessError) as exc:
@@ -560,6 +640,8 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
         with _state:
             stopped = _active["stopped"]
         if not stopped:
+            with _line:
+                _holder["ends"] = datetime.now(timezone.utc) + timedelta(seconds=TIMEOUT)
             result = _job(unit, run_script(f"{UNIT_PREFIX}{ident}", area, argv, kvm=kvm, publish=ports,
                                            simulator=bool(phone)), area, TIMEOUT, limits=True)
         with _state:
@@ -577,6 +659,7 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
         failure = str(exc) or type(exc).__name__
         raise
     finally:
+        watched.set()
         with _state:
             _active.clear()
         recorded, delivered, cleanup_error = row is None, target is not None, None
@@ -594,10 +677,11 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
             cleanup_error = cleanup([path for path in scratch if os.path.lexists(path)],
                                     unit if row is not None else None) or device_error
             if row is not None:
+                why = CLIENT_GONE if stopped == "stopped" else stopped
                 result = result or {"exit": None, "timed_out": False, "started": None, "finished": S.now(),
-                                    "error": "turned off before it started" if stopped else failure,
+                                    "error": f"{why} before it started" if stopped else failure,
                                     "output": "", "output_truncated": False}
-                ended = ("turned off" if stopped else "failed" if failure else "cleanup failed" if cleanup_error
+                ended = (stopped if stopped else "failed" if failure else "cleanup failed" if cleanup_error
                          else "exit" if result["exit"] is not None
                          else "timeout" if result["timed_out"] else "no exit status")
                 if target is None:
@@ -608,6 +692,8 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
                            cleanup=cleanup_error)
                 if failure and not row["error"]:
                     row["error"] = failure
+                if stopped == "stopped" and result["started"]:
+                    row["error"] = CLIENT_GONE
                 T.finish_machine_run(project, slug, row)
                 recorded = True
         finally:
@@ -619,7 +705,6 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
                     _ready.clear()
                     why = cleanup_error or "its record or evidence was not finished"
                     LOG.warning(f"validation: retained {area}: {why}; the next request retries its removal")
-                _lock.release()
     return {**result, "n": row["n"], "commit": commit, "tree": tree, "host": row["host"], "isolation": row["isolation"],
             "ended": row["ended"], "cleanup": cleanup_error, "results": str(target), "results_skipped": skipped,
             "publish": row["publish"], "simulator": row["simulator"], "log": row["log"], "unit": unit}

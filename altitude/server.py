@@ -1747,6 +1747,55 @@ class Handler(BaseHTTPRequestHandler):
             log(f"update request failed: {exc!r}")
             return self._json({"error": "Altitude could not complete the update request. Run alt update in a terminal to see why."}, 503)
 
+    def _validate(self, o: dict) -> None:
+        """`alt task validate`: one validation run, answered as JSON. A client that accepts NDJSON hears what a busy
+        machine makes its request wait for, one line at a time, then gets the answer as the last line. Once its
+        request is read, the client sends nothing more, so a readable connection means it closed it: that takes a
+        waiting request out of the line and stops an admitted run (docs/DEVELOPMENT.md#validation-runner)."""
+        streaming, started = "application/x-ndjson" in (self.headers.get("Accept") or ""), False
+
+        def waiting(text: str) -> None:
+            nonlocal started
+            if not streaming:
+                return
+            if not started:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/x-ndjson")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                started = True
+            self.wfile.write(json.dumps({"waiting": text}).encode() + b"\n")
+
+        def gone() -> bool:
+            try:
+                poller = select.poll()
+                poller.register(self.connection, select.POLLIN | select.POLLPRI)
+                return bool(poller.poll(0))
+            except (OSError, ValueError):
+                return True
+        try:
+            if o.keys() - {"project", "slug", "attempt", "command", "kvm", "publish", "simulator"}:
+                raise ValueError("alt task validate: unsupported fields")
+            peer, local = self.client_address, self.connection.getsockname()
+
+            def owner(task: dict) -> bool:
+                return task_owner_connection(o["project"], o["slug"], task, peer, local)
+            answer, code = validation.run(o["project"], o["slug"], o.get("attempt"), o.get("command"),
+                                          kvm=o.get("kvm", False), publish=o.get("publish"),
+                                          simulator=o.get("simulator", False), owner=owner, waiting=waiting,
+                                          gone=gone), 200
+        except PermissionError as exc:
+            answer, code = {"error": str(exc)}, 403
+        except (ValueError, KeyError, OSError, RuntimeError) as exc:
+            answer, code = {"error": str(exc)}, 400
+        if not started:
+            return self._json(answer, code)
+        try:
+            self.wfile.write(json.dumps(answer, default=str).encode() + b"\n")
+        except OSError as exc:
+            log(f"{self.command} {self.path}: client went away ({type(exc).__name__}: {exc})")
+
     def _validation_post(self, body: dict) -> None:
         """The validation switch, behind the terminal's request checks: an agent cannot turn its own runner back on."""
         denied = self._terminal_denied(json_body=True, subject="Validation")
@@ -2083,20 +2132,7 @@ class Handler(BaseHTTPRequestHandler):
                 except (ValueError, KeyError, OSError, RuntimeError) as exc:
                     return self._json({"error": str(exc)}, 400)
             if parts == ["api", "task", "validate"]:
-                try:
-                    if o.keys() - {"project", "slug", "attempt", "command", "kvm", "publish", "simulator"}:
-                        raise ValueError("alt task validate: unsupported fields")
-                    peer, local = self.client_address, self.connection.getsockname()
-
-                    def owner(task: dict) -> bool:
-                        return task_owner_connection(o["project"], o["slug"], task, peer, local)
-                    return self._json(validation.run(o["project"], o["slug"], o.get("attempt"), o.get("command"),
-                                                     kvm=o.get("kvm", False), publish=o.get("publish"),
-                                                     simulator=o.get("simulator", False), owner=owner))
-                except PermissionError as exc:
-                    return self._json({"error": str(exc)}, 403)
-                except (ValueError, KeyError, OSError, RuntimeError) as exc:
-                    return self._json({"error": str(exc)}, 400)
+                return self._validate(o)
             if parts == ["api", "task", "run"]:
                 try:
                     if o.keys() - {"project", "slug", "attempt", "command", "request"}:
