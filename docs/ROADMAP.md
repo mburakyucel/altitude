@@ -67,14 +67,16 @@ the Mac under a throwaway home. Minimal OS installation,
 login/logout, browser/device CA trust, download from GitHub's published release, native confinement and
 live-provider compatibility remain outside this harness's evidence.
 
-The private-trial path is Linux-only until the macOS evidence below is recorded. The following
-remaining acceptance stays under #225/#226/#219/#350; those issues stay open:
+From `v0.1.0` a release also installs on a Mac, which stays experimental until the native evidence
+below is recorded. The following remaining acceptance stays under #225/#226/#219/#350; those issues
+stay open:
 
 - **Native macOS runtime and installation:** the common engine/authority contract runs on a per-user
   LaunchAgent, with each job its own launchd job (coalition Stop, a supervisor-held time limit),
   Altitude's Seatbelt profile around Claude, Codex's own sandbox, and the installer's macOS branch.
-  It is on `main` (#570), and Altitude runs from source on the operator's Mac. macOS 15 and 26 on
-  Apple silicon remain targets, not supported platforms, until the evidence below is recorded.
+  It is on `main` (#570), Altitude runs from source on the operator's Mac, and `v0.1.0` installs there
+  with one command (#551). macOS 15 and 26 on Apple silicon remain experimental targets, not
+  supported platforms, until the evidence below is recorded.
   Running before any login (boot mode) is a separate, later increment.
 - **Native evidence:** on a disposable Mac account, record exact OS/chip, application, Python and
   engine versions. Verify allowed writes and denied writes outside the task, ordinary and detached
@@ -165,8 +167,8 @@ Live-provider testing is deferred by the operator's 2026-09-08 decision. The
 remaining validation limits explicit; this does not establish clean-machine or public readiness.
 
 The direction is the same project and task workflow across CLI engines and supported machines.
-The current [setup](SETUP.md) supplies a private Linux x86_64 archive; Ubuntu 24.04 is its initial
-target. The native macOS 15/26 Apple-silicon runtime is implemented; its validation remains as described
+The current [setup](SETUP.md) supplies one release archive for Linux x86_64, with Ubuntu 24.04 as its
+initial target, and experimentally for Apple silicon Macs. The native macOS 15/26 Apple-silicon runtime is implemented; its validation remains as described
 above. The common confinement contract still needs proof before any support claim.
 
 | Work | Intended outcome | Current boundary |
@@ -174,7 +176,7 @@ above. The common confinement contract still needs proof before any support clai
 | Additional CLI engines | Integrate candidates such as **OpenCode**, preserving native tools, sessions, context and helpers. | Codex and Claude Code work today. Each added engine needs launch/resume/stop, permissions, authentication and optional usage observations implemented and verified through task delivery. |
 | Engine readiness and access | Select from installed, authenticated engines; document verified model-provider, subscription and API/access configurations. | One engine suffices with Auto or an explicit pin. Local readiness distinguishes configured, unknown and tested; it makes no provider request. Launch environment and role-model settings constrain configuration inheritance. |
 | [macOS runtime · #225](https://github.com/mburakyucel/altitude/issues/225) | Native OS/service integration with verified start, task execution, stop/resume, restart/adoption and shutdown. | Implemented behind the platform seam; spare-account acceptance (install, confinement, Stop, restart/adoption, update/rollback, logout/login, reboot, sleep) is pending. |
-| [Installable daemon and updates · #226](https://github.com/mburakyucel/altitude/issues/226) | A packaged CLI, daemon and built web app, onboarding, per-user service, versioned updates and recoverable uninstall on supported Linux and macOS. | Linux and macOS (from a release after `v0.1.0-rc.2`) install with one command from a published release, use localhost HTTPS, explicit CA trust and retained data, and offer verified in-app and CLI updates; the Mac lane runs under a throwaway home of an existing account. Clean-machine acceptance remains pending. |
+| [Installable daemon and updates · #226](https://github.com/mburakyucel/altitude/issues/226) | A packaged CLI, daemon and built web app, onboarding, per-user service, versioned updates and recoverable uninstall on supported Linux and macOS. | Linux and macOS (from `v0.1.0`) install with one command from a published release, use localhost HTTPS, explicit CA trust and retained data, and offer verified in-app and CLI updates; fresh Linux and macOS virtual machines and a throwaway home on the Mac prove the lifecycle. A physical clean machine remains pending. |
 
 Engine work belongs at the [integration boundary](ARCHITECTURE.md#engine-integration-boundary),
 with remaining assumptions outside it moved as those files are touched. Platform support and

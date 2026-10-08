@@ -62,18 +62,24 @@ See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](D
 
 On Linux x86_64 with Python 3.12 or newer and a systemd user manager, or on macOS 15 or newer on
 Apple silicon with Python 3.12, Homebrew's OpenSSL 3 and a logged-in desktop session, one command
-installs a published release as the account that will use Altitude. The preview has no stable
-release yet, so install the newest release candidate from its own tag:
+installs the latest published release as the account that will use Altitude:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/download/v0.1.0-rc.2/install.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/latest/download/install.sh | sh
 ```
+
+The command downloads anonymously, so it needs the repository to be public; until then,
+[install by hand](#install-by-hand) from files downloaded while signed in. `latest` names the
+newest stable release and skips release candidates; to install one exact release,
+replace `latest/download` with `download/<tag>`, for example `download/v0.1.0`. On the Mac, installation,
+updates, rollback, uninstall and starting again at login pass in fresh macOS virtual machines, while
+native runtime acceptance is pending, so macOS is experimental.
 
 `v0.1.0-rc.1` cannot start its service: systemd refuses the working directory its unit names, so
 installation fails at service start and leaves that unit and an interrupted activation behind.
 Until they are cleared, `alt recover`, updates and uninstall stop at the refused unit. On a machine
-that ran it, remove the unit and complete the activation's recovery, then run the command above;
-configuration, TLS identity and data are kept:
+that ran it, remove the unit and complete the activation's recovery, then install again; the
+failed installation left no version to update, and configuration, TLS identity and data are kept:
 
 ```sh
 systemctl --user disable altitude.service
@@ -86,15 +92,12 @@ systemctl --user daemon-reload
 when something is missing: Linux x86_64 or a Mac with Apple silicon, not root, Python 3.12 or newer,
 `curl`, a SHA-256 tool and `openssl`; on Linux `systemctl --user`, on a Mac macOS 15 or newer,
 OpenSSL 3 ahead of macOS's LibreSSL on PATH and launchd's domain of the logged-in desktop session.
-`v0.1.0-rc.2` and earlier releases stop on a Mac before downloading anything; a Mac installs a
-release whose `install.sh` lists these Mac checks. It then downloads that release's archive and `install.py`, checks
+Releases before `v0.1.0` stop on a Mac before downloading anything. It then downloads that release's archive and `install.py`, checks
 each against the SHA-256 written into the script when the release was built, runs
 `install.py --archive … --sha256 …` and prints the address, the certificate fingerprint and the next
 steps: put `~/.local/bin` on PATH, run `alt doctor`, trust the certificate and open the address.
 Nothing is run from a download that does not match, and nothing runs as root. The script is one
-function called on its last line, so a download cut off midway does nothing. Once a stable
-release exists, `https://github.com/mburakyucel/altitude/releases/latest/download/install.sh`
-names the newest one; `latest` skips release candidates.
+function called on its last line, so a download cut off midway does nothing.
 
 An installed copy checks for a newer release and offers it in the app, in `alt doctor` and through
 `alt update` ([operations](OPERATIONS.md#installed-application-lifecycle)); nothing updates until you
@@ -103,12 +106,12 @@ a copy installed from a stable release is offered stable releases only.
 
 The command trusts GitHub's HTTPS and the published, immutable release for `install.sh` itself.
 Releases that the release workflow publishes from the public repository attest every release file.
-A release published while the repository was private, including `v0.1.0-rc.1`, has no attestation,
-so this check applies to releases published once it is public. To verify an attested release's script before running it, set `VERSION`
-to its tag:
+A release published while the repository was private, including `v0.1.0` and its release candidates,
+has no attestation, so this check applies to releases published once it is public. To verify an
+attested release's script before running it, set `VERSION` to its tag:
 
 ```sh
-VERSION=v0.1.0   # an attested release
+VERSION=v0.1.1   # replace with an attested release's tag
 curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/mburakyucel/altitude/releases/download/$VERSION/install.sh" &&
   gh attestation verify install.sh --repo mburakyucel/altitude &&
   sh install.sh
@@ -123,17 +126,6 @@ sleeps, the terminal closes), `~/.local/bin/alt recover` finishes restoring the 
 `python3.12 install.py --recover`. Configuration, TLS identity and data are kept either way. A Mac can
 also run Altitude from a source checkout: build the web app, run `bin/alt tls-init`, then
 `make install-service`, which installs the same LaunchAgent from the checkout ([operations](OPERATIONS.md)).
-
-The same installer runs by hand from the release files, for example offline or with a private
-archive: download `install.py`, the versioned `.tar.gz` archive and its `.sha256` from the release,
-and verify the checksum's source; a checksum from the same untrusted download does not establish
-authenticity.
-
-```sh
-python3.12 install.py --archive altitude-v0.1.0-rc.2.tar.gz --sha256 '<release SHA-256>'
-export PATH="$HOME/.local/bin:$PATH"
-alt doctor
-```
 
 Installation starts and enables an owned per-user service and prints its HTTPS URL and public
 CA fingerprint. It refuses an existing customized service or conflicting `alt` launcher;
@@ -151,6 +143,30 @@ For engines outside their default locations, the existing `CODEX_BIN` or `CLAUDE
 select absolute paths. [Configuration](#configuration-and-limits) describes saved settings.
 For nvm installations, Altitude discovers the installed default when Node is absent from PATH;
 enable its Corepack pnpm shim for project builds. See [noninteractive toolchain setup](DEVELOPMENT.md#noninteractive-toolchain).
+
+### Install by hand
+
+The same installer runs by hand from the release files, for example offline or while the repository
+is private: download `install.py`, the versioned `.tar.gz` archive and its `.sha256` from the release
+(signed in, `gh release download v0.1.0 --repo mburakyucel/altitude`), and verify the checksum's
+source; a checksum from the same untrusted download does not establish authenticity.
+
+```sh
+python3.12 install.py --archive altitude-v0.1.0.tar.gz --sha256 '<release SHA-256>'
+export PATH="$HOME/.local/bin:$PATH"
+alt doctor
+```
+
+### Update from a release candidate
+
+A copy installed from `v0.1.0-rc.2` follows stable releases only and is offered `v0.1.0` and later
+stable releases. The lookup and download are anonymous requests to GitHub, which find nothing while
+the repository is private; until then, download the archive while signed in to GitHub and install it:
+
+```sh
+gh release download v0.1.0 --repo mburakyucel/altitude --pattern 'altitude-v0.1.0.tar.gz*'
+alt update --archive altitude-v0.1.0.tar.gz --sha256 "$(cat altitude-v0.1.0.tar.gz.sha256)"
+```
 
 ### Installation with a coding agent
 
