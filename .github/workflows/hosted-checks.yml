@@ -47,6 +47,13 @@ jobs:
         with:
           node-version: 22
 
+      # The image integration fixtures use the detected ffmpeg converter and Little CMS (docs/DEVELOPMENT.md).
+      - name: Install the image converter
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg liblcms2-2
+          ffmpeg -version | head -n 1
+
       # Corepack selects the pinned pnpm from web/package.json only when pnpm starts inside web/.
       - name: Install frozen dependencies and Chromium
         working-directory: web

@@ -42,6 +42,8 @@ class TestRequiredCheckWorkflow(AltitudeCase):
         self.assertNotIn('--dir', install)
         self.assertIn('pnpm install --frozen-lockfile', install)
         self.assertIn('pnpm exec playwright install --with-deps chromium', install)
+        converter = next(step for step in steps if step.startswith('name: Install the image converter'))
+        self.assertIn('apt-get install -y --no-install-recommends ffmpeg liblcms2-2', converter)
         self.assertIn('name: Full deterministic checks\n        run: make check\n', self.job)
         report = steps[-1]
         self.assertIn('if: failure()', report)
