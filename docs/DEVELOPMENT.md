@@ -1092,7 +1092,7 @@ shell trusts, with `github.com` resolving to the loopback.
 and load average before and after, the guest's sizing, each image's restore image, macOS build,
 prerequisites and disk footprint, and per phase the probe outcomes, every attempt's and step's exit
 and result, the guest's load average, the disk the clone took and the run time. Each step's full output, the
-lifecycle's own results and the guest helper's log stay beside it. Everything the runner writes
+listing each refusal is compared against, the lifecycle's own results and the guest helper's log stay beside it. Everything the runner writes
 lives in `~/.cache/altitude-installation-vm/macos`: the helper, the release build and its temporary files, the images (about 26 GiB for macOS
 26.6.2) and per-run clones (about 1 GiB at most), deleted after each phase, also after a failure or a
 stop. One guest runs at a time, and the runner stops whenever less than 10 GiB of disk would stay

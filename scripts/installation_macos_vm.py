@@ -736,7 +736,9 @@ def attempt(guest: Guest, repository: str, user: str, results: Path, label: str)
     result = guest.ssh(wrap(login(public)), timeout=300, check=False)
     after = guest.ssh(wrap(login(LISTING)), timeout=120).stdout
     (results / f"{label}.log").write_text(f"$ {public}\n# exit {result.returncode}\n{result.stdout}{result.stderr}")
-    return {"user": user, "exit": result.returncode, "output": (result.stdout + result.stderr).strip(), "unchanged": before == after}
+    (results / f"{label}.listing").write_text(before)
+    return {"user": user, "exit": result.returncode, "output": (result.stdout + result.stderr).strip(),
+            "listed": len(before.splitlines()), "unchanged": before == after}
 
 
 # Each refusal names the missing prerequisite and its documented fix.
