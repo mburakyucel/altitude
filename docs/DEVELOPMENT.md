@@ -508,7 +508,7 @@ The approved fictional browser lane below establishes only the journeys actually
 The complete required suite runs in a Mac validation run with its dependencies in the run's own folders:
 
 ```sh
-alt task validate -- sh -c 'export PLAYWRIGHT_BROWSERS_PATH="$HOME/browsers" MAC_CHROMIUM_TMPDIR="$TMPDIR" ALTITUDE_UI_BROWSER_CONFIG="$HOME/config" npm_config_cache="$TMPDIR/npm" XDG_CACHE_HOME="$HOME/cache" && pnpm --dir web install --frozen-lockfile --store-dir "$TMPDIR/pnpm-store" && pnpm --dir web exec playwright install chromium chromium-headless-shell && make check'
+alt task validate -- sh -c 'export PLAYWRIGHT_BROWSERS_PATH="$HOME/browsers" MAC_CHROMIUM_TMPDIR="$TMPDIR" ALTITUDE_UI_BROWSER_CONFIG="$HOME/config" npm_config_cache="$TMPDIR/npm" XDG_CACHE_HOME="$HOME/cache" && (cd web && pnpm install --frozen-lockfile --store-dir "$TMPDIR/pnpm-store" && pnpm exec playwright install chromium chromium-headless-shell) && make check'
 ```
 
 A Mac shared with running tasks runs the suite several times slower than an idle one, and workers' and
