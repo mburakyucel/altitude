@@ -48,9 +48,9 @@ L3_GH_SEARCHES = {"code", "commits", "issues", "prs", "repos"}
 L3_GH_RULE = (
     "The coordinator's gh only reads, from this project's repository or a public one: "
     "view/list/status/checks/diff/watch/check of pr, issue, release, repo, run, workflow, ruleset, label and cache; "
-    "`gh search <type>` scoped with --repo or repo:OWNER/REPO; and `gh api repos/OWNER/REPO/...` with GET and no "
-    "fields or input. Writes, downloads, --web or -w, owner-wide reads (`repo list`, --owner, --org, org:/user:/owner:, OR) "
-    "and other private repositories are refused; use `alt issue` to write and `alt issue inspect` for an "
+    "`gh search <type>` scoped with --repo or repo:OWNER/REPO; and `gh api repos/OWNER/REPO/...` with GET and "
+    "no fields or input. Writes, downloads, --web or -w, owner-wide reads (`repo list`, --owner, --org, "
+    "org:/user:/owner:, OR) and other private repositories are refused; use `alt issue` to write and `alt issue inspect` for an "
     "operator-linked issue elsewhere.")
 _GH_NAME = r"[A-Za-z0-9_.-]+"
 _GH_REPO = re.compile(rf"(?:(?:https://)?(?:www\.)?github\.com/)?({_GH_NAME})/({_GH_NAME}?)(?:\.git)?", re.I)
