@@ -262,6 +262,12 @@ def _l3_verb_request(project: str, request: dict) -> dict:
             result = l3.project_message(project, options.target, options.text, summary=options.summary,
                                         request_id=options.request_id, reply_to=options.reply_to)
             return {"returncode": 0, "stdout": json.dumps(result) + "\n", "stderr": ""}
+        if args[:2] == ["project", "terminal"]:
+            if stdin or args[2:] not in ([], ["--json"]):
+                raise ValueError("alt project terminal: the only option is --json")
+            record = coordinator_terminal_output(project)
+            text = json.dumps(record) if args[2:] else terminal.describe(record, "project")
+            return {"returncode": 0, "stdout": text + "\n", "stderr": ""}
         project_options = {"--p", "--pr", "--pro", "--proj", "--proje", "--projec", "--project"}
         file_options = {"--f", "--fi", "--fil", "--file"}
         if any(arg.split("=", 1)[0] in project_options | file_options
@@ -2861,7 +2867,16 @@ def owner_terminal_output(project: str, slug: str, attempt: object, peer: tuple,
         raise PermissionError("alt task terminal: only the running owner's current attempt may read its terminal")
     if not task_owner_connection(project, slug, task, peer, local):
         raise PermissionError("alt task terminal: only this task's owner may read its terminal")
-    return terminal.owner_output(project, slug)
+    return terminal.output(project, slug)
+
+
+def coordinator_terminal_output(project: str) -> dict:
+    """The project terminal's output for the project's coordinator. Only the project-bound coordinator socket calls
+    this, so neither a task worker nor another project's coordinator can read it."""
+    unavailable = platform.container_unavailable("Terminal")
+    if unavailable:
+        raise ValueError(unavailable)
+    return terminal.output(project, None)
 
 
 def pr_close(project: str, number: int, *, actor: str, body: str = "") -> dict:

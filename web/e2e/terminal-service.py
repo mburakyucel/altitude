@@ -4,7 +4,7 @@ things are fixtures: the agent check (service_support passes every request; /fix
 and the shell (no profile files, a fixed prompt) and its job, which the service manager runs in production.
 Routes under /fixture/ drive the lifecycle events a walkthrough cannot cause from the page: a lost stream,
 a finished task, an agent request, a restart, an update that replaces the built app under an open page, the
-app's files out of reach. /fixture/notices reads what waits for the task owner."""
+app's files out of reach. /fixture/notices reads what waits for the task owner and the coordinator."""
 import os
 import shutil
 import socket
@@ -82,9 +82,11 @@ def main():
             if self.path == "/fixture/unreachable":  # the connection drops for the terminal's code and the page
                 unreachable.set()
                 return self._json({"ok": True})
-            if self.path == "/fixture/notices":  # what waits for the task owner's next checkpoint
+            if self.path == "/fixture/notices":  # what waits for the task owner's next checkpoint and the coordinator
                 return self._json({"notices": [row["text"] for row in T.pending("atlas", slug)
-                                               if row.get("by") == "terminal"]})
+                                               if row.get("by") == "terminal"],
+                                   "coordinator": [row["text"] for row in l3.queued("atlas")
+                                                   if row["trigger"] == "terminal"]})
             if self.path == "/fixture/finish":  # the task finishes; altd's next tick closes its terminal
                 row = S.load_task("atlas", slug)
                 row.update(state="done", agent_id=None)
