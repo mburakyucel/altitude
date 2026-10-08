@@ -2,6 +2,7 @@
 from __future__ import annotations
 import fcntl
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -20,7 +21,8 @@ PENDING = "pending — "
 # Every bullet templates/incident.md writes, in order. A value may run over many lines, so a field ends only at
 # the NEXT one of these labels, at the amendment
 # history, or at EOF — never at a stray `- ` line or a blank line inside the value.
-INCIDENT_LABELS = ("date", "task", "project", "what happened", "evidence", "root cause", "status", "issue")
+INCIDENT_LABELS = ("date", "task", "project", "system", "what happened", "summary", "evidence", "root cause", "status",
+                   "issue")
 # Fields `alt incident amend` may rewrite, in template order → the bullet label each one owns in incident.md.
 AMENDABLE = {"what": "what happened", "evidence": "evidence", "cause": "root cause", "status": "status", "issue": "issue"}
 # ...and the incidents.jsonl column each one feeds, so a correction reaches `alt incident list`.
@@ -107,8 +109,10 @@ def _block_faulting_task(project: str, slug: str, reason: str, kind: str,
 
 def system_fault(kind: str, detail: str, *, project: str | None = None, task: str | None = None,
                  expected_block_id: object = T._UNSET, expected_owner: dict | None = None,
-                 expected_task: dict | None = None) -> dict | None:
+                 expected_task: dict | None = None, step: str | None = None) -> dict | None:
     """Block the faulting task; deduplicate incidents by source project and kind for 24 hours.
+
+    `step` names what was running when the fault happened when the kind alone does not say it.
 
     Evidence, FYIs and L3 messages belong to the faulting project. Projectless machine faults go to
     registered `altitude`, or only the fault ledger if absent. Repair tasks never wake L3 again.
@@ -154,6 +158,7 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
             return {"kind": kind, "incident": rec["incident"], "count": rec["count"], "repeat": True}
         inc = new_incident(target, title=f"system fault: {kind}", task=task,
                            what=f"Altitude's own machinery failed ({kind}): {detail[:800]}",
+                           summary=failure_summary(kind, step, detail),
                            evidence=f"monitor/faults.json key {key}; {platform.job_logs_hint('altitude')}", cause="not yet analysed — a system fault, not a task fault",
                            tags=["system-fault", kind], actor="altd")
         rec["incident"] = inc["id"]
@@ -190,7 +195,8 @@ def index(project: str | None = None) -> list[dict]:
             body = (config.project_dir(row["project"]) / "incidents" / f"{row['id']}.md").read_text()
             spans = _field_spans(body, row["id"])
             row["issue"] = None
-            for key, label in (("status", "status"), ("evidence", "evidence"), ("cause", "root cause"), ("issue", "issue")):
+            for key, label in (("status", "status"), ("evidence", "evidence"), ("cause", "root cause"), ("issue", "issue"),
+                               ("summary", "summary"), ("system", "system")):
                 if label in spans:
                     start, end = spans[label]
                     row[key] = body[start:end].strip() or None if key == "issue" else body[start:end]
@@ -221,6 +227,79 @@ def open_summary(project: str) -> str:
     return "\n".join(lines)
 
 
+# ---- what an incident says about the failure and the machine -------------------------------------------------
+_MESSAGE = re.compile(r"""["'](?:message|error)["']\s*:\s*["']((?:[^"'\\]|\\.)+)["']""")
+_JSON_START = re.compile(r'\{"|\w*":')   # an event line, or a stream chunk cut mid-event
+
+
+def _event_message(event: dict) -> str:
+    for key in ("error", "message"):
+        value = event.get(key)
+        value = value.get("message") if isinstance(value, dict) else value
+        if isinstance(value, str) and value.strip():
+            return value
+    return event["result"] if event.get("is_error") and isinstance(event.get("result"), str) else ""
+
+
+def failure_line(text: str) -> str:
+    """The last line that says what went wrong. An error inside a JSON event or a printed mapping counts; raw stream
+    chunks and event lines without one never do (#658 published three `thinking_tokens` events instead)."""
+    for line in reversed(text.splitlines()):
+        start = line.find('{"')
+        try:   # a whole event line, or one after a prefix such as the l2-died worker state
+            event = json.JSONDecoder().raw_decode(line[start:])[0] if start >= 0 else None
+        except ValueError:
+            event = None
+        found = (_event_message(event) if isinstance(event, dict) else "") or next(
+            iter(reversed(_MESSAGE.findall(line))), "") or _JSON_START.split(line, 1)[0].strip(" ;:,")
+        if found.strip():
+            return " ".join(found.split())[:300]
+    return ""
+
+
+def failure_summary(kind: str, step: str | None, detail: str) -> str:
+    line = failure_line(detail)
+    return (f"Fault {kind}" + (f" during {step}" if step else "")
+            + (f". Last error: {line}" if line else ". No error line was recorded."))
+
+
+def _deployment() -> str:
+    if platform.containerized():
+        return "container image"
+    return "installed release" if config.RELEASE is not None else "source checkout"
+
+
+def _altitude_build() -> str:
+    commit = (config.RELEASE or {}).get("commit")
+    return f"{version()} ({commit[:12]})" if commit else version()
+
+
+def system_context(project: str, task: str | None) -> str:
+    """This machine, Altitude's build and the task's engine as `key: value` pairs. Only these facts are collected:
+    never host or user names, home paths, addresses, serial numbers or hardware UUIDs."""
+    from .dispatch import l2_engine
+    facts = {**platform.host_facts(), "altitude": _altitude_build(), "deployment": _deployment()}
+    if task:
+        try:
+            engine = l2_engine(S.load_task(project, task))
+        except (KeyError, OSError, ValueError):
+            engine = None
+        if engine:
+            facts["engine"] = f"{engine} {engines.cli_version(engine) or '(CLI version unknown)'}"
+            facts["confinement"] = engines.worker_confinement(engine)
+    return "; ".join(f"{key}: {' '.join(str(value).replace(';', ',').split())}" for key, value in facts.items())
+
+
+def _system_section(system: str) -> str:
+    """One bullet per fact; Altitude's own version and commit are public and kept, everything else is sanitized."""
+    lines = []
+    for pair in system.split("; "):
+        key, _, value = pair.partition(": ")
+        public = key == "altitude" and re.fullmatch(r"[\w.+-]+(?: \([0-9a-f]{12}\))?", value)
+        lines.append(f"- {pair}" if public else f"- {sanitize(pair)}")
+    return "\n".join(lines)
+
+
 # ---- public issue: one sanitized GitHub issue per incident ---------------------------------------------------
 _CREDENTIAL = re.compile(
     r"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[A-Z0-9]{16})\b"
@@ -230,13 +309,35 @@ _CREDENTIAL = re.compile(
     r"|https?://[^\s/@:]+:[^\s/@]+@", re.I)
 _PRIVATE = re.compile(r"(?:/home/|/Users/|~/|\$HOME/|[A-Z]:\\Users\\)|\bI-\d{8}-\d{6}(?:-\d+)?\.md\b|\bincidents(?:/|\.jsonl\b)|"
                       r"\b(?:conversation|inbox|faults|chat)\.jsonl?\b|\.altitude/", re.I)
+# IPv4, MAC and IPv6 (eight groups or `::` shortened) addresses; a time such as 10:15:07 is none of these.
+_ADDRESS = re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b"
+                      r"|\b(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b"
+                      r"|(?<![\w:])(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}(?![\w:])"
+                      r"|(?<![\w:])(?=[0-9a-f:]*::)(?=[0-9a-f:]*[0-9a-f])[0-9a-f:]{3,39}(?![\w:])", re.I)
+
+
+def _private_address(match: re.Match) -> bool:
+    """Loopback and unspecified addresses (127.0.0.1, ::1, 0.0.0.0) name no machine; every other address does."""
+    try:
+        address = ipaddress.ip_address(match.group(0))
+    except ValueError:
+        return True   # a MAC address
+    return not (address.is_loopback or address.is_unspecified)
+
+
+# A serial number named as one ("serial PF4SERIAL9", "Serial Number: C02XK1ZZJGH5"); a value needs a digit, so
+# "serial port" is prose.
+_SERIAL = re.compile(r"((?i:\bserial(?:[ _-]?(?:number|no\.?))?)[\"']?\s*[:=#]?\s*[\"']?)"
+                     r"(?!\[REDACTED\])(?=[A-Za-z0-9-]*\d)[A-Za-z0-9-]{5,}")
 _PATH_TAIL = r"(?:[/\\][^\s`'\"<>\[\]{}()]*)?"
 _REDACTIONS = (
     (_CREDENTIAL, "[REDACTED]"),
+    (_SERIAL, r"\1[REDACTED]"),
     (re.compile(r"(?:~|\$HOME|/home/[^/\s]+|/Users/[^/\s]+|[A-Za-z]:\\Users\\[^\\\s]+)" + _PATH_TAIL), "[path]"),
     (re.compile(r"[^\s`'\"<>\[\]{}()]*(?:\.altitude/|\bincidents(?:/|\.jsonl\b)|\bI-\d{8}-\d{6}(?:-\d+)?\.md\b)[^\s`'\"<>\[\]{}()]*"), "[path]"),
     (re.compile(r"\b(?:conversation|inbox|faults|chat)\.jsonl?\b", re.I), "[file]"),
     (re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"), "[email]"),
+    (_ADDRESS, lambda m: "[address]" if _private_address(m) else m.group(0)),
     (re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"), "[id]"),
     (re.compile(r"\b[0-9a-f]{12,}\b", re.I), "[id]"),
 )
@@ -254,8 +355,9 @@ def _standalone(name: str) -> str:
 
 
 def sanitize(text: str) -> str:
-    """Plain words for a public issue: paths, ids, addresses, credentials, task and project names and the
-    operator's name never leave. Encoded text is decoded first so `%2Fhome` cannot slip past."""
+    """Plain words for a public issue: paths, ids, email and network addresses, credentials, task and project names,
+    this machine's host and account names and the operator's name never leave. Encoded text is decoded first so
+    `%2Fhome` cannot slip past."""
     text = unquote(text)
     home = str(Path.home())
     if home not in ("/", ""):
@@ -267,6 +369,9 @@ def sanitize(text: str) -> str:
         text = re.sub(rf"\b(?:{names})\b", "[project]", text)
     if operator := config.operator_name():
         text = re.sub(_standalone(operator), "the operator", text, flags=re.I)
+    for label, names in platform.local_names().items():
+        for name in sorted(names, key=len, reverse=True):
+            text = re.sub(_standalone(name), f"[{label}]", text, flags=re.I)
     return text
 
 
@@ -279,10 +384,23 @@ def check_public(text: str) -> None:
             or any((os.path.normpath("/" + path.lstrip("/")) + "/").startswith(home) for path in absolute_paths)
             or _PRIVATE.search(text)):
         raise ValueError("Private incident evidence boundary: an issue is public; home paths and private incident evidence must stay on this machine")
+    if any(_private_address(m) for m in _ADDRESS.finditer(text)):
+        raise ValueError("Private incident evidence boundary: an issue is public; network addresses stay on this machine")
+    if _SERIAL.search(text):
+        raise ValueError("Private incident evidence boundary: an issue is public; serial numbers stay on this machine")
     if _CREDENTIAL.search(text):
         raise ValueError("Private credential boundary: redact credentials and tokens before publishing an issue")
     if (operator := config.operator_name()) and re.search(_standalone(operator), text, re.I):
         raise ValueError("Private incident evidence boundary: an issue is public; the operator's name stays on this machine")
+
+
+def _check_incident(text: str) -> None:
+    """An incident issue also never names this machine. Project issues are exempt: an account name is often the
+    GitHub owner their links name."""
+    check_public(text)
+    if any(re.search(_standalone(name), text, re.I) for names in platform.local_names().values() for name in names):
+        raise ValueError("Private incident evidence boundary: an issue is public; this machine's host and account "
+                         "names stay on this machine")
 
 
 def version() -> str:
@@ -366,12 +484,12 @@ def _find_or_create(project: str, incident: str, body: str, spans: dict) -> tupl
     title = sanitize(body.split("\n", 1)[0].partition(" — ")[2].strip() or incident)[:200]
     text = "\n\n".join((
         "## Expected\nAltitude completes the step without this failure.",
-        "## Actual\n" + sanitize(_field(body, spans, "what happened")),
+        "## Actual\n" + sanitize(_field(body, spans, "summary") or _field(body, spans, "what happened")),
         "## Cause\n" + sanitize(_field(body, spans, "root cause")),
         "## Reproduction\nPending triage: the coordinator adds a fictional or redacted reproduction in a comment.",
-        f"## Altitude version\n{version()}",
+        *(["## System\n" + _system_section(system)] if (system := _field(body, spans, "system")) else []),
         key)) + "\n"
-    check_public(title + "\n" + text)
+    _check_incident(title + "\n" + text)
     url = _gh(project, ["issue", "create", "--repo", repository, f"--title={title}", f"--label={ISSUE_LABEL}",
                         "--body-file", "-"], input=text, timeout=60).strip()
     return _issue_url(url, repository), True
@@ -449,7 +567,7 @@ def _close_issue(project: str, incident: str, url: str, reason: str) -> None:
     from .server import issue_repository
     repository = issue_repository()
     note = sanitize(reason)
-    check_public(note)
+    _check_incident(note)
     own = json.loads(_gh(project, ["issue", "view", url, "--repo", repository, "--json", "body,state"], timeout=30))
     _gh(project, ["issue", "comment", url, "--repo", repository, "--body-file", "-"],
         input=f"Incident closed: {note}\n", timeout=60)
@@ -477,14 +595,22 @@ def _one_field(value: str) -> str:
 
 
 def new_incident(project: str, *, title: str, task: str | None, what: str, evidence: str, cause: str,
-                 tags: list[str], actor: str = "l3") -> dict:
+                 tags: list[str], actor: str = "l3", summary: str | None = None) -> dict:
     """Write incident evidence into the project's Altitude state; `publish_issue` gives it its public handle.
 
+    `summary` is a system fault's clean failure line, which the issue reports as actual behavior; an incident
+    filed without one reports `what`.
     Filing an incident never creates a task or schedules a healing workflow.
-    Safe to call while holding any project lock: reserving the file takes no lock and no network."""
+    Safe to call while holding any project lock: reserving the file and reading the system context take no lock
+    and no network."""
     template = (config.TEMPLATES / "incident.md").read_text()
     title = " ".join(title.split())
-    fields = dict(title=title, date=S.now()[:10], task=task or "-", project=project, what=_one_field(what),
+    try:
+        system = system_context(project, task)
+    except Exception as exc:  # noqa: BLE001 — an unreadable machine fact never costs the fault its incident
+        system = f"unavailable ({type(exc).__name__})"
+    fields = dict(title=title, date=S.now()[:10], task=task or "-", project=project, system=system,
+                  what=_one_field(what), summary=_one_field(summary or ""),
                   evidence=_one_field(evidence), cause=_one_field(cause), status="watch", issue="")
     d = config.project_dir(project) / "incidents"
     d.mkdir(parents=True, exist_ok=True)

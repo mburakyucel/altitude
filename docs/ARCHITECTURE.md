@@ -428,6 +428,7 @@ Everything above the platform seam is the same on both hosts. These are the beha
 | Temporary directory in jobs | `/tmp` | the user's own `$TMPDIR` | above |
 | Source-checkout deployment | systemd unit (`make install-service`); TLS drop-in; self-restart | LaunchAgent (`make install-service`); self-restart through the seam; TLS drop-in refused with an explicit message | Operations |
 | L3 journal reading | `journalctl` shim | not available; L3 reads service status through the broker | Isolation and landing |
+| Incident system facts | `os-release` name, kernel release, DMI vendor and product family (product name when the family is a placeholder) | macOS version, Darwin release, `hw.model` identifier | [Incident issues](CLI.md#incident-issues) |
 
 Case-insensitive project names are refused on both hosts, because macOS disks are case-insensitive by
 default and runtime folders are named after projects.
@@ -1509,6 +1510,9 @@ backend and launch-source paths (`altitude/`, `bin/`, `systemd/`, `scripts/`, `p
 regular thirty-second daemon tick discovers a merge while its worker still runs.
 Web docs, design boards, the unused npm lockfile, and other non-build files do not
 trigger activation. Launch-source changes become available through the activated committed export.
+Until then, the checkout's `alt` talks to the older running service, so it sends a service field
+only when its option is given: a new option reaches the service only when used, and handlers keep
+refusing fields they do not know.
 
 The web app shows a compact, dismissible update notice above the phone header and first in the
 desktop main pane, except in Monitor where **Altitude update** owns the full status. **Details**

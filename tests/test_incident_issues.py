@@ -5,9 +5,10 @@ import subprocess
 from unittest import mock
 
 from tests.support import AltitudeCase, fyi_rows, git, make_repo
-from altitude import config, incidents, l3, server, state as S, tasks as T
+from altitude import config, engines, incidents, l3, platform, server, state as S, tasks as T
 
 PROJECT = "atlas"
+LOCAL_NAMES = platform.local_names   # the real reader; every case sees fixture names
 TARGET = "https://github.com/product-fixture/altitude"
 
 
@@ -19,6 +20,8 @@ class IncidentIssueCase(AltitudeCase):
         self.gh = self.fake_gh()
         self.setenv("ALTITUDE_UPSTREAM_ISSUE_REPOSITORY", "product-fixture/altitude")
         self.patch(config, "UPSTREAM_ISSUE_REPOSITORY", "product-fixture/altitude")
+        self.patch(platform, "local_names", return_value={"host": {"ada-workstation.lan", "ada-workstation"},
+                                                          "user": {"adafixture"}})
 
     def issues(self) -> list[dict]:
         path = self.gh / "issues.json"
@@ -59,8 +62,8 @@ class TestPublication(IncidentIssueCase):
             self.assertNotIn(private, body)
         for public in ("## Expected", "## Actual", "the operator's checkout at [path] was dirty; session [id], agent [id], "
                        "[REDACTED] mail [email], see [path]", "## Cause\nthe worktree base was not refreshed",
-                       "## Reproduction\nPending triage", f"## Altitude version\n{incidents.version()}",
-                       incidents.marker(PROJECT, incident)):
+                       "## Reproduction\nPending triage", "## System\n- platform: ",
+                       f"- altitude: {incidents.version()}\n", incidents.marker(PROJECT, incident)):
             self.assertIn(public, body)
         self.assertIn(f"- issue: {issue['url']}\n", self.record(incident))
         self.assertEqual(self.row(incident)["issue"], issue["url"])
@@ -357,3 +360,173 @@ class TestNotificationAndAuthority(IncidentIssueCase):
             server.issue_write(PROJECT, "upstream", "x", actor="l3", title="t")
         url = server.issue_write(PROJECT, "new", "plain report", actor="l3", title="local", labels=["bug"])
         self.assertEqual(url, "https://github.com/fictional/atlas/issues/101")
+
+
+UUID = "4c4c4544-0042-3510-8051-b4c04f565431"
+# Identifiers within reach of collection or in the failing worker's output; none may reach an issue.
+PRIVATE = ("ada-workstation", "adafixture", "10.20.30.40", "fe80::1c2d:3e4f", "a4:83:e7:12:34:56",
+           "PF4SERIAL9", "L1HF3SERIAL", "C02XK1ZZJGH5", UUID, "thinking_tokens", "elta", '{"')
+STREAM = ('elta":100,"session_id":"787c6ab0-8e6c-4c93-a8fc-b47b76e39e1e"}\n'
+          '{"type":"system","subtype":"thinking_tokens","estimated_tokens":300,"estimated_tokens_delta":150}\n'
+          '{"type":"system","subtype":"thinking_tokens","estimated_tokens":350,"estimated_tokens_delta":50}')
+
+
+class TestSystemAndSummary(IncidentIssueCase):
+    """Issues #613 and #658: an incident says which machine, build and engine failed, and what the failure was."""
+
+    def setUp(self):
+        super().setUp()
+        self.patch(platform, "containerized", return_value=False)
+        self.patch(platform.host_platform, "node", return_value="ada-workstation")
+        self.patch(engines, "cli_version", return_value="2.1.300")
+        self.task = T.new(PROJECT, "Fixture victim", "Toy request")["slug"]
+
+    def linux_host(self):
+        self.patch(platform.sys, "platform", "linux")
+        self.patch(platform.host_platform, "release", return_value="6.8.0-45-generic")
+        self.patch(platform.host_platform, "machine", return_value="x86_64")
+        self.patch(platform.host_platform, "freedesktop_os_release", return_value={"PRETTY_NAME": "Ubuntu 24.04.1 LTS"})
+        dmi = self.tmp / "dmi"
+        dmi.mkdir()
+        for name, value in {"sys_vendor": "LENOVO", "product_family": "ThinkPad X1 Carbon Gen 11",
+                            "product_name": "21HMCTO1WW", "product_serial": "PF4SERIAL9", "board_serial": "L1HF3SERIAL",
+                            "product_uuid": UUID}.items():
+            (dmi / name).write_text(value + "\n")
+        self.patch(platform, "DMI", dmi)
+
+    def mac_host(self) -> list:
+        self.patch(platform.sys, "platform", "darwin")
+        self.patch(platform.host_platform, "mac_ver", return_value=("15.4.1", ("", "", ""), ""))
+        self.patch(platform.host_platform, "release", return_value="24.4.0")
+        self.patch(platform.host_platform, "machine", return_value="arm64")
+        self.patch(config, "RELEASE", {"version": "v0.4.0", "commit": "884b6464abcdef0123456789abcdef0123456789"})
+        self.patch(config, "INSTALL_PREFIX", self.tmp / "install")
+        asked, real = [], subprocess.run
+
+        def run(argv, *args, **kwargs):
+            if argv[0] != "/usr/sbin/sysctl":
+                return real(argv, *args, **kwargs)   # the fixture gh
+            asked.append(argv)
+            return subprocess.CompletedProcess(argv, 0, "Mac15,3\n", "")
+        self.patch(platform.subprocess, "run", side_effect=run)
+        return asked
+
+    def fault(self, detail: str, step: str) -> tuple[str, str]:
+        fault = incidents.system_fault("l2-died", detail, project=PROJECT, task=self.task, step=step)
+        [issue] = self.issues()
+        self.assertEqual(fault["issue"], issue["url"])
+        return fault["incident"], issue["body"]
+
+    def section(self, body: str, title: str) -> str:
+        return body.split(f"## {title}\n", 1)[1].split("\n\n", 1)[0]
+
+    def assert_private_absent(self, body: str):
+        for private in (*PRIVATE, str(config.HOME), "3e710860"):
+            self.assertNotIn(private.lower(), body.lower())
+
+    def test_linux_issue_names_the_machine_build_and_engine_and_the_failure_without_stream_lines(self):
+        self.linux_host()
+        incident, body = self.fault(
+            "L2 worker 3e710860bbb944b29ff1e2068d33f5e1 (attempt 1) ended without a fresh report: worker state=failed "
+            f"on Ada-Workstation as adafixture via 10.20.30.40 and fe80::1c2d:3e4f (a4:83:e7:12:34:56), board serial "
+            f"L1HF3SERIAL, in {config.HOME}/Projects/atlas; " + STREAM, "the L2 worker run (attempt 1)")
+        self.assertEqual(self.section(body, "System").splitlines(), [
+            "- platform: Linux", "- os: Ubuntu 24.04.1 LTS", "- kernel: Linux 6.8.0-45-generic",
+            "- architecture: x86_64", "- model: LENOVO ThinkPad X1 Carbon Gen 11",
+            f"- altitude: {incidents.version()}", "- deployment: source checkout", "- engine: claude 2.1.300",
+            "- confinement: systemd user unit, Claude permission rules"])
+        self.assertEqual(self.section(body, "Actual"),
+                         "Fault l2-died during the L2 worker run (attempt 1). Last error: L2 worker [id] (attempt 1) "
+                         "ended without a fresh report: worker state=failed on [host] as [user] via [address] and "
+                         "[address] ([address]), board serial [REDACTED], in [path]")
+        self.assert_private_absent(body)
+        record = self.record(incident)
+        self.assertIn("thinking_tokens", record)   # the raw evidence stays private on the record
+        self.assertIn("- system: platform: Linux; os: Ubuntu 24.04.1 LTS;", record)
+        row = self.row(incident)
+        self.assertIn("Last error: L2 worker", row["summary"])
+        self.assertIn("engine: claude 2.1.300; confinement: systemd user unit", row["system"])
+
+    def test_macos_issue_names_the_mac_model_and_release_and_the_error_inside_the_worker_output(self):
+        asked = self.mac_host()
+        _, body = self.fault("L2 worker 3e710860bbb944b29ff1e2068d33f5e1 (attempt 2) ended without a fresh report: "
+                             "worker state=failed; {'message': 'workspace routing discovery unauthorized (401)'}",
+                             "the L2 worker run (attempt 2)")
+        self.assertEqual(asked, [["/usr/sbin/sysctl", "-n", "hw.model"]])   # never the serial or the platform UUID
+        self.assertEqual(self.section(body, "System").splitlines(), [
+            "- platform: macOS", "- os: macOS 15.4.1", "- kernel: Darwin 24.4.0", "- architecture: arm64",
+            "- model: Mac15,3", "- altitude: v0.4.0 (884b6464abcd)", "- deployment: installed release",
+            "- engine: claude 2.1.300", "- confinement: launchd job with Altitude's Seatbelt profile, Claude permission rules"])
+        self.assertEqual(self.section(body, "Actual"), "Fault l2-died during the L2 worker run (attempt 2). "
+                                                       "Last error: workspace routing discovery unauthorized (401)")
+        self.assert_private_absent(body)
+
+    def test_an_incident_l3_files_reports_its_own_words_and_the_machine_without_an_engine(self):
+        self.linux_host()
+        incident, _ = self.file(what="the worker used stale state on ada-workstation")
+        body = self.issues()[0]["body"]
+        self.assertEqual(self.section(body, "Actual"), "the worker used stale state on [host]")
+        self.assertNotIn("- engine:", body)
+        self.assertIn("- summary: \n", self.record(incident))
+
+    def test_an_unreadable_machine_fact_still_files_the_incident(self):
+        self.patch(platform, "host_facts", side_effect=OSError("denied"))
+        incident, body = self.fault("worker exited", "the L2 worker run (attempt 1)")
+        self.assertIn("- system: unavailable (OSError)", self.record(incident))
+        self.assertEqual(self.section(body, "System"), "- unavailable (OSError)")
+        self.assertEqual(self.section(body, "Actual"),
+                         "Fault l2-died during the L2 worker run (attempt 1). Last error: worker exited")
+
+
+class TestFailureLine(IncidentIssueCase):
+    def test_the_last_error_wins_and_stream_events_without_one_never_count(self):
+        cases = {
+            "first\nError: disk full\n" + STREAM.split("\n", 1)[1]: "Error: disk full",
+            'started\n{"type":"error","error":{"message":"rate limited"}}\n{"type":"system","subtype":"x"}': "rate limited",
+            '{"type":"result","is_error":true,"result":"API Error: 500"}': "API Error: 500",
+            'L2 worker x ended: worker state=failed; {"type":"result","is_error":true,"result":"API Error: 529"}':
+                "API Error: 529",
+            'L2 worker x ended: worker state=failed; {"type":"system","subtype":"init"}':
+                "L2 worker x ended: worker state=failed",
+            '{"type":"result","is_error":false,"result":"done"}': "",
+            STREAM.split("\n", 1)[1]: "",
+            "  \n": "",
+        }
+        for text, line in cases.items():
+            self.assertEqual(incidents.failure_line(text), line, text)
+        self.assertEqual(incidents.failure_summary("tick", None, STREAM), "Fault tick. No error line was recorded.")
+        self.assertEqual(len(incidents.failure_line("x" * 900)), 300)
+
+
+class TestSanitizerFields(IncidentIssueCase):
+    def test_network_addresses_and_this_machines_names_are_redacted_but_versions_times_and_loopback_stay(self):
+        text = incidents.sanitize("adafixture@ada-workstation reached 10.20.30.40, 2001:db8:0:0:0:0:0:1, fe80::1 and "
+                                  "a4:83:e7:12:34:56 at 10:15:07 with CLI 2.1.300 on Ubuntu; serving 127.0.0.1:8890 and ::1; "
+                                  "ADA-WORKSTATION; device serial PF4SERIAL9, Serial Number: C02XK1ZZJGH5, serial port busy")
+        self.assertEqual(text, "[user]@[host] reached [address], [address], [address] and [address] at 10:15:07 with "
+                               "CLI 2.1.300 on Ubuntu; serving 127.0.0.1:8890 and ::1; [host]; device serial [REDACTED], "
+                               "Serial Number: [REDACTED], serial port busy")
+        with self.assertRaisesRegex(ValueError, "network addresses"):
+            incidents.check_public("reached 10.20.30.40")
+        with self.assertRaisesRegex(ValueError, "serial numbers"):
+            incidents.check_public("serial no. PF4SERIAL9")
+        incidents.check_public("serving 127.0.0.1:8890 on Ada-Workstation for adafixture")   # project issues
+        with self.assertRaisesRegex(ValueError, "host and account names"):
+            incidents._check_incident("seen on Ada-Workstation")
+
+
+class TestLocalNames(AltitudeCase):
+    def test_a_container_localhost_and_an_images_default_name_are_no_machine_names(self):
+        self.patch(platform, "containerized", return_value=True)
+        self.assertEqual(LOCAL_NAMES(), {"host": set(), "user": set()})
+        self.patch(platform, "containerized", return_value=False)
+        self.patch(platform.socket, "gethostname", return_value="ada-workstation.lan")
+        self.patch(platform.pwd, "getpwuid", return_value=mock.Mock(pw_name="adafixture"))
+        self.assertEqual(LOCAL_NAMES(), {"host": {"ada-workstation.lan", "ada-workstation"}, "user": {"adafixture"}})
+        self.patch(platform.socket, "gethostname", return_value="localhost")
+        self.assertEqual(LOCAL_NAMES()["host"], set())
+        self.patch(platform.sys, "platform", "linux")
+        self.patch(platform.host_platform, "freedesktop_os_release", return_value={"PRETTY_NAME": "Ubuntu 24.04.1 LTS"})
+        self.patch(platform.socket, "gethostname", return_value="ubuntu")
+        self.patch(platform.pwd, "getpwuid", return_value=mock.Mock(pw_name="ubuntu"))
+        self.assertEqual(LOCAL_NAMES(), {"host": set(), "user": set()})
