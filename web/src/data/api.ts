@@ -360,7 +360,7 @@ export const NewTasksSchema = ChoiceOptionsSchema.extend({
 export type NewTasks = z.infer<typeof NewTasksSchema>;
 
 /**
- * An installed copy's version and the newer stable release its daemon last found (null for a source
+ * An installed copy's version and the newer release it follows that its daemon last found (null for a source
  * deployment). `attempt` is an update started from the app that has not reached its version yet.
  */
 export const UpdateSchema = z.object({
