@@ -78,6 +78,28 @@ class TestTaskFiles(AltitudeCase):
                 self.assertEqual(data["text"], text)
                 self.assertFalse(data["markdown"])
 
+    def test_ancestor_lookup_needs_search_access_without_directory_contents(self):
+        """#625: a permitted document beneath an ancestor whose directory contents are hidden."""
+        search = getattr(os, "O_SEARCH", getattr(os, "O_PATH", 0))
+        self.assertNotEqual(search, 0)
+        original = os.open
+        hidden = config.project_dir(self.project).parts[1]
+
+        def opened(path, flags, *args, **kwargs):
+            if os.fspath(path) == hidden and flags & search != search:
+                raise PermissionError("fictional ancestor's directory contents are hidden")
+            return original(path, flags, *args, **kwargs)
+
+        with mock.patch.object(os, "open", side_effect=opened):
+            # Read-only directory traversal reproduces the endpoint's unavailable result.
+            with mock.patch.object(T.platform, "directory_search_access", return_value=os.O_RDONLY):
+                self.assert_refused(status=404)
+            # Search-only descriptors still bind every component and final file to the real filesystem.
+            with mock.patch.object(T.platform, "directory_search_access", return_value=search):
+                code, _, data = self.request()
+                self.assertEqual(code, 200)
+                self.assertEqual(data["text"], self.document.read_text())
+
     def test_original_reference_survives_archive_and_reports_current_location(self):
         original = str(self.document)
         archived = S.archive_dir(self.project) / self.slug
