@@ -14,7 +14,7 @@ function jsonResponse(obj: unknown, status = 200): Response {
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 
 const decision = {
-  project: "tutor",
+  project: "harbor",
   slug: "fix-audio",
   title: "Fix the audio",
   kind: "asks",
@@ -28,7 +28,7 @@ const decision = {
 const overview = {
   projects: [
     { name: "altitude", managed: true, counts: { running: 1, fault: 0 } },
-    { name: "tutor", managed: true, counts: { running: 0, fault: 0 } },
+    { name: "harbor", managed: true, counts: { running: 0, fault: 0 } },
     { name: "idle", managed: true, counts: { running: 0, fault: 0 } },
     { name: "broken", managed: true, counts: { running: 1, fault: 1 } },
     { name: "spare", managed: false, path: "/home/ada/Projects/spare" },
@@ -100,9 +100,9 @@ describe("Rail", () => {
     expect(await within(needs).findByText("1")).toHaveClass("badge");
 
     expect(dotOf(within(rail).getByRole("link", { name: "altitude" }))).toBe("running");
-    const tutor = within(rail).getByRole("link", { name: /^tutor/ });
-    expect(dotOf(tutor)).toBe("waiting");
-    expect(tutor.querySelector(".badge")).toBeNull();
+    const harbor = within(rail).getByRole("link", { name: /^harbor/ });
+    expect(dotOf(harbor)).toBe("waiting");
+    expect(harbor.querySelector(".badge")).toBeNull();
     expect(dotOf(within(rail).getByRole("link", { name: "idle" }))).toBe("idle");
     expect(dotOf(within(rail).getByRole("link", { name: "broken" }))).toBe("danger");
     expect(within(rail).queryByRole("link", { name: "spare" })).toBeNull();
@@ -153,11 +153,11 @@ describe("Rail", () => {
 
   it("selects the project a route names and marks its row", async () => {
     mockFetch();
-    renderApp({ route: "/projects/tutor" });
+    renderApp({ route: "/projects/harbor" });
 
     const rail = await screen.findByRole("navigation", { name: "Rail" });
-    await waitFor(() => expect(localStorage.getItem("altitude.project")).toBe("tutor"));
-    expect(within(rail).getByRole("link", { name: /^tutor/ })).toHaveAttribute("aria-current", "page");
+    await waitFor(() => expect(localStorage.getItem("altitude.project")).toBe("harbor"));
+    expect(within(rail).getByRole("link", { name: /^harbor/ })).toHaveAttribute("aria-current", "page");
   });
 });
 
@@ -188,8 +188,8 @@ describe("Routes", () => {
     await waitFor(() => expect(first.router.state.location.pathname).toBe("/projects/altitude"));
     first.unmount();
 
-    const second = renderApp({ route: "/chat/tutor" });
-    await waitFor(() => expect(second.router.state.location.pathname).toBe("/projects/tutor"));
+    const second = renderApp({ route: "/chat/harbor" });
+    await waitFor(() => expect(second.router.state.location.pathname).toBe("/projects/harbor"));
   });
 
   it("sends an unknown path to Needs you", async () => {
@@ -228,17 +228,17 @@ describe("Phone", () => {
     expect(document.querySelector(".phone-header .brand-mark")).toBeNull();
     await user.click(title);
     const sheet = await screen.findByRole("dialog", { name: "Switch project" });
-    const tutor = within(sheet).getByRole("link", { name: /^tutor/ });
-    expect(dotOf(tutor)).toBe("waiting");
+    const harbor = within(sheet).getByRole("link", { name: /^harbor/ });
+    expect(dotOf(harbor)).toBe("waiting");
     expect(within(sheet).getByText("Add a folder")).toBeInTheDocument();
     expect(within(sheet).getByText("spare")).toBeInTheDocument();
-    await user.click(tutor);
+    await user.click(harbor);
 
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(router.state.location.pathname).toBe("/projects/tutor");
-    expect(localStorage.getItem("altitude.project")).toBe("tutor");
+    expect(router.state.location.pathname).toBe("/projects/harbor");
+    expect(localStorage.getItem("altitude.project")).toBe("harbor");
     const bar = screen.getByRole("navigation", { name: "Primary" });
-    expect(within(bar).getByRole("link", { name: "Work" })).toHaveAttribute("href", "/projects/tutor?tab=work");
+    expect(within(bar).getByRole("link", { name: "Work" })).toHaveAttribute("href", "/projects/harbor?tab=work");
   });
 
   it("hides the chevron with one managed project and nothing to add", async () => {
@@ -253,9 +253,9 @@ describe("Phone", () => {
   it("pushes a task page over its tab with a back control and keeps the tab bar", async () => {
     mockFetch();
     setViewport(390);
-    const { router, user } = renderBrowserApp("/projects/tutor?tab=work");
+    const { router, user } = renderBrowserApp("/projects/harbor?tab=work");
 
-    await act(() => router.navigate("/projects/tutor/tasks/fix-audio"));
+    await act(() => router.navigate("/projects/harbor/tasks/fix-audio"));
     await screen.findByRole("navigation", { name: "Task views" });
     expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "fix-audio", level: 1 })).toBeInTheDocument();
@@ -266,7 +266,7 @@ describe("Phone", () => {
     expect(within(bar).getByRole("link", { name: "Chat" })).not.toHaveAttribute("aria-current");
 
     await user.click(screen.getByRole("button", { name: "Back" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/projects/tutor"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/projects/harbor"));
     expect(router.state.location.search).toBe("?tab=work");
   });
 
@@ -274,24 +274,24 @@ describe("Phone", () => {
     mockFetch();
     setViewport(390);
     localStorage.setItem("altitude.project", "altitude");
-    const { router, user } = renderBrowserApp(`/projects/tutor/tasks/fix-audio${suffix}`);
+    const { router, user } = renderBrowserApp(`/projects/harbor/tasks/fix-audio${suffix}`);
     const tabs = await screen.findByRole("navigation", { name: "Task views" });
     await user.click(within(tabs).getByRole("link", { name: "Live session" }));
     await user.click(within(tabs).getByRole("link", { name: "Conversation" }));
     await user.click(screen.getByRole("button", { name: "Back" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/projects/tutor"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/projects/harbor"));
     expect(router.state.location.search).toBe("");
     expect(router.state.historyAction).toBe("REPLACE");
-    expect(screen.getByRole("textbox", { name: "Message L3 about tutor" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Message L3 about harbor" })).toBeInTheDocument();
   });
 
   it.each(["/live/", "/LIVE"])("direct live route variant %s uses the same app Back fallback", async (suffix) => {
     mockFetch();
     setViewport(390);
-    const { router, user } = renderBrowserApp(`/projects/tutor/tasks/fix-audio${suffix}`);
+    const { router, user } = renderBrowserApp(`/projects/harbor/tasks/fix-audio${suffix}`);
     await screen.findByRole("region", { name: "Live session" });
     await user.click(screen.getByRole("button", { name: "Back" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/projects/tutor"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/projects/harbor"));
     expect(router.state.location.search).toBe("");
     expect(router.state.historyAction).toBe("REPLACE");
   });

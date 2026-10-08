@@ -32,7 +32,7 @@ const asks = {
 };
 
 const stopped = {
-  project: "tutor",
+  project: "harbor",
   slug: "fix-audio",
   title: "Fix the audio",
   kind: "stopped",
@@ -46,7 +46,7 @@ const stopped = {
 
 const l2Asks = {
   ...asks,
-  project: "tutor",
+  project: "harbor",
   slug: "score-phonemes",
   title: "Score pronunciation per phoneme",
   asked_by: "l2",
@@ -59,7 +59,7 @@ function overview(queue: unknown[]) {
   return {
     projects: [
       { name: "altitude", managed: true },
-      { name: "tutor", managed: true },
+      { name: "harbor", managed: true },
       { name: "notes", managed: true },
     ],
     queue,
@@ -92,7 +92,7 @@ function mockFetch(initialQueue: unknown[], decideStatus = 200) {
     }
     if (url.includes("/api/chat/altitude")) return jsonResponse(chatView);
     if (url.includes("/api/chat/")) return jsonResponse({ history: [], queued: [], active: null, busy: false });
-    if (url.includes("/api/task/tutor/score-phonemes")) {
+    if (url.includes("/api/task/harbor/score-phonemes")) {
       return jsonResponse({
         slug: "score-phonemes",
         state: "blocked",
@@ -124,18 +124,18 @@ describe("Needs you", () => {
     renderApp({ route: "/" });
     const list = await screen.findByLabelText("Decisions");
     const labels = () => within(list).getAllByRole("region").map((section) => section.getAttribute("aria-label"));
-    expect(labels()).toEqual(["Project altitude", "Project tutor"]);
-    const [altitude, tutor] = within(list).getAllByRole("region");
+    expect(labels()).toEqual(["Project altitude", "Project harbor"]);
+    const [altitude, harbor] = within(list).getAllByRole("region");
     expect(within(altitude!).getAllByRole("article")).toHaveLength(2);
-    expect(within(tutor!).getAllByRole("article")).toHaveLength(2);
-    const group = within(tutor!).getByRole("article", { name: "Shared task title" });
+    expect(within(harbor!).getAllByRole("article")).toHaveLength(2);
+    const group = within(harbor!).getByRole("article", { name: "Shared task title" });
     expect(within(group).getByText("2 questions to answer")).toBeInTheDocument();
     expect(within(group).getByText("Which regions?")).toBeInTheDocument();
-    expect(within(group).getByRole("link", { name: "Open L2 chat" })).toHaveAttribute("href", "/projects/tutor/tasks/score-phonemes?question=q-badge&revision=1");
-    expect(within(tutor!).getByRole("article", { name: "Fix the audio" })).toBeInTheDocument();
+    expect(within(group).getByRole("link", { name: "Open L2 chat" })).toHaveAttribute("href", "/projects/harbor/tasks/score-phonemes?question=q-badge&revision=1");
+    expect(within(harbor!).getByRole("article", { name: "Fix the audio" })).toBeInTheDocument();
     expect(screen.getByText("4 questions · 1 stopped task across 2 projects")).toBeInTheDocument();
-    act(() => setSelectedProject("tutor"));
-    expect(labels()).toEqual(["Project tutor", "Project altitude"]);
+    act(() => setSelectedProject("harbor"));
+    expect(labels()).toEqual(["Project harbor", "Project altitude"]);
     expect(within(list).getAllByRole("article")).toHaveLength(4);
   });
 
@@ -145,9 +145,9 @@ describe("Needs you", () => {
     renderApp({ route: "/" });
     const list = await screen.findByLabelText("Decisions");
     const labels = () => within(list).getAllByRole("region").map((section) => section.getAttribute("aria-label"));
-    expect(labels()).toEqual(["Project tutor", "Project altitude"]);
+    expect(labels()).toEqual(["Project harbor", "Project altitude"]);
     act(() => setSelectedProject("altitude"));
-    expect(labels()).toEqual(["Project altitude", "Project tutor"]);
+    expect(labels()).toEqual(["Project altitude", "Project harbor"]);
   });
 
   it("collapses and reopens a project from its heading without losing staged answers", async () => {
@@ -155,7 +155,7 @@ describe("Needs you", () => {
     const { user, queryClient } = renderApp({ route: "/" });
     const list = await screen.findByLabelText("Decisions");
     const altitude = within(list).getByRole("region", { name: "Project altitude" });
-    const tutor = within(list).getByRole("region", { name: "Project tutor" });
+    const harbor = within(list).getByRole("region", { name: "Project harbor" });
     await user.click(within(altitude).getByRole("button", { name: "Accent" }));
     expect(within(altitude).getByRole("button", { name: "Send 1 answer" })).toBeEnabled();
 
@@ -165,7 +165,7 @@ describe("Needs you", () => {
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(within(altitude).getByRole("heading", { level: 2 })).toHaveTextContent("altitude1 question");
     expect(within(altitude).queryByRole("article")).toBeNull();
-    expect(within(tutor).getAllByRole("article")).toHaveLength(2);
+    expect(within(harbor).getAllByRole("article")).toHaveLength(2);
 
     // A background refresh keeps the collapsed state; keyboard reopens it with the staged pick intact.
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
@@ -177,12 +177,12 @@ describe("Needs you", () => {
     expect(within(altitude).getByRole("button", { name: "Accent" })).toHaveAttribute("aria-pressed", "true");
     expect(within(altitude).getByRole("button", { name: "Send 1 answer" })).toBeEnabled();
 
-    const tutorToggle = within(tutor).getByRole("button", { name: "tutor" });
-    tutorToggle.focus();
+    const harborToggle = within(harbor).getByRole("button", { name: "harbor" });
+    harborToggle.focus();
     await user.keyboard(" ");
-    expect(tutorToggle).toHaveAttribute("aria-expanded", "false");
-    expect(within(tutor).getByRole("heading", { level: 2 })).toHaveTextContent("1 question · 1 stopped task");
-    expect(within(tutor).queryByRole("article")).toBeNull();
+    expect(harborToggle).toHaveAttribute("aria-expanded", "false");
+    expect(within(harbor).getByRole("heading", { level: 2 })).toHaveTextContent("1 question · 1 stopped task");
+    expect(within(harbor).queryByRole("article")).toBeNull();
     expect(screen.getByText("2 questions · 1 stopped task across 2 projects")).toBeInTheDocument();
   });
 
@@ -215,7 +215,7 @@ describe("Needs you", () => {
     renderApp({ route: "/" });
     await waitFor(() => expect(screen.getAllByRole("link", { name: "PR #250" })
       .map((link) => link.getAttribute("href")).sort()).toEqual([
-        "https://github.com/example/altitude/pull/250", "https://github.com/example/tutor/pull/250",
+        "https://github.com/example/altitude/pull/250", "https://github.com/example/harbor/pull/250",
       ]));
   });
 
@@ -258,7 +258,7 @@ describe("Needs you", () => {
     expect(within(card).getByRole("link", { name: "Open L2 chat" })).toHaveAttribute("href", "/projects/altitude/tasks/add-badge?question=q-badge&revision=1");
 
     const stoppedCard = within(list).getByRole("article", { name: "Fix the audio" });
-    expect(within(list).getByRole("region", { name: "Project tutor" })).toContainElement(stoppedCard);
+    expect(within(list).getByRole("region", { name: "Project harbor" })).toContainElement(stoppedCard);
     expect(within(stoppedCard).getByText("Stopped mid-task").closest(".decision-kind")).toHaveAttribute("data-tone", "danger");
     expect(within(stoppedCard).getByText("yesterday")).toBeInTheDocument();
     expect(within(stoppedCard).getAllByText("the recording upload fails at 10 minutes")).toHaveLength(1);
@@ -335,8 +335,8 @@ describe("Needs you", () => {
 
     const card = await screen.findByRole("article", { name: "Fix the audio" });
     await user.click(within(card).getByRole("link", { name: "Open L2 chat" }));
-    expect(router.state.location.pathname).toBe("/projects/tutor/tasks/fix-audio");
+    expect(router.state.location.pathname).toBe("/projects/harbor/tasks/fix-audio");
     expect(router.state.location.state).toEqual({ from: "needs", tab: "needs" });
-    expect(localStorage.getItem("altitude.project")).toBe("tutor");
+    expect(localStorage.getItem("altitude.project")).toBe("harbor");
   });
 });

@@ -50,7 +50,7 @@ beforeEach(() => setViewport(1440));
 
 describe("Models dialog", () => {
   it("opens on Tasks from beside the quota, lists Only-engine projects and saves New tasks for every project", async () => {
-    const { posts } = server({ only: [{ project: "tutor", engine: "beta" }] });
+    const { posts } = server({ only: [{ project: "harbor", engine: "beta" }] });
     const { user } = renderApp({ route: "/projects/example" });
     await user.click(await screen.findByRole("button", { name: /^New tasks · Auto/ }));
     expect(dialog()).toHaveAccessibleName("Models · Tasks · All projects");
@@ -63,8 +63,8 @@ describe("Models dialog", () => {
     expect(within(dialog()).getAllByRole("radio").filter((r) => r.closest(".models-effort")).map((r) => r.parentElement?.textContent)).toEqual(["Default", "Low", "High"]);
     await user.click(within(dialog()).getByRole("radio", { name: "Low" }));
     expect(dialog()).toHaveTextContent("When Swift is unavailable, each project's Auto picks instead.");
-    expect(dialog()).toHaveTextContent("tutor runs tasks only on Beta, so it keeps its Beta model.");
-    expect(within(dialog()).getByRole("link", { name: "Change" })).toHaveAttribute("href", "/settings/projects/tutor#routing");
+    expect(dialog()).toHaveTextContent("harbor runs tasks only on Beta, so it keeps its Beta model.");
+    expect(within(dialog()).getByRole("link", { name: "Change" })).toHaveAttribute("href", "/settings/projects/harbor#routing");
     expect(dialog()).toHaveTextContent("For one task, tell L3: “use Opus at Max for this”.");
     await user.click(within(dialog()).getByRole("button", { name: "Use for all new tasks" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());

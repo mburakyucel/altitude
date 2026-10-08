@@ -73,13 +73,13 @@ class TestPublication(IncidentIssueCase):
         self.assertEqual(self.calls(), [["issue", "list"], ["issue", "create"]])
 
     def test_sanitizer_covers_short_secrets_key_blocks_encoded_names_and_project_names(self):
-        self.register("tutor")
+        self.register("harbor")
         with mock.patch.object(config, "OPERATOR", "Ada Fixture"):
             text = incidents.sanitize(
                 "password=hunter2 and token=abcdefgh!supersecret; Ada%20Fixture saw session 3E710860BBBB44B29FF1E2068D33F5E1 in "
-                "tutor/write-the-lesson-plan and altitude/land-the-fix for tutor\n-----BEGIN RSA PRIVATE KEY-----\nMIIE\n"
+                "harbor/write-the-lesson-plan and altitude/land-the-fix for harbor\n-----BEGIN RSA PRIVATE KEY-----\nMIIE\n"
                 "-----END RSA PRIVATE KEY-----\nat %2Fhome%2Fada%2Fx")
-            for private in ("hunter2", "supersecret", "Ada", "3E710860", "write-the-lesson", "land-the-fix", "tutor", "MIIE", "/home"):
+            for private in ("hunter2", "supersecret", "Ada", "3E710860", "write-the-lesson", "land-the-fix", "harbor", "MIIE", "/home"):
                 self.assertNotIn(private, text, text)
             self.assertEqual(text, "[REDACTED] and [REDACTED] the operator saw session [id] in [task] and [task] "
                                    "for [project]\n[REDACTED]\nat [path]")
