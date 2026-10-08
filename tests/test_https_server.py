@@ -35,6 +35,17 @@ class TestHTTPSServer(AltitudeCase):
         worker.assert_not_called()
         self.assertIn("HTTPS startup refused", server.log.call_args.args[0])
 
+    def test_binding_needs_no_reverse_lookup_of_the_address(self):
+        # A Mac without a network held http.server's getfqdn in mDNS past the installation's health deadline.
+        with mock.patch.object(socket, "getfqdn", side_effect=AssertionError("reverse lookup")), \
+                mock.patch.object(socket, "gethostbyaddr", side_effect=AssertionError("reverse lookup")):
+            httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        try:
+            self.assertEqual(httpd.server_port, httpd.socket.getsockname()[1])
+            self.assertEqual(httpd.server_name, "127.0.0.1")
+        finally:
+            httpd.server_close()
+
     def test_devices_certificate_names_the_ca_a_phone_must_match(self):
         self.assertIsNone(server.certificate_view(), "no CA file of its own, nothing to match")
         server.tls_init()

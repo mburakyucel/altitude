@@ -24,11 +24,21 @@ import uuid
 from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from http.cookies import CookieError, SimpleCookie
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import http.server
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
 from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, line, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, validation, verify
+
+
+class ThreadingHTTPServer(http.server.ThreadingHTTPServer):
+    def server_bind(self) -> None:
+        # http.server names itself by a reverse lookup of the address, which held a Mac guest without a network in mDNS
+        # past the installation's health deadline; nothing reads that name.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
 
 LOG = config.ROOT / "altd.log"
 _bg: dict[str, threading.Thread] = {}
