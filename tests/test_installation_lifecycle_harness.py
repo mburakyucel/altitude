@@ -461,13 +461,15 @@ class TestInstallationMacosVm(AltitudeCase):
     class Guest:
         """Answers the lane's probes as a guest whose network card is plugged in until `unplug`."""
 
-        def __init__(self, unplug_reaches=(), failing=()):
+        def __init__(self, unplug_reaches=(), failing=(), routeless=0):
             self.gateway = self.listener = None
+            self.routeless = routeless
             self.plugged, self.unplug_reaches, self.failing, self.sent = True, set(unplug_reaches), dict(failing), []
 
         def ssh(self, command, timeout=120, check=True):
             if command.startswith("route"):
-                return subprocess.CompletedProcess(command, 0, "127.0.0.1\n", "")
+                self.routeless -= 1
+                return subprocess.CompletedProcess(command, 0, "" if self.routeless >= 0 else "127.0.0.1\n", "")
             kind = "internet" if command.startswith("curl") else "host"
             if kind in self.failing:
                 return subprocess.CompletedProcess(command, self.failing[kind], "", "")
@@ -524,6 +526,16 @@ class TestInstallationMacosVm(AltitudeCase):
                     vm.isolate(guest, {})
             finally:
                 guest.listener.close()
+
+    def test_isolation_waits_for_a_guest_whose_address_comes_after_ssh(self):
+        from scripts import installation_macos_vm as vm
+        guest, record = self.Guest(routeless=2), {}
+        with mock.patch.object(vm.time, "sleep"):
+            try:
+                vm.isolate(guest, record)
+            finally:
+                guest.listener.close()
+        self.assertEqual(record["reachable"]["isolated"], {"internet": False, "host": False})
 
     def test_a_probe_that_could_not_run_stops_the_run_instead_of_proving_isolation(self):
         from scripts import installation_macos_vm as vm

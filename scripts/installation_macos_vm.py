@@ -651,7 +651,13 @@ INTERNET = ("curl -sS --max-time 10 -o /dev/null https://www.apple.com/; "
 def reachable(guest: Guest) -> dict:
     """Which of the internet and a listener on this Mac the guest reaches."""
     if guest.listener is None:
-        found = guest.ssh("route -n get default 2>/dev/null | awk '/gateway:/ {print $2}'", check=False).stdout.strip()
+        # On a loaded Mac the guest's address can come after sshd answers.
+        deadline = time.monotonic() + 60
+        while True:
+            found = guest.ssh("route -n get default 2>/dev/null | awk '/gateway:/ {print $2}'", check=False).stdout.strip()
+            if re.fullmatch(r"\d+\.\d+\.\d+\.\d+", found) or time.monotonic() > deadline:
+                break
+            time.sleep(2)
         if not re.fullmatch(r"\d+\.\d+\.\d+\.\d+", found):
             raise Stop(f"the guest has no default route while online: {found!r}")
         # Bound while this Mac has the guests' network; it stays open after the card is unplugged.
