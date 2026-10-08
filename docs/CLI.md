@@ -565,12 +565,23 @@ alt incident amend I-20260908-123456 --status closed --reason "Prevention merged
 
 The issue carries the label `incident` (create it once in the repository), the sanitized title,
 expected and actual behavior, the sanitized root cause, a reproduction line that reads pending
-triage until L3 adds a fictional or redacted reproduction in a comment, the Altitude version, and
-the incident id with an opaque project digest as its marker. Publication decodes the text, then
+triage until L3 adds a fictional or redacted reproduction in a comment, a System section, and
+the incident id with an opaque project digest as its marker. A system fault's actual behavior is its
+summary: the fault kind, the step that failed when the kind alone does not say it, and the last
+error line from the worker or Altitude, where an error inside a JSON event or printed mapping counts
+and raw stream chunks and event lines never do. An incident L3 files reports its own what-happened
+text. The System section lists what the record captured when the incident was filed: platform, OS
+name and version, kernel, architecture, machine model (the Mac model identifier, or the DMI vendor
+and product family on Linux), Altitude version (with the release commit) and deployment kind
+(source checkout, installed release or container image), and for an incident with a task the engine
+with its CLI version and the worker's confinement. Host and account names, home paths, addresses,
+serial numbers and hardware UUIDs are never collected. Publication decodes the text, then
 rewrites home paths, `.altitude` and incident file references, long hex ids and UUIDs, email
-addresses, credentials and private key blocks, task references, the names of other managed projects
-and the configured operator name to `[path]`, `[id]`, `[email]`, `[REDACTED]`, `[task]`, `[project]`
-and "the operator", then applies the same private-evidence and credential refusal as project-local
+addresses, IP and MAC addresses other than loopback, credentials and private key blocks, task
+references, the names of other managed projects, this machine's host and account names (outside the
+container, whose names are the image's) and the configured operator name to `[path]`, `[id]`,
+`[email]`, `[address]`, `[REDACTED]`, `[task]`, `[project]`, `[host]`, `[user]` and "the operator",
+then applies the same private-evidence, network-address and credential refusal as project-local
 issues plus the operator name. Evidence, task, project, message ids, logs, transcripts and the fault
 ledger never leave the machine. System faults publish after their fault lock is released; the FYI
 and L3 message name the issue. One publisher or amender runs per project at a time, so a retry
@@ -582,7 +593,8 @@ project log gets an `incident-issue` event; nothing retries on its own. `alt inc
 retries: it reuses the repository's `incident` issue whose body carries this incident's marker
 before creating, so an interrupted create never produces two issues. A record whose issue is
 already a URL returns it without GitHub. `alt incident list`, project API incident rows and
-`STATE.md` show the link or the pending reason.
+`STATE.md` show the link or the pending reason; `alt incident list` and the API rows also carry the
+record's `summary` and `system`, so the coordinator sees them before publication.
 
 `--issue <url>` attaches an existing issue in the same repository when L3 judges the cause is the
 same: altd verifies it with a GitHub read, comments the occurrence there, and closes the issue this

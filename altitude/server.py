@@ -801,7 +801,8 @@ def _on_l2_finished(project: str, item: dict) -> None:
             request_task_resume(project, slug)
         else:
             incidents.system_fault("l2-died", detail, project=project, task=slug,
-                                   expected_block_id=blocked.get("block_id"), expected_task=blocked)
+                                   expected_block_id=blocked.get("block_id"), expected_task=blocked,
+                                   step=f"the L2 worker run (attempt {t.get('attempt')})")
             log(f"[{project}/{slug}] L2 died → blocked; fault raised")
         return
     v = verify.verify(project, slug)

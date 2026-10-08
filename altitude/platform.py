@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import platform as host_platform
 import plistlib
+import pwd
 import re
 import select
 import shlex
@@ -2412,15 +2413,73 @@ def validation_command(roots: tuple[Path, ...], output: Path, port: int, argv: l
             *(f"{key}={env[key]}" for key in sorted(env)), *argv]
 
 
+def _os_name() -> str:
+    if _darwin():
+        return f"macOS {host_platform.mac_ver()[0]}"
+    try:
+        return host_platform.freedesktop_os_release().get("PRETTY_NAME", "")
+    except OSError:
+        return ""
+
+
 def host_identity() -> str:
     """The OS, its version and the architecture, as validation evidence names the host."""
     if _darwin():
-        return f"macOS {host_platform.mac_ver()[0]} {host_platform.machine()}"
+        return f"{_os_name()} {host_platform.machine()}"
+    return " ".join(filter(None, (_os_name(), f"Linux {host_platform.release()}", host_platform.machine())))
+
+
+DMI = Path("/sys/class/dmi/id")
+_DMI_PLACEHOLDER = re.compile(r"default string|to be filled|o\.e\.m\.|system product name|not specified|^none$", re.I)
+
+
+def _dmi(name: str) -> str:
     try:
-        release = host_platform.freedesktop_os_release().get("PRETTY_NAME", "")
+        value = (DMI / name).read_text(errors="replace").strip()
     except OSError:
-        release = ""
-    return " ".join(filter(None, (release, f"Linux {host_platform.release()}", host_platform.machine())))
+        return ""
+    return "" if _DMI_PLACEHOLDER.search(value) else value
+
+
+def _machine_model() -> str:
+    """The Mac model identifier, or the DMI vendor with its product family (product name when the family is
+    absent or a placeholder); never a serial number or hardware UUID."""
+    if _darwin():
+        try:
+            return subprocess.run(["/usr/sbin/sysctl", "-n", "hw.model"], capture_output=True, text=True,
+                                  check=True, timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):
+            return ""
+    return " ".join(filter(None, (_dmi("sys_vendor"), _dmi("product_family") or _dmi("product_name"))))
+
+
+def host_facts() -> dict[str, str]:
+    """What an incident says about this machine. Only these facts are read: host names, user names, home
+    paths, addresses, serial numbers and hardware UUIDs are never collected."""
+    facts = {"platform": "macOS" if _darwin() else "Linux", "os": _os_name(),
+             "kernel": f"{'Darwin' if _darwin() else 'Linux'} {host_platform.release()}",
+             "architecture": host_platform.machine(), "model": _machine_model()}
+    return {key: " ".join(value.replace(";", ",").split())[:80] or "unknown" for key, value in facts.items()}
+
+
+def local_names() -> dict[str, set[str]]:
+    """This machine's host names and account name, which public text never carries. A container's host and
+    account names are the image's and launcher's (`altitude`), not the machine's, so it has none."""
+    if containerized():
+        return {"host": set(), "user": set()}
+    host = socket.gethostname()
+    try:
+        user = {pwd.getpwuid(os.getuid()).pw_name}
+    except KeyError:
+        user = set()
+    return {"host": {host, host.split(".")[0]} - {"", "localhost"}, "user": user - {""}}
+
+
+def job_confinement(*, profile: bool) -> str:
+    """The job a worker runs in; `profile` is whether Altitude's own Seatbelt profile wraps it on macOS."""
+    if _darwin():
+        return "launchd job with Altitude's Seatbelt profile" if profile else "launchd job"
+    return "systemd user unit in the Altitude container" if containerized() else "systemd user unit"
 
 
 def validation_runroot() -> str:
