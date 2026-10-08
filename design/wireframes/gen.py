@@ -975,7 +975,7 @@ def models_dialog(tab="l3", chosen="Auto", effort="Default", note="", other=Fals
     seg = '<div class="seg">' + "".join(f'<span{" class=on" if e == effort else ""}>{e}</span>' for e in ("Default", "Low", "Medium", "High", "Max")) + '</div>'
     use = "Saving…" if saving else ("Use for L3 in altitude" if tab == "l3" else "Use for all new tasks")
     foot = ('<p class="muted" style="font-size:12px;margin:6px 0 0">Applies from L3\'s next reply.</p>' if tab == "l3" else
-            '<p class="muted" style="font-size:12px;margin:6px 0 0">tutor runs tasks only on Codex, so it keeps its Codex model. <u>Change</u></p>'
+            '<p class="muted" style="font-size:12px;margin:6px 0 0">harbor runs tasks only on Codex, so it keeps its Codex model. <u>Change</u></p>'
             '<p class="muted" style="font-size:12px;margin:4px 0 0">For one task, tell L3: “use Opus at Max for this”.</p>')
     return (f'<div class="models"><div style="display:flex;justify-content:space-between"><b>Models</b><span>{I("x","i sm")}</span></div>{tabs}{head}'
             f'{opts}<div style="margin-top:6px"><b style="font-size:13px">Effort</b></div>{seg}{note}'

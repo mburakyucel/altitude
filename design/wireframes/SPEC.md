@@ -615,7 +615,7 @@ that tab, and closes the dialog; the closed control then shows the new value. It
 a changed, valid choice. **Back to Auto**, shown while a choice is saved, removes it in one tap.
 The L3 tab says "Applies from L3's next reply." with the last reply's reported model and effort. The
 Tasks tab says that each project's Auto picks while the chosen model is unavailable, lists every
-project whose **Only <engine>** routing keeps its tasks elsewhere ("tutor runs tasks only on Codex,
+project whose **Only <engine>** routing keeps its tasks elsewhere ("harbor runs tasks only on Codex,
 so it keeps its Codex model. Change", linking to its Routing), and ends with the hint "For one task,
 tell L3: “use Opus at Max for this”." The L3 tab names the project's own L3 Only engine the same way
 ("This project keeps L3 only on Codex, so Fable can't be used here. Change in Routing").

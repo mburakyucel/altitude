@@ -16,11 +16,11 @@ const question = {
   asked_by: "l2", question: "How long should backups stay?", asked: ago(3), since: ago(3),
 };
 const second = { ...question, id: "q-drill", slug: "run-restore-drill", title: "Run a restore drill", question: "Which drill?" };
-const stopped = { project: "tutor", slug: "fix-audio", title: "Fix the audio", kind: "stopped", asked_by: "l2", question: "upload fails", asked: ago(2), since: ago(2) };
+const stopped = { project: "harbor", slug: "fix-audio", title: "Fix the audio", kind: "stopped", asked_by: "l2", question: "upload fails", asked: ago(2), since: ago(2) };
 
 function overview(queue: unknown[]) {
   return {
-    projects: [{ name: "altitude", managed: true }, { name: "tutor", managed: true }],
+    projects: [{ name: "altitude", managed: true }, { name: "harbor", managed: true }],
     queue,
     wip: { per_project: {}, machine: 0, waiting: [] },
     quota: { known: false },
