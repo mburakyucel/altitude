@@ -198,8 +198,14 @@ def walkthrough(safari: Safari, url: str, device: str, results: Path) -> list[di
         safari.snapshot(results / f"{name}.png")
         steps.append({"step": name, "url": safari.evaluate("location.href"), "reached": what})
 
-    safari.open(url + "/")
-    safari.attach(url)
+    for attempt in range(4):
+        safari.open(url + "/")
+        try:
+            safari.attach(url, seconds=15)
+            break
+        except TimeoutError:
+            if attempt == 3:  # a Safari launched by the first open can drop that address and show a blank page
+                raise
     safari.wait("document.readyState === 'complete'", "the first page")
     # Pair as the fixture's device, the way a paired phone's cookie does, then read the fixture's project.
     safari.evaluate(f"document.cookie = 'altitude_device={device}; path=/'; 0")
