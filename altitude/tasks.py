@@ -1272,9 +1272,13 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
           expected_owner: dict | None = None,
           recommendation: str | None = None,
           recommendation_label: str | None = None, recommendation_why: str | None = None,
-          questions: dict | None = None, design: dict | None = None, resume_pending: bool = False) -> dict:
+          questions: dict | None = None, design: dict | None = None, resume_pending: bool = False,
+          tell_l3: bool = False) -> dict:
+    """`tell_l3` queues L3's notification of newly published questions under the same lock, so no reader
+    sees the owner's question before L3 is due to read it: until L3 has, the question alerts no device."""
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        published = {(q["id"], q["revision"]) for q in task.get("questions", [])}
         _require_daemon_fence(task, slug, expected_daemon_request=expected_daemon_request,
                               expected_agent_id=expected_agent_id, expected_session_id=expected_session_id,
                               expected_block_id=expected_block_id)
@@ -1317,7 +1321,12 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
                 _take_turn(task)
         if files:
             _save_design(project, slug, files)
-        return _move(project, task, "blocked", actor, reason=reason)
+        moved = _move(project, task, "blocked", actor, reason=reason)
+        if tell_l3 and any(q["status"] == "open" and (q["id"], q["revision"]) not in published
+                           for q in moved.get("questions", [])):
+            from . import l3
+            l3.queue_locked(project, block_question(moved), trigger="block", slug=slug)
+        return moved
 
 
 def resume(project: str, slug: str, actor: str = "altd", *, agent_id: str | None = None,

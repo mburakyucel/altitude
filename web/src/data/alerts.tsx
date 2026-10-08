@@ -213,24 +213,42 @@ async function deliver(decision: Decision, key: string): Promise<void> {
   });
 }
 
+/** The tag the worker shows when it cannot read what is waiting; it stands for any waiting decision. */
+const ANY_DECISION = "altitude-decision";
+
+/**
+ * A banner whose decision has left the queue was answered, withdrawn or superseded: this device closes it
+ * without being touched. The worker does the same when a push wakes it with the page closed.
+ */
+async function closeAnswered(waiting: Set<string>): Promise<void> {
+  const registration = await navigator.serviceWorker.getRegistration("/sw.js");
+  for (const banner of (await registration?.getNotifications()) ?? []) {
+    if (banner.tag === ANY_DECISION ? waiting.size === 0 : !waiting.has(banner.tag)) banner.close();
+  }
+}
+
 /**
  * Mounted once by the shell. Published operator questions alert; faults, stopped tasks and finished
- * work stay in Needs you without one. A decision already on screen is recorded without alerting.
+ * work stay in Needs you without one. A decision already on screen is recorded without alerting, and
+ * one marked `alert_held` waits, unrecorded, until its task rests.
  */
 export function useDecisionAlerts(overview: Overview | undefined, pathname: string): void {
   const state = useAlertState();
   const navigate = useNavigate();
   const asks = (overview?.queue ?? []).filter((decision) => decision.id);
-  const signature = asks.map(alertKey).join("\n");
+  const signature = asks.map((decision) => `${alertKey(decision)}${decision.alert_held ? " held" : ""}`).join("\n");
   const latest = useRef(asks);
   latest.current = asks;
 
   useEffect(() => {
     if (state !== "on" || !overview) return;
-    const current = new Map(latest.current.map((decision) => [alertKey(decision), decision]));
-    const keys = [...current.keys()];
+    const waiting = new Set(latest.current.map(alertKey));
+    const current = new Map(latest.current.filter((decision) => !decision.alert_held)
+      .map((decision) => [alertKey(decision), decision]));
     const seen = readSeen();
-    writeSeen(keys); // resolved decisions drop out, so the record stays the size of the queue
+    // Answered decisions drop out, so the record stays the size of the queue.
+    writeSeen([...new Set([...(seen ?? []).filter((key) => waiting.has(key)), ...current.keys()])]);
+    void closeAnswered(waiting).catch(() => undefined); // a banner left open still opens the queue
     if (seen === null) return; // storage lost its record: start again from what is waiting now
     for (const [key, decision] of current) {
       if (seen.includes(key)) continue;
