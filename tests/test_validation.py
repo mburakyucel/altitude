@@ -14,6 +14,7 @@ import re
 import shlex
 import shutil
 import socket
+import ssl
 import stat
 import subprocess
 import sys
@@ -25,7 +26,7 @@ from unittest import TestCase, mock
 
 from tests.support import AltitudeCase, make_repo
 from tests.test_grant import SHIM, wait_for
-from altitude import config, dispatch, engines, platform, server, state as S, tasks as T, terminal, validation
+from altitude import config, dispatch, engines, platform, server, state as S, tasks as T, terminal, tls, validation
 
 RUNNER_HOME = validation.home
 
@@ -138,9 +139,11 @@ class RunnerCase(AltitudeCase):
         wait_for(started.exists, "the holding run to start")
         return release, thread, answers
 
+    def ledger(self):
+        return S.task_dir(self.project, self.slug) / "machine.jsonl"
+
     def rows(self):
-        return [json.loads(line) for line in (S.task_dir(self.project, self.slug) / "machine.jsonl").read_text()
-                .splitlines()]
+        return [json.loads(line) for line in self.ledger().read_text().splitlines()]
 
 
 class ClientStop:
@@ -312,6 +315,62 @@ class TestValidationRunner(ClientStop, RunnerCase):
                          [(f"sh -c 'touch {self.tmp / 'holding'}; until [ -e {release} ]; do sleep .02; done'", "exit"),
                           ("echo second", "exit"), ("echo third", "exit"), ("echo silent", "exit")])
         self.assertEqual(validation._queue, [])
+
+    def test_a_client_that_stops_while_its_run_is_set_up_ends_it_before_it_starts(self):
+        client, clone = self.send(["sh", "-c", f"touch {self.tmp / 'ran'}"]), validation._clone
+
+        def stopped(*args):
+            client.close()
+            wait_for(lambda: validation._active["stopped"], "the watcher to stop the run")
+            return clone(*args)
+        with mock.patch.object(validation, "_clone", side_effect=stopped):
+            wait_for(lambda: self.ledger().exists() and self.rows()[0]["finished"], "the stopped run's record")
+        [row] = self.rows()
+        self.assertEqual((row["ended"], row["error"], row["exit"]),
+                         ("stopped", "its client stopped or lost its connection before it started", None))
+        self.assertFalse(self.calls("run"))
+        self.assertFalse((self.tmp / "ran").exists())
+
+    def test_only_the_end_of_the_connection_stops_a_run_over_plain_http_and_tls(self):
+        self.patch(config, "TLS_DIR", self.tmp / "tls")
+        tls.initialize()
+        secure = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        secure.daemon_threads = True
+        secure.socket = tls.check().wrap_socket(secure.socket, server_side=True, do_handshake_on_connect=False)
+        threading.Thread(target=secure.serve_forever, kwargs={"poll_interval": .01}, daemon=True).start()
+        self.addCleanup(secure.server_close)
+        self.addCleanup(secure.shutdown)
+        trust = ssl.create_default_context(cafile=str(config.TLS_DIR / "ca.crt"))
+        transports = {"plain": lambda: socket.create_connection(self.httpd.server_address),
+                      "tls": lambda: trust.wrap_socket(socket.create_connection(secure.server_address),
+                                                       server_hostname="localhost")}
+        self.stops.side_effect = lambda unit, env: (self.tmp / "release").touch()
+        for name, connect in transports.items():
+            with self.subTest(name):
+                for ending in ("answer", "close"):
+                    started, release = self.tmp / f"{name}-{ending}", self.tmp / "release"
+                    release.unlink(missing_ok=True)
+                    body = json.dumps({"project": self.project, "slug": self.slug, "attempt": "1", "command": [
+                        "sh", "-c", f"touch {started}; until [ -e {release} ]; do sleep .02; done"]}).encode()
+                    client = connect()
+                    client.sendall(b"POST /api/task/validate HTTP/1.1\r\nHost: localhost\r\nContent-Type: "
+                                   b"application/json\r\nContent-Length: %d\r\n\r\n%s" % (len(body), body))
+                    wait_for(started.exists, "the run to start")
+                    client.sendall(b"anything after the request")   # readable, but the client is still there
+                    threading.Event().wait(20 * validation.WATCH_SECONDS)
+                    self.assertFalse(release.exists(), "the run was not stopped")
+                    if ending == "close":
+                        client.close()
+                        wait_for(lambda: self.rows()[-1]["finished"], "the stopped run's record")
+                        self.assertEqual(self.rows()[-1]["ended"], "stopped")
+                        continue
+                    release.touch()
+                    reply = b""
+                    while chunk := client.recv(65536):
+                        reply += chunk
+                    client.close()
+                    self.assertEqual(json.loads(reply.split(b"\r\n\r\n", 1)[1])["ended"], "exit")
+        self.assertEqual([row["ended"] for row in self.rows()], ["exit", "stopped", "exit", "stopped"])
 
     def test_a_request_that_waited_is_checked_again_when_admitted(self):
         release, _, _ = self.holding()

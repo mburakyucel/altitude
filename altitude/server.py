@@ -1750,8 +1750,9 @@ class Handler(BaseHTTPRequestHandler):
     def _validate(self, o: dict) -> None:
         """`alt task validate`: one validation run, answered as JSON. A client that accepts NDJSON hears what a busy
         machine makes its request wait for, one line at a time, then gets the answer as the last line. Once its
-        request is read, the client sends nothing more, so a readable connection means it closed it: that takes a
-        waiting request out of the line and stops an admitted run (docs/DEVELOPMENT.md#validation-runner)."""
+        request is read, the client sends nothing more: a connection at its end, or failed, means the client closed it
+        or went away, which takes a waiting request out of the line and stops an admitted run
+        (docs/DEVELOPMENT.md#validation-runner)."""
         streaming, started = "application/x-ndjson" in (self.headers.get("Accept") or ""), False
 
         def waiting(text: str) -> None:
@@ -1768,10 +1769,20 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"waiting": text}).encode() + b"\n")
 
         def gone() -> bool:
+            # Only what arrives is read: TLS handles its own records (a key update reads as no data), the end of the
+            # connection reads as empty, and anything else the client sends is dropped.
             try:
                 poller = select.poll()
-                poller.register(self.connection, select.POLLIN | select.POLLPRI)
-                return bool(poller.poll(0))
+                poller.register(self.connection, select.POLLIN)
+                if not poller.poll(0):
+                    return False
+                self.connection.settimeout(0)
+                try:
+                    return not self.connection.recv(65536)
+                finally:
+                    self.connection.settimeout(None)
+            except (ssl.SSLWantReadError, ssl.SSLWantWriteError, BlockingIOError):
+                return False
             except (OSError, ValueError):
                 return True
         try:

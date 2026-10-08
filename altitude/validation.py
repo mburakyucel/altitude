@@ -601,7 +601,7 @@ def _run(project: str, slug: str, task: dict, argv: list[str], *, kvm: bool, pub
     ident = uuid.uuid4().hex[:12]
     area, unit = home() / "runs" / ident, f"{UNIT_PREFIX}{ident}.service"
     row, result, failure, stopped, target, skipped, device, relay = None, None, None, None, None, [], None, None
-    watched = threading.Event()
+    watched, watcher = threading.Event(), None
 
     def watch() -> None:  # the job's launcher waits for the job, so the client is watched beside it
         while not watched.wait(WATCH_SECONDS):
@@ -618,11 +618,14 @@ def _run(project: str, slug: str, task: dict, argv: list[str], *, kvm: bool, pub
             if not enabled():
                 raise PermissionError(OFF)
             _active.update(area=area, unit=unit, stopped=None)
-        threading.Thread(target=watch, name="validation-client", daemon=True).start()
+        watcher = threading.Thread(target=watch, name="validation-client", daemon=True)
+        watcher.start()
         try:
             commit, tree = _clone(Path(task["worktree"]), area / "work", project)
         except (OSError, subprocess.SubprocessError) as exc:
             raise ValueError(f"alt task validate: cannot copy the task branch's committed HEAD: {exc}") from exc
+        with _state:
+            phone = None if _active["stopped"] else phone   # a run stopped while its clone was made boots no phone
         if phone:
             device = sim.Phone(area / "simulator", phone)
             try:
@@ -660,6 +663,8 @@ def _run(project: str, slug: str, task: dict, argv: list[str], *, kvm: bool, pub
         raise
     finally:
         watched.set()
+        if watcher:
+            watcher.join()   # it reads the client's connection, which the answer is written to next
         with _state:
             _active.clear()
         recorded, delivered, cleanup_error = row is None, target is not None, None
