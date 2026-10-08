@@ -451,9 +451,10 @@ than a worker's:
   (`/opt/homebrew`, `/usr`, the developer directory) stay readable. `PATH` keeps altd's entries
   outside the home, with the active developer directory's `usr/bin` just ahead of `/usr/bin`, so
   `git` (and `python3` when no earlier entry has one) run without the shims, which report the
-  read-only cache as an `error:` on their stderr. A descriptor walk from `/`, as `tasks.task_file`
-  makes, cannot open the hidden `/private/tmp`, so `tests/test_task_files.py` holds natively, not
-  in a run.
+  read-only cache as an `error:` on their stderr. The read-only task-file API traverses ancestors
+  from `/` using search-only directory descriptors on Mac, without enumerating hidden folders.
+  Every component still refuses symlinks; final status/document reads stay descriptor-relative
+  and require ordinary file access. `tests/test_task_files.py` exercises this API inside a run.
 - **Network** reaches the internet and loopback, except Altitude's own port on any address. Unix
   sockets are reachable at any depth in each of its own folders, such as the coordinator verb broker
   a suite binds under `TMPDIR`, and for the system's name resolution and log; other processes'
