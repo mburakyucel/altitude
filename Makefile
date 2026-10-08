@@ -1,4 +1,4 @@
-.PHONY: run test check check-python check-web web ui ui-shell ui-ios ui-simulator audit-history installation-vm installation-mac browser-sandbox restart install-service
+.PHONY: run test check check-python check-web web ui ui-shell ui-ios ui-simulator audit-history installation-vm installation-mac installation-macos-vm browser-sandbox restart install-service
 run:            ## run altd in the foreground on 127.0.0.1:8890 (ALTITUDE_HOST/PORT override)
 	ALTITUDE_HOST=$${ALTITUDE_HOST:-127.0.0.1} bin/alt serve
 test:           ## Python unit and integration tests (throwaway ALTITUDE_HOME)
@@ -42,6 +42,10 @@ endif
 installation-mac: ## installation lifecycle on this Mac under a throwaway HOME and LaunchAgent label: install.sh, update detection, alt update, the Update button, failed-update recovery, uninstall (RESULTS=dir [SOURCE=ref]); outside the worker sandbox, inside a task with alt task run
 	$(if $(RESULTS),,$(error Set RESULTS to a directory for the evidence))
 	python3 scripts/installation_mac.py "$(RESULTS)" --source "$(or $(SOURCE),HEAD)"
+installation-macos-vm: ## install.sh refusals in throwaway macOS guests on this Apple silicon Mac (RESULTS=dir [SOURCE=ref]); inside a task, through `alt task run` under an operator grant
+	$(if $(RESULTS),,$(error Set RESULTS to a directory for the evidence))
+	python3.12 scripts/installation_macos_vm.py image
+	python3.12 scripts/installation_macos_vm.py run "$(RESULTS)" --source "$(or $(SOURCE),HEAD)"
 container-vm: ## actual container image/launcher lifecycle and authorization checks in a disposable Ubuntu KVM VM (RESULTS=dir)
 ifdef ALTITUDE_TASK
 	alt task validate --kvm -- make container-vm RESULTS=/results/container-vm

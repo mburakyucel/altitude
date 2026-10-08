@@ -1,5 +1,6 @@
 """Verify failure injection and refusal without operating any native user service."""
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -452,3 +453,115 @@ class TestInstallationVmCapture(AltitudeCase):
             with self.subTest(failure):
                 code, results, record = self.lane(capture=True, made=[], failure=failure, unreadable=True)
                 self.assertEqual((code, record["passed"], record["capture"]), (0, True, f"none: {failure}"))
+
+
+class TestInstallationMacosVm(AltitudeCase):
+    """The macOS VM lane's offline guest setup, isolation and judging; no guest, helper or restore image."""
+
+    class Guest:
+        """Answers the lane's probes as a guest whose network card is plugged in until `unplug`."""
+
+        def __init__(self, unplug_reaches=(), failing=None):
+            self.gateway = self.listener = None
+            self.plugged, self.unplug_reaches, self.failing, self.sent = True, set(unplug_reaches), failing, []
+
+        def ssh(self, command, timeout=120, check=True):
+            if command.startswith("route"):
+                return subprocess.CompletedProcess(command, 0, "127.0.0.1\n", "")
+            kind = "internet" if command.startswith("curl") else "host"
+            if kind == self.failing:
+                return subprocess.CompletedProcess(command, 255, "", "")
+            return subprocess.CompletedProcess(command, 0 if self.plugged or kind in self.unplug_reaches else 7, "", "")
+
+        def command(self, line):
+            self.sent.append(line)
+            self.plugged = False
+
+        def expect(self, prefix, timeout):
+            return prefix
+
+    def test_auto_login_password_is_padded_and_masked_as_loginwindow_reads_it(self):
+        from scripts import installation_macos_vm as vm
+        key = bytes([0x7D, 0x89, 0x52, 0x23, 0xD2, 0xBC, 0xDD, 0xEA, 0xA3, 0xB9, 0x1F])
+        for password, size in (("short", 12), ("exactly12chr", 24)):
+            masked = vm.kcpassword(password)
+            self.assertEqual(len(masked), size)
+            plain = bytes(byte ^ key[index % len(key)] for index, byte in enumerate(masked))
+            self.assertEqual(plain.rstrip(b"\0"), password.encode())
+            self.assertTrue(plain.endswith(b"\0"))
+
+    def test_account_password_is_stored_only_as_a_salted_pbkdf2_hash(self):
+        from scripts import installation_macos_vm as vm
+        import plistlib
+        record = plistlib.loads(vm.shadow_hash("fixture password"))["SALTED-SHA512-PBKDF2"]
+        self.assertEqual((record["iterations"], len(record["salt"]), len(record["entropy"])), (50_000, 32, 128))
+        self.assertEqual(record["entropy"], hashlib.pbkdf2_hmac("sha512", b"fixture password", record["salt"], 50_000, 128))
+        self.assertNotEqual(vm.shadow_hash("fixture password"), vm.shadow_hash("fixture password"))
+
+    def test_guest_address_comes_from_its_own_lease_whatever_the_zero_padding(self):
+        from scripts import installation_macos_vm as vm
+        leases = self.tmp / "dhcpd_leases"
+        leases.write_text("{\n\tname=other\n\tip_address=192.168.64.2\n\thw_address=1,a:b:c:d:e:f\n}\n"
+                          "{\n\tname=guest\n\tip_address=192.168.64.3\n\thw_address=1,2:0:5a:1:b2:c3\n}\n")
+        self.assertEqual(vm.lease("02:00:5a:01:b2:c3", leases), "192.168.64.3")
+        self.assertIsNone(vm.lease("02:00:5a:01:b2:c4", leases))
+        self.assertIsNone(vm.lease("02:00:5a:01:b2:c3", self.tmp / "missing"))
+
+    def test_isolation_needs_both_destinations_before_and_neither_after_unplugging(self):
+        from scripts import installation_macos_vm as vm
+        guest, record = self.Guest(), {}
+        try:
+            vm.isolate(guest, record)
+        finally:
+            guest.listener.close()
+        self.assertEqual(guest.sent, ["unplug"])
+        self.assertEqual(record["reachable"], {"online": {"internet": True, "host": True},
+                                               "isolated": {"internet": False, "host": False}})
+        for leaky in ("internet", "host"):
+            guest = self.Guest(unplug_reaches={leaky})
+            try:
+                with self.assertRaisesRegex(vm.Stop, "not isolated"):
+                    vm.isolate(guest, {})
+            finally:
+                guest.listener.close()
+
+    def test_a_probe_that_could_not_run_stops_the_run_instead_of_proving_isolation(self):
+        from scripts import installation_macos_vm as vm
+        guest = self.Guest(failing="host")
+        try:
+            with self.assertRaisesRegex(vm.Stop, "could not run"):
+                vm.isolate(guest, {})
+        finally:
+            guest.listener.close()
+        self.assertEqual(guest.sent, [])
+
+    def test_refusal_passes_only_with_its_documented_fix_and_nothing_changed(self):
+        from scripts import installation_macos_vm as vm
+        output = "Python 3.12 or newer was not found. Install it with: brew install python@3.12"
+        self.assertTrue(vm.judged({"exit": 1, "output": output, "unchanged": True}, "missing-python")["passed"])
+        for outcome in ({"exit": 0, "output": output, "unchanged": True},
+                        {"exit": 1, "output": output, "unchanged": False},
+                        {"exit": 1, "output": "Altitude cannot be installed on this Mac yet.", "unchanged": True}):
+            self.assertFalse(vm.judged(outcome, "missing-python")["passed"])
+
+    def test_release_is_served_where_the_public_command_and_installer_look_on_github(self):
+        from scripts import installation_macos_vm as vm
+        release = self.tmp / "release"
+        release.mkdir()
+        (release / "install.sh").write_text("#!/bin/sh\nREPOSITORY='https://github.com/example/altitude'\nVERSION='v0.0.1'\n")
+        (release / "altitude-v0.0.1.tar.gz").write_bytes(b"archive")
+        self.assertEqual(vm.release_tree(release, self.tmp / "serve"), "example/altitude")
+        root = self.tmp / "serve/root/example/altitude/releases"
+        self.assertTrue((root / "latest/download/install.sh").is_file())
+        self.assertEqual(sorted(path.name for path in (root / "download/v0.0.1").iterdir()),
+                         ["altitude-v0.0.1.tar.gz", "install.sh"])
+
+    def test_other_hosts_refuse_before_touching_anything(self):
+        from scripts import installation_macos_vm as vm
+        with mock.patch.object(vm.sys, "platform", "linux"), \
+                mock.patch.object(vm.sys, "argv", ["installation_macos_vm.py", "run", str(self.tmp / "results")]), \
+                mock.patch.object(vm.sys, "stderr", io.StringIO()) as stderr, mock.patch.object(vm, "lock") as lock:
+            self.assertEqual(vm.main(), 2)
+        self.assertIn("needs a Mac with Apple silicon", stderr.getvalue())
+        lock.assert_not_called()
+        self.assertFalse((self.tmp / "results").exists())
