@@ -126,12 +126,20 @@ def release_repository() -> str:
     return match[1]
 
 
-def latest_release(repository: str) -> dict:
-    """The newest stable published release: its version and release notes page."""
-    data = json.loads(_get(f"https://api.github.com/repos/{repository}/releases/latest", 1024 * 1024))
-    version = data.get("tag_name") if isinstance(data, dict) else None
-    if not isinstance(version, str) or not VERSION.fullmatch(version) or data.get("prerelease") or data.get("draft"):
-        raise ValueError("The latest published release has no valid version")
+def latest_release(repository: str, current: str) -> dict:
+    """The newest published release this installation follows: its version and release notes page.
+
+    An installation from a release candidate follows candidates and stable releases; a stable one follows
+    stable releases only. GitHub lists releases newest first; drafts are never offered."""
+    data = json.loads(_get(f"https://api.github.com/repos/{repository}/releases?per_page=100", 4 * 1024 * 1024))
+    follows_candidates = "-rc." in current
+    versions = [release["tag_name"] for release in (data if isinstance(data, list) else [])
+                if isinstance(release, dict) and isinstance(release.get("tag_name"), str)
+                and VERSION.fullmatch(release["tag_name"]) and not release.get("draft")
+                and (follows_candidates or "-rc." not in release["tag_name"])]
+    if not versions:
+        raise ValueError("No published release has a valid version")
+    version = max(versions, key=version_key)
     return {"version": version, "notes": f"https://github.com/{repository}/releases/tag/{version}"}
 
 
@@ -171,7 +179,8 @@ def check_for_update(now: float | None = None) -> None:
     if now < record.get("next", 0):
         return
     try:
-        found = {"latest": latest_release(release_repository()), "checked": now, "next": now + UPDATE_CHECK_SECONDS}
+        found = {"latest": latest_release(release_repository(), config.RELEASE["version"]), "checked": now,
+                 "next": now + UPDATE_CHECK_SECONDS}
     except (OSError, ValueError, RuntimeError):
         found = {"next": now + UPDATE_RETRY_SECONDS}
     with _changing_update_record() as record:
@@ -255,7 +264,7 @@ def _fail_attempt(version: str) -> None:
 
 
 def update(version: str | None = None) -> dict:
-    """Install the named or latest published release through the same verification and activation."""
+    """Install the named release, or the newest one this installation follows, through the same verification and activation."""
     from . import platform
     platform.require_native_application()
     try:
@@ -271,7 +280,7 @@ def _update(version: str | None) -> dict:
     repository = release_repository()
     current = config.RELEASE["version"]
     if version is None:
-        version = latest_release(repository)["version"]
+        version = latest_release(repository, current)["version"]
         if version_key(version) <= version_key(current):
             return {"version": current, "updated": False, "detail": f"Altitude {current} is up to date"}
     elif not VERSION.fullmatch(version):
