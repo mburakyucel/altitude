@@ -1871,7 +1871,8 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
     paths = _codex_paths(root, worker_id)
     if engine == "claude":
         cmd = [config.CLAUDE_BIN, "-p", "--output-format", "stream-json", "--verbose", "--name", name,
-               "--permission-mode", "auto", "--settings", str(settings or claude_settings()), *image_args]
+               "--permission-mode", "auto", "--allowedTools", "Bash(alt *)",
+               "--settings", str(settings or claude_settings()), *image_args]
         if persona:
             cmd += ["--append-system-prompt-file", str(persona)]
         if model:

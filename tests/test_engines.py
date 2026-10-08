@@ -7,8 +7,8 @@ import sys
 from pathlib import Path
 from unittest import mock
 
-from tests.support import AltitudeCase
-from altitude import config, engines, platform, state as S
+from tests.support import ALT, AltitudeCase
+from altitude import config, dispatch, engines, platform, state as S, tasks as T
 
 
 class _Input(io.BytesIO):
@@ -88,6 +88,8 @@ class TestForegroundUnits(AltitudeCase):
                     cli = child[child.index(config.CLAUDE_BIN):]
                     self.assertIn("-p", cli)
                     self.assertEqual(cli[cli.index("--output-format") + 1], "stream-json")
+                    self.assertEqual(cli[cli.index("--permission-mode") + 1], "auto")
+                    self.assertEqual(cli[cli.index("--allowedTools") + 1], "Bash(alt *)")
                     self.assertEqual(cli[cli.index("--settings") + 1], str(self.settings))
                     self.assertEqual(cli[cli.index("--append-system-prompt-file") + 1], str(self.persona))
                     self.assertNotIn("--bg", cli)
@@ -100,6 +102,73 @@ class TestForegroundUnits(AltitudeCase):
                     prompt = engines._codex_processes[row["id"]].stdin.getvalue().decode()
                     self.assertTrue(prompt.endswith("\n\ncontinue" if resume else "\n\nbrief"))
                     self.assertIn(str(config.PERSONAS / "l1.md"), prompt)
+
+    def test_incident_612_native_allowance_admits_replies_without_granting_coordinator_authority(self):
+        script = '''
+import json
+import subprocess
+import sys
+print(json.dumps({"type": "system", "subtype": "init", "session_id": "session"}), flush=True)
+sys.stdin.read()
+arguments = sys.argv[2:]
+allowed = "--allowedTools" in arguments and arguments[arguments.index("--allowedTools") + 1] == "Bash(alt *)"
+if allowed:
+    reply = subprocess.run([sys.executable, sys.argv[1], "task", "reply", "-"],
+                           input="Owner can report through Altitude.", text=True, capture_output=True)
+    denied = subprocess.run([sys.executable, sys.argv[1], "task", "new", "--title", "Unowned task", "Unauthorized"],
+                            input="", text=True, capture_output=True)
+    error = reply.returncode != 0 or denied.returncode == 0
+    detail = reply.stderr + denied.stderr
+else:
+    error, detail = True, "External System Writes: coordination has no native allowance"
+print(json.dumps({"type": "result", "is_error": error, "result": detail}), flush=True)
+'''
+        real_popen = subprocess.Popen
+        for host in ("linux", "darwin"):
+            for resume in (False, True):
+                with self.subTest(host=host, resume=resume):
+                    task = T.new(self.project, f"Owner allowance {host} {resume}", "Report the authorized result.")
+                    task.update(state="running", attempt=1, session_id="session", hold_merge="Operator security review")
+                    S.save_task(self.project, task)
+                    processes = []
+
+                    def popen(command, **options):
+                        if host == "darwin":
+                            specification = json.loads(command[-1])
+                            wrapped, environment = specification["command"], specification["env"]
+                            self.assertIn(str(self.repo), specification["writable"])
+                            self.assertIn(str(config.ROOT), specification["writable"])
+                        else:
+                            child = command[command.index("--") + 1:]
+                            wrapper_index = child.index("/bin/sh")
+                            environment = dict(argument.split("=", 1) for argument in child[2:wrapper_index])
+                            wrapped = child[wrapper_index:]
+                        self.assertEqual(wrapped[:4], ["/bin/sh", "-c", engines.GITHUB_INPUT, "altitude-worker"])
+                        native = wrapped[4:]
+                        self.assertEqual(native[native.index("--permission-mode") + 1], "auto")
+                        self.assertNotIn("--dangerously-skip-permissions", native)
+                        self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", environment)
+                        options["env"] = environment
+                        process = real_popen([*wrapped[:4], sys.executable, "-c", script, str(ALT), *native[1:]], **options)
+                        processes.append(process)
+                        return process
+
+                    with mock.patch.object(platform, "_darwin", return_value=host == "darwin"), \
+                         mock.patch.object(engines, "claude_agents", return_value=[]), \
+                         mock.patch.object(platform, "job_active", side_effect=lambda *_: processes[-1].poll() is None), \
+                         mock.patch.object(engines.subprocess, "Popen", side_effect=popen):
+                        result = engines._start_worker("claude", "owner-fixture", "Report the result.",
+                            cwd=self.repo, job_root=self.job_root, resume="session" if resume else None,
+                            persona=self.persona, settings=self.settings,
+                            extra_env=dispatch.l2_env(self.project, task["slug"], 1))
+                        self.assertEqual(result["returncode"], 0, result["stderr"])
+                        self.assertEqual(processes[-1].wait(timeout=10), 0)
+                        worker = engines.worker("claude", {"agent_id": result["agent"]["id"]}, job_root=self.job_root)
+                    self.assertEqual(worker["state"], "done", worker["detail"])
+                    self.assertEqual(T.task_messages(self.project, task["slug"])[-1]["text"],
+                                     "Owner can report through Altitude.")
+                    self.assertEqual(S.load_task(self.project, task["slug"])["hold_merge"], "Operator security review")
+                    self.assertFalse(any(row["title"] == "Unowned task" for row in S.list_tasks(self.project)))
 
     def test_incident_171446_provider_stream_from_real_process_preserves_result_and_error(self):
         real_popen = subprocess.Popen

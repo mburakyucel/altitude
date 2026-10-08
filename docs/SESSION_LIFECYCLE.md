@@ -1136,6 +1136,12 @@ this one-time rotation; activation needs no manual session reset or task action.
 Both engines launch L2 workers through the same transient user-unit command builder, outside altd's
 cgroup. Claude runs foreground `-p --output-format stream-json` inside its own unit, with its settings,
 hooks, model pin and resumable session; launch and resume stop any daemon job still bound to the task name.
+Fresh and resumed owners retain `--permission-mode auto` with the narrow `--allowedTools "Bash(alt *)"`
+allowance. Native deny/ask rules and worker confinement remain effective; Altitude's CLI and broker
+enforce role, task-attempt, merge-hold and operator-grant authority. No allowance covers other external
+commands. Running messages still arrive through the inbox hook, whose context does not establish
+operator authorization for those commands in the native classifier; that part of
+[issue #612](https://github.com/mburakyucel/altitude/issues/612) remains open.
 Each turn has a private worker record and output log, and Stop removes the unit's descendants.
 Each Codex turn also uses this boundary,
 because altd's own `NoNewPrivileges` hardening would stop its nested bwrap from starting.
