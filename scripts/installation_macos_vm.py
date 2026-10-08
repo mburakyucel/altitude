@@ -816,7 +816,9 @@ def phase_lifecycle(guest: Guest, repository: str, results: Path, record: dict, 
               # What launchd and the guest were doing when a step failed.
               f'if [ $code != 0 ]; then label=$(sed -n \'s/.*"label": "\\(.*\\)".*/\\1/p\' "$work/home/results/service-label.json"); '
               f'launchctl print "gui/$(id -u)/$label" > {SHARED}/lifecycle/launchd.txt 2>&1; '
-              f'ps -Ao pcpu,pmem,etime,comm -r | head -25 > {SHARED}/lifecycle/processes.txt; fi; exit $code')
+              f'ps -Ao pcpu,pmem,etime,comm -r | head -25 > {SHARED}/lifecycle/processes.txt; '
+              f'log show --last 10m --style compact --predicate "eventMessage CONTAINS \\"$label\\" OR '
+              f'process == \\"UserNotificationCenter\\"" > {SHARED}/lifecycle/system-log.txt 2>&1; fi; exit $code')
     result = guest.ssh(script, timeout=480, check=False)
     record["guest_load_at_end"] = float(guest.ssh("sysctl -n vm.loadavg").stdout.split()[1])
     (results / "lifecycle.log").write_text(result.stdout + result.stderr)
