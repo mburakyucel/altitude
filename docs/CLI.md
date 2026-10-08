@@ -793,7 +793,9 @@ alt machine set --unset-wip --reason 'Restore the machine default of 80'
 ```
 
 `machine show` reports the effective machine `wip`, its `override` (null when inherited), `default`
-(80), and `request.status` showing whether a change is still `pending` or has completed.
+(80), and `request.status` showing whether a change is still `pending` or has completed. It also
+reports `machine_runs`, how many [granted commands](#operator-grant) run at once on this computer: a
+quarter of its cores, at least one, not a setting.
 Project registration and settings expose no concurrency cap. Stored project `wip` overrides
 impose no limit.
 
@@ -1925,7 +1927,13 @@ machine key cannot run commands under this task's grant. It records the run in `
 first, then runs the command as the operator in a transient user unit outside every worker sandbox,
 in the task worktree, through a login shell, with the user service manager reachable and the
 owner's task identity in the environment, so `alt` inside the command acts as that L2. One command
-runs at a time per task, for at most `MACHINE_COMMAND_TIMEOUT` (600 seconds); the unit itself
+runs at a time per task, for at most `MACHINE_COMMAND_TIMEOUT` (600 seconds), and at most a quarter
+of the computer's cores (at least one) run at once across the machine; `alt machine show` reports
+that number as `machine_runs`. A command that finds every place taken waits its turn in arrival
+order, for up to 30 minutes, and prints what it waits for on standard error: the commands holding
+the places, when their limits end and how many requests are ahead. Stopping or interrupting the CLI,
+or losing its connection, takes the command out of the line, or stops it and records why, and frees
+its place ([machine runs](DEVELOPMENT.md#validation-runner)). The unit itself
 writes its output to `<unit>.log` and its exit status to `<unit>.exit` in the task folder, so the
 result outlives altd. The CLI prints the output and a status line, then exits with the command's
 status (124 on timeout). Each run completes its `machine.jsonl` row, with the finish time the unit

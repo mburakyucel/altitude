@@ -576,6 +576,23 @@ json.dump({"apps": sorted(apps), "opened": opened, "socket": os.environ["SIMULAT
         self.assertTrue(validation._ready.is_set())
 
 
+
+class TestBoot(TestCase):
+    def test_a_boot_slowed_by_a_busy_host_shares_one_limit_across_its_steps(self):
+        clock, calls = [1000.0], []
+
+        def simctl(devices, *args, timeout):   # each step takes as long as a host under heavy load made it
+            calls.append((args[0], timeout))
+            clock[0] += {"create": 20, "bootstatus": 150, "getenv": 90}[args[0]]
+            return {"create": "PHONE\n", "getenv": "/tmp/inspector.sock\n"}.get(args[0], "")
+        with mock.patch.object(sim, "_simctl", side_effect=simctl), \
+                mock.patch.object(sim.time, "monotonic", side_effect=lambda: clock[0]):
+            phone = sim.Phone(Path(SUITE) / f"boot-{os.getpid()}-{time.monotonic_ns()}", {"device_id": "d", "runtime_id": "r"})
+            self.addCleanup(phone.devices.rmdir)
+            self.assertEqual(phone.boot(), "/tmp/inspector.sock")
+        self.assertEqual(calls, [("create", sim.BOOT_SECONDS), ("bootstatus", sim.BOOT_SECONDS - 20),
+                                 ("getenv", sim.BOOT_SECONDS - 170)])
+
 class TestRemove(TestCase):
     def test_an_absent_set_needs_nothing(self):
         with mock.patch.object(sim, "_simctl") as simctl:

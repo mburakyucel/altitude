@@ -1028,12 +1028,13 @@ failure; otherwise valid isolated tasks continue. Publication retains its curren
 ownership boundaries and review holds.
 
 A failing `git fetch origin main` for self-deploy raises `git_policy.FetchError`. The tick logs each
-such failure and retries it on the next tick. It raises the `self-deploy` system fault only once fetches
-have failed for five minutes without a success in between, carrying the latest fetch error. The
-post-delivery fast-forward returns a note for a failed fetch and leaves the retry to the tick. Every
-other self-deploy failure, including a dirty, diverged, ahead or off-main checkout and a failed
-fast-forward, raises the fault immediately. The failure start is held in daemon memory, so a restart
-starts a new grace period.
+such failure, and each command of the tick that outlives its time limit on a busy host (#724), and
+retries it on the next tick. It raises the system fault (`self-deploy`, or `tick` for the setup check
+and the rest of the tick) only once the same step has failed for five minutes without a success in
+between, carrying the latest error. The post-delivery fast-forward returns a note for a failed fetch
+and leaves the retry to the tick. Every other self-deploy failure, including a dirty, diverged, ahead
+or off-main checkout and a failed fast-forward, raises the fault immediately. The failure start is
+held in daemon memory, so a restart starts a new grace period.
 
 Base fetching tolerates one competing update of the same remote-tracking ref across linked
 worktrees, including ordinary Git commands and landing fetches. `git_policy.fetch_origin` uses

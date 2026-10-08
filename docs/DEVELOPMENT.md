@@ -407,8 +407,15 @@ alt task validate -- python3 -m unittest tests.test_container_workflow tests.tes
   run holds the machine, when that run's limit ends and how many requests are ahead. Every check is
   repeated at admission. altd watches each request's connection: a client that stops, is interrupted
   or loses its connection leaves the line, or, once admitted, has its run stopped at once and recorded
-  as `stopped`, which frees the machine for the next request. `alt task run` does not share this slot;
-  it is refused only while a command or run of its own task is unfinished.
+  as `stopped`, which frees the machine for the next request.
+- **Machine runs.** Commands under an operator grant (`alt task run`) wait in a line of their own,
+  apart from this slot: at most a quarter of the computer's cores run at once (at least one; two on
+  an 8-core Mac), and `alt machine show` reports the number as `machine_runs`. A command beyond
+  that waits in arrival order for up to 30 minutes, printing the commands that hold the places,
+  when their limits end and how many requests are ahead. A client that stops or loses its connection
+  leaves the line, or has its command stopped with that reason recorded, which frees its place.
+  A command still running when altd restarts keeps a place until it ends. A task still runs one
+  command at a time.
 - **Storage.** The image, Podman's storage, the cloud-image cache and each run's area live in
   `~/.altitude-validation`, beside Altitude's home rather than in it. Workers can write Altitude's
   home, and a path a worker replaced must not become a mount or a place the run writes.
@@ -511,7 +518,9 @@ make ui-simulator   # inside a task: alt task validate --simulator -- sh -c 'mak
   area, outside the folders the run can write, and boots it headless. It picks the newest available iOS
   runtime and an iPhone of the newest generation it supports, the shortest-named model, by detection. The
   operator's own Simulator devices are never listed or touched. A boot takes about 35 seconds and the
-  phone's data about 3 GB, inside the runner's 20 GiB free-disk check.
+  phone's data about 3 GB, inside the runner's 20 GiB free-disk check. Creating the phone, booting it
+  and reading its inspector socket share one five-minute limit, so a step that a busy host slows can
+  use the time the others left.
 - **Relay.** The run still cannot reach the Simulator service. It reaches the phone's Safari through a
   Unix socket in its own `TMPDIR`, named by `SIMULATOR_INSPECTOR`. altd relays Safari's Web Inspector
   protocol (the binary-plist protocol Safari's Develop menu uses) and filters it: only Safari's web pages
