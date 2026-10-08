@@ -1814,6 +1814,8 @@ def _pr_merged_at(repo: Path, task: dict, branch_sha: str) -> bool:
 
 
 SOURCE_EXPORT = re.compile(r"\.altitude-source/([0-9a-f]{40})")
+#: The restart helper verifies the replacement service from the export it was launched from.
+SOURCE_EXPORT_GRACE_SECONDS = 3600
 
 
 def prune_source_exports() -> list[str]:
@@ -1821,24 +1823,32 @@ def prune_source_exports() -> list[str]:
 
     The running service, `current` and an in-flight `next` link keep theirs. A worker keeps the export named in
     its task's brief and session settings until its task ends and cleanup has run; review and validation jobs use
-    the running service's export."""
+    the running service's export. Nothing is pruned within an hour of `current` moving, while the previous
+    service's restart helper may still run from its export."""
     root = config.SOURCE.parent
     if config.RELEASE is not None or root.name != ".altitude-source":
         return []
-    keep = {config.SOURCE.name} | {Path(os.readlink(link)).name for link in (root / "current", root / "next")
+    current = root / "current"
+    if current.is_symlink() and datetime.now().timestamp() - current.lstat().st_mtime < SOURCE_EXPORT_GRACE_SECONDS:
+        return []
+    keep = {config.SOURCE.name} | {Path(os.readlink(link)).name for link in (current, root / "next")
                                    if link.is_symlink()}
     stale = [path for path in root.iterdir() if re.fullmatch(r"[0-9a-f]{40}", path.name)
              and path.name not in keep and path.is_dir() and not path.is_symlink()]
     if not stale:
         return []
     for project in config.load_projects():
-        for task in S.list_tasks(project, include_archive=True):
-            if task["state"] in S.OPEN_STATES or not task.get("cleaned"):
-                for name in ("brief.md", "settings.json"):
-                    try:
-                        keep.update(SOURCE_EXPORT.findall((S.task_dir(project, task["slug"]) / name).read_text()))
-                    except OSError:
-                        pass
+        with S.project_lock(project):  # archival moves task folders under this lock
+            for task in S.list_tasks(project, include_archive=True):
+                if task["state"] in S.OPEN_STATES or not task.get("cleaned"):
+                    for name in ("brief.md", "settings.json"):
+                        path = S.task_dir(project, task["slug"]) / name
+                        try:
+                            keep.update(SOURCE_EXPORT.findall(path.read_text()))
+                        except FileNotFoundError:
+                            pass  # not launched yet
+                        except OSError as e:
+                            return [f"deferred source export pruning: cannot read {path}: {e}"]
     notes = []
     for path in stale:
         if path.name in keep:
@@ -1871,14 +1881,14 @@ def cleanup_task(project: str, task: dict) -> list[str]:
     def keep(reason: str, *, retry: bool = False) -> list[str]:
         S.append_event(project, slug, "cleanup-worktree", action="deferred" if retry else "skipped",
                        worktree=wt, reason=reason)
-        notes.append(f"{'deferred' if retry else 'kept'} worktree {Path(wt).name}: {reason}")
+        notes.append(f"{'deferred' if retry else 'kept'} worktree {Path(wt or slug).name}: {reason}")
         return finish()
 
-    if not wt or not branch or not Path(wt).is_dir():
-        return finish()
     try:
-        if engines.worker_live(l2_engine(task), task, job_root=l2_job_root(project, slug)):
+        if task.get("agent_id") and engines.worker_live(l2_engine(task), task, job_root=l2_job_root(project, slug)):
             return keep("L2 worker is still running", retry=True)
+        if not wt or not branch or not Path(wt).is_dir():
+            return finish()
         fetch = git("fetch", "-q", "origin", "main")
         if fetch.returncode != 0:
             return keep(f"could not refresh origin/main: {(fetch.stderr or fetch.stdout).strip()[:120]}", retry=True)
@@ -1899,6 +1909,8 @@ def cleanup_task(project: str, task: dict) -> list[str]:
             return keep(f"git worktree remove failed: {(removed.stderr or removed.stdout).strip()[:120]}")
         if merged:
             git("branch", "-D", branch)
+    except subprocess.TimeoutExpired as e:
+        return keep(f"git timed out: {e}", retry=True)
     except (subprocess.SubprocessError, OSError, RuntimeError) as e:
         return keep(f"cleanup error: {e}")
     if tip and not merged:

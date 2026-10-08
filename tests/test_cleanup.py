@@ -1,6 +1,7 @@
 """cleanup_task frees a finished task's worktree and branch once nothing needs them, and
 prune_source_exports removes launch exports nothing names (real git, disposable repositories)."""
 import os
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -92,6 +93,21 @@ class TestCleanup(AltitudeCase):
         engines.remove_l2_worker.assert_not_called()
         self.assertTrue((Path(dirty["worktree"]) / "notes.txt").exists())
 
+    def test_a_git_timeout_retries(self):
+        task = self.task("slow", state="rejected")
+        self.merge(task["branch"])
+        run = dispatch.subprocess.run
+
+        def fetch_times_out(args, **kwargs):
+            if args[:2] == ["git", "fetch"]:
+                raise dispatch.subprocess.TimeoutExpired(args, 120)
+            return run(args, **kwargs)
+        with mock.patch.object(dispatch.subprocess, "run", side_effect=fetch_times_out):
+            notes = dispatch.cleanup_task(self.project, task)
+        self.assertTrue(self.listed(task), notes)
+        self.assertTrue(notes[0].startswith("deferred worktree slow: git timed out:"), notes)
+        self.assertEqual(self.last_event("slow")["action"], "deferred")
+
     def test_rejected_task_with_merged_branch_is_removed_without_self_deploy(self):
         task = self.task("rejected", state="rejected")
         self.merge(task["branch"])
@@ -144,8 +160,12 @@ class TestCleanup(AltitudeCase):
         self.assertTrue(self.listed(running))
         self.assertIsNone(S.load_task(self.project, "running").get("cleaned"))
 
-    def test_no_worktree_means_nothing_to_clean(self):
+    def test_no_worktree_means_nothing_to_clean_once_the_worker_ends(self):
         self.assertEqual(dispatch.cleanup_task(self.project, {"slug": "x", "state": "done"}), [])
+        task = {"slug": "y", "state": "rejected", "agent_id": "a2"}
+        with mock.patch.object(engines, "worker_live", return_value=True):
+            self.assertEqual(dispatch.cleanup_task(self.project, task), ["deferred worktree y: L2 worker is still running"])
+        self.assertEqual(dispatch.cleanup_task(self.project, task), [])
 
 
 class TestSourceExports(AltitudeCase):
@@ -158,11 +178,16 @@ class TestSourceExports(AltitudeCase):
             (self.root / sha / "bin").mkdir(parents=True)
         (self.root / "git-guards").mkdir()
         (self.root / "current").symlink_to(self.CURRENT, target_is_directory=True)
+        self.activated(hours_ago=2)
         self.patch(config, "RELEASE", None)
         self.patch(config, "SOURCE", self.root / self.RUNNING)
         self.save("open-task", "blocked", brief=self.BRIEF)
         self.save("ending-task", "rejected", settings=self.SETTINGS)
         self.save("ended-task", "done", settings=self.ENDED, cleaned=S.now())
+
+    def activated(self, *, hours_ago):
+        at = time.time() - hours_ago * 3600
+        os.utime(self.root / "current", (at, at), follow_symlinks=False)
 
     def save(self, slug, state, *, brief=None, settings=None, **extra):
         folder = S.task_dir(self.project, slug)
@@ -181,6 +206,20 @@ class TestSourceExports(AltitudeCase):
         self.assertEqual(left, sorted([self.RUNNING, self.CURRENT, self.BRIEF, self.SETTINGS, "current", "git-guards"]))
         self.assertEqual(os.readlink(self.root / "current"), self.CURRENT)
         self.assertEqual(dispatch.prune_source_exports(), [])
+
+    def test_an_unreadable_reference_defers_pruning(self):
+        settings = S.task_dir(self.project, "ending-task") / "settings.json"
+        settings.chmod(0)
+        self.addCleanup(settings.chmod, 0o600)
+        notes = dispatch.prune_source_exports()
+        self.assertEqual(len(notes), 1)
+        self.assertTrue(notes[0].startswith("deferred source export pruning: cannot read "), notes)
+        self.assertTrue(all((self.root / sha).is_dir() for sha in (self.SETTINGS, self.ENDED, self.STALE)))
+
+    def test_a_recent_activation_defers_pruning(self):
+        self.activated(hours_ago=0.5)
+        self.assertEqual(dispatch.prune_source_exports(), [])
+        self.assertTrue((self.root / self.STALE).is_dir())
 
     def test_versioned_and_checkout_runs_have_no_exports_to_prune(self):
         self.patch(config, "SOURCE", self.repo)

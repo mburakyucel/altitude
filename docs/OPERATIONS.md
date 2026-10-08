@@ -148,7 +148,8 @@ reason. Inspect them in that worktree, then remove it with `git worktree remove`
 
 A source deployment removes `.altitude-source/<sha>` exports that nothing names: the running service's
 export, the target of `current` and exports named by an unfinished or not yet cleaned-up task's brief
-or session settings stay. `altd.log` records each removal as `[source] removed source export <sha>`.
+or session settings stay. Pruning starts an hour after an activation and waits while a task's launch
+files cannot be read. `altd.log` records each removal as `[source] removed source export <sha>`.
 Other entries under `.altitude-source`, such as `git-guards`, are never touched.
 
 ## Incident publication

@@ -248,7 +248,9 @@ deployment-local `.altitude-source/<sha>` directory. `config.REPO` identifies th
 `config.SOURCE` identifies the activated source for CLI code, personas, hooks, templates and schemas.
 These exports sit outside worker writable roots. The maintenance tick removes an export nothing names:
 the running service's export, the target of `current` and every export named in the brief or session
-settings of a task that is unfinished or not yet cleaned up stay, so live workers keep theirs. Managed
+settings of a task that is unfinished or not yet cleaned up stay, so live workers keep theirs. Pruning
+waits an hour after `current` moves, while the restart helper may still run from the previous export,
+and skips a pass when a task's launch files cannot be read. Managed
 Git guards use `.altitude-source/current/hooks`; setup and launch preflight refresh recognized
 Altitude-owned paths from earlier exports, including skipped versions, and preserve custom hooks.
 Task inputs use activated source independently of
