@@ -1123,6 +1123,11 @@ def tick() -> None:
             if ready and config.is_managed(project):
                 tick_project(project)
     try:
+        for note in dispatch.prune_source_exports():
+            log(f"[source] {note}")
+    except Exception as e:  # noqa: BLE001
+        log(f"[source] export pruning failed: {e}")
+    try:
         auto_restart()
     except Exception as e:  # noqa: BLE001
         log(f"auto-restart: {e}\n{traceback.format_exc()}")
@@ -1183,9 +1188,9 @@ def tick_project(project: str) -> None:
             request_task_resume(project, slug)
         dispatch_waiting(project)
         for t in S.list_tasks(project, include_archive=True):
-            if t["state"] == "done" and not t.get("cleaned"):
-                notes = dispatch.cleanup_after_done(project, t)
-                deferred = any(note.startswith(("deferred ", "skipped ", "could not ")) for note in notes)
+            if t["state"] not in S.OPEN_STATES and not t.get("cleaned"):
+                notes = dispatch.cleanup_task(project, t)
+                deferred = any(note.startswith("deferred ") for note in notes)
                 if not deferred:
                     with S.project_lock(project):
                         t2 = S.load_task(project, t["slug"]); t2["cleaned"] = S.now(); S.save_task(project, t2)
