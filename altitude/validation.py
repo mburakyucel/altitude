@@ -138,12 +138,11 @@ def native_script(run: Path, argv: list[str], output: Path) -> str:
                           tuple(candidate_dirs(run)), output, config.PORT, argv, env))])
 
 
-def isolation() -> str:
+def isolation(run: Path, unit: str) -> str:
     """What isolated a run, for its record: the image tag, or the digest of the profile for a run area."""
     if platform.validation_in_container():
         return image_tag()
-    run = home() / "runs" / "run"
-    profile = platform.validation_profile(tuple(candidate_dirs(run)), engines.machine_files(run, "unit.service")[0],
+    profile = platform.validation_profile(tuple(candidate_dirs(run)), engines.machine_files(run, unit)[0],
                                           config.PORT)
     return "seatbelt:" + hashlib.sha256(profile.encode()).hexdigest()[:16]
 
@@ -326,8 +325,8 @@ def _own(name: str, dir_fd: int | None = None) -> None:
 
 def _remove(path: Path) -> str | None:
     """Remove `path` as the operator's account. A link in its place is removed, never followed. Its folders first get
-    their owner's permissions back, since a run can leave one without write permission, as the native browser trial's
-    protected package does (#700). Returns the first entry that could not be removed and why, or None."""
+    their owner's permissions back, since protected-package fixtures can leave one without write permission (#700).
+    Returns the first entry that could not be removed and why, or None."""
     if path.is_symlink():
         path.unlink()
         return None
@@ -529,7 +528,7 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
         (area / "run.json").write_text(json.dumps({"project": project, "slug": slug, "unit": unit}))
         row = T.start_machine_run(project, slug, lambda n: {
             "purpose": "validation", "command": shlex.join(argv), "unit": unit, "commit": commit, "tree": tree,
-            "host": platform.host_identity(), "isolation": isolation(), "kvm": kvm,
+            "host": platform.host_identity(), "isolation": isolation(area, unit), "kvm": kvm,
             "publish": {"container": ports[0], "host": ports[1]} if ports else None,
             "log": str(S.task_dir(project, slug) / "validation" / f"{n}.log")})
         with _state:

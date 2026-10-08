@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import ctypes
 import fcntl
-import fnmatch
 from contextlib import ExitStack, contextmanager
 import ipaddress
 import json
@@ -2037,83 +2036,6 @@ def _altitude_coalitions() -> dict[int, str]:
     return {coalition: unit for coalition, unit in units.items() if coalition}
 
 
-def require_native_browser_trial() -> None:
-    require_native_application()
-    if not _darwin():
-        raise RuntimeError("The native browser trial requires macOS; Linux uses its validation container")
-
-
-def _native_trial_job_root(excluded_roots: tuple[Path, ...]) -> Path:
-    root = _jobs()
-    if any(root.is_relative_to(p) or any(fnmatch.fnmatch(str(parent), str(p)) for parent in (root, *root.parents))
-           for p in excluded_roots):
-        raise RuntimeError("Native job records overlap worker write roots")
-    for path in (root, *root.parents):
-        st = path.lstat()
-        if stat.S_ISLNK(st.st_mode) or st.st_mode & 0o022:
-            raise RuntimeError("Native job record ancestry protection is unavailable")
-    if root.stat().st_uid != os.getuid():
-        raise RuntimeError("Native job record owner differs from the operator")
-    return root
-
-
-def native_trial_worker_specs(*, unit_prefixes: tuple[str, ...], excluded_roots: tuple[Path, ...]) -> list[dict]:
-    """Protected live launch evidence, retaining the actual roots after mutable task records change (#625).
-
-    Use the existing job/coalition lifetime checks, never task-writable worker records or process-name matching.
-    A malformed, shared-writable or linked job record makes cleanup uncertain instead of widening its targets.
-    """
-    if not _darwin() or containerized():
-        raise RuntimeError("Native runtime job evidence requires the native Mac platform")
-    root = _native_trial_job_root(excluded_roots)
-    found = []
-    for job in root.glob("*"):
-        if not job.name.startswith(tuple("dev.altitude.job." + prefix for prefix in unit_prefixes)):
-            continue
-        for path in (job, job / "spec.json"):
-            st = path.lstat()
-            if stat.S_ISLNK(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o022:
-                raise RuntimeError("Native job record protection is unavailable")
-        with (job / "spec.json").open() as stream:
-            spec = json.load(stream)
-        if spec.get("label") != job.name or not isinstance(spec.get("command"), list):
-            raise RuntimeError("Native job identity is unavailable")
-        name = job.name.removeprefix("dev.altitude.job.") + ".service"
-        if job_active(name, {}):
-            found.append({**spec, "unit": name})
-    return found
-
-
-def native_runtime_jobs(executable: Path, *, unit_prefixes: tuple[str, ...], excluded_roots: tuple[Path, ...]) -> list[str]:
-    return sorted(spec["unit"] for spec in native_trial_worker_specs(
-        unit_prefixes=unit_prefixes, excluded_roots=excluded_roots) if str(executable) in spec["command"])
-
-
-def native_temporary_roots() -> tuple[Path, ...]:
-    # Keep parity with seatbelt_profile's private temp/cache parent and fixed device/temp roots.
-    return tuple(dict.fromkeys(Path(p).resolve() for p in
-                 (Path(_user_temp()).resolve().parent, "/private/tmp", "/private/var/tmp", "/dev", tempfile.gettempdir())))
-
-
-@contextmanager
-def native_browser_trial_deadline(seconds: int):
-    """Bound each foreground trial/recovery phase below the outer grant timeout (#625)."""
-    require_native_browser_trial()
-    def expired(signum, frame):
-        raise NativeBrowserTrialDeadline("Native browser trial phase deadline expired")
-    previous = signals.signal(signals.SIGALRM, expired)
-    previous_timer = signals.setitimer(signals.ITIMER_REAL, seconds)
-    try:
-        yield
-    finally:
-        signals.setitimer(signals.ITIMER_REAL, *previous_timer)
-        signals.signal(signals.SIGALRM, previous)
-
-
-class NativeBrowserTrialDeadline(BaseException):
-    """An internal transaction deadline must pass through service/status RuntimeError handlers."""
-
-
 # --- macOS: processes and sockets ---------------------------------------------------------------------------------
 
 _LIBPROC = None
@@ -2353,6 +2275,93 @@ def validation_in_container() -> bool:
     """Whether a validation run is a rootless Podman container (Linux) rather than a process under the validation
     Seatbelt profile (macOS, where Podman would need a virtual machine of its own)."""
     return not _darwin()
+
+
+def validation_browser_environment(temp: Path) -> dict[str, str]:
+    """Chromium's supported hermetic temp override on Mac (#625), inside the run's existing write root."""
+    return {"MAC_CHROMIUM_TMPDIR": str(temp)} if _darwin() else {}
+
+
+def validation_browser_probe(work: Path) -> dict:
+    """Finite in-profile controls for #625's fictional browser lane; never apply a nested profile.
+
+    Directory opens read no private contents, scratch creation never replaces an existing file,
+    and signal zero never changes another process. Unavailable controls remain missing evidence.
+    """
+    import pwd
+    checks = []
+    def denied(name, operation):
+        try:
+            value = operation()
+        except PermissionError as exc:
+            checks.append({"name": name, "passed": True, "errno": exc.errno})
+        except OSError as exc:
+            checks.append({"name": name, "passed": False, "unavailable_errno": exc.errno})
+        else:
+            checks.append({"name": name, "passed": False, "unexpected_allow": True})
+            return value
+
+    def directory(path):
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+        os.close(fd)
+
+    denied("operator-home-directory-open", lambda: directory(pwd.getpwuid(os.getuid()).pw_dir))
+    denied("shared-temp-directory-open", lambda: directory("/private/tmp"))
+    scratch = work.parent / ("browser-probe-" + uuid.uuid4().hex)
+    fd = denied("outside-candidate-root-create", lambda: os.open(scratch, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+    if fd is not None:
+        try:
+            os.close(fd)
+            scratch.unlink()
+        except OSError as exc:
+            # Creation already succeeded: failed cleanup cannot retroactively prove a write denial.
+            checks[-1]["cleanup_error"] = str(exc)
+    with tempfile.TemporaryDirectory(prefix="browser-probe-", dir=os.environ["TMPDIR"]) as own:
+        path = Path(own) / "owned"
+        with path.open("wb") as stream:
+            stream.write(b"fictional control"); stream.flush(); os.fsync(stream.fileno())
+        checks.append({"name": "owned-read-write", "passed": path.read_bytes() == b"fictional control"})
+        path.unlink()
+        address = str(Path(own) / "socket")
+        with socket.socket(socket.AF_UNIX) as server, socket.socket(socket.AF_UNIX) as client:
+            server.settimeout(2); client.settimeout(2)
+            server.bind(address); server.listen(1); client.connect(address)
+            with server.accept()[0] as peer:
+                peer.settimeout(2); client.sendall(b"fictional"); data = peer.recv(16)
+            checks.append({"name": "owned-unix-socket", "passed": data == b"fictional"})
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(10)"])
+    try:
+        os.kill(child.pid, 0)
+        child.terminate(); child.wait(timeout=3)
+        checks.append({"name": "owned-child-signal-termination", "passed": child.returncode is not None})
+    finally:
+        if child.poll() is None:
+            child.kill(); child.wait(timeout=3)
+    identity = _bsd(os.getpid())
+    parent = identity.ppid
+    ancestor = None
+    for _ in range(16):
+        if parent <= 1:
+            break
+        info = _bsd(parent)
+        if info.uid == os.getuid():
+            try:
+                os.kill(parent, 0)
+            except PermissionError as exc:
+                same = _started(_bsd(parent)) == _started(info)
+                ancestor = {"pid": parent, "start": _started(info), "coalition": _coalition_of(parent)}
+                checks.append({"name": "same-uid-ancestor-signal-zero", "passed": same, "errno": exc.errno})
+                break
+        parent = info.ppid
+    if ancestor is None:
+        checks.append({"name": "same-uid-ancestor-signal-zero", "passed": False, "unavailable": True})
+    return {"passed": all(row["passed"] for row in checks), "checks": checks,
+            "process": {"pid": os.getpid(), "start": _started(identity), "coalition": _coalition_of(os.getpid())},
+            "denied_ancestor": ancestor, "roots": {"work": str(work), "home": os.environ["HOME"],
+                                                 "temp": os.environ["TMPDIR"], "results": os.environ["VALIDATION_RESULTS"]},
+            "missing": ["unrelated owned Unix-socket fixture", "keychain/service denial controls",
+                        "protected supervisor identity/denial corroboration", "Mach registration/lookup and shared-peer exposure",
+                        "native worker metadata enforcement"]}
 
 
 def validation_profile(roots: tuple[Path, ...], output: Path, port: int) -> str:

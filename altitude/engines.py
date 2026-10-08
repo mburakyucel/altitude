@@ -12,7 +12,6 @@ import subprocess
 import sys
 import threading
 import time
-import tomllib
 import uuid
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
@@ -119,102 +118,17 @@ CODEX_CONTAINER_PATCH_NOTE = (
     "Do not call the custom `apply_patch` tool or bypass confinement."
 )
 BROWSER_VERIFICATION_NOTE = (
-    "[altitude] Browser sandbox: run verification that needs the browser's own sandbox with `alt task validate`, "
-    "in a disposable container where Playwright's Chromium keeps it. Explicitly authorized native runtime "
-    "acceptance instead uses the actual fresh intended confined native candidate worker: first record the "
-    "protected executable/package, effective role policy, writable roots and native job identity, then run a "
-    "finite blank/local-fictional preflight with disposable profile/config/cache and cleanup. Native eligibility "
-    "requires that authority and context evidence; operating-system detection, preparation delivery or an "
-    "installed candidate alone establishes neither. Launch with chromiumSandbox:true. Test specs never set their "
-    "own Playwright launchOptions or sandbox flags: the project's shared Playwright configuration owns them, its "
-    "required check runs the harness configuration and `alt task validate` the sandboxed one, so a spec's sandbox "
-    "evidence comes from running it there. Never "
-    "disable either sandbox, add sandbox-bypass flags or chmod/chown a SUID helper. If the runner is unavailable or "
-    "the required native context/protections cannot be established, or the browser refuses its sandbox, report "
-    "the evidence and block with --fault. An operator grant never substitutes an outside-worker browser run.\n\n"
+    "[altitude] Browser verification: stock worker permissions stay unchanged. Run candidate browser checks "
+    "through `alt task validate`. Checks requiring Chromium's own sandbox use the Linux container with "
+    "chromiumSandbox:true. A project's explicitly approved local-fictional harness may instead use the existing "
+    "Mac validation Seatbelt runner without Chromium's inner sandbox; this is neither native-worker nor "
+    "deployed/private-content acceptance. Record the actual runner identity, policy, roots, finite preflight "
+    "and cleanup evidence. Test specs never set their own Playwright launchOptions or sandbox flags: the "
+    "project's shared configuration owns them. Never disable worker/runner confinement, add ad hoc "
+    "sandbox-bypass flags or chmod/chown a SUID helper. If the required runner or protections are unavailable, "
+    "or the browser fails its required preflight, report the evidence and block with --fault. An operator grant "
+    "never substitutes an outside-worker browser run.\n\n"
 )
-
-
-def browser_trial_package() -> dict:
-    """The single reviewed preparation artifact; this is not a general runtime selector."""
-    return {"entrypoint": "bin/codex", "executables": ("bin/codex", "bin/codex-code-mode-host",
-            "codex-path/rg", "codex-resources/zsh/bin/zsh"), "files": {
-        "codex-package.json": "fdf9f78baec6353a4242626930b399cec71b2d3d680923adf6719b82e6afc30b",
-        "codex-path/rg": "a326a1fb48074202e9ad41e4cd1e389eeea372c8c6f7d7e80da81176d5d9430e",
-        "bin/codex": "3db7db57eacd482e722617b188b50ef87260397d8cd969f32508ca237b6129d2",
-        "bin/codex-code-mode-host": "e773e0c65bbe36afca9de5bae227fbe47691726314e6b8441c49923c937a9203",
-        "codex-resources/zsh/bin/zsh": "db6fe1a78eaceaff3b0f0cde25fc25afe466d61b0bf76b4ebe35812e4bc8dd71"}}
-
-
-def browser_trial_selection(environment: dict, entrypoint: Path) -> dict:
-    """Only the existing global executable seam changes; every permission argument is retained."""
-    return {**environment, "CODEX_BIN": str(entrypoint)}
-
-
-def browser_trial_stock(environment: dict) -> Path:
-    binary = shutil.which(environment.get("CODEX_BIN", "codex"), path=clean_env(environment)["PATH"])
-    if not binary:
-        raise RuntimeError("Stock executable is unavailable in the effective service PATH")
-    return Path(binary).resolve()
-
-
-def browser_trial_jobs(entrypoint: Path) -> list[str]:
-    return platform.native_runtime_jobs(entrypoint, unit_prefixes=(CODEX_UNIT_PREFIX, "altitude-review-"),
-                                        excluded_roots=browser_trial_write_roots())
-
-
-def browser_trial_write_roots() -> tuple[Path, ...]:
-    """Include the other engine's extra roots and platform temporary roots in trial protection (#625)."""
-    roots = [config.ROOT.resolve()]
-    for project in config.load_projects():
-        for task in S.list_tasks(project):
-            if task.get("worktree"):
-                cwd = Path(task["worktree"]).resolve()
-                roots.extend((cwd, *_worktree_git_dirs(cwd)))
-    roots = [*_claude_writable(*roots), *platform.native_temporary_roots()]
-    for spec in platform.native_trial_worker_specs(
-            unit_prefixes=(CODEX_UNIT_PREFIX, "altitude-claude-", "altitude-review-"), excluded_roots=tuple(roots)):
-        roots.extend(_browser_trial_launch_roots(spec))
-    # Fail closed when the protected launch evidence itself lies inside an actual live worker root.
-    platform._native_trial_job_root(tuple(roots))
-    return tuple(dict.fromkeys(roots))
-
-
-def _browser_trial_launch_roots(spec: dict) -> list[Path]:
-    """Read existing effective launch arguments; never infer roots from mutable task ownership records."""
-    cwd = Path(spec["cwd"])
-    if not cwd.is_absolute():
-        raise RuntimeError("Native launch cwd evidence is unavailable")
-    roots = [cwd]
-    if spec.get("writable") is not None:
-        values = spec["writable"]
-    else:
-        command = spec["command"]
-        settings = [command[i + 1] for i, arg in enumerate(command[:-1]) if arg == "-c"
-                    and command[i + 1].startswith(("default_permissions=", "permissions."))]
-        policy = tomllib.loads("\n".join(settings))
-        profile = policy["permissions"][policy["default_permissions"]]
-        if profile.get("extends") not in (None, ":workspace", ":read-only"):
-            raise RuntimeError("Native launch permission inheritance is unknown")
-        values = [name for name, enabled in profile.get("workspace_roots", {}).items() if enabled]
-        values += [name for name, access in profile.get("filesystem", {}).items() if access == "write"]
-    for name in values:
-        path = Path(name)
-        if not path.is_absolute():
-            raise RuntimeError("Native launch writable-root evidence is unavailable")
-        roots.append(path)
-    return roots
-
-
-def browser_trial_stock_root(executable: Path) -> Path:
-    """Freeze the complete native standalone fallback; delegated launchers are not eligible for this trial."""
-    root = executable.parent.parent
-    metadata = json.loads((root / "codex-package.json").read_text())
-    if (executable != root / "bin/codex" or metadata.get("layoutVersion") != 1
-            or metadata.get("entrypoint") != "bin/codex" or metadata.get("resourcesDir") != "codex-resources"
-            or metadata.get("pathDir") != "codex-path"):
-        raise RuntimeError("Stock fallback must be the native standalone package")
-    return root
 
 
 def installation(engine: str) -> dict:
@@ -593,9 +507,9 @@ def claude_stop(agent_id: str) -> str:
     return (p.stdout or p.stderr).strip()
 
 
-def clean_env(environment: dict | None = None) -> dict:
+def clean_env() -> dict:
     """Nested launches need CLAUDE* unset (verified); keep PATH sane for the service manager."""
-    source = config.subprocess_env() if environment is None else config.subprocess_env(environment)
+    source = config.subprocess_env()
     env = {k: v for k, v in source.items() if not k.startswith("CLAUDE")}
     env.setdefault("HOME", str(Path.home()))
     commands = (config.INSTALL_PREFIX / "launchers" / config.RELEASE["version"]

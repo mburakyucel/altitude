@@ -330,104 +330,41 @@ separately, and checks the recent landmark in the viewport. `live-history.pw.ts`
 failure/retry, complete traversal, late activity and old command results, raw disclosure, reconnect
 anchoring and cancellation at both viewports. These use real task storage and HTTP handlers with
 fictional projections at the engine seam. Loading/error overlays model transport conditions only.
-Run committed candidates through `alt task validate` with `playwright.validation.config.ts` so
-Chromium retains its own sandbox; retain the HTML report and measurement attachments from `/results`.
+Run committed candidates through `alt task validate -- make ui-validate`: Linux keeps Chromium's own
+sandbox; the approved Mac fictional harness uses the existing Seatbelt runner. Retain reports and measurements.
 The emulated iPhone lane remains separate from physical iOS momentum/rubber-band and native macOS
 acceptance. Loaded history has proportional DOM/memory cost; recent-first loading is not virtualization.
 
-## Native Mac browser runtime candidate
+## Fictional browser validation
 
-The [pinned runtime patch](../patches/codex-0.159.0-seatbelt-browser.patch) is a preparation
-artifact for incident I-20260929-203338 ([issue 625](https://github.com/mburakyucel/altitude/issues/625)).
-It applies to upstream commit `687a119f0fcaace47e1f1abcc77cec6c813fd6da`. The release archive's
-workspace version is reset to `0.0.0` to match its unchanged Cargo lockfile; external dependency
-versions, checksums and Git revisions stay pinned. Rust uses the upstream `1.95.0` toolchain.
-Apply the patch to a fresh checkout, run upstream `just fmt-check`, then
-`just test -p codex-sandboxing --lib --locked --target aarch64-apple-darwin --cargo-profile dev-small`.
-The patch admits only a network-enabled process policy semantically equal to canonical
-workspace-write plus both `/run/user/<real UID>/bus` and `/run/user/<real UID>/systemd` denies.
-The comparison uses the named-profile compiler's canonical form, which omits legacy skip-missing
-defaults. Only the comparison operand is normalized; supplied filesystem permissions are
-unchanged. Plain workspace-write is excluded from Mach access, as are
-other narrower policies. Identical effective permissions share eligibility regardless of profile name.
-The added policy tests cover effective worker roots, current role combinations, missing or wrong-UID
-denies, extra restrictions, ordering/duplicates and whole-name matching. Native nested-sandbox
-tests cannot establish enforcement inside a worker that already denies nested Seatbelt application.
+`alt task validate -- make ui-validate` repeats the full fictional phone/desktop browser
+suite against the task's committed candidate. `UI_ARGS=project-menu.pw.ts` selects a focused
+journey. The command installs frozen dependencies and locked Chromium into the disposable run,
+builds the web app, then runs a finite blank/local-fictional full-Chromium preflight before journeys.
+It keeps stage logs, browser/version/executable digest, effective shared launch options, reports
+and named attachments in `VALIDATION_RESULTS`; the daemon retains them privately on the task.
+Profile/config/cache and package-manager storage belong to the run and its cleanup.
+On Mac, `MAC_CHROMIUM_TMPDIR` directs Chromium's native temporary-directory lookup into the
+same short owned folder: its pinned Apple implementation uses this override rather than `TMPDIR`.
 
-The emitter also excludes each contained writable root's metadata denied by the public matcher from
-every broader write clause, including logical and resolved exclusion paths and protected rename ancestors.
-Containment follows emitted root normalization; ordinary mutable roots are not canonicalized.
-This tightens filesystem emission in every role/profile using the candidate, independently of Mach
-eligibility. Explicit narrower writable entries retain their independent grants. Direct config/hooks
-inside an explicitly writable Git root remain permitted by the public Git-operation contract;
-the contained root's own protected metadata is a separate boundary. Disjoint-root policies retain
-their original write-policy bytes and parameters. The upstream tests evaluate emitted alternatives,
-use fixed worker-shape denial/ordinary-write expectations and public-permission comparisons, and
-cover missing/file/directory metadata, multiple ancestors, explicit writes and trusted aliases.
-The existing Mach eligibility matrix remains unchanged. Record exact upstream format/test/build
-results and package digests separately: Altitude's required PR check does not run these Rust tests.
+Stock worker permissions and installed engines stay unchanged. Mac validation uses its existing
+Seatbelt profile with Chromium's inner sandbox disabled, solely for this approved local-fictional
+harness. This sacrifices separate renderer protection; shared Mach and network exposure and absent
+CPU/memory/process quotas remain limitations. It is neither private/live-content verification nor
+native worker, installation, Simulator or GUI acceptance. Linux validation keeps the container
+and Chromium sandbox. No new operator-facing mode, runtime patch or lifecycle trial is installed.
+The custom runtime preparation and trial route are retired, having never been adopted; their
+historical delivery does not repair the stock runtime's recorded nested metadata limitation.
+[Issue 625](https://github.com/mburakyucel/altitude/issues/625) and native runtime tracking retain that
+separate enforcement concern and original failure evidence.
 
-The public matcher's first metadata-prefix rule can permit child metadata when an explicit writable
-ancestor metadata root wins by entry order; emission preserves that existing public exception.
-In the recorded isolated task shape, the workspace is a linked worktree and
-the common Git directory is outside it: the repository root is not a writable task root. Current
-coordinator and captured-review policies do not grant the repository root either. Native eligibility
-still inspects actual roots and order; a repository-root/common-Git combination is not accepted from
-these fixtures, and its metadata denial remains an adoption stop.
-
-Build the CLI and its code-mode host together using upstream's package builder's verified V8
-artifact pair:
-
-```sh
-cargo build --locked --target aarch64-apple-darwin --profile dev-small --bin codex --bin codex-code-mode-host
-```
-
-Assemble the canonical package from those two binaries
-with upstream `just assemble-codex-package`; give it a distinct custom package version and compiled
-commit stamp. Keep upstream archive, patch, toolchain, lockfile, build command and target, package
-inputs and executable SHA-256 digests in the task's private build record. A prepared build is not
-an installed runtime or recovery evidence.
-The CLI's `--version` reports the source-build version `0.0.0`; identify this candidate by its
-custom package metadata, compiled stamp and executable digests, rather than an official-release label.
-
-Installation and selection require separate approval of protected-artifact adoption under the
-current authority rules. An operator grant cannot loosen confinement or engine permission settings.
-The existing executable setting covers several roles; exclusion is proved in their
-effective policies. No automatic installation, update, general CLI replacement or service action
-is part of preparation. Maintainers review and rebase the patch for each upstream update.
-Adoption requires a new intended confined candidate worker, finite blank/local fictional preflight
-with disposable storage and cleanup, worker/role negative checks and synthetic namespace/peer tests.
-Matching-name collisions, spoofing or cross-task port exchange/disruption stop adoption; the name
-filter supplies no task identity and Chromium's separate peer enforcement is disabled by default.
-Native metadata checks include child metadata under overlapping common-Git and worktree-Git roots:
-the named compiler omits legacy nested carveouts, and component equality does not prove that a
-broader parent write clause preserves the child's protections. The contained-root emitter correction
-is preparation; actual native writes, creation and rename/unlink probes remain required. Public
-metadata-entry ordering, equal physical roots reached through different trusted aliases and resolved
-metadata symlinks to files remain explicit native acceptance concerns. Restoring stock also restores
-its known contained-metadata limitation; stock service health is not isolation acceptance.
-Required browser protections and the security merge hold still apply. The validation container
-does not establish native Mac acceptance; its Darwin admission refusal is distinct from the native
-Mach launch failure and the separate remote Mac rig. Explicitly authorized native acceptance runs only
-inside the actual fresh intended confined candidate worker. Before browser launch, record its protected
-executable/package identity, effective role policy and roots, native job/coalition and actual exclusion
-of protected recovery inputs. Run locked Chromium with `chromiumSandbox:true`, finite blank/local-fictional
-content, disposable profile/config/cache and cleanup. OS detection, preparation merge or installed bytes
-alone do not establish that context. Unavailable context/protections still fault-block; no host-grant,
-outside-worker or Linux-browser substitute is accepted.
-
-The [bounded foreground trial/restore command](OPERATIONS.md#native-browser-runtime-trial) prepares the
-complete fixed package, preserves stock identity and service definition, selects one existing executable
-setting and uses guarded activation. Deterministic tests cover package/link/digest refusal, one-key scope,
-handled interruption/phase deadline, explicit fault abort, activation failure, concurrent restore refusal,
-drift, complete stock identity/effective PATH, extra-role root exclusion, pending recovery and candidate-job
-termination including reviewers after stock activation. They establish application transitions only; native enforcement,
-process/service health and the original isolation/peer acceptance remain separate unperformed evidence.
-Current stock-role deny evidence protects installation/recovery inputs and job-record provenance before
-candidate installation/selection or trusting those inputs. The separate purpose may stage disposable
-writable probe fixtures first; the probes stay in confined stock roles and preserve actual authority records.
-Protected live launch roots supplement mutable task records; the candidate repeats
-actual deny checks before browser acceptance. Unknown launch-root evidence refuses the operation.
+A pass requires the actual daemon receipt's candidate tree/profile identity, native job context
+where applicable, finite browser evidence and successful process/area cleanup. The environment
+marker alone is not isolation proof. Record deny/allow probes and any uncovered native boundary
+explicitly. Failure ends the lane with evidence; no permission expansion or outside-runner retry
+substitutes for acceptance. Full-browser failure with headless-shell success leaves full-browser
+features and original phone acceptance pending. Simulator/device and phone journey acceptance
+remain with their existing owners.
 
 ## Validation runner
 
@@ -533,7 +470,7 @@ than a worker's:
 The run time limit, one-run-at-a-time, free disk check, switch, restart fence, record and cleanup
 are shared with Linux; there is no memory, process or CPU limit. altd removes the run's folders as the
 operator's account, first giving every folder in them its owner's permissions back, so a folder a
-suite left without write permission (as the native browser trial's protected package is) does not
+suite left without write permission (such as protected-package fixtures) does not
 stop cleanup. Links are removed, never followed. `--kvm` and `--publish` are refused.
 `python3 scripts/platform_probe.py --only validation-confinement` checks the profile natively: a
 fixture run in the home writes and reads only its own folder and is refused the home, the shared
@@ -546,27 +483,26 @@ A process under the profile cannot apply another Seatbelt profile, so these do n
 validation run: browsers that keep their own sandbox (see [browser verification](#browser-verification)),
 Altitude's own worker confinement, and launchd jobs. Candidate application journeys there use the
 suites' local-process job fixtures. A macOS run establishes the candidate's behavior on this Mac under
-those fixtures; it does not establish native launchd/Seatbelt worker behavior, browser behavior,
-installation or provider compatibility.
+those fixtures; it does not establish native launchd/Seatbelt worker behavior, installation or provider compatibility.
+The approved fictional browser lane below establishes only the journeys actually run.
 
 ### Browser verification
 
-Worker confinement and the browser's own sandbox are separate protections. On Linux, the validation
-container provides the user namespaces that bundled Chromium needs. Ordinary verification requiring
-the browser sandbox runs through `alt task validate`. Explicitly authorized native acceptance runs
-inside the actual fresh intended confined candidate worker after recording its protected executable,
-complete package, effective policy, write roots and native job identity, as described in the
-[native candidate acceptance gates](#native-mac-browser-runtime-candidate). Operating-system detection,
-preparation delivery and installation alone do not establish native eligibility. Launch with
-[`chromiumSandbox: true`](https://playwright.dev/docs/api/class-browsertype#browser-type-launch-option-chromium-sandbox),
-because Playwright defaults it to false. Use blank or local fictional content, a finite timeout, and a
-disposable profile. E2e specs never set their own `launchOptions` or sandbox flags:
-`web/playwright.config.ts` owns the harness launch that `make check` runs, and
-`web/playwright.validation.config.ts` adds `chromiumSandbox: true` under `alt task validate`, so a spec's
-sandbox evidence comes from running it there. `tests/test_repository_instructions.py` rejects either
-option in `web/e2e`.
+Worker confinement and Chromium's own sandbox are separate protections. Candidate browser checks
+use `alt task validate -- make ui-validate`. On Mac, the approved fictional harness uses the runner's
+existing Seatbelt protection without Chromium's inner sandbox; on Linux it uses the container and
+`web/playwright.validation.config.ts` with `chromiumSandbox:true`. Playwright defaults that option
+to false. `web/playwright.config.ts` owns the fictional harness used by required CI and Mac
+validation. E2e specs never set their own `launchOptions` or sandbox flags; the shared configuration
+owns them and `tests/test_repository_instructions.py` enforces this boundary. Evidence identifies
+which configuration actually ran. Use only blank/local fictional content with finite execution,
+disposable storage and cleanup in the approved Mac lane.
 
-`make browser-sandbox` is the check. It launches Chromium this way against a local fictional page and
+Checks requiring both protections use the Linux container; Mac cannot nest another Seatbelt profile
+inside its validation profile. Neither fictional Mac success nor Linux results establishes the
+original native-worker browser context, deployed/private-content or Simulator acceptance.
+
+`make browser-sandbox` is the Linux dual-protection check. It launches Chromium this way against a local fictional page and
 writes `browser-sandbox.json` to the run's results: browser version, launch options,
 `chrome://sandbox` and each renderer's user, seccomp mode and user/PID namespaces. It passes only when
 Chromium reports itself adequately sandboxed and every renderer runs as a non-root user under
@@ -586,19 +522,17 @@ After source delivery and normal activation, repeat both checks through `alt tas
 retain its commit, image tag, log and result paths before declaring runner recovery. Linux desktop
 WebKit emulation does not establish native macOS or iOS acceptance.
 
-Never disable either sandbox, add sandbox-bypass flags, or chmod/chown a SUID helper. If the required
-runner or evidenced native context is unavailable, or the browser refuses its sandbox there,
-checkpoint the evidence and block with
-`--fault`. L3 owns recovery under the [existing procedure](../personas/l3.md#recovery-and-upstream-reporting).
-Altitude's local fictional harness exception grants no authority for another project's verification.
+Never disable worker/runner confinement or add ad hoc sandbox-bypass flags or chmod/chown a SUID
+helper. Chromium's inner sandbox is disabled only by the approved fictional harness configuration.
+If the required runner/protections are unavailable or browser preflight fails, retain evidence and
+block with `--fault`; no operator grant supplies outside-worker browser acceptance. Altitude's
+fictional exception grants no authority for another project's checks.
 
-The queued-message **Send now** walkthrough uses real queue and task storage with deterministic
-engine interruption in `web/e2e/send-now.pw.ts`. `web/playwright.validation.config.ts` keeps the
-fixture viewports and enables Chromium's sandbox in the validation container. After committing
-the candidate, run the focused walkthrough with:
+The queued-message **Send now** walkthrough uses real queue/task storage with deterministic
+engine interruption in `web/e2e/send-now.pw.ts`. Run the focused candidate with:
 
 ```sh
-alt task validate -- sh -c 'cd web && pnpm install --frozen-lockfile && pnpm build && pnpm exec playwright test --config playwright.validation.config.ts send-now.pw.ts; result=$?; cp -r ui-artifacts /results/ui-artifacts; exit "$result"'
+alt task validate -- make ui-validate UI_ARGS=send-now.pw.ts
 ```
 
 Named states cover loading, queued controls, interruption pending, delivered and removed rows,

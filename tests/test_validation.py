@@ -589,7 +589,8 @@ class TestMacValidationRunner(RunnerCase):
         self.assertEqual({k: row[k] for k in ("commit", "ended", "cleanup", "kvm", "publish")},
                          {"commit": self.head, "ended": "exit", "cleanup": None, "kvm": False, "publish": None})
         self.assertTrue(row["isolation"].startswith("seatbelt:"))
-        self.assertEqual(row["isolation"], validation.isolation(), "the digest does not depend on the run's folder")
+        self.assertEqual(row["isolation"], "seatbelt:" + hashlib.sha256(self.profile.read_bytes()).hexdigest()[:16],
+                         "the receipt identifies the actual admitted profile, including run paths")
         self.assertTrue(row["host"].startswith("macOS "))
 
     def altd_path(self):
@@ -643,7 +644,7 @@ class TestMacValidationRunner(RunnerCase):
         self.assertFalse(list((validation.home() / "runs").iterdir()))
 
     def protected(self, folder):
-        """What the native browser trial leaves (#700): a file in a folder without write permission."""
+        """Read-only package fixtures (#700): a file in a folder without write permission."""
         return (f'mkdir -p "{folder}/package/bin" && touch "{folder}/package/bin/runtime" && '
                 f'chmod 0555 "{folder}/package/bin" "{folder}/package"')
 

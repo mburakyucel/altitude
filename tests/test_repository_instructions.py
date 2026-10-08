@@ -82,10 +82,10 @@ class TestRepositoryInstructions(AltitudeCase):
                         # #441: every fresh/resumed owner learns where the browser keeps its sandbox, even without
                         # project rules.
                         self.assertEqual(prompt.count(engines.BROWSER_VERIFICATION_NOTE), 1)
-                        for requirement in ("alt task validate", "chromiumSandbox:true", "Never disable either sandbox",
+                        for requirement in ("alt task validate", "chromiumSandbox:true", "Never disable worker/runner confinement",
                                             "chmod/chown a SUID helper", "block with --fault",
-                                            "Explicitly authorized native runtime", "actual fresh intended confined",
-                                            "effective role policy", "operating-system detection",
+                                            "explicitly approved local-fictional harness", "Mac validation Seatbelt runner",
+                                            "neither native-worker", "actual runner identity",
                                             "outside-worker browser run", "launchOptions or sandbox flags"):
                             self.assertIn(requirement, prompt)
                         self.assertTrue(prompt.endswith("Continue task." if resume else "Start task."))
