@@ -34,7 +34,7 @@ def record_dispatch_failure(project: str, slug: str, error: object, *, launch: d
     S.append_event(project, slug, "dispatch-failed", reason=reason)
     from . import incidents
     incidents.system_fault("dispatch-failed", f"{project}/{slug}: {reason}", project=project, task=slug,
-                           expected_block_id=(launch or task).get("block_id"))
+                           expected_block_id=(launch or task).get("block_id"), step="the L2 launch")
     return DispatchFailure(f"dispatch failed: {reason}")
 
 
@@ -55,7 +55,7 @@ def record_resume_failure(project: str, slug: str, claim_id: str, error: object,
         project_setup.block_task(project, slug, error, expected_block_id=claim.get("block_id", claim_id))
     else:
         incidents.system_fault(kind, f"{project}/{slug}: {reason}", project=project, task=slug,
-                               expected_block_id=claim.get("block_id", claim_id))
+                               expected_block_id=claim.get("block_id", claim_id), step="the L2 session resume")
     return ResumeFailure(f"resume of {project}/{slug} failed: {reason}")
 
 
@@ -94,7 +94,7 @@ def _recover_resume_claim(project: str, slug: str, task: dict, *, daemon_request
     S.append_event(project, slug, "resume-failed", reason=reason)
     from . import incidents
     incidents.system_fault("l2-resume-recovery", f"{project}/{slug}: {reason}", project=project, task=slug,
-                           expected_block_id=claim.get("block_id"))
+                           expected_block_id=claim.get("block_id"), step="resume recovery after a daemon restart")
     raise ResumeFailure(f"resume of {project}/{slug} failed: {reason}")
 
 

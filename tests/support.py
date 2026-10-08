@@ -361,7 +361,8 @@ class AltitudeCase(unittest.TestCase):
     their routes as this machine's own CLI does; a case about pairing and the access gate sets `gated`. A case whose
     fixtures stand in for one host's service manager (systemd-run and systemctl shims) names it in `host`; on a
     kernel without procfs, a Linux `host` also reads the case's own process from a procfs fixture. A worker
-    launch reads no GitHub sign-in unless the case sets `github` and supplies its own `gh` fixture."""
+    launch reads no GitHub sign-in unless the case sets `github` and supplies its own `gh` fixture. Public-text
+    sanitizing sees no machine host or account names unless the case supplies fixture names."""
 
     gated = False
     host: str | None = None
@@ -376,6 +377,7 @@ class AltitudeCase(unittest.TestCase):
             self.patch(access, "is_machine", return_value=True)
         if not self.github:
             self.patch(engines, "github_token", return_value="")
+        self.patch(platform, "local_names", return_value={"host": set(), "user": set()})
         self.tmp = Path(tempfile.mkdtemp(prefix="case-", dir=SUITE))
         self.addCleanup(shutil.rmtree, self.tmp, True)
         if self.host == "linux" and NATIVE_PLATFORM != "linux":

@@ -92,6 +92,7 @@ class TestDirectDispatch(AltitudeCase):
             project=self.project,
             task=task["slug"],
             expected_block_id=None,
+            step="the L2 launch",
         )
 
     def test_zero_exit_without_a_concrete_agent_never_marks_running(self):
