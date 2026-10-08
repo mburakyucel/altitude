@@ -505,6 +505,19 @@ suites' local-process job fixtures. A macOS run establishes the candidate's beha
 those fixtures; it does not establish native launchd/Seatbelt worker behavior, installation or provider compatibility.
 The approved fictional browser lane below establishes only the journeys actually run.
 
+The complete required suite runs in a Mac validation run with its dependencies in the run's own folders:
+
+```sh
+alt task validate -- sh -c 'export PLAYWRIGHT_BROWSERS_PATH="$HOME/browsers" MAC_CHROMIUM_TMPDIR="$TMPDIR" ALTITUDE_UI_BROWSER_CONFIG="$HOME/config" npm_config_cache="$TMPDIR/npm" XDG_CACHE_HOME="$HOME/cache" && pnpm --dir web install --frozen-lockfile --store-dir "$TMPDIR/pnpm-store" && pnpm --dir web exec playwright install chromium chromium-headless-shell && make check'
+```
+
+A Mac shared with running tasks runs the suite several times slower than an idle one, and workers' and
+runs' timers are coalesced there: a 16 ms sleep has been measured at over 100 ms. Suite time limits are
+therefore failure bounds that end a stall, never budgets a passing test has to meet: Vitest allows 30 s
+per test and 10 s per `findBy`/`waitFor`, and walkthrough gestures carry their own touch times. Headless
+Chromium there has no display to pace its GPU compositor, which stops animation frames after the first,
+so `web/playwright.config.ts` composites in software on macOS, as Chromium does on Linux.
+
 ### iOS Simulator runs
 
 `alt task validate --simulator -- COMMAND` on a Mac gives the run a disposable iPhone in the iOS
