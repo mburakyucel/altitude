@@ -396,7 +396,9 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
         S.append_event(project, slug, "daemon-request", task=slug, request_id=request["id"],
                        operation=operation, reason=reason, by=actor)
         S.regen_state_md(project)
-        return {"queued": True, "idempotent": False, "request": request}
+    if operation == "resume":
+        route.retry_sign_in(l2_engine(task))
+    return {"queued": True, "idempotent": False, "request": request}
 
 
 def send_now_unavailable(project: str, task: dict, *, own_request: str | None = None) -> str | None:

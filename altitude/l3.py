@@ -1249,6 +1249,8 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
         claimed = getattr(_turn_local, "claimed", None)
         claimed = claimed if claimed and claimed["turn"] is active_turn else None
         choice = claimed["choice"] if claimed else _select(project, requested, model=model)
+        if trigger == "chat" and not choice.get("engine") and route.retry_sign_in():
+            choice = _select(project, requested, model=model)  # the operator's message retries after signing in
         if trigger == "report-landed" and not choice.get("engine"):
             # A pending report waits for an available L3; its retry owns delivery, so the chat stays quiet.
             return {"completed": False, "held": True, "error": f"engine hold: {choice['why']}", "turn_id": turn_id}

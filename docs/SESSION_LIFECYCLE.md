@@ -427,7 +427,8 @@ that model until its reported reset passes, and a pinned model stays strict, so 
 and leaves queued events queued rather than spending them on failing turns. An explicit
 unavailable-model rejection excludes that model for thirty minutes; a usage limit that names a model
 family applies to every configured id of that family.
-an authentication rejection excludes the engine for thirty minutes. Retrying configured alternatives
+an authentication rejection excludes the engine for thirty minutes or until an operator coordinator
+message that finds no engine, or a task Resume, attempts it again. Retrying configured alternatives
 is bounded and requires confirmation that no response output or tool effects occurred. A rejection
 after work starts cannot silently replay the turn. If no option is eligible, the task stays queued
 with an explanation to install/authenticate an engine, wait for the quota reset or change preferences.

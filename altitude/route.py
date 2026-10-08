@@ -204,6 +204,20 @@ def _rejected(option: dict) -> str | None:
     return None
 
 
+def retry_sign_in(engine: str | None = None) -> bool:
+    """Withdraw a sign-in rejection for an explicit operator Retry or Resume, so that attempt launches.
+
+    Signing in cures it at once, unlike a usage window. Automatic retries still honor it; a credential that
+    is still invalid records it again on the attempt. True when a rejection was withdrawn."""
+    withdrawn = False
+    for name in (engine,) if engine else config.ENGINES:
+        path = _rejection_path({"engine": name}, "engine")
+        if S.read_json(path, {}).get("sign_in"):
+            path.unlink(missing_ok=True)
+            withdrawn = True
+    return withdrawn
+
+
 def note_limit(engine: str, limit: dict) -> None:
     note_rejection({"engine": engine, "model": limit.get("model")}, limit)
 

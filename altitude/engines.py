@@ -325,7 +325,8 @@ def rejection(engine: str, result: dict, model: str | None = None) -> dict | Non
     else:
         raise ValueError(f"unknown engine {engine!r}")
     if auth:
-        return {"scope": "engine", "why": "provider rejected authentication or account access; sign in and verify access"}
+        return {"scope": "engine", "sign_in": True,
+                "why": "provider rejected authentication or account access; sign in, then Retry or Resume"}
     if model_missing:
         return {"scope": "model", "why": "provider rejected the selected model as missing or inaccessible; configure an accessible model"}
     return None
