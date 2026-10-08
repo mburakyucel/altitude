@@ -204,6 +204,14 @@ baseline: its exact `install.sh` and archive install in the offline guest and up
 from required candidate checks. Availability of either entry point alone is not executed acceptance
 or a new release gate.
 
+On an Apple silicon Mac, `make installation-macos-vm RESULTS=dir SOURCE=<sha>` runs the built
+`install.sh` through its public command in fresh macOS guests ([macOS VM run](DEVELOPMENT.md#macos-vm-run)):
+each missing prerequisite must stop it with its documented fix and nothing changed, and with them
+present the release installs, updates to newer stable releases, recovers from a failing one, starts
+again at login after a restart and uninstalls. Record its `macos-vm.json` files with the candidate's
+evidence. It establishes no physical second Mac, browser/device certificate trust or download from
+GitHub.
+
 ## Recovery
 
 Packaged activation restores the preceding application version/service after failure, retaining

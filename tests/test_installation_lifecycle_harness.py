@@ -1,5 +1,6 @@
 """Verify failure injection and refusal without operating any native user service."""
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -452,3 +453,169 @@ class TestInstallationVmCapture(AltitudeCase):
             with self.subTest(failure):
                 code, results, record = self.lane(capture=True, made=[], failure=failure, unreadable=True)
                 self.assertEqual((code, record["passed"], record["capture"]), (0, True, f"none: {failure}"))
+
+
+class TestInstallationMacosVm(AltitudeCase):
+    """The macOS VM lane's offline guest setup, isolation and judging; no guest, helper or restore image."""
+
+    class Guest:
+        """Answers the lane's probes as a guest whose network card is plugged in until `unplug`."""
+
+        def __init__(self, unplug_reaches=(), failing=(), routeless=0):
+            self.gateway = self.listener = None
+            self.routeless = routeless
+            self.plugged, self.unplug_reaches, self.failing, self.sent = True, set(unplug_reaches), dict(failing), []
+
+        def ssh(self, command, timeout=120, check=True):
+            if command.startswith("route"):
+                self.routeless -= 1
+                return subprocess.CompletedProcess(command, 0, "" if self.routeless >= 0 else "127.0.0.1\n", "")
+            kind = "internet" if command.startswith("curl") else "host"
+            if kind in self.failing:
+                return subprocess.CompletedProcess(command, self.failing[kind], "", "")
+            return subprocess.CompletedProcess(command, 0 if self.plugged or kind in self.unplug_reaches else 1, "", "")
+
+        def command(self, line):
+            self.sent.append(line)
+            self.plugged = False
+
+        def expect(self, prefix, timeout):
+            return prefix
+
+    def test_auto_login_password_is_padded_and_masked_as_loginwindow_reads_it(self):
+        from scripts import installation_macos_vm as vm
+        key = bytes([0x7D, 0x89, 0x52, 0x23, 0xD2, 0xBC, 0xDD, 0xEA, 0xA3, 0xB9, 0x1F])
+        for password, size in (("short", 12), ("exactly12chr", 24)):
+            masked = vm.kcpassword(password)
+            self.assertEqual(len(masked), size)
+            plain = bytes(byte ^ key[index % len(key)] for index, byte in enumerate(masked))
+            self.assertEqual(plain.rstrip(b"\0"), password.encode())
+            self.assertTrue(plain.endswith(b"\0"))
+
+    def test_account_password_is_stored_only_as_a_salted_pbkdf2_hash(self):
+        from scripts import installation_macos_vm as vm
+        import plistlib
+        record = plistlib.loads(vm.shadow_hash("fixture password"))["SALTED-SHA512-PBKDF2"]
+        self.assertEqual((record["iterations"], len(record["salt"]), len(record["entropy"])), (50_000, 32, 128))
+        self.assertEqual(record["entropy"], hashlib.pbkdf2_hmac("sha512", b"fixture password", record["salt"], 50_000, 128))
+        self.assertNotEqual(vm.shadow_hash("fixture password"), vm.shadow_hash("fixture password"))
+
+    def test_guest_address_comes_from_its_own_lease_whatever_the_zero_padding(self):
+        from scripts import installation_macos_vm as vm
+        leases = self.tmp / "dhcpd_leases"
+        leases.write_text("{\n\tname=other\n\tip_address=192.168.64.2\n\thw_address=1,a:b:c:d:e:f\n}\n"
+                          "{\n\tname=guest\n\tip_address=192.168.64.3\n\thw_address=1,2:0:5a:1:b2:c3\n}\n")
+        self.assertEqual(vm.lease("02:00:5a:01:b2:c3", leases), "192.168.64.3")
+        self.assertIsNone(vm.lease("02:00:5a:01:b2:c4", leases))
+        self.assertIsNone(vm.lease("02:00:5a:01:b2:c3", self.tmp / "missing"))
+
+    def test_isolation_needs_both_destinations_before_and_neither_after_unplugging(self):
+        from scripts import installation_macos_vm as vm
+        guest, record = self.Guest(), {}
+        try:
+            vm.isolate(guest, record)
+        finally:
+            guest.listener.close()
+        self.assertEqual(guest.sent, ["unplug"])
+        self.assertEqual(record["reachable"], {"online": {"internet": True, "host": True},
+                                               "isolated": {"internet": False, "host": False}})
+        for leaky in ("internet", "host"):
+            guest = self.Guest(unplug_reaches={leaky})
+            try:
+                with self.assertRaisesRegex(vm.Stop, "not isolated"):
+                    vm.isolate(guest, {})
+            finally:
+                guest.listener.close()
+
+    def test_isolation_waits_for_a_guest_whose_address_comes_after_ssh(self):
+        from scripts import installation_macos_vm as vm
+        guest, record = self.Guest(routeless=2), {}
+        with mock.patch.object(vm.time, "sleep"):
+            try:
+                vm.isolate(guest, record)
+            finally:
+                guest.listener.close()
+        self.assertEqual(record["reachable"]["isolated"], {"internet": False, "host": False})
+
+    def test_a_probe_that_could_not_run_stops_the_run_instead_of_proving_isolation(self):
+        from scripts import installation_macos_vm as vm
+        # SSH failing, and the internet probe's TLS or other error, which says nothing about reachability.
+        for failing in ({"host": 255}, {"internet": 3}):
+            guest = self.Guest(failing=failing)
+            try:
+                with self.assertRaisesRegex(vm.Stop, "could not run"):
+                    vm.isolate(guest, {})
+            finally:
+                guest.listener.close()
+            self.assertEqual(guest.sent, [])
+
+    def test_internet_probe_tells_unreachable_from_inconclusive_and_avoids_the_served_host(self):
+        from scripts import installation_macos_vm as vm
+        self.assertNotIn("github.com", vm.INTERNET)
+        for code, expected in ((0, 0), (6, 1), (7, 1), (28, 1), (60, 3), (35, 3)):
+            shell = vm.INTERNET.replace("curl -sS --max-time 10 -o /dev/null https://www.apple.com/", f"(exit {code})")
+            self.assertEqual(subprocess.run(["sh", "-c", shell]).returncode, expected, code)
+
+    def test_a_guest_that_does_not_start_leaves_no_helper_running(self):
+        from scripts import installation_macos_vm as vm
+        fake = self.tmp / "helper"
+        fake.write_text("#!/bin/sh\nexec sleep 60\n")
+        fake.chmod(0o755)
+        started = []
+        popen = subprocess.Popen
+        def spawn(*args, **kwargs):
+            started.append(popen(*args, **kwargs))
+            return started[-1]
+        for interruption in (vm.Stop("the guest helper did not say 'started' within 120s"), SystemExit(143)):
+            with mock.patch.object(vm, "helper", return_value=fake), mock.patch.object(vm.subprocess, "Popen", spawn), \
+                    mock.patch.object(vm.Guest, "expect", side_effect=interruption):
+                with self.assertRaises(type(interruption)):
+                    vm.Guest(self.tmp, self.tmp, self.tmp / "vm.log")
+            self.assertIsNotNone(started[-1].poll())
+
+    def test_refusal_passes_only_with_its_documented_fix_and_nothing_changed(self):
+        from scripts import installation_macos_vm as vm
+        output = "Python 3.12 or newer was not found. Install it with: brew install python@3.12"
+        self.assertTrue(vm.judged({"exit": 1, "output": output, "unchanged": True}, "missing-python")["passed"])
+        for outcome in ({"exit": 0, "output": output, "unchanged": True},
+                        {"exit": 1, "output": output, "unchanged": False},
+                        {"exit": 1, "output": "Altitude cannot be installed on this Mac yet.", "unchanged": True}):
+            self.assertFalse(vm.judged(outcome, "missing-python")["passed"])
+
+    def test_openssl_refusal_needs_the_path_fix_as_well_as_the_install(self):
+        from scripts import installation_macos_vm as vm
+        output = ("Altitude was not installed: the openssl on PATH is LibreSSL 3.3.6, not OpenSSL 3.\n"
+                  "  Install it (brew install openssl@3), put it ahead of /usr/bin")
+        path_fix = ' (export PATH="$(brew --prefix openssl@3)/bin:$PATH", also in your shell profile), then run this again.'
+        self.assertFalse(vm.judged({"exit": 1, "output": output, "unchanged": True}, "openssl-not-first")["passed"])
+        self.assertTrue(vm.judged({"exit": 1, "output": output + path_fix, "unchanged": True}, "openssl-not-first")["passed"])
+
+    def test_public_command_trusts_the_test_authority_for_its_own_and_install_shs_downloads(self):
+        from scripts import installation_macos_vm as vm
+        command = vm.public_command("example/altitude")
+        trust, _, public = command.partition("; ")
+        self.assertEqual(trust, f"export SSL_CERT_FILE={vm.SHARED}/ca.pem CURL_CA_BUNDLE={vm.SHARED}/ca.pem")
+        self.assertEqual(public, "curl --proto '=https' --tlsv1.2 -fsSL "
+                                 "https://github.com/example/altitude/releases/latest/download/install.sh | sh")
+
+    def test_release_is_served_where_the_public_command_and_installer_look_on_github(self):
+        from scripts import installation_macos_vm as vm
+        release = self.tmp / "release"
+        release.mkdir()
+        (release / "install.sh").write_text("#!/bin/sh\nREPOSITORY='https://github.com/example/altitude'\nVERSION='v0.0.1'\n")
+        (release / "altitude-v0.0.1.tar.gz").write_bytes(b"archive")
+        self.assertEqual(vm.release_tree(release, self.tmp / "serve"), "example/altitude")
+        root = self.tmp / "serve/root/example/altitude/releases"
+        self.assertTrue((root / "latest/download/install.sh").is_file())
+        self.assertEqual(sorted(path.name for path in (root / "download/v0.0.1").iterdir()),
+                         ["altitude-v0.0.1.tar.gz", "install.sh"])
+
+    def test_other_hosts_refuse_before_touching_anything(self):
+        from scripts import installation_macos_vm as vm
+        with mock.patch.object(vm.sys, "platform", "linux"), \
+                mock.patch.object(vm.sys, "argv", ["installation_macos_vm.py", "run", str(self.tmp / "results")]), \
+                mock.patch.object(vm.sys, "stderr", io.StringIO()) as stderr, mock.patch.object(vm, "lock") as lock:
+            self.assertEqual(vm.main(), 2)
+        self.assertIn("needs a Mac with Apple silicon", stderr.getvalue())
+        lock.assert_not_called()
+        self.assertFalse((self.tmp / "results").exists())
