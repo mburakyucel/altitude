@@ -83,6 +83,15 @@ class FakeRegistration {
     getSubscription: vi.fn(async () => this.subscribed),
   };
   async showNotification(_title: string, _options?: NotificationOptions) {}
+  /** The banners this device shows now; closing one removes it. */
+  banners: { tag: string; close: () => void }[] = [];
+  async getNotifications() { return [...this.banners]; }
+  show(...tags: string[]) {
+    this.banners.push(...tags.map((tag) => {
+      const banner = { tag, close: vi.fn(() => { this.banners = this.banners.filter((shown) => shown !== banner); }) };
+      return banner;
+    }));
+  }
 }
 
 /** A browser that can alert: a service worker registration and a permission prompt that sticks. */
@@ -238,6 +247,58 @@ describe("decision alerts", () => {
 
     browser.click("/projects/altitude/tasks/run-restore-drill?question=q-drill&revision=1");
     await waitFor(() => expect(router.state.location.pathname).toBe("/projects/altitude/tasks/run-restore-drill"));
+  });
+
+  it("waits to alert while the decision's task is still moving, and alerts once it rests", async () => {
+    const browser = alreadyOn([KEY]);
+    const setQueue = mockFetch([question]);
+    const { queryClient } = renderApp({ route: "/projects/altitude" });
+    await waitFor(() => expect(localStorage.getItem(ALERTS_SEEN_KEY)).toContain("q-retention"));
+
+    // L3 is reading the block that published it: Needs you lists it, and nothing alerts or records it.
+    setQueue([question, { ...second, alert_held: true }]);
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
+    expect(browser.shown).not.toHaveBeenCalled();
+    expect(localStorage.getItem(ALERTS_SEEN_KEY)).not.toContain("q-drill");
+
+    // L3's turn ended with it still open: it alerts once.
+    setQueue([question, second]);
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
+    await waitFor(() => expect(browser.shown).toHaveBeenCalledTimes(1));
+    expect(browser.shown).toHaveBeenCalledWith("altitude needs a decision", expect.objectContaining({
+      tag: "altitude:run-restore-drill:q-drill",
+    }));
+
+    // Held again for a later revision, it was already announced and does not alert a second time.
+    setQueue([question, { ...second, revision: 2, alert_held: true }]);
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
+    setQueue([question, { ...second, revision: 2 }]);
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
+    expect(browser.shown).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes the banner of a decision answered since, and keeps the ones still waiting", async () => {
+    const browser = alreadyOn([KEY, "altitude:run-restore-drill:q-drill"]);
+    browser.registration.show(KEY, "altitude:run-restore-drill:q-drill", "altitude-decision");
+    const setQueue = mockFetch([question, { ...second, alert_held: true }]);
+    const { queryClient } = renderApp({ route: "/projects/altitude" });
+    await waitFor(() => expect(localStorage.getItem(ALERTS_SEEN_KEY)).toContain("q-drill"));
+    expect(browser.registration.banners.map((banner) => banner.tag))
+      .toEqual([KEY, "altitude:run-restore-drill:q-drill", "altitude-decision"]);
+
+    // The drill was settled: its banner closes without being touched; the other stays.
+    setQueue([question]);
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
+    await waitFor(() => expect(browser.registration.banners.map((banner) => banner.tag))
+      .toEqual([KEY, "altitude-decision"]));
+
+    // Nothing waits: the banner that said only "a decision is waiting" goes too.
+    setQueue([]);
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
+    await waitFor(() => expect(browser.registration.banners).toEqual([]));
+    expect(JSON.parse(localStorage.getItem(ALERTS_SEEN_KEY)!)).toEqual([]);
+    expect(browser.shown).not.toHaveBeenCalled();
   });
 
   it("records a decision the operator is already looking at without alerting, and alerts elsewhere", async () => {

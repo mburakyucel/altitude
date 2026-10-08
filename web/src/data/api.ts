@@ -263,6 +263,7 @@ export const DecisionSchema = z
     }).passthrough().nullish(),
     response: z.object({ text: z.string(), at: z.string(), message_id: z.string() }).nullish(),
     asked_again: z.boolean().nullish(),
+    alert_held: z.boolean().nullish(),
     pr: z.number().nullish(),
   })
   .passthrough();

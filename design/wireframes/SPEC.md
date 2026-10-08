@@ -770,7 +770,9 @@ only — never question, conversation or incident text. Activating it opens that
 app. Faults, stopped tasks, reviews and completed work stay in Needs you without an alert. A grouped
 ask alerts once. A decision already on screen, in Needs you or its owning task, is recorded without
 alerting. Refreshing, reconnecting, polling and other tasks' activity repeat nothing, and turning the
-switch on never announces what is already waiting.
+switch on never announces what is already waiting. A question shows in Needs you at once but alerts
+only once L3 has had its turn and it is still open (or 15 minutes after it was asked), and an alert
+whose decision is answered, withdrawn or superseded disappears from every device untouched.
 
 ### 3.9 Open the owning L2 question
 

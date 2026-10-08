@@ -121,8 +121,8 @@ for up to thirty minutes. A usage limit is not cleared this way; it waits for it
 ## Refused decision alerts
 
 A push service that refuses Altitude's alert keeps its device subscribed, and altd tries that device
-again on each tick while a decision waits, even one another device already took, so a fix on either
-side takes effect without another step. altd records the refusal and the short reason code the
+again on each tick until a push gets through, even for a decision another device already took, so a
+fix on either side takes effect without another step. altd records the refusal and the short reason code the
 service gave in `~/.altitude/push.json`, logs it once as `push to <host> refused with
 <status> <reason>` and logs `push to <host> delivered again` once a push gets through. Until then,
 the line under the alert switch in Needs you names that push service and its reason, and that device

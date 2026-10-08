@@ -1868,17 +1868,28 @@ decision. Content is the project and task name only. A decision visible in Needs
 task is recorded without an alert, and the recorded keys make refresh, reconnection and polling
 repeat none. A key names the waiting decision, not its revision, so a block and the escalation that
 republishes it alert once; a decision that is answered leaves the queue, and an ask that returns
-alerts again. A tab with alerts on keeps its change stream while hidden; every other hidden tab still
+alerts again. `digest.queue()` marks a decision `alert_held` while its task is still moving: L3 has
+that task's block notification queued or running (`l3.reading_blocks`), or its owner is running,
+queued or due to resume, as after L3 answers it. `alt task block` queues that notification under the
+lock that publishes the question, so no reader sees the question before L3 is due to read it. A held decision shows in Needs you, is neither alerted nor
+recorded, and alerts once the task rests or 15 minutes after it was asked (`digest.ALERT_HOLD`). When
+a key leaves the queue, the page closes that banner through the registration's `getNotifications()`,
+and the generic banner once nothing waits. A tab with alerts on keeps its change stream while hidden; every other hidden tab still
 closes it.
 
 A device is also woken while Altitude is closed. `altitude/push.py` keeps the VAPID signing key under
 `~/.altitude/push/` and the subscribed endpoints in `~/.altitude/push.json`, both written only by the
 daemon; the switch registers its endpoint through `/api/alerts/subscription` and reads the public key
-from `/api/alerts`. Each tick, a decision key that is newly waiting sends one empty, signed POST per
-device: no payload, so no encryption library and no word of the decision leaves the machine. The
-worker's `push` handler reads `/api/overview` and names the project and task, and shows that a
-decision is waiting when the device cannot reach Altitude; a page already on screen alerts for itself,
-so the worker stays quiet. An endpoint the service reports gone is dropped, a refusal is logged and
+from `/api/alerts`. Each tick, a decision key that newly may alert, or an announced key that has left
+the queue, marks every device `owed` one empty, signed POST, and an owed device is tried each tick until
+its push service takes one: no payload, so no encryption library and no word of the decision leaves
+the machine. The worker's `push`
+handler reads `/api/overview`, closes the banners whose key is no longer waiting, and names the project
+and task of each new decision. Every push shows a notification, because Safari ends a subscription
+after three that show none: with nothing new, the worker shows a standing banner again in place
+without sound, or shows a silent one and closes it at once. Out of reach of Altitude it keeps a banner
+it already shows and adds none, since the push may be a clearing; with none shown it says a decision
+is waiting. A banner left that way closes on the next push the worker can read, or when a page opens. A page already on screen alerts and closes banners for itself, so the worker adds nothing. An endpoint the service reports gone is dropped, a refusal is logged and
 kept, and a machine without OpenSSL or outbound reach simply has no push, which the switch states.
 EventSource retries a dropped connection after the stream's 3-second `retry`; a refused stream, such
 as during daemon activation, reconnects after 5 seconds. A hidden tab closes its stream and reopens it,
