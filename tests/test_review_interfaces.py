@@ -99,7 +99,7 @@ class TestReviewInterfaces(AltitudeCase):
                 self.assertTrue(request.full_url.endswith("/api/task/review/run"))
                 self.assertEqual(json.loads(request.data), {"project": self.project, "slug": self.slug, "attempt": "2",
                                                            "review_id": "review", "context_ids": ["source"],
-                                                           "proposal_id": proposal_id})
+                                                           **({"proposal_id": proposal_id} if proposal_id else {})})
                 self.assertIsNone(transport.call_args.kwargs["timeout"])
 
     def test_streamed_execution_error_is_not_a_success_receipt(self):

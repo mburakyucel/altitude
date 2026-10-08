@@ -1501,6 +1501,9 @@ backend and launch-source paths (`altitude/`, `bin/`, `systemd/`, `scripts/`, `p
 regular thirty-second daemon tick discovers a merge while its worker still runs.
 Web docs, design boards, the unused npm lockfile, and other non-build files do not
 trigger activation. Launch-source changes become available through the activated committed export.
+Until then, the checkout's `alt` talks to the older running service, so it sends a service field
+only when its option is given: a new option reaches the service only when used, and handlers keep
+refusing fields they do not know.
 
 The web app shows a compact, dismissible update notice above the phone header and first in the
 desktop main pane, except in Monitor where **Altitude update** owns the full status. **Details**

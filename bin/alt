@@ -522,11 +522,14 @@ def main(argv=None) -> None:
         import ssl
         import urllib.error
         import urllib.request
-        body = "" if setup_command or machine_run or validation_run or review_run or terminal_read or sys.stdin.isatty() and (closing_pr or args.operation == "close" or getattr(args, "url", None)) else sys.stdin.read()
+        body = "" if setup_command or machine_run or validation_run or review_run or terminal_read or sys.stdin.isatty() and (closing_pr or args.operation == "close") else sys.stdin.read()
         payload = {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"],
                    "review_id": args.review_id, "context_ids": args.context_message, "proposal_id": args.proposal_message} if review_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"]} if terminal_read else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "request": uuid.uuid4().hex} if machine_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "kvm": args.kvm, "publish": args.publish, "simulator": args.simulator} if validation_run else {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
                    "project": _project(args), "operation": args.operation, "body": body,
-                   **{key: getattr(args, key) for key in ("title", "labels", "number", "reason", "incident", "url") if hasattr(args, key)}}
+                   **{key: getattr(args, key) for key in ("title", "labels", "number", "reason") if hasattr(args, key)}}
+        # An option left unset sends nothing, so a checkout awaiting activation keeps working against the older
+        # running service, whose handlers refuse fields they do not know; each handler reads absence as that default.
+        payload = {key: value for key, value in payload.items() if value is not None and value is not False}
         # L3 uses its runtime shim/socket; HTTP is the operator's existing daemon surface.
         if ACTOR == "l3":
             sys.exit(f"alt {c}: L3 must use its project-bound runtime alt socket")
