@@ -188,5 +188,11 @@ test("a project chat command opens the project terminal; other blocks copy only"
     hidden: [output.getByText("project-25", { exact: true })],
   });
   await page.keyboard.press("Enter");
-  await walk.state("14-project-enter-runs", { visible: [output.getByText("project-25", { exact: true })], hidden: [] });
+  await walk.state("14-project-enter-runs", {
+    visible: [output.getByText("project-25", { exact: true }), page.getByText("The coordinator can read this terminal's output, and what it reads reaches its AI provider.")],
+    hidden: [],
+  });
+  // Once the shell is back at its prompt, the coordinator is told the command it handed over has run.
+  await expect.poll(async () => (await (await request.post("/fixture/notices")).json()).coordinator, { timeout: 10_000 })
+    .toEqual([expect.stringContaining("looks finished in the project terminal: `echo project-$((5*5))`")]);
 });

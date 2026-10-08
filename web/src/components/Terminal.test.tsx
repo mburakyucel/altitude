@@ -116,6 +116,7 @@ describe("Project terminal", () => {
     const { user, router } = renderApp({ route: "/projects/demo/terminal" });
     expect(await screen.findByTestId("terminal-screen")).toHaveTextContent("t1");
     expect(posts).toContainEqual(["/api/terminal/demo/open", {}]);
+    expect(screen.getByText("The coordinator can read this terminal's output, and what it reads reaches its AI provider.")).toBeVisible();
     expect(screen.queryByText(/clean main/)).toBeNull();
     await user.click(within(screen.getByRole("region", { name: "Terminal" })).getByRole("button", { name: "Close" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/projects/demo"));

@@ -294,7 +294,7 @@ a task or project conversation offer Open in terminal; elsewhere (Live session, 
 | Tap | The terminal view appears, opening its shell or attaching to the running one (§3.10). |
 | Typed | Once the screen has drawn output and stayed quiet for 300 ms (the prompt), the page re-reads the terminal; with no program in the foreground it types the command as a paste and focuses the screen. |
 | A program is running | The terminal names a foreground program (vim, a build): nothing is typed; a notice above the screen, "<program> is running, so the command wasn't typed.", with **Copy command** and ×. The same notice explains a shell that shows no settled prompt within five seconds of the tap (nothing drawn, output that keeps coming, or a check that answers late), a failed check or stopped typing. A shell builtin reading input (`read`) is not a foreground program, so the command is typed into it; nothing presses Enter. |
-| Owner not told | In a task terminal the page first tells Altitude the command so its owner hears once it has run. When that fails, the command is still typed and the notice reads "Altitude couldn't tell the task's owner to watch this command, so reply in chat once it has run.", with **Copy command** and ×. |
+| Reader not told | The page first tells Altitude the command so the terminal's reader (a task's owner, or the coordinator for a project terminal) hears once it has run. When that fails, the command is still typed and the notice reads "Altitude couldn't tell the task's owner to watch this command, so reply in chat once it has run." (in a project terminal, "the coordinator"), with **Copy command** and ×. |
 | Terminal is off / couldn't open | The terminal's own card (§3.10); the command is dropped, so turning it on or Retry opens a plain shell. |
 | Enter | Only the operator's Enter runs it: the keyboard's, or on phone the key row's **Enter** (§3.10), which runs the typed command without opening the soft keyboard. |
 
@@ -1157,7 +1157,7 @@ selection Ctrl+C interrupts. Escape and Tab belong to the shell, also when the p
 | Off | "Terminal is off", what it does, **Open Settings** (returns here with Back, which opens the shell). |
 | Starting | Skeleton lines and "Starting the terminal…". |
 | Running | The screen with the cursor focused; **Close** / ×; the phone key row. |
-| Running, task terminal | Also a grey note above the screen: "This task's owner can read this terminal's output." A project terminal has no note. |
+| Running, reader note | Also a grey note above the screen: "This task's owner can read this terminal's output, and what it reads reaches its AI provider." A project terminal names the coordinator instead: "The coordinator can read this terminal's output, …". |
 | Restart pending | A grey note above the screen: "Altitude restarts at its next quiet point to apply an update. This terminal will close then." |
 | Reconnecting | A small "Reconnecting…" badge over the screen's top right, so the shell keeps its size; it disappears when output resumes and missed output appears. |
 | Typing stopped | Input failed (a program not reading it, Altitude unreachable), so part of it may not have arrived: an amber alert "Typing stopped: <reason> Part of what you typed may not have arrived; check the screen." with **Resume typing**. Keys typed meanwhile are dropped, not queued. |

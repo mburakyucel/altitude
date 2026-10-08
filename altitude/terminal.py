@@ -8,8 +8,9 @@ and closing are recorded, on the task or project log.
 
 Terminal requests from Altitude's own agents are refused (`agent_connection`): the terminal is full command access
 as the operator, outside every worker sandbox and the operator-grant approval flow. A task's own owner may read its
-task terminal's output (`owner_output`, `owner_connection`), never type into or control it; the last output of an
-ended task terminal stays readable in memory until a new terminal opens there, the task finishes or altd stops.
+task terminal's output (`output`, `owner_connection`) and the project's coordinator its project terminal's, never type
+into or control it; the last output of an ended terminal stays readable in memory until a new terminal opens there,
+its task finishes, its project is removed or altd stops.
 """
 from __future__ import annotations
 
@@ -30,7 +31,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import config, platform, state as S, tasks as T
+from . import config, l3, platform, state as S, tasks as T
 
 REPLAY_BYTES = 256 * 1024
 READ_BYTES = 65536
@@ -75,8 +76,8 @@ class Terminal:
     cond: threading.Condition = field(default_factory=threading.Condition)  # output and ending
     io: threading.Lock = field(default_factory=threading.Lock)  # the descriptor: held to use it or close it
     closing: bool = False  # Close was asked for: a waiting write gives up
-    #: The command the page typed from the owner's `run` block: its text, then when Enter ran it and since when
-    #: the shell has held the foreground again. The owner hears once it has finished.
+    #: The command the page typed from a `run` block: its text, then when Enter ran it and since when the shell has
+    #: held the foreground again. Its reader (the task's owner, or the project's coordinator) hears once it has finished.
     command: dict | None = None
 
     @property
@@ -84,13 +85,17 @@ class Terminal:
         return self.start + len(self.buffer)
 
     @property
+    def place(self) -> str:
+        return "project" if self.slug is None else "task"
+
+    @property
     def unit(self) -> str:
         return f"altitude-terminal-{self.id}.service"
 
 
 _terminals: dict[tuple[str, str | None], Terminal] = {}
-#: The last ended terminal of each task or project: a page naming it reads how it ended, and a task's owner reads
-#: its output, until a new terminal opens there.
+#: The last ended terminal of each task or project: a page naming it reads how it ended, and its reader reads its
+#: output, until a new terminal opens there.
 _ended: dict[tuple[str, str | None], Terminal] = {}
 _lock = threading.Lock()
 
@@ -210,7 +215,7 @@ def _read(term: Terminal) -> None:
         term.ended = True
         term.cond.notify_all()
     if term.command:
-        _notice(term, f"the task terminal ended ({term.reason}) before "
+        _notice(term, f"the {term.place} terminal ended ({term.reason}) before "
                 + ("the command you handed the operator finished" if term.command.get("entered")
                    else "the operator ran the command you handed them"))
 
@@ -285,13 +290,12 @@ def _busy(term: Terminal) -> str | None:
 
 
 def hand(project: str, slug: str | None, ident, text) -> None:
-    """Follow the command the page is typing from the owner's `run` block, so the owner hears when it has run."""
-    if slug is None:
-        raise TerminalError("Only a task terminal tells its owner about a command.", 400)
+    """Follow the command the page is typing from a `run` block, so the terminal's reader hears when it has run."""
     if not isinstance(text, str) or not text.strip() or len(text) > INPUT_LIMIT:
         raise TerminalError("Send the command as text.", 400)
     term = _running(project, slug, ident)
-    attempt = S.load_task(project, slug).get("attempt")  # a later attempt's owner did not hand it
+    # A later attempt's owner did not hand it; a project has one coordinator.
+    attempt = None if slug is None else S.load_task(project, slug).get("attempt")
     with term.cond:
         term.command = {"text": text, "attempt": attempt}
 
@@ -319,7 +323,7 @@ def _follow(term: Terminal) -> None:
     with term.io:
         try:
             group, shell = os.tcgetpgrp(term.fd), platform.terminal_session(term.fd)
-        except OSError:  # no shell session to watch: the terminal's end tells the owner instead
+        except OSError:  # no shell session to watch: the terminal's end tells the reader instead
             return
     if shell <= 0 or group <= 0:
         return
@@ -330,7 +334,7 @@ def _follow(term: Terminal) -> None:
     now = time.monotonic()
     if now - command.setdefault("shell", now) >= COMMAND_SETTLE_SECONDS and not any(
             map(_alive, command.get("groups", ()))):
-        _notice(term, "the command you handed the operator looks finished in the task terminal")
+        _notice(term, f"the command you handed the operator looks finished in the {term.place} terminal")
 
 
 def _alive(group: int) -> bool:
@@ -344,23 +348,27 @@ def _alive(group: int) -> bool:
 
 
 def _notice(term: Terminal, what: str) -> None:
-    """Tell the task's owner, waking it when it waits. Altitude sees the shell, not the command's exit status.
-    The notice waits for the project lock on its own thread, so the reader keeps draining output meanwhile."""
+    """Tell the terminal's reader: the task's owner, waking it when it waits, or the project's coordinator, as a
+    queued turn. Altitude sees the shell, not the command's exit status. The notice waits for the project lock on
+    its own thread, so the reader keeps draining output meanwhile."""
     with term.cond:
         command, term.command = term.command, None
     if not command:
         return
     text = (f"Terminal: {what}: `{command['text']}`. This is a prompt to check, not proof: read its output with "
-            "`alt task terminal` and verify that the command actually ended and how. Altitude does not see its exit "
-            "status, and a command waiting for input, such as `read`, can look finished. Then continue or report "
-            "the blocker.")
+            f"`alt {term.place} terminal` and verify that the command actually ended and how. Altitude does not see "
+            "its exit status, and a command waiting for input, such as `read`, can look finished. Then continue or "
+            "report the blocker.")
 
     def send():
         try:
-            T.notify(term.project, term.slug, text, by="terminal", attempt=command["attempt"])
+            if term.slug is not None:
+                T.notify(term.project, term.slug, text, by="terminal", attempt=command["attempt"])
+            elif config.is_managed(term.project):
+                l3.queue_message(term.project, text, trigger="terminal")
         except (OSError, ValueError, KeyError, T.TransitionError) as exc:
-            print(f"terminal: the notice for {term.project}/{term.slug} failed: {exc}", file=sys.stderr, flush=True)
-    threading.Thread(target=send, name=f"terminal-notice:{term.project}:{term.slug}").start()
+            print(f"terminal: the notice for {term.project}/{term.slug or ''} failed: {exc}", file=sys.stderr, flush=True)
+    threading.Thread(target=send, name=f"terminal-notice:{term.project}:{term.slug or ''}").start()
 
 
 def write(project: str, slug: str | None, ident, data: str) -> None:
@@ -483,7 +491,7 @@ def read(term: Terminal, offset: int, wait: float) -> tuple[bytes, int, bool, bo
         return data, term.end, missed, term.ended and begin + len(data) >= term.end
 
 
-# --- The owner's read-only view -----------------------------------------------------------------------------------
+# --- The reader's read-only view ----------------------------------------------------------------------------------
 
 #: Escape sequences: operating-system commands (titles, links), control sequences (colour, cursor) and the rest.
 _ESCAPES = re.compile(rb"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[ -/]*[0-~]")
@@ -500,9 +508,9 @@ def plain(data: bytes) -> str:
     return "\n".join(lines)
 
 
-def owner_output(project: str, slug: str) -> dict:
-    """The task terminal's output as its owner reads it: the running terminal's, else the last ended one's. Project
-    terminals have no owner reader: `slug` names a task."""
+def output(project: str, slug: str | None) -> dict:
+    """The terminal's output as its reader reads it: the task's owner, or with `slug` None the project's coordinator.
+    The running terminal's, else the last ended one's."""
     term = _terminals.get((project, slug)) or _ended.get((project, slug))
     if term is None:
         return {"state": "none", "text": "", "missed": False}
@@ -512,6 +520,15 @@ def owner_output(project: str, slug: str) -> dict:
         exit_code, reason, error = term.exit_code, term.reason, term.error
     return {"state": state, "text": plain(data), "missed": missed, "exit_code": exit_code, "reason": reason,
             "error": error}
+
+
+def describe(record: dict, place: str) -> str:
+    """`output` as the reader's command prints it: a status line, then the text."""
+    if record["state"] == "none":
+        return f"[altitude] no terminal output: this {place}'s terminal has not been opened since Altitude last started"
+    head = ("[altitude] terminal running" if record["state"] == "running"
+            else f"[altitude] terminal ended ({record.get('reason')}, exit {record.get('exit_code')})")
+    return head + ("; earlier output was dropped" if record["missed"] else "") + "\n" + record["text"]
 
 
 def owner_connection(peer: tuple, local: tuple, unit: str) -> bool:
