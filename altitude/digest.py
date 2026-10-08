@@ -1,12 +1,28 @@
 """Cross-project user-input queue, WIP summary, and digest text."""
 from __future__ import annotations
 
-from . import config, dispatch, route, state as S, tasks as T
+from datetime import datetime, timedelta, timezone
+
+from . import config, dispatch, l3, route, state as S, tasks as T
+
+# L3 reads a block notification in about a minute (95% within five), and an owner it answers resumes to
+# resolve the question; a decision still waiting after this alerts even while either of them stalls.
+ALERT_HOLD = timedelta(minutes=15)
 
 def queue() -> list[dict]:
+    """Every decision on the operator's turn, oldest first. Needs you shows each at once; one whose task is
+    still moving (L3 reading its block notification, or its owner running or due to resume) carries
+    `alert_held` and wakes no device until the task rests or ALERT_HOLD passes, so a member L3 settles
+    never alerts."""
     items = []
+    since = datetime.now(timezone.utc) - ALERT_HOLD
     for p in config.load_projects():
-        items += T.decisions(p)
+        moving = l3.reading_blocks(p) | {t["slug"] for t in S.list_tasks(p)
+                                         if t["state"] == "running" or t.get("resume_after")}
+        for row in T.decisions(p):
+            if row["slug"] in moving and row.get("asked") and datetime.fromisoformat(row["asked"]) > since:
+                row["alert_held"] = True
+            items.append(row)
     items.sort(key=lambda i: i.get("asked") or "")
     return items
 

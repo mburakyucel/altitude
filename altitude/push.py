@@ -142,13 +142,16 @@ def _save(record: dict) -> None:
     RECORD.chmod(0o600)  # an endpoint is a capability: whoever holds it can wake that device
 
 
-def _waiting() -> list[str]:
-    """One key per waiting operator question or held review, in the form the page and the worker both use.
+def _waiting() -> tuple[list[str], list[str]]:
+    """The key of every waiting operator question or held review, in the form the page and the worker both
+    use, and the keys among them that may wake a device now: a decision whose task is still moving waits.
 
     Keyed on the decision, not its revision: a block and its escalation publish the same waiting
     decision twice, and the operator is woken for it once."""
-    return [f"{row['project']}:{row['slug']}:{row.get('group_id') or row.get('id') or 'review:%s' % row['pr']}"
-            for row in digest.queue() if row.get("id") or row["kind"] == "review"]  # not a fault or a stop
+    rows = [row for row in digest.queue() if row.get("id") or row["kind"] == "review"]  # not a fault or a stop
+    keys = [f"{row['project']}:{row['slug']}:{row.get('group_id') or row.get('id') or 'review:%s' % row['pr']}"
+            for row in rows]
+    return keys, [key for key, row in zip(keys, rows) if not row.get("alert_held")]
 
 
 def subscribe(endpoint: str) -> dict:
@@ -163,7 +166,7 @@ def subscribe(endpoint: str) -> dict:
         kept = [known for known in record["subscriptions"] if known != endpoint]
         # Already waiting decisions are not news to the first device; a later one must not silence
         # what the devices already subscribed are still owed.
-        seen = _waiting() if not record["subscriptions"] else record["seen"]
+        seen = _waiting()[0] if not record["subscriptions"] else record["seen"]
         kept = [*kept[-(DEVICES - 1):], endpoint]
         # A fresh subscription starts unrefused; what its push service thinks shows on the next send.
         refused = {known: why for known, why in record["refused"].items() if known in kept and known != endpoint}
@@ -186,24 +189,24 @@ def refused() -> list[dict]:
 
 
 def notify(log=lambda message: None) -> None:
-    """Called each tick: a newly waiting decision wakes every subscribed device, once.
+    """Called each tick: a decision that newly may alert wakes every subscribed device, once, and so does
+    an announced decision that has left the queue, so each device closes the banner it no longer needs.
 
-    A decision counts as announced only once a device has taken it. A machine that was asleep or off
-    its network when the decision arrived therefore still wakes on the next tick that gets through.
+    A decision counts as announced, or as cleared, only once a device has taken that push. A machine that
+    was asleep or off its network therefore still wakes on the next tick that gets through.
     A device whose push service refused is tried again each tick while a decision waits, so a fix on
     either side reaches it without another step, even when another device took the decision."""
     with _LOCK:
         record = _record()
         if not record["subscriptions"]:
             return
-        keys = _waiting()
-        fresh = [key for key in keys if key not in record["seen"]]
+        keys, alerting = _waiting()
+        fresh = [key for key in alerting if key not in record["seen"]]
+        cleared = [key for key in record["seen"] if key not in keys]
         refusing = [endpoint for endpoint in record["subscriptions"] if endpoint in record["refused"]]
-        if not fresh and not (keys and refusing):  # answered decisions drop out; the record stays the size of the queue
-            record["seen"] = keys
-            _save(record)
+        if not fresh and not cleared and not (keys and refusing):
             return
-        endpoints = list(record["subscriptions"]) if fresh else refusing
+        endpoints = list(record["subscriptions"]) if fresh or cleared else refusing
         before = dict(record["refused"])  # a subscription renewed while sending starts clean, not refused again
     taken, outcomes = False, {}
     for endpoint in endpoints:  # sent outside the lock: a slow push service must not stall a subscription
@@ -221,7 +224,8 @@ def notify(log=lambda message: None) -> None:
             outcomes[endpoint] = None
     with _LOCK:
         record = _record()
-        record["seen"] = keys if taken else [key for key in keys if key not in fresh]
+        if taken:  # the record stays the size of the queue
+            record["seen"] = [key for key in keys if key in record["seen"] or key in fresh]
         for endpoint, why in outcomes.items():
             now = record["refused"].get(endpoint)
             if endpoint not in record["subscriptions"] or now != before.get(endpoint) or now == why:

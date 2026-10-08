@@ -623,6 +623,17 @@ def _turn_identity(turn):
             if key in turn} if turn else None
 
 
+def reading_blocks(project: str) -> set[str]:
+    """The tasks whose block notification waits in L3's queue or is the turn L3 runs now. The queue is read
+    first: a claim removes its row and publishes the turn under one guard, so no notification falls between."""
+    with S.project_lock(project):
+        slugs = {row["slug"] for row in _queue_rows(queue_path(project)) if row.get("trigger") == "block" and row.get("slug")}
+    turn = active(project)
+    if turn and turn["trigger"] == "block" and turn.get("slug"):
+        slugs.add(turn["slug"])
+    return slugs
+
+
 def note_task(project: str, slug: str) -> bool:
     """Record that the project's running L3 turn created `slug`; false when no turn is running (a task
     created from the CLI outside a turn belongs to no chat row)."""

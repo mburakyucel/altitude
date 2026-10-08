@@ -17,7 +17,9 @@ import unittest
 import urllib.request
 
 from tests.support import AltitudeCase
-from altitude import config, push, server, state as S, tasks as T
+from datetime import timedelta
+
+from altitude import config, digest, engines, l3, push, server, state as S, tasks as T
 
 
 class _Service(http.server.BaseHTTPRequestHandler):
@@ -249,6 +251,103 @@ class TestPush(AltitudeCase):
         push.notify()
         self.assertEqual(sorted(sent["path"] for sent in self.service.requests),
                          ["/wake/device-1", "/wake/device-2"])
+
+    def for_operator(self, title: str, question: str) -> str:
+        """An owner publishes an operator question, and L3 is told of the block as `alt task block` tells it."""
+        task = T.new(self.project, title, "Do it.", actor="burak")
+        task.update({"state": "running", "attempt": 1})
+        S.save_task(self.project, task)
+        blocked = T.block(self.project, task["slug"], question, actor="l2", expected_attempt=1,
+                          updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE})
+        l3.queue_message(self.project, T.block_question(blocked), trigger="block", slug=task["slug"])
+        return task["slug"]
+
+    def l3_turn(self, during=lambda: None, *, limited: bool = False) -> None:
+        """L3 reads the queued block notification; `during` runs inside its turn, as L3's own verbs would."""
+        def execute(text, **kwargs):
+            if limited:
+                return {"text": "", "session_id": "", "error": "fixture allowance exhausted", "usage": {},
+                        "limited": {"scope": "engine", "why": "fixture allowance exhausted",
+                                    "until": "2999-01-01T00:00:00+00:00"}, "safe_to_retry": True, "tools": []}
+            during()
+            return {"text": "Read.", "session_id": "fixture-session", "reported_session_id": "fixture-session",
+                    "usage": {"input_tokens": 10}, "context_tokens": 10, "error": None, "tools": []}
+
+        for seam in ("claude_print", "codex_exec"):
+            self.patch(engines, seam, side_effect=execute)
+        l3.deliver_queued(self.project)
+
+    def test_a_question_l3_settles_during_its_turn_wakes_no_device(self):
+        push.subscribe(self.endpoint)
+        slug = self.for_operator("Choose backup retention", "How long should backups stay?")
+        push.notify()  # queued for L3: Needs you lists it, and no device wakes yet
+        self.assertEqual([row["alert_held"] for row in digest.queue()], [True])
+
+        answers = []
+
+        def settle():
+            push.notify()  # L3 is still reading it
+            answers.append(T.message(self.project, slug, "l3", "The retention policy says 30 days.", by="l3"))
+
+        self.l3_turn(settle)
+        push.notify()  # the owner L3 answered is due to resume
+        T.resume(self.project, slug)
+        push.notify()
+        [question] = T.operator_questions(S.load_task(self.project, slug))
+        T.resolve_question(self.project, slug, question["id"], question["revision"], answers[0]["id"],
+                           disposition="answered", reason="30 days, per the retention policy.", expected_attempt=1,
+                           l3_authority="The recorded retention policy settles it.")
+        push.notify()
+        self.assertEqual(digest.queue(), [])
+        self.assertEqual(self.service.requests, [])
+
+    def test_a_question_still_open_when_l3_turn_ends_wakes_each_device_once(self):
+        push.subscribe(self.endpoint)
+        self.for_operator("Choose backup retention", "How long should backups stay?")
+        self.l3_turn(lambda: push.notify())
+        self.assertEqual(self.service.requests, [])  # nothing during the turn
+        push.notify()
+        push.notify()
+        self.assertEqual(len(self.service.requests), 1)
+
+    def test_a_question_alerts_after_the_hold_when_l3_cannot_take_its_turn(self):
+        push.subscribe(self.endpoint)
+        self.for_operator("Choose backup retention", "How long should backups stay?")
+        self.l3_turn(limited=True)  # every engine refuses: the notification stays queued
+        self.assertEqual([row["trigger"] for row in l3._queue_rows(l3.queue_path(self.project))], ["block"])
+        push.notify()
+        self.assertEqual(self.service.requests, [])
+        self.patch(digest, "ALERT_HOLD", timedelta(0))  # the hold has passed
+        push.notify()
+        push.notify()
+        self.assertEqual(len(self.service.requests), 1)
+
+    def test_an_answered_decision_wakes_each_device_once_more_to_close_its_banner(self):
+        second = self.endpoint.replace("device-1", "device-2")
+        push.subscribe(self.endpoint)
+        push.subscribe(second)
+        task = self.decision("Choose backup retention", "How long should backups stay?")
+        push.notify()
+        self.assertEqual(len(self.service.requests), 2)
+
+        T.message(self.project, task["slug"], T.OPERATOR_MESSAGE_ROLE, "Thirty days.")  # answered
+        self.assertEqual(digest.queue(), [])
+        self.service.status = 503  # no device takes it: the clearing is owed until one does
+        push.notify()
+        self.service.status = 201
+        push.notify()
+        push.notify()
+        self.assertEqual(sorted(sent["path"] for sent in self.service.requests[2:]),
+                         ["/wake/device-1", "/wake/device-1", "/wake/device-2", "/wake/device-2"])
+        self.assertEqual(json.loads((self.tmp / "push.json").read_text())["seen"], [])
+
+    def test_a_decision_settled_before_it_alerted_sends_no_clearing_wake(self):
+        push.subscribe(self.endpoint)
+        slug = self.for_operator("Choose backup retention", "How long should backups stay?")
+        push.notify()
+        T.message(self.project, slug, T.OPERATOR_MESSAGE_ROLE, "Thirty days.")  # read in Needs you, answered
+        push.notify()
+        self.assertEqual(self.service.requests, [])
 
     def test_an_unreachable_push_service_leaves_the_subscription_and_says_so(self):
         push.subscribe(self.endpoint)
