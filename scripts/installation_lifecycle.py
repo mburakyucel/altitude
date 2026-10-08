@@ -6,7 +6,8 @@ Only engine executables are fixtures; service control, TLS and recovery are real
 The whole lifecycle runs in one invocation; `reboot-install` and `reboot-verify` split an install from
 its check after the VM restarts. `recovery` installs the candidate over a baseline whose installation
 failed, after the documented cleanup. `bootstrap` runs the built install.sh through its public curl | sh command against a release
-server on this machine's loopback, whose name the root wrapper points here.
+server on this machine's loopback, whose name the root wrapper points here. `update` installs the baseline while that server
+answers for GitHub's release list and downloads, and the app's Update request must carry it to the candidate.
 """
 from __future__ import annotations
 
@@ -28,7 +29,7 @@ import tarfile
 import threading
 import time
 from urllib.parse import urlsplit
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 
 def digest(path: Path) -> str:
@@ -323,6 +324,35 @@ class Lifecycle:
         assert all(digest(path) == value for path, value in retained.items()), "Installing over the failed release changed retained data"
         self.uninstall(retained)
 
+    def release_authority(self, *names: str) -> Path:
+        """A throwaway certificate authority and a server certificate for NAMES, valid for a day."""
+        server = self.home / "release-server"
+        server.mkdir()
+        self.run("server-authority", "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+                 "-subj", "/CN=Lifecycle test release authority", "-keyout", server / "ca.key", "-out", server / "ca.crt")
+        self.run("server-request", "openssl", "req", "-newkey", "rsa:2048", "-nodes", "-subj", f"/CN={names[0]}",
+                 "-keyout", server / "server.key", "-out", server / "server.csr")
+        (server / "names").write_text("subjectAltName=" + ",".join(f"DNS:{name}" for name in names) + "\n")
+        self.run("server-certificate", "openssl", "x509", "-req", "-in", server / "server.csr", "-CA", server / "ca.crt",
+                 "-CAkey", server / "ca.key", "-CAcreateserial", "-days", "1", "-extfile", server / "names",
+                 "-out", server / "server.crt")
+        return server
+
+    def release_server(self, server: Path):
+        """HTTPS on 127.0.0.1:443 serving SERVER/root, with the request lines it answered."""
+        requests = []
+
+        class Handler(SimpleHTTPRequestHandler):
+            def log_message(self, format, *args):
+                requests.append(" ".join(map(str, args)))
+
+        httpd = ThreadingHTTPServer(("127.0.0.1", 443), functools.partial(Handler, directory=str(server / "root")))
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(server / "server.crt", server / "server.key")
+        httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        return httpd, requests
+
     def bootstrap(self):
         """The built install.sh, fetched and run by its public command, downloads, verifies and installs."""
         old, old_sha, _, before, *_ = self.prepare()
@@ -333,16 +363,7 @@ class Lifecycle:
         sums = dict(reversed(line.split()) for line in (self.baseline / "SHA256SUMS").read_text().splitlines())
         assert digest(script) == sums["install.sh"], "install.sh differs from the release's SHA256SUMS"
         # A throwaway authority that only this test's curl trusts; the machine's trust store is untouched.
-        server = self.home / "release-server"
-        server.mkdir()
-        self.run("server-authority", "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
-                 "-subj", "/CN=Lifecycle test release authority", "-keyout", server / "ca.key", "-out", server / "ca.crt")
-        self.run("server-request", "openssl", "req", "-newkey", "rsa:2048", "-nodes", "-subj", f"/CN={address.hostname}",
-                 "-keyout", server / "server.key", "-out", server / "server.csr")
-        (server / "names").write_text(f"subjectAltName=DNS:{address.hostname}\n")
-        self.run("server-certificate", "openssl", "x509", "-req", "-in", server / "server.csr", "-CA", server / "ca.crt",
-                 "-CAkey", server / "ca.key", "-CAcreateserial", "-days", "1", "-extfile", server / "names",
-                 "-out", server / "server.crt")
+        server = self.release_authority(address.hostname)
         root = server / "root"
         releases = root / address.path.strip("/") / "releases"
         (releases / "latest/download").mkdir(parents=True)
@@ -350,17 +371,7 @@ class Lifecycle:
         (releases / "latest/download/install.sh").write_bytes(script.read_bytes())
         (releases / "download" / before["version"] / "install.py").write_bytes((self.baseline / "install.py").read_bytes())
         served = releases / "download" / before["version"] / old.name
-        requests = []
-
-        class Handler(SimpleHTTPRequestHandler):
-            def log_message(self, format, *args):
-                requests.append(" ".join(map(str, args)))
-
-        httpd = ThreadingHTTPServer(("127.0.0.1", 443), functools.partial(Handler, directory=str(root)))
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.load_cert_chain(server / "server.crt", server / "server.key")
-        httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
-        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        httpd, requests = self.release_server(server)
         self.env["CURL_CA_BUNDLE"] = str(server / "ca.crt")
         command = f"curl --proto '=https' --tlsv1.2 -fsSL {repository}/releases/latest/download/install.sh | sh"
         try:
@@ -385,9 +396,94 @@ class Lifecycle:
         self.uninstall({})
         self.result["passed"] = True
 
+    def update(self):
+        """An installed copy offered the candidate by GitHub's release list installs it through the app's Update request.
+
+        The release server answers for api.github.com and github.com, which the root wrapper points at this machine's
+        loopback; the account's user manager hands its authority to the service and the update job as SSL_CERT_FILE."""
+        old, old_sha, _, before, new, new_sha, _, after = self.prepare()
+        self.result["limits"][0] = ("Same-source versions; GitHub's release list and downloads answered by a server on the guest's "
+                                    "loopback, not by GitHub; the Update request is sent as the page sends it, not from a browser")
+        address = urlsplit(before["repository"])
+        assert address.scheme == "https" and address.hostname == "github.com", address
+        repository = address.path.strip("/")
+        server = self.release_authority("api.github.com", "github.com")
+        root = server / "root"
+        listing = root / "repos" / repository / "releases"
+        listing.parent.mkdir(parents=True)
+        # Newest first, as GitHub lists them: a newer draft that must never be offered, the candidate, the baseline.
+        write_json(listing, [{"tag_name": "v0.99.0", "draft": True, "prerelease": False},
+                             *({"tag_name": release["version"], "draft": False, "prerelease": "-rc." in release["version"]}
+                               for release in (after, before))])
+        download = root / repository / "releases/download" / after["version"]
+        download.mkdir(parents=True)
+        (download / new.name).write_bytes(new.read_bytes())
+        (download / (new.name + ".sha256")).write_text(new_sha + "\n")
+        httpd, requests = self.release_server(server)
+        self.run("trust-release-server", "systemctl", "--user", "set-environment", f"SSL_CERT_FILE={server / 'ca.crt'}")
+        try:
+            self.install(old, old_sha)
+            self.healthy("installed", before)
+            # The daemon looks up releases as it starts.
+            record = self.home / ".altitude/update.json"
+            deadline = time.monotonic() + 120
+            while not (record.is_file() and "latest" in json.loads(record.read_text() or "{}")):
+                assert time.monotonic() < deadline, "The daemon recorded no release lookup"
+                time.sleep(1)
+            write_json(self.results / "offered-update-record.json", json.loads(record.read_text()))
+            offered = json.loads(self.run("offered-doctor", self.alt, "doctor"))
+            write_json(self.results / "offered-doctor.json", offered)
+            assert offered["update"]["available"]["version"] == after["version"], offered["update"]
+            # The page's own requests: pair, read the overview, then Update for exactly the version it shows.
+            base = f"https://127.0.0.1:{self.env['ALTITUDE_PORT']}"
+            context = ssl.create_default_context(cafile=str(self.tls / "ca.crt"))
+            code = re.search(r"Pairing code: (\S+)", self.run("pair", self.alt, "pair")).group(1)
+            cookie = None
+
+            def page(path: str, body: dict | None = None):
+                request = Request(base + path, data=None if body is None else json.dumps(body).encode(),
+                                  headers={"Content-Type": "application/json", "Origin": base, **({"Cookie": cookie} if cookie else {})})
+                with urlopen(request, context=context, timeout=30) as response:
+                    return response.headers, json.load(response)
+
+            headers, _ = page("/api/pair", {"code": code})
+            cookie = headers["Set-Cookie"].split(";")[0]
+            _, overview = page("/api/overview")
+            write_json(self.results / "offered-overview-update.json", overview["update"])
+            assert overview["update"]["available"]["version"] == after["version"], overview["update"]
+            _, started = page("/api/update", {"version": after["version"]})
+            write_json(self.results / "update-request.json", started)
+            assert started["update"]["attempt"]["state"] == "running", started
+            deadline = time.monotonic() + 300
+            while True:
+                assert time.monotonic() < deadline, "The update did not activate the candidate"
+                try:
+                    with urlopen(base + "/api/health", context=context, timeout=10) as response:
+                        if json.load(response)["version"] == after["version"]:
+                            break
+                except OSError:
+                    pass  # the service is restarting
+                time.sleep(1)
+            self.healthy("updated", after)
+            updated = json.loads(self.run("updated-doctor", self.alt, "doctor"))
+            write_json(self.results / "updated-doctor.json", updated)
+            assert updated["update"]["available"] is None and updated["update"]["attempt"] is None, updated["update"]
+            write_json(self.results / "updated-update-record.json", json.loads(record.read_text()))
+            self.run("update-unit-journal", "journalctl", "--user", "--no-pager", "-u", f"altitude-update-{after['version']}")
+        finally:
+            httpd.shutdown()
+            self.run("untrust-release-server", "systemctl", "--user", "unset-environment", "SSL_CERT_FILE")
+            write_json(self.results / "update-requests.json", requests)
+        assert sum(f"GET /repos/{repository}/releases?per_page=30 " in line for line in requests) >= 1, requests
+        downloads = [line for line in requests if "/releases/download/" in line]
+        assert len(downloads) == 2 and all(f"GET /{repository}/releases/download/{after['version']}/{new.name}" in line
+                                           for line in downloads), requests
+        self.uninstall({})
+        self.result["passed"] = True
+
     def execute(self, phase: str = "all"):
         try:
-            {"all": self.exercise, "bootstrap": self.bootstrap, "reboot-install": self.reboot_install,
+            {"all": self.exercise, "bootstrap": self.bootstrap, "update": self.update, "reboot-install": self.reboot_install,
              "reboot-verify": self.reboot_verify, "recovery": self.recovery}[phase]()
         except Exception as exc:
             self.result["error"] = f"{type(exc).__name__}: {exc}"

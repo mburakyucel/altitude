@@ -773,9 +773,17 @@ phase writes to its own subdirectory of the results. The `bootstrap` phase runs 
 host name resolves to the guest's loopback, where the account serves the release over HTTPS with a
 throwaway certificate authority that only this test's `curl` trusts. A download altered by one byte
 must be refused with nothing installed; the unaltered one must install a healthy service, which is
-then uninstalled. The hosts entry and unprivileged-port setting it needs are restored afterwards.
+then uninstalled. The `update` phase installs the baseline while the account's server answers for
+GitHub's release list and release downloads: the release host and its `api.` host resolve to the
+guest's loopback, and the account's user manager gives the service and its update job the throwaway
+authority as `SSL_CERT_FILE`. The listing names a newer draft, the candidate and the baseline. The
+daemon's startup lookup must offer the candidate in `alt doctor` and the overview; the request the
+app's **Update** button sends, from a paired session, must install it through `alt update --version`,
+downloading only the candidate's archive and checksum, and afterwards nothing is offered. Both
+baseline and candidate must carry this lookup, so the phase needs same-source versions. The hosts
+entries and unprivileged-port setting these phases need are restored afterwards.
 Retain its results before discarding the VM. The hosted workflow
-runs neither phase and does not prove a minimal OS install or login/logout behavior, browser/device CA trust,
+runs none of these phases and does not prove a minimal OS install or login/logout behavior, browser/device CA trust,
 a download from GitHub's published release, native confinement or provider compatibility. There is no browser test
 in this harness. Native macOS installation remains with `macos-support-native-runtime-behind-the`;
 this Linux evidence is partial acceptance toward #226 and does not close it or establish public readiness.
@@ -825,8 +833,8 @@ online only while cloud-init installs Git, GitHub CLI and OpenSSL, and is then u
 is restricted to the SSH forward. Before the harness starts, the runner probes the internet and a
 listener it opens on the host's loopback. Through the online card both must answer and through the
 restricted card the host must not; after unplugging, nothing may answer. Any other outcome, or a
-probe that cannot run, stops the run. After the lifecycle passes, the runner runs `bootstrap` and
-`reboot-install`, restarts the VM, checks that it is still isolated and runs `reboot-verify`. Results hold the harness evidence and build logs plus `vm.json` (source
+probe that cannot run, stops the run. After the lifecycle passes, the runner runs `bootstrap`, `update`
+(not with `BASELINE`, whose published code makes its own lookup) and `reboot-install`, restarts the VM, checks that it is still isolated and runs `reboot-verify`. Results hold the harness evidence and build logs plus `vm.json` (source
 commit, published baseline release with its commit and checksums when used, whether it was a recovery run, harness commit and whether its scripts were modified, image and signature, QEMU version, guest OS and kernel, probe outcomes, each phase's exit) and the VM console
 and QEMU logs; `harness.log` and the `harness-*.log` files are written as the phases run. The runner prints each stage with its
 elapsed time; after the first image download, a run takes about three and a half minutes, two of them

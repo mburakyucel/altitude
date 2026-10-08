@@ -89,6 +89,11 @@ function called on its last line, so a download cut off midway does nothing. Onc
 release exists, `https://github.com/mburakyucel/altitude/releases/latest/download/install.sh`
 names the newest one; `latest` skips release candidates.
 
+An installed copy checks for a newer release and offers it in the app, in `alt doctor` and through
+`alt update` ([operations](OPERATIONS.md#installed-application-lifecycle)); nothing updates until you
+confirm. A copy installed from a release candidate is offered newer candidates and stable releases;
+a copy installed from a stable release is offered stable releases only.
+
 The command trusts GitHub's HTTPS and the published, immutable release for `install.sh` itself.
 Releases that the release workflow publishes from the public repository attest every release file.
 A release published while the repository was private, including `v0.1.0-rc.1`, has no attestation,

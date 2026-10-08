@@ -12,8 +12,10 @@ deleted afterwards. The guest has two network cards: one is online only while cl
 the harness prerequisites and is then unplugged; the other is restricted to the loopback SSH
 forward, so during the tests the guest reaches neither the internet nor this host's services.
 After the lifecycle passes, another disposable account installs through the built install.sh from a
-release server inside the guest; then a third installs the baseline, the VM restarts and the harness
-checks that the service came back on its own before removing it. --recovery instead runs only the
+release server inside the guest. Without --baseline-release, a third installs the baseline while that server
+answers for GitHub's release list and downloads, and the app's Update request must install the candidate it
+offers. Then another installs the baseline, the VM restarts and the harness checks that the service came back
+on its own before removing it. --recovery instead runs only the
 recovery phase: the published baseline's installation must fail, and after the documented cleanup the
 candidate installed over it must start and keep its settings, TLS identity and data.
 Requires qemu-system-x86, qemu-utils and cloud-image-utils, and read/write access to /dev/kvm.
@@ -252,10 +254,12 @@ def harness(machine: Machine, commit: str, phase: str, log: Path) -> int:
             stdout=stream, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, timeout=1200).returncode
 
 
-def lifecycle(machine: Machine, commits: str, results: Path, record: dict) -> None:
-    """The lifecycle, then install.sh's bootstrap, then an install that must survive the VM's restart."""
+def lifecycle(machine: Machine, commits: str, results: Path, record: dict, published: bool) -> None:
+    """The lifecycle, then install.sh's bootstrap, the offered update, and an install that must survive the VM's restart.
+
+    A published baseline looks up releases with its own code, so the offered update runs only for same-source versions."""
     exits = record["harness_exit"]
-    for phase in ("all", "bootstrap", "reboot-install"):
+    for phase in ("all", "bootstrap", *(() if published else ("update",)), "reboot-install"):
         note(f"running the {phase} phase")
         exits[phase] = harness(machine, commits, phase, results / ("harness.log" if phase == "all" else f"harness-{phase}.log"))
         if exits[phase]:
@@ -375,14 +379,15 @@ def run(results: Path, commit: str, cache: Path, baseline_release: str | None = 
                 note("running the recovery phase")
                 exits["recovery"] = harness(machine, commits, "recovery", results / "harness-recovery.log")
             else:
-                lifecycle(machine, commits, results, record)
+                lifecycle(machine, commits, results, record, bool(baseline_release))
         finally:
             note(f"harness exits {exits}; copying its results")
             try:
                 machine.copy("ubuntu@127.0.0.1:results/.", str(results))
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
                 record["uncopied_results"] = str(error)
-        record["passed"] = list(exits.values()) == [0] * (1 if recovery else 4) and "uncopied_results" not in record
+        phases = 1 if recovery else 4 if baseline_release else 5
+        record["passed"] = list(exits.values()) == [0] * phases and "uncopied_results" not in record
     finally:
         try:
             if machine:
