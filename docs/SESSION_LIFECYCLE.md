@@ -960,7 +960,7 @@ checks issue-close CLI/API validation without changing the production command's 
 An owner assigned an existing external PR incorporates its history in the isolated task branch,
 then uses [`alt land --adopt-pr N --expected-head SHA --reason '…'`](CLI.md#adopt-an-existing-pr).
 Adoption records an immutable PR/head receipt and event, and status exposes the adopted PR.
-After a verified history-preserving merge on main, the same task can explicitly select its next
+After its verified merge on main, the same task can explicitly select its next
 assigned PR with that PR's observed head and authorization reason. The earlier receipt stays
 unchanged in `adoption_history`; `adopted_pr` selects the active landing, ancestry and approval
 target. Failed or repeated transitions do not overwrite earlier receipts or expand their authority.
@@ -968,7 +968,7 @@ A prior PR's recorded hold approval restores the original requirement for the ne
 the operator subsequently released it for the task as a whole. L3 checks the original decision's
 scope before releasing the new active PR; a restored hold retains its generation, while an explicit
 renewed hold changes it and requires approval of that renewed requirement.
-Landing and resume preserve the original head's ancestry. Commit messages, including historical
+Landing and resume preserve the original head's ancestry in the task branch. Commit messages, including historical
 labels naming other tasks, carry no ownership authority; landing excludes other active tasks' PRs and branches.
 The local task branch stays unchanged in identity while fast-forward pushes update the original
 PR branch. Merging landings incorporate main while preserving the adopted
@@ -982,8 +982,8 @@ and pending checks still block, including nonrequired checks. Unknown requiredne
 candidate evidence refuse delivery; at least one hosted check must actually pass.
 Review blockers, required checks and merge holds apply to the reused PR; the owner, active PR and hold are
 checked again immediately before merge. Recorded operator approval matches the adopted PR's
-number, URL and branch. A no-CI suite tests a two-parent candidate, and the GitHub merge retains
-history without requesting deletion of the original branch. The normal report and archive path
+number, URL and branch. A no-CI suite tests the squash candidate, and the GitHub squash merge
+requests no deletion of the original branch. The normal report and archive path
 verifies delivery; adoption grants no authority over another project's task.
 
 ### Continuing an active task after merge

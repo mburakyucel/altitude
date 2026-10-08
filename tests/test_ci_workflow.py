@@ -20,7 +20,7 @@ class TestRequiredCheckWorkflow(AltitudeCase):
     def test_one_hosted_job_with_the_required_id_runs_for_every_pull_request(self):
         self.assertEqual(config.PR_CHECK_NAME, 'check')
         self.assertEqual(re.findall(r'^  ([\w-]+):$', self.job, re.M), [config.PR_CHECK_NAME])
-        self.assertIn('\n    runs-on: ubuntu-latest\n', self.job)
+        self.assertIn('\n    runs-on: ubuntu-24.04\n', self.job)
         # A job condition or `name:` would skip or rename the run `alt land` and release.yml select.
         self.assertIsNone(re.search(r'^    (if|name):', self.job, re.M))
         self.assertIn('on:\n  workflow_dispatch:\n  pull_request:\n    branches: [main]\n'

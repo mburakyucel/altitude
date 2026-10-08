@@ -1161,7 +1161,9 @@ service, LaunchAgents, keychains, trust stores or network configuration.
 ## CI and candidate identity
 
 `.github/workflows/hosted-checks.yml` runs `make check` as its job `check` on a GitHub-hosted
-`ubuntu-latest` runner for every pull request to main, every push to main and manual dispatches.
+`ubuntu-24.04` runner for every pull request to main, every push to main and manual dispatches.
+It first installs `ffmpeg` and `liblcms2-2` for the image fixtures, then the frozen web
+dependencies and Chromium from `web/`, where Corepack selects the pinned pnpm.
 Every run, whether from a fork or a repository branch, has a read-only token and no secrets, and no
 workflow runs on the maintainer's machine. Standard hosted runners are free for public
 repositories. GitHub's fork-workflow approval setting (require approval for first-time
@@ -1237,9 +1239,9 @@ four processes), web tests 13.54 s (360 passed), typecheck/build 4.82 s and brow
 CI allocations vary with available capacity. Worker counts follow the process's available CPUs,
 not a fixed container size or host-wide count. This reference uses head `998da21`; it is not
 acceptance evidence for a later revision. PR evidence records the current source, allocation,
-timings and complete results. A hosted `ubuntu-latest` runner for a public repository has four
-CPUs, so its gate uses four browser workers and two Python processes. Run local timing measurements
-one at a time and retain scoped memory and termination observations alongside timings.
+timings and complete results. A hosted `ubuntu-24.04` runner has four CPUs for a public
+repository, so its gate uses four browser workers and two Python processes. Run local timing
+measurements one at a time and retain scoped memory and termination observations alongside timings.
 
 A warm local implementation run on 2026-09-08, Linux, Python 3.12.3, Node 22.22.2 and pnpm
 10.34.5 measured the following; PR/check artifacts identify the validated source revision.

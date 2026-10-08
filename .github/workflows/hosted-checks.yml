@@ -16,7 +16,7 @@ permissions:
 jobs:
   # Keep the job id `check` and no `name:`: `alt land` and release.yml select this job by id.
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       CI: 'true'

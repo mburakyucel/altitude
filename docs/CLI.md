@@ -1735,7 +1735,7 @@ incorporate only changes belonging to this task; the original receipt remains un
 For a task explicitly assigned several existing PRs, finish the active PR before adopting the next.
 Fetch main, incorporate the next inspected PR without rewriting history, then repeat `--adopt-pr`
 with its number, full observed head and a reason naming its assignment. Landing verifies the
-previous PR is merged and its original and final heads are preserved on current main. It retains
+previous PR is merged and its merge commit is on current main. It retains
 the previous receipt unchanged in `adoption_history` and selects the new `adopted_pr` under the
 project lock. `alt task show` and `alt task events` retain the audit trail. No receipt editing is
 needed. Refused adoption validation leaves the active receipt unchanged. Once adoption is recorded,
@@ -1758,14 +1758,15 @@ Unknown requiredness remains blocked. These rules apply to ordinary and adopted 
 At least one hosted check must actually succeed; entirely skipped CI cannot use the no-CI fallback.
 Where no CI is configured, use `--test-cmd "<full suite>"` if the
 default `make test` is unsuitable; it runs as [one argv command](#dry-run-and-gate-selection)
-on the exact two-parent merge candidate. The live task
+on the exact squash merge candidate. The live task
 owner and merge hold are rechecked before merging. The original branch receives only fast-forward
-pushes; rejected pushes never retry with force. `--merge` uses a merge commit and requests no
-branch deletion, so the repository must permit that merge method. Host-side branch deletion
-settings remain the repository operator's policy.
+pushes; rejected pushes never retry with force. `--merge` squashes the PR into one commit on main,
+as ordinary landing does, and requests no branch deletion; the PR keeps its original commits.
+Host-side branch deletion settings remain the repository operator's policy.
 
-`--merge` incorporates current main while holding the repository turn. If that integration
-conflicts, reconcile manually while preserving the adopted commits with a merge commit:
+`--merge` incorporates current main into the task branch while holding the repository turn. If
+that integration conflicts, reconcile manually while preserving the adopted commits with a merge
+commit:
 
 ```sh
 git fetch origin main

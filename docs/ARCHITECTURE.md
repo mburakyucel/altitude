@@ -983,8 +983,8 @@ remains effective.
 The receipt binds PR number/URL, origin, base, original branch/head, actor, attempt, reason and time.
 The original head must remain an ancestor during landing and resume.
 The task keeps its local branch and publishes a fast-forward refspec to the original PR branch;
-adopted pushes never retry with force. Landing incorporates main with a merge commit, preserving
-the adopted history. Adoption cannot be widened to a later external head.
+adopted pushes never retry with force. Landing incorporates main into the task branch with a merge
+commit, preserving the adopted branch history. Adoption cannot be widened to a later external head.
 The existing PR is reused, outstanding required reviews or requested changes and drafts block merge,
 and the live task owner/hold/active receipt are rechecked before merging. The fetched base branch
 is authoritative; lagging `baseRefOid` metadata does not replace it. Check evidence confirms the
@@ -994,13 +994,13 @@ skipped checks. Completed skipped checks identified as nonrequired by GitHub are
 interpreting workflow conditions. Failed, cancelled and pending checks still block, including
 nonrequired checks; pending checks use the existing wait. Unknown requiredness or ambiguous
 candidate association refuses delivery. At least one check must actually pass under the hosted gate.
-For other projects without CI, the full local suite runs on a clean merge candidate:
-one parent for squash delivery, two for adopted history. The suite is one `--test-cmd` argv
+For other projects without CI, the full local suite runs on a clean single-parent squash
+candidate, for adopted PRs too. The suite is one `--test-cmd` argv
 command run without a shell. Workflows on either pinned side keep the hosted gate, so a head that
 deletes them cannot select the local suite. A dry run reports the fetched base, the exact head or
 the staged tree, per-side workflow detection and the gate it would use, and names what only a real
-landing settles; it commits, pushes, opens, tests and merges nothing. Adopted PRs use a
-GitHub merge commit and request no branch deletion. See the [supported workflow](CLI.md#adopt-an-existing-pr)
+landing settles; it commits, pushes, opens, tests and merges nothing. Adopted PRs squash like
+ordinary delivery and request no branch deletion. See the [supported workflow](CLI.md#adopt-an-existing-pr)
 and [dry run and gate selection](CLI.md#dry-run-and-gate-selection).
 
 Operator merge decisions originate in task chat, UI choices or project chat. The owner applies a

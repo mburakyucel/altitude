@@ -279,10 +279,8 @@ def _adoption(root: Path, task: dict, base: str,
                 or previous.get("headRefName") != receipt["branch"] or previous.get("baseRefName") != base
                 or not previous_merge or not previous.get("headRefOid")):
             raise LandError("previous adoption must be verified merged before selecting another PR")
-        for ancestor, descendant in ((receipt["head"], previous_merge),
-                                     (previous["headRefOid"], previous_merge), (previous_merge, f"origin/{base}")):
-            _need(_git(root, "merge-base", "--is-ancestor", ancestor, descendant),
-                  "previous adoption is not preserved in the current base")
+        _need(_git(root, "merge-base", "--is-ancestor", previous_merge, f"origin/{base}"),
+              "previous adoption merge is not on current main")
         receipt = None
     if receipt and (receipt["base"] != base or receipt["origin"] != origin
                     or number is not None and (number != receipt["number"] or expected_head != receipt["head"])):
@@ -818,8 +816,8 @@ def _local_suite(cwd: Path, test_cmd: str) -> dict:
 
 
 @contextlib.contextmanager
-def _candidate(root: Path, base_sha: str, head_sha: str, *, preserve_history: bool = False):
-    """Yield the squash or two-parent merge candidate used by the selected GitHub merge method."""
+def _candidate(root: Path, base_sha: str, head_sha: str):
+    """Yield the single-parent squash candidate GitHub's squash merge produces."""
     tmp = Path(tempfile.mkdtemp(prefix="alt-land-candidate-"))
     path = tmp / "candidate"
     try:
@@ -827,8 +825,7 @@ def _candidate(root: Path, base_sha: str, head_sha: str, *, preserve_history: bo
         if worktree.returncode != 0:
             raise LandError(f"cannot build the merge candidate worktree: "
                             f"{((worktree.stderr or '') + (worktree.stdout or '')).strip()[-200:]}")
-        method = ["--no-ff", "--no-commit"] if preserve_history else ["--squash"]
-        merged = _git(path, "merge", *method, head_sha, timeout=300)
+        merged = _git(path, "merge", "--squash", head_sha, timeout=300)
         if merged.returncode != 0:
             raise LandError("the base-plus-head merge candidate does not merge cleanly — GitHub would refuse "
                             f"this merge too: {((merged.stderr or '') + (merged.stdout or '')).strip()[-200:]}")
@@ -873,12 +870,13 @@ def _candidate(root: Path, base_sha: str, head_sha: str, *, preserve_history: bo
 
 
 def _merge(root: Path, branch: str, number: int, base: str, expected_head: str,
-           *, preserve_history: bool = False) -> bool:
+           *, delete_branch: bool = True) -> bool:
     """Merge, then believe GitHub about the result, not the exit code — `--delete-branch` can fail on the
     local half (a worktree holds the branch) after the merge itself succeeded. GitHub atomically refuses if the
-    PR head changed after the candidate this invocation validated. The receipt names no main run: the merged
-    commit's push-triggered run rarely exists yet, and `alt task status` resolves it by commit once it does."""
-    method = ["--merge"] if preserve_history else ["--squash", "--delete-branch"]
+    PR head changed after the candidate this invocation validated. An adopted PR keeps its original branch. The
+    receipt names no main run: the merged commit's push-triggered run rarely exists yet, and `alt task status`
+    resolves it by commit once it does."""
+    method = ["--squash", "--delete-branch"] if delete_branch else ["--squash"]
     m = _run(["gh", "pr", "merge", str(number), *method,
               "--match-head-commit", expected_head], root, timeout=300)
     after = _pr_view(root, str(number)) or {}
@@ -894,14 +892,14 @@ def _merge(root: Path, branch: str, number: int, base: str, expected_head: str,
 
 
 def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge=None,
-                          preserve_history: bool = False) -> tuple[bool, dict]:
+                          delete_branch: bool = True) -> tuple[bool, dict]:
     """Test one exact base/head pair and merge only while both tips still match it."""
     base_sha, head_sha = pair["base_sha"], pair["head_sha"]
     identity = {"base": base_sha, "head": head_sha}
 
     try:
         _assert_pair_current(root, pair)
-        with _candidate(root, base_sha, head_sha, preserve_history=preserve_history) as path:
+        with _candidate(root, base_sha, head_sha) as path:
             tests = _local_suite(path, test_cmd)
     except LandError as exc:
         _note(f"not merging: {exc}")
@@ -932,7 +930,7 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge
         return False, tests
     with before_merge() if before_merge else contextlib.nullcontext():
         merged = _merge(root, pair["branch"], pair["number"], pair["base"], head_sha,
-                        preserve_history=preserve_history)
+                        delete_branch=delete_branch)
     return merged, tests
 
 
@@ -1250,13 +1248,13 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     if merge and not merged:
         if checks == "none-configured":
             merged, local_tests = _merge_on_local_suite(
-                root, pair, test_cmd, before_merge=before_merge, preserve_history=bool(adoption))
+                root, pair, test_cmd, before_merge=before_merge, delete_branch=not adoption)
         elif checks == "pass":
             checks = _checks_value(root, number, pair)
             if checks == "pass":
                 with before_merge():
                     merged = _merge(root, publish_branch, number, base, pushed_head,
-                                    preserve_history=bool(adoption))
+                                    delete_branch=not adoption)
                 if pair["required_pr_check"]:
                     commit_sha = ((_pr_view(root, str(number)) or {}).get("mergeCommit") or {}).get("oid")
                     if not commit_sha or _need(_git(root, "rev-parse", f"{commit_sha}^{{tree}}"),

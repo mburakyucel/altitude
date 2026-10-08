@@ -1753,7 +1753,7 @@ class TestCheckEvidence(AltitudeCase):
         self.assertTrue(query_calls)
         self.assertTrue(all("owner=team" in a and "repo=demo" in a for a in query_calls))
 
-    def test_adopted_pr_checks_block_then_pass_and_preserve_history(self):
+    def test_adopted_pr_checks_block_then_pass_and_squash(self):
         self.git("push", "-q", "origin", "HEAD:proposal/external")
         pull = json.loads((self.ghdir / "pr.json").read_text())
         pull.update(url="https://github.com/team/demo/pull/101", headRefName="proposal/external",
@@ -1770,7 +1770,12 @@ class TestCheckEvidence(AltitudeCase):
         result = land.land("applicable checks passed", cwd=self.repo, wait=0, merge=True)
         self.assertEqual((result["pr"], result["checks"], result["merged"]), (101, "pass", True))
         self.assertEqual(S.load_task("demo", "fix-x")["adopted_pr"], receipt)
-        self.assertEqual(self.git("show", "-s", "--format=%P", "origin/main").strip(), f"{self.base} {self.head}")
+        # Squash-only repositories refuse merge commits, so an adopted PR squashes like ordinary landing.
+        self.assertEqual(self.git("show", "-s", "--format=%P", "origin/main").strip(), self.base)
+        merges = [call for call in self.gh_log() if call[:2] == ["pr", "merge"]]
+        self.assertIn("--squash", merges[-1])
+        self.assertNotIn("--merge", merges[-1])
+        self.assertNotIn("--delete-branch", merges[-1])
 
     def test_policy_required_skipped_job_cannot_be_excluded_by_optional_metadata(self):
         self.optional_deploy()
