@@ -41,11 +41,21 @@ _report_retries: dict[tuple[str, str], tuple[str, int, float]] = {}
 REPORT_RETRY_DELAYS = (60, 300, 900, 3600)
 L3_VERB_MAX_REQUEST = 4 << 20
 L3_VERB_MAX_OUTPUT = 8 << 20
-L3_GH_READS = {
-    ("pr", "view"), ("pr", "list"), ("pr", "diff"), ("pr", "checks"),
-    ("issue", "list"), ("issue", "view"),
-    ("run", "list"), ("run", "view"), ("run", "watch"),
-}
+# The coordinator's `gh` reads this project's repository or a public one; `alt issue` verbs are its only writes.
+L3_GH_GROUPS = {"pr", "issue", "release", "repo", "run", "workflow", "ruleset", "label", "cache"}
+L3_GH_VERBS = {"view", "list", "status", "checks", "diff", "watch", "check"}
+L3_GH_SEARCHES = {"code", "commits", "issues", "prs", "repos"}
+L3_GH_RULE = (
+    "The coordinator's gh only reads, from this project's repository or a public one: "
+    "view/list/status/checks/diff/watch/check of pr, issue, release, repo, run, workflow, ruleset, label and cache; "
+    "`gh search <type>` scoped with --repo or repo:OWNER/REPO; and `gh api repos/OWNER/REPO/...` with GET and no "
+    "fields or input. Writes, downloads, --web, `repo list`, owner-wide search (--owner, org:/user:/owner:, OR) "
+    "and other private repositories are refused; use `alt issue` to write and `alt issue inspect` for an "
+    "operator-linked issue elsewhere.")
+_GH_NAME = r"[A-Za-z0-9_.-]+"
+_GH_REPO = re.compile(rf"(?:(?:https://)?(?:www\.)?github\.com/)?({_GH_NAME})/({_GH_NAME}?)(?:\.git)?", re.I)
+_GH_URL = re.compile(rf"(?:https://)?(?:www\.)?github\.com/({_GH_NAME})/({_GH_NAME})(?:[/?#]\S*)?", re.I)
+_GH_QUALIFIER = re.compile(r"(?<![\w-])-?(repo|org|user|owner):(\S*)", re.I)
 L3_TASK_TARGETS = {
     "handoff", "release",
     "reject", "escalate", "events", "messages", "report", "show", "resume", "message", "stop",
@@ -337,27 +347,116 @@ def _l3_verb_request(project: str, request: dict) -> dict:
     if (not isinstance(args, list) or len(args) < 2 or len(args) > 64
             or any(not isinstance(arg, str) or len(arg) > 4096 for arg in args)):
         raise ValueError("invalid gh read arguments")
-    redirected = any(
-        arg in ("--repo", "-R") or arg.startswith(("--repo=", "-R="))
-        or (arg.startswith("-R") and len(arg) > 2)
-        or "://" in arg or "/" in arg
-        for arg in args[2:]
-    )
-    if (tuple(args[:2]) not in L3_GH_READS
-            or any(arg == "--web" or arg.startswith("--web=") for arg in args[2:])
-            or redirected):
-        raise ValueError("L3 may only use the documented gh read commands")
+    command, repositories = _l3_gh_command(args)
     env = engines.clean_env()
-    env.pop("GH_REPO", None)  # cwd plus rejected repo selectors binds reads to this project's checkout
-    env["GH_PAGER"] = "cat"
+    env.pop("GH_REPO", None)  # unnamed repositories resolve to this project's checkout
+    # `-w` means --web in most reads (and --workflow in `run list`), so a browser launch fails instead.
+    env.update({"GH_PAGER": "cat", "GH_BROWSER": "false", "GH_PROMPT_DISABLED": "1"})
+    deadline = time.monotonic() + 120
+    def gh(argv: list[str]) -> subprocess.CompletedProcess:
+        return subprocess.run(["gh", *argv], cwd=str(config.project_path(project)), env=env,
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                              timeout=max(1.0, deadline - time.monotonic()))
     try:
-        result = subprocess.run(["gh", *args], cwd=str(config.project_path(project)), env=env,
-                                capture_output=True, text=True, timeout=120)
+        if repositories:
+            from . import github_intake
+            try:
+                own = "/".join(github_intake.project_repo(project)).lower()
+            except github_intake.IssueIntakeError:
+                own = None
+            for repository in sorted(repositories - {own}):
+                seen = gh(["api", "--method=GET", f"repos/{repository}", "--jq=.visibility"])
+                if seen.returncode != 0 or seen.stdout.strip() != "public":
+                    raise ValueError(f"L3 gh read refused: {repository} is neither this project's repository "
+                                     f"nor public. {L3_GH_RULE}")
+        result = gh(command)
     except (OSError, subprocess.SubprocessError) as exc:
         return {"returncode": 1, "stdout": "", "stderr": f"gh read failed: {exc}\n"}
 
     return {"returncode": result.returncode, "stdout": _l3_bounded(result.stdout or ""),
             "stderr": _l3_bounded(result.stderr or "")}
+
+
+def _l3_gh_command(args: list[str]) -> tuple[list[str], set[str]]:
+    """Admit a gh command that only reads; return it with every other repository it names, lowercased."""
+    def refuse(reason: str):
+        raise ValueError(f"L3 gh read refused: {reason}. {L3_GH_RULE}")
+    def repository(value: str, pattern: re.Pattern = _GH_REPO) -> None:
+        match = pattern.fullmatch(value)
+        if not match or {".", ".."} & set(match.group(1, 2)):
+            refuse(f"{value!r} is not a github.com OWNER/REPO")
+        repositories.add(f"{match.group(1)}/{match.group(2)}".lower())
+
+    repositories: set[str] = set()
+    if args[0] == "api":
+        return _l3_gh_api(args[1:], repository, refuse), repositories
+    if args[0] == "search":
+        if args[1] not in L3_GH_SEARCHES:
+            refuse(f"gh search {args[1]} is not a search type")
+    elif args[0] not in L3_GH_GROUPS or args[1] not in L3_GH_VERBS or args[:2] == ["repo", "list"]:
+        refuse(f"gh {args[0]} {args[1]} is not a repository read")
+    selector = False
+    for arg in args[2:]:
+        if selector:
+            repository(arg)
+            selector = False
+            continue
+        flag, equals, value = arg.partition("=")
+        if flag in ("--web", "--owner"):
+            refuse(f"{flag} is not a repository read")
+        if flag == "--repo" or re.match(r"-[A-Za-z]*R", arg):
+            if flag != "--repo" and not arg.startswith("-R"):
+                refuse("give -R on its own")
+            value = value if flag == "--repo" else arg[2:].removeprefix("=")
+            if value or equals:
+                repository(value)
+            selector = not (value or equals)
+            continue
+        for match in _GH_QUALIFIER.finditer(arg):
+            if match.group(1).lower() != "repo":
+                refuse(f"search qualifier {match.group(0)!r} spans an owner")
+            repository(match.group(2))
+        if re.search(r"(?<!\S)OR(?!\S)", arg):
+            refuse("OR can widen a search beyond its repositories")
+        if "://" in arg or "github.com/" in arg.lower():
+            repository(arg, _GH_URL)
+        elif re.fullmatch(rf"{_GH_NAME}/{_GH_NAME}(?:#\d+)?", arg):
+            repository(arg.partition("#")[0])
+    if selector:
+        refuse("--repo needs OWNER/REPO")
+    if args[0] == "search" and not repositories:
+        refuse("gh search needs --repo OWNER/REPO or a repo: qualifier")
+    return list(args), repositories
+
+
+def _l3_gh_api(args: list[str], repository, refuse) -> list[str]:
+    """Rebuild a GET of one repository endpoint, so gh sees only the options validated here."""
+    class Parser(argparse.ArgumentParser):
+        def error(self, message):
+            refuse(f"gh api {message}")
+    parser = Parser(prog="gh api", allow_abbrev=False, add_help=False)
+    parser.add_argument("endpoint")
+    parser.add_argument("-X", "--method", type=str.upper, choices=["GET"])
+    parser.add_argument("-H", "--header", action="append", default=[])
+    parser.add_argument("-p", "--preview", action="append", default=[])
+    parser.add_argument("-q", "--jq")
+    parser.add_argument("-t", "--template")
+    parser.add_argument("--cache")
+    parser.add_argument("-i", "--include", action="store_true")
+    for flag in ("--paginate", "--slurp", "--silent"):
+        parser.add_argument(flag, action="store_true")
+    options = parser.parse_args(args)
+    match = re.fullmatch(r"/?repos/([^/?#]+)/([^/?#]+)((?:/[^/?#]+)*/?)(\?[^#]*)?", options.endpoint)
+    if (not match or "%" in options.endpoint or "\\" in options.endpoint
+            or {".", ".."} & set(match.group(3).split("/"))):
+        refuse("gh api reads one repos/OWNER/REPO/... endpoint")
+    if match.group(1, 2) != ("{owner}", "{repo}"):
+        repository(f"{match.group(1)}/{match.group(2)}")
+    return ["api", options.endpoint, "--method=GET",
+            *(f"--header={value}" for value in options.header), *(f"--preview={value}" for value in options.preview),
+            *(f"--{name}={value}" for name in ("jq", "template", "cache")
+              if (value := getattr(options, name)) is not None),
+            *(f"--{name}" for name in ("include", "paginate", "slurp", "silent") if getattr(options, name))]
 
 
 def _note_created_task(project: str, stdout: str) -> None:

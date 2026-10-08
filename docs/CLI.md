@@ -87,10 +87,10 @@ An L3 process is read-only on the deployment checkout and Altitude home. Native 
 trusted shims; the CLI, broker and shims authorize their operations. Git log/diff/show include full patches
 and historical files, with external diff/text-conversion helpers disabled and output-file options refused.
 The altitude user journal is also readable. Runtime shims carry every `alt` invocation plus
-`gh pr` view/list/diff/checks, GitHub issue/run inspection, and altitude service status over that project's
+[read-only `gh` commands](#coordinator-github-reads) and altitude service status over that project's
 same-user altd Unix socket. The socket fixes the project independently of request data. The broker re-applies the
-L3 command door and accepts flat task identifiers and stdin rather than `--file`. Ordinary GitHub reads
-stay bound to the project's repository; [exact operator-linked issue inspection](#operator-linked-issue-inspection)
+L3 command door and accepts flat task identifiers and stdin rather than `--file`. GitHub reads
+reach the project's repository and public repositories; [exact operator-linked issue inspection](#operator-linked-issue-inspection)
 uses its separate bounded verb. Source editing, Git writes, direct GitHub mutations, service control,
 direct command networking, and cross-project task verbs are unavailable.
 
@@ -362,6 +362,30 @@ so that task stops asking for merge review; its delivery record and hold stay un
 
 ## GitHub issues
 
+### Coordinator GitHub reads
+
+The coordinator's `gh` runs in altd with its existing authentication and admits a command only when it reads
+this project's repository or a public one:
+
+- `view`, `list`, `status`, `checks`, `diff`, `watch` and `check` of `pr`, `issue`, `release`, `repo`, `run`,
+  `workflow`, `ruleset`, `label` and `cache`, for example `gh repo view`, `gh release list`,
+  `gh ruleset list`, `gh workflow list` or `gh run view <id> --log`;
+- `gh search code|commits|issues|prs|repos` scoped with `--repo OWNER/REPO` or a `repo:OWNER/REPO` qualifier;
+- `gh api repos/OWNER/REPO/...` (or `repos/{owner}/{repo}/...`) with GET only. Altd rebuilds the call from
+  `--method GET`, `--header`, `--preview`, `--jq`, `--template`, `--cache`, `--include`, `--paginate`,
+  `--slurp` and `--silent`; fields, input, another host and endpoints outside one repository are refused.
+
+Every repository a command names (`--repo`/`-R`, a `github.com` URL, an `OWNER/REPO` or `OWNER/REPO#N`
+argument, a `repo:` qualifier or the API path) must be the project's checkout origin or report `public`
+visibility to altd's GitHub read. Other private repositories, including other registered projects', stay
+behind [operator-linked issue inspection](#operator-linked-issue-inspection). Writes and side effects
+(`create`, `edit`, `close`, `merge`, `comment`, `delete`, `rerun`, `cancel`, `download`, `checkout`,
+`auth` and the like), `--web`, `gh repo list`, and owner-wide search (`--owner`, `org:`, `user:` or
+`owner:` qualifiers, and `OR`) are refused. A refusal names its reason and restates this rule. Altd runs
+the read in the checkout without `GH_REPO`, standard input or prompts, makes any browser launch fail,
+shares one 120-second budget across the visibility checks and the command, and bounds its output to
+8 MiB per stream. `alt issue` verbs remain the coordinator's only GitHub writes.
+
 ### Operator-linked issue inspection
 
 Only the coordinator uses:
@@ -379,8 +403,8 @@ altd's existing authenticated GitHub access. The source is one stored operator p
 canonical issue link. Removed rows, question metadata, images, task chat, assistant/server turns
 and unlogged text cannot supply the source. Direct quoted or pasted links qualify; the coordinator
 still follows the operator's intent and later restrictions. The verb accepts no stdin body, repository
-override or arbitrary API path, and has no L2 or operator HTTP route. Direct cross-repository `gh`
-and API reads remain unavailable to the coordinator.
+override or arbitrary API path, and has no L2 or operator HTTP route. The coordinator's direct
+[`gh` reads](#coordinator-github-reads) reach only its project's repository and public repositories.
 The issue and comment GETs share one 120-second budget within both transports' 130-second wait.
 An unreadable, malformed or out-of-project chat source refuses inspection; report the failure to
 L3 for supported recovery rather than substituting another source.

@@ -1154,7 +1154,8 @@ The CLI, broker and read shims authorize their operations without a duplicate na
 Claude's runtime shims and the MCP coordinator tool send `alt` invocations plus authenticated GitHub
 and service-status reads through the project-bound Unix socket; altd supplies the project independently of the request,
 re-applies the L3 command door, accepts only flat task identifiers and stdin, and exposes no direct GitHub or service write command.
-Ordinary GitHub reads stay on the project's checkout-origin repository. The coordinator-only
+Its [GitHub reads](CLI.md#coordinator-github-reads) admit any read-only `gh` command, including GET-only
+`gh api` of a repository endpoint, against the project's checkout-origin repository or a public one. The coordinator-only
 `alt issue inspect <canonical-issue-url> --source-message <turn-id> [--comments-page N]` reads one
 exact issue through this broker with altd's existing authentication, including an issue outside that
 repository. The source is a stored operator project-chat turn whose text contains the
@@ -1167,7 +1168,7 @@ twenty per explicitly requested page; no prefetch or cache runs. The
 [CLI contract](CLI.md#operator-linked-issue-inspection) gives byte limits and response fields.
 Private evidence retention is an intentional coordinator role rule; public publication needs
 separate authority, with no taint enforcement added. Nested links and issue instructions grant
-nothing. Direct cross-repository `gh`/API reads remain denied; no L2/operator HTTP route, credential,
+nothing. Direct `gh`/API reads of other private repositories remain denied; no L2/operator HTTP route, credential,
 service, networking or other-project task authority accompanies the read.
 
 For the main Altitude service, `engines.service_status` projects one fixed native `show` read into
