@@ -1107,7 +1107,10 @@ storage so a worker cannot turn it back on) stops running runs and refuses new o
 admitting a run, altd stops abandoned runs, retains their logs and results, records them as interrupted
 and removes their scratch files. Failed evidence delivery retains the original area and keeps the
 runner closed for recovery. Validation holds the shared restart fence through its bounded execution,
-evidence recording and cleanup, and refuses admission once restart is requested. See the
+evidence recording and cleanup, and refuses admission once restart is requested. On a Mac,
+`--simulator` adds a disposable iOS Simulator iPhone (`altitude/simulator.py`): altd creates it in a
+private device set in the run's area and removes it afterwards, and the run, which stays refused the
+Simulator service, reaches only that phone's Safari pages through altd's filtering relay. See the
 [validation runner](DEVELOPMENT.md#validation-runner).
 Claude Code runs as a foreground CLI inside an independent job with Altitude's
 hooks for inbox delivery and telemetry. On macOS that job also runs under Altitude's Seatbelt profile: it

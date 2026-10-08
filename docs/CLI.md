@@ -1945,7 +1945,7 @@ not which local process calls; the grant record and its per-command log are the 
 ### Validation runs
 
 ```text
-alt task validate [--kvm] [--publish PORT] -- <command>
+alt task validate [--kvm] [--publish PORT] [--simulator] -- <command>
 ```
 
 The current owner runs one command against a throwaway clone of its task's committed `HEAD`, isolated
@@ -1953,7 +1953,10 @@ from the operator's runtime: a disposable rootless container that altd starts fr
 Linux, and a job under the validation sandbox profile on macOS. No grant is needed; the Settings switch
 **Validation runs** turns the verb off for the whole computer. On Linux, `--kvm` adds `/dev/kvm`, and
 `--publish` forwards a container port to a free loopback port and prints it; a macOS run refuses both
-and binds free loopback ports itself. The command starts in the clone, and whatever it writes to
+and binds free loopback ports itself. On a Mac, `--simulator` adds a disposable iOS Simulator iPhone
+whose Safari the command reaches through the relay socket in `$SIMULATOR_INSPECTOR`, kept as a
+screenshot and removed when the run ends ([iOS Simulator runs](DEVELOPMENT.md#ios-simulator-runs)).
+The command starts in the clone, and whatever it writes to
 `$VALIDATION_RESULTS` (`/results` in the container) is copied to the task folder's `validation/<n>/`,
 and its output to `validation/<n>.log`. The run is recorded in `machine.jsonl` with purpose
 `validation`, its commit and tree, the host's OS and architecture, what isolated it, how it ended and
@@ -1961,7 +1964,7 @@ whether cleanup finished, and adds the same `machine-run` events as `alt task ru
 output and a status line with these, and exits with the command's status (124 on timeout) only when
 the run also ended cleanly; a stop, failure or failed cleanup exits 1. altd accepts the request only
 from a process in the task's current worker job. A non-running task, a stale attempt, another caller,
-a turned-off switch, missing KVM, low disk or a run already in progress refuses with the reason. The
+a turned-off switch, missing KVM, a host without an iOS Simulator for `--simulator`, low disk or a run already in progress refuses with the reason. The
 [validation runner](DEVELOPMENT.md#validation-runner) describes the isolation, its limits and cleanup.
 
 ### Reading the task terminal

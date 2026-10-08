@@ -368,12 +368,12 @@ remain with their existing owners.
 
 ## Validation runner
 
-`alt task validate [--kvm] [--publish PORT] -- COMMAND` runs one validation command for the calling
+`alt task validate [--kvm] [--publish PORT] [--simulator] -- COMMAND` runs one validation command for the calling
 task's owner against its unmerged committed candidate, isolated from the operator's runtime: a
 disposable rootless Podman container on Linux, a job under the validation Seatbelt profile on macOS.
 The owner needs no machine grant, and ordinary worker confinement stays unchanged: altd, not the
 worker, starts the run. altd accepts the request only from a process in the task's current worker
-job. `make installation-vm` and `make browser-sandbox` call it automatically inside a task.
+job. `make installation-vm`, `make browser-sandbox` and `make ui-simulator` call it automatically inside a task.
 
 Owners use it to check a candidate before merging and to iterate without the operator: commit,
 run, read the output and results, revise, commit and run again. Nothing is merged, deployed or
@@ -464,9 +464,11 @@ than a worker's:
   so a run cannot start, stop or change a service. It signals only its own processes.
 - **Simulator and apps** stay out of reach: Apple's Simulator service and LaunchServices start
   programs as the operator's account outside any sandbox, so the profile refuses both, as a worker's
-  does. A run cannot create, boot or run programs in a Simulator device, or open an app.
+  does. A run cannot create, boot or run programs in a Simulator device, or open an app. With
+  `--simulator`, altd gives the run one iPhone's Safari through a relay instead
+  ([iOS Simulator runs](#ios-simulator-runs)).
 - **Environment** is exactly `HOME`, `TMPDIR`, `PATH`, `LANG`, `ALTITUDE_VALIDATION` and
-  `VALIDATION_RESULTS`; nothing of altd's environment crosses.
+  `VALIDATION_RESULTS`, plus `SIMULATOR_INSPECTOR` with `--simulator`; nothing of altd's environment crosses.
 
 The run time limit, one-run-at-a-time, free disk check, switch, restart fence, record and cleanup
 are shared with Linux; there is no memory, process or CPU limit. altd removes the run's folders as the
@@ -486,6 +488,62 @@ Altitude's own worker confinement, and launchd jobs. Candidate application journ
 suites' local-process job fixtures. A macOS run establishes the candidate's behavior on this Mac under
 those fixtures; it does not establish native launchd/Seatbelt worker behavior, installation or provider compatibility.
 The approved fictional browser lane below establishes only the journeys actually run.
+
+### iOS Simulator runs
+
+`alt task validate --simulator -- COMMAND` on a Mac gives the run a disposable iPhone in the iOS
+Simulator, which altd creates, owns and removes. `make ui-simulator` uses it inside a task to walk the
+phone UI in iOS Safari:
+
+```sh
+make ui-simulator   # inside a task: alt task validate --simulator -- sh -c 'make web && make ui-simulator'
+```
+
+- **Phone.** Before the command starts, altd creates one iPhone in a private device set in the run's
+  area, outside the folders the run can write, and boots it headless. It picks the newest available iOS
+  runtime and an iPhone of the newest generation it supports, the shortest-named model, by detection. The
+  operator's own Simulator devices are never listed or touched. A boot takes about 35 seconds and the
+  phone's data about 3 GB, inside the runner's 20 GiB free-disk check.
+- **Relay.** The run still cannot reach the Simulator service. It reaches the phone's Safari through a
+  Unix socket in its own `TMPDIR`, named by `SIMULATOR_INSPECTOR`. altd relays Safari's Web Inspector
+  protocol (the binary-plist protocol Safari's Develop menu uses) and filters it: only Safari's web pages
+  are listed, other inspectable processes in the phone are hidden, a request about anything else (another
+  process, a page not listed, an automation session) closes the connection, and a page whose address is on
+  Altitude's port is hidden and closes any connection inspecting it. A run holds at most four connections
+  at once, and a message that stops arriving partway closes its connection after 30 seconds. The page's
+  address is read from Safari's listing, which updates shortly after a navigation, so a page can answer
+  briefly before its connection closes (under a second: 0.3 to 0.8 s measured here). Simulator Safari
+  holds no pairing, and Altitude answers an unpaired browser only with its page, files, health, access
+  status and pairing. One request of the relay's own, `_rpc_altitudeOpenURL:`, opens an `http(s)` loopback
+  address with a port, never Altitude's, in Safari: that is how a run puts its first page on the phone.
+  Safari runs as the operator's account outside the run's profile, like a browser on this Mac: its pages
+  reach the internet and loopback, and it has no Altitude pairing. The phone's inspector can drop a
+  connection opened in the moment another one closes; a script that reconnects waits a second or two
+  first.
+- **Removal.** When the command ends, including after a failure, a timeout or a stop, altd keeps one
+  screenshot of the whole screen as the task folder's `validation/<n>.simulator.png`, then shuts down
+  and deletes every device in the run's set and removes the set. A set that stays keeps the run area,
+  ends the run as `cleanup failed` and keeps new runs refused until a later request or start removes
+  it. A phone that does not start is removed and the request is refused with Simulator's error, before
+  any run is recorded.
+- **Record.** The run's record and status line name the Xcode version, the iOS runtime and build,
+  the iPhone model, Safari's version and the screenshot. On Linux, or on a Mac without Xcode or an iOS
+  Simulator runtime, `--simulator` is refused with the reason.
+
+`scripts/ios_simulator.py` is the walkthrough: it serves the built app with the fixture engines and
+fictional data of `web/e2e/acceptance-service.py` on loopback, pairs Safari as the fixture's device,
+opens a project's work in the phone layout, taps into a task and goes Back. It keeps a page snapshot
+per step (`01-work.png`, `02-task.png`, `03-back.png`), Safari's console (`console.log`), the fixture
+service's log, the steps and the browser's user agent, viewport and speech-recognition support
+(`walkthrough.json`) in `$VALIDATION_RESULTS/simulator`. A step that does not reach its state,
+horizontal overflow, a console error or a fixture service that does not end cleanly fails it.
+
+Taps are page events marked as user gestures, not touches on the screen. The lane establishes iOS
+Safari's rendering, layout and WebKit APIs in a phone-layout journey on the Simulator's iOS version; it
+is not physical-iPhone acceptance (see [device evidence](#device-evidence)). The relay depends on
+Safari's unpublished inspector protocol, so an Xcode update can break it; the run then fails with the
+versions recorded. `tests/test_simulator.py` covers the relay's filtering, the device lifecycle and
+its recovery with a fixture `xcrun` and inspector; a real phone is recorded evidence from a Mac.
 
 ### Browser verification
 
@@ -559,7 +617,7 @@ blocks automating it.
 | macOS validation run | `alt task validate -- COMMAND` on a Mac ([macOS validation runs](#macos-validation-runs)) | A committed candidate's command on macOS under the validation profile, with fictional state and fixture engines: the Python suites and application journeys with local-process jobs | Native launchd jobs and worker confinement, browsers with their own sandbox, installation, provider compatibility | Implemented; native acceptance is recorded on the delivering PR |
 | Container deployment | `make container-vm RESULTS=dir`; `scripts/container_vm.py RESULTS --image-workflow [--native-sandbox-binary PATH]` or `--browser` through the validation runner | Actual rootless launcher/image, quotas, published local HTTPS, Stop/restart/replacement, interrupted-build and supervisor cleanup, private backup/restore and failure cleanup, neighboring-container isolation and service-manager attempt detection; separate image profile/workflow/recovery fixtures | Physical-device routing/trust, real authentication/provider-session compatibility, Mac, native installation | Ubuntu 24.04 amd64 launcher/backup lanes pass; actual-daemon phone/desktop onboarding and task lane passes; [coverage and limits](CONTAINERS.md#evidence) |
 | Native macOS | Owned by the macOS runtime work ([roadmap](ROADMAP.md#native-macos-runtime)) | macOS service lifecycle, confinement, installation and Safari | Other macOS versions or architectures | Not established; no automated lane runs native jobs, browsers or installation on the Mac |
-| Phone browsers | See [device evidence](#device-evidence) | Per class | Per class | Emulated WebKit in use; Simulator and physical checks by arrangement |
+| Phone browsers | See [device evidence](#device-evidence) | Per class | Per class | Emulated WebKit in use; iOS Simulator on a Mac through `make ui-simulator`; physical checks by arrangement |
 
 The container gate removes its verified private containers, volumes and images before asking Podman
 to retire that store's pause process with `system migrate`. It never applies this operation to a
@@ -604,7 +662,7 @@ Device results name their evidence class; a result in one class never stands in 
 | --- | --- | --- | --- |
 | Chromium phone/desktop | `make check` (required) | Application behavior, layouts and interaction states on both viewports | Any Safari or iOS behavior |
 | Emulated iPhone WebKit | `make ui-ios` (opt-in) | The same walkthroughs in Playwright's WebKit engine with iPhone metrics, touch and user agent | iOS Safari, Home Screen mode, real microphone/speech, icon selection or certificate trust |
-| iOS Simulator on a Mac | Not set up | Safari tab and Home Screen behavior, icon choice, separate Safari/Home Screen storage | Real audio capture, device certificate trust |
+| iOS Simulator on a Mac | `make ui-simulator` (opt-in, [iOS Simulator runs](#ios-simulator-runs)) | iOS Safari's rendering, layout, viewport and WebKit APIs (such as `webkitSpeechRecognition`) in a scripted phone-layout journey with fixture engines, on the recorded Xcode, iOS runtime and iPhone model | Touches and swipes, Home Screen mode and icon, Safari/Home Screen storage separation, real audio capture or dictation, certificate trust, other iOS versions; physical-iPhone acceptance |
 | Physical iPhone | Operator observation; [voice troubleshooting](OPERATIONS.md#on-iphone) reports | Native capture, trust, installed icon, Home Screen lifecycle | Other devices or OS versions |
 
 Run the emulated iPhone lane for changes to phone-facing behavior such as voice, pairing, Home

@@ -7,7 +7,8 @@ published on 127.0.0.1. Everything else is fixed here: a non-root user mapped to
 except the run's clone and results folder, rootless networking with host loopback closed, and one service unit whose
 limits bound the build, Podman and the container together. On macOS, where Podman would need a virtual machine of its
 own, the command runs as a job under the platform's validation Seatbelt profile, with a home and temporary folder in
-its run area and nothing of altd's environment.
+its run area and nothing of altd's environment. A macOS run can also have a disposable iOS Simulator iPhone, which
+altd creates and removes and the run reaches only through a relay to its Safari (`simulator`).
 The runner's storage sits beside Altitude's home, outside every worker's writable roots, and what a run produces
 reaches the task folder only through no-follow descriptors. Runs are recorded in the task's `machine.jsonl` like
 machine commands.
@@ -32,9 +33,10 @@ import subprocess
 import threading
 import uuid
 
-from . import config, engines, platform, state as S, tasks as T
+from . import config, engines, platform, simulator as sim, state as S, tasks as T
 
 TIMEOUT = 3600                   # seconds for one run, image build included
+SIMULATOR_SECONDS = 900          # beside it, for a run's iPhone: creation, boot, screenshot and removal
 MEMORY_MAX = "8G"                # the unit's memory, swap and process caps hold Podman and the container together
 TASKS_MAX = 4096
 CPU_QUOTA = "400%"
@@ -123,15 +125,21 @@ def candidate_dirs(run: Path) -> list[Path]:
     return [run / "work", run / "results", *own]
 
 
-def native_script(run: Path, argv: list[str], output: Path) -> str:
+def inspector(run: Path) -> Path:
+    """The socket of a macOS run's Simulator relay, in the run's own temporary folder, which its profile admits."""
+    return platform.validation_temp(run.name) / "simulator.sock"
+
+
+def native_script(run: Path, argv: list[str], output: Path, *, simulator: bool = False) -> str:
     """macOS: the owner's command in the run's clone under the validation profile, which admits only the run's
-    candidate folders. Its environment is only this: a home and temporary folder of its own, and altd's PATH without
-    folders the profile hides, with the developer tools ahead of /usr/bin."""
+    candidate folders. Its environment is only this: a home and temporary folder of its own, altd's PATH without
+    folders the profile hides, with the developer tools ahead of /usr/bin, and its Simulator relay's socket."""
     hidden = os.path.realpath(Path.home())
     path = platform.validation_path([entry for entry in os.environ.get("PATH", "/usr/bin:/bin").split(":")
                                      if entry and not Path(os.path.realpath(entry)).is_relative_to(hidden)])
     env = {"HOME": str(run / "home"), "TMPDIR": str(platform.validation_temp(run.name)), "PATH": ":".join(path), "LANG": "en_US.UTF-8",
-           "ALTITUDE_VALIDATION": "1", "VALIDATION_RESULTS": str(run / "results")}
+           "ALTITUDE_VALIDATION": "1", "VALIDATION_RESULTS": str(run / "results"),
+           **({"SIMULATOR_INSPECTOR": str(inspector(run))} if simulator else {})}
     return "\n".join(["set -u", f"[ ! -e {shlex.quote(str(run / 'stopped'))} ] || exit 125",
                       f"cd {shlex.quote(str(run / 'work'))} || exit 125",
                       "exec " + shlex.join(platform.validation_command(
@@ -147,11 +155,12 @@ def isolation(run: Path, unit: str) -> str:
     return "seatbelt:" + hashlib.sha256(profile.encode()).hexdigest()[:16]
 
 
-def run_script(name: str, run: Path, argv: list[str], *, kvm: bool, publish: tuple[int, int] | None) -> str:
+def run_script(name: str, run: Path, argv: list[str], *, kvm: bool, publish: tuple[int, int] | None,
+               simulator: bool = False) -> str:
     """The unit's shell script: build the image when its Containerfile changed, refresh the verified cloud image
     for a VM run with the deployed runner's own code, then run the owner's command."""
     if not platform.validation_in_container():
-        return native_script(run, argv, engines.machine_files(run, f"{name}.service")[0])
+        return native_script(run, argv, engines.machine_files(run, f"{name}.service")[0], simulator=simulator)
     tag, pod = image_tag(), shlex.join(podman())
     lines = ["set -u", f"[ ! -e {shlex.quote(str(run / 'stopped'))} ] || exit 125", f"export XDG_RUNTIME_DIR={shlex.quote(str(Path(platform.validation_runroot()).parent))}",
              f"{pod} image exists {tag} || {pod} build --quiet --tag={tag} "
@@ -296,6 +305,8 @@ def _deliver(project: str, slug: str, n: int, area: Path, unit: str) -> tuple[Pa
         log = engines.machine_files(area, unit)[0]
         if log.is_file():
             _copy_file(str(log), fd, f"{n}.log")
+        if (area / "simulator.png").is_file():
+            _copy_file(str(area / "simulator.png"), fd, f"{n}.simulator.png")
     finally:
         os.close(fd)
     target = S.task_dir(project, slug) / "validation" / str(n)
@@ -428,6 +439,8 @@ def _recover() -> str | None:
                 running = f"cannot confirm that {unit} stopped: {exc}"
             if running:
                 reasons.append(running)
+            elif phone := sim.remove(area / "simulator"):
+                reasons.append(phone)
             elif _interrupted(area):
                 done.append(area)
             else:
@@ -460,22 +473,24 @@ def stop_all() -> None:
 
 
 def run(project: str, slug: str, attempt: object, argv: object, *, kvm: object = False, publish: object = None,
-        owner=lambda task: False) -> dict:
+        simulator: object = False, owner=lambda task: False) -> dict:
     """One validation run for the running owner's current attempt; returns the command's exit status and output.
     `owner(task)` says whether the request comes from that task's own worker."""
     with config.restart_lock() as ready:
         if not ready or config.restart_in_progress():
             raise ValueError("alt task validate: Altitude is restarting; retry when it is ready")
-        return _run(project, slug, attempt, argv, kvm=kvm, publish=publish, owner=owner)
+        return _run(project, slug, attempt, argv, kvm=kvm, publish=publish, simulator=simulator, owner=owner)
 
 
-def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object, publish: object, owner) -> dict:
+def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object, publish: object, simulator: object,
+         owner) -> dict:
     S.require_task_slug(slug)
     if (not isinstance(argv, list) or not argv or not all(isinstance(a, str) and a for a in argv)
             or sum(len(a) + 1 for a in argv) > COMMAND_LIMIT):
         raise ValueError(f"alt task validate: supply a command of at most {COMMAND_LIMIT} characters after --")
-    if not isinstance(kvm, bool) or publish is not None and (type(publish) is not int or not 1 <= publish <= 65535):
-        raise ValueError("alt task validate: --kvm is on or off and --publish names one container port")
+    if (not isinstance(kvm, bool) or not isinstance(simulator, bool)
+            or publish is not None and (type(publish) is not int or not 1 <= publish <= 65535)):
+        raise ValueError("alt task validate: --kvm and --simulator are on or off and --publish names one container port")
     unavailable = platform.validation_unavailable()
     if unavailable:
         raise ValueError(f"alt task validate: {unavailable}")
@@ -488,6 +503,10 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
     if kvm and not os.access(platform.KVM, os.R_OK | os.W_OK):
         raise ValueError("alt task validate: no KVM access; /dev/kvm is usable while the operator's desktop login "
                          "is active")
+    try:
+        phone = sim.plan() if simulator else None
+    except ValueError as exc:
+        raise ValueError(f"alt task validate: {exc}") from exc
     task = S.load_task(project, slug)
     if task.get("state") != "running" or str(task.get("attempt")) != str(attempt) or not task.get("worktree"):
         raise PermissionError("alt task validate: only the running owner's current attempt may run validation")
@@ -510,7 +529,7 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
         raise ValueError(f"alt task validate: the runner has not finished removing what earlier runs left: {left}")
     ident = uuid.uuid4().hex[:12]
     area, unit = home() / "runs" / ident, f"{UNIT_PREFIX}{ident}.service"
-    row, result, failure, stopped, target, skipped = None, None, None, False, None, []
+    row, result, failure, stopped, target, skipped, device, relay = None, None, None, False, None, [], None, None
     try:
         for folder in candidate_dirs(area):
             folder.mkdir(mode=0o700, parents=True)
@@ -524,22 +543,36 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
             commit, tree = _clone(Path(task["worktree"]), area / "work", project)
         except (OSError, subprocess.SubprocessError) as exc:
             raise ValueError(f"alt task validate: cannot copy the task branch's committed HEAD: {exc}") from exc
+        if phone:
+            device = sim.Phone(area / "simulator", phone)
+            try:
+                relay = sim.Relay(inspector(area), device.boot(), config.PORT, device.open)
+            except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+                raise ValueError(f"alt task validate: the iOS Simulator iPhone did not start: {exc}") from exc
+            phone = {**{key: phone[key] for key in ("xcode", "runtime", "device")}, "safari": device.safari()}
         ports = (publish, host_port()) if publish else None
         (area / "run.json").write_text(json.dumps({"project": project, "slug": slug, "unit": unit}))
         row = T.start_machine_run(project, slug, lambda n: {
             "purpose": "validation", "command": shlex.join(argv), "unit": unit, "commit": commit, "tree": tree,
             "host": platform.host_identity(), "isolation": isolation(area, unit), "kvm": kvm,
             "publish": {"container": ports[0], "host": ports[1]} if ports else None,
-            "log": str(S.task_dir(project, slug) / "validation" / f"{n}.log")})
+            "simulator": phone, "log": str(S.task_dir(project, slug) / "validation" / f"{n}.log")})
         with _state:
             stopped = _active["stopped"]
         if not stopped:
-            result = _job(unit, run_script(f"{UNIT_PREFIX}{ident}", area, argv, kvm=kvm, publish=ports),
-                          area, TIMEOUT, limits=True)
+            result = _job(unit, run_script(f"{UNIT_PREFIX}{ident}", area, argv, kvm=kvm, publish=ports,
+                                           simulator=bool(phone)), area, TIMEOUT, limits=True)
         with _state:
             stopped = _active["stopped"]
             _active.clear()
+        missing = None
+        if relay:
+            relay.close()
+            missing = device.screenshot(area / "simulator.png")
         target, skipped = _deliver(project, slug, row["n"], area, unit)
+        if relay:
+            row["simulator"]["screenshot"] = f"none: {missing}" if missing else str(
+                S.task_dir(project, slug) / "validation" / f"{row['n']}.simulator.png")
     except BaseException as exc:
         failure = str(exc) or type(exc).__name__
         raise
@@ -547,14 +580,19 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
         with _state:
             _active.clear()
         recorded, delivered, cleanup_error = row is None, target is not None, None
+        if relay:
+            relay.close()
         try:
             # Cleanup of the run's processes and of everything the candidate could write comes before the record, so
             # a run whose cleanup failed is never recorded as a success. A run that never started leaves nothing to
             # keep. Evidence that was not delivered stays in place. Only the runner's own files (run.json, the receipt,
             # log and exit status) stay until the record exists, for the next start to finish an interrupted run.
-            scratch = [*candidate_dirs(area), area] if row is None else candidate_dirs(area) if delivered else []
+            # The phone goes first: its set is the record of what to remove, so a set that stays keeps the area.
+            device_error = sim.remove(area / "simulator") if device else None
+            scratch = [*candidate_dirs(area), *([] if device_error else [area])] if row is None \
+                else candidate_dirs(area) if delivered else []
             cleanup_error = cleanup([path for path in scratch if os.path.lexists(path)],
-                                    unit if row is not None else None)
+                                    unit if row is not None else None) or device_error
             if row is not None:
                 result = result or {"exit": None, "timed_out": False, "started": None, "finished": S.now(),
                                     "error": "turned off before it started" if stopped else failure,
@@ -584,4 +622,4 @@ def _run(project: str, slug: str, attempt: object, argv: object, *, kvm: object,
                 _lock.release()
     return {**result, "n": row["n"], "commit": commit, "tree": tree, "host": row["host"], "isolation": row["isolation"],
             "ended": row["ended"], "cleanup": cleanup_error, "results": str(target), "results_skipped": skipped,
-            "publish": row["publish"], "log": row["log"], "unit": unit}
+            "publish": row["publish"], "simulator": row["simulator"], "log": row["log"], "unit": unit}
