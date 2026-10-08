@@ -617,21 +617,21 @@ def _checks_evidence(root: Path, pair: dict) -> str:
             return "fail"
         if states & {"PENDING", "EXPECTED"}:
             return "pending"
+        registered = [(name, app) for name, app in sorted(required, key=str)
+                      if any(name == seen_name and app in (None, seen_app) for seen_name, seen_app in seen)]
+        if (gate_seen and not gate_passed) or any(
+                not any(name == check_name and needed and app in (None, check_app)
+                        for check_name, check_app, needed in passed) for name, app in registered):
+            return "skipped"
         # GitHub registers a workflow's jobs one by one: a required check absent from the candidate
         # has not reported yet, which is a wait, not a skip of the checks that did register.
-        unregistered = [name for name, app in sorted(required, key=str)
-                        if not any(name == seen_name and app in (None, seen_app) for seen_name, seen_app in seen)]
+        unregistered = [name for name, app in sorted(required, key=str) if (name, app) not in registered]
         if named_gate and not gate_seen:
             unregistered.append(config.PR_CHECK_NAME)
         if unregistered:
             pair["unregistered"] = (f"required check {', '.join(dict.fromkeys(unregistered))} has not registered on "
                                     f"head {pair['head_sha']}; registered: {', '.join(observed) or 'none'}")
             return "missing"
-        if any(not any(name == check_name and needed and (app is None or app == check_app)
-                       for check_name, check_app, needed in passed) for name, app in required):
-            return "skipped"
-        if named_gate and not gate_passed:
-            return "skipped"
         if states - {"SUCCESS"} or not states:
             return "skipped" if contexts or required else "none"
         if named_gate:
@@ -941,6 +941,10 @@ def _required_pr_check(root: Path, base_sha: str) -> bool:
     return _git(root, "cat-file", "-e", f"{base_sha}:{config.PR_CHECK_WORKFLOW}").returncode == 0
 
 
+def _checks_outcome(checks: str, pair: dict) -> str:
+    return f"checks are {checks!r}" + (f"; {pair['unregistered']}" if checks == "missing" else "")
+
+
 def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority, deadline):
     """Keep the repository turn while the owner assesses an integrated head and CI runs."""
     from . import reviews
@@ -980,8 +984,8 @@ def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority, de
             return checks
         if time.monotonic() >= deadline:
             if stale:
-                raise LandError("owner assessment wait timed out; candidate remains published and unmerged — "
-                                "assess when ready and re-run alt land")
+                raise LandError(f"owner assessment wait timed out with {_checks_outcome(checks, pair)}; candidate "
+                                "remains published and unmerged — assess when ready and re-run alt land")
             return checks
         time.sleep(min(CHECK_POLL_SECONDS, max(deadline - time.monotonic(), 0)))
 
@@ -1259,7 +1263,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                                                "merged tree") != pair["tree"]:
                         raise LandError("merged tree does not match the tested PR tree; report delivery for recovery")
         else:
-            _note(f"not merging: checks are {checks!r}" + (f"; {pair['unregistered']}" if checks == "missing" else ""))
+            _note(f"not merging: {_checks_outcome(checks, pair)}")
     return {"pr": number, "url": pr.get("url"), "checks": checks, "merged": merged,
             "branch": branch, "commit": commit, "head": pushed_head, "lease": lease, "staged": staged,
             "hold": hold_merge, "replaced": replaced, "local_tests": local_tests, "adopted_pr": adoption}

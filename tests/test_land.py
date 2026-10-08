@@ -1720,6 +1720,15 @@ class TestCheckEvidence(AltitudeCase):
                 self.assertEqual(self.classify(), "missing")
                 self.assertFalse(land.land("required check missing", cwd=self.repo, wait=0, merge=True)["merged"])
 
+    def test_registered_required_skip_is_terminal_while_another_required_check_is_absent(self):
+        check = self.contexts()["nodes"][0]
+        check.update(conclusion="SKIPPED", isRequired=True)
+        self.pr["baseRef"]["branchProtectionRule"] = {"requiredStatusChecks": [
+            {"context": check["name"], "app": None}, {"context": "absent", "app": None}]}
+        self.assertEqual(self.classify(), "skipped")
+        check["conclusion"] = "SUCCESS"
+        self.assertEqual(self.classify(), "missing")
+
     def test_required_app_and_requiredness_are_enforced(self):
         check = self.contexts()["nodes"][0]
         self.pr["baseRef"]["branchProtectionRule"] = {
@@ -2076,6 +2085,24 @@ class TestRequiredPrCheck(AltitudeCase):
         self.assertEqual(clock.sleep.call_count, 60 // land.CHECK_POLL_SECONDS)
         self.assertIn("not merging: checks are 'missing'; required check check has not registered on head "
                       f"{self.head}; registered: hosted-check skipped (not required)", stderr.getvalue())
+        self.assert_not_merged()
+
+    def test_assessment_timeout_reports_the_unregistered_required_check(self):
+        from altitude import reviews
+        self.only_the_hosted_skip_registered()
+        S.save_task("demo", {**S.load_task("demo", "fix-x"), "attempt": 1})
+        self.setenv("ALTITUDE_ACTOR", "l2")
+        self.setenv("ALTITUDE_ATTEMPT", "1")
+        now = {"seconds": 0.0}
+        with mock.patch.object(land, "time", wraps=land.time) as clock, \
+                mock.patch.object(reviews, "require_merge", side_effect=reviews.AssessmentRequired([], "fix-x")), \
+                contextlib.redirect_stderr(io.StringIO()):
+            clock.monotonic.side_effect = lambda: now["seconds"]
+            clock.sleep.side_effect = lambda seconds: now.__setitem__("seconds", now["seconds"] + seconds)
+            with self.assertRaisesRegex(land.LandError, "owner assessment wait timed out with checks are 'missing'; "
+                                        "required check check has not registered on head .*; "
+                                        r"registered: hosted-check skipped \(not required\); candidate remains"):
+                land.land("assessment and registration both time out", cwd=self.repo, wait=30, merge=True)
         self.assert_not_merged()
 
     def test_name_app_workflow_and_event_must_identify_the_required_pr_run(self):
