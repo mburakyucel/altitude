@@ -5,6 +5,11 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Every pull request, push to main and manual dispatch runs the required `check` on a GitHub-hosted
+  runner with a read-only token and no secrets; no workflow runs on the maintainer's machine. A
+  failed run keeps its browser report as a seven-day artifact, and release publication requires
+  the tagged commit's successful push run of the same workflow (#469).
+
 ## v0.1.0 — 2026-10-08
 
 First stable release of the early preview: alpha quality, with rough edges and the known limitations

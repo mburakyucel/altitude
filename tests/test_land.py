@@ -1939,7 +1939,7 @@ class TestRequiredPrCheck(AltitudeCase):
     classify = TestCheckEvidence.classify
     merge_candidate = TestCheckEvidence.merge_candidate
     diverge_base = TestCheckEvidence.diverge_base
-    workflow_path = ".github/workflows/self-hosted-checks.yml"
+    workflow_path = ".github/workflows/hosted-checks.yml"
     source = TestCheckEvidence.source
 
     def setUp(self):

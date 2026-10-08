@@ -933,20 +933,18 @@ An owner whose branch needs manual conflict reconciliation updates it in the wor
 they cannot resolve goes to L3 through an ordinary `alt task block`, without `--fault`.
 The delivery gate requires Python, web, build and phone/desktop browser checks. Review captures stay
 outside Git, accessible until review is complete under the [project UI rule](../AGENTS.md#ui).
-Owners and helpers run relevant tests during development. This repository's self-hosted PR
+Owners and helpers run relevant tests during development. This repository's GitHub-hosted PR
 `check` runs full `make check`, including concurrent Python/web phases and both browser viewports.
 `alt land` requires successful CI for the current head and tested tree, without a duplicate
 local full run. The branch includes current main; a branch missing it needs reconciliation
 and fresh PR checks on the new head. Final validation and merge are serialized across Altitude
 owners, and the merged tree must equal the tested tree. GitHub updates outside Altitude remain unprotected.
-A passing required check with its GitHub console log is sufficient delivery evidence. The runner
-retains small logs and identity receipts; failed runs also retain browser reports and traces, which
-owners copy into the task only for diagnosis or on a reviewer's request, saying so in the report
-when the export is unreadable. When the runner's evidence budget refuses admission, L3 coordinates
-a measured cleanup of exports no open work needs. GitHub artifact storage is unused. A bounded CI wait
+A passing required check with its GitHub console log is sufficient delivery evidence. A failed run
+uploads its browser report and traces as a seven-day artifact, which owners download into the task
+only for diagnosis or on a reviewer's request. A bounded CI wait
 ends in an explicit owner block with run and missing evidence;
-L3 owns the existing finite `recheck-ci` for GitHub execution. Missing runs need trigger/runner
-recovery. Runner outages pause delivery without a bypass. Failed, skipped, missing or stale checks,
+L3 owns the existing finite `recheck-ci` for GitHub execution. Missing runs need trigger
+recovery. CI outages pause delivery without a bypass. Failed, skipped, missing or stale checks,
 required reviews and merge holds still block. Other projects retain their configured gate.
 L3 verifies each blocked owner's remaining causes before resuming the existing session; policy
 activation does not release an operator hold.

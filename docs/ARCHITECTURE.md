@@ -856,15 +856,15 @@ movement or ownership loss refuses. No review identity or disposition is automat
 The final review/context check precedes recorded approval application, preserving holds on review refusal.
 The process owns the turn: return, exception or termination releases it without daemon recovery.
 There is no persistent queue or FIFO guarantee. Dry runs and nonmerging preparation in other repositories do not take
-the turn. External Git/GitHub writers, older landing code, self-hosted runner executions and
+the turn. External Git/GitHub writers, older landing code, CI runs and
 hand-run suites do not share it, so exact base/head refusals remain necessary.
-This repository requires its self-hosted PR `check` to run the full `make check` suite. Owners
+This repository requires its GitHub-hosted PR `check` to run the full `make check` suite. Owners
 and helpers run relevant tests during development; landing does not repeat the full suite locally.
 CI proves its tested merge tree equals the PR head tree. Landing requires that successful PR
 check on the current head and verifies that the head includes current main. A branch missing
 current main needs reconciliation and a fresh PR run on the new head. Altitude serializes final
 validation and merge, rechecks identity and holds, and verifies the merged tree against the
-tested tree. Missing, pending, failed or stale CI blocks; runner outages have no local bypass.
+tested tree. Missing, pending, failed or stale CI blocks; CI outages have no local bypass.
 The gate governs Altitude merges; GitHub updates outside Altitude remain unprotected.
 See [policy, evidence and activation](DEVELOPMENT.md#ci-and-candidate-identity).
 Planned file lists guide coordination without limiting edits or landing. The owner stages selected
@@ -1729,14 +1729,11 @@ The same browser specs run at 390×844 with mobile user agent and touch and at 1
 smoke spec reads the real route tree and checks content, assets, console/uncaught errors, API
 failures and horizontal overflow. `walkthrough.ts` drives actions, asserts visible text/roles
 appearing and disappearing, and saves named screenshots on passing and failing walkthroughs.
-Traces are retained only on failure. Outputs stay under ignored `web/ui-artifacts/`. The self-hosted
-workflow retains logs and candidate identity through the runner's local evidence exporter. Failed
-runs also retain the self-contained HTML report and attachments; passing runs keep small receipts.
-GitHub artifact uploads, duplicate raw results and caches are excluded. A passing required check
-with its console log is sufficient delivery evidence; owners retrieve a failed report only for
-diagnosis or on a reviewer's request; L3 coordinates cleanup of unneeded exports when the runner's
-budget refuses admission. See the
-[retention and retrieval contract](DEVELOPMENT.md#ci-and-candidate-identity).
+Traces are retained only on failure. Outputs stay under ignored `web/ui-artifacts/`. A failed
+required check uploads the self-contained HTML report and its attachments as a seven-day GitHub
+artifact; passing runs upload nothing. A passing required check with its console log is sufficient
+delivery evidence; owners download a failed report only for diagnosis or on a reviewer's request.
+See [CI and candidate identity](DEVELOPMENT.md#ci-and-candidate-identity).
 The committed design tree holds maintained boards and their spec; review galleries and routine
 renderings are not source artifacts. Curated documentation illustrations retain a maintained source.
 The required PR job runs every suite phase and preserves candidate identity. Bundled Chromium

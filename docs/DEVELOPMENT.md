@@ -878,7 +878,7 @@ and Python harnesses replace image capability checks and native execution at the
 
 `.github/workflows/installation-lifecycle.yml` is an independent, manually dispatched Ubuntu 24.04
 x86_64 workflow. It is outside `make check`, PR triggers and release gates; its failure or pending
-state does not hold other tasks. The required self-hosted PR `check` and all review requirements
+state does not hold other tasks. The required PR `check` and all review requirements
 remain unchanged. Run it from **main**, selecting the source to package separately:
 
 ```sh
@@ -1160,28 +1160,24 @@ service, LaunchAgents, keychains, trust stores or network configuration.
 
 ## CI and candidate identity
 
-The self-hosted `.github/workflows/self-hosted-checks.yml` runs `make check` for the repository
-owner's pull requests from branches in this repository, pushes to main and manual dispatches on
-the dedicated ephemeral-container runner (label `altitude-ci-docker`). Its PR `check` is required
-by `alt land` in every repository whose base commit ships that workflow; owners and helpers run
-relevant tests during development instead of repeating a full local suite at every landing.
-Python, web unit tests, typecheck/build and both browser viewports must execute and pass.
-No unrun or failed phase is green; live-provider validation stays deferred.
-`.github/workflows/release.yml` runs only for a pushed `v0.*` tag and publishes that checked commit's
-release; see [publish a release](RELEASING.md#publish-a-release).
+`.github/workflows/hosted-checks.yml` runs `make check` as its job `check` on a GitHub-hosted
+`ubuntu-latest` runner for every pull request to main, every push to main and manual dispatches.
+Every run, whether from a fork or a repository branch, has a read-only token and no secrets, and no
+workflow runs on the maintainer's machine. Standard hosted runners are free for public
+repositories. GitHub's fork-workflow approval setting (require approval for first-time
+contributors) stays on, so such a contributor's run starts once the maintainer approves it.
+The PR `check` is required by `alt land` in every repository whose base commit ships that workflow;
+owners and helpers run relevant tests during development instead of repeating a full local suite at
+every landing. Python, web unit tests, typecheck/build and both browser viewports must execute and
+pass. No unrun or failed phase is green; live-provider validation stays deferred. `alt land` lands
+only its own repository branches, so a fork's run is contributor feedback: after review, Altitude
+integrates the contribution on a repository branch, where the same check runs on the integrated
+head before the merge. `.github/workflows/release.yml` runs only for a pushed `v0.*` tag and
+publishes that checked commit's release; see [publish a release](RELEASING.md#publish-a-release).
 
-Every other pull request, from a fork or from an author other than the repository owner, runs the
-same `make check` through `.github/workflows/hosted-checks.yml` on a GitHub-hosted runner with a
-read-only token and no secrets, so untrusted code never executes on the owner's machine. A failed
-hosted run uploads its browser HTML report as a seven-day artifact. That job is contributor
-feedback, not the landing gate: after review, Altitude integrates the contribution on a
-repository branch, where the required self-hosted `check` runs before the merge. GitHub's
-fork-workflow approval setting (require approval for first-time contributors) stays on once the
-repository is public. A fork of this repository without its own self-hosted runner leaves the
-self-hosted job queued for its own owner's pull requests and relies on the hosted workflow.
-
-CI records its event base, head, candidate SHA and tree, verifying that the head includes that base
-and that the tested merge tree equals the head tree. Landing requires the specific successful PR
+CI verifies that it tests the exact commit and, for a pull request, that GitHub's merge commit has
+the event's base and head as parents, that the head includes that base and that the tested merge
+tree equals the head tree. Landing requires the specific successful PR
 job on the current head, verifies that current main is an ancestor of that head, and serializes
 publication, CI waiting and merge across Altitude owners, including nonmerging invocations.
 For reviewed merging candidates, CI and explicit owner reassessment share one bounded wait while
@@ -1195,7 +1191,7 @@ leave the candidate unmerged and its operator hold intact, and final validation 
 assessment deadline. `tests/test_reviews.py` checks the review identity and changed evidence in refusals.
 Original review receipts remain unchanged. Fixtures establish the application protocol, not live engine support for
 background tool sessions or provider compatibility.
-Runner executions outside the command do not share its turn. Any base or head movement after candidate pinning
+CI runs outside the command do not share its turn. Any base or head movement after candidate pinning
 refuses the merge. A later invocation can reuse the successful head when main is already an
 ancestor of it: the merge still has the identical tested tree. Ordinary competing merges introduce
 commits outside the head and require reconciliation, a push and fresh checks on the new head.
@@ -1214,78 +1210,36 @@ must be established. Projects without CI retain the full local candidate suite a
 (one argv command, see [dry run and gate selection](CLI.md#dry-run-and-gate-selection));
 neither provides an outage bypass for this repository.
 
-CI retains evidence on the runner host without GitHub artifact uploads. The workflow writes
-`ci-check.log` and `ci-result.json` directly in `RUNNER_TEMP`; the runner's completion hook copies
-those receipts before clearing temporary files. Its existing bounded exporter retains them before
-removing the disposable container. Failed runs also retain the self-contained browser HTML report
-with its screenshots and failure traces. Passing runs keep only small logs and identity receipts.
-Duplicate raw results and caches are excluded; early failures keep available diagnostics.
-
-A passing required check on the current head, with its GitHub console log, is sufficient delivery
-evidence; `alt land` verifies the head, tree and base ancestry. Owners retrieve the local export
-(browser HTML report, screenshots, traces) into their task folder only to diagnose a failed run or
-when a reviewer asks, match its run URL, attempt, head and tree to the candidate, and open it with
-`pnpm --dir web exec playwright show-report /path/to/report`. When the export is unreadable from the
-task sandbox (issue #380), the owner says so in the report and continues with the console log.
-
-The runner limits evidence to 256 MiB per job and 4 GiB for this repository. It reserves the
-per-job limit for each of its four slots, so it admits a job only while the full retained size is at
-most 3 GiB; otherwise it logs "Evidence budget reached" and every queued job waits. Private runner
-diagnostics count toward that size but are unreadable to owners, so a worker-readable total is a
-lower bound. Owners can read exports but not remove them. An owner that needs a failed run's report
-for review copies it into its task. When admission refuses, L3 coordinates the cleanup: a read-only
-inventory of completed exports whose PR has merged or closed, or whose main run a later green main
-superseded, with no open task or incident relying on them; their receipts and console logs copied
-into the recovery task; and an operator grant to measure the full size as the CI account,
-remove exactly that list and verify that the runner starts queued jobs. Never remove active jobs,
-open PRs' failures or the only copy of evidence awaiting review. A budget refusal requires bounded
-cleanup and verification, not a quota increase. Task evidence stays accessible through review. No new paid
-storage, public report server or host mount into Altitude runtime is required. Runner credentials
-and other projects' evidence remain outside the report access path. GitHub still supplies checks
-and console logs; browser reports are read locally instead of downloaded from GitHub.
+A failed run uploads the self-contained browser HTML report, with its screenshots and failure
+traces, as the seven-day artifact `browser-report-<attempt>`; passing runs upload nothing. A passing
+required check on the current head, with its GitHub console log, is sufficient delivery evidence;
+`alt land` verifies the head, tree and base ancestry. Owners download a failed report into their
+task folder only to diagnose a failed run or when a reviewer asks, match its run URL and attempt to
+the candidate, and open it with `pnpm --dir web exec playwright show-report /path/to/report`.
 
 An owner keeps a bounded CI wait in its active session. If it cannot obtain the required result,
 it records the run and missing evidence, explicitly blocks and asks L3 for the existing finite
-[`recheck-ci`](CLI.md#durable-ci-recheck). No run means trigger/runner recovery, not an invented
-run ID. Runner outages pause delivery until verified recovery and fresh CI. A probe
+[`recheck-ci`](CLI.md#durable-ci-recheck). No run means trigger recovery, not an invented run ID.
+GitHub Actions outages pause delivery until verified recovery and fresh CI. A probe
 does not resume the owner, settle a question or release a hold; L3 owns that reconciliation.
-The existing GitHub artifact-capacity probe remains for projects using hosted artifacts.
-
-### Gate activation
-
-The transition PR uses trusted landing's existing full local candidate gate as well as a fresh PR
-run. Verify the installed local exporter and owner access before relying on report retention.
-Actions is already enabled; no plan upgrade or branch protection change is required. Verify the
-runner admits PR events and a fresh PR run executes Python, web, build and both browser viewports.
-A bounded failing PR revision demonstrates retrieval of browser reports and traces after container
-removal; a passing revision demonstrates the small receipt/log export. Restore a passing revision
-before review. Runner configuration changes require scoped machine authority.
-Known browser/setup flakes require verified correction before activation; fewer duplicate full
-runs do not establish a fix. L3 owns prerequisite coordination.
-
-The operator reviews the green PR, L3 records its hold release, and the owner uses trusted
-`alt land --merge`. Normal source activation applies the gate. L3 coordinates existing owners
-using older committed exports so later mergers share the serialization contract, preserving
-their sessions, PRs and holds. Verify fresh main checks, tested/merged tree equality and a live
-CI-only delivery before declaring the rollout complete. Do not run candidate landing code against
-live state to bootstrap its own authority.
-[Release readiness](RELEASING.md) still binds validation to a final main SHA.
+The existing GitHub artifact-capacity probe covers the failed-report uploads.
 
 ## Runtime evidence
 
 Use `make check` for per-phase wall/user/system timings and retain the runner summaries with the
 source SHA and tool versions. Separate dependency/browser installation from warm execution.
-The serial baseline supplied for this change is self-hosted run 35065148992: 13 min 54 s
+The serial baseline is CI run 35065148992: 13 min 54 s
 on four CPUs, including Python at 4 min 15 s and 316 browser tests at 9 min 12 s with two workers.
-The measured reference is self-hosted run 35076675654 on 2026-09-16, completing the concurrent gate in 3 min 51 s at
+The measured reference is CI run 35076675654 on 2026-09-16, completing the concurrent gate in 3 min 51 s at
 eight process-available CPUs: Python 149.54 s (1,371 tests, one optional native probe skipped,
 four processes), web tests 13.54 s (360 passed), typecheck/build 4.82 s and browsers 212.58 s
 (324 passed, eight workers, zero retries). Phase wall times overlap and must not be added.
 CI allocations vary with available capacity. Worker counts follow the process's available CPUs,
 not a fixed container size or host-wide count. This reference uses head `998da21`; it is not
 acceptance evidence for a later revision. PR evidence records the current source, allocation,
-timings and complete results. Run local candidate checks and self-hosted measurements sequentially
-when they share a host, and retain scoped memory and termination observations alongside timings.
+timings and complete results. A hosted `ubuntu-latest` runner for a public repository has four
+CPUs, so its gate uses four browser workers and two Python processes. Run local timing measurements
+one at a time and retain scoped memory and termination observations alongside timings.
 
 A warm local implementation run on 2026-09-08, Linux, Python 3.12.3, Node 22.22.2 and pnpm
 10.34.5 measured the following; PR/check artifacts identify the validated source revision.

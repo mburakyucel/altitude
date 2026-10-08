@@ -42,7 +42,7 @@ jobs:
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main ||
             { echo "::error::$VERSION does not point at a commit on main"; exit 1; }
           # A run whose `check` job was skipped still concludes successfully; require the job itself.
-          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/self-hosted-checks.yml/runs?head_sha=$GITHUB_SHA&event=push&branch=main&status=success" \
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/hosted-checks.yml/runs?head_sha=$GITHUB_SHA&event=push&branch=main&status=success" \
             --jq '.workflow_runs[] | select(.head_sha == $ENV.GITHUB_SHA) | .id')
           for run in $runs; do
             checked=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs" \

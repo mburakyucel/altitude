@@ -1,14 +1,65 @@
-"""Execute the workflow's candidate assertions and evidence packaging on real, isolated Git."""
+"""The required check's workflow shape, and its candidate assertions executed on real, isolated Git."""
 import json
 import os
+import re
 import subprocess
-import sys
 import textwrap
 
 from tests.support import AltitudeCase, REPO, git, make_repo
+from altitude import config
+
+WORKFLOWS = REPO / '.github/workflows'
 
 
-class TestPrWorkflow(AltitudeCase):
+class TestRequiredCheckWorkflow(AltitudeCase):
+    def setUp(self):
+        super().setUp()
+        self.workflow = (REPO / config.PR_CHECK_WORKFLOW).read_text()
+        self.job = self.workflow.split('\njobs:\n')[1]
+
+    def test_one_hosted_job_with_the_required_id_runs_for_every_pull_request(self):
+        self.assertEqual(config.PR_CHECK_NAME, 'check')
+        self.assertEqual(re.findall(r'^  ([\w-]+):$', self.job, re.M), [config.PR_CHECK_NAME])
+        self.assertIn('\n    runs-on: ubuntu-latest\n', self.job)
+        # A job condition or `name:` would skip or rename the run `alt land` and release.yml select.
+        self.assertIsNone(re.search(r'^    (if|name):', self.job, re.M))
+        self.assertIn('on:\n  workflow_dispatch:\n  pull_request:\n    branches: [main]\n'
+                      '  push:\n    branches: [main]\n', self.workflow)
+        self.assertNotIn('pull_request_target', self.workflow)
+        self.assertIn('timeout-minutes: 60', self.job)
+
+    def test_fork_and_owner_runs_share_a_read_only_token_without_secrets(self):
+        self.assertIn('\npermissions:\n  contents: read\n', self.workflow)
+        self.assertEqual(self.job.count('permissions:'), 0)
+        self.assertIsNone(re.search(r'\bsecrets\.\w', self.workflow))
+        self.assertIn('persist-credentials: false', self.job)
+
+    def test_full_suite_runs_after_frozen_install_and_failure_keeps_the_browser_report(self):
+        steps = self.job.split('\n      - ')
+        install = next(step for step in steps if step.startswith('name: Install frozen dependencies'))
+        self.assertIn('pnpm --dir web install --frozen-lockfile', install)
+        self.assertIn('playwright install --with-deps chromium', install)
+        self.assertIn('name: Full deterministic checks\n        run: make check\n', self.job)
+        report = steps[-1]
+        self.assertIn('if: failure()', report)
+        self.assertIn('actions/upload-artifact@', report)
+        self.assertIn('path: web/ui-artifacts/report', report)
+
+    def test_no_workflow_reaches_a_self_hosted_runner(self):
+        self.assertFalse((WORKFLOWS / 'self-hosted-checks.yml').exists())
+        for workflow in WORKFLOWS.glob('*.yml'):
+            with self.subTest(workflow=workflow.name):
+                runners = re.findall(r'runs-on:\s*(.+)', workflow.read_text())
+                self.assertTrue(runners)
+                self.assertTrue(all(runner.startswith(('ubuntu-', 'macos-')) for runner in runners), runners)
+
+    def test_release_requires_the_push_run_of_this_workflow_and_job(self):
+        release = (WORKFLOWS / 'release.yml').read_text()
+        self.assertIn(f'actions/workflows/{os.path.basename(config.PR_CHECK_WORKFLOW)}/runs?', release)
+        self.assertIn(f'select(.name == "{config.PR_CHECK_NAME}" and .conclusion == "success")', release)
+
+
+class TestCandidateIdentity(AltitudeCase):
     def setUp(self):
         super().setUp()
         make_repo(self.repo)
@@ -21,10 +72,10 @@ class TestPrWorkflow(AltitudeCase):
         self.event = self.tmp / 'event.json'
         self.event.write_text(json.dumps({'pull_request': {'base': {'sha': self.base},
                                                         'head': {'sha': self.head}}}))
-        self.env = dict(os.environ, GITHUB_EVENT_NAME='pull_request', GITHUB_EVENT_PATH=str(self.event),
-                        GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='2', GITHUB_SERVER_URL='https://example.invalid',
-                        GITHUB_REPOSITORY='fictional/project', RUNNER_TEMP=str(self.tmp), CHECK_OUTCOME='success')
-        self.workflow = (REPO / '.github/workflows/self-hosted-checks.yml').read_text()
+        self.env = dict(os.environ, GITHUB_EVENT_NAME='pull_request', GITHUB_EVENT_PATH=str(self.event))
+        workflow = (REPO / config.PR_CHECK_WORKFLOW).read_text()
+        step = workflow.split('- name: Verify the exact candidate')[1].split('\n      - ')[0]
+        self.script = textwrap.dedent(step.split('run: |\n')[1])
         self.checkout_candidate(self.tree, self.base, self.head)
 
     def checkout_candidate(self, tree, *parents):
@@ -36,45 +87,12 @@ class TestPrWorkflow(AltitudeCase):
         self.env['GITHUB_SHA'] = self.sha
 
     def verify(self):
-        step = self.workflow.split('- name: Verify exact commit')[1].split('- name: Full deterministic')[0]
-        script = textwrap.dedent(step.split('run: |\n')[1]).split('node --version')[0]
-        return subprocess.run(['bash', '-eo', 'pipefail', '-c', script], cwd=self.repo,
+        return subprocess.run(['bash', '-eo', 'pipefail', '-c', self.script], cwd=self.repo,
                               env=self.env, capture_output=True, text=True)
 
-    def package(self):
-        step = self.workflow.split('- name: Retain report')[1]
-        script = textwrap.dedent(step.split("python3 - <<'PY'\n")[1].rsplit('          PY', 1)[0])
-        result = subprocess.run([sys.executable, '-c', script], cwd=self.repo, env=self.env,
-                                capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        return self.tmp
-
-    def test_current_merge_tree_passes_and_records_identity(self):
+    def test_current_merge_tree_passes(self):
         result = self.verify()
         self.assertEqual(result.returncode, 0, result.stderr)
-        record = json.loads((self.package() / 'ci-result.json').read_text())
-        self.assertTrue(record['passed'])
-        self.assertEqual((record['base'], record['head'], record['sha'], record['tree'], record['run_attempt']),
-                         (self.base, self.head, self.sha, self.tree, '2'))
-
-    def test_suite_writes_hook_selected_log_and_preserves_exit_status(self):
-        commands = self.tmp / 'commands'
-        commands.mkdir()
-        make = commands / 'make'
-        make.write_text('#!/bin/sh\necho "fixture suite output"\nexit "$FIXTURE_EXIT"\n')
-        make.chmod(0o755)
-        step = self.workflow.split('- name: Full deterministic checks')[1].split('- name: Retain report')[0]
-        script = textwrap.dedent(step.split('run: |\n')[1])
-        for code in (0, 2):
-            with self.subTest(exit=code):
-                env = dict(self.env, PATH=str(commands) + os.pathsep + os.environ['PATH'],
-                           FIXTURE_EXIT=str(code))
-                result = subprocess.run(['bash', '-c', script], cwd=self.repo, env=env,
-                                        capture_output=True, text=True)
-                self.assertEqual(result.returncode, code, result.stderr)
-                # The installed completion hook selects top-level ci-*.log files.
-                self.assertEqual([p.name for p in self.tmp.glob('ci-*.log')], ['ci-check.log'])
-                self.assertEqual((self.tmp / 'ci-check.log').read_text(), 'fixture suite output\n')
 
     def test_wrong_sha_parent_order_or_tree_refuses(self):
         self.env['GITHUB_SHA'] = self.head
@@ -96,30 +114,12 @@ class TestPrWorkflow(AltitudeCase):
         self.checkout_candidate(self.tree, new_base, self.head)
         self.assertNotEqual(self.verify().returncode, 0)
 
-    def test_failed_report_retains_attached_trace_without_raw_duplicates(self):
-        self.env['CHECK_OUTCOME'] = 'failure'
-        report = self.repo / 'web/ui-artifacts/report'
-        (report / 'data').mkdir(parents=True)
-        (report / 'index.html').write_text('<a href="data/trace.zip">Failure trace</a>')
-        (report / 'data/trace.zip').write_bytes(b'fictional trace')
-        raw = self.repo / 'web/ui-artifacts/results'
-        raw.mkdir()
-        (raw / 'trace.zip').write_bytes(b'fictional trace')
-        evidence = self.package()
-        self.assertFalse(json.loads((evidence / 'ci-result.json').read_text())['passed'])
-        # The runner exports this existing report; the workflow creates no second copy.
-        self.assertIn('data/trace.zip', (report / 'index.html').read_text())
-        self.assertEqual((report / 'data/trace.zip').read_bytes(), b'fictional trace')
-        self.assertFalse((evidence / 'report').exists())
-        self.assertFalse((evidence / 'altitude-ci-evidence').exists())
-        self.assertEqual([p.name for p in evidence.glob('ci-*.json')], ['ci-result.json'])
-
-    def test_precheck_failure_and_main_run_keep_available_identity(self):
-        self.env.update(CHECK_OUTCOME='skipped', GITHUB_EVENT_NAME='push')
+    def test_main_and_dispatched_runs_check_only_the_exact_commit(self):
         self.event.write_text('{}')
-        result = self.verify()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        record = json.loads((self.package() / 'ci-result.json').read_text())
-        self.assertFalse(record['passed'])
-        self.assertIsNone(record['base'])
-        self.assertIsNone(record['head'])
+        for event in ('push', 'workflow_dispatch'):
+            with self.subTest(event=event):
+                self.env['GITHUB_EVENT_NAME'] = event
+                self.env['GITHUB_SHA'] = self.sha
+                self.assertEqual(self.verify().returncode, 0, self.verify().stderr)
+                self.env['GITHUB_SHA'] = self.head
+                self.assertNotEqual(self.verify().returncode, 0)

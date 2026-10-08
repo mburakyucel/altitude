@@ -1371,11 +1371,10 @@ deadline, without releasing the repository turn. Final review/context, CI, holds
 run again after assessment; review refusal leaves the merge hold intact.
 
 The turn is a process-owned repository lock, not a durable or FIFO queue. Dry runs and nonmerging preparation
-in other repositories do not wait for it. The containerized
-self-hosted runner and a `make check` run by hand outside `alt land` do not share it; a hand run
-without `CI` set uses two browser workers. External writers and older landing versions
-can still change refs: stale base/head evidence refuses merge and is never reused or retried
-automatically. Only invocations using this installed version share serialization.
+in other repositories do not wait for it. CI runs and a `make check` run by hand outside
+`alt land` do not share it; a hand run without `CI` set uses two browser workers. External
+writers and older landing versions can still change refs: stale base/head evidence refuses merge
+and is never reused or retried automatically. Only invocations using this installed version share serialization.
 
 After its push, landing pins the candidate from the fetched `origin/<branch>` tip, which must be
 the revision it pushed; any other tip is a head the landing did not push and refuses at once
@@ -1387,7 +1386,7 @@ to pass on that exact pushed head with current main included.
 
 ### This repository's required PR check
 
-Owners and helpers run relevant tests during development. The self-hosted PR `check` runs
+Owners and helpers run relevant tests during development. The GitHub-hosted PR `check` runs
 the full suite. Use the existing commands:
 
 ```sh
@@ -1404,8 +1403,8 @@ serialized across Altitude owners; the merged tree must equal the tested tree. F
 cancelled, stale or unrelated required runs block. `--test-cmd` supplies no bypass for this gate.
 
 After a bounded CI wait, retain the run and missing evidence, explicitly block and ask L3 for a
-[durable CI recheck](#durable-ci-recheck). A missing run needs trigger/runner recovery, not an
-invented run ID. Runner or storage outages pause merges until verified recovery and fresh checks.
+[durable CI recheck](#durable-ci-recheck). A missing run needs trigger recovery, not an
+invented run ID. GitHub Actions outages pause merges until verified recovery and fresh checks.
 Reviews and live merge holds remain mandatory. Opening a held PR does not authorize its merge.
 GitHub updates outside Altitude remain unprotected. Other repositories keep their hosted/no-CI
 behavior and local command choice. See [evidence and activation](DEVELOPMENT.md#ci-and-candidate-identity).
