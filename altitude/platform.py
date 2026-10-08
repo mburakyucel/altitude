@@ -2292,6 +2292,11 @@ def validation_in_container() -> bool:
     return not _darwin()
 
 
+def directory_search_access() -> int:
+    """Look up names without reading hidden ancestors on Mac (#625); keep Linux directory access."""
+    return os.O_SEARCH if _darwin() else os.O_RDONLY
+
+
 def validation_browser_environment(temp: Path) -> dict[str, str]:
     """Chromium's supported hermetic temp override on Mac (#625), inside the run's existing write root."""
     return {"MAC_CHROMIUM_TMPDIR": str(temp)} if _darwin() else {}

@@ -47,9 +47,10 @@ CAPTURE_TASK_LIMIT = 64 << 20   # attached validation captures one task keeps
 
 
 @contextmanager
-def _directory(root: Path | int, parts: list[str], *, create: bool = False):
+def _directory(root: Path | int, parts: list[str], *, create: bool = False, search: bool = False):
     """Walk relative to an open root without following any symlink, including racing replacements."""
-    fd = os.dup(root) if isinstance(root, int) else os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    flags = (platform.directory_search_access() if search else os.O_RDONLY) | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.dup(root) if isinstance(root, int) else os.open(root, flags)
     try:
         for part in parts:
             if not part or part in (".", "..") or "/" in part or "\\" in part:
@@ -60,7 +61,7 @@ def _directory(root: Path | int, parts: list[str], *, create: bool = False):
                     os.fsync(fd)
                 except FileExistsError:
                     pass
-            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            child = os.open(part, flags, dir_fd=fd)
             os.close(fd)
             fd = child
         yield fd
@@ -130,7 +131,7 @@ def task_file(project: str, reference: str) -> dict:
         raise TaskFileError(unsupported, 415)
     try:
         # Starting at / also refuses symlinks in ancestors of the configured runtime home.
-        with _directory(Path("/"), list(config.project_dir(project).parts[1:])) as root:
+        with _directory(Path("/"), list(config.project_dir(project).parts[1:]), search=True) as root:
             for location in ("tasks", "archive"):
                 try:
                     with _directory(root, [location, slug]) as directory:
