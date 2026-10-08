@@ -474,7 +474,7 @@ class Lifecycle:
             httpd.shutdown()
             self.run("untrust-release-server", "systemctl", "--user", "unset-environment", "SSL_CERT_FILE")
             write_json(self.results / "update-requests.json", requests)
-        assert sum(f"GET /repos/{repository}/releases?per_page=100 " in line for line in requests) >= 1, requests
+        assert sum(f"GET /repos/{repository}/releases?per_page=30 " in line for line in requests) >= 1, requests
         downloads = [line for line in requests if "/releases/download/" in line]
         assert len(downloads) == 2 and all(f"GET /{repository}/releases/download/{after['version']}/{new.name}" in line
                                            for line in downloads), requests

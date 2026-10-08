@@ -640,7 +640,8 @@ class PublishedReleaseCase(InstallationCase):
     """INSTALLED installed; GitHub's release list and downloads are fixtures."""
     INSTALLED = "v0.1.0"
     RELEASES = "https://github.com/example/altitude/releases"
-    LIST = "https://api.github.com/repos/example/altitude/releases?per_page=100"
+    LIST = "https://api.github.com/repos/example/altitude/releases?per_page=30"
+    LATEST = "https://api.github.com/repos/example/altitude/releases/latest"
 
     def setUp(self):
         super().setUp()
@@ -669,10 +670,15 @@ class PublishedReleaseCase(InstallationCase):
         return download
 
     def listed(self, *releases):
-        """GitHub's release list, newest first: a tag as the release workflow publishes it, or a raw entry."""
-        self.published[self.LIST] = json.dumps([
-            {"tag_name": release, "draft": False, "prerelease": "-rc." in release} if isinstance(release, str) else release
-            for release in releases]).encode()
+        """GitHub's releases, newest first: a tag as the release workflow publishes it, or a raw entry. Its latest
+        release is the newest that is neither a draft nor a prerelease."""
+        releases = [{"tag_name": release, "draft": False, "prerelease": "-rc." in release} if isinstance(release, str)
+                    else release for release in releases]
+        self.published[self.LIST] = json.dumps(releases).encode()
+        self.published.pop(self.LATEST, None)
+        latest = [release for release in releases if not release.get("draft") and not release.get("prerelease")]
+        if latest:
+            self.published[self.LATEST] = json.dumps(latest[0]).encode()
 
 
 class PublishedUpdate(PublishedReleaseCase):
@@ -719,12 +725,12 @@ class PublishedUpdate(PublishedReleaseCase):
         self.assertEqual(result["notes"], f"{self.RELEASES}/tag/v0.1.1")
         self.assertEqual(set(result), {"version", "updated", "service", "url", "notes"})
         self.assertNotIn(str(self.home), json.dumps(result))
-        self.assertEqual(self.requests, [self.LIST, download, download + ".sha256"])
+        self.assertEqual(self.requests, [self.LATEST, download, download + ".sha256"])
         self.assertEqual((self.prefix / "current").resolve(), self.prefix / "versions/v0.1.1")
         self.assertEqual(installation.metadata(self.prefix / "versions/v0.1.0")["version"], "v0.1.0")
 
     def test_current_or_older_latest_changes_nothing(self):
-        for releases in (("v0.1.0",), ("v0.1.0-rc.2", "v0.0.9"), ("v0.0.9",)):
+        for releases in (("v0.1.0",), ("v0.2.0-rc.1", "v0.1.0"), ("v0.0.9",), ({"tag_name": "main", "draft": False},)):
             with self.subTest(releases=releases):
                 self.published = {}
                 self.listed(*releases)
@@ -758,11 +764,11 @@ class PublishedUpdate(PublishedReleaseCase):
         self.assertEqual(self.actions, [])
 
     def test_unusable_lookup_or_unnamed_repository_refuses_before_downloading(self):
-        for listing in ([], [{"tag_name": "main"}], ["v0.2.0"], {"tag_name": "v0.2.0"}, [{"tag_name": "v0.2.0", "draft": True}]):
-            with self.subTest(listing=listing):
-                self.published = {self.LIST: json.dumps(listing).encode()}
+        for latest in (["v0.2.0"], "v0.2.0", None):
+            with self.subTest(latest=latest):
+                self.published = {self.LATEST: json.dumps(latest).encode()}
                 self.requests.clear()
-                with self.assertRaisesRegex(ValueError, "No published release has a valid version"):
+                with self.assertRaisesRegex(ValueError, "returned no releases"):
                     installation.update()
                 self.assertEqual(len(self.requests), 1)
         self.requests.clear()
@@ -841,6 +847,9 @@ class NoticeCase(PublishedReleaseCase):
         (config.ROOT / "update.json").unlink(missing_ok=True)
         self.listed(*releases)
         installation.check_for_update()
+        # A candidate installation reads the release list; a stable one only GitHub's latest release.
+        self.assertEqual(self.requests[-1], self.LIST if "-rc." in self.INSTALLED else self.LATEST)
+        self.assertIn("checked", installation._update_record()[1], "A lookup that found nothing to follow still succeeded")
         return (installation.update_status()["available"] or {}).get("version")
 
 
@@ -849,7 +858,7 @@ class NewVersionNotice(NoticeCase):
 
     def test_check_runs_every_twelve_hours_and_retries_an_hour_after_going_offline(self):
         installation.check_for_update(now=1000)
-        self.assertEqual(self.requests, [self.LIST])
+        self.assertEqual(self.requests, [self.LATEST])
         self.assertIsNone(installation.update_status()["available"])
         installation.check_for_update(now=1000 + 3599)
         self.assertEqual(len(self.requests), 1)

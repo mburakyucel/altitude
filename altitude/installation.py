@@ -126,19 +126,22 @@ def release_repository() -> str:
     return match[1]
 
 
-def latest_release(repository: str, current: str) -> dict:
-    """The newest published release this installation follows: its version and release notes page.
+def latest_release(repository: str, current: str) -> dict | None:
+    """The newest published release this installation follows, with its release notes page; None when there is none.
 
-    An installation from a release candidate follows candidates and stable releases; a stable one follows
-    stable releases only. GitHub lists releases newest first; drafts are never offered."""
-    data = json.loads(_get(f"https://api.github.com/repos/{repository}/releases?per_page=100", 4 * 1024 * 1024))
+    A stable installation follows stable releases: GitHub's latest release, never a draft or prerelease. One installed
+    from a release candidate also follows newer candidates, read from the thirty newest releases."""
     follows_candidates = "-rc." in current
-    versions = [release["tag_name"] for release in (data if isinstance(data, list) else [])
-                if isinstance(release, dict) and isinstance(release.get("tag_name"), str)
-                and VERSION.fullmatch(release["tag_name"]) and not release.get("draft")
-                and (follows_candidates or "-rc." not in release["tag_name"])]
+    path = "releases?per_page=30" if follows_candidates else "releases/latest"
+    data = json.loads(_get(f"https://api.github.com/repos/{repository}/{path}", 4 * 1024 * 1024))
+    releases = data if follows_candidates else [data]
+    if not isinstance(releases, list) or not all(isinstance(release, dict) for release in releases):
+        raise ValueError("GitHub's release lookup returned no releases")
+    versions = [release["tag_name"] for release in releases
+                if isinstance(release.get("tag_name"), str) and VERSION.fullmatch(release["tag_name"])
+                and not release.get("draft") and (follows_candidates or "-rc." not in release["tag_name"])]
     if not versions:
-        raise ValueError("No published release has a valid version")
+        return None
     version = max(versions, key=version_key)
     return {"version": version, "notes": f"https://github.com/{repository}/releases/tag/{version}"}
 
@@ -280,7 +283,8 @@ def _update(version: str | None) -> dict:
     repository = release_repository()
     current = config.RELEASE["version"]
     if version is None:
-        version = latest_release(repository, current)["version"]
+        found = latest_release(repository, current)
+        version = found["version"] if found else current
         if version_key(version) <= version_key(current):
             return {"version": current, "updated": False, "detail": f"Altitude {current} is up to date"}
     elif not VERSION.fullmatch(version):

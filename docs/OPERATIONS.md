@@ -195,11 +195,12 @@ The daemon makes the same lookup at startup and every twelve hours and records w
 in a job of its own so the update survives the restart. **Check for new versions** in Settings
 turns the lookup off. Nothing updates on its own.
 
-`alt update` reads GitHub's release list for the repository the installed release was built from
-(one anonymous request to `api.github.com` for its newest hundred releases) and picks the newest
-release the installation follows: a copy installed from a `-rc.N` candidate follows newer candidates
-and stable releases, a stable copy follows stable releases only, and drafts never count. It does
-nothing when the installed version is current or newer. Otherwise it downloads that release's archive and its `.sha256`
+`alt update` makes one anonymous request to `api.github.com` for the repository the installed
+release was built from and picks the newest release the installation follows. A stable copy follows
+stable releases only: it asks for GitHub's latest release, which is never a draft or prerelease. A
+copy installed from a `-rc.N` candidate also follows newer candidates: it reads the thirty newest
+releases and takes the highest version that is not a draft. It does nothing when no followed
+release is newer than the installed version. Otherwise it downloads that release's archive and its `.sha256`
 from the release, then installs it exactly as an archive update does. `alt update --version
 v0.1.1` installs a named newer published release, including a `-rc.N` candidate, without the
 lookup; it refuses an older version, which `alt recover` restores. Every download hop stays on
