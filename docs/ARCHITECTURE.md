@@ -1277,20 +1277,22 @@ message's `run` block (one line with no control, invisible-formatting or line-se
 **Open in terminal** in its task or project conversation: the page holds the command in memory for that
 terminal, never in the URL or history, shows the terminal and, once its screen has drawn output and
 stayed quiet for 300 ms, re-reads the status and types the command through xterm's paste when no program
-holds the foreground. It never sends Enter, and the server sees ordinary input. Before typing it into a task
-terminal, the page names it with `command`, so altd follows that one command in memory: the first Enter the
+holds the foreground. It never sends Enter, and the server sees ordinary input. Before typing it, the page
+names it with `command`, so altd follows that one command in memory: the first Enter the
 operator types after it starts it, and a Ctrl+C before that Enter drops it. The command has finished once
 the shell has held the foreground (`tcgetpgrp` equal to the shell's session) for a second after that Enter and
 no process group that held the foreground since still exists, so a job suspended with Ctrl+Z or sent to the
 background has not. The reader looks every 0.2 seconds, so a job suspended sooner than that after it starts
-counts as finished. Then, or when the terminal ends first, `tasks.notify` leaves one Terminal notice in the
-task inbox, on its own thread so the reader keeps draining output while it waits for the project lock. It
-reaches the owner at its next checkpoint as any queued message does and wakes a blocked owner unless it is
-stopped or faulted; a task no longer running or blocked, or on a later attempt than the one current when the
-page named the command, gets none. It is no conversation entry and grants nothing. When naming the command
+counts as finished. Then, or when the terminal ends first, one Terminal notice goes to the terminal's reader,
+on its own thread so the reader keeps draining output while it waits for the project lock. For a task terminal,
+`tasks.notify` leaves it in the task inbox: it reaches the owner at its next checkpoint as any queued message
+does and wakes a blocked owner unless it is stopped or faulted; a task no longer running or blocked, or on a later
+attempt than the one current when the page named the command, gets none. It is no conversation entry and grants
+nothing. For a project terminal, `l3.queue_message` queues it for the coordinator as a `terminal` system turn,
+which the conversation shows as a system line; a project no longer managed gets none. When naming the command
 fails, the page still types it and asks the operator to reply in chat instead. altd does not see the command's exit status, so the notice sends the
-owner to `alt task terminal` to verify; a shell builtin that waits for input without a child looks finished.
-Project terminals send no notice. Input and output are never written anywhere; the notice holds only the command text. The task's `events.jsonl`, or the project's
+reader to `alt task terminal` or `alt project terminal` to verify; a shell builtin that waits for input without a child looks finished.
+A command the operator types without a `run` block sends no notice. Input and output are never written anywhere; the notice holds only the command text. The task's `events.jsonl`, or the project's
 `events.log` for a project terminal, records only `terminal` rows for `opened` and `closed`, with the
 folder, and the reason and exit code on close.
 
@@ -1300,12 +1302,17 @@ each line as its last carriage return left it), whether earlier output was dropp
 `running`, `exited` with its exit code and reason, or `none`. altd answers only the task's current attempt
 while it runs, and only when the client end of the connection is held by a process in that owner's worker job
 (`terminal.owner_connection`, from the same process and socket facts as the agent check), so another agent that
-holds this machine's key cannot read it. There is no owner path to input, resize, close or stream. The last
-ended task terminal's output stays readable in altd's memory until a new terminal opens for the task, the task
-finishes (the tick's sweep forgets it) or altd stops; nothing is written to disk. Project terminals have no
-reader. The task terminal says "This task's owner can read this terminal's output." Anything the terminal
-prints can reach the owner, its session record and its provider, where it stays after Altitude forgets it.
-A password typed at a prompt that does not echo, such as `sudo`'s, is not in the output.
+holds this machine's key cannot read it. The project's coordinator reads its project terminal's output, in the
+same form, with `alt project terminal`, which altd answers only on that project's coordinator socket (as it does
+`alt project message`): the socket's path, not the request, names the project, the ordinary CLI refuses the
+verb, and the owner's HTTP reader names a task, so neither a task worker nor another project's coordinator reads
+it. There is no reader path to input, resize, close or stream. The last ended terminal's output stays readable
+in altd's memory until a new terminal opens there, its task finishes or its project is removed (the tick's sweep
+forgets it) or altd stops; nothing is written to disk. Each terminal names its reader above the screen: "This
+task's owner can read this terminal's output" or "The coordinator can read this terminal's output", "and what it
+reads reaches its AI provider". Anything the terminal prints can reach the reader, its session record and its
+provider, where it stays after Altitude forgets it. A password typed at a prompt that does not echo, such as
+`sudo`'s, is not in the output. A desktop or SSH terminal has no reader.
 
 Every terminal request is refused unless it comes from a paired browser on Altitude's own page and
 not from Altitude itself. Its reads and streams pass the same-page rule every POST passes (see

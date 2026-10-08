@@ -198,14 +198,6 @@ def _brief_text(record: dict) -> str:
                      + ([f"CI recheck: {ci['status']}; next action at {next_ci or 'none'}"] if ci else []))
 
 
-def _terminal_text(record: dict) -> str:
-    if record["state"] == "none":
-        return "[altitude] no terminal output: this task's terminal has not been opened since Altitude last started"
-    head = ("[altitude] terminal running" if record["state"] == "running"
-            else f"[altitude] terminal ended ({record.get('reason')}, exit {record.get('exit_code')})")
-    return (head + ("; earlier output was dropped" if record["missed"] else "") + "\n" + record["text"])
-
-
 def _queue_text(record: dict) -> str:
     lines = [f"Running ({len(record['running'])}):"]
     lines += [f"- {row['project']}/{row['slug']} ({row['age']})" for row in record["running"]] or ["- none"]
@@ -275,6 +267,8 @@ def main(argv=None) -> None:
     a.add_argument("--l2-engine", choices=config.ENGINES); a.add_argument("--l3-engine", choices=config.ENGINES)
     ps.add_parser("list"); ps.add_parser("discover")
     ps.add_parser("message", parents=[l3.project_message_parser()], help="coordinator socket: send information to a registered project")
+    ps.add_parser("terminal", help="coordinator socket: read this project's terminal output (read-only)").add_argument(
+        "--json", action="store_true", dest="as_json")
     ps.add_parser("setup", parents=[project_setup.parser()], help="inspect configuration; --repair requests supported daemon setup")
     r = ps.add_parser("remove"); r.add_argument("name")
     x = ps.add_parser("set"); x.add_argument("name"); x.add_argument("--reason", required=True)
@@ -476,8 +470,8 @@ def main(argv=None) -> None:
     if args.cmd not in ("install", "update", "recover", "uninstall", "doctor", "service"):
         config.ensure_root()
     c = args.cmd
-    if c == "project" and args.pcmd == "message":
-        sys.exit("alt project message is available only through the project's coordinator socket")
+    if c == "project" and args.pcmd in ("message", "terminal"):
+        sys.exit(f"alt project {args.pcmd} is available only through the project's coordinator socket")
     closing_pr = c == "pr" and args.target == "close"
     actor_command = (c, getattr(args, "tcmd", None) if c == "task" else
                      getattr(args, "acmd", None) if c == "audit" else
@@ -564,7 +558,8 @@ def main(argv=None) -> None:
                     if review_run and not result.get("ok"):
                         sys.exit(result.get("error", "Review execution failed"))
                     if terminal_read:
-                        out(result) if args.as_json else print(_terminal_text(result))
+                        from altitude import terminal
+                        out(result) if args.as_json else print(terminal.describe(result, "task"))
                         return
                     if machine_run or validation_run:
                         sys.stdout.write(result["output"])

@@ -153,4 +153,17 @@ describe("a chat command at the terminal", () => {
     expect(screen.getByRole("button", { name: "Copy command" })).toBeVisible();
     expect(typed()).toEqual([]);
   });
+
+  it("names the command for the project terminal so the coordinator hears, and says when it won't", async () => {
+    vi.mocked(terminalSend).mockImplementation(async (_project, action) => {
+      if (action === "command") throw new Error("refused");
+      return { ok: true };
+    });
+    show("gh api repos/fixture/demo").request();
+    act(() => emit());
+    await act(() => vi.advanceTimersByTimeAsync(400));
+    expect(vi.mocked(terminalSend)).toHaveBeenCalledWith("demo", "command", { task: undefined, id: "t1", text: "gh api repos/fixture/demo" });
+    expect(screen.getByRole("status")).toHaveTextContent("Altitude couldn't tell the coordinator to watch this command, so reply in chat once it has run.");
+    expect(typed()).toEqual(["gh api repos/fixture/demo"]);
+  });
 });

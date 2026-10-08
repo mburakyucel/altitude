@@ -55,6 +55,8 @@ export function handling(trigger: string, task?: string | null): string {
       return "the start";
     case "fyi":
       return `an FYI${on}`;
+    case "terminal":
+      return "a terminal notice";
     default:
       return `a system event${on}`;
   }
@@ -81,6 +83,8 @@ export function kindLabel(trigger: string): string {
       return "Start";
     case "fyi":
       return "FYI";
+    case "terminal":
+      return "Terminal";
     default:
       return "System event";
   }
