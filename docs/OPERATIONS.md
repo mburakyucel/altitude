@@ -109,6 +109,15 @@ to `~/.config/altitude/access/`, so it works whatever address Altitude listens o
 a browser is open. To sign out every browser, remove `~/.config/altitude/access/devices.json`. Back up
 the folder only to a place as private as `~/.config`.
 
+## Engine sign-in recovery
+
+When an engine's login expires, its turns hold with "provider rejected authentication or account
+access; sign in, then Retry or Resume". Sign in with the engine's own CLI, then press **Retry** on the
+coordinator's failed turn (or send it a message) or **Resume** on a held task. That attempt launches;
+once it succeeds, held tasks and report turns on the engine continue on their next tick. While the
+login is still invalid, the attempt records the rejection again and automatic retries keep waiting
+for up to thirty minutes. A usage limit is not cleared this way; it waits for its reset.
+
 ## Refused decision alerts
 
 A push service that refuses Altitude's alert keeps its device subscribed, and altd tries that device

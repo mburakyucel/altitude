@@ -214,6 +214,32 @@ class TestPickEngine(AltitudeCase):
         self.codex = codex(100, short=20)
         self.assertIsNone(route.pick_engine("l2")["engine"])
 
+    def test_retry_withdraws_only_a_sign_in_rejection_on_the_named_engine(self):
+        sign_in = engines.rejection("claude", {"error": "Not logged in"})
+        self.assertEqual(sign_in["scope"], "engine")
+        self.assertIn("sign in, then Retry or Resume", sign_in["why"])
+        for engine in config.ENGINES:
+            route.note_rejection({"engine": engine}, sign_in)
+        self.assertIn("sign in, then Retry or Resume", route.pick_engine("l2", forced="claude")["why"])
+        self.assertEqual(route.pick_engine("l2", forced="claude", retry_sign_in=True)["engine"], "claude")
+        self.assertTrue(route.retry_sign_in("claude"))
+        self.assertFalse(route.retry_sign_in("claude"))
+        self.assertEqual(route.pick_engine("l2", forced="claude")["engine"], "claude")
+        self.assertIsNone(route.pick_engine("l2", forced="codex")["engine"])
+
+        # A usage window's cure is time and a model rejection's is configuration: Retry keeps both,
+        # even beside a sign-in rejection on the same engine.
+        route.note_rejection({"engine": "claude"}, sign_in)
+        route.note_limit("claude", engines.usage_limit_in("You've hit your usage limit"))
+        route.note_rejection({"engine": "codex", "model": "gpt-test"},
+                             engines.rejection("codex", {"error": "model_not_found"}, "gpt-test"))
+        self.assertIsNone(route.pick_engine("l2", forced="claude", retry_sign_in=True)["engine"])
+        self.assertTrue(route.retry_sign_in("claude"))
+        self.assertTrue(route.retry_sign_in("codex"))
+        self.assertIn("usage window exhausted", route.pick_engine("l2", forced="claude")["why"])
+        self.assertIsNone(route.pick_engine("l2", forced="codex", model="gpt-test")["engine"])
+        self.assertEqual(route.pick_engine("l2", forced="codex")["engine"], "codex")
+
     def test_a_session_stays_on_its_engine_under_the_switch_margin(self):
         # Two close quotas would otherwise alternate every turn, paying a cold cache and a handoff each time.
         self.claude = {"known": True, "five_hour": 10, "seven_day": 20}
