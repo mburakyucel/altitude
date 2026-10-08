@@ -422,14 +422,14 @@ class TestSystemAndSummary(IncidentIssueCase):
 
     def assert_private_absent(self, body: str):
         for private in (*PRIVATE, str(config.HOME), "3e710860"):
-            self.assertNotIn(private, body)
+            self.assertNotIn(private.lower(), body.lower())
 
     def test_linux_issue_names_the_machine_build_and_engine_and_the_failure_without_stream_lines(self):
         self.linux_host()
         incident, body = self.fault(
             "L2 worker 3e710860bbb944b29ff1e2068d33f5e1 (attempt 1) ended without a fresh report: worker state=failed "
-            f"on ada-workstation as adafixture via 10.20.30.40 and fe80::1c2d:3e4f (a4:83:e7:12:34:56) in "
-            f"{config.HOME}/Projects/atlas; " + STREAM, "the L2 worker run (attempt 1)")
+            f"on Ada-Workstation as adafixture via 10.20.30.40 and fe80::1c2d:3e4f (a4:83:e7:12:34:56), board serial "
+            f"L1HF3SERIAL, in {config.HOME}/Projects/atlas; " + STREAM, "the L2 worker run (attempt 1)")
         self.assertEqual(self.section(body, "System").splitlines(), [
             "- platform: Linux", "- os: Ubuntu 24.04.1 LTS", "- kernel: Linux 6.8.0-45-generic",
             "- architecture: x86_64", "- model: LENOVO ThinkPad X1 Carbon Gen 11",
@@ -438,7 +438,7 @@ class TestSystemAndSummary(IncidentIssueCase):
         self.assertEqual(self.section(body, "Actual"),
                          "Fault l2-died during the L2 worker run (attempt 1). Last error: L2 worker [id] (attempt 1) "
                          "ended without a fresh report: worker state=failed on [host] as [user] via [address] and "
-                         "[address] ([address]) in [path]")
+                         "[address] ([address]), board serial [REDACTED], in [path]")
         self.assert_private_absent(body)
         record = self.record(incident)
         self.assertIn("thinking_tokens", record)   # the raw evidence stays private on the record
@@ -484,6 +484,10 @@ class TestFailureLine(IncidentIssueCase):
             "first\nError: disk full\n" + STREAM.split("\n", 1)[1]: "Error: disk full",
             'started\n{"type":"error","error":{"message":"rate limited"}}\n{"type":"system","subtype":"x"}': "rate limited",
             '{"type":"result","is_error":true,"result":"API Error: 500"}': "API Error: 500",
+            'L2 worker x ended: worker state=failed; {"type":"result","is_error":true,"result":"API Error: 529"}':
+                "API Error: 529",
+            'L2 worker x ended: worker state=failed; {"type":"system","subtype":"init"}':
+                "L2 worker x ended: worker state=failed",
             '{"type":"result","is_error":false,"result":"done"}': "",
             STREAM.split("\n", 1)[1]: "",
             "  \n": "",
@@ -498,16 +502,21 @@ class TestSanitizerFields(IncidentIssueCase):
     def test_network_addresses_and_this_machines_names_are_redacted_but_versions_times_and_loopback_stay(self):
         text = incidents.sanitize("adafixture@ada-workstation reached 10.20.30.40, 2001:db8:0:0:0:0:0:1, fe80::1 and "
                                   "a4:83:e7:12:34:56 at 10:15:07 with CLI 2.1.300 on Ubuntu; serving 127.0.0.1:8890 and ::1; "
-                                  "Ada-Workstation stays")
+                                  "ADA-WORKSTATION; device serial PF4SERIAL9, Serial Number: C02XK1ZZJGH5, serial port busy")
         self.assertEqual(text, "[user]@[host] reached [address], [address], [address] and [address] at 10:15:07 with "
-                               "CLI 2.1.300 on Ubuntu; serving 127.0.0.1:8890 and ::1; Ada-Workstation stays")
+                               "CLI 2.1.300 on Ubuntu; serving 127.0.0.1:8890 and ::1; [host]; device serial [REDACTED], "
+                               "Serial Number: [REDACTED], serial port busy")
         with self.assertRaisesRegex(ValueError, "network addresses"):
             incidents.check_public("reached 10.20.30.40")
-        incidents.check_public("serving 127.0.0.1:8890")
+        with self.assertRaisesRegex(ValueError, "serial numbers"):
+            incidents.check_public("serial no. PF4SERIAL9")
+        incidents.check_public("serving 127.0.0.1:8890 on Ada-Workstation for adafixture")   # project issues
+        with self.assertRaisesRegex(ValueError, "host and account names"):
+            incidents._check_incident("seen on Ada-Workstation")
 
 
 class TestLocalNames(AltitudeCase):
-    def test_a_container_has_no_machine_names_and_localhost_is_none(self):
+    def test_a_container_localhost_and_an_images_default_name_are_no_machine_names(self):
         self.patch(platform, "containerized", return_value=True)
         self.assertEqual(LOCAL_NAMES(), {"host": set(), "user": set()})
         self.patch(platform, "containerized", return_value=False)
@@ -516,3 +525,8 @@ class TestLocalNames(AltitudeCase):
         self.assertEqual(LOCAL_NAMES(), {"host": {"ada-workstation.lan", "ada-workstation"}, "user": {"adafixture"}})
         self.patch(platform.socket, "gethostname", return_value="localhost")
         self.assertEqual(LOCAL_NAMES()["host"], set())
+        self.patch(platform.sys, "platform", "linux")
+        self.patch(platform.host_platform, "freedesktop_os_release", return_value={"PRETTY_NAME": "Ubuntu 24.04.1 LTS"})
+        self.patch(platform.socket, "gethostname", return_value="ubuntu")
+        self.patch(platform.pwd, "getpwuid", return_value=mock.Mock(pw_name="ubuntu"))
+        self.assertEqual(LOCAL_NAMES(), {"host": set(), "user": set()})

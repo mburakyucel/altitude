@@ -2464,7 +2464,8 @@ def host_facts() -> dict[str, str]:
 
 def local_names() -> dict[str, set[str]]:
     """This machine's host names and account name, which public text never carries. A container's host and
-    account names are the image's and launcher's (`altitude`), not the machine's, so it has none."""
+    account names are the image's and launcher's (`altitude`), not the machine's, so it has none; a name that is a
+    word of the OS name (a cloud image's `ubuntu`) is that image's default and names no machine either."""
     if containerized():
         return {"host": set(), "user": set()}
     host = socket.gethostname()
@@ -2472,7 +2473,9 @@ def local_names() -> dict[str, set[str]]:
         user = {pwd.getpwuid(os.getuid()).pw_name}
     except KeyError:
         user = set()
-    return {"host": {host, host.split(".")[0]} - {"", "localhost"}, "user": user - {""}}
+    generic = {"", "localhost", *_os_name().lower().split()}
+    return {"host": {name for name in (host, host.split(".")[0]) if name.lower() not in generic},
+            "user": {name for name in user if name.lower() not in generic}}
 
 
 def job_confinement(*, profile: bool) -> str:

@@ -577,12 +577,14 @@ and product family on Linux), Altitude version (with the release commit) and dep
 with its CLI version and the worker's confinement. Host and account names, home paths, addresses,
 serial numbers and hardware UUIDs are never collected. Publication decodes the text, then
 rewrites home paths, `.altitude` and incident file references, long hex ids and UUIDs, email
-addresses, IP and MAC addresses other than loopback, credentials and private key blocks, task
-references, the names of other managed projects, this machine's host and account names (outside the
-container, whose names are the image's) and the configured operator name to `[path]`, `[id]`,
-`[email]`, `[address]`, `[REDACTED]`, `[task]`, `[project]`, `[host]`, `[user]` and "the operator",
-then applies the same private-evidence, network-address and credential refusal as project-local
-issues plus the operator name. Evidence, task, project, message ids, logs, transcripts and the fault
+addresses, IP and MAC addresses other than loopback, credentials, private key blocks and values
+named as serial numbers, task references, the names of other managed projects, this machine's host
+and account names in any letter case (outside the container, whose names are the image's, and
+except a name that is a word of the OS name, such as a cloud image's `ubuntu`) and the configured
+operator name to `[path]`, `[id]`, `[email]`, `[address]`, `[REDACTED]`, `[task]`, `[project]`,
+`[host]`, `[user]` and "the operator", then applies the same private-evidence, network-address,
+serial-number and credential refusal as project-local issues plus the operator name and this
+machine's host and account names. Evidence, task, project, message ids, logs, transcripts and the fault
 ledger never leave the machine. System faults publish after their fault lock is released; the FYI
 and L3 message name the issue. One publisher or amender runs per project at a time, so a retry
 cannot race the daemon into a second issue.

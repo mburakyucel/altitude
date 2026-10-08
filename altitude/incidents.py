@@ -245,16 +245,15 @@ def failure_line(text: str) -> str:
     """The last line that says what went wrong. An error inside a JSON event or a printed mapping counts; raw stream
     chunks and event lines without one never do (#658 published three `thinking_tokens` events instead)."""
     for line in reversed(text.splitlines()):
-        try:
-            event = json.loads(line)
+        start = line.find('{"')
+        try:   # a whole event line, or one after a prefix such as the l2-died worker state
+            event = json.JSONDecoder().raw_decode(line[start:])[0] if start >= 0 else None
         except ValueError:
             event = None
-        if isinstance(event, dict):
-            found = [_event_message(event)]
-        else:
-            found = _MESSAGE.findall(line) or [_JSON_START.split(line, 1)[0].strip(" ;:,")]
-        if found[-1].strip():
-            return " ".join(found[-1].split())[:300]
+        found = (_event_message(event) if isinstance(event, dict) else "") or next(
+            iter(reversed(_MESSAGE.findall(line))), "") or _JSON_START.split(line, 1)[0].strip(" ;:,")
+        if found.strip():
+            return " ".join(found.split())[:300]
     return ""
 
 
@@ -326,9 +325,14 @@ def _private_address(match: re.Match) -> bool:
     return not (address.is_loopback or address.is_unspecified)
 
 
+# A serial number named as one ("serial PF4SERIAL9", "Serial Number: C02XK1ZZJGH5"); a value needs a digit, so
+# "serial port" is prose.
+_SERIAL = re.compile(r"((?i:\bserial(?:[ _-]?(?:number|no\.?))?)[\"']?\s*[:=#]?\s*[\"']?)"
+                     r"(?!\[REDACTED\])(?=[A-Za-z0-9-]*\d)[A-Za-z0-9-]{5,}")
 _PATH_TAIL = r"(?:[/\\][^\s`'\"<>\[\]{}()]*)?"
 _REDACTIONS = (
     (_CREDENTIAL, "[REDACTED]"),
+    (_SERIAL, r"\1[REDACTED]"),
     (re.compile(r"(?:~|\$HOME|/home/[^/\s]+|/Users/[^/\s]+|[A-Za-z]:\\Users\\[^\\\s]+)" + _PATH_TAIL), "[path]"),
     (re.compile(r"[^\s`'\"<>\[\]{}()]*(?:\.altitude/|\bincidents(?:/|\.jsonl\b)|\bI-\d{8}-\d{6}(?:-\d+)?\.md\b)[^\s`'\"<>\[\]{}()]*"), "[path]"),
     (re.compile(r"\b(?:conversation|inbox|faults|chat)\.jsonl?\b", re.I), "[file]"),
@@ -365,9 +369,9 @@ def sanitize(text: str) -> str:
         text = re.sub(rf"\b(?:{names})\b", "[project]", text)
     if operator := config.operator_name():
         text = re.sub(_standalone(operator), "the operator", text, flags=re.I)
-    for label, names in platform.local_names().items():   # case-sensitive: a host named `ubuntu` leaves "Ubuntu"
+    for label, names in platform.local_names().items():
         for name in sorted(names, key=len, reverse=True):
-            text = re.sub(_standalone(name), f"[{label}]", text)
+            text = re.sub(_standalone(name), f"[{label}]", text, flags=re.I)
     return text
 
 
@@ -382,10 +386,21 @@ def check_public(text: str) -> None:
         raise ValueError("Private incident evidence boundary: an issue is public; home paths and private incident evidence must stay on this machine")
     if any(_private_address(m) for m in _ADDRESS.finditer(text)):
         raise ValueError("Private incident evidence boundary: an issue is public; network addresses stay on this machine")
+    if _SERIAL.search(text):
+        raise ValueError("Private incident evidence boundary: an issue is public; serial numbers stay on this machine")
     if _CREDENTIAL.search(text):
         raise ValueError("Private credential boundary: redact credentials and tokens before publishing an issue")
     if (operator := config.operator_name()) and re.search(_standalone(operator), text, re.I):
         raise ValueError("Private incident evidence boundary: an issue is public; the operator's name stays on this machine")
+
+
+def _check_incident(text: str) -> None:
+    """An incident issue also never names this machine. Project issues are exempt: an account name is often the
+    GitHub owner their links name."""
+    check_public(text)
+    if any(re.search(_standalone(name), text, re.I) for names in platform.local_names().values() for name in names):
+        raise ValueError("Private incident evidence boundary: an issue is public; this machine's host and account "
+                         "names stay on this machine")
 
 
 def version() -> str:
@@ -474,7 +489,7 @@ def _find_or_create(project: str, incident: str, body: str, spans: dict) -> tupl
         "## Reproduction\nPending triage: the coordinator adds a fictional or redacted reproduction in a comment.",
         *(["## System\n" + _system_section(system)] if (system := _field(body, spans, "system")) else []),
         key)) + "\n"
-    check_public(title + "\n" + text)
+    _check_incident(title + "\n" + text)
     url = _gh(project, ["issue", "create", "--repo", repository, f"--title={title}", f"--label={ISSUE_LABEL}",
                         "--body-file", "-"], input=text, timeout=60).strip()
     return _issue_url(url, repository), True
@@ -552,7 +567,7 @@ def _close_issue(project: str, incident: str, url: str, reason: str) -> None:
     from .server import issue_repository
     repository = issue_repository()
     note = sanitize(reason)
-    check_public(note)
+    _check_incident(note)
     own = json.loads(_gh(project, ["issue", "view", url, "--repo", repository, "--json", "body,state"], timeout=30))
     _gh(project, ["issue", "comment", url, "--repo", repository, "--body-file", "-"],
         input=f"Incident closed: {note}\n", timeout=60)
