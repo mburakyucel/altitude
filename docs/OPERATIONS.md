@@ -352,6 +352,12 @@ journey and cleanup evidence. Stock workers and executable selection stay unchan
 grants no native service operation, Simulator/GUI capability or private/live-content acceptance.
 See [fictional browser validation](DEVELOPMENT.md#fictional-browser-validation).
 
+On a Mac, `--simulator` runs add a disposable iOS Simulator iPhone that altd creates in the run's area,
+about 3 GB while the run lasts, and removes when it ends, after keeping a screenshot
+([iOS Simulator runs](DEVELOPMENT.md#ios-simulator-runs)). The operator's own Simulator devices are not
+touched. A phone that cannot be removed keeps its run area and new runs refused, like other leftovers;
+each later request and the next start retry its removal.
+
 ## Voice input
 
 Dictation turns speech into draft text in every conversation. One machine setting selects how; typing
