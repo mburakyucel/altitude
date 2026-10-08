@@ -9,7 +9,7 @@ import json
 from service_support import configure, serve
 from tests.support import SUITE, add_worktree, make_repo
 from tests.fakes import FakeL2
-from altitude import config, engines, l3, state as S, tasks as T
+from altitude import config, engines, l3, project_setup, route, state as S, tasks as T
 
 PROJECT = "atlas"
 RETENTION = {
@@ -146,6 +146,13 @@ def main():
     # Later the backfill owner needs a product decision; L3 brings it to the operator.
     T.block(PROJECT, backfill, RETENTION["question"], actor="l2", questions={"questions": [RETENTION]})
     T.escalate(PROJECT, backfill, RETENTION["question"], questions={"questions": [RETENTION]})
+    for name in (PROJECT, "harbor"):  # Setup is complete, as on a configured machine
+        project_setup.request(name, "repair", actor="operator")
+        project_setup.run(name)
+    # Weekly allowance readings are illustrative; no provider is asked.
+    readings = {"claude": 42, "codex": 36}
+    route.engine_readouts = lambda: [{"engine": name, "label": config.ENGINE_LABELS[name], "week": readings[name],
+                                      "known": True, "stale": False, "at": S.now()} for name in config.ENGINES]
     S.regen_state_md(PROJECT)
     serve()
 

@@ -126,10 +126,11 @@ To try a project, follow [setup](SETUP.md).
 
 ## Capture source and maintenance
 
-[Fixture data and capture instructions](../design/readme/README.md) explain how to reproduce the
-images. The script builds on [Project](../web/src/routes/Project.tsx),
+[Example data and capture instructions](../design/readme/README.md) explain how to reproduce the
+images. The browser walkthrough renders [Project](../web/src/routes/Project.tsx),
 [Task](../web/src/routes/Task.tsx), [Live session](../web/src/routes/LiveSession.tsx) and
-[Needs you](../web/src/routes/NeedsYou.tsx), with no app styling overrides or private service data.
+[Needs you](../web/src/routes/NeedsYou.tsx) against a seeded disposable service, with no app styling
+overrides or private service data.
 Desktop images are 1440×900 and phone images 390×844, rendered at 2× for readable enlargement.
 Open any image for its full resolution. Responsive picture sources keep phone text readable
 when this page is viewed at narrow widths.
