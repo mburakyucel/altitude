@@ -55,7 +55,7 @@ REFUSED = (
     # Browser, owner-wide and other private repositories.
     ["pr", "view", "7", "--web"], ["repo", "view", "--web=true"], ["pr", "view", "7", "-w"],
     ["pr", "view", "7", "-cw"], ["search", "issues", "cli/cli"], ["search", "code", "token", "--json=repository"],
-    ["search", "prs", "repo:cli/cli", "is:open"], ["search", "issues", "secret -repo:cli/cli"],
+    ["search", "prs", "repo:cli/cli", "is:open"], ["search", "repos", "--repo", "team/project"], ["search", "issues", "secret -repo:cli/cli"],
     ["search", "issues", "secret", "--json", "body", "--template", "repo:cli/cli {{.body}}"], ["repo", "list"], ["repo", "list", "team"],
     ["ruleset", "list", "--org", "team"], ["ruleset", "view", "1", "-po", "team"],
     ["search", "issues", "secret"], ["search", "code", "--owner", "team", "token"],

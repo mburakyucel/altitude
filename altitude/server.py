@@ -44,7 +44,7 @@ L3_VERB_MAX_OUTPUT = 8 << 20
 # The coordinator's `gh` reads this project's repository or a public one; `alt issue` verbs are its only writes.
 L3_GH_GROUPS = {"pr", "issue", "release", "repo", "run", "workflow", "ruleset", "label", "cache"}
 L3_GH_VERBS = {"view", "list", "status", "checks", "diff", "watch", "check"}
-L3_GH_SEARCHES = {"code", "commits", "issues", "prs", "repos"}
+L3_GH_SEARCHES = {"code", "commits", "issues", "prs"}
 L3_GH_RULE = (
     "The coordinator's gh only reads, from this project's repository or a public one: "
     "view/list/status/checks/diff/watch/check of pr, issue, release, repo, run, workflow, ruleset, label and cache; "
