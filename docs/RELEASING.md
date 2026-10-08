@@ -206,9 +206,11 @@ or a new release gate.
 
 On an Apple silicon Mac, `make installation-macos-vm RESULTS=dir SOURCE=<sha>` runs the built
 `install.sh` through its public command in fresh macOS guests ([macOS VM run](DEVELOPMENT.md#macos-vm-run)):
-each missing prerequisite must stop it with its documented fix and nothing changed. Record its
-`macos-vm.json` with the candidate's evidence. It establishes no installation, update or uninstall on
-macOS, no physical second Mac, browser/device certificate trust or download from GitHub.
+each missing prerequisite must stop it with its documented fix and nothing changed, and with them
+present the release installs, updates to newer stable releases, recovers from a failing one, starts
+again at login after a restart and uninstalls. Record its `macos-vm.json` files with the candidate's
+evidence. It establishes no physical second Mac, browser/device certificate trust or download from
+GitHub.
 
 ## Recovery
 

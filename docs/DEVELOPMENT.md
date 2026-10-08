@@ -698,7 +698,7 @@ blocks automating it.
 | --- | --- | --- | --- | --- |
 | Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration, systemd unit-file parsing (`systemd-analyze verify`, without systemd running) and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, native macOS, container deployment | In use |
 | Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run), in a task through the [validation runner](#validation-runner)) | Fresh install, user-service start, update, failed-update recovery, service start after a restart, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`) and an installation over a failed one (`RECOVERY`), on Ubuntu 24.04 x86_64 | Login/logout, the guest's own download from GitHub, storage migration (no application state is created), other distributions | In use |
-| Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under an [operator grant](CLI.md#operator-grant)) | The built `install.sh` through its public command against a release server inside a fresh macOS 26 arm64 guest with automatic login: its refusals, each with its documented fix and nothing changed, for missing Python, OpenSSL 3 not first on PATH and an account with no desktop session | Installation, service at login, update and uninstall; other macOS versions; a physical second Mac; browser/device CA trust; the guest's own download from GitHub | In use on Apple silicon |
+| Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under an [operator grant](CLI.md#operator-grant)) | The built `install.sh` through its public command in fresh macOS 26 arm64 guests with automatic login and no network: its refusals with their documented fixes for missing Python, OpenSSL 3 not first on PATH and an account with no desktop session; the [macOS installation lane](#macos-installation-lane)'s lifecycle under a throwaway HOME; and the account's own installation, its HTTPS health and `alt doctor`, its LaunchAgent started again by the automatic login after a restart, and uninstall | A physical second Mac, other macOS versions, logout/login without a restart, browser/device CA trust, the guest's own download from GitHub, the real check and notice schedule, the app's rendered notice, a release candidate's lookup | In use on Apple silicon |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Validation container | `alt task validate -- COMMAND` ([validation runner](#validation-runner)); `make browser-sandbox` | A committed candidate's command in a disposable rootless Podman container, including nested rootless containers and Playwright's Chromium with its own sandbox | Running Altitude itself in a container, other hosts' kernels or Podman versions, native macOS | In use on Linux x86_64 |
 | macOS validation run | `alt task validate -- COMMAND` on a Mac ([macOS validation runs](#macos-validation-runs)) | A committed candidate's command on macOS under the validation profile, with fictional state and fixture engines: the Python suites and application journeys with local-process jobs | Native launchd jobs and worker confinement, browsers with their own sandbox, installation, provider compatibility | Implemented; native acceptance is recorded on the delivering PR |
@@ -1044,8 +1044,9 @@ download from GitHub itself or the real check and notice schedule.
 `scripts/installation_macos_vm.py` runs the built `install.sh` in fresh macOS guests on an Apple
 silicon Mac through Apple's Virtualization framework, at no cost and without root. It needs Xcode's
 command line tools, which compile and locally sign its Swift helper `scripts/macos_vm.swift` with the
-virtualization entitlement, and Python 3.12. One command builds the guests once and runs the checks
-against a committed revision (default: HEAD):
+virtualization entitlement, Python 3.12, `pnpm` for the release build and GitHub CLI, which it
+copies into the guests. One command builds the guests once and runs every phase against a committed
+revision (default: HEAD):
 
 ```sh
 make installation-macos-vm RESULTS=/tmp/altitude-macos-vm SOURCE=origin/main
@@ -1060,36 +1061,50 @@ Assistant, then a first login gives those files root's ownership and installs a 
 line tools, Homebrew and Homebrew's `python@3.12` and `openssl@3`. The restore image is deleted once
 `fresh` is built. `image --step` does only the next step; each step finishes within ten minutes.
 
-`installation_macos_vm.py run RESULTS` builds a release from the committed revision and, per phase,
-boots a copy-on-write clone with 4 CPUs, 4 GiB of memory and a 64 GiB sparse disk, and reaches it
-over SSH through the host-guest socket only. Before the installer runs, the runner probes the
-internet and a listener it opens on the guest network's gateway on this Mac: both must answer, and
-after it unplugs the guest's only network card neither may. A probe that cannot run stops the run,
-and the probes repeat at the end. The release is then served on the guest's loopback over HTTPS
-with a throwaway certificate authority that only the test's `curl` trusts, with `github.com`
-resolving to the loopback, and the account runs the public `curl … | sh` command in its login
-shell. In `fresh` the installer must stop for the missing Python. In `prerequisites` it must stop
-for OpenSSL 3 not being first on PATH; after the documented fix, a second account with the same
-shell setup and no desktop session must be stopped for the missing session. Each refusal must name
-its documented fix and leave the account's files outside `Library`, its LaunchAgents and its
-launchd jobs unchanged. The clone is deleted afterwards, also after a failure or a stop.
+`installation_macos_vm.py run RESULTS [--phase PHASE]` builds `v0.0.1` from the committed revision
+and runs each phase in its own copy-on-write clone with 4 CPUs, 4 GiB of memory and a 64 GiB sparse
+disk, reached over SSH through the host-guest socket only, with Spotlight indexing off. Before the
+installer runs, the runner probes the internet and a listener it opens on the guest network's
+gateway on this Mac: both must answer, and after it unplugs the guest's only network card neither
+may. A probe that cannot run stops the run, and the probes repeat at the end. The release is served
+on the guest's loopback over HTTPS with a throwaway certificate authority that the public command's
+shell trusts, with `github.com` resolving to the loopback. Phases that install wait, for at most
+three minutes, until the guest's one-minute load is under its CPU count, and record it.
 
-`RESULTS/macos-vm.json` records the source and harness commits, this Mac's macOS version and free
-disk before and after, the guest's sizing, each image's restore image, macOS build, prerequisites
-and disk footprint, and per phase the probe outcomes, each attempt's exit, output and whether it
-changed anything, the clone's disk footprint and the run time. Each attempt's full output and the
-guest helper's log stay beside it. Everything the runner writes lives in
-`~/.cache/altitude-installation-vm/macos`: the helper, the images (about 26 GiB for macOS 26.6.2)
-and per-run clones (under 0.5 GiB). One guest runs at a time, and the runner stops, deleting its
-clone, whenever less than 10 GiB of disk would stay free. Building the images takes about fifteen
-minutes after the restore image's download; a run takes about a minute. `installation_macos_vm.py
-clean` deletes everything in its folder.
+- `fresh`: the public command must stop for the missing Python.
+- `prerequisites`: it must stop for OpenSSL 3 not being first on PATH; after the documented fix, a
+  second account with the same shell setup and no desktop session must be stopped for the missing
+  session. Each refusal must name its documented fix and leave the account's files outside
+  `Library`, its LaunchAgents and its launchd jobs unchanged.
+- `lifecycle`: with the documented fix and GitHub CLI in place, the guest's account runs the
+  [macOS installation lane](#macos-installation-lane)'s `mac` phase under a throwaway HOME, as
+  `installation_mac.py` does: install, update detection and notice, `alt update`, the Update button,
+  failed-update recovery and uninstall. When it fails, launchd's record of the job, the guest's
+  busiest processes, a sample of the service's process and its open files are kept.
+- `login`: the account installs through the public command into its own home. Its LaunchAgent
+  `dev.altitude.altd` must run from `~/Library/LaunchAgents`, answer HTTPS health with the release's
+  version and commit on the generated authority and pass `alt doctor`. After the guest restarts with
+  its card still unplugged, the automatic login must start the service again with a new process;
+  uninstall must then remove the LaunchAgent and stop the service.
+
+`RESULTS/macos-vm.json` records the source and harness commits, this Mac's macOS version, free disk
+and load average before and after, the guest's sizing, each image's restore image, macOS build,
+prerequisites and disk footprint, and per phase the probe outcomes, every attempt's and step's exit
+and result, the guest's load, the disk the clone took and the run time. Each step's full output, the
+lifecycle's own results and the guest helper's log stay beside it. Everything the runner writes
+lives in `~/.cache/altitude-installation-vm/macos`: the helper, the images (about 26 GiB for macOS
+26.6.2) and per-run clones (under 1 GiB each), deleted after each phase, also after a failure or a
+stop. One guest runs at a time, and the runner stops whenever less than 10 GiB of disk would stay
+free. Building the images takes about fifteen minutes after the restore image's download. On an
+unloaded Mac `fresh` and `prerequisites` take under a minute each, `lifecycle` about five minutes
+and `login` under three. `installation_macos_vm.py clean` deletes everything in its folder.
 
 Virtual machines cannot start inside a task's sandbox or a [macOS validation
-run](#macos-validation-runs). Inside a task, an owner runs each `installation_macos_vm.py` command with
-`alt task run` under an [operator grant](CLI.md#operator-grant) naming this lane, repeating
-`image --step` while images are missing, and keeps `RESULTS` in the task folder. The runner never
-touches the host's Altitude service, LaunchAgents, keychains, trust stores or network configuration.
+run](#macos-validation-runs). Inside a task, an owner runs `installation_macos_vm.py` with
+`alt task run` under an [operator grant](CLI.md#operator-grant) naming this lane: `image --step`
+while images are missing, then `run` with one or two phases per command so each finishes within the
+command limit, keeping `RESULTS` in the task folder. The runner never touches the host's Altitude
+service, LaunchAgents, keychains, trust stores or network configuration.
 
 ## CI and candidate identity
 

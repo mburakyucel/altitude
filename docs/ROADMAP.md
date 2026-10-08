@@ -111,8 +111,10 @@ macOS host behind it on `main`; Altitude runs from source on the operator's Mac.
 [installation lane](DEVELOPMENT.md#macos-installation-lane) checks install and `alt doctor`, update
 detection, CLI and app update, failed-update rollback and uninstall keeping data (#551). The native
 lifecycle checks still pending are adoption across an update with running tasks, logout/login,
-reboot then login and sleep past a deadline, on a spare account. The [macOS VM run](DEVELOPMENT.md#macos-vm-run) checks the public `install.sh`
-command's refusals in fresh macOS guests on that Mac. Two operator decisions of
+reboot then login and sleep past a deadline, on a spare account. The [macOS VM run](DEVELOPMENT.md#macos-vm-run) repeats that lifecycle in fresh,
+offline macOS guests on that Mac, with the public command's refusals and the service starting again at
+the automatic login after a restart; a physical second Mac, browser/device certificate trust and a
+download from GitHub remain. Two operator decisions of
 September 28, 2026 shape it: operator-grant commands run unsandboxed, as on Linux, because launchd
 refuses service control to every sandboxed process, and each terminal shell runs as its own launchd
 job, because macOS hides the environment of its own binaries from the mark that finds what a terminal
