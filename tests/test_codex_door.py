@@ -5,6 +5,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
 import tomllib
 import unittest
 from pathlib import Path
@@ -293,6 +295,33 @@ class TestCodexAdapter(AltitudeCase):
         self.assertIn('model_reasoning_effort="high"', received["argv"])
         self.assertEqual(received["sha256"], hashlib.sha256(prompt.encode()).hexdigest())
         self.assertEqual((out["reported_session_id"], out["usage"], out["error"]), ("thr-l3", {"input_tokens": 7}, None))
+
+    def _engine_that_never_reads(self, script: str) -> str:
+        engine = self.tmp / "codex"
+        engine.write_text(f"#!{sys.executable}\n" + script)
+        engine.chmod(0o755)
+        self.patch(config, "CODEX_BIN", str(engine))
+        self.patch(platform, "job_command", side_effect=lambda unit, command, env, **kw: command)
+        return "Keep the public result stable. ✓\n" * 8192
+
+    def assert_prompt_writer_ends(self):
+        deadline = time.monotonic() + 10
+        while any(thread.name.endswith("(_feed)") for thread in threading.enumerate()) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertEqual([thread.name for thread in threading.enumerate() if thread.name.endswith("(_feed)")], [])
+
+    def test_an_engine_that_exits_without_reading_its_prompt_reports_its_failure(self):
+        prompt = self._engine_that_never_reads("import sys\nprint('codex: not signed in', file=sys.stderr)\nsys.exit(3)\n")
+        out = engines.codex_exec(prompt, cwd=self.worktree, timeout=30)
+        self.assertEqual((out["returncode"], out["error"]), (3, "codex: not signed in"))
+        self.assert_prompt_writer_ends()
+
+    def test_a_turn_whose_engine_never_reads_its_prompt_times_out_and_releases_the_writer(self):
+        prompt = self._engine_that_never_reads("import time\ntime.sleep(60)\n")
+        self.patch(platform, "job_stop")
+        with self.assertRaises(subprocess.TimeoutExpired):
+            engines.codex_exec(prompt, cwd=self.worktree, timeout=1)
+        self.assert_prompt_writer_ends()
 
     def test_window_hold_belongs_to_claude_only(self):
         with mock.patch.object(engines, "usage_hold", return_value="2030-01-01T00:00:00+00:00"):
