@@ -288,7 +288,9 @@ class TranscriptBody extends Component<ScrollProps> {
       onScroll={() => {
         const node = this.body.current;
         if (!node || !this.props.active || node.scrollTop === this.previousScroll) return;
-        const up = node.scrollTop < this.previousScroll;
+        // Content shrinking under a following view lowers scrollTop too, but leaves it at the bottom.
+        const up = node.scrollTop < this.previousScroll
+          && !(this.props.following && node.scrollHeight - node.scrollTop - node.clientHeight <= 1);
         this.remember();
         if (up) this.upward();
       }}>
