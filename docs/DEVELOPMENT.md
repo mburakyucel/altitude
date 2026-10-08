@@ -625,7 +625,8 @@ blocks automating it.
 | Validation container | `alt task validate -- COMMAND` ([validation runner](#validation-runner)); `make browser-sandbox` | A committed candidate's command in a disposable rootless Podman container, including nested rootless containers and Playwright's Chromium with its own sandbox | Running Altitude itself in a container, other hosts' kernels or Podman versions, native macOS | In use on Linux x86_64 |
 | macOS validation run | `alt task validate -- COMMAND` on a Mac ([macOS validation runs](#macos-validation-runs)) | A committed candidate's command on macOS under the validation profile, with fictional state and fixture engines: the Python suites and application journeys with local-process jobs | Native launchd jobs and worker confinement, browsers with their own sandbox, installation, provider compatibility | Implemented; native acceptance is recorded on the delivering PR |
 | Container deployment | `make container-vm RESULTS=dir`; `scripts/container_vm.py RESULTS --image-workflow [--native-sandbox-binary PATH]` or `--browser` through the validation runner | Actual rootless launcher/image, quotas, published local HTTPS, Stop/restart/replacement, interrupted-build and supervisor cleanup, private backup/restore and failure cleanup, neighboring-container isolation and service-manager attempt detection; separate image profile/workflow/recovery fixtures | Physical-device routing/trust, real authentication/provider-session compatibility, Mac, native installation | Ubuntu 24.04 amd64 launcher/backup lanes pass; actual-daemon phone/desktop onboarding and task lane passes; [coverage and limits](CONTAINERS.md#evidence) |
-| Native macOS | Owned by the macOS runtime work ([roadmap](ROADMAP.md#native-macos-runtime)) | macOS service lifecycle, confinement, installation and Safari | Other macOS versions or architectures | Not established; no automated lane runs native jobs, browsers or installation on the Mac |
+| macOS installation lane | `make installation-mac RESULTS=dir` ([macOS installation lane](#macos-installation-lane), in a task through `alt task run` under an operator grant) | A built release's `install.sh` (prerequisites, download through a local release server, checksum, tampered-download refusal), its LaunchAgent and HTTPS health, `alt doctor`, update detection by the installed daemon (app notice, `alt` notice, doctor), `alt update`, the app's Update button as a detached launchd job, failed-update rollback and uninstall retention, on this Mac under a throwaway home | A fresh Mac or another account, login/logout, reboot, browser/device CA trust, the download from GitHub itself, the 12-hour schedule and once-a-day notice timing, provider compatibility | In use on macOS Apple silicon |
+| Native macOS | Owned by the macOS runtime work ([roadmap](ROADMAP.md#native-macos-runtime)) | macOS service lifecycle, confinement and Safari | Other macOS versions or architectures | Not established; no automated lane runs native jobs or browsers on the Mac |
 | Phone browsers | See [device evidence](#device-evidence) | Per class | Per class | Emulated WebKit in use; iOS Simulator on a Mac through `make ui-simulator`; physical checks by arrangement |
 
 The container gate removes its verified private containers, volumes and images before asking Podman
@@ -853,8 +854,8 @@ entries and unprivileged-port setting these phases need are restored afterwards.
 Retain its results before discarding the VM. The hosted workflow
 runs none of these phases and does not prove a minimal OS install or login/logout behavior, browser/device CA trust,
 a download from GitHub's published release, native confinement or provider compatibility. There is no browser test
-in this harness. Native macOS installation remains with `macos-support-native-runtime-behind-the`;
-this Linux evidence is partial acceptance toward #226 and does not close it or establish public readiness.
+in this harness. The [macOS installation lane](#macos-installation-lane) covers the Mac; this Linux
+evidence is partial acceptance toward #226 and does not close it or establish public readiness.
 
 ### Local VM run
 
@@ -912,6 +913,52 @@ is built inside the container, results go to the task folder's `validation/<n>/`
 is cached in `~/.altitude-validation/cache`. The container has no GitHub login, so `BASELINE` runs
 need the operator's own shell or a [operator grant](CLI.md#operator-grant). The runner never touches
 the host's Altitude service, trust stores or network configuration.
+
+### macOS installation lane
+
+`scripts/installation_mac.py` runs the lifecycle on a Mac with macOS 15 or newer on Apple silicon,
+Homebrew's Python 3.12 and OpenSSL 3 first on `PATH`, Git, GitHub CLI and `pnpm`:
+
+```sh
+make installation-mac RESULTS=/tmp/altitude-mac SOURCE=origin/main
+```
+
+It builds `v0.0.1` from the committed `SOURCE` (default `HEAD`) and runs the harness's `mac`
+phase as the running account under a throwaway `HOME` in the user temporary folder, with a clean
+environment. An installation under any `HOME` other than the account's own gets a LaunchAgent label
+derived from that home (`platform.service_label()`), so the lane's service and jobs never address
+the account's `dev.altitude.altd`. The service listens on a free loopback port. The phase serves
+ordinary stable releases, as users receive them, from a local HTTPS proxy that answers only for `github.com` and `api.github.com`, with a
+throwaway certificate authority; the installing shell's `HTTPS_PROXY` and `SSL_CERT_FILE` point at
+it and the installation keeps them, so no request reaches GitHub. It then:
+
+- runs the built `install.sh` through its public `curl … | sh` command: a download altered by one
+  byte is refused with nothing installed, and the unaltered one installs the LaunchAgent and a
+  service whose HTTPS health on the generated CA reports the release's version and commit, with
+  `alt doctor` passing apart from its expected findings;
+- publishes `v0.0.2`; the installed daemon's check records it, and the app's overview, the
+  once-a-day `alt` notice and `alt doctor` report it; `alt update` activates it;
+- publishes `v0.0.3`; a paired device's Update button starts the detached
+  `dev.altitude.job.altitude-update-…` launchd job, which activates it and is removed;
+- publishes `v0.0.4`, whose startup exits; `alt update` restores `v0.0.3`, which keeps
+  serving;
+- uninstalls: the LaunchAgent, its launchd job and the update job are gone, settings, TLS identity
+  and fictional history and project files remain.
+
+The lane makes the next check due by rewriting `update.json` under its lock instead of waiting 12
+hours, and removes the once-a-day notice marker between versions. Afterwards, also after a failure, a
+timeout or a stop, the runner stops every process the phase started, boots out what remains of the lane's own labels, copies the evidence into
+`RESULTS` and deletes the throwaway home. Results hold `build.log`, `lifecycle.log`, the harness's
+`result.json` and `mac.json` (source and harness commits, macOS version and chip, the account
+service's state before and after, each step's outcome and the cleanup). A lock refuses a second run
+while one is active.
+
+launchd refuses service control from a sandboxed process, so the lane runs outside the worker
+sandbox: in a terminal, or in a task through `alt task run` under an
+[operator grant](CLI.md#operator-grant) whose bounds are this command. launchd keeps the
+enable/disable record of the lane's one label, which only an administrator can clear. The lane does
+not establish a fresh Mac or another account, login/logout, reboot, browser or device CA trust, the
+download from GitHub itself or the real check and notice schedule.
 
 ## CI and candidate identity
 

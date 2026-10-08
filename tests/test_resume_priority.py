@@ -219,6 +219,37 @@ class TestResumePriority(AltitudeCase):
         self.launch("Available model", "other")
         self.assertEqual(digest.wip()["machine"], 1)
 
+    def test_resume_request_retries_a_sign_in_rejection_but_not_a_usage_limit(self):
+        original = self.launch("Signed out owner")
+        slug, engine = original["slug"], original["l2_engine"]
+        self.pause(original)
+        T.message(self.project, slug, "burak", "Continue after signing in")
+        route.note_rejection({"engine": engine}, engines.rejection(engine, {"error": "authentication_error"}))
+        self.assertFalse(dispatch.resume_ready(self.project, S.load_task(self.project, slug)))
+        self.assertIn("sign in, then Retry or Resume", dispatch.resume(self.project, slug)["held"])
+        self.assertEqual(len(self.fake.calls), 1)
+        dispatch.request_task_operation(self.project, slug, "resume", "Signed in", actor=config.OPERATOR_ACTOR)
+        self.assertEqual(dispatch.run_task_operation(self.project, slug)["state"], "running")
+        self.assertEqual(len(self.fake.calls), 2)
+
+        self.pause(S.load_task(self.project, slug))
+        route.note_limit(engine, engines.usage_limit_in("You've hit your usage limit"))
+        dispatch.request_task_operation(self.project, slug, "resume", "Retry", actor=config.OPERATOR_ACTOR)
+        held = dispatch.run_task_operation(self.project, slug)
+        self.assertTrue(held["pending"])
+        self.assertIn("usage window exhausted", held["held"])
+        self.assertEqual(len(self.fake.calls), 2)
+
+        # A sign-in rejection recorded while that request waits is retried by the repeated Resume.
+        for path in config.MONITOR_DIR.glob("route-unavailable-*.json"):
+            path.unlink()  # the usage window has reset
+        route.note_rejection({"engine": engine}, engines.rejection(engine, {"error": "authentication_error"}))
+        self.assertIn("sign in, then Retry or Resume", dispatch.run_task_operation(self.project, slug)["held"])
+        repeat = dispatch.request_task_operation(self.project, slug, "resume", "Retry", actor=config.OPERATOR_ACTOR)
+        self.assertTrue(repeat["idempotent"])
+        self.assertEqual(dispatch.run_task_operation(self.project, slug)["state"], "running")
+        self.assertEqual(len(self.fake.calls), 3)
+
     def test_setup_contention_does_not_reserve_capacity_in_any_project_tick_order(self):
         original = self.launch("Setup held owner")
         original["hold_merge"] = "Keep review hold"

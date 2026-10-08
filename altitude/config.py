@@ -19,9 +19,11 @@ SOURCE = Path(__file__).resolve().parent.parent
 RELEASE = json.loads((SOURCE / "release.json").read_text()) if (SOURCE / "release.json").is_file() else None
 INSTALL_PREFIX = SOURCE.parent.parent if RELEASE is not None else None
 INSTALL_CONFIG = Path(os.environ.get("ALTITUDE_CONFIG", HOME / ".config/altitude/install.json")).expanduser()
+#: The installing shell's HTTPS proxy and CA bundle, which an installed service keeps for its release checks and updates.
+NETWORK = ("HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy", "SSL_CERT_FILE")
 if RELEASE is not None and not platform.containerized() and INSTALL_CONFIG.exists():
     for key, value in json.loads(INSTALL_CONFIG.read_text()).get("environment", {}).items():
-        if not isinstance(value, str) or not (key.startswith("ALTITUDE_") or key in ("PATH", "CLAUDE_BIN", "CODEX_BIN")):
+        if not isinstance(value, str) or not (key.startswith("ALTITUDE_") or key in ("PATH", "CLAUDE_BIN", "CODEX_BIN", *NETWORK)):
             raise ValueError(f"invalid installation environment setting: {key}")
         os.environ.setdefault(key, value)
 ROOT = Path(os.environ.get("ALTITUDE_HOME", HOME / ".altitude"))
@@ -79,7 +81,7 @@ def installation_environment() -> dict[str, str]:
             "ALTITUDE_TLS_DIR": str(TLS_DIR), "ALTITUDE_TLS": "1", "PATH": subprocess_env().get("PATH", ""),
             "ALTITUDE_ROOTS": ":".join(map(str, PROJECT_ROOTS)),
             **{key: os.environ[key] for key in ("CLAUDE_BIN", "CODEX_BIN", "ALTITUDE_OPERATOR",
-               "ALTITUDE_PRIMARY_ENGINE", "ALTITUDE_UPSTREAM_ISSUE_REPOSITORY") if key in os.environ}}
+               "ALTITUDE_PRIMARY_ENGINE", "ALTITUDE_UPSTREAM_ISSUE_REPOSITORY", *NETWORK) if key in os.environ}}
 
 # Context lines per engine: Claude quality degrades past
 # ~25–30% of the window in the operator's experience. Every Claude 5 alias Altitude uses (opus, fable, sonnet) reports a

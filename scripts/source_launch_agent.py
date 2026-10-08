@@ -25,11 +25,13 @@ def main() -> int:
                             check=True).stdout.strip()
     environment = {"ALTITUDE_HOST": os.environ.get("ALTITUDE_HOST") or "127.0.0.1", "ALTITUDE_PORT": "8890", "ALTITUDE_SERVICE": "1",
                    # This installation's own choice: its incidents become issues on the public tracker.
-                   "ALTITUDE_UPSTREAM_ISSUE_REPOSITORY": "mburakyucel/altitude", "PATH": os.environ["PATH"]}
+                   "ALTITUDE_UPSTREAM_ISSUE_REPOSITORY": "mburakyucel/altitude", "PATH": os.environ["PATH"],
+                   # launchd starts an agent in the account's home; the service keeps this one, where its label lives.
+                   "HOME": str(Path.home())}
     if branch != "main":
         environment["ALTITUDE_SOURCE_BRANCH"] = branch
     agent = {
-        "Label": platform.LABEL, "ProgramArguments": [sys.executable, "-B", str(ROOT / "bin" / "alt"), "serve"],
+        "Label": platform.service_label(), "ProgramArguments": [sys.executable, "-B", str(ROOT / "bin" / "alt"), "serve"],
         "WorkingDirectory": str(ROOT),
         "EnvironmentVariables": environment,
         # Restart=on-failure with RestartSec=20: launchd restarts a failed service, not one that exited cleanly.
@@ -40,7 +42,7 @@ def main() -> int:
     platform.control("restart")  # bootstraps it again, so launchd reads this definition
     time.sleep(5)  # altd refuses a checkout that is not clean and at its origin branch within its first seconds
     status = platform.status()
-    print(f"{platform.LABEL} on {branch}: {status['ActiveState']} (pid {status['MainPID']}); log: {log}")
+    print(f"{platform.service_label()} on {branch}: {status['ActiveState']} (pid {status['MainPID']}); log: {log}")
     if status["ActiveState"] != "active":
         lines = Path(log).read_text(errors="replace").splitlines() if Path(log).exists() else []
         print(lines[-1] if lines else "The log is empty.")

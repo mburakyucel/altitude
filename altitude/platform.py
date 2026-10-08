@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ctypes
 import fcntl
+import hashlib
 from contextlib import ExitStack, contextmanager
 import ipaddress
 import json
@@ -38,7 +39,7 @@ import time
 SERVICE = "altitude.service"
 CONTAINER_STOP_WAIT = 105  # process termination45 + stop-post45 + margin15
 CONTAINER_BUILD_SECONDS = 900  # extraction, build480, inspections60, save60, load60, margin
-#: The LaunchAgent that runs the service on macOS.
+#: The LaunchAgent that runs the account's service on macOS; service_label() names the one for the current home.
 LABEL = "dev.altitude.altd"
 #: What First run shows for a missing command-line tool, run in the operator's own terminal.
 INSTALL = ({"gh": "brew install gh", "git": "xcode-select --install"} if sys.platform == "darwin"
@@ -927,9 +928,19 @@ def run(*args: str) -> str:
     return result.stdout
 
 
+def service_label() -> str:
+    """The LaunchAgent label: LABEL for the account's own home. launchd's labels are per account, not per home, so an
+    installation under any other HOME (the macOS installation lane's throwaway one) gets a label of its own and can
+    never stop or replace the account's service."""
+    home = Path.home()
+    if home.resolve() == Path(pwd.getpwuid(os.getuid()).pw_dir).resolve():
+        return LABEL
+    return f"{LABEL}.{hashlib.sha256(str(home).encode()).hexdigest()[:12]}"
+
+
 def service_path() -> Path:
     if _darwin():
-        return Path.home() / "Library/LaunchAgents" / f"{LABEL}.plist"
+        return Path.home() / "Library/LaunchAgents" / f"{service_label()}.plist"
     return Path.home() / ".config/systemd/user" / SERVICE
 
 
@@ -1009,11 +1020,13 @@ def definition(prefix: Path, python: Path, settings: Path, environment: dict[str
             raise ValueError("Service paths and PATH must not contain control characters")
     if _darwin():
         # launchd restarts the service when it fails (KeepAlive), not after a clean exit, as Restart=on-failure does.
+        # launchd starts an agent in the account's home; the service keeps the home it was installed from, where its
+        # definition, logs, launcher and label live.
         log = str(logs_dir() / "altd.log")
         return plistlib.dumps({
-            "Label": LABEL, "ProgramArguments": [str(python), "-B", str(prefix / "current/bin/alt"), "serve"],
+            "Label": service_label(), "ProgramArguments": [str(python), "-B", str(prefix / "current/bin/alt"), "serve"],
             "WorkingDirectory": str(prefix),
-            "EnvironmentVariables": {"ALTITUDE_CONFIG": str(settings), **environment,
+            "EnvironmentVariables": {"ALTITUDE_CONFIG": str(settings), **environment, "HOME": str(Path.home()),
                                      "ALTITUDE_SERVICE": "1", "ALTITUDE_TLS": "1"},
             "RunAtLoad": True, "KeepAlive": {"SuccessfulExit": False}, "ThrottleInterval": 5, "Umask": 0o077,
             "ProcessType": "Standard", "StandardOutPath": log, "StandardErrorPath": log}).decode()
@@ -1576,8 +1589,8 @@ def _print(label: str, *, timeout: float = 30) -> dict | None:
 def _launchd_status() -> dict[str, str]:
     """The service in the vocabulary the installation reads: loaded (defined or bootstrapped), active (running),
     its definition's path and main PID, and whether it is enabled."""
-    path = service_path()
-    job = _print(LABEL)
+    path, label = service_path(), service_label()
+    job = _print(label)
     disabled = re.findall(r'"([^"]+)" => (?:disabled|true)', run(LAUNCHCTL, "print-disabled", _domain()))
     running = bool(job and job.get("state") == "running" and job.get("pid"))
     exited = (job or {}).get("last exit code", "")
@@ -1589,20 +1602,21 @@ def _launchd_status() -> dict[str, str]:
             else "inactive",
             "SubState": job.get("state", "") if job else "", "FragmentPath": fragment,
             "MainPID": job["pid"] if running else "0",
-            "UnitFileState": "disabled" if LABEL in disabled else "enabled" if path.exists() else ""}
+            "UnitFileState": "disabled" if label in disabled else "enabled" if path.exists() else ""}
 
 
 def _launchd_control(action: str) -> str:
     """start, stop and restart the service. launchd reads the definition when the service is bootstrapped, so
     reload has nothing to do and restart bootstraps it again."""
-    target = f"{_domain()}/{LABEL}"
+    label = service_label()
+    target = f"{_domain()}/{label}"
     if action == "reload":
         return ""
     if action in ("enable", "disable"):
         return run(LAUNCHCTL, action, target)
     if action not in ("start", "stop", "restart"):
         raise ValueError("Unknown application service operation")
-    job = _print(LABEL)
+    job = _print(label)
     if job and action == "start":
         return run(LAUNCHCTL, "kickstart", target)
     if job:
@@ -1616,7 +1630,7 @@ def _launchd_control(action: str) -> str:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
-            removed = _print(LABEL, timeout=min(30, remaining)) is None
+            removed = _print(label, timeout=min(30, remaining)) is None
             remaining = deadline - time.monotonic()
             if removed or remaining <= 0:
                 break
@@ -1636,7 +1650,7 @@ def _launchd_service_status(unit: str) -> dict:
                                "exec_main_code", "exec_main_status", "memory_current", "memory_peak", "memory_high",
                                "memory_max"))}
     try:
-        job = _print(LABEL if unit in ("altitude", SERVICE) else _label(unit))
+        job = _print(service_label() if unit in ("altitude", SERVICE) else _label(unit))
         if job is None:
             record.update(state="inactive", load_state="not-found",
                           error="Unit not loaded or load state unavailable; termination/resource evidence is unknown.")
