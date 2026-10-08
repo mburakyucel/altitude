@@ -33,7 +33,7 @@ XCRUN = "/usr/bin/xcrun"
 SAFARI = "com.apple.mobilesafari"
 BOOT_SECONDS = 300
 FRAME_LIMIT = 64 << 20            # bytes in one inspector message; a page snapshot is a few MiB
-FRAME_SECONDS = 30               # for the rest of a message once its length has arrived
+FRAME_SECONDS = 30               # for the rest of a message once its first byte has arrived
 SESSIONS = 4                     # run connections at once; a walkthrough uses one
 OPEN = "_rpc_altitudeOpenURL:"    # the relay's own request: {"url": ...}, answered by OPENED with {"error": ...}
 OPENED = "_rpc_altitudeOpenedURL:"
@@ -169,13 +169,14 @@ def openable(url: object, port: int) -> str | None:
 
 def _read(sock: socket.socket) -> dict | None:
     """One message, or None when the peer closed the connection."""
-    head = _exact(sock, 4)
-    if head is None:
+    first = _exact(sock, 1)
+    if first is None:
         return None
-    size = struct.unpack(">I", head)[0]
+    deadline = time.monotonic() + FRAME_SECONDS
+    size = struct.unpack(">I", first + (_exact(sock, 3, deadline) or b""))[0]
     if size > FRAME_LIMIT:
         raise ValueError(f"an inspector message of {size} bytes is over the limit")
-    body = _exact(sock, size, time.monotonic() + FRAME_SECONDS)
+    body = _exact(sock, size, deadline)
     message = plistlib.loads(body or b"")
     if (not isinstance(message, dict) or not isinstance(message.get("__selector"), str)
             or not isinstance(message.get("__argument"), dict)):
@@ -242,7 +243,7 @@ class _Session:
         try:
             while (message := _read(source)) is not None and handle(message["__selector"], message["__argument"]):
                 pass
-        except (OSError, ValueError, plistlib.InvalidFileException):
+        except Exception:  # anything malformed or failing ends the connection
             pass
         finally:
             self.close()
@@ -358,9 +359,11 @@ class Relay:
             threading.Thread(target=self._serve, args=(session,), daemon=True).start()
 
     def _serve(self, session: _Session) -> None:
-        session.serve()
-        with self.lock:
-            self.sessions.remove(session)
+        try:
+            session.serve()
+        finally:
+            with self.lock:
+                self.sessions.remove(session)
 
     def close(self) -> None:
         self.stopped.set()

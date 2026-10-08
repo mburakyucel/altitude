@@ -324,10 +324,24 @@ class TestRelay(RelayCase):
         self.client()
 
     def test_a_message_that_stalls_partway_closes_its_connection(self):
-        client = self.client()
-        with mock.patch.object(sim, "FRAME_SECONDS", 0.2):
-            client.sock.sendall(struct.pack(">I", 100) + b"partial")
+        for name, partial in (("in its length", struct.pack(">I", 100)[:2]),
+                              ("in its body", struct.pack(">I", 100) + b"partial")):
+            with self.subTest(name), mock.patch.object(sim, "FRAME_SECONDS", 0.2):
+                client = self.client()
+                client.sock.sendall(partial)
+                self.assertTrue(client.closed())
+
+    def test_a_malformed_request_closes_its_connection_and_frees_its_place(self):
+        for _ in range(sim.SESSIONS + 1):
+            client = self.client()
+            client.send("_rpc_forwardGetListing:", {"WIRApplicationIdentifierKey": []})
             self.assertTrue(client.closed())
+            for _ in range(100):
+                if not self.relay.sessions:
+                    break
+                time.sleep(0.05)
+        self.assertEqual(self.relay.sessions, [])
+        self.client()
 
     def test_closing_the_relay_ends_its_connections_and_frees_the_socket(self):
         client = self.client()
