@@ -2,9 +2,11 @@
 """The phone UI in iOS Safari on a validation run's Simulator iPhone.
 
 Serves this checkout's built web app with fixture engines and fictional data on loopback, pairs the phone's Safari,
-opens a project's work in the phone layout, taps into a task and back, and keeps a page snapshot at each step,
-Safari's console and the browser's versions. A step that does not reach its state, horizontal overflow or a console
-error fails the walkthrough.
+opens a project's work in the phone layout, taps into a task and back, checks what Add to Home Screen would take from
+the app, then opens the device setup page of a fictional CA and taps Download the profile. It keeps a page snapshot at
+each step, Safari's console and the browser's versions. A step that does not reach its state, horizontal overflow, a
+console error or a profile Safari does not fetch fails the walkthrough. The run's final screenshot shows Safari's
+answer to the profile.
 
 It runs inside `alt task validate --simulator` (`make ui-simulator`): altd's relay to that iPhone's Safari is the socket
 in $SIMULATOR_INSPECTOR, and nothing here reaches the Simulator service. Evidence goes to RESULTS, by default
@@ -14,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -22,10 +25,15 @@ import socket
 import struct
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 import uuid
 
 REPO = Path(__file__).resolve().parent.parent
+FAILURES = (OSError, RuntimeError, TimeoutError, ValueError, KeyError)
+sys.path.insert(0, str(REPO))
+from altitude import tls
 SAFARI = "com.apple.mobilesafari"
 OPEN, OPENED = "_rpc_altitudeOpenURL:", "_rpc_altitudeOpenedURL:"
 PHONE_WIDTH = 500   # widest viewport this walkthrough accepts as the phone layout
@@ -181,6 +189,38 @@ class Safari:
         path.write_bytes(base64.b64decode(data.split(",", 1)[1]))
 
 
+#: Counts the app's requests from the first step on, and once `__leaving` is set starts no more, so the walkthrough
+#: leaves the app between requests. Safari logs a request cut off by leaving as a console error.
+REQUESTS = """
+if (!window.__requests) {
+  window.__requests = new Map();
+  const original = window.fetch;
+  window.fetch = function (...args) {
+    if (window.__leaving) return new Promise(() => {});
+    const key = {};
+    window.__requests.set(key, String(args[0]?.url ?? args[0]));
+    return original.apply(this, args).then((response) => response.clone().arrayBuffer().then(() => response))
+      .finally(() => window.__requests.delete(key));
+  };
+}
+0
+"""
+
+
+def leave(safari: Safari, address: str) -> None:
+    """Open `address` once the app has no request under way."""
+    safari.evaluate("window.__leaving = true; 0")
+    try:
+        safari.wait("!window.__requests?.size", "the app's requests to end")
+    except TimeoutError as exc:
+        try:
+            under_way = safari.evaluate("[...window.__requests.values()]", seconds=5)
+        except FAILURES:
+            under_way = "unknown"
+        raise TimeoutError(f"{exc}; under way: {under_way}") from None
+    safari.evaluate(f"location.href = {json.dumps(address)}; 0")
+
+
 #: Page helpers, evaluated before each check: a labelled element that is laid out, and whether the page overflows.
 HELPERS = """
 var shown = (selector) => [...document.querySelectorAll(selector)].find((e) => e.getClientRects().length > 0);
@@ -216,12 +256,97 @@ def walkthrough(safari: Safari, url: str, device: str, results: Path) -> list[di
     safari.evaluate(f"location.href = {json.dumps(url + work + '?tab=work')}; 0")
     task_link = f"shown('section[aria-label=\"Work\"] a[href^=\"{work}/tasks/\"]')"
     state("01-work", f"{task_link} && innerWidth <= {PHONE_WIDTH}", "the project's work in the phone layout")
+    safari.evaluate(REQUESTS)
     state("02-task", "shown('section[aria-label=\"Task conversation\"]') && shown('button[aria-label=\"Back\"]') "
                      "&& !shown('section[aria-label=\"Work\"]')", "a task's conversation with Back",
           action=f"{task_link}.click(); 0")
     state("03-back", f"{task_link} && !shown('section[aria-label=\"Task conversation\"]')",
           "the project's work again", action="shown('button[aria-label=\"Back\"]').click(); 0")
+    task = safari.evaluate(f"{task_link}.getAttribute('href')")
+    steps.append(home_screen(safari, url, ["/", work, task], results))
     return steps
+
+
+#: What Add to Home Screen takes from each address, read as Safari parses the page, and the files it names.
+HOME_SCREEN = """
+window.__home || (window.__home = (async () => {
+  const pages = {};
+  const read = async (path) => {
+    const response = await fetch(path);
+    if (!response.ok || response.redirected) throw new Error(`${path} answered ${response.status} at ${response.url}`);
+    return response;
+  };
+  for (const path of %s) {
+    const page = new DOMParser().parseFromString(await (await read(path)).text(), 'text/html');
+    pages[path] = {title: page.title, icon: page.querySelector('link[rel="apple-touch-icon"]')?.getAttribute('href'),
+                   manifest: page.querySelector('link[rel="manifest"]')?.getAttribute('href')};
+  }
+  const icon = await read(pages['/'].icon), bytes = new Uint8Array(await icon.arrayBuffer());
+  const image = new Image();
+  image.src = pages['/'].icon;
+  await image.decode();
+  const manifest = await (await read(pages['/'].manifest)).json();
+  return {pages, manifest, icon: {type: icon.headers.get('content-type'), size: [image.naturalWidth, image.naturalHeight],
+                                  bytes: btoa(String.fromCharCode(...bytes))}};
+})().then((value) => window.__homeResult = value, (error) => window.__homeResult = {error: String(error)}));
+window.__homeResult
+"""
+
+
+def home_screen(safari: Safari, url: str, paths: list[str], results: Path) -> dict:
+    """At the app's root, project and task addresses Safari finds the approved Climb icon, the manifest's name and
+    standalone display: what Add to Home Screen uses. Adding the app is Safari's own menu, out of the relay's reach."""
+    found = safari.wait(HOME_SCREEN % json.dumps(paths), "the Home Screen icon and manifest")
+    if "error" in found:
+        raise RuntimeError(f"Safari could not read the Home Screen files: {found['error']}")
+    icon, approved = found["icon"], (REPO / "web" / "public" / "apple-touch-icon.png").read_bytes()
+    wrong = [path for path, page in found["pages"].items()
+             if page != {"title": "Altitude", "icon": "/apple-touch-icon.png", "manifest": "/manifest.webmanifest"}]
+    manifest = {key: found["manifest"].get(key) for key in ("name", "short_name", "display", "start_url")}
+    if wrong or icon["type"] != "image/png" or icon["size"] != [180, 180] or base64.b64decode(icon["bytes"]) != approved \
+            or manifest != {"name": "Altitude", "short_name": "Altitude", "display": "standalone", "start_url": "/"}:
+        raise RuntimeError(f"Safari found other Home Screen files: pages {found['pages']}, manifest {manifest}, "
+                           f"icon {icon['type']} {icon['size']} sha256 "
+                           f"{hashlib.sha256(base64.b64decode(icon['bytes'])).hexdigest()}")
+    # The icon as Safari draws it, which also leaves the app so its change stream ends.
+    leave(safari, url + "/apple-touch-icon.png")
+    safari.wait("document.images[0] && document.images[0].complete && document.images[0].naturalWidth === 180",
+                "the icon on its own")
+    safari.snapshot(results / "04-icon.png")
+    return {"step": "04-icon", "url": safari.evaluate("location.href"), "pages": found["pages"], "manifest": manifest,
+            "icon": {"type": icon["type"], "size": icon["size"], "sha256": hashlib.sha256(approved).hexdigest()},
+            "reached": "the approved Climb icon, name and standalone display at the root, project and task addresses"}
+
+
+def certificate_setup(safari: Safari, app: str, results: Path) -> dict:
+    """The device setup page for a fictional CA, as `alt tls-share` offers it: it names the CA and its SHA-256, and
+    Download the profile makes Safari fetch the profile, which the share sends in full. Whether Safari accepts it shows
+    only in its own prompt in the run's final screenshot; allowing, installing and trusting it are Safari's and
+    Settings' controls, out of the relay's reach. tests/test_tls.py checks the profile's contents."""
+    with tempfile.TemporaryDirectory() as folder:
+        ca = Path(folder) / "ca.crt"
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes",
+                        "-keyout", str(Path(folder) / "ca.key"), "-out", str(ca), "-days", "1",
+                        "-subj", "/CN=Fixture Altitude CA", "-addext", "basicConstraints=critical,CA:TRUE"],
+                       check=True, capture_output=True)
+        authority, sent = tls.identity(ca), threading.Event()
+        share = tls.Share({"name": "127.0.0.1", "kind": "IP", "url": app}, ca.read_bytes(), authority, 5,
+                          sent=lambda message: message.startswith("Sent the profile") and sent.set())
+    try:
+        safari.evaluate(f"location.href = {json.dumps(share.link + '#ios')}; 0")
+        rows = tls.fingerprint_rows(authority["sha256"])
+        safari.wait(f"document.body && [{json.dumps(authority['name'])}, ...{json.dumps(rows)}]"
+                    ".every((text) => document.body.innerText.includes(text))", "the setup page with the CA's SHA-256")
+        safari.snapshot(results / "05-setup.png")
+        safari.evaluate("[...document.links].find((a) => a.textContent === 'Download the profile').click(); 0",
+                        gesture=True)
+        if not sent.wait(30):
+            raise TimeoutError("Safari did not fetch the profile")
+        time.sleep(3)  # for Safari's prompt to appear in the final screenshot
+    finally:
+        share.close()
+    return {"step": "05-profile", "url": share.link, "ca": authority["name"], "sha256": authority["sha256"],
+            "reached": "the setup page's CA and SHA-256, and the profile sent to Safari in full"}
 
 
 def main() -> int:
@@ -247,15 +372,23 @@ def main() -> int:
         safari = Safari(inspector)
         try:
             record["steps"] = walkthrough(safari, ready["url"], ready["device"], args.results)
-        finally:
+        except FAILURES as exc:
+            record["error"] = str(exc)
+        # Recorded beside a failure, never in its place.
+        try:
             if safari.target:
                 record["browser"] = safari.evaluate(
                     "({userAgent: navigator.userAgent, viewport: [innerWidth, innerHeight], "
                     "devicePixelRatio, speechRecognition: typeof webkitSpeechRecognition})")
-                # Leave the app, so its change stream ends before the service stops.
-                safari.evaluate("location.href = 'about:blank'; 0")
-                safari.wait("location.href === 'about:blank'", "a blank page")
-    except (OSError, RuntimeError, TimeoutError, ValueError, KeyError) as exc:
+                if record["error"]:  # a finished walkthrough has left the app
+                    # Leave the app, so its change stream ends before the service stops.
+                    leave(safari, "about:blank")
+                    safari.wait("location.href === 'about:blank'", "a blank page")
+        except FAILURES as exc:
+            record["cleanup"] = str(exc)
+        if not record["error"]:
+            record["steps"].append(certificate_setup(safari, ready["url"], args.results))
+    except FAILURES as exc:
         record["error"] = str(exc)
     finally:
         service.terminate()
@@ -265,6 +398,8 @@ def main() -> int:
             service.kill()
             service.wait()
         service_log.close()
+    if record.get("cleanup") and not record["error"]:
+        record["error"] = record["cleanup"]
     console = safari.console if safari else []
     errors = [m for m in console if m.get("level") == "error"]
     (args.results / "console.log").write_text("".join(
