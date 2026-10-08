@@ -2554,6 +2554,18 @@ replacing the displayed capture. First acceptance also verifies the saved eviden
 of an already recorded decision retain their receipt. Viewing and follow-ups do not decide anything,
 and neither design acceptance nor publication releases a merge hold.
 
+Validation captures follow the same fixed-evidence path ([validation captures](DEVELOPMENT.md#validation-captures)).
+`alt task reply --capture <run>` reads that run's GIFs from the task's own `validation/` evidence through
+directory descriptors without following links, accepts only regular files that `capture.describe` parses as
+one GIF within 1 MiB, 1024 px a side and 300 frames (at most 12), and saves content-named copies in the task
+folder's `captures/` (at most 64 MiB per task) with their titles and shapes on the reply's conversation row.
+The conversation shows **Watch capture** under that reply, opening
+`/projects/<project>/tasks/<slug>/captures/<message>` in a new tab. The page reads
+`GET /api/captures/<project>/<slug>/<message>`, which resolves only that L2 reply; each GIF is
+`/api/captures/<project>/<slug>/<message>/<content-hash>.gif`, served to this machine or a paired browser
+only when the reply lists it, its bytes match the hash and it still parses as a capture, as `image/gif` with
+`nosniff`, a restrictive CSP, `no-referrer` and no-store caching. Anything else is **Capture unavailable**.
+
 ### Monitor and live sessions
 
 The Monitor page reads `/api/monitor`; no hold, incident, route or follow-up work is derived from

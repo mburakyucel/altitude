@@ -1453,6 +1453,35 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _captures(self, parts: list[str]) -> None:
+        """A reply's validation captures: the reply lists them by digest, and only those saved bytes cross this route."""
+        asset = unquote(parts[3]) if len(parts) == 4 else None
+        try:
+            if len(parts) not in (3, 4):
+                raise ValueError("capture unavailable")
+            project, slug, identity = [unquote(part) for part in parts[:3]]
+            row = T.task_captures(project, slug, identity)
+            if asset is None:
+                prefix = f"/api/captures/{quote(project, safe='')}/{slug}/{identity}"
+                return self._json({"run": row.get("capture_run"), "at": row.get("at"),
+                    "conversation_url": f"/projects/{quote(project, safe='')}/tasks/{slug}",
+                    "captures": [{**{key: item[key] for key in ("title", "bytes", "width", "height", "frames", "seconds")},
+                                  "url": f"{prefix}/{item['name']}"} for item in row["captures"]]})
+            data = T.capture_image(project, slug, row, asset)
+        except (T.TransitionError, OSError, ValueError, KeyError, TypeError):
+            if asset is not None:
+                return self._plain("Capture unavailable", 404)
+            return self._json({"error": "Capture unavailable"}, 404)
+        self.send_response(200)
+        self.send_header("Content-Type", "image/gif")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.end_headers()
+        self.wfile.write(data)
+
     def _redirect(self, location: str) -> None:
         self.send_response(302)
         self.send_header("Location", location)
@@ -2000,6 +2029,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, exc.status)
             if api == "design":
                 return self._task_design(parts[2:])
+            if api == "captures":
+                return self._captures(parts[2:])
             if api == "images":
                 return self._images(parts, q)
             if api == "access":
@@ -2201,11 +2232,12 @@ class Handler(BaseHTTPRequestHandler):
                             raise ValueError("alt task run: unsupported fields")
                         return run_machine_command(o["project"], o["slug"], o.get("attempt"), o.get("command"),
                                                    o.get("request"), owner=owner, waiting=waiting, gone=gone)
-                    if o.keys() - {"project", "slug", "attempt", "command", "kvm", "publish", "simulator"}:
+                    if o.keys() - {"project", "slug", "attempt", "command", "kvm", "publish", "simulator", "capture"}:
                         raise ValueError("alt task validate: unsupported fields")
                     return validation.run(o["project"], o["slug"], o.get("attempt"), o.get("command"),
                                           kvm=o.get("kvm", False), publish=o.get("publish"),
-                                          simulator=o.get("simulator", False), owner=owner, waiting=waiting, gone=gone)
+                                          simulator=o.get("simulator", False), capture=o.get("capture", False),
+                                          owner=owner, waiting=waiting, gone=gone)
                 return self._in_line(call)
             if parts == ["api", "pr", "close"]:
                 try:

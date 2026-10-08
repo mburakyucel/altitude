@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 
-from . import config, github_intake, images as image_store, platform, state as S, usage
+from . import capture as C, config, github_intake, images as image_store, platform, state as S, usage
 
 def short_reason(reason: str, limit: int = 200) -> str:
     """The first sentence of a block reason, for the card; the whole reason stays in detail."""
@@ -43,6 +43,7 @@ DESIGN_IMAGE_LIMIT = 8 << 20
 DESIGN_TOTAL_LIMIT = 32 << 20
 DESIGN_TEXT_LIMIT = 64 << 10
 DESIGN_IMAGE_COUNT = 12
+CAPTURE_TASK_LIMIT = 64 << 20   # attached validation captures one task keeps
 
 
 @contextmanager
@@ -216,15 +217,17 @@ def _capture_design(project: str, task: dict, selection: dict) -> tuple[dict, di
     return {**design, "id": _design_hash(design)}, files
 
 
-def _save_design(project: str, slug: str, files: dict[str, bytes]) -> None:
-    relative = (S.task_dir(project, slug) / "designs").relative_to(config.ROOT)
+def _save_design(project: str, slug: str, files: dict[str, bytes], folder: str = "designs",
+                 limit: int = DESIGN_IMAGE_LIMIT) -> None:
+    """Content-named `files` in the task's `folder`, written without following links."""
+    relative = (S.task_dir(project, slug) / folder).relative_to(config.ROOT)
     with _directory(config.ROOT, list(relative.parts), create=True) as directory:
         for name, data in files.items():
             try:
                 saved = os.stat(name, dir_fd=directory, follow_symlinks=False)
                 if not stat.S_ISREG(saved.st_mode):
                     raise ValueError("saved design path is not a regular file")
-                if saved.st_size <= DESIGN_IMAGE_LIMIT and _design_bytes(config.ROOT, str(relative / name), DESIGN_IMAGE_LIMIT) == data:
+                if saved.st_size <= limit and _design_bytes(config.ROOT, str(relative / name), limit) == data:
                     continue
             except FileNotFoundError:
                 pass
@@ -282,6 +285,74 @@ def require_design(project: str, slug: str, question: dict) -> None:
 
 def design_url(project: str, slug: str, question: dict) -> str:
     return f"/projects/{quote(project, safe='')}/tasks/{slug}/design/{question['id']}/{question['revision']}"
+
+
+def _run_captures(project: str, slug: str, run: object) -> tuple[list[dict], dict[str, bytes]]:
+    """Validation run `run`'s captures, read from this task's own evidence without following links: the Simulator's
+    beside the run and the lanes' own in its `captures/` folder. Each must be a regular file that is one GIF within the
+    capture budget; the reply keeps content-named copies, so later edits to the run's folder change nothing shown."""
+    if type(run) is not int or run < 1:
+        raise TransitionError("--capture names a validation run number")
+    evidence = S.task_dir(project, slug).relative_to(config.ROOT) / "validation"
+    sources = [(str(evidence / f"{run}.simulator.gif"), "Simulator iPhone")]
+    try:
+        with _directory(config.ROOT, [*evidence.parts, str(run), "captures"]) as folder:
+            names = sorted(name for name in os.listdir(folder) if name.endswith(".gif"))
+        sources += [(str(evidence / str(run) / "captures" / name), name[:-4].replace("-", " ").capitalize()) for name in names]
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError) as exc:
+        raise TransitionError(f"validation run {run} captures unavailable: {exc}") from exc
+    captures, files = [], {}
+    for path, title in sources:
+        try:
+            data = _design_bytes(config.ROOT, path, C.BUDGET)
+            shape = C.describe(data)
+        except FileNotFoundError:
+            continue
+        except (OSError, ValueError) as exc:
+            raise TransitionError(f"{title}: not a capture Altitude can show: {exc}") from exc
+        name = hashlib.sha256(data).hexdigest() + ".gif"
+        files[name] = data
+        captures.append({"name": name, "title": title, **shape})
+    if not captures:
+        raise TransitionError(f"validation run {run} has no captures; ask its lane for them with CAPTURE=1")
+    if len(captures) > C.RUN_LIMIT:
+        raise TransitionError(f"validation run {run} has {len(captures)} captures; a reply shows at most {C.RUN_LIMIT}")
+    return captures, files
+
+
+def _attach_captures(project: str, slug: str, run: object) -> list[dict]:
+    """Save run `run`'s captures in the task's `captures/` folder within `CAPTURE_TASK_LIMIT`."""
+    captures, files = _run_captures(project, slug, run)
+    folder = S.task_dir(project, slug) / "captures"
+    kept = {path.name: path.stat().st_size for path in folder.glob("*.gif")} if folder.is_dir() else {}
+    if sum({**kept, **{name: len(data) for name, data in files.items()}}.values()) > CAPTURE_TASK_LIMIT:
+        raise TransitionError(f"this task already keeps {CAPTURE_TASK_LIMIT >> 20} MiB of attached captures")
+    _save_design(project, slug, files, "captures", C.BUDGET)
+    return captures
+
+
+def task_captures(project: str, slug: str, message_id: str) -> dict:
+    """The conversation row `message_id` that lists captures; nothing else is ever selected."""
+    config.project(project)
+    S.require_task_slug(slug)
+    row = next((row for row in task_messages(project, slug) if row.get("id") == message_id), None)
+    if not row or row.get("role") != "l2" or not row.get("captures"):
+        raise ValueError("capture unavailable")
+    return row
+
+
+def capture_image(project: str, slug: str, row: dict, name: str) -> bytes:
+    """One capture the row lists, exactly the bytes its name digests and still a capture."""
+    if not re.fullmatch(r"[a-f0-9]{64}\.gif", name) or not any(c["name"] == name for c in row["captures"]):
+        raise ValueError("capture unavailable")
+    relative = (S.task_dir(project, slug) / "captures" / name).relative_to(config.ROOT)
+    data = _design_bytes(config.ROOT, str(relative), C.BUDGET)
+    if hashlib.sha256(data).hexdigest() != name[:-4]:
+        raise ValueError("saved capture was altered")
+    C.describe(data)
+    return data
 
 
 def ci_recheck_identity(task: dict) -> dict:
@@ -476,10 +547,10 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
             stop_id: str | None = None,
             uploads: list[dict] | None = None, image_ids: list[str] | None = None,
             request_id: str | None = None, request_digest: str | None = None,
-            summary: str | None = None) -> dict:
+            summary: str | None = None, capture_run: int | None = None) -> dict:
     """Append one message to the task conversation. The operator's and L3's messages also wait in the task's inbox until
     the worker reads them at its next checkpoint. An L2 names its attempt, so a worker of an earlier attempt cannot speak for
-    the current one. L3's one-line `summary` describes its message in the conversation's folded row."""
+    the current one, and may attach one validation run's captures (`capture_run`). L3's one-line `summary` describes its message in the conversation's folded row."""
     if role not in TASK_MESSAGE_ROLES:
         raise TransitionError(f"task message role must be one of {TASK_MESSAGE_ROLES}")
     text = str(text or "").strip()
@@ -533,6 +604,10 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
             if len(members) == 1:
                 row.update(question_id=members[0]["id"], question_revision=members[0]["revision"])
         d = S.task_dir(project, slug)
+        if capture_run is not None:
+            if role != "l2":
+                raise TransitionError("Only the owner attaches validation captures.")
+            row.update(captures=_attach_captures(project, slug, capture_run), capture_run=capture_run)
         if uploads or image_ids:
             if role not in (OPERATOR_MESSAGE_ROLE, "l3") or uploads and image_ids:
                 raise TransitionError("Images must be operator input or an explicit coordinator handoff.")

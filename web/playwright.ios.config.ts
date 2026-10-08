@@ -1,5 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 import base from "./playwright.config";
+import { captures } from "./capture-reporter";
 
 // Opt-in emulated iPhone lane (`make ui-ios`): the same walkthroughs in Playwright's WebKit with
 // iPhone metrics, touch and user agent. It is desktop WebKit evidence, not iOS Safari, Home Screen,
@@ -9,8 +10,9 @@ import base from "./playwright.config";
 export default defineConfig({
   ...base,
   outputDir: "./ui-artifacts/ios/results",
-  reporter: [["list"], ["html", { outputFolder: "ui-artifacts/ios/report", open: "never" }]],
-  use: { headless: true, screenshot: "only-on-failure", trace: "retain-on-failure" },
+  reporter: [["list"], ["html", { outputFolder: "ui-artifacts/ios/report", open: "never" }],
+    ...(captures ? [["./capture-reporter.ts"] as const] : [])],
+  use: { headless: true, screenshot: "only-on-failure", trace: "retain-on-failure", video: base.use?.video },
   projects: [
     {
       // Named "phone" so specs apply their phone layout and @phone-only walkthroughs.

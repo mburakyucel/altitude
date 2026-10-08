@@ -480,6 +480,9 @@ export const TaskMessageSchema = z
     review_id: z.string().nullish(),
     delivery: z.object({ state: z.enum(["queued", "sending", "removed", "delivered", "unconfirmed"]), at: z.string().nullable(), removable: z.boolean().optional(), send_now: z.boolean().optional(), send_now_reason: z.string().nullish(), send_now_pending: z.boolean().optional() }).nullish(),
     images: z.array(MessageImageSchema).nullish(),
+    /** An L2 reply's GIFs from one validation run, opened on the task's captures page. */
+    captures: z.array(z.object({ name: z.string(), title: z.string() }).passthrough()).nullish(),
+    capture_run: z.number().nullish(),
   })
   .passthrough();
 
@@ -982,6 +985,22 @@ export function useTaskDesign(project: string, slug: string, question: string, r
     queryFn: async () => TaskDesignSchema.parse(await api(`/api/design/${project}/${slug}/${question}/${revision}`)),
     refetchInterval: 2_000,
     retry: false,
+  });
+}
+
+const TaskCapturesSchema = z.object({
+  run: z.number(), at: z.string().nullable(), conversation_url: z.string(),
+  captures: z.array(z.object({ title: z.string(), url: z.string(), bytes: z.number(), width: z.number(), height: z.number(), frames: z.number(), seconds: z.number() })),
+});
+export type TaskCapture = z.infer<typeof TaskCapturesSchema>["captures"][number];
+
+/** One reply's validation captures; kept only while their page is open. */
+export function useTaskCaptures(project: string, slug: string, message: string) {
+  return useQuery({
+    queryKey: ["task-captures", project, slug, message],
+    queryFn: async () => TaskCapturesSchema.parse(await api(`/api/captures/${project}/${slug}/${message}`)),
+    retry: false,
+    gcTime: 0,
   });
 }
 

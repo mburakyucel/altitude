@@ -453,6 +453,14 @@
 .design-screenshot figcaption { display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: 13px; }
 .design-screenshot figcaption a { flex-shrink: 0; }
 .design-screenshot img { display: block; width: 100%; max-height: 72vh; object-fit: contain; border: 1px solid var(--hairline); border-radius: 8px; }
+/* Validation captures play at their recorded size, narrowed to the page; the link sits under its reply. */
+.capture { display: flex; flex-direction: column; gap: 10px; margin: 0; min-width: 0; }
+.capture figcaption { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; font-size: 13px; }
+.capture figcaption b { overflow-wrap: anywhere; }
+.capture figcaption span { font-variant-numeric: tabular-nums; }
+.capture img { display: block; max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 0 0 1px var(--hairline); background: var(--card); }
+.capture-link { align-self: flex-start; overflow-wrap: anywhere; }
+.shell[data-phone] .capture-link { display: inline-flex; align-items: center; min-height: 44px; }
 .page-body {
   display: flex;
   min-width: 0;

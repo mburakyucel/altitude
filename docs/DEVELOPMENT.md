@@ -339,7 +339,7 @@ acceptance. Loaded history has proportional DOM/memory cost; recent-first loadin
 
 `alt task validate -- make ui-validate` repeats the full fictional phone/desktop browser
 suite against the task's committed candidate. `UI_ARGS=project-menu.pw.ts` selects a focused
-journey. The command installs frozen dependencies and locked Chromium into the disposable run,
+journey, and `CAPTURE=1` with it keeps each selected journey as a [capture](#validation-captures). The command installs frozen dependencies and locked Chromium into the disposable run,
 builds the web app, then runs a finite blank/local-fictional full-Chromium preflight before journeys.
 It keeps stage logs, browser/version/executable digest, effective shared launch options, reports
 and named attachments in `VALIDATION_RESULTS`; the daemon retains them privately on the task.
@@ -543,8 +543,11 @@ make ui-simulator   # inside a task: alt task validate --simulator -- sh -c 'mak
   ends the run as `cleanup failed` and keeps new runs refused until a later request or start removes
   it. A phone that does not start is removed and the request is refused with Simulator's error, before
   any run is recorded.
+- **Capture.** With `--capture` (`make ui-simulator CAPTURE=1`), altd also records the screen from just
+  before the command starts and keeps it as `validation/<n>.simulator.gif`; the recording stops when the
+  command ends, forcefully after 10 seconds (see [validation captures](#validation-captures)).
 - **Record.** The run's record and status line name the Xcode version, the iOS runtime and build,
-  the iPhone model, Safari's version and the screenshot. On Linux, or on a Mac without Xcode or an iOS
+  the iPhone model, Safari's version, the screenshot and any capture. On Linux, or on a Mac without Xcode or an iOS
   Simulator runtime, `--simulator` is refused with the reason.
 
 `scripts/ios_simulator.py` is the walkthrough: it serves the built app with the fixture engines and
@@ -646,6 +649,41 @@ Named states cover loading, queued controls, interruption pending, delivered and
 denied and unconfirmed requests, unavailable delivery and waiting for system work. Unit and Python
 fixtures additionally cover selected-message ordering, concurrent pickup, question/fault supersession,
 Stop recovery and engine job termination. The emulated iPhone lane remains separate evidence.
+
+## Validation captures
+
+A lane records nothing unless asked. With `CAPTURE=1` it keeps a few small looping GIFs with that run's
+evidence, so the operator can watch what it did from the task conversation:
+
+| Lane | Request | Capture |
+| --- | --- | --- |
+| iOS Simulator | `make ui-simulator CAPTURE=1` (`alt task validate --simulator --capture`) | The iPhone's whole screen from just before the command starts to its end, recorded by altd with `simctl io recordVideo`, as `validation/<n>.simulator.gif` beside the screenshot |
+| VM installation | `make installation-vm CAPTURE=1` (`--capture`) | An accelerated replay of the lane's progress lines and harness logs, each line at the time it arrived and led by its real elapsed time, in an 80×24 terminal that fills and then clears like a pager, under a top line naming the commit and current step, as `captures/installation-vm.gif` in the results |
+| Browser walkthroughs | `make ui-validate UI_ARGS=spec.pw.ts CAPTURE=1`; also `make ui` / `make ui-ios` | Playwright's video of each selected journey, one GIF per journey and viewport, in the results' `captures/` (`web/ui-artifacts/captures/` or `web/ui-artifacts/ios/captures/` outside the runner) with `captures.json` naming each outcome |
+
+The browser lanes refuse `CAPTURE=1` without `UI_ARGS`, so a whole-suite run never records hundreds of
+journeys, and `make check` never records. `altitude/capture.py` makes every capture the same way: 4 frames a
+second, unchanged frames dropped, a still screen held at most 2 s, at most 60 s of playback (a longer run is
+sped up evenly), 64 colours without dithering, phone captures 390 px wide and desktop ones 800 px. A capture
+is at most 1 MiB, 1024 px a side and 300 frames, and a run keeps at most 12; one over budget is re-encoded
+once at three-quarter size and otherwise not kept. Measured phone and desktop journeys are 0.3–0.6 MiB for
+about ten seconds.
+
+`ffmpeg` is an optional capability found on `PATH` (altd's own for the Simulator, the run's for the other
+lanes); the validation image installs it. A capture never decides a lane: a recording, conversion or budget
+failure is the capture's own outcome (`none: ffmpeg unavailable` in the run record's `simulator.capture`,
+`vm.json`'s `capture` or `captures.json`) beside the lane's unchanged exit and evidence. Recordings and frames
+stay in the run's own area and are removed with it; Playwright's HTML report keeps each journey's WebM like
+any Playwright video, and the per-test copies are removed after conversion.
+
+`alt task reply --capture <n>` attaches run `<n>`'s captures to the owner's reply. Each is read from the task's
+own `validation/` evidence without following links and must parse as one GIF within the limits above; the
+reply keeps content-named copies in the task's `captures/` folder, at most 64 MiB per task, so later edits to
+the run folder change nothing it shows. The conversation shows **Watch capture · title** (or **Watch N
+captures**) under the reply, opening a page in a new tab where each GIF loops at its recorded size with its
+title, size and length; a missing or altered file shows **Capture unavailable** with Retry. Captures hold
+only the lanes' fictional data, never enter Git or a PR diff, and are removed or archived with the task's
+other evidence.
 
 ## Validation environments
 
@@ -951,7 +989,8 @@ through the [validation runner](#validation-runner) with KVM. The committed `SOU
 is built inside the container, results go to the task folder's `validation/<n>/`, and the cloud image
 is cached in `~/.altitude-validation/cache`. The container has no GitHub login, so `BASELINE` runs
 need the operator's own shell or a [operator grant](CLI.md#operator-grant). The runner never touches
-the host's Altitude service, trust stores or network configuration.
+the host's Altitude service, trust stores or network configuration. `CAPTURE=1` adds an accelerated replay
+of the run as `captures/installation-vm.gif` ([validation captures](#validation-captures)).
 
 ### macOS installation lane
 

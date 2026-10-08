@@ -17,7 +17,8 @@ from unittest import TestCase, mock
 
 from tests.support import SUITE
 from tests import test_validation as base
-from altitude import config, platform, simulator as sim, state as S, tasks as T, validation
+from altitude import capture as C, config, platform, simulator as sim, state as S, tasks as T, validation
+from tests.test_capture import gif
 
 XCRUN = f"#!{sys.executable}\n" + r'''"""xcrun stand-in: xcodebuild's version and simctl on private device sets, failing a step on request."""
 import json, os, shutil, sys, uuid
@@ -31,7 +32,7 @@ if args[0] == "xcodebuild":
 args, devices = args[1:], None
 if args[0] == "--set":
     devices, args = Path(args[1]), args[2:]
-step = "delete" if args[:2] == ["delete", "all"] else args[0]
+step = "delete" if args[:2] == ["delete", "all"] else "recordVideo" if args[2:3] == ["recordVideo"] else args[0]
 if step == os.environ.get("FAKE_SIMCTL_FAIL"):
     if step == "create":
         (devices / "PARTIAL").mkdir()   # the device exists before simctl reports failure
@@ -52,6 +53,13 @@ elif args[0] == "getenv":
     print(os.environ["FAKE_INSPECTOR"])
 elif args[0] == "appinfo":
     print('{\n    CFBundleIdentifier = "com.apple.mobilesafari";\n    Path = "%s";\n}' % os.environ["FAKE_SAFARI"])
+elif step == "recordVideo":   # records until interrupted, then finishes its file, unless it hangs on request
+    import signal, time
+    signal.signal(signal.SIGINT, signal.SIG_IGN if os.environ.get("FAKE_RECORD_HANG") else
+                  lambda *_: (Path(args[-1]).write_bytes(b"fixture video"), sys.exit(0)))
+    print("Recording started", file=sys.stderr, flush=True)
+    while True:
+        time.sleep(0.05)
 elif args[0] == "io":
     Path(args[3]).write_bytes(b"\x89PNG fixture screen")
 elif args[:2] == ["shutdown", "all"]:
@@ -473,6 +481,63 @@ json.dump({"apps": sorted(apps), "opened": opened, "socket": os.environ["SIMULAT
             tuple(validation.candidate_dirs(validation.home() / "runs" / area_name)),
             validation.home() / "runs" / area_name / f"{result['unit']}.log", config.PORT),
             "the run's profile is the one every macOS run has")
+
+    def converting(self, failure: str | None = None):
+        """The ffmpeg capability at its seam: the recording becomes a fixture GIF, or fails with `failure`."""
+        made = []
+
+        def video(source, target, width):
+            made.append((source.read_bytes(), width))
+            if failure:
+                raise C.CaptureError(failure)
+            target.write_bytes(gif())
+            return C.describe(gif())
+        return self.patch(validation.C, "video", side_effect=video), made
+
+    def test_a_capture_records_the_phone_while_the_command_runs_and_is_kept_beside_its_screenshot(self):
+        _, made = self.converting()
+        result = self.drive(capture=True)
+        self.assertEqual((result["exit"], result["ended"], result["cleanup"]), (0, "exit", None), result["output"])
+        steps = [call[3] if call[3] != "io" else call[5] for call in self.calls()[1:] if call[0] == "simctl"]
+        self.assertEqual(steps[:7], ["create", "bootstatus", "getenv", "appinfo", "recordVideo", "openurl",
+                                     "screenshot"], "recording starts before the command and ends before the screenshot")
+        [record] = [call for call in self.calls() if call[5:6] == ["recordVideo"]]
+        self.assertEqual(record[6:8], ["--codec=h264", "--force"])
+        self.assertEqual(made, [(b"fixture video", C.PHONE)])
+        evidence = S.task_dir(self.project, self.slug) / "validation"
+        self.assertEqual(result["simulator"]["capture"], str(evidence / "1.simulator.gif"))
+        self.assertEqual(self.rows()[0]["simulator"]["capture"], str(evidence / "1.simulator.gif"))
+        self.assertEqual((evidence / "1.simulator.gif").read_bytes(), gif())
+        self.assertEqual(sorted(p.name for p in evidence.iterdir() if p.is_file()),
+                         ["1.log", "1.simulator.gif", "1.simulator.png"], "the recording itself is not kept")
+        self.assertEqual(self.runs(), [])
+
+    def test_a_capture_that_fails_never_changes_the_run_or_its_other_evidence(self):
+        for name, setup, why in (
+                ("recording", lambda: self.setenv("FAKE_SIMCTL_FAIL", "recordVideo"),
+                 "simctl recordVideo failed: recordVideo: the fixture failed"),
+                ("ffmpeg", lambda: self.converting(C.UNAVAILABLE), C.UNAVAILABLE),
+                ("stop", lambda: (self.setenv("FAKE_RECORD_HANG", "1"), self.patch(sim, "RECORD_STOP", 0.3)),
+                 "the screen recording did not stop within 0.3 s"),
+                ("start", lambda: self.patch(sim.Phone, "record", side_effect=OSError("no recorder")),  # stays patched
+                 "the screen recording did not start: no recorder")):
+            with self.subTest(name):
+                self.converting()
+                setup()
+                result = self.drive(capture=True)
+                self.assertEqual((result["exit"], result["ended"], result["cleanup"]), (0, "exit", None))
+                self.assertEqual(result["simulator"]["capture"], f"none: {why}")
+                self.assertTrue(Path(result["simulator"]["screenshot"]).is_file())
+                self.assertEqual(self.runs(), [], "a recording that would not stop is ended with the run")
+                self.setenv("FAKE_SIMCTL_FAIL", None)
+                self.setenv("FAKE_RECORD_HANG", None)
+
+    def test_without_capture_nothing_records_and_capture_needs_the_simulator(self):
+        result = self.drive()
+        self.assertNotIn("capture", result["simulator"])
+        self.assertNotIn("recordVideo", [step for call in self.calls() for step in call])
+        self.assertIn("needs --simulator", self.validate(["true"], capture=True, status=400)["error"])
+        self.assertIn("are on or off", self.validate(["true"], simulator=True, capture="yes", status=400)["error"])
 
     def test_cli_door(self):
         self.serving(self.httpd.server_address[1])

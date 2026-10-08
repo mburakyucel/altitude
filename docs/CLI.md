@@ -973,7 +973,7 @@ replaying tool logs. See [session lifecycle](SESSION_LIFECYCLE.md#messages-resum
 alt task new --title <title> [--wait <reason> | --after <task>] [--effort <level>] [--paths a.py,b/] [--hold-merge <reason>] [--image <id>] -
 alt task release <slug> --reason <reason>
 alt task message <slug> <text>|- [--file <path>] [--image <id>] [--summary <line>]
-alt task reply [<slug>] <text>|- [--file <path>]
+alt task reply [<slug>] <text>|- [--file <path>] [--capture <run>]
 alt task block <slug> --reason <question> [--recommendation <approach> --label <action> --why <reason>] [--for-operator | --fault]
 alt task escalate <slug> --question <question> [--recommendation <approach> --label <action> --why <reason>]
 alt task resume|stop <slug> --reason <reason>
@@ -993,7 +993,8 @@ alt task reject <slug> --reason <reason>
 `alt task reply - <<'EOF'` keeps amounts such as $1.20, quotes and line breaks literal; a single-quoted
 argument suffices for one line. A reply always goes to the current task; like the sibling verbs it may
 lead with that task's slug (`alt task reply "$ALTITUDE_TASK" -`), and any other extra argument is
-refused. Without `--questions-file`, a block's reason is its question: a different reason revises the
+refused. `--capture <run>` attaches that validation run's [captures](DEVELOPMENT.md#validation-captures)
+as fixed copies; the reply shows **Watch capture** under its text. Without `--questions-file`, a block's reason is its question: a different reason revises the
 open question, and the saved reason re-parks it unchanged.
 
 Repository changes use `alt land --message <message> [--merge]`. Project, incident, service, TLS,
@@ -1955,7 +1956,7 @@ not which local process calls; the grant record and its per-command log are the 
 ### Validation runs
 
 ```text
-alt task validate [--kvm] [--publish PORT] [--simulator] -- <command>
+alt task validate [--kvm] [--publish PORT] [--simulator [--capture]] -- <command>
 ```
 
 The current owner runs one command against a throwaway clone of its task's committed `HEAD`, isolated
@@ -1965,7 +1966,8 @@ Linux, and a job under the validation sandbox profile on macOS. No grant is need
 `--publish` forwards a container port to a free loopback port and prints it; a macOS run refuses both
 and binds free loopback ports itself. On a Mac, `--simulator` adds a disposable iOS Simulator iPhone
 whose Safari the command reaches through the relay socket in `$SIMULATOR_INSPECTOR`, kept as a
-screenshot and removed when the run ends ([iOS Simulator runs](DEVELOPMENT.md#ios-simulator-runs)).
+screenshot and removed when the run ends ([iOS Simulator runs](DEVELOPMENT.md#ios-simulator-runs)); `--capture`
+also records its screen as `validation/<n>.simulator.gif` ([validation captures](DEVELOPMENT.md#validation-captures)).
 The command starts in the clone, and whatever it writes to
 `$VALIDATION_RESULTS` (`/results` in the container) is copied to the task folder's `validation/<n>/`,
 and its output to `validation/<n>.log`. The run is recorded in `machine.jsonl` with purpose

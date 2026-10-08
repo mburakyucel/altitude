@@ -31,12 +31,12 @@ class TestServicePayload(AltitudeCase):
                 runpy.run_path(str(ALT))["main"](list(argv))
         return sent.exception.args
 
-    def test_validate_sends_simulator_kvm_and_publish_only_when_given(self):
+    def test_validate_sends_simulator_capture_kvm_and_publish_only_when_given(self):
         base = {"project": self.project, "slug": "owned", "attempt": "1", "command": ["true"]}
         self.assertEqual(self.sent("task", "validate", "--", "true", actor="l2"), ("task/validate", base))
-        self.assertEqual(self.sent("task", "validate", "--simulator", "--kvm", "--publish", "8080", "--", "true",
-                                   actor="l2"),
-                         ("task/validate", {**base, "simulator": True, "kvm": True, "publish": 8080}))
+        self.assertEqual(self.sent("task", "validate", "--simulator", "--capture", "--kvm", "--publish", "8080", "--",
+                                   "true", actor="l2"),
+                         ("task/validate", {**base, "simulator": True, "capture": True, "kvm": True, "publish": 8080}))
 
     def test_issue_new_sends_labels_only_when_given(self):
         base = {"project": self.project, "operation": "new", "body": "text", "title": "T"}

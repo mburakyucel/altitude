@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { availableParallelism } from "node:os";
 import { defineConfig, devices } from "@playwright/test";
+import { captures } from "./capture-reporter";
 
 // The recovery lane exercises local project/draft/clipboard fixtures; the full suite keeps
 // Chromium's full distribution, whose notification APIs are absent from the headless shell.
@@ -13,7 +14,7 @@ export default defineConfig({
   testMatch: "**/*.pw.ts",
   outputDir: results ? resolve(results, "tests") : shell ? "./ui-artifacts/shell-results" : "./ui-artifacts/results",
   reporter: [["list"], ["html", { outputFolder: results ? resolve(results, "report") : shell ? "ui-artifacts/report/shell" : "ui-artifacts/report", open: "never" }],
-    ["./browser-evidence.ts"]],
+    ["./browser-evidence.ts"], ...(captures ? [["./capture-reporter.ts"] as const] : [])],
   workers: process.env.CI ? availableParallelism() : 2,
   fullyParallel: Boolean(process.env.CI),
   retries: 0,
@@ -35,6 +36,7 @@ export default defineConfig({
     headless: true,
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
+    video: captures ? "on" : "off",
   },
   projects: [
     {

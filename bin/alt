@@ -380,6 +380,7 @@ def main(argv=None) -> None:
     vl.add_argument("--kvm", action="store_true", help="Linux: add /dev/kvm for a virtual machine")
     vl.add_argument("--publish", type=int, metavar="PORT", help="Linux: publish this container port on a free 127.0.0.1 port")
     vl.add_argument("--simulator", action="store_true", help="macOS: a disposable iOS Simulator iPhone whose Safari the command drives through $SIMULATOR_INSPECTOR")
+    vl.add_argument("--capture", action="store_true", help="with --simulator: record the iPhone's screen as a small GIF beside its screenshot")
     vl.add_argument("command", nargs=argparse.REMAINDER, help="-- then the command and its arguments")
     dn = ts.add_parser("done"); dn.add_argument("slug"); dn.add_argument("--digest", default=""); dn.add_argument("--file")
     dn.add_argument("--findings-tracked", default="", metavar="REFERENCE",
@@ -387,6 +388,7 @@ def main(argv=None) -> None:
     br = ts.add_parser("brief"); br.add_argument("slug"); br.add_argument("--file"); br.add_argument("text", nargs="?")
     rp = ts.add_parser("reply", help="current L2: append a human-readable reply to this task's conversation")
     rp.add_argument("text", nargs="*", metavar="[slug] text|-", help="optionally led by this task's slug, as in the sibling verbs; - or nothing reads stdin"); rp.add_argument("--file")
+    rp.add_argument("--capture", type=int, metavar="RUN", help="attach this validation run's captures; the reply links to them")
     review = ts.add_parser("review", help="request, run and assess a cross-engine review of the owned task")
     review_actions = review.add_subparsers(dest="review_action", required=True)
     for action in ("status", "request", "run", "assess", "cancel", "withdraw"):
@@ -518,7 +520,7 @@ def main(argv=None) -> None:
         import urllib.request
         body = "" if setup_command or machine_run or validation_run or review_run or terminal_read or sys.stdin.isatty() and (closing_pr or args.operation == "close") else sys.stdin.read()
         payload = {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"],
-                   "review_id": args.review_id, "context_ids": args.context_message, "proposal_id": args.proposal_message} if review_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"]} if terminal_read else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "request": uuid.uuid4().hex} if machine_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "kvm": args.kvm, "publish": args.publish, "simulator": args.simulator} if validation_run else {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
+                   "review_id": args.review_id, "context_ids": args.context_message, "proposal_id": args.proposal_message} if review_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"]} if terminal_read else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "request": uuid.uuid4().hex} if machine_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "kvm": args.kvm, "publish": args.publish, "simulator": args.simulator, "capture": args.capture} if validation_run else {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
                    "project": _project(args), "operation": args.operation, "body": body,
                    **{key: getattr(args, key) for key in ("title", "labels", "number", "reason") if hasattr(args, key)}}
         # An option left unset sends nothing, so a checkout awaiting activation keeps working against the older
@@ -589,7 +591,7 @@ def main(argv=None) -> None:
                               + (f"; results {result['results']}; commit {result['commit']} tree {result['tree']}; "
                                  f"{result['host']}; {result['isolation']}" if validation_run else "")
                               + ("; " + ", ".join(str(result["simulator"].get(key)) for key in (
-                                  "device", "runtime", "safari", "xcode", "screenshot") if result["simulator"].get(key))
+                                  "device", "runtime", "safari", "xcode", "screenshot", "capture") if result["simulator"].get(key))
                                  if validation_run and result.get("simulator") else ""))
                         # Only a command that exited 0 and whose run ended cleanly is a success.
                         code = 124 if result["timed_out"] else result["exit"] if ended == "exit" else 1
@@ -850,7 +852,8 @@ def main(argv=None) -> None:
             if len(words) > 1:
                 sys.exit("alt task reply: give one text or -, optionally after this task's slug")
             args.text = words[0] if words else "-"
-            out(T.message(p, slug, "l2", _stdin_or_file(args), by="l2", expected_attempt=int(attempt)))
+            out(T.message(p, slug, "l2", _stdin_or_file(args), by="l2", expected_attempt=int(attempt),
+                          capture_run=args.capture))
         elif tc in ("show", "status"):
             from altitude import status
             slug = args.slug or os.environ.get("ALTITUDE_TASK")

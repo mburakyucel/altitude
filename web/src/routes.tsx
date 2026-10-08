@@ -11,6 +11,7 @@ import DecisionPage from "./routes/Decision";
 import Task from "./routes/Task";
 import TaskReport from "./routes/TaskReport";
 import TaskDesign from "./routes/TaskDesign";
+import TaskCaptures from "./routes/TaskCaptures";
 import TaskFile from "./routes/TaskFile";
 import Monitor from "./routes/Monitor";
 import Settings from "./routes/Settings";
@@ -74,6 +75,7 @@ export const routes: RouteObject[] = [
       // The task's report view: what the expanded system card links as Full report and Digest (§3.4).
       { path: "/projects/:name/tasks/:slug/report", element: <TaskReport /> },
       { path: "/projects/:name/tasks/:slug/design/:questionId/:revision", element: <TaskDesign /> },
+      { path: "/projects/:name/tasks/:slug/captures/:messageId", element: <TaskCaptures /> },
       { path: "/chat", loader: () => redirect("/projects") },
       { path: "/chat/:name", loader: ({ params }) => redirect(`/projects/${params.name}`) },
       { path: "/monitor", element: <Monitor /> },

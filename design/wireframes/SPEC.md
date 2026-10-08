@@ -849,6 +849,20 @@ unavailable**, **Retry** and **Back to question**, with saved content hidden. An
 Earlier versions retain their original text and screenshots. Existing conversation listening and
 decision states are reused; the viewer has no microphone, composer or empty publishing form.
 
+#### 3.9.2 Validation captures
+
+An L2 reply with attached validation captures shows an underlined **Watch capture · title** link (or
+**Watch N captures**) under its text, at least 44 px tall on phone. It opens
+`/projects/:name/tasks/:slug/captures/:messageId` in another browser tab, leaving the conversation and
+draft intact. The page shows **← Back to conversation**, **Captures from validation run N**, when the
+reply attached them, and each capture as its title, size, length and frame count above the GIF looping
+at its recorded size, narrowed to the page. A reply without captures has no link.
+
+Phone and desktop states are walked in `web/e2e/captures.pw.ts`: **Loading captures…** gives way to
+content; an unknown, denied or failed read shows **Capture unavailable** with **Retry** and Back. A
+capture starts at **Loading capture…**; a missing or altered one hides its meta and shows **Capture
+unavailable.** with **Retry capture**, and recovery removes the error.
+
 ### 3.10 Task page
 
 The [maintained task states](TaskStates.html) describe activity and steering. Task actions stay
