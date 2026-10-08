@@ -89,17 +89,18 @@ class TestReviewInterfaces(AltitudeCase):
     def test_run_uses_fixed_daemon_operation_and_returns_receipt(self):
         self.serving(8890)  # the transport is replaced; nothing listens
         for proposal_id in (None, "original-proposal"):
-            arguments = ("--proposal-message", proposal_id) if proposal_id else ()
+            arguments = ("--context-message", "source", "--proposal-message", proposal_id) if proposal_id else ()
             response = mock.MagicMock()
             response.__enter__.return_value = io.BytesIO(b'{"ok":true,"review":{"id":"review","state":"completed"}}')
             with self.subTest(proposal_id=proposal_id), mock.patch("urllib.request.urlopen", return_value=response) as transport:
-                result = self.cli("task", "review", "run", "--review-id", "review", "--context-message", "source", *arguments)
+                result = self.cli("task", "review", "run", "--review-id", "review", *arguments)
                 self.assertEqual(result["state"], "completed")
                 request = transport.call_args.args[0]
                 self.assertTrue(request.full_url.endswith("/api/task/review/run"))
                 self.assertEqual(json.loads(request.data), {"project": self.project, "slug": self.slug, "attempt": "2",
-                                                           "review_id": "review", "context_ids": ["source"],
-                                                           **({"proposal_id": proposal_id} if proposal_id else {})})
+                                                           "review_id": "review",
+                                                           **({"context_ids": ["source"], "proposal_id": proposal_id}
+                                                              if proposal_id else {})})
                 self.assertIsNone(transport.call_args.kwargs["timeout"])
 
     def test_streamed_execution_error_is_not_a_success_receipt(self):
