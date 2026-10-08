@@ -1045,6 +1045,8 @@ Preserve all previous deliveries, exact remaining scope and holds; chat acknowle
 completion. Old verifier or archive callbacks cannot finish its
 continuation. Done, archived and rejected tasks cannot be resumed or messaged through this path.
 Archived restoration remains a separate product decision because execution context may be removed.
+The maintenance tick removes a done or rejected task's worktree and merged branch under the
+[retention rule](OPERATIONS.md#worktree-and-source-export-retention).
 
 An L2 block that publishes or revises questions queues one coordinator notification with the open group,
 including operator-directed blocks. The operator flag places those decisions in Needs you without waiting for L3; it does not

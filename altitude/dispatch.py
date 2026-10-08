@@ -5,8 +5,10 @@ from datetime import datetime, timedelta, timezone
 import fcntl
 import json
 import os
+import re
 import subprocess
 import shlex
+import shutil
 import sys
 import uuid
 from pathlib import Path
@@ -1811,11 +1813,51 @@ def _pr_merged_at(repo: Path, task: dict, branch_sha: str) -> bool:
     return False
 
 
-def cleanup_after_done(project: str, task: dict) -> list[str]:
-    """After archive, remove the task's worktree and branch once its work is on origin/main and nothing uses it.
+SOURCE_EXPORT = re.compile(r"\.altitude-source/([0-9a-f]{40})")
 
-    A refusal is a note, never a fault: a tree that is unmerged, dirty, or still in use simply stays for a later
-    pass or a manual `git worktree prune`. `pull_after_done` runs afterwards in every case."""
+
+def prune_source_exports() -> list[str]:
+    """Remove `.altitude-source/<sha>` exports that nothing can still launch from or read.
+
+    The running service, `current` and an in-flight `next` link keep theirs. A worker keeps the export named in
+    its task's brief and session settings until its task ends and cleanup has run; review and validation jobs use
+    the running service's export."""
+    root = config.SOURCE.parent
+    if config.RELEASE is not None or root.name != ".altitude-source":
+        return []
+    keep = {config.SOURCE.name} | {Path(os.readlink(link)).name for link in (root / "current", root / "next")
+                                   if link.is_symlink()}
+    stale = [path for path in root.iterdir() if re.fullmatch(r"[0-9a-f]{40}", path.name)
+             and path.name not in keep and path.is_dir() and not path.is_symlink()]
+    if not stale:
+        return []
+    for project in config.load_projects():
+        for task in S.list_tasks(project, include_archive=True):
+            if task["state"] in S.OPEN_STATES or not task.get("cleaned"):
+                for name in ("brief.md", "settings.json"):
+                    try:
+                        keep.update(SOURCE_EXPORT.findall((S.task_dir(project, task["slug"]) / name).read_text()))
+                    except OSError:
+                        pass
+    notes = []
+    for path in stale:
+        if path.name in keep:
+            continue
+        try:
+            shutil.rmtree(path)
+            notes.append(f"removed source export {path.name}")
+        except OSError as e:
+            notes.append(f"could not remove source export {path.name}: {e}")
+    return notes
+
+
+def cleanup_task(project: str, task: dict) -> list[str]:
+    """After a task ends (done or rejected), remove its worktree and branch once nothing needs them.
+
+    The worktree goes once no worker runs, its tree is clean and every commit in it is on a branch or remote.
+    The branch goes once its tip is on origin/main or a verified PR merged it; a branch with commits found only
+    here stays, with its reason recorded. A running worker or a failed fetch defers to a later pass; any other
+    refusal is a recorded note, never a fault. `pull_after_done` follows a done task in every case."""
     repo = config.project_path(project)
     slug, wt, branch = task.get("slug") or "", task.get("worktree"), task.get("branch")
     notes: list[str] = []
@@ -1823,35 +1865,49 @@ def cleanup_after_done(project: str, task: dict) -> list[str]:
     def git(*args: str, cwd: Path = repo) -> subprocess.CompletedProcess:
         return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=120)
 
-    def keep(reason: str) -> list[str]:
-        S.append_event(project, slug, "cleanup-worktree", action="skipped", worktree=wt, reason=reason)
-        notes.append(f"kept worktree {Path(wt).name}: {reason}")
-        return notes + pull_after_done(project, task)
+    def finish() -> list[str]:
+        return notes + (pull_after_done(project, task) if task.get("state") == "done" else [])
+
+    def keep(reason: str, *, retry: bool = False) -> list[str]:
+        S.append_event(project, slug, "cleanup-worktree", action="deferred" if retry else "skipped",
+                       worktree=wt, reason=reason)
+        notes.append(f"{'deferred' if retry else 'kept'} worktree {Path(wt).name}: {reason}")
+        return finish()
 
     if not wt or not branch or not Path(wt).is_dir():
-        return pull_after_done(project, task)
+        return finish()
     try:
+        if engines.worker_live(l2_engine(task), task, job_root=l2_job_root(project, slug)):
+            return keep("L2 worker is still running", retry=True)
         fetch = git("fetch", "-q", "origin", "main")
         if fetch.returncode != 0:
-            return keep(f"could not refresh origin/main: {(fetch.stderr or fetch.stdout).strip()[:120]}")
-        tip = git("rev-parse", "--verify", "-q", f"refs/heads/{branch}").stdout.strip()
-        merged = bool(tip) and git("merge-base", "--is-ancestor", tip, "refs/remotes/origin/main").returncode == 0
-        if not merged and not (tip and _pr_merged_at(repo, task, tip)):
-            return keep("branch is not on origin/main")
+            return keep(f"could not refresh origin/main: {(fetch.stderr or fetch.stdout).strip()[:120]}", retry=True)
         status = git("status", "--porcelain", "--untracked-files=all", cwd=Path(wt))
         if status.returncode != 0 or status.stdout.strip():
             return keep("worktree has uncommitted changes")
-        if engines.worker_live(l2_engine(task), task, job_root=l2_job_root(project, slug)):
-            return keep("L2 worker is still running")
+        loose = git("rev-list", "-n1", "HEAD", "--not", "--branches", "--remotes", cwd=Path(wt))
+        if loose.returncode != 0 or loose.stdout.strip():
+            return keep("worktree has commits on no branch")
+        tip = git("rev-parse", "--verify", "-q", f"refs/heads/{branch}").stdout.strip()
+        merged = bool(tip) and (git("merge-base", "--is-ancestor", tip, "refs/remotes/origin/main").returncode == 0
+                                or _pr_merged_at(repo, task, tip))
         if task.get("agent_id"):
             note = engines.remove_l2_worker(l2_engine(task), task["agent_id"], job_root=l2_job_root(project, slug))
             notes.append(f"{l2_engine(task)} worker {task['agent_id']}: {(note or 'completed')[:120]}")
         removed = git("worktree", "remove", wt)
         if removed.returncode != 0:
             return keep(f"git worktree remove failed: {(removed.stderr or removed.stdout).strip()[:120]}")
-        git("branch", "-D", branch)
+        if merged:
+            git("branch", "-D", branch)
     except (subprocess.SubprocessError, OSError, RuntimeError) as e:
         return keep(f"cleanup error: {e}")
-    S.append_event(project, slug, "cleanup-worktree", action="removed", worktree=wt, reason="merged into origin/main")
-    notes.append(f"removed merged worktree {Path(wt).name}")
-    return notes + pull_after_done(project, task)
+    if tip and not merged:
+        ahead = git("rev-list", "--count", tip, "--not", "refs/remotes/origin/main").stdout.strip()
+        reason = f"kept branch {branch}: {ahead} commit(s) not on origin/main"
+        S.append_event(project, slug, "cleanup-worktree", action="removed", worktree=wt, branch="kept", reason=reason)
+        notes.append(f"removed worktree {Path(wt).name}; {reason}")
+    else:
+        reason = "merged into origin/main" if merged else "branch already removed"
+        S.append_event(project, slug, "cleanup-worktree", action="removed", worktree=wt, reason=reason)
+        notes.append(f"removed {'merged ' if merged else ''}worktree {Path(wt).name}")
+    return finish()

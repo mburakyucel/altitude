@@ -136,6 +136,21 @@ resume waiting messages. Removing the last project opens First run; otherwise a 
 project is selected. `alt project remove <name>` uses the same checks. See
 [project lifecycle](CLI.md#project-lifecycle).
 
+## Worktree and source export retention
+
+Altitude removes what it created for finished work; the operator does not clean these by hand.
+For each done or rejected task, the maintenance tick removes `.claude/worktrees/<slug>` once no worker
+runs, the tree is clean and its commits are on a branch or remote, and deletes `worktree-<slug>` once
+its commits are on `origin/main` or a verified PR merged it. A branch with commits found only on this
+machine stays; `alt task events <slug> --json` shows the `cleanup-worktree` event with its reason and
+unmerged commit count. Uncommitted changes or commits on no branch keep the worktree with a recorded
+reason. Inspect them in that worktree, then remove it with `git worktree remove` once nothing is needed.
+
+A source deployment removes `.altitude-source/<sha>` exports that nothing names: the running service's
+export, the target of `current` and exports named by an unfinished or not yet cleaned-up task's brief
+or session settings stay. `altd.log` records each removal as `[source] removed source export <sha>`.
+Other entries under `.altitude-source`, such as `git-guards`, are never touched.
+
 ## Incident publication
 
 Altitude records its own failures as sanitized incidents under the runtime directory. They stay

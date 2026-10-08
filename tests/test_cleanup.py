@@ -1,4 +1,6 @@
-"""cleanup_after_done removes a task's worktree once its branch is on origin/main and nothing still uses it (real git)."""
+"""cleanup_task frees a finished task's worktree and branch once nothing needs them, and
+prune_source_exports removes launch exports nothing names (real git, disposable repositories)."""
+import os
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -49,7 +51,7 @@ class TestCleanup(AltitudeCase):
     def test_merged_branch_is_removed_with_its_worker(self):
         task = self.task()
         self.merge(task["branch"])
-        notes = dispatch.cleanup_after_done(self.project, task)
+        notes = dispatch.cleanup_task(self.project, task)
         self.assertFalse(self.listed(task), notes)
         self.assertFalse(self.branch_exists(task))
         engines.remove_l2_worker.assert_called_once()
@@ -57,39 +59,136 @@ class TestCleanup(AltitudeCase):
         self.assertIn("removed merged worktree task-one", notes)
 
     def test_squash_merge_needs_a_verified_merged_pr(self):
+        unverified = self.task("unverified")
+        self.merge(unverified["branch"], squash=True)
+        with mock.patch.object(dispatch, "_pr_merged_at", return_value=False):
+            notes = dispatch.cleanup_task(self.project, unverified)
+        self.assertFalse(self.listed(unverified), notes)
+        self.assertTrue(self.branch_exists(unverified))
+        self.assertIn("not on origin/main", self.last_event("unverified")["reason"])
         task = self.task(verified={"verdict": "ok", "prs": [7]})
         self.merge(task["branch"], squash=True)
         tip = git("rev-parse", task["branch"], cwd=self.repo).strip()
-        with mock.patch.object(dispatch, "_pr_merged_at", return_value=False):
-            notes = dispatch.cleanup_after_done(self.project, task)
-        self.assertTrue(self.listed(task), notes)
-        self.assertIn("branch is not on origin/main", self.last_event(task["slug"])["reason"])
         with mock.patch.object(dispatch, "_pr_merged_at", return_value=True) as receipt:
-            dispatch.cleanup_after_done(self.project, task)
-        self.assertFalse(self.listed(task))
+            dispatch.cleanup_task(self.project, task)
+        self.assertFalse(self.listed(task) or self.branch_exists(task))
         self.assertEqual(receipt.call_args.args[2], tip)  # asked about the branch tip, not main
 
-    def test_unmerged_dirty_and_live_worktrees_are_kept(self):
-        unmerged = self.task("unmerged")
+    def test_dirty_and_live_worktrees_are_kept(self):
         dirty = self.task("dirty")
         self.merge(dirty["branch"])
         (Path(dirty["worktree"]) / "notes.txt").write_text("mine\n")
         live = self.task("live")
         self.merge(live["branch"])
-        for task, reason in ((unmerged, "not on origin/main"), (dirty, "uncommitted changes")):
-            notes = dispatch.cleanup_after_done(self.project, task)
-            self.assertTrue(self.listed(task) and self.branch_exists(task), notes)
-            self.assertIn(reason, self.last_event(task["slug"])["reason"])
-            self.assertTrue(any(reason in n for n in notes), notes)
+        notes = dispatch.cleanup_task(self.project, dirty)
+        self.assertTrue(self.listed(dirty) and self.branch_exists(dirty), notes)
+        self.assertEqual(self.last_event("dirty")["action"], "skipped")
+        self.assertIn("kept worktree dirty: worktree has uncommitted changes", notes)
         with mock.patch.object(engines, "worker_live", return_value=True):
-            notes = dispatch.cleanup_after_done(self.project, live)
+            notes = dispatch.cleanup_task(self.project, live)
         self.assertTrue(self.listed(live), notes)
-        self.assertIn("still running", self.last_event("live")["reason"])
+        self.assertEqual(self.last_event("live")["action"], "deferred")
+        self.assertIn("deferred worktree live: L2 worker is still running", notes)
         engines.remove_l2_worker.assert_not_called()
         self.assertTrue((Path(dirty["worktree"]) / "notes.txt").exists())
 
+    def test_rejected_task_with_merged_branch_is_removed_without_self_deploy(self):
+        task = self.task("rejected", state="rejected")
+        self.merge(task["branch"])
+        with mock.patch.object(dispatch, "pull_after_done") as pull:
+            notes = dispatch.cleanup_task(self.project, task)
+        self.assertFalse(self.listed(task) or self.branch_exists(task), notes)
+        self.assertEqual(notes, ["claude worker a1: removed", "removed merged worktree rejected"])
+        pull.assert_not_called()
+
+    def test_local_only_commits_keep_their_branch(self):
+        task = self.task("abandoned", state="rejected")
+        tip = git("rev-parse", task["branch"], cwd=self.repo).strip()
+        notes = dispatch.cleanup_task(self.project, task)
+        self.assertFalse(self.listed(task), notes)
+        self.assertFalse(Path(task["worktree"]).exists())
+        self.assertEqual(git("rev-parse", task["branch"], cwd=self.repo).strip(), tip)
+        event = self.last_event("abandoned")
+        self.assertEqual((event["action"], event["branch"]), ("removed", "kept"))
+        self.assertIn("kept branch worktree-abandoned: 1 commit(s) not on origin/main", notes[-1])
+
+    def test_commits_on_no_branch_keep_the_worktree(self):
+        task = self.task("detached", state="rejected")
+        self.merge(task["branch"])
+        wt = Path(task["worktree"])
+        git("switch", "-q", "--detach", cwd=wt)
+        (wt / "doc.md").write_text("detached work\n")
+        git("commit", "-qam", "detached change", cwd=wt)
+        notes = dispatch.cleanup_task(self.project, task)
+        self.assertTrue(self.listed(task) and self.branch_exists(task), notes)
+        self.assertIn("kept worktree detached: worktree has commits on no branch", notes)
+
+    def test_maintenance_sweeps_terminal_tasks_and_retries_a_live_worker(self):
+        rejected = self.task("rejected", state="rejected")
+        self.merge(rejected["branch"])
+        running = self.task("running", state="running")
+        self.merge(running["branch"])
+        for name in ("project_setup", "images"):
+            self.patch(getattr(server, name), "maintain" if name == "project_setup" else "collect")
+        for name in ("self_deploy", "request_l3_drain", "resume_stranded_reports", "dispatch_waiting", "spawn"):
+            self.patch(server, name)
+        self.patch(dispatch, "run_settings")
+        self.patch(dispatch, "poll", return_value=[])
+        with mock.patch.object(engines, "worker_live", return_value=True):
+            server.tick_project(self.project)
+        self.assertTrue(self.listed(rejected))
+        self.assertIsNone(S.load_task(self.project, "rejected").get("cleaned"))
+        server.tick_project(self.project)
+        self.assertFalse(self.listed(rejected))
+        self.assertTrue(S.load_task(self.project, "rejected").get("cleaned"))
+        self.assertTrue(self.listed(running))
+        self.assertIsNone(S.load_task(self.project, "running").get("cleaned"))
+
     def test_no_worktree_means_nothing_to_clean(self):
-        self.assertEqual(dispatch.cleanup_after_done(self.project, {"slug": "x", "state": "done"}), [])
+        self.assertEqual(dispatch.cleanup_task(self.project, {"slug": "x", "state": "done"}), [])
+
+
+class TestSourceExports(AltitudeCase):
+    RUNNING, CURRENT, BRIEF, SETTINGS, ENDED, STALE = (c * 40 for c in "abcdef")
+
+    def setUp(self):
+        super().setUp()
+        self.root = self.tmp / "deploy" / ".altitude-source"
+        for sha in (self.RUNNING, self.CURRENT, self.BRIEF, self.SETTINGS, self.ENDED, self.STALE):
+            (self.root / sha / "bin").mkdir(parents=True)
+        (self.root / "git-guards").mkdir()
+        (self.root / "current").symlink_to(self.CURRENT, target_is_directory=True)
+        self.patch(config, "RELEASE", None)
+        self.patch(config, "SOURCE", self.root / self.RUNNING)
+        self.save("open-task", "blocked", brief=self.BRIEF)
+        self.save("ending-task", "rejected", settings=self.SETTINGS)
+        self.save("ended-task", "done", settings=self.ENDED, cleaned=S.now())
+
+    def save(self, slug, state, *, brief=None, settings=None, **extra):
+        folder = S.task_dir(self.project, slug)
+        folder.mkdir(parents=True, exist_ok=True)
+        if brief:
+            (folder / "brief.md").write_text(f"Schema: `{self.root / brief}/schemas/report.json`\n")
+        if settings:
+            (folder / "settings.json").write_text(f'{{"hooks": "{self.root / settings}/hooks/inbox.py"}}\n')
+        S.save_task(self.project, {"slug": slug, "title": slug, "state": state, "created": S.now(), "updated": S.now(),
+                                   **extra})
+
+    def test_unreferenced_exports_are_removed_and_named_ones_kept(self):
+        notes = dispatch.prune_source_exports()
+        self.assertEqual(sorted(notes), [f"removed source export {self.ENDED}", f"removed source export {self.STALE}"])
+        left = sorted(path.name for path in self.root.iterdir())
+        self.assertEqual(left, sorted([self.RUNNING, self.CURRENT, self.BRIEF, self.SETTINGS, "current", "git-guards"]))
+        self.assertEqual(os.readlink(self.root / "current"), self.CURRENT)
+        self.assertEqual(dispatch.prune_source_exports(), [])
+
+    def test_versioned_and_checkout_runs_have_no_exports_to_prune(self):
+        self.patch(config, "SOURCE", self.repo)
+        self.assertEqual(dispatch.prune_source_exports(), [])
+        self.patch(config, "SOURCE", self.root / self.RUNNING)
+        self.patch(config, "RELEASE", {"version": "1.0.0"})
+        self.assertEqual(dispatch.prune_source_exports(), [])
+        self.assertTrue((self.root / self.STALE).is_dir())
 
 
 class TestSelfDeploy(AltitudeCase):
