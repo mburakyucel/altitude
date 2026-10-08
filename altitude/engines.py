@@ -603,12 +603,12 @@ def claude_settings() -> Path:
     return p
 
 
-def _feed(fd: int, data: bytes) -> None:
-    """Write all of `data` to a child's stdin pipe and close it, however late the child starts reading.
+def _feed(stream, data: str) -> None:
+    """Write all of `data` to a child's stdin and close it, however late the child starts reading.
     `communicate()` cannot be polled for this: a retry after its timeout never writes input still pending, so a
     prompt larger than the pipe buffer (16 KiB on macOS) leaves a slow-starting child waiting on stdin (#617)."""
     try:
-        with open(fd, "wb") as stream:
+        with stream:
             stream.write(data)
     except BrokenPipeError:
         pass  # the child ended without reading; its exit status and output report why
@@ -2140,18 +2140,13 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
     started_at = datetime.now(timezone.utc).isoformat()
     if interrupt is not None and interrupt.is_set():
         return _chat_interrupted(resume)
-    prompt_read, prompt_write = os.pipe()
-    try:
-        proc = subprocess.Popen(platform.job_command(unit, cmd, codex_env(extra_env),
-                                **({"runtime_max": timeout} if durable_timeout or interrupt is not None else {})),
-                                cwd=str(cwd), stdin=prompt_read, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                text=True, env=codex_env(extra_env, retain_user_bus=True), start_new_session=True)
-    except BaseException:
-        os.close(prompt_write)
-        raise
-    finally:
-        os.close(prompt_read)
-    threading.Thread(target=_feed, args=(prompt_write, prompt.encode()), daemon=True).start()
+    proc = subprocess.Popen(platform.job_command(unit, cmd, codex_env(extra_env),
+                            **({"runtime_max": timeout} if durable_timeout or interrupt is not None else {})),
+                            cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=codex_env(extra_env, retain_user_bus=True), start_new_session=True)
+    # The writer owns stdin, so the polling communicate() below only reads.
+    prompt_input, proc.stdin = proc.stdin, None
+    threading.Thread(target=_feed, args=(prompt_input, prompt), daemon=True).start()
     interrupted, finished = {}, threading.Event()
     watcher = None
     if interrupt is not None:

@@ -7,6 +7,7 @@ import json
 import runpy
 import subprocess
 import sys
+import threading
 from unittest import mock
 
 from tests.support import AltitudeCase
@@ -17,8 +18,13 @@ PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4
 
 
 class _Input(io.StringIO):
+    """Stdin a fake engine reads to its end; the prompt stays inspectable after the writer closes it."""
+    def __init__(self):
+        super().__init__()
+        self.ended = threading.Event()
+
     def close(self):
-        pass
+        self.ended.set()
 
 
 class _BytesInput(io.BytesIO):
@@ -36,7 +42,7 @@ class _Process:
                   [{"type": "thread.started", "thread_id": "session"},
                    {"type": "turn.completed", "usage": {"input_tokens": 1}}])
         self.events = "".join(json.dumps(event) + "\n" for event in events)
-        self.stdin = _BytesInput() if output else _Input()
+        self.stdin = self.received = _BytesInput() if output else _Input()
         self.stdout, self.stderr = io.StringIO(self.events), io.StringIO()
         if output:
             output.write(self.events.encode())
@@ -50,8 +56,11 @@ class _Process:
     def kill(self):
         pass
 
-    def communicate(self, text, timeout=None):
-        self.stdin.write(text)
+    def communicate(self, text=None, timeout=None):
+        if text is None:
+            self.received.ended.wait(10)
+        else:
+            self.received.write(text)
         return self.events, ""
 
 
@@ -110,7 +119,7 @@ class TestNativeImages(ImageDeliveryCase):
                               engines.codex_exec("inspect the screenshot", sandbox_settings=[], **common))
                 self.assertEqual(result["session_id"], "session")
                 self.assertIn("original-model", popen.call_args.args[0])
-                self.assert_input(engine, popen.call_args.args[0], process.stdin.getvalue(), resume=resume)
+                self.assert_input(engine, popen.call_args.args[0], process.received.getvalue(), resume=resume)
 
     def test_task_fresh_and_resumed_workers_keep_engine_model_session_and_images(self):
         for engine in ("claude", "codex"):

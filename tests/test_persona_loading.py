@@ -2,6 +2,7 @@
 import io
 import json
 import subprocess
+import threading
 from pathlib import Path
 from unittest import mock
 
@@ -15,8 +16,13 @@ class _BytesInput(io.BytesIO):
 
 
 class _TextInput(io.StringIO):
+    """Stdin a fake engine reads to its end; the prompt stays inspectable after the writer closes it."""
+    def __init__(self):
+        super().__init__()
+        self.ended = threading.Event()
+
     def close(self):
-        pass
+        self.ended.set()
 
 
 class _ProviderProcess:
@@ -29,7 +35,7 @@ class _ProviderProcess:
                              if "--append-system-prompt-file" in command else None)
         self.persona = self.persona_path.read_text() if self.persona_path else None
         self.synchronous = kwargs.get("text", False)
-        self.stdin = _TextInput() if self.synchronous else _BytesInput()
+        self.stdin = self.received = _TextInput() if self.synchronous else _BytesInput()
         if config.CLAUDE_BIN in command:
             events = [{"type": "system", "subtype": "init", "session_id": session},
                       {"type": "result", "session_id": session, "result": "Fixture answer", "usage": {}}]
@@ -45,13 +51,16 @@ class _ProviderProcess:
 
     @property
     def prompt(self):
-        text = self.stdin.getvalue()
+        text = self.received.getvalue()
         text = text if isinstance(text, str) else text.decode()
         # A worker job reads its GitHub token from the first input line before the engine starts.
         return text.split("\n", 1)[1] if engines.GITHUB_INPUT in self.command else text
 
-    def communicate(self, text, timeout=None):
-        self.stdin.write(text)
+    def communicate(self, text=None, timeout=None):
+        if text is None:
+            self.received.ended.wait(10)
+        else:
+            self.received.write(text)
         self.alive = False
         return self.output, ""
 
