@@ -1138,7 +1138,7 @@ cgroup. Claude runs foreground `-p --output-format stream-json` inside its own u
 hooks, model pin and resumable session; launch and resume stop any daemon job still bound to the task name.
 Fresh and resumed owners retain `--permission-mode auto` with the narrow `--allowedTools "Bash(alt *)"`
 allowance. Native deny/ask rules and worker confinement remain effective; Altitude's CLI and broker
-enforce role, task-attempt, merge-hold and machine-grant authority. No allowance covers other external
+enforce role, task-attempt, merge-hold and operator-grant authority. No allowance covers other external
 commands. Running messages still arrive through the inbox hook, whose context does not establish
 operator authorization for those commands in the native classifier; that part of
 [issue #612](https://github.com/mburakyucel/altitude/issues/612) remains open.

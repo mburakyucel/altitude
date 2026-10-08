@@ -506,7 +506,7 @@ The [setup guide](SETUP.md) describes the current manual configuration.
 
 Owner launch and resume pre-approve `Bash(alt *)` in native auto mode, so Altitude's own
 coordination commands do not depend on the permission classifier. Native deny/ask rules,
-worker confinement and Altitude's role, task-attempt, merge-hold and machine-grant checks still
+worker confinement and Altitude's role, task-attempt, merge-hold and operator-grant checks still
 apply. Other external commands retain their native permission checks. The other launcher already
 admits coordination within its network-enabled workspace-write sandbox. The allowance is shared
 by Linux and macOS launches; it grants no additional filesystem or service access.

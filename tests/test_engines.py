@@ -135,19 +135,21 @@ print(json.dumps({"type": "result", "is_error": error, "result": detail}), flush
                     def popen(command, **options):
                         if host == "darwin":
                             specification = json.loads(command[-1])
-                            native, environment = specification["command"], specification["env"]
+                            wrapped, environment = specification["command"], specification["env"]
                             self.assertIn(str(self.repo), specification["writable"])
                             self.assertIn(str(config.ROOT), specification["writable"])
                         else:
                             child = command[command.index("--") + 1:]
-                            executable_index = child.index(config.CLAUDE_BIN)
-                            environment = dict(argument.split("=", 1) for argument in child[2:executable_index])
-                            native = child[executable_index:]
+                            wrapper_index = child.index("/bin/sh")
+                            environment = dict(argument.split("=", 1) for argument in child[2:wrapper_index])
+                            wrapped = child[wrapper_index:]
+                        self.assertEqual(wrapped[:4], ["/bin/sh", "-c", engines.GITHUB_INPUT, "altitude-worker"])
+                        native = wrapped[4:]
                         self.assertEqual(native[native.index("--permission-mode") + 1], "auto")
                         self.assertNotIn("--dangerously-skip-permissions", native)
                         self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", environment)
                         options["env"] = environment
-                        process = real_popen([sys.executable, "-c", script, str(ALT), *native[1:]], **options)
+                        process = real_popen([*wrapped[:4], sys.executable, "-c", script, str(ALT), *native[1:]], **options)
                         processes.append(process)
                         return process
 
