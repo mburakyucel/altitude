@@ -28,8 +28,11 @@ export default defineConfig({
     launchOptions: {
       chromiumSandbox: false,
       timeout: 30_000,
-      // Capture stays inside Chromium; walkthroughs never request a physical microphone.
-      args: ["--enable-automation", "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"],
+      // Capture stays inside Chromium; walkthroughs never request a physical microphone. In a macOS validation run
+      // the GPU compositor has no display to pace frames by and stops animation frames after the first one;
+      // software compositing paces them by timer, as on Linux (#617).
+      args: ["--enable-automation", "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream",
+        ...(process.platform === "darwin" ? ["--disable-gpu"] : [])],
       // Crashpad also needs a writable directory even with Playwright's temporary browser profile.
       env: { ...process.env, XDG_CONFIG_HOME: process.env.ALTITUDE_UI_BROWSER_CONFIG ?? resolve("ui-artifacts/browser-config") },
     },

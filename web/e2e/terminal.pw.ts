@@ -269,8 +269,11 @@ test("a project terminal opens in the project folder, refuses agents and ends wi
 async function finger(page: Page, x: number, y: number) {
   const chromium = page.context().browser()?.browserType().name() === "chromium";
   const input = chromium ? await page.context().newCDPSession(page) : null;
+  // Chromium's touches carry the finger's own times, a step per frame, so a swipe's speed and a resting pause never
+  // depend on how quickly a busy host delivers each step.
+  let time = Date.now() / 1000;
   const touch = (type: "touchStart" | "touchMove" | "touchEnd", point?: { x: number; y: number }) => input
-    ? input.send("Input.dispatchTouchEvent", { type, touchPoints: point ? [point] : [] })
+    ? input.send("Input.dispatchTouchEvent", { type, touchPoints: point ? [point] : [], timestamp: time += 0.016 })
     : page.evaluate(({ type, point }) => {
       const target = document.querySelector(".terminal-screen .xterm-screen")!;
       const event = new Event(type.toLowerCase(), { bubbles: true, cancelable: true });
@@ -287,7 +290,10 @@ async function finger(page: Page, x: number, y: number) {
         at = { x, y: from.y + dy * step / 8 };
         await touch("touchMove", at);
       }
-      if (pause) await page.waitForTimeout(pause);
+      if (pause) {
+        time += pause / 1000;
+        await page.waitForTimeout(pause);
+      }
     },
     async lift() {
       try { await touch("touchEnd"); } finally { await input?.detach(); }

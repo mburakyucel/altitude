@@ -398,6 +398,8 @@ test("a grouped review keeps its current preview reachable after another member 
   // Answering one member in chat hands the turn back; the owner asks the review again.
   await park(request);
   await page.reload();
+  // Read back only once the reloaded conversation has opened at its question, as before the reload.
+  await expect(card(page, review)).toBeInViewport();
   await readBack();
   const viewQuestion = jumps.getByRole("button", { name: "Your turn · 1 question", exact: true });
   await walk.state("group-review-02-question-survives-partial-answer", { visible: [viewQuestion], hidden: [preview] });
