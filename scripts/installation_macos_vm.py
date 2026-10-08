@@ -765,18 +765,6 @@ def add_github_cli(guest: Guest, record: dict) -> None:
     record["github_cli"] = guest.ssh("zsh -lc 'gh --version'").stdout.splitlines()[0]
 
 
-def settled(guest: Guest, record: dict, timeout: int = 180) -> None:
-    """Wait, within TIMEOUT, until the guest's one-minute load is under its CPU count, as after a new Mac's first minutes:
-    a starting installation must answer within its own health deadline. The load it started at is recorded."""
-    deadline = time.monotonic() + timeout
-    while True:
-        load = float(guest.ssh("sysctl -n vm.loadavg").stdout.split()[1])
-        if load < CPUS or time.monotonic() > deadline:
-            record["guest_load_at_start"] = load
-            return
-        time.sleep(10)
-
-
 def phase_fresh(guest: Guest, repository: str, results: Path, record: dict, release: Path, commit: str) -> None:
     record["prerequisites"] = prerequisites(guest)
     record["cases"] = {"missing-python": judged(attempt(guest, repository, ACCOUNT, results, "missing-python"), "missing-python")}
@@ -816,7 +804,6 @@ def phase_lifecycle(guest: Guest, repository: str, results: Path, record: dict, 
     fix_openssl(guest)
     add_github_cli(guest, record)
     record["prerequisites"] = prerequisites(guest)
-    settled(guest, record)
     guest.copy(release, f"{SHARED}/release")
     guest.copy(SCRIPTS / "installation_lifecycle.py", f"{SHARED}/installation_lifecycle.py")
     (results / "diagnose.sh").write_text(DIAGNOSE)
@@ -831,7 +818,6 @@ def phase_lifecycle(guest: Guest, repository: str, results: Path, record: dict, 
               f'cp -R "$work/home/Library/Logs" {SHARED}/lifecycle/logs 2>/dev/null; '
               f'[ $code = 0 ] || sh {SHARED}/diagnose.sh "$work/home" {SHARED}/lifecycle; exit $code')
     result = guest.ssh(script, timeout=480, check=False)
-    record["guest_load_at_end"] = float(guest.ssh("sysctl -n vm.loadavg").stdout.split()[1])
     (results / "lifecycle.log").write_text(result.stdout + result.stderr)
     guest.fetch(f"{SHARED}/lifecycle", results / "lifecycle")
     outcome = json.loads((results / "lifecycle/result.json").read_text())
@@ -848,7 +834,6 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, rele
     record["prerequisites"] = prerequisites(guest)
     steps = record["steps"] = []
     version = re.search(r"^VERSION='([^']+)'", (release / "install.sh").read_text(), re.M).group(1)
-    settled(guest, record)
     agent = f"/Users/{ACCOUNT}/Library/LaunchAgents/{SERVICE_LABEL}.plist"
     alt = f"/Users/{ACCOUNT}/.local/bin/alt"
 
@@ -936,8 +921,6 @@ def run_phase(name: str, release: Path, results: Path, record: dict) -> None:
         guest = Guest(work / "guest", work, folder / "vm.log")
         guest.wait_ssh(300)
         phase["guest"] = guest.ssh("sw_vers -productVersion; sw_vers -buildVersion").stdout.split()
-        # Spotlight's first indexing of a new clone takes the guest's CPUs while the installation starts.
-        guest.ssh("sudo -n mdutil -a -i off >/dev/null")
         note(f"{name}: checking the guest's network, then unplugging it")
         isolate(guest, phase)
         serve = work / "serve"
@@ -951,6 +934,7 @@ def run_phase(name: str, release: Path, results: Path, record: dict) -> None:
         guest.ssh(SERVE)
         note(f"{name}: running the installer")
         PHASES[name](guest, repository, folder, phase, release, record["source_commit"])
+        phase["guest_load"] = guest.ssh("sysctl -n vm.loadavg").stdout.split()[1:4]
         phase["reachable"]["after"] = reachable(guest)
         if any(phase["reachable"]["after"].values()):
             raise Stop(f"the guest was not isolated at the end: {phase['reachable']}")

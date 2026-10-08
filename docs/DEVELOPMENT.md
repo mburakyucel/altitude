@@ -1063,13 +1063,11 @@ line tools, Homebrew and Homebrew's `python@3.12` and `openssl@3`. The restore i
 
 `installation_macos_vm.py run RESULTS [--phase PHASE]` builds `v0.0.1` from the committed revision
 and runs each phase in its own copy-on-write clone with 4 CPUs, 4 GiB of memory and a 64 GiB sparse
-disk, reached over SSH through the host-guest socket only, with Spotlight indexing off. Before the
-installer runs, the runner probes the internet and a listener it opens on the guest network's
-gateway on this Mac: both must answer, and after it unplugs the guest's only network card neither
-may. A probe that cannot run stops the run, and the probes repeat at the end. The release is served
+disk, reached over SSH through the host-guest socket only. Before the installer runs, the runner
+probes the internet and a listener it opens on the guest network's gateway on this Mac: both must
+answer, and after it unplugs the guest's only network card neither may. A probe that cannot run stops the run, and the probes repeat at the end. The release is served
 on the guest's loopback over HTTPS with a throwaway certificate authority that the public command's
-shell trusts, with `github.com` resolving to the loopback. Phases that install wait, for at most
-three minutes, until the guest's one-minute load is under its CPU count, and record it.
+shell trusts, with `github.com` resolving to the loopback.
 
 - `fresh`: the public command must stop for the missing Python.
 - `prerequisites`: it must stop for OpenSSL 3 not being first on PATH; after the documented fix, a
@@ -1090,7 +1088,7 @@ three minutes, until the guest's one-minute load is under its CPU count, and rec
 `RESULTS/macos-vm.json` records the source and harness commits, this Mac's macOS version, free disk
 and load average before and after, the guest's sizing, each image's restore image, macOS build,
 prerequisites and disk footprint, and per phase the probe outcomes, every attempt's and step's exit
-and result, the guest's load, the disk the clone took and the run time. Each step's full output, the
+and result, the guest's load average, the disk the clone took and the run time. Each step's full output, the
 lifecycle's own results and the guest helper's log stay beside it. Everything the runner writes
 lives in `~/.cache/altitude-installation-vm/macos`: the helper, the images (about 26 GiB for macOS
 26.6.2) and per-run clones (under 1 GiB each), deleted after each phase, also after a failure or a
