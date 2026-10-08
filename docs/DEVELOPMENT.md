@@ -1091,17 +1091,17 @@ prerequisites and disk footprint, and per phase the probe outcomes, every attemp
 and result, the guest's load average, the disk the clone took and the run time. Each step's full output, the
 lifecycle's own results and the guest helper's log stay beside it. Everything the runner writes
 lives in `~/.cache/altitude-installation-vm/macos`: the helper, the images (about 26 GiB for macOS
-26.6.2) and per-run clones (under 1 GiB each), deleted after each phase, also after a failure or a
+26.6.2) and per-run clones (about 1 GiB at most), deleted after each phase, also after a failure or a
 stop. One guest runs at a time, and the runner stops whenever less than 10 GiB of disk would stay
 free. Building the images takes about fifteen minutes after the restore image's download. On an
-unloaded Mac `fresh` and `prerequisites` take under a minute each, `lifecycle` about five minutes
-and `login` under three. `installation_macos_vm.py clean` deletes everything in its folder.
+unloaded Mac `fresh` and `prerequisites` take under half a minute each, `lifecycle` about three
+minutes and `login` just over one; the release build adds about one. `installation_macos_vm.py clean` deletes everything in its folder.
 
 Virtual machines cannot start inside a task's sandbox or a [macOS validation
 run](#macos-validation-runs). Inside a task, an owner runs `installation_macos_vm.py` with
 `alt task run` under an [operator grant](CLI.md#operator-grant) naming this lane: `image --step`
-while images are missing, then `run` with one or two phases per command so each finishes within the
-command limit, keeping `RESULTS` in the task folder. The runner never touches the host's Altitude
+while images are missing, then `run`, with `--phase` splitting the phases across commands when the
+Mac is busy so each finishes within the command limit, keeping `RESULTS` in the task folder. The runner never touches the host's Altitude
 service, LaunchAgents, keychains, trust stores or network configuration.
 
 ## CI and candidate identity
