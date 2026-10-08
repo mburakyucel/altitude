@@ -1163,7 +1163,9 @@ refuses the merge. A later invocation can reuse the successful head when main is
 ancestor of it: the merge still has the identical tested tree. Ordinary competing merges introduce
 commits outside the head and require reconciliation, a push and fresh checks on the new head.
 Landing verifies the merged tree against the tested tree; commit metadata can differ.
-Missing, pending, failed, skipped, cancelled, stale or unrelated required runs block.
+Missing, pending, failed, skipped, cancelled, stale or unrelated required runs block. A required run
+that has not registered on the head yet keeps the bounded wait going; one still absent at the bound
+reports `missing`.
 Review and task/UX holds remain enforced. The operator chooses Altitude-only enforcement without
 a GitHub plan upgrade: GitHub web/API merges and other updates outside Altitude remain unprotected.
 All main updates must use `alt land` for its guarantee.

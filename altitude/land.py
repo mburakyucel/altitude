@@ -579,8 +579,8 @@ def _checks_evidence(root: Path, pair: dict) -> str:
                   "incorporate current main in the PR branch and wait for fresh CI")
             if not head["tree"]["oid"] or candidate["tree"]["oid"] != head["tree"]["oid"]:
                 raise LandError("PR check candidate tree differs from the current head")
-        gate_passed = False
-        states, passed = set(), set()
+        gate_passed = gate_seen = False
+        states, passed, seen, observed = set(), set(), set(), []
         for check in contexts:
             is_run = check["__typename"] == "CheckRun"
             if not is_run and check["__typename"] != "StatusContext":
@@ -602,23 +602,36 @@ def _checks_evidence(root: Path, pair: dict) -> str:
                        and (suite.get("app") or {}).get("databaseId") == 15368
                        and run and run["event"] == "pull_request"
                        and (run.get("file") or {}).get("path") == config.PR_CHECK_WORKFLOW)
+            name, app = (check["name"] if is_run else check["context"]), (suite.get("app") or {}).get("databaseId")
+            seen.add((name, app))
+            gate_seen |= is_gate
+            observed.append(f"{name} {(status or 'without conclusion').lower()}" + ("" if is_gate or check["isRequired"] else " (not required)"))
             if is_gate and status == "SUCCESS":
                 gate_passed = True
             if is_run and status == "SKIPPED" and check["isRequired"] is False and not is_gate:
                 continue
             states.add(status)
             if status == "SUCCESS":
-                passed.add((check["name"] if is_run else check["context"],
-                            (suite.get("app") or {}).get("databaseId"), check["isRequired"]))
+                passed.add((name, app, check["isRequired"]))
         if states & {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"}:
             return "fail"
         if states & {"PENDING", "EXPECTED"}:
             return "pending"
-        if any(not any(name == check_name and needed and (app is None or app == check_app)
-                       for check_name, check_app, needed in passed) for name, app in required):
+        registered = [(name, app) for name, app in sorted(required, key=str)
+                      if any(name == seen_name and app in (None, seen_app) for seen_name, seen_app in seen)]
+        if (gate_seen and not gate_passed) or any(
+                not any(name == check_name and needed and app in (None, check_app)
+                        for check_name, check_app, needed in passed) for name, app in registered):
             return "skipped"
-        if named_gate and not gate_passed:
-            return "skipped"
+        # GitHub registers a workflow's jobs one by one: a required check absent from the candidate
+        # has not reported yet, which is a wait, not a skip of the checks that did register.
+        unregistered = [name for name, app in sorted(required, key=str) if (name, app) not in registered]
+        if named_gate and not gate_seen:
+            unregistered.append(config.PR_CHECK_NAME)
+        if unregistered:
+            pair["unregistered"] = (f"required check {', '.join(dict.fromkeys(unregistered))} has not registered on "
+                                    f"head {pair['head_sha']}; registered: {', '.join(observed) or 'none'}")
+            return "missing"
         if states - {"SUCCESS"} or not states:
             return "skipped" if contexts or required else "none"
         if named_gate:
@@ -928,10 +941,14 @@ def _required_pr_check(root: Path, base_sha: str) -> bool:
     return _git(root, "cat-file", "-e", f"{base_sha}:{config.PR_CHECK_WORKFLOW}").returncode == 0
 
 
+def _checks_outcome(checks: str, pair: dict) -> str:
+    return f"checks are {checks!r}" + (f"; {pair['unregistered']}" if checks == "missing" else "")
+
+
 def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority, deadline):
     """Keep the repository turn while the owner assesses an integrated head and CI runs."""
     from . import reviews
-    notified, announced = None, False
+    notified, announced = None, None
     actor = authority.get("actor") if authority is not None else os.environ.get("ALTITUDE_ACTOR")
     while True:
         stale = None
@@ -957,18 +974,18 @@ def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority, de
                   "Keep this command running in a background/tool session and collect its result. "
                   f"Cancel landing if code needs edits.\n{stale}")
         notified = notice
-        if checks == "pending" and not announced:
-            _note(f"PR checks pending on head {pair['head_sha']}; polling for up to "
-                  f"{max(0, round(deadline - time.monotonic()))}s")
-            announced = True
-        if checks not in ("pending", "pass", "none-configured"):
+        if checks in ("pending", "missing") and checks != announced:
+            _note(f"{pair['unregistered'] if checks == 'missing' else 'PR checks pending on head ' + pair['head_sha']}; "
+                  f"polling for up to {max(0, round(deadline - time.monotonic()))}s")
+            announced = checks
+        if checks not in ("pending", "missing", "pass", "none-configured"):
             return checks
-        if stale is None and checks != "pending":
+        if stale is None and checks not in ("pending", "missing"):
             return checks
         if time.monotonic() >= deadline:
             if stale:
-                raise LandError("owner assessment wait timed out; candidate remains published and unmerged — "
-                                "assess when ready and re-run alt land")
+                raise LandError(f"owner assessment wait timed out with {_checks_outcome(checks, pair)}; candidate "
+                                "remains published and unmerged — assess when ready and re-run alt land")
             return checks
         time.sleep(min(CHECK_POLL_SECONDS, max(deadline - time.monotonic(), 0)))
 
@@ -1246,7 +1263,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                                                "merged tree") != pair["tree"]:
                         raise LandError("merged tree does not match the tested PR tree; report delivery for recovery")
         else:
-            _note(f"not merging: checks are {checks!r}")
+            _note(f"not merging: {_checks_outcome(checks, pair)}")
     return {"pr": number, "url": pr.get("url"), "checks": checks, "merged": merged,
             "branch": branch, "commit": commit, "head": pushed_head, "lease": lease, "staged": staged,
             "hold": hold_merge, "replaced": replaced, "local_tests": local_tests, "adopted_pr": adoption}

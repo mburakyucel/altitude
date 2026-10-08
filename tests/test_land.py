@@ -1717,15 +1717,24 @@ class TestCheckEvidence(AltitudeCase):
                 base["branchProtectionRule"] = {"requiredStatusChecks": [{"context": "absent", "app": None}]} if classic else None
                 base["rules"] = self.connection([] if classic else [{"type": "REQUIRED_STATUS_CHECKS",
                     "parameters": {"requiredStatusChecks": [{"context": "absent", "integrationId": None}]}}])
-                self.assertEqual(self.classify(), "skipped")
+                self.assertEqual(self.classify(), "missing")
                 self.assertFalse(land.land("required check missing", cwd=self.repo, wait=0, merge=True)["merged"])
+
+    def test_registered_required_skip_is_terminal_while_another_required_check_is_absent(self):
+        check = self.contexts()["nodes"][0]
+        check.update(conclusion="SKIPPED", isRequired=True)
+        self.pr["baseRef"]["branchProtectionRule"] = {"requiredStatusChecks": [
+            {"context": check["name"], "app": None}, {"context": "absent", "app": None}]}
+        self.assertEqual(self.classify(), "skipped")
+        check["conclusion"] = "SUCCESS"
+        self.assertEqual(self.classify(), "missing")
 
     def test_required_app_and_requiredness_are_enforced(self):
         check = self.contexts()["nodes"][0]
         self.pr["baseRef"]["branchProtectionRule"] = {
             "requiredStatusChecks": [{"context": check["name"], "app": {"databaseId": 2}}]}
         check["isRequired"] = True
-        self.assertEqual(self.classify(), "skipped")
+        self.assertEqual(self.classify(), "missing", "another app's same-named check is not the required one")
         check["checkSuite"]["app"]["databaseId"] = 2
         self.assertEqual(self.classify(), "pass")
         check["isRequired"] = False
@@ -1956,7 +1965,7 @@ class TestRequiredPrCheck(AltitudeCase):
         self.git("rm", "-q", self.workflow_path)
         self.git("commit", "-q", "-m", "drop the workflow")
         result = land.land("head without the workflow", cwd=self.repo, wait=0, merge=True)
-        self.assertEqual((result["checks"], result["merged"], result["local_tests"]), ("skipped", False, None))
+        self.assertEqual((result["checks"], result["merged"], result["local_tests"]), ("missing", False, None))
         self.assert_not_merged()
 
     def test_head_adding_the_workflow_does_not_require_the_check_yet(self):
@@ -2024,10 +2033,76 @@ class TestRequiredPrCheck(AltitudeCase):
                 self.assertIsNone(result["local_tests"])
         self.contexts().update(self.connection([]))
         S.write_json(self.ghdir / "checks.json", [])
-        self.assertEqual(self.classify(), "skipped")
+        self.assertEqual(self.classify(), "missing")
         missing = land.land("missing required check", cwd=self.repo, wait=0, merge=True)
         self.assertFalse(missing["merged"])
         self.assertIsNone(missing["local_tests"])
+        self.assert_not_merged()
+
+    def only_the_hosted_skip_registered(self):
+        """GitHub registers the hosted job, skipped by design here, seconds before the required `check`."""
+        hosted = copy.deepcopy(self.required_check)
+        hosted.update(name="hosted-check", status="COMPLETED", conclusion="SKIPPED", isRequired=False)
+        hosted["checkSuite"]["workflowRun"]["file"]["path"] = ".github/workflows/hosted-checks.yml"
+        self.contexts().update(self.connection([hosted]))
+        S.write_json(self.ghdir / "checks.json", [{"bucket": "skipping"}])
+        S.write_json(self.ghdir / "check_evidence.json", self.evidence)
+        return hosted
+
+    def test_merge_waits_for_the_required_check_to_register_after_the_hosted_skip(self):
+        hosted = self.only_the_hosted_skip_registered()
+        self.assertEqual(self.classify(), "missing")
+        polls = []
+
+        def register_then_finish(_seconds):
+            polls.append(_seconds)
+            self.required_check.update(status="QUEUED" if len(polls) == 1 else "COMPLETED",
+                                       conclusion=None if len(polls) == 1 else "SUCCESS")
+            self.contexts().update(self.connection([hosted, self.required_check]))
+            S.write_json(self.ghdir / "checks.json", [{"bucket": "pending" if len(polls) == 1 else "pass"},
+                                                      {"bucket": "skipping"}])
+            S.write_json(self.ghdir / "check_evidence.json", self.evidence)
+
+        stderr = io.StringIO()
+        with mock.patch.object(land, "time", wraps=land.time) as clock, contextlib.redirect_stderr(stderr):
+            clock.sleep.side_effect = register_then_finish
+            result = land.land("required check registers late", cwd=self.repo, wait=60, merge=True)
+        self.assertEqual((result["checks"], result["merged"], len(polls)), ("pass", True, 2))
+        notice = stderr.getvalue()
+        self.assertIn(f"required check check has not registered on head {self.head}", notice)
+        self.assertIn("registered: hosted-check skipped (not required)", notice)
+        self.assertIn("PR checks pending", notice)
+
+    def test_required_check_that_never_registers_is_reported_missing_at_the_bound(self):
+        self.only_the_hosted_skip_registered()
+        now = {"seconds": 0.0}
+        stderr = io.StringIO()
+        with mock.patch.object(land, "time", wraps=land.time) as clock, contextlib.redirect_stderr(stderr):
+            clock.monotonic.side_effect = lambda: now["seconds"]
+            clock.sleep.side_effect = lambda seconds: now.__setitem__("seconds", now["seconds"] + seconds)
+            result = land.land("required check never registers", cwd=self.repo, wait=60, merge=True)
+        self.assertEqual((result["checks"], result["merged"], result["local_tests"]), ("missing", False, None))
+        self.assertEqual(clock.sleep.call_count, 60 // land.CHECK_POLL_SECONDS)
+        self.assertIn("not merging: checks are 'missing'; required check check has not registered on head "
+                      f"{self.head}; registered: hosted-check skipped (not required)", stderr.getvalue())
+        self.assert_not_merged()
+
+    def test_assessment_timeout_reports_the_unregistered_required_check(self):
+        from altitude import reviews
+        self.only_the_hosted_skip_registered()
+        S.save_task("demo", {**S.load_task("demo", "fix-x"), "attempt": 1})
+        self.setenv("ALTITUDE_ACTOR", "l2")
+        self.setenv("ALTITUDE_ATTEMPT", "1")
+        now = {"seconds": 0.0}
+        with mock.patch.object(land, "time", wraps=land.time) as clock, \
+                mock.patch.object(reviews, "require_merge", side_effect=reviews.AssessmentRequired([], "fix-x")), \
+                contextlib.redirect_stderr(io.StringIO()):
+            clock.monotonic.side_effect = lambda: now["seconds"]
+            clock.sleep.side_effect = lambda seconds: now.__setitem__("seconds", now["seconds"] + seconds)
+            with self.assertRaisesRegex(land.LandError, "owner assessment wait timed out with checks are 'missing'; "
+                                        "required check check has not registered on head .*; "
+                                        r"registered: hosted-check skipped \(not required\); candidate remains"):
+                land.land("assessment and registration both time out", cwd=self.repo, wait=30, merge=True)
         self.assert_not_merged()
 
     def test_name_app_workflow_and_event_must_identify_the_required_pr_run(self):
@@ -2044,7 +2119,7 @@ class TestRequiredPrCheck(AltitudeCase):
                 else:
                     check["checkSuite"]["workflowRun"]["event"] = change
                 self.contexts().update(self.connection([check]))
-                self.assertEqual(self.classify(), "skipped")
+                self.assertEqual(self.classify(), "missing", "a look-alike run is not the required check")
         self.assert_not_merged()
 
     def test_unknown_or_different_candidate_tree_refuses(self):
