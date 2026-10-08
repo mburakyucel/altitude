@@ -48,7 +48,7 @@ L3_GH_SEARCHES = {"code", "commits", "issues", "prs", "repos"}
 L3_GH_RULE = (
     "The coordinator's gh only reads, from this project's repository or a public one: "
     "view/list/status/checks/diff/watch/check of pr, issue, release, repo, run, workflow, ruleset, label and cache; "
-    "`gh search <type>` scoped with --repo or repo:OWNER/REPO; and `gh api repos/OWNER/REPO/...` with GET and "
+    "`gh search <type>` scoped with --repo OWNER/REPO; and `gh api repos/OWNER/REPO/...` with GET and "
     "no fields or input. Writes, downloads, --web or -w, owner-wide reads (`repo list`, --owner, --org, "
     "org:/user:/owner:, OR) and other private repositories are refused; use `alt issue` to write and `alt issue inspect` for an "
     "operator-linked issue elsewhere.")
@@ -381,11 +381,12 @@ def _l3_gh_command(args: list[str]) -> tuple[list[str], set[str]]:
     """Admit a gh command that only reads; return it with every other repository it names, lowercased."""
     def refuse(reason: str):
         raise ValueError(f"L3 gh read refused: {reason}. {L3_GH_RULE}")
-    def repository(value: str, pattern: re.Pattern = _GH_REPO) -> None:
+    def repository(value: str, pattern: re.Pattern = _GH_REPO) -> str:
         match = pattern.fullmatch(value)
         if not match or {".", ".."} & set(match.group(1, 2)):
             refuse(f"{value!r} is not a github.com OWNER/REPO")
-        repositories.add(f"{match.group(1)}/{match.group(2)}".lower())
+        repositories.add(name := f"{match.group(1)}/{match.group(2)}".lower())
+        return name
 
     repositories: set[str] = set()
     if args[0] == "api":
@@ -395,10 +396,10 @@ def _l3_gh_command(args: list[str]) -> tuple[list[str], set[str]]:
             refuse(f"gh search {args[1]} is not a search type")
     elif args[0] not in L3_GH_GROUPS or args[1] not in L3_GH_VERBS or args[:2] == ["repo", "list"]:
         refuse(f"gh {args[0]} {args[1]} is not a repository read")
-    selector = scoped = False
+    selector, scope = False, []
     for arg in args[2:]:
         if selector:
-            repository(arg)
+            scope.append(repository(arg))
             selector = False
             continue
         flag, equals, value = arg.partition("=")
@@ -411,15 +412,13 @@ def _l3_gh_command(args: list[str]) -> tuple[list[str], set[str]]:
                 refuse("give -R on its own")
             value = value if flag == "--repo" else arg[2:].removeprefix("=")
             if value or equals:
-                repository(value)
+                scope.append(repository(value))
             selector = not (value or equals)
-            scoped = True
             continue
         for match in _GH_QUALIFIER.finditer(arg):
             if match.group(1).lower() != "repo":
                 refuse(f"search qualifier {match.group(0)!r} spans an owner")
             repository(match.group(2))
-            scoped = True
         if re.search(r"(?<!\S)OR(?!\S)", arg):
             refuse("OR can widen a search beyond its repositories")
         if "://" in arg or "github.com/" in arg.lower():
@@ -428,9 +427,12 @@ def _l3_gh_command(args: list[str]) -> tuple[list[str], set[str]]:
             repository(arg.partition("#")[0])
     if selector:
         refuse("--repo needs OWNER/REPO")
-    if args[0] == "search" and not scoped:
-        refuse("gh search needs --repo OWNER/REPO or a repo: qualifier")
-    return list(args), repositories
+    if args[0] != "search":
+        return list(args), repositories
+    if not scope:
+        refuse("gh search needs --repo OWNER/REPO")
+    # gh could read a --repo given here as another option's value; leading copies always scope the search.
+    return ["search", args[1], *(f"--repo={name}" for name in scope), *args[2:]], repositories
 
 
 def _l3_gh_api(args: list[str], repository, refuse) -> list[str]:

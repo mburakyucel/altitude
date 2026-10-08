@@ -26,9 +26,12 @@ ALLOWED = (
     (["cache", "list"], set()),
     (["issue", "view", "https://github.com/cli/cli/issues/1"], {"cli/cli"}),
     (["pr", "view", "cli/cli#1"], {"cli/cli"}),
-    (["search", "issues", "flaky", "--repo", "team/project"], set()),
-    (["search", "prs", "repo:cli/cli", "is:open"], {"cli/cli"}),
-    (["search", "code", "--repo=cli/cli", "token"], {"cli/cli"}),
+    (["search", "issues", "flaky", "--repo", "Team/Project"], set(),
+     ["search", "issues", "--repo=team/project", "flaky", "--repo", "Team/Project"]),
+    (["search", "prs", "-R", "team/project", "repo:cli/cli", "-repo:cli/cli", "is:open"], {"cli/cli"},
+     ["search", "prs", "--repo=team/project", "-R", "team/project", "repo:cli/cli", "-repo:cli/cli", "is:open"]),
+    (["search", "code", "token", "--json", "path", "--template", "--repo", "cli/cli"], {"cli/cli"},
+     ["search", "code", "--repo=cli/cli", "token", "--json", "path", "--template", "--repo", "cli/cli"]),
 )
 
 REFUSED = (
@@ -51,7 +54,9 @@ REFUSED = (
     ["api", "repos/{owner}/private"], ["api", "--method", "GET"],
     # Browser, owner-wide and other private repositories.
     ["pr", "view", "7", "--web"], ["repo", "view", "--web=true"], ["pr", "view", "7", "-w"],
-    ["pr", "view", "7", "-cw"], ["search", "issues", "cli/cli"], ["search", "code", "token", "--json=repository"], ["repo", "list"], ["repo", "list", "team"],
+    ["pr", "view", "7", "-cw"], ["search", "issues", "cli/cli"], ["search", "code", "token", "--json=repository"],
+    ["search", "prs", "repo:cli/cli", "is:open"], ["search", "issues", "secret -repo:cli/cli"],
+    ["search", "issues", "secret", "--json", "body", "--template", "repo:cli/cli {{.body}}"], ["repo", "list"], ["repo", "list", "team"],
     ["ruleset", "list", "--org", "team"], ["ruleset", "view", "1", "-po", "team"],
     ["search", "issues", "secret"], ["search", "code", "--owner", "team", "token"],
     ["search", "issues", "--repo", "team/project", "org:other"], ["pr", "list", "--search", "user:other"],
@@ -95,12 +100,13 @@ class TestCoordinatorGhReads(AltitudeCase):
         return server.l3_verb_request(self.project, {"kind": "gh", "args": args})
 
     def test_reads_of_this_project_and_public_repositories_run(self):
-        for args, checked in ALLOWED:
+        for args, checked, *rebuilt in ALLOWED:
             self.calls.clear()
             with self.subTest(args=args):
                 self.assertEqual(self.read(args), {"returncode": 0, "stdout": "read\n", "stderr": ""})
                 *checks, (command, kwargs) = self.calls
-                self.assertEqual(command, ["gh", *args])
+                self.assertEqual(command, ["gh", *(rebuilt[0] if rebuilt else args)],
+                                 "a search always carries its validated --repo scope first")
                 self.assertEqual({check[0][3].removeprefix("repos/") for check in checks}, checked)
                 self.assertEqual(kwargs["cwd"], str(self.repo))
                 self.assertIs(kwargs["stdin"], subprocess.DEVNULL)

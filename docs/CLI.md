@@ -370,7 +370,8 @@ this project's repository or a public one:
 - `view`, `list`, `status`, `checks`, `diff`, `watch` and `check` of `pr`, `issue`, `release`, `repo`, `run`,
   `workflow`, `ruleset`, `label` and `cache`, for example `gh repo view`, `gh release list`,
   `gh ruleset list`, `gh workflow list` or `gh run view <id> --log`;
-- `gh search code|commits|issues|prs|repos` scoped with `--repo OWNER/REPO` or a `repo:OWNER/REPO` qualifier;
+- `gh search code|commits|issues|prs|repos` with at least one `--repo OWNER/REPO`; altd places a
+  `--repo` copy of each before the other arguments, so another option cannot absorb the scope;
 - `gh api repos/OWNER/REPO/...` (or `repos/{owner}/{repo}/...`) with GET only. Altd rebuilds the call from
   `--method GET`, `--header`, `--preview`, `--jq`, `--template`, `--cache`, `--include`, `--paginate`,
   `--slurp` and `--silent`; fields, input, another host and endpoints outside one repository are refused.
