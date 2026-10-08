@@ -37,8 +37,11 @@ class TestRequiredCheckWorkflow(AltitudeCase):
     def test_full_suite_runs_after_frozen_install_and_failure_keeps_the_browser_report(self):
         steps = self.job.split('\n      - ')
         install = next(step for step in steps if step.startswith('name: Install frozen dependencies'))
-        self.assertIn('pnpm --dir web install --frozen-lockfile', install)
-        self.assertIn('playwright install --with-deps chromium', install)
+        # From the repository root Corepack starts its latest pnpm, which refuses web/'s pinned version.
+        self.assertIn('working-directory: web\n', install)
+        self.assertNotIn('--dir', install)
+        self.assertIn('pnpm install --frozen-lockfile', install)
+        self.assertIn('pnpm exec playwright install --with-deps chromium', install)
         self.assertIn('name: Full deterministic checks\n        run: make check\n', self.job)
         report = steps[-1]
         self.assertIn('if: failure()', report)

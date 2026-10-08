@@ -47,7 +47,9 @@ jobs:
         with:
           node-version: 22
 
+      # Corepack selects the pinned pnpm from web/package.json only when pnpm starts inside web/.
       - name: Install frozen dependencies and Chromium
+        working-directory: web
         run: |
           export PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/browsers"
           echo "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" >> "$GITHUB_ENV"
@@ -55,8 +57,8 @@ jobs:
           python3 --version
           node --version
           pnpm --version
-          pnpm --dir web install --frozen-lockfile
-          pnpm --dir web exec playwright install --with-deps chromium
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
 
       - name: Full deterministic checks
         run: make check
