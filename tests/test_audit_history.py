@@ -1,4 +1,5 @@
-"""The history audit finds planted material across refs, keeps matches out of its console summary and rescans only the delta."""
+"""The history audit finds planted material across refs, keeps matches out of its console summary and rescans only the delta,
+even when the previous run recorded heads this clone lacks."""
 import io
 import json
 import unittest
@@ -70,10 +71,12 @@ class TestAuditHistory(AltitudeCase):
 
     def test_delta_scans_only_objects_and_commits_new_since_the_previous_run(self):
         self.commit({"old.txt": "AKIAABCDEFGHIJKLMNOP old\n"}, "old")
-        _, _ = self.run_audit("full.json")
+        _, previous = self.run_audit("full.json")
+        previous["heads"]["refs/pull/7/head"] = "0" * 39 + "7"
+        (self.out / "full.json").write_text(json.dumps(previous))
         self.commit({"new.txt": "AKIAQRSTUVWXYZABCDEF new\n"}, "new: mail later@corp.example")
         summary, private = self.run_audit("delta.json", "--since", str(self.out / "full.json"))
-        self.assertEqual((summary["commits"], summary["blobs"]), (1, 1))
+        self.assertEqual((summary["commits"], summary["blobs"], summary["since_heads_missing"]), (1, 1, 1))
         self.assertEqual({f["kind"] for f in private["findings"]}, {"content", "commit"})
         self.assertEqual(summary["findings"]["cloud-access-key"]["total"], 1)
         self.assertEqual(summary["findings"]["email-address"]["total"], 1)
