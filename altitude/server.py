@@ -49,7 +49,7 @@ L3_GH_RULE = (
     "The coordinator's gh only reads, from this project's repository or a public one: "
     "view/list/status/checks/diff/watch/check of pr, issue, release, repo, run, workflow, ruleset, label and cache; "
     "`gh search <type>` scoped with --repo or repo:OWNER/REPO; and `gh api repos/OWNER/REPO/...` with GET and no "
-    "fields or input. Writes, downloads, --web, `repo list`, owner-wide search (--owner, org:/user:/owner:, OR) "
+    "fields or input. Writes, downloads, --web, owner-wide reads (`repo list`, --owner, --org, org:/user:/owner:, OR) "
     "and other private repositories are refused; use `alt issue` to write and `alt issue inspect` for an "
     "operator-linked issue elsewhere.")
 _GH_NAME = r"[A-Za-z0-9_.-]+"
@@ -402,7 +402,7 @@ def _l3_gh_command(args: list[str]) -> tuple[list[str], set[str]]:
             selector = False
             continue
         flag, equals, value = arg.partition("=")
-        if flag in ("--web", "--owner"):
+        if flag in ("--web", "--owner", "--org") or args[0] == "ruleset" and re.match(r"-[A-Za-z]*o", arg):
             refuse(f"{flag} is not a repository read")
         if flag == "--repo" or re.match(r"-[A-Za-z]*R", arg):
             if flag != "--repo" and not arg.startswith("-R"):

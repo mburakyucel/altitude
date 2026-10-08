@@ -51,6 +51,7 @@ REFUSED = (
     ["api", "repos/{owner}/private"], ["api", "--method", "GET"],
     # Browser, owner-wide and other private repositories.
     ["pr", "view", "7", "--web"], ["repo", "view", "--web=true"], ["repo", "list"], ["repo", "list", "team"],
+    ["ruleset", "list", "--org", "team"], ["ruleset", "view", "1", "-po", "team"],
     ["search", "issues", "secret"], ["search", "code", "--owner", "team", "token"],
     ["search", "issues", "--repo", "team/project", "org:other"], ["pr", "list", "--search", "user:other"],
     ["issue", "list", "--search", "x OR is:private"], ["pr", "list", "--search=repo:other/private"],

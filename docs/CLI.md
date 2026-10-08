@@ -380,8 +380,8 @@ argument, a `repo:` qualifier or the API path) must be the project's checkout or
 visibility to altd's GitHub read. Other private repositories, including other registered projects', stay
 behind [operator-linked issue inspection](#operator-linked-issue-inspection). Writes and side effects
 (`create`, `edit`, `close`, `merge`, `comment`, `delete`, `rerun`, `cancel`, `download`, `checkout`,
-`auth` and the like), `--web`, `gh repo list`, and owner-wide search (`--owner`, `org:`, `user:` or
-`owner:` qualifiers, and `OR`) are refused. A refusal names its reason and restates this rule. Altd runs
+`auth` and the like), `--web`, and owner-wide reads (`gh repo list`, `--owner`, organization rulesets,
+`org:`, `user:` or `owner:` search qualifiers, and `OR`) are refused. A refusal names its reason and restates this rule. Altd runs
 the read in the checkout without `GH_REPO`, standard input or prompts, makes any browser launch fail,
 shares one 120-second budget across the visibility checks and the command, and bounds its output to
 8 MiB per stream. `alt issue` verbs remain the coordinator's only GitHub writes.
