@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
 
@@ -226,7 +226,9 @@ describe("LiveSession", () => {
     expect(within(panel).queryByText("No session file for this attempt")).toBeNull();
   });
 
-  it("keeps following when content shrinks under it, and pauses when the reader scrolls up", async () => {
+  it("keeps following when content shrinks under it, and stops at once when the reader scrolls up", async () => {
+    const resized: (() => void)[] = [];
+    vi.stubGlobal("ResizeObserver", class { constructor(callback: () => void) { resized.push(callback); } observe() {} disconnect() {} });
     stub();
     renderApp({ route });
     const panel = await openPanel();
@@ -244,8 +246,14 @@ describe("LiveSession", () => {
     body.scrollTop = top;
     fireEvent.scroll(body);
     expect(within(panel).getByRole("button", { name: "Pause" })).toBeInTheDocument();
-    body.scrollTop = 100;
-    fireEvent.scroll(body);
+    // The reader scrolls up as content grows; the resize lands before the pause renders.
+    act(() => {
+      body.scrollTop = 100;
+      body.dispatchEvent(new Event("scroll"));
+      height = 1200;
+      resized.forEach((callback) => callback());
+    });
+    expect(top).toBe(100);
     expect(within(panel).getByRole("button", { name: "Follow" })).toBeInTheDocument();
   });
 
