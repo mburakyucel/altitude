@@ -1,23 +1,32 @@
 #!/usr/bin/env python3
 """The phone UI in iOS Safari on a validation run's Simulator iPhone.
 
-Serves this checkout's built web app with fixture engines and fictional data on loopback, pairs the phone's Safari,
-opens a project's work in the phone layout, taps into a task and back, walks voice input's restart after the X (issue
-#698) with diagnostics on, checks what Add to Home Screen would take from the app, loads a page over HTTPS with the
-run's certificate from Altitude's generator, whose CA altd trusted in the phone, then opens the device setup page of
-a fictional CA and taps Download the profile. It keeps a page snapshot at each step, Safari's console, the browser's
-versions and the voice diagnostic report. A step that does not reach its state, horizontal overflow, a console error,
-a certificate warning, an untrusted certificate Safari accepts or a profile Safari does not fetch fails the
-walkthrough. The run's final screenshot shows Safari's answer to the profile.
+Serves this checkout's built web app with fixture engines and fictional data on loopback and pairs the phone's Safari.
+Then these steps, in this order, each selectable with --steps (`make ui-simulator STEPS=...`):
 
-It runs inside `alt task validate --simulator` (`make ui-simulator`): altd's relay to that iPhone's Safari is the socket
-in $SIMULATOR_INSPECTOR, and nothing here reaches the Simulator service. Evidence goes to RESULTS, by default
-$VALIDATION_RESULTS/simulator. See docs/DEVELOPMENT.md#ios-simulator-runs.
+- navigation: a project's work in the phone layout, a task and back;
+- dictation: voice input's restart after the X (issue #698) with diagnostics on;
+- https: a page over HTTPS with the run's certificate from Altitude's generator, whose CA altd trusted in the phone,
+  and an untrusted control refused;
+- profile: the device setup page of a CA from the same generator, then altd's native profile walk (Download the
+  profile, Allow, Settings' Profile Downloaded, Install, full trust), checking the profile's name and SHA-256 against
+  the CA served, and a page with that CA's server certificate loading without a warning;
+- home-screen: altd's native Add to Home Screen walk at the app's root and at a task's address: the sheet's title,
+  the Home Screen icon against the approved one pixel for pixel, the web app opening on its own and pairing.
+
+It keeps a page snapshot or screenshot at each step, Safari's console, the browser's versions and the voice diagnostic
+report. A step that does not reach its state, horizontal overflow, a console error, a certificate warning, an untrusted
+certificate Safari accepts or a native step that is not reached fails the walkthrough.
+
+It runs inside `alt task validate --simulator` (`make ui-simulator`): altd's relay to that iPhone's Safari and its two
+walks is the socket in $SIMULATOR_INSPECTOR, and nothing here reaches the Simulator service. Evidence goes to RESULTS,
+by default $VALIDATION_RESULTS/simulator. See docs/DEVELOPMENT.md#ios-simulator-runs.
 """
 from __future__ import annotations
 
 import argparse
 import base64
+import dataclasses
 import hashlib
 import http.server
 import json
@@ -33,7 +42,9 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.request
 import uuid
+import zlib
 
 REPO = Path(__file__).resolve().parent.parent
 FAILURES = (OSError, RuntimeError, TimeoutError, ValueError, KeyError)
@@ -41,6 +52,10 @@ sys.path.insert(0, str(REPO))
 from altitude import tls
 SAFARI = "com.apple.mobilesafari"
 OPEN, OPENED = "_rpc_altitudeOpenURL:", "_rpc_altitudeOpenedURL:"
+WALK, WALKED = "_rpc_altitudeWalk:", "_rpc_altitudeWalked:"
+STEPS = ("navigation", "dictation", "https", "profile", "home-screen")
+WALK_WAIT = 1200    # seconds for altd's answer to one walk, building the walks at the first included
+SHARE_MINUTES = 30  # the setup page's window, longer than the profile walk
 PHONE_WIDTH = 500   # widest viewport this walkthrough accepts as the phone layout
 CERTIFICATE_ALERT = re.compile(r"ALERT_(BAD_CERTIFICATE|CERTIFICATE|UNKNOWN_CA)")   # a TLS client refusing the chain
 
@@ -59,6 +74,7 @@ class Safari:
         self.inbox: list = []
         self.console: list = []
         self.opened: list = []
+        self.walked: list = []
         self.target = self.app = self.page = self.sender = None
         self.console_on = False
         self.next_id = 1
@@ -94,6 +110,8 @@ class Safari:
             self.listing[argument["WIRApplicationIdentifierKey"]] = argument["WIRListingKey"]
         elif selector == OPENED:
             self.opened.append(argument.get("error", ""))
+        elif selector == WALKED:
+            self.walked.append(argument)
         elif selector == "_rpc_applicationSentData:":
             message = json.loads(argument["WIRMessageDataKey"])
             method, params = message.get("method"), message.get("params", {})
@@ -123,6 +141,14 @@ class Safari:
         error = self.until(lambda: self.opened and [self.opened.pop()], 60, "the relay did not answer")[0]
         if error:
             raise RuntimeError(f"Safari did not open {url}: {error}")
+
+    def walk(self, name: str, url: str, code: str = "") -> tuple[dict, dict]:
+        """altd's native walk `name` at `url`: its record and its screenshots by name."""
+        self.send(WALK, {"walk": name, "url": url, **({"code": code} if code else {})})
+        answer = self.until(lambda: self.walked and [self.walked.pop()], WALK_WAIT, f"the {name} walk got no answer")[0]
+        if answer.get("error"):
+            raise RuntimeError(f"the {name} walk: {answer['error']}")
+        return json.loads(answer["walk"]), answer.get("files", {})
 
     def attach(self, prefix: str, seconds: float = 60) -> None:
         """Inspect Safari's page whose address starts with `prefix`."""
@@ -234,16 +260,27 @@ var fits = () => document.documentElement.scrollWidth <= innerWidth;
 """
 
 
-def walkthrough(safari: Safari, url: str, device: str, results: Path) -> list[dict]:
-    steps = []
+@dataclasses.dataclass
+class Run:
+    """What the steps share: the relay's socket and a Safari connection through it, the fixture service and its paired
+    device, the fixture project's work and task addresses, the evidence folder and the steps recorded so far."""
+    inspector: str
+    safari: Safari
+    url: str
+    device: str
+    results: Path
+    work: str = ""
+    task: str = ""
+    steps: list = dataclasses.field(default_factory=list)
 
-    def state(name: str, check: str, what: str, action: str | None = None) -> None:
-        if action:
-            safari.evaluate(HELPERS + action, gesture=True)
-        safari.wait(HELPERS + f"({check}) && fits()", what)
-        safari.snapshot(results / f"{name}.png")
-        steps.append({"step": name, "url": safari.evaluate("location.href"), "reached": what})
+    def task_link(self) -> str:
+        return f"shown('section[aria-label=\"Work\"] a[href^=\"{self.work}/tasks/\"]')"
 
+
+def setup(run: Run) -> None:
+    """Open the app in Safari, pair it as the fixture's device the way a paired phone's cookie does, and find the
+    fixture project's work and a task in it."""
+    safari, url = run.safari, run.url
     for attempt in range(4):
         safari.open(url + "/")
         try:
@@ -253,14 +290,27 @@ def walkthrough(safari: Safari, url: str, device: str, results: Path) -> list[di
             if attempt == 3:  # a Safari launched by the first open can drop that address and show a blank page
                 raise
     safari.wait("document.readyState === 'complete'", "the first page")
-    # Pair as the fixture's device, the way a paired phone's cookie does, then read the fixture's project.
-    safari.evaluate(f"document.cookie = 'altitude_device={device}; path=/'; 0")
+    safari.evaluate(f"document.cookie = 'altitude_device={run.device}; path=/'; 0")
     project = safari.wait("window.__project || (window.__overview ||= fetch('/api/overview').then(r => r.json())"
                           ".then(o => window.__project = o.projects.find(p => p.managed).name), '')",
                           "the fixture's project")
-    work = f"/projects/{project}"
-    safari.evaluate(f"location.href = {json.dumps(url + work + '?tab=work')}; 0")
-    task_link = f"shown('section[aria-label=\"Work\"] a[href^=\"{work}/tasks/\"]')"
+    run.work = f"/projects/{project}"
+    safari.evaluate(f"location.href = {json.dumps(url + run.work + '?tab=work')}; 0")
+    run.task = safari.wait(HELPERS + f"{run.task_link()}?.getAttribute('href')", "a task in the project's work")
+    run.task = run.task.split("?")[0]
+
+
+def navigation(run: Run) -> None:
+    """The project's work in the phone layout, a task's conversation and Back."""
+    safari, task_link = run.safari, run.task_link()
+
+    def state(name: str, check: str, what: str, action: str | None = None) -> None:
+        if action:
+            safari.evaluate(HELPERS + action, gesture=True)
+        safari.wait(HELPERS + f"({check}) && fits()", what)
+        safari.snapshot(run.results / f"{name}.png")
+        run.steps.append({"step": name, "url": safari.evaluate("location.href"), "reached": what})
+
     state("01-work", f"{task_link} && innerWidth <= {PHONE_WIDTH}", "the project's work in the phone layout")
     safari.evaluate(REQUESTS)
     state("02-task", "shown('section[aria-label=\"Task conversation\"]') && shown('button[aria-label=\"Back\"]') "
@@ -268,10 +318,6 @@ def walkthrough(safari: Safari, url: str, device: str, results: Path) -> list[di
           action=f"{task_link}.click(); 0")
     state("03-back", f"{task_link} && !shown('section[aria-label=\"Task conversation\"]')",
           "the project's work again", action="shown('button[aria-label=\"Back\"]').click(); 0")
-    task = safari.evaluate(f"{task_link}.getAttribute('href')")
-    steps += dictation(safari, url, work, task.split("?")[0], results)
-    steps.append(home_screen(safari, url, ["/", work, task], results))
-    return steps
 
 
 #: Simulator Safari's microphone and speech recognizer stop at native permission dialogs the inspector cannot answer,
@@ -466,55 +512,146 @@ def dictation(safari: Safari, url: str, work: str, task: str, results: Path) -> 
     return steps
 
 
-#: What Add to Home Screen takes from each address, read as Safari parses the page, and the files it names.
-HOME_SCREEN = """
-window.__home || (window.__home = (async () => {
-  const pages = {};
-  const read = async (path) => {
-    const response = await fetch(path);
-    if (!response.ok || response.redirected) throw new Error(`${path} answered ${response.status} at ${response.url}`);
-    return response;
-  };
-  for (const path of %s) {
-    const page = new DOMParser().parseFromString(await (await read(path)).text(), 'text/html');
-    pages[path] = {title: page.title, icon: page.querySelector('link[rel="apple-touch-icon"]')?.getAttribute('href'),
-                   manifest: page.querySelector('link[rel="manifest"]')?.getAttribute('href')};
-  }
-  const icon = await read(pages['/'].icon), bytes = new Uint8Array(await icon.arrayBuffer());
-  const image = new Image();
-  image.src = pages['/'].icon;
-  await image.decode();
-  const manifest = await (await read(pages['/'].manifest)).json();
-  return {pages, manifest, icon: {type: icon.headers.get('content-type'), size: [image.naturalWidth, image.naturalHeight],
-                                  bytes: btoa(String.fromCharCode(...bytes))}};
-})().then((value) => window.__homeResult = value, (error) => window.__homeResult = {error: String(error)}));
-window.__homeResult
-"""
+#: The native walks' steps, in order; a step the walk did not record was not reached.
+HOME_WALK = ("safari", "share", "add", "home-screen", "standalone", "paired")
+PROFILE_WALK = ("download", "allow", "profile-downloaded", "certificate", "install", "trust")
 
 
-def home_screen(safari: Safari, url: str, paths: list[str], results: Path) -> dict:
-    """At the app's root, project and task addresses Safari finds the approved Climb icon, the manifest's name and
-    standalone display: what Add to Home Screen uses. Adding the app is Safari's own menu, out of the relay's reach."""
-    found = safari.wait(HOME_SCREEN % json.dumps(paths), "the Home Screen icon and manifest")
-    if "error" in found:
-        raise RuntimeError(f"Safari could not read the Home Screen files: {found['error']}")
-    icon, approved = found["icon"], (REPO / "web" / "public" / "apple-touch-icon.png").read_bytes()
-    wrong = [path for path, page in found["pages"].items()
-             if page != {"title": "Altitude", "icon": "/apple-touch-icon.png", "manifest": "/manifest.webmanifest"}]
-    manifest = {key: found["manifest"].get(key) for key in ("name", "short_name", "display", "start_url")}
-    if wrong or icon["type"] != "image/png" or icon["size"] != [180, 180] or base64.b64decode(icon["bytes"]) != approved \
-            or manifest != {"name": "Altitude", "short_name": "Altitude", "display": "standalone", "start_url": "/"}:
-        raise RuntimeError(f"Safari found other Home Screen files: pages {found['pages']}, manifest {manifest}, "
-                           f"icon {icon['type']} {icon['size']} sha256 "
-                           f"{hashlib.sha256(base64.b64decode(icon['bytes'])).hexdigest()}")
-    # The icon as Safari draws it, which also leaves the app so its change stream ends.
-    leave(safari, url + "/apple-touch-icon.png")
-    safari.wait("document.images[0] && document.images[0].complete && document.images[0].naturalWidth === 180",
-                "the icon on its own")
-    safari.snapshot(results / "04-icon.png")
-    return {"step": "04-icon", "url": safari.evaluate("location.href"), "pages": found["pages"], "manifest": manifest,
-            "icon": {"type": icon["type"], "size": icon["size"], "sha256": hashlib.sha256(approved).hexdigest()},
-            "reached": "the approved Climb icon, name and standalone display at the root, project and task addresses"}
+def walked(run: Run, name: str, url: str, prefix: str, expected: tuple, code: str = "") -> tuple[dict, list, dict]:
+    """altd's walk `name` at `url`, with its screenshots kept as `<prefix>-<name>.png`: what it saw, a row for each
+    expected step, completed or not reachable with the reason, a failed `runner` row for a runner that crashed, hung or
+    did not build even after its last step, and its files."""
+    record, files = run.safari.walk(name, url, code)
+    for file, data in files.items():
+        (run.results / f"{prefix}-{file}").write_bytes(data)
+    found = {row.get("step"): row for row in record.get("steps", [])}
+    why = record.get("error") or record.get("seen", {}).get("stopped") or "no reason recorded"
+    rows = []
+    for step in expected:
+        row = dict(found.get(step) or {"step": step, "status": "not reachable",
+                                        "reason": f"the walk ended before this step: {why}"})
+        if row.get("screenshot"):
+            row["screenshot"] = f"{prefix}-{row['screenshot']}"
+        rows.append(row)
+    if record.get("error"):
+        rows.append({"step": "runner", "status": "failed", "reason": record["error"]})
+    return record, rows, files
+
+
+def finish(run: Run, step: str, rows: list, reached: str, **seen) -> None:
+    """Record a walk's rows as one step; any row not completed fails the walkthrough."""
+    run.steps.append({"step": step, "walk": rows, **seen, "reached": reached})
+    unreached = [row for row in rows if row.get("status") != "completed"]
+    if unreached:
+        row = unreached[0]
+        raise RuntimeError(f"{step}: {row['step']} {row.get('status')}: {row.get('reason')}")
+
+
+def unreached(step: str) -> dict:
+    return {"step": step, "status": "not reachable", "reason": "an earlier step was not reached"}
+
+
+def check(step: str, failures: list[str], detail: str) -> dict:
+    """A row for what the run checked of a walk: completed, or failed with what differed."""
+    return {"step": step, "status": "failed", "reason": "; ".join(failures)} if failures else \
+        {"step": step, "status": "completed", "detail": detail}
+
+
+def api(run: Run, method: str, path: str) -> dict:
+    """The fixture service's answer, as the paired device."""
+    request = urllib.request.Request(run.url + path, method=method, data=b"{}" if method == "POST" else None,
+                                     headers={"Cookie": f"altitude_device={run.device}",
+                                              "Content-Type": "application/json"})
+    with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=10) as answer:
+        return json.load(answer)
+
+
+def pixels(data: bytes) -> tuple[int, int, bytes]:
+    """A non-interlaced 8-bit RGB or RGBA PNG's size and RGBA pixels: what it shows, whatever chunks its encoder
+    added. iOS stores a Home Screen icon re-encoded, so its bytes differ from the file the app serves."""
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ValueError("not a PNG")
+    offset, header, compressed = 8, None, b""
+    while offset + 8 <= len(data):
+        size, kind = struct.unpack(">I4s", data[offset:offset + 8])
+        body = data[offset + 8:offset + 8 + size]
+        if kind == b"IHDR" and len(body) == 13:
+            header = struct.unpack(">IIBBBBB", body)
+        elif kind == b"IDAT":
+            compressed += body
+        offset += 12 + size
+    if not header or header[2] != 8 or header[3] not in (2, 6) or header[6]:
+        raise ValueError(f"not an 8-bit RGB or RGBA PNG: {header}")
+    width, height, kind = header[0], header[1], header[3]
+    size = 3 if kind == 2 else 4
+    try:
+        raw = zlib.decompress(compressed)
+    except zlib.error as exc:
+        raise ValueError(f"its image data cannot be read: {exc}") from None
+    stride, out = width * size, bytearray()
+    if len(raw) != height * (stride + 1):
+        raise ValueError(f"its image data holds {len(raw)} bytes for {width}x{height}")
+    previous = bytearray(stride)
+    for y in range(height):
+        start = y * (stride + 1)
+        method, line = raw[start], bytearray(raw[start + 1:start + 1 + stride])
+        for x in range(stride):
+            a, b = line[x - size] if x >= size else 0, previous[x]
+            c = previous[x - size] if x >= size else 0
+            if method == 1:
+                line[x] = (line[x] + a) & 255
+            elif method == 2:
+                line[x] = (line[x] + b) & 255
+            elif method == 3:
+                line[x] = (line[x] + (a + b) // 2) & 255
+            elif method == 4:
+                p = a + b - c
+                line[x] = (line[x] + min((abs(p - a), 0, a), (abs(p - b), 1, b), (abs(p - c), 2, c))[2]) & 255
+        out += line if size == 4 else b"".join(line[x:x + 3] + b"\xff" for x in range(0, stride, 3))
+        previous = line
+    return width, height, bytes(out)
+
+
+def home_screen(run: Run) -> None:
+    """Add to Home Screen at the app's root and at a task's address, through altd's native walk. The sheet offers the
+    title Altitude as a web app; the Home Screen icon iOS stored shows the approved Climb icon pixel for pixel; the clip
+    opens the manifest's start address full screen; and the icon opens Altitude on its own, without Safari, where it
+    pairs with a code from the fixture service as a Home Screen app."""
+    approved = (REPO / "web" / "public" / "apple-touch-icon.png").read_bytes()
+    for label, path in (("root", "/"), ("task", run.task)):
+        prefix = f"home-{label}"
+        apps = [d for d in api(run, "GET", "/api/devices")["devices"] if d["name"] == "Home Screen app on iPhone"]
+        code = api(run, "POST", "/api/devices/code")["code"]
+        record, rows, files = walked(run, "home-screen", run.url + path, prefix, HOME_WALK, code)
+        seen, clip, icon = record.get("seen", {}), record.get("clip", {}), files.get("web-clip-icon.png")
+        reached = {row["step"] for row in rows if row.get("status") == "completed"}
+        if "home-screen" in reached:
+            failures = [f"{what} is {value!r}" for what, value, wanted in (
+                ("the sheet's title", seen.get("sheet title"), "Altitude"),
+                ("Open as Web App", seen.get("open as web app"), "1"), ("the clip's title", clip.get("Title"), "Altitude"),
+                ("the clip's address", clip.get("URL"), run.url + "/"),
+                ("the clip's full screen", clip.get("FullScreen"), True)) if value != wanted]
+            try:
+                if not icon or pixels(icon) != pixels(approved):
+                    failures.append("the Home Screen icon's pixels differ from the approved icon" if icon else
+                                    "iOS stored no Home Screen icon")
+            except ValueError as exc:
+                failures.append(f"the Home Screen icon cannot be read: {exc}")
+            rows.append(check("web-clip", failures, "the title Altitude as a web app, the approved icon pixel for "
+                                                    "pixel, and the manifest's start address"))
+        else:
+            rows.append(unreached("web-clip"))
+        if "paired" in reached:
+            added = len([d for d in api(run, "GET", "/api/devices")["devices"]
+                         if d["name"] == "Home Screen app on iPhone"]) - len(apps)
+            rows.append(check("standalone-pairing", [] if seen.get("safari") == "not in front" and added == 1 else
+                              [f"Safari {seen.get('safari')}; {added} new Home Screen app device(s)"],
+                              "the app paired as a Home Screen app on iPhone, with Safari not in front"))
+        else:
+            rows.append(unreached("standalone-pairing"))
+        finish(run, prefix, rows, f"Add to Home Screen at {path}: the icon, title and standalone app",
+               clip=clip, icon={"approved sha256": hashlib.sha256(approved).hexdigest(),
+                                "stored sha256": icon and hashlib.sha256(icon).hexdigest()})
 
 
 class Secure:
@@ -560,19 +697,31 @@ class Secure:
         self.server.server_close()
 
 
-def https(safari: Safari, results: Path) -> dict:
+def secure_page(nonce: str) -> bytes:
+    return (f'<!doctype html><meta name="viewport" content="width=device-width"><title>{nonce}</title>'
+            "<h1>HTTPS without a warning</h1><p>Served with an Altitude certificate.</p>").encode()
+
+
+def load_secure(safari: Safari, secure: Secure, nonce: str, what: str) -> None:
+    """Safari shows the page `secure` serves as a secure context: no certificate warning stands in its place."""
+    try:
+        safari.wait(f"location.href === {json.dumps(secure.origin + '/')} && document.title === {json.dumps(nonce)}"
+                    " && isSecureContext", what)
+    except TimeoutError as exc:
+        raise RuntimeError(f"{exc}; the server refused {secure.refused}") from None
+
+
+def https(run: Run) -> None:
     """A page served over HTTPS with the identity altd made with Altitude's certificate generator and trusted in the
-    phone ($SIMULATOR_HTTPS), through the serving context Altitude's server loads: Safari fetches from it and loads it
-    as a secure context, with no certificate warning. As a control, a fetch from a second identity of the same
-    generator, which the phone does not trust, must be refused for its certificate, with Safari's message about it and
-    a certificate alert at the server, so a pass shows that Safari checked the chain."""
-    folder, nonce = Path(os.environ["SIMULATOR_HTTPS"]), uuid.uuid4().hex
-    page = (f'<!doctype html><meta name="viewport" content="width=device-width"><title>{nonce}</title>'
-            "<h1>HTTPS without a warning</h1><p>Served with this run's Altitude certificate.</p>").encode()
+    phone ($SIMULATOR_HTTPS), through the serving context Altitude's server loads: Safari loads it as a secure
+    context, with no certificate warning. As a control, a fetch from a second identity of the same generator, which the
+    phone does not trust, must be refused for its certificate, with Safari's message about it and a certificate alert at
+    the server, so a pass shows that Safari checked the chain."""
+    safari, folder, nonce = run.safari, Path(os.environ["SIMULATOR_HTTPS"]), uuid.uuid4().hex
     with tempfile.TemporaryDirectory() as other:
         tls.fixture(Path(other) / "untrusted")
-        untrusted = Secure(tls._load(Path(other) / "untrusted"), page)
-    trusted = Secure(tls._load(folder), page)
+        untrusted = Secure(tls._load(Path(other) / "untrusted"), secure_page(nonce))
+    trusted = Secure(tls._load(folder), secure_page(nonce))
 
     def fetched(url: str) -> tuple[str, list[str]]:
         """How the current page's fetch of `url` ended, and what Safari's console said about that request."""
@@ -585,14 +734,9 @@ def https(safari: Safari, results: Path) -> dict:
         return outcome, [m.get("text", "") for m in safari.console if m.get("url") == url]
 
     try:
-        outcome, said = fetched(trusted.origin + "/fetch")
-        if outcome != "loaded":
-            raise RuntimeError(f"Safari refused the run's trusted certificate: {outcome}; Safari: {said}; "
-                               f"the server: {trusted.refused}")
         safari.evaluate(f"location.href = {json.dumps(trusted.origin + '/')}; 0")
-        safari.wait(f"location.href === {json.dumps(trusted.origin + '/')} && document.title === {json.dumps(nonce)}"
-                    " && isSecureContext", "the HTTPS page, without a certificate warning")
-        safari.snapshot(results / "05-https.png")
+        load_secure(safari, trusted, nonce, "the HTTPS page, without a certificate warning")
+        safari.snapshot(run.results / "05-https.png")
         control, said = fetched(untrusted.origin + "/fetch")
         if control == "loaded" or untrusted.requests or not said \
                 or not any(CERTIFICATE_ALERT.search(refusal) for refusal in untrusted.refused):
@@ -601,47 +745,93 @@ def https(safari: Safari, results: Path) -> dict:
     finally:
         trusted.close()
         untrusted.close()
-    return {"step": "05-https", "url": trusted.origin + "/", "served": tls.details(folder / "server.crt")["sha256"],
-            "control": {"url": untrusted.origin + "/fetch", "fetch": control, "safari": said, "server": untrusted.refused},
-            "reached": "an HTTPS page with the run's trusted Altitude certificate, without a warning; an untrusted "
-                       "one refused"}
+    run.steps.append({"step": "05-https", "url": trusted.origin + "/", "served": tls.details(folder / "server.crt")["sha256"],
+                      "control": {"url": untrusted.origin + "/fetch", "fetch": control, "safari": said,
+                                  "server": untrusted.refused},
+                      "reached": "an HTTPS page with the run's trusted Altitude certificate, without a warning; an "
+                                 "untrusted one refused"})
 
 
-def certificate_setup(safari: Safari, app: str, results: Path) -> dict:
-    """The device setup page for a fictional CA, as `alt tls-share` offers it: it names the CA and its SHA-256, and
-    Download the profile makes Safari fetch the profile, which the share sends in full. Whether Safari accepts it shows
-    only in its own prompt in the run's final screenshot; allowing, installing and trusting it are Safari's and
-    Settings' controls, out of the relay's reach. tests/test_tls.py checks the profile's contents."""
+def profile(run: Run) -> None:
+    """The device setup page, as `alt tls-share` offers it, for a new CA from Altitude's certificate generator whose key
+    is gone: it names the CA and its SHA-256. Then altd's native walk takes the profile through Safari and Settings:
+    Download the profile, Allow, Settings' Profile Downloaded, the profile's details, Install and full trust under
+    Certificate Trust Settings. The name and SHA-256 Settings shows must be the CA's, the CA Settings trusts must be
+    it, and a page served with that CA's server certificate then loads in Safari without a warning. The phone never
+    trusted this CA before, as the https step's control shows for another of the generator's CAs."""
+    safari, nonce, checking = run.safari, uuid.uuid4().hex, None
     with tempfile.TemporaryDirectory() as folder:
-        ca = Path(folder) / "ca.crt"
-        subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes",
-                        "-keyout", str(Path(folder) / "ca.key"), "-out", str(ca), "-days", "1",
-                        "-subj", "/CN=Fixture Altitude CA", "-addext", "basicConstraints=critical,CA:TRUE"],
-                       check=True, capture_output=True)
-        authority, sent = tls.identity(ca), threading.Event()
-        share = tls.Share({"name": "127.0.0.1", "kind": "IP", "url": app}, ca.read_bytes(), authority, 5,
-                          sent=lambda message: message.startswith("Sent the profile") and sent.set())
+        identity = Path(folder) / "profile"
+        tls.fixture(identity)
+        ca, authority, context = (identity / "ca.crt").read_bytes(), tls.identity(identity / "ca.crt"), tls._load(identity)
+    sent = threading.Event()
+    share = tls.Share({"name": "127.0.0.1", "kind": "IP", "url": run.url}, ca, authority, SHARE_MINUTES,
+                      sent=lambda message: message.startswith("Sent the profile") and sent.set())
+    secure = Secure(context, secure_page(nonce))
     try:
         safari.evaluate(f"location.href = {json.dumps(share.link + '#ios')}; 0")
         rows = tls.fingerprint_rows(authority["sha256"])
         safari.wait(f"document.body && [{json.dumps(authority['name'])}, ...{json.dumps(rows)}]"
                     ".every((text) => document.body.innerText.includes(text))", "the setup page with the CA's SHA-256")
-        safari.snapshot(results / "06-setup.png")
-        safari.evaluate("[...document.links].find((a) => a.textContent === 'Download the profile').click(); 0",
-                        gesture=True)
-        if not sent.wait(30):
-            raise TimeoutError("Safari did not fetch the profile")
-        time.sleep(3)  # for Safari's prompt to appear in the final screenshot
+        safari.snapshot(run.results / "06-setup.png")
+        run.steps.append({"step": "06-setup", "url": share.link, "ca": authority["name"], "sha256": authority["sha256"],
+                          "reached": "the setup page names the CA and its SHA-256"})
+        record, rows, _ = walked(run, "profile", share.link + "#ios", "profile", PROFILE_WALK)
+        seen, fingerprint = record.get("seen", {}), authority["sha256"].replace(":", "").lower()
+        reached = {row["step"] for row in rows if row.get("status") == "completed"}
+        failures = []
+        if "certificate" in reached:
+            shown = seen.get("certificate", "").splitlines()
+            if authority["name"] not in seen.get("profile", "").splitlines():
+                failures.append(f"Install Profile does not name {authority['name']}")
+            if authority["name"] not in shown:
+                failures.append(f"the certificate's details do not name {authority['name']}")
+            if not any(re.sub(r"[^0-9a-f]", "", line.lower()) == fingerprint for line in shown):
+                failures.append("the certificate's SHA-256 is not the served CA's")
+            if not sent.is_set():
+                failures.append("the setup page's server sent no profile")
+        rows.insert(PROFILE_WALK.index("certificate") + 1, check(
+            "verify", failures, f"the profile and its certificate are {authority['name']}, SHA-256 "
+                                f"{authority['sha256']}") if "certificate" in reached else unreached("verify"))
+        if "trust" in reached:
+            failures = [] if seen.get("trusted") == authority["name"] else [f"Settings trusted {seen.get('trusted')}"]
+            if not failures:
+                # The walk closed Safari; a new connection inspects the page it opens.
+                checking = Safari(run.inspector)
+                try:
+                    checking.open(secure.origin + "/")
+                    checking.attach(secure.origin)
+                    load_secure(checking, secure, nonce, "the page signed by the profile's CA, without a certificate "
+                                                         "warning")
+                    checking.snapshot(run.results / "profile-https.png")
+                except FAILURES as exc:
+                    failures.append(str(exc))
+            rows.append(check("https", failures, f"{secure.origin}/ loads as a secure context"))
+        else:
+            rows.append(unreached("https"))
+        finish(run, "profile", rows, "the profile downloaded, installed and trusted in Settings, then HTTPS without a "
+                                     "warning", ca=authority["name"], sha256=authority["sha256"])
     finally:
         share.close()
-    return {"step": "06-profile", "url": share.link, "ca": authority["name"], "sha256": authority["sha256"],
-            "reached": "the setup page's CA and SHA-256, and the profile sent to Safari in full"}
+        secure.close()
+        if checking:
+            checking.sock.close()
+
+
+def selection(text: str) -> list[str]:
+    chosen = [name for name in re.split(r"[\s,]+", text) if name]
+    unknown = sorted(set(chosen) - set(STEPS))
+    if unknown or not chosen:
+        raise argparse.ArgumentTypeError(f"choose steps from {', '.join(STEPS)}, not {', '.join(unknown) or 'none'}")
+    return [name for name in STEPS if name in chosen]
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("results", nargs="?", type=Path,
                         default=Path(os.environ.get("VALIDATION_RESULTS", REPO / "web" / "test-results")) / "simulator")
+    parser.add_argument("--steps", type=selection, default=list(STEPS),
+                        help=f"the steps to run, separated by spaces or commas; they run in this order: {' '.join(STEPS)}")
     args = parser.parse_args()
     inspector = os.environ.get("SIMULATOR_INSPECTOR")
     if not inspector:
@@ -652,32 +842,37 @@ def main() -> int:
     service_log = (args.results / "service.log").open("w")
     service = subprocess.Popen([sys.executable, "e2e/acceptance-service.py"], cwd=REPO / "web",
                                stdout=subprocess.PIPE, stderr=service_log, text=True)
-    record = {"steps": [], "error": None}
-    safari = None
+    record = {"selected": args.steps, "steps": [], "error": None}
+    safari, left = None, False
+    steps = {"navigation": navigation, "dictation": lambda run: run.steps.extend(
+                 dictation(run.safari, run.url, run.work, run.task, run.results)),
+             "https": https, "profile": profile, "home-screen": home_screen}
     try:
         ready = json.loads(service.stdout.readline() or "{}")
         if not ready.get("disposable"):
             raise RuntimeError("the fixture service did not start; see service.log")
         safari = Safari(inspector)
+        run = Run(inspector, safari, ready["url"], ready["device"], args.results, steps=record["steps"])
         try:
-            record["steps"] = walkthrough(safari, ready["url"], ready["device"], args.results)
-        except FAILURES as exc:
-            record["error"] = str(exc)
-        # Recorded beside a failure, never in its place.
-        try:
-            if safari.target:
-                record["browser"] = safari.evaluate(
-                    "({userAgent: navigator.userAgent, viewport: [innerWidth, innerHeight], "
-                    "devicePixelRatio, speechRecognition: typeof webkitSpeechRecognition})")
-                if record["error"]:  # a finished walkthrough has left the app
-                    # Leave the app, so its change stream ends before the service stops.
+            setup(run)
+            record["browser"] = safari.evaluate(
+                "({userAgent: navigator.userAgent, viewport: [innerWidth, innerHeight], "
+                "devicePixelRatio, speechRecognition: typeof webkitSpeechRecognition})")
+            for name in args.steps:
+                if name in ("https", "profile", "home-screen") and not left:
+                    # Leave the app, so its change stream ends before the service stops; the native walks close Safari.
                     leave(safari, "about:blank")
                     safari.wait("location.href === 'about:blank'", "a blank page")
+                    left = True
+                steps[name](run)
         except FAILURES as exc:
-            record["cleanup"] = str(exc)
-        if not record["error"]:
-            record["steps"].append(https(safari, args.results))
-            record["steps"].append(certificate_setup(safari, ready["url"], args.results))
+            record["error"] = str(exc)
+        if not left:
+            try:
+                leave(safari, "about:blank")
+                safari.wait("location.href === 'about:blank'", "a blank page")
+            except FAILURES as exc:
+                record["cleanup"] = str(exc)
     except FAILURES as exc:
         record["error"] = str(exc)
     finally:
@@ -704,6 +899,9 @@ def main() -> int:
     (args.results / "walkthrough.json").write_text(json.dumps(record, indent=2) + "\n")
     for step in record["steps"]:
         print(f"ios_simulator: {step['step']}: {step['reached']}")
+        for row in step.get("walk", []):
+            why = f" ({row['reason']})" if row.get("reason") else ""
+            print(f"ios_simulator:   {row['step']}: {row.get('status')}{why}")
     print(f"ios_simulator: {record.get('browser', {}).get('userAgent', 'no browser')}")
     if record["error"]:
         print(f"ios_simulator: failed: {record['error']}", file=sys.stderr)

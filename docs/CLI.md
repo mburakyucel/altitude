@@ -1971,8 +1971,8 @@ Linux, and a job under the validation sandbox profile on macOS. No grant is need
 **Validation runs** turns the verb off for the whole computer. On Linux, `--kvm` adds `/dev/kvm`, and
 `--publish` forwards a container port to a free loopback port and prints it; a macOS run refuses both
 and binds free loopback ports itself. On a Mac, `--simulator` adds a disposable iOS Simulator iPhone
-whose Safari the command reaches through the relay socket in `$SIMULATOR_INSPECTOR` and which trusts
-the run's own HTTPS certificate in `$SIMULATOR_HTTPS`, kept as a screenshot and removed when the run ends ([iOS Simulator runs](DEVELOPMENT.md#ios-simulator-runs)); `--capture`
+whose Safari, and two fixed native walks, the command reaches through the relay socket in `$SIMULATOR_INSPECTOR`
+and which trusts the run's own HTTPS certificate in `$SIMULATOR_HTTPS`, kept as a screenshot and removed when the run ends ([iOS Simulator runs](DEVELOPMENT.md#ios-simulator-runs)); `--capture`
 also records its screen as `validation/<n>.simulator.gif` ([validation captures](DEVELOPMENT.md#validation-captures)).
 The command starts in the clone, and whatever it writes to
 `$VALIDATION_RESULTS` (`/results` in the container) is copied to the task folder's `validation/<n>/`,
