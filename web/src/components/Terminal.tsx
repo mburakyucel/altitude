@@ -53,6 +53,18 @@ function Card({ title, children, action, tone }: { title?: string; children?: Re
   </div>;
 }
 
+function Loading({ opening }: { opening: boolean }) {
+  return <div className="terminal-card" role="status" aria-label="Starting the terminal">
+    <div className="skeleton h-4 w-2/3" /><div className="skeleton h-4 w-1/3" />
+    <p className="text-muted">{opening ? "Starting the terminal…" : "Loading the terminal…"}</p>
+  </div>;
+}
+
+/** What a phone swipe reveals before the switch completes: the terminal opens only once it is shown. */
+export function TerminalPreview() {
+  return <section className="terminal-panel" aria-label="Terminal"><div className="terminal-body"><Loading opening={false} /></div></section>;
+}
+
 /** What the operator is told after a terminal ends without their Close here; nothing for a clean exit. */
 function endNotice(status: TerminalStatus): string | null {
   if (status.state !== "exited") return "The terminal closed while the connection was lost.";
@@ -209,10 +221,7 @@ export default function Terminal({ project, task, keys, head, closeIcon, onLeave
       {" "}The shell keeps running. Reloading clears text you have typed but not sent.
     </Card>;
   } else if (!running || screenError === "checking") {
-    content = <div className="terminal-card" role="status" aria-label="Starting the terminal">
-      <div className="skeleton h-4 w-2/3" /><div className="skeleton h-4 w-1/3" />
-      <p className="text-muted">{opening ? "Starting the terminal…" : "Loading the terminal…"}</p>
-    </div>;
+    content = <Loading opening={opening} />;
   } else {
     content = <>
       {confirm ? <Card title="Close the terminal?" action={<>
