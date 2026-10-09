@@ -2458,15 +2458,9 @@ class Handler(BaseHTTPRequestHandler):
             if api == "l2" and len(parts) > 2 and parts[2] == "send-now":
                 project, slug = o["project"], o["slug"]
                 try:
-                    result = dispatch.request_send_now(project, slug, str(o.get("id") or ""))
+                    return self._json(dispatch.request_send_now(project, slug, str(o.get("id") or "")))
                 except T.TransitionError as exc:
                     return self._json({"error": str(exc)}, 409)
-                if result.get("queued"):
-                    try:
-                        spawn(f"task-operation:{project}:{slug}", dispatch.run_task_operation, project, slug)
-                    except Exception as exc:
-                        log(f"[{project}/{slug}] Send now saved; immediate wake failed: {exc}")
-                return self._json(result)
             if api == "l2" and len(parts) > 2 and parts[2] == "remove":
                 try:
                     T.remove_message(o["project"], o["slug"], str(o.get("id") or ""))
@@ -2565,28 +2559,29 @@ class Handler(BaseHTTPRequestHandler):
                 self._stream_open()
                 gone: list[BaseException] = []
 
-                def send(t: str) -> None:
+                def emit(event: dict) -> None:
                     # The turn owns its answer, not the page that started it. 2026-09-03 07:54Z: the operator refreshed
                     # Chat mid-turn; the write error unwound the turn, the answer was never logged and the
                     # session bookkeeping was skipped. A lost client ends the stream and nothing else.
                     if gone:
                         return
                     try:
-                        self._stream_send({"t": t})
+                        self._stream_send(event)
                     except OSError as e:
                         gone.append(e)
                         log(f"POST {self.path}: client went away mid-turn ({type(e).__name__}: {e}); the turn continues")
 
+                def send(t: str) -> None:
+                    emit({"t": t})
+
                 def started(_pid) -> None:
                     # The page keys its pending bubble on the turn id from here on, so a poll that already
                     # shows the server's own rows for this turn never doubles them (SPEC.md §4.2).
-                    if gone:
-                        return
-                    try:
-                        self._stream_send({"turn": l3.active(project)})
-                    except OSError as e:
-                        gone.append(e)
-                        log(f"POST {self.path}: client went away as the turn started ({type(e).__name__}: {e})")
+                    emit({"turn": l3.active(project)})
+
+                def split(text: str, delivery: dict) -> None:
+                    # A Send now message the turn took in ends the reply so far; the reply continues under its turn.
+                    emit({"turn": l3.active(project), "user": text, "delivery": delivery})
 
                 over = threading.Event()
 
@@ -2604,7 +2599,7 @@ class Handler(BaseHTTPRequestHandler):
 
                 threading.Thread(target=watch, daemon=True).start()
                 try:
-                    res = server_l3_turn(project, text, trigger="chat", on_text=send, on_start=started,
+                    res = server_l3_turn(project, text, trigger="chat", on_text=send, on_start=started, on_split=split,
                                          **({"slug": slug} if slug else {}))
                 finally:
                     over.set()

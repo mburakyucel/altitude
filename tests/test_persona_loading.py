@@ -11,56 +11,83 @@ from altitude import config, dispatch, engines, l3, platform, state as S, tasks 
 
 
 class _BytesInput(io.BytesIO):
+    """A worker job's launch input; closing it hands the spec to the fake engine."""
+    def __init__(self, ended):
+        super().__init__()
+        self.ended = ended
+
     def close(self):
-        pass  # Keep the submitted prompt inspectable after the adapter closes stdin.
+        self.ended()  # Keep the submitted spec inspectable after the adapter closes stdin.
 
 
 class _TextInput(io.StringIO):
-    """Stdin a fake engine reads to its end; the prompt stays inspectable after the writer closes it."""
-    def __init__(self):
+    """Stdin a fake engine reads to its end; the spec stays inspectable after the writer closes it."""
+    def __init__(self, ended):
         super().__init__()
-        self.ended = threading.Event()
+        self.ended = ended
 
     def close(self):
-        self.ended.set()
+        self.ended()
+
+
+class _Output:
+    """A synchronous turn's output, available once its launch input has arrived."""
+    def __init__(self, process):
+        self.process = process
+
+    def __iter__(self):
+        self.process.started.wait(10)
+        return iter(io.StringIO(self.process.output))
+
+    def close(self):
+        pass
 
 
 class _ProviderProcess:
-    """Capture the provider boundary and return only deterministic session initialization/output."""
+    """Capture driver launch input or coordinator exec stdin, returning deterministic session/output."""
 
-    def __init__(self, command, kwargs, session):
-        self.command, self.session = command, session
+    def __init__(self, command, kwargs, sequence):
+        self.kwargs, self.sequence = kwargs, sequence
+        self.exec_command = (command[command.index(config.CODEX_BIN):] if config.CODEX_BIN in command else None)
         self.pid, self.returncode, self.alive = 4242, 0, True
+        self.started = threading.Event()
+        self.synchronous = kwargs.get("text", False)
+        self.stdin = self.received = (_TextInput if self.synchronous else _BytesInput)(self.start)
+        if self.synchronous:
+            self.stdout, self.stderr = _Output(self), io.StringIO("")
+
+    def start(self):
+        if self.started.is_set():
+            return
+        text = self.received.getvalue()
+        self.spec = None if self.exec_command else json.loads(text if isinstance(text, str) else text.decode())
+        command = self.command = self.exec_command or self.spec["command"]
         self.persona_path = (Path(command[command.index("--append-system-prompt-file") + 1])
                              if "--append-system-prompt-file" in command else None)
         self.persona = self.persona_path.read_text() if self.persona_path else None
-        self.synchronous = kwargs.get("text", False)
-        self.stdin = self.received = _TextInput() if self.synchronous else _BytesInput()
-        if config.CLAUDE_BIN in command:
+        if command[0] == config.CLAUDE_BIN:
+            session = self.session = (command[command.index("--resume") + 1] if "--resume" in command
+                                      else f"fixture-session-{self.sequence}")
             events = [{"type": "system", "subtype": "init", "session_id": session},
                       {"type": "result", "session_id": session, "result": "Fixture answer", "usage": {}}]
         else:
+            resume = (command[-2] if "resume" in command else None) if self.exec_command else self.spec["resume"]
+            session = self.session = resume or f"fixture-session-{self.sequence}"
             events = [{"type": "thread.started", "thread_id": session},
                       {"type": "item.completed", "item": {"type": "agent_message", "text": "Fixture answer"}},
                       {"type": "turn.completed", "usage": {}}]
         self.output = "".join(json.dumps(event) + "\n" for event in events)
-        if self.synchronous:
-            self.stdout, self.stderr = io.StringIO(self.output), io.StringIO("")
-        else:
-            kwargs["stdout"].write(self.output.encode())
+        if not self.synchronous:  # the launcher has closed its copy of the job's output file by now
+            with open(self.kwargs["stdout"].name, "ab") as stdout:
+                stdout.write(self.output.encode())
+        self.started.set()
 
     @property
     def prompt(self):
-        text = self.received.getvalue()
-        text = text if isinstance(text, str) else text.decode()
-        # A worker job reads its GitHub token from the first input line before the engine starts.
-        return text.split("\n", 1)[1] if engines.GITHUB_INPUT in self.command else text
+        return self.received.getvalue() if self.exec_command else self.spec["input"][0]["text"]
 
-    def communicate(self, text=None, timeout=None):
-        if text is None:
-            self.received.ended.wait(10)
-        else:
-            self.received.write(text)
+    def communicate(self, timeout=None):
+        self.started.wait(10)
         self.alive = False
         return self.output, ""
 
@@ -68,6 +95,7 @@ class _ProviderProcess:
         return None if self.alive else self.returncode
 
     def wait(self, timeout=None):
+        self.started.wait(10)
         self.alive = False
         return self.returncode
 
@@ -95,11 +123,9 @@ class PersonaLoading(AltitudeCase):
         real_popen = subprocess.Popen
 
         def popen(command, **kwargs):
-            if config.CLAUDE_BIN not in command and config.CODEX_BIN not in command:
+            if config.CODEX_BIN not in command and command[-len(engines._driver_command()):] != engines._driver_command():
                 return real_popen(command, **kwargs)  # Real local Git fixtures still validate task provenance.
-            session = (command[command.index("--resume") + 1] if "--resume" in command else
-                       command[-2] if "resume" in command else f"fixture-session-{len(self.processes)}")
-            process = _ProviderProcess(command, kwargs, session)
+            process = _ProviderProcess(command, kwargs, len(self.processes))
             self.processes.append(process)
             return process
 
@@ -112,7 +138,13 @@ class PersonaLoading(AltitudeCase):
             self.assertEqual("--resume" in process.command, resumed)
         else:
             self.assertIsNone(process.persona_path)
-            self.assertEqual("resume" in process.command, resumed)
+            if role == "l3":
+                self.assertEqual(process.command[:2], [config.CODEX_BIN, "exec"])
+                self.assertIn("--ignore-user-config", process.command)
+                self.assertEqual("resume" in process.command, resumed)
+            else:
+                self.assertEqual(process.command[:2], [config.CODEX_BIN, "app-server"])
+                self.assertEqual(process.spec["resume"] is not None, resumed)
             if resumed:
                 self.assertNotIn(text, process.prompt, "existing threads do not reload the persona")
                 self.assertNotIn("FIXTURE PERSONA UPDATE", process.prompt)
