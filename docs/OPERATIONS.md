@@ -581,10 +581,10 @@ reload is a diagnostic comparison, not successful restart acceptance. Native suc
 repeated capture and transcription on the affected device without further reloads; Chromium's
 scripted recognition and synthetic audio do not establish that result.
 
-On iOS 27, Safari's speech recognition hears only a tab's first dictation ([WebKit bug 326069](https://bugs.webkit.org/show_bug.cgi?id=326069)): later ones get
+An iOS 27 Safari report describes speech recognition hearing only a tab's first dictation ([WebKit bug 326069](https://bugs.webkit.org/show_bug.cgi?id=326069)): later ones get
 a microphone that delivers silence, after X and Stop alike. Altitude notices that exact silence after three
 seconds, stops listening, keeps the draft and says "The microphone went silent. Close and reopen Altitude to dictate again. Typing works." Closing
-and reopening the Safari tab or Home Screen app restores one more dictation; a page reload does not. Host
+and reopening the tab restores one more dictation in that report; a page reload does not. This is a candidate cause of a silent restart, not a diagnosis of every affected device. Host
 voice, where it runs, does not use Safari's recognizer.
 
 For a silent restart, **Settings → Voice input → Voice troubleshooting** offers **Start diagnostics**.
