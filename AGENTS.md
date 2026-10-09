@@ -78,7 +78,14 @@ development/admin exposure grants no new privilege model, generic flag framework
 - [L2 delivery and completion](personas/l2.md#delivery-and-completion) owns landing, holds,
   reporting, continuation and full-scope issue completion; the [CLI reference](docs/CLI.md#delivery-linked-issue-completion)
   describes the commands. Deferred task scope goes to L3 for authorized tracking and rejection/archive.
-- Never publish credentials, tokens, private incident evidence or security-sensitive operational details.
+- The repository is public, and so is everything pushed or published: commits, branch names, PR titles
+  and bodies, issue text and comments, release notes, and screenshots, GIFs or evidence attached to
+  public records. None of it contains personal or private information: other people's names or contact
+  details, email addresses beyond the maintainer's chosen commit identity, hostnames, home directories
+  and local paths, device identifiers, local network addresses, credentials or tokens, chat transcripts,
+  private incident evidence, security-sensitive operational details, or content copied from private
+  records and task folders. Examples and reproductions are fictional or redacted. Private context a
+  change needs stays in the task record; the public text describes it in general terms.
 
 ## Checks
 
