@@ -519,7 +519,8 @@ PROFILE_WALK = ("download", "allow", "profile-downloaded", "certificate", "insta
 
 def walked(run: Run, name: str, url: str, prefix: str, expected: tuple, code: str = "") -> tuple[dict, list, dict]:
     """altd's walk `name` at `url`, with its screenshots kept as `<prefix>-<name>.png`: what it saw, a row for each
-    expected step, completed or not reachable with the reason, and its files."""
+    expected step, completed or not reachable with the reason, a failed `runner` row for a runner that crashed, hung or
+    did not build even after its last step, and its files."""
     record, files = run.safari.walk(name, url, code)
     for file, data in files.items():
         (run.results / f"{prefix}-{file}").write_bytes(data)
@@ -532,6 +533,8 @@ def walked(run: Run, name: str, url: str, prefix: str, expected: tuple, code: st
         if row.get("screenshot"):
             row["screenshot"] = f"{prefix}-{row['screenshot']}"
         rows.append(row)
+    if record.get("error"):
+        rows.append({"step": "runner", "status": "failed", "reason": record["error"]})
     return record, rows, files
 
 
@@ -572,7 +575,7 @@ def pixels(data: bytes) -> tuple[int, int, bytes]:
     while offset + 8 <= len(data):
         size, kind = struct.unpack(">I4s", data[offset:offset + 8])
         body = data[offset + 8:offset + 8 + size]
-        if kind == b"IHDR":
+        if kind == b"IHDR" and len(body) == 13:
             header = struct.unpack(">IIBBBBB", body)
         elif kind == b"IDAT":
             compressed += body
@@ -581,7 +584,13 @@ def pixels(data: bytes) -> tuple[int, int, bytes]:
         raise ValueError(f"not an 8-bit RGB or RGBA PNG: {header}")
     width, height, kind = header[0], header[1], header[3]
     size = 3 if kind == 2 else 4
-    raw, stride, out = zlib.decompress(compressed), width * size, bytearray()
+    try:
+        raw = zlib.decompress(compressed)
+    except zlib.error as exc:
+        raise ValueError(f"its image data cannot be read: {exc}") from None
+    stride, out = width * size, bytearray()
+    if len(raw) != height * (stride + 1):
+        raise ValueError(f"its image data holds {len(raw)} bytes for {width}x{height}")
     previous = bytearray(stride)
     for y in range(height):
         start = y * (stride + 1)
@@ -626,7 +635,7 @@ def home_screen(run: Run) -> None:
                 if not icon or pixels(icon) != pixels(approved):
                     failures.append("the Home Screen icon's pixels differ from the approved icon" if icon else
                                     "iOS stored no Home Screen icon")
-            except (ValueError, zlib.error) as exc:
+            except ValueError as exc:
                 failures.append(f"the Home Screen icon cannot be read: {exc}")
             rows.append(check("web-clip", failures, "the title Altitude as a web app, the approved icon pixel for "
                                                     "pixel, and the manifest's start address"))

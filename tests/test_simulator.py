@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 from unittest import TestCase, mock
+import zlib
 
 from tests.support import SUITE
 from tests import test_validation as base
@@ -55,6 +56,10 @@ if args[:2] == ["xcodebuild", "test-without-building"]:   # one walk: its record
         sys.exit(65)
     if mode == "hang":   # until interrupted, as Ctrl-C ends a test run
         signal.signal(signal.SIGINT, lambda *_: (Path(os.environ["FAKE_SIMCTL_LOG"] + ".interrupted").touch(), sys.exit(1)))
+        while True:
+            time.sleep(0.05)
+    if mode == "stuck":   # a run that ignores Ctrl-C
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         while True:
             time.sleep(0.05)
     sys.exit(0)
@@ -619,11 +624,14 @@ json.dump(answers, open(os.path.join(os.environ["VALIDATION_RESULTS"], "walks.js
         self.assertEqual(self.runs(), [], "the walks' build and evidence go with the run area")
 
     def test_a_walk_whose_runner_crashes_hangs_or_does_not_build_is_a_recorded_failure(self):
+        """A runner past its time is interrupted as Ctrl-C does, and killed if it does not end."""
         request = {"walk": "profile", "url": "http://127.0.0.1:5555/#ios"}
         self.patch(sim, "WALK_SECONDS", 1)
+        self.patch(sim, "XCODEBUILD_STOP", 1)
         for mode, error in (("crash", "xcodebuild exit 65: Walks-Runner (4242) encountered an error (Test crashed "
                                       "with signal trap.)"),
-                            ("hang", "xcodebuild did not finish within 1 s")):
+                            ("hang", "xcodebuild did not finish within 1 s"),
+                            ("stuck", "xcodebuild did not finish within 1 s")):
             with self.subTest(mode):
                 self.setenv("FAKE_WALK", mode)
                 _, [answer] = self.walk(request)
@@ -822,6 +830,73 @@ class TestRemove(TestCase):
         with mock.patch.object(sim, "_simctl") as simctl:
             self.assertIsNone(sim.remove(Path(SUITE) / "no-such-set"))
         simctl.assert_not_called()
+
+
+def script():
+    """scripts/ios_simulator.py, the run's walkthrough, as a module."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("ios_simulator", Path(__file__).resolve().parents[1] / "scripts" /
+                                                  "ios_simulator.py")
+    module = sys.modules.setdefault(spec.name, importlib.util.module_from_spec(spec))
+    spec.loader.exec_module(module)
+    return module
+
+
+def png(rows: list[bytes], channels: int, filters=(0,), extra: bytes = b"") -> bytes:
+    """A PNG of `rows`, each row filtered with the next of `filters` as an encoder may choose, after an `extra` chunk."""
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+    raw, previous = b"", bytes(len(rows[0]))
+    for y, row in enumerate(rows):
+        method, line = filters[y % len(filters)], bytearray()
+        for x, value in enumerate(row):
+            a, b = row[x - channels] if x >= channels else 0, previous[x]
+            c = previous[x - channels] if x >= channels else 0
+            p = a + b - c
+            paeth = a if abs(p - a) <= abs(p - b) and abs(p - a) <= abs(p - c) else b if abs(p - b) <= abs(p - c) else c
+            line.append((value - (0, a, b, (a + b) // 2, paeth)[method]) & 255)
+        raw, previous = raw + bytes([method]) + bytes(line), row
+    header = struct.pack(">IIBBBBB", len(rows[0]) // channels, len(rows), 8, 2 if channels == 3 else 6, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + extra + chunk(b"IDAT", zlib.compress(raw))
+            + chunk(b"IEND", b""))
+
+
+class TestRunScript(TestCase):
+    def test_a_runner_that_fails_after_its_last_step_fails_the_walk(self):
+        ios = script()
+        steps = [{"step": step, "status": "completed"} for step in ios.PROFILE_WALK]
+        for error, rows in ((None, steps), ("xcodebuild exit 65: Walks-Runner (4242) encountered an error",
+                                            steps + [{"step": "runner", "status": "failed", "reason":
+                                                      "xcodebuild exit 65: Walks-Runner (4242) encountered an error"}])):
+            with self.subTest(error=error):
+                safari = mock.Mock(walk=mock.Mock(return_value=({"steps": steps, "seen": {"finished": "yes"},
+                                                                 "error": error}, {})))
+                run = ios.Run("", safari, "http://127.0.0.1:5555", "device", Path(SUITE))
+                _, walked, _ = ios.walked(run, "profile", "http://127.0.0.1:5555/#ios", "profile", ios.PROFILE_WALK)
+                self.assertEqual(walked, rows)
+                if error:
+                    with self.assertRaisesRegex(RuntimeError, "profile: runner failed: xcodebuild exit 65"):
+                        ios.finish(run, "profile", walked, "the profile")
+                else:
+                    ios.finish(run, "profile", walked, "the profile")
+
+    def test_icons_compare_by_the_pixels_they_show_whatever_their_encoding(self):
+        pixels = script().pixels
+        rgba = [bytes([10, 200, 30, 255, 40, 50, 60, 255, 250, 5, 128, 255]),
+                bytes([0, 0, 0, 255, 255, 255, 255, 255, 90, 91, 92, 255])]
+        shown = (3, 2, b"".join(rgba))
+        for filters in ((0,), (1,), (2,), (3,), (4,), (4, 3, 2, 1, 0)):
+            with self.subTest(filters=filters):
+                self.assertEqual(pixels(png(rgba, 4, filters)), shown)
+        stored = png([bytes(v for i, v in enumerate(row) if i % 4 != 3) for row in rgba], 3, (4, 1),
+                     extra=struct.pack(">I", 4) + b"tEXtiOS!" + b"\0\0\0\0")
+        self.assertEqual(pixels(stored), shown, "an opaque RGB re-encoding with other chunks shows the same icon")
+        self.assertNotEqual(pixels(png([rgba[0], rgba[1][:-1] + b"\xfe"], 4)), shown)
+        whole = png([bytes(6)], 3)   # the image data starts at byte 41
+        for data in (b"GIF89a", whole[:20], whole[:20] + struct.pack(">I", 2) + whole[24:],
+                     whole[:41] + b"\xff" * 4 + whole[45:]):
+            with self.subTest(data=data[:8]), self.assertRaises(ValueError):
+                pixels(data)
 
 
 if __name__ == "__main__":

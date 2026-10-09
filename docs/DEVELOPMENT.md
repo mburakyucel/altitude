@@ -626,7 +626,8 @@ unless `STEPS` (its `--steps`) names some, separated by spaces or commas:
   standalone app.
 
 The profile and Home Screen steps record a row per walk step and per check of what it showed:
-completed, not reachable with the reason, or failed with what differed. Their screenshots are
+completed, not reachable with the reason, or failed with what differed, and a failed `runner` row when
+the walk's runner crashed, did not finish or did not build, even after its last step. Their screenshots are
 `profile-<step>.png`, `home-root-<step>.png` and `home-task-<step>.png`, with the icon as the Home
 Screen draws it (`…-home-screen-icon.png`) and as iOS stores it (`…-web-clip-icon.png`). The
 walkthrough also keeps Safari's console (`console.log`), the fixture service's log, the steps and the
