@@ -2741,28 +2741,19 @@ class FolderError(ValueError):
         self.status = status
 
 
-def typed_folder(raw: str) -> Path:
-    """A folder path as the operator typed it, `~` expanded as text: nothing reads the folder until it is validated."""
-    return Path(os.path.expanduser(Path(raw)))
-
-
 def folders(raw: str | None) -> dict:
     """One folder the operator opened in the folder browser: its visible subfolders, never files or contents.
 
     Browsing starts at the home folder and stays inside it after following links; hidden folders stay out.
     """
     home = (platform.CONTAINER_PROJECTS if platform.containerized() else config.HOME).resolve()
-    typed = typed_folder(raw) if raw else home
-    if not typed.is_absolute():
+    target = Path(raw).expanduser() if raw else home
+    if not target.is_absolute():
         raise FolderError("Choose an absolute folder path.", 400)
-    # Links are followed and the result is bounded by the home folder's prefix (with its separator, so home itself
-    # passes and a sibling such as `/home/user2` does not) before anything reads the folder.
-    resolved = os.path.join(os.path.realpath(typed), "")
-    if (not resolved.startswith(os.path.join(home, ""))
-            or any(part.startswith(".") for part in Path(resolved).relative_to(home).parts)):
+    target = target.resolve()
+    if not target.is_relative_to(home) or any(part.startswith(".") for part in target.relative_to(home).parts):
         raise FolderError("Choose a folder inside the container projects volume." if platform.containerized()
                           else "Browsing stays inside your home folder. Type the path to add a folder elsewhere.", 403)
-    target = Path(resolved)
     if not target.is_dir():
         raise FolderError("This folder no longer exists.", 404)
     view = {"path": str(target), "parts": list(target.relative_to(home).parts), "readable": True, "folders": [],
@@ -2790,7 +2781,12 @@ def save_projects_folder(body: dict) -> dict:
     if body.keys() - {"path"}:
         raise ValueError("Unsupported projects folder fields.")
     path = body.get("path")
-    value = str(typed_folder(path)) if isinstance(path, str) and path.strip() else None
+    value = None
+    if isinstance(path, str) and path.strip():
+        expanded = os.path.expanduser(Path(path))
+        if expanded.startswith("~"):
+            raise RuntimeError("Could not determine home directory.")
+        value = str(Path(expanded))
     _save_machine("projects_folder", value, "Projects folder")
     return {"roots": [home_relative(r) for r in config.project_roots()]}
 

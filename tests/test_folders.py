@@ -5,6 +5,7 @@ contents. The projects folder is the one folder First run lists the immediate su
 """
 import json
 import os
+import pwd
 import unittest
 from pathlib import Path
 
@@ -84,6 +85,15 @@ class TestFolders(FolderCase):
         for path in (self.home / "code" / "escape", self.home / "hidden-link"):
             with self.subTest(path=path), self.assertRaises(server.FolderError):
                 server.folders(str(path))
+
+    def test_an_unknown_named_home_keeps_the_expansion_error_for_both_consumers(self):
+        self.patch(pwd, "getpwnam", side_effect=KeyError)
+        for raw in ("~missing/Projects", "./~missing/Projects"):
+            for consumer in (server.folders, lambda path: server.save_projects_folder({"path": path})):
+                with self.subTest(raw=raw, consumer=consumer), self.assertRaisesRegex(
+                        RuntimeError, "^Could not determine home directory\\.$"):
+                    consumer(raw)
+        self.assertFalse((config.ROOT / "projects_folder-request.json").exists())
 
     @unittest.skipIf(os.geteuid() == 0, "root reads every folder")
     def test_an_unreadable_folder_says_so_and_lists_nothing(self):

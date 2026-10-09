@@ -1263,7 +1263,8 @@ event and no pull request. They are bound by that commit alone, never qualify as
 count like every other check on the candidate: a failing scan blocks and a pending one keeps the wait
 going. CodeQL counts an alert as new in a PR when a step of its data flow lies in the changed code, so
 an alert already open on main can fail a PR that never touches its line: a browser-walkthrough fixture
-server subclassing `server.Handler` adds a request source. Such an alert is fixed at its sink.
+server subclassing `server.Handler` adds a request source. Fix real defects at their sinks and
+document genuine false positives for operator dismissal without changing accepted behavior.
 Every other workflow run must come from a push or pull request event of this PR's branch.
 Review and task/UX holds remain enforced. The operator chooses Altitude-only enforcement without
 a GitHub plan upgrade: GitHub web/API merges and other updates outside Altitude remain unprotected.
