@@ -135,8 +135,8 @@ becomes the latest release, which the [one-command install](SETUP.md#install-the
 fetches.
 
 ```sh
-git tag v0.1.0 <approved SHA>
-git push origin v0.1.0
+git tag <version> <approved SHA>
+git push origin <version>
 ```
 
 A tag ruleset lets only the operator's GitHub account create, move or delete `v*` tags, and immutable
