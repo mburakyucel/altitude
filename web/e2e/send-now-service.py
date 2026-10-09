@@ -31,17 +31,19 @@ def main():
         if text == "Fixture system work":
             assert options.get("interrupt") is None, "System turns must not be interruptible"
             assert release.wait(30), "The system turn was not released"
-        if text == "Keep working":
-            if options.get("on_text"):
-                options["on_text"]("Checking the current work.")
+        if text in ("Keep working", "Hold on"):
+            partial = ("Checking the current work. Two checks failed on the review branch, and the first log"
+                       if text == "Keep working" else "")
+            if partial and options.get("on_text"):
+                options["on_text"](partial)
             interrupt = options.get("interrupt")
             assert interrupt is not None, "Chat turns expose their engine interrupt event"
             interrupts.append(interrupt)
             assert interrupt.wait(30), "Send now did not interrupt the fixture turn"
             stopped.set()
             assert release.wait(30), "The interrupted turn was not released"
-            return {"interrupted": True, "error": "Interrupted for a queued message",
-                    "text": "Checking the current work.", "session_id": "fixture-send-now"}
+            return {"interrupted": True, "error": None,
+                    "text": partial, "session_id": "fixture-send-now"}
         return {"text": f"{text} answered.", "session_id": "fixture-send-now"}
 
     engines.claude_print = answer

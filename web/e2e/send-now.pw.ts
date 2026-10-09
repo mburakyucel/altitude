@@ -42,7 +42,7 @@ test.describe("L2 Send now", () => {
     expect((await status()).calls.filter((call: { prompt?: string }) => call.prompt?.includes("Check this immediately."))).toHaveLength(1);
     await expect(row("Earlier instruction stays queued.").getByRole("button", { name: "Remove", exact: true })).toBeVisible();
     await row("Earlier instruction stays queued.").getByRole("button", { name: "Remove", exact: true }).click();
-    await walk.state("l2-05-removed", { visible: [convo.getByText("Message removed", { exact: true })], hidden: [convo.getByRole("button", { name: "Send now", exact: true })] });
+    await walk.state("l2-05-removed", { visible: [selected], hidden: [row("Earlier instruction stays queued."), convo.getByRole("button", { name: "Send now", exact: true })] });
     expect((await status()).tasks[0].edit).toContain("An existing edit stays");
   });
 
@@ -170,5 +170,40 @@ test.describe("L3 Send now", () => {
     await expect.poll(async () => (await status()).calls.length).toBe(3);
     expect((await status()).calls.map((call: { text: string }) => call.text)).toEqual(["Keep working", "Deliver this next", "Earlier queued message"]);
     await expect(convo.getByText("Deliver this next", { exact: true })).toHaveCount(1);
+  });
+
+  test("shows an interrupted reply quietly, with and without partial output", async ({ page, request }, info) => {
+    const walk = walkthrough(page, info);
+    const convo = page.getByRole("region", { name: "Conversation", exact: true });
+    const field = page.getByRole("textbox", { name: "Message L3 about atlas" });
+    const queued = (text: string) => convo.locator(".queued-row").filter({ hasText: text });
+    const status = async () => (await (await request.get("/fixture/status")).json());
+    const interrupt = async (first: string, next: string, calls: number) => {
+      await field.fill(first);
+      await convo.getByRole("button", { name: "Send", exact: true }).click();
+      await expect.poll(async () => (await status()).calls.length).toBe(calls);
+      await field.fill(next);
+      await convo.getByRole("button", { name: /^(Send|Queue)$/ }).click();
+      await queued(next).getByRole("button", { name: "Send now", exact: true }).click();
+      expect((await request.post("/fixture/release")).ok()).toBe(true);
+      await expect(convo.getByText(`${next} answered.`, { exact: true })).toBeVisible();
+    };
+    const turn = (text: string) => convo.locator(".turn").filter({ has: page.locator(".bubble", { hasText: text }) });
+    await walk.open("/projects/atlas");
+    await interrupt("Keep working", "Deliver this next", 1);
+    await walk.state("l3-07-interrupted-partial", {
+      visible: [turn("Keep working").getByText("Two checks failed on the review branch, and the first log", { exact: false })],
+      hidden: [convo.getByText(/Interrupted/), convo.locator(".queued-row")],
+    });
+    await interrupt("Hold on", "Use the other branch", 3);
+    await walk.state("l3-08-interrupted-empty", {
+      visible: [turn("Hold on").locator(".bubble"), turn("Use the other branch").getByText("Use the other branch answered.", { exact: true })],
+      hidden: [convo.getByText(/Interrupted|could not answer/), convo.locator(".queued-row"), turn("Hold on").locator(".reply")],
+    });
+    // The two operator messages sit back to back, as consecutive messages do.
+    const first = (await turn("Hold on").locator(".bubble").boundingBox())!;
+    const next = (await turn("Use the other branch").locator(".bubble").boundingBox())!;
+    expect(next.y - (first.y + first.height)).toBeLessThanOrEqual(12);
+    expect(next.y - (first.y + first.height)).toBeGreaterThanOrEqual(4);
   });
 });

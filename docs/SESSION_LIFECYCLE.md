@@ -536,7 +536,7 @@ persists a cross-process claim and moves that claim's exact message batch out of
 Each ordinary operator message offers Remove while the inbox still owns it. Removal and pickup share
 the project lock: only the selected ID leaves pending input, and later arrivals remain separate for
 the next checkpoint. The existing delivery metadata records removal while original conversation text
-remains evidence; the bubble becomes Message removed. Removed text cannot authorize a new decision.
+remains evidence; the message leaves the task conversation. Removed text cannot authorize a new decision.
 Quick-choice receipts and messages already used by recorded decisions cannot be removed. Cancellation
 does not undo a resume request, Stop, fault or question. Claimed messages say Sending to session and
 cannot be removed. A failure before launch restores removal; an attempted but unconfirmed handoff
@@ -1252,8 +1252,9 @@ in the queue file until claim, and Remove remains available while the queue owns
 cannot undo an interruption already requested. An active chat still starting explains why Send now
 is unavailable until the engine reports its launch. The daemon sets only the
 captured chat turn's interruption signal; the engine seam stops that invocation's owned job and
-confirms its termination before the L3 lock is released. Partial output and session identity remain,
-and the turn says **Interrupted for a queued message**. That turn is never replayed. Active system
+confirms its termination before the L3 lock is released. Partial output and session identity remain:
+the turn's assistant row holds the partial reply, possibly empty, and `interrupted: true`, and the
+conversation shows only that partial text, or nothing when it is empty. That turn is never replayed. Active system
 turns finish normally to preserve their existing notification and report receipts; a promoted row
 says **Runs next after system work**. A stale or repeated request cannot interrupt a replacement
 turn or submit the message twice. Engine unavailability and launch pauses leave the row queued with

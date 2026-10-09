@@ -1758,6 +1758,16 @@
 .msg-row[data-pending] {
   opacity: 0.6;
 }
+/* A reply Send now stopped before it said anything leaves no row: the operator's two messages sit
+ * back to back, the first one's time beside its bubble (SPEC.md §4.2). */
+.turn[data-joined] > .msg-row[data-mine] {
+  flex-direction: row-reverse;
+  align-items: flex-end;
+  gap: 8px;
+}
+.turn[data-joined] + .turn {
+  margin-top: -14px;
+}
 .bubble {
   position: relative;
   max-width: 76%;
