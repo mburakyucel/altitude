@@ -72,6 +72,9 @@ In the existing design review and [phone and desktop walkthrough](../../AGENTS.m
   bordered or filled button; a borderless ghost button sits only beside a visible bordered or
   filled action; a text link is underlined. Plain text beside muted meta lines is not a control.
 - Complexity is restrained: each visible control and detail earns its place in the current task.
+- State shows visually before it is written: a control changes in place, and an icon, colour or
+  motion says that something is working, waiting, done or failed. Text appears only where a cue
+  cannot carry the meaning, such as an error's reason. No line restates what the screen already shows.
 - Typography, spacing, alignment, colour, and component treatment have a consistent visual finish;
   interaction states and transitions feel complete and polished on phone and desktop.
 
