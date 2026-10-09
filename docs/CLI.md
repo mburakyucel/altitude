@@ -985,6 +985,7 @@ alt task grant <slug> --revoke --reason <why>
 alt task run <slug> <command>
 alt task terminal [<slug>] [--json]
 alt project terminal [--json]  # the coordinator, through its project socket
+alt task offer <title>  # the coordinator, through its project socket, during a chat turn
 alt task done <slug> --digest <text> [--findings-tracked <reference>]
 alt task reject <slug> --reason <reason>
 ```
@@ -1000,6 +1001,14 @@ open question, and the saved reason re-parks it unchanged.
 Repository changes use `alt land --message <message> [--merge]`. Project, incident, service, TLS,
 and installation commands remain available through `bin/alt --help` and the relevant subcommand
 help.
+
+L3's `alt task offer '<title>'`, during a chat turn, ends its reply with Create task and that title for
+the operator (up to 100 characters on one line) instead of a question such as "Shall I queue a task?".
+A reply that creates a task carries the task card instead. A press arrives as the operator's
+chat message `Create task: <title>`; the `alt task new` that turn runs is bound to the offering reply,
+and a second creation for the same reply is refused, so the turn creates the task from the reply and the
+conversation without asking again. [Conversations](ARCHITECTURE.md#conversations-and-navigation)
+describes when the press is accepted.
 
 L3's `alt task message` requires `--summary`: one plain line, up to 100 characters, saying what the
 message is about. The task conversation shows it as the message's folded row, and Show opens the

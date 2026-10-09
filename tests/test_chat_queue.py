@@ -1653,6 +1653,10 @@ class TestChatQueue(AltitudeCase):
     def test_create_task_offers_belong_to_chat_replies_that_created_no_task(self):
         with self.assertRaisesRegex(ValueError, "during a chat turn"):
             l3.note_offer(self.project, "No turn runs")
+        for env in ({"ALTITUDE_ACTOR": "l3"}, {}):
+            result = self.alt("task", "offer", "Outside the socket", env={"ALTITUDE_PROJECT": self.project, **env})
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("only through the project's coordinator socket", result.stderr)
         offer = self.offer_turn()
         for title in ("", "x" * 101, "two\nlines"):
             with self.subTest(title=title), self.assertRaises(ValueError):
