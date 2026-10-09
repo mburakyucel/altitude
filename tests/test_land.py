@@ -977,6 +977,25 @@ class TestLand(AltitudeCase):
         self.assertIn("moved", result["local_tests"]["error"])
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
+    def test_main_moving_between_publication_and_pinning_is_integrated(self):
+        self.staged_change()
+        self.no_checks()
+        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
+        real = land._snapshot_pair
+
+        def merge_lands_first(*args, **kwargs):
+            if not (self.tmp / "base-src-race.py").exists():
+                self.advance_base("src/race.py")  # another owner merges right after this push
+            return real(*args, **kwargs)
+
+        self.patch(land, "_snapshot_pair", side_effect=merge_lands_first)
+        result = land.land("fix: pinning race", cwd=self.repo, wait=0, merge=True)
+        self.assertTrue(result["merged"])
+        self.assertTrue(result["local_tests"]["passed"])
+        self.assertEqual(self.git("show", f"{result['head']}:src/race.py"), "base\n")
+        moved = git("rev-parse", "HEAD", cwd=self.tmp / "base-src-race.py").strip()
+        self.assertEqual(result["local_tests"]["base"], moved)
+
     def test_ci_added_after_no_checks_classification_is_not_merged(self):
         """Regression: classification and candidate snapshot used to be separate, adopt-new-tip operations."""
         self.staged_change()

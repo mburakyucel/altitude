@@ -969,7 +969,7 @@ def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority, de
     notified, announced = None, None
     actor = authority.get("actor") if authority is not None else os.environ.get("ALTITUDE_ACTOR")
     while True:
-        stale = None
+        stale = refusal = None
         if merge:
             # Only local review reads share admission's lock; network reads and sleeps
             # leave review requests available, including during nonmerging publication.
@@ -982,7 +982,9 @@ def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority, de
                         raise LandError(str(exc)) from exc
                     stale = exc
                 except T.TransitionError as exc:
-                    raise _review_refusal(root, pair, exc) from exc
+                    refusal = exc
+        if refusal:
+            raise _review_refusal(root, pair, refusal) from refusal
         checks = _checks_value(root, pair["number"], pair)
         notice = str(stale) if stale else None
         if stale and notice != notified:
@@ -1197,12 +1199,15 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         task = _record_delivery(project, slug, task, authority, branch=publish_branch, number=number,
                                 head=head, base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"))
         hold_merge = task.get("hold_merge")
-        return _snapshot_pair(root, publish_branch, number, base, head)
+        pinned = _snapshot_pair(root, publish_branch, number, base, head)
+        if merge and _git(root, "merge-base", "--is-ancestor", pinned["base_sha"], head).returncode != 0:
+            raise BaseMoved(f"main moved to {pinned['base_sha']} before PR #{number}'s head {head} was pinned")
+        return pinned
 
     replaced, pushed_head = publish(recorded_tip)
     pr = _ensure_pr(root, publish_branch, base, message, pr_title, pr_body_file, task_ref, pr=pr)
     number = pr.get("number")
-    pair = pin(pushed_head)
+    pair = None
     wait = LAND_WAIT_TIMEOUT if wait is None else min(max(wait, 0), LAND_WAIT_TIMEOUT)
     deadline = time.monotonic() + wait
     merged, local_tests, waited = pr.get("state") == "MERGED", None, 0
@@ -1255,6 +1260,8 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
 
     while True:
         try:
+            if pair is None:
+                pair = pin(pushed_head)
             checks = _wait_for_candidate(root, project, slug, pair, merge=merge, wait=wait,
                                          authority=authority, deadline=deadline)
             _require_closing_issues(root, number, closes_issues)
@@ -1295,7 +1302,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         _need(_git(root, "fetch", "-q", "origin", base), f"git fetch origin {base}")
         more, pushed_head = publish(pushed_head)
         replaced += more
-        pair = pin(pushed_head)
+        pair = None
     if merge and not merged and checks not in ("pass", "none-configured"):
         _note(f"not merging: {_checks_outcome(checks, pair)}")
     return {"pr": number, "url": pr.get("url"), "checks": checks, "merged": merged,

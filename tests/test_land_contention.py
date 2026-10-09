@@ -752,6 +752,20 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
             self.assertNotIn('waiting for another merge', (call[1] / 'notes').read_text())
             self.assertEqual(self.calls(slug, ['pr', 'merge']), [])
 
+    def test_nonmerging_publication_stops_published_when_main_moves(self):
+        self.ship_check_workflow()
+        first = self.start('first', merge=False, required_check=True)
+        self.checked('first')
+        (self.repo / 'external.txt').write_text('external\n')
+        git('add', 'external.txt', cwd=self.repo)
+        git('commit', '-qm', 'external main movement', cwd=self.repo)
+        git('push', '-q', 'origin', 'main', cwd=self.repo)
+        self.release('first')
+        self.assertRegex(self.finish(first)['error'], 'main moved to .* stays published at')
+        head = S.load_task(self.project, 'first')['delivery']['head']
+        self.assertEqual(git('rev-parse', 'worktree-first', cwd=self.remote).strip(), head)
+        self.assertEqual(self.calls('first', ['pr', 'merge']), [])
+
     def test_nonmerge_publication_does_not_wait_for_another_candidate(self):
         first = self.start('first')
         self.checked('first')
