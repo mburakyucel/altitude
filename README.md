@@ -14,25 +14,20 @@ any task. The work keeps going on your machine after you put the phone away.
 [Set up phone access and voice](docs/OPERATIONS.md#on-iphone) with private HTTPS and a supported
 browser.
 
-**Early preview · Linux x86_64 · macOS on Apple silicon (experimental) · [Get started](#get-started)**
+**Early preview · Linux x86_64 · macOS on Apple silicon · [Get started](#get-started)**
 
-<img src="docs/images/project-desktop.png" alt="Desktop: discuss Atlas's architecture with L3 while three task owners work in parallel in the adjacent Work panel." width="1440">
-
-*The actual app, with a fictional Atlas project. Set direction with L3, your project orchestrator;
-follow parallel delivery alongside the conversation.*
+<img src="docs/images/project-desktop.png" alt="Desktop: the project conversation with L3 beside the Work panel, where three task owners deliver in parallel." width="1440">
 
 ## On your phone
 
 <p>
-  <a href="docs/images/project-phone.png"><img src="docs/images/project-phone.png" alt="Phone: speak or type to L3 in the Atlas project conversation." width="250"></a>
-  <a href="docs/images/task-phone.png"><img src="docs/images/task-phone.png" alt="Phone: steer the compatibility task owner directly." width="250"></a>
-  <a href="docs/images/decision-phone.png"><img src="docs/images/decision-phone.png" alt="Phone: choose a seven-day or thirty-day rollback window in Needs you." width="250"></a>
+  <a href="docs/images/project-phone.png"><img src="docs/images/project-phone.png" alt="Phone: speak or type to L3 in the project conversation." width="250"></a>
+  <a href="docs/images/task-phone.png"><img src="docs/images/task-phone.png" alt="Phone: steer a task owner directly in its conversation." width="250"></a>
+  <a href="docs/images/decision-phone.png"><img src="docs/images/decision-phone.png" alt="Phone: answer a task owner's question with one tap in Needs you." width="250"></a>
 </p>
 
 [Watch the phone walkthrough](docs/images/phone-walkthrough.webm) ·
 [Explore the desktop and phone walkthrough](docs/WALKTHROUGH.md)
-
-*Real interface, fictional data. The recording follows project chat, task steering and a decision.*
 
 ## One conversation. An engineering team behind it.
 
@@ -56,23 +51,28 @@ computer or [your phone](docs/OPERATIONS.md#on-iphone).
 One engine is enough, and each integration is
 [replaceable by design](docs/ARCHITECTURE.md#engine-integration-boundary).
 
+## Built in
+
+- **Phone access.** [Pair each browser](docs/SETUP.md#pair-each-device) with a one-time code, add
+  Altitude to the iPhone Home Screen and get an alert when a decision needs you. Dictation runs on
+  your computer on Linux and uses the browser's recognition elsewhere.
+- **Terminals beside the work.** [Open a shell](docs/ARCHITECTURE.md#operator-terminal) in a task's
+  worktree or the project folder from the browser. A command an agent hands you arrives typed at
+  the prompt, waiting for your Enter.
+- **Operator grants.** When a task needs to act on your machine beyond its sandbox, such as a
+  service change or a release, you [approve one stated purpose](docs/CLI.md#operator-grant); each
+  command runs as you and is recorded on the task.
+- **Validation runs.** Owners check their changes in
+  [disposable runs](docs/DEVELOPMENT.md#validation-runner) before merging: a Linux container, a
+  confined run on a Mac or an iOS Simulator iPhone.
+
 ## Get started
 
-Altitude runs for one person on a Linux x86_64 machine with a systemd user manager. Ubuntu 24.04
-is the initial target; clean-machine and provider acceptance remain pending. A Mac with Apple silicon
-on macOS 15 or newer installs with the same command. Installation, updates, rollback, uninstall and
-starting again at login pass in fresh macOS virtual machines; the
-[native runtime's acceptance](docs/ROADMAP.md#native-macos-runtime) is pending, so macOS is
-experimental. You need Python 3.12+,
-Git, OpenSSL, an authenticated GitHub CLI and one authenticated coding CLI. Agent work uses your
-coding account's allowance and normal charges.
-
-[Linux container support](docs/CONTAINERS.md) is under validation. Its rootless Podman candidate uses
-dedicated project volumes and an explicit security exception. Linux lifecycle and backup pass
-fixture checks; one live run verifies real sign-in, browser onboarding, an owner-created PR and
-issue, and authentication across restart and image replacement.
-[Recorded evidence](docs/CONTAINERS.md#live-linux-run) names the remaining platform and compatibility
-gaps; Mac acceptance remains unverified.
+Altitude runs for one person on a Linux x86_64 machine with a systemd user manager or a Mac with
+Apple silicon on macOS 15 or newer. You need Python 3.12+, Git, OpenSSL (on a Mac, Homebrew's
+`openssl@3`), an authenticated GitHub CLI and one authenticated coding CLI. Agent work uses your
+coding account's allowance and normal charges. A [Linux container deployment](docs/CONTAINERS.md)
+is under validation.
 
 1. Install the latest release as the account that will use Altitude:
 

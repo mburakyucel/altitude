@@ -1,9 +1,7 @@
 # A project through several fronts of work
 
-**Illustrative scenario, actual interface.** Atlas is a fictional search service moving to a
-versioned index; Harbor is a second fictional project. Every message, task, usage reading and
-tool result below is fixture data rendered by the real web application. The captures demonstrate
-the interface, not a migration that an agent actually delivered.
+Atlas, a search service moving to a versioned index, carries this example. The captures show the
+current interface with example data.
 
 ## Who carries the work
 
@@ -63,8 +61,8 @@ conversation remains available separately from the engine transcript.
 [Full-size desktop](images/task-desktop.png) · [Phone conversation](images/task-phone.png)
 
 On phone, use **Conversation** and **Live session** to switch panes.
-[Open the phone session capture](images/session-phone.png). The capture script also sends a
-fixture-only follow-up, checks that its bubble appears, and verifies that the composer clears.
+[Open the phone session capture](images/session-phone.png). The capture journey also sends a
+follow-up, checks that its bubble appears, and verifies that the composer clears.
 
 For the occasional command you want to run yourself, turn on **Settings → This machine →
 Terminal**. The task's panel then switches between **Live session** and **Terminal** (a third tab
@@ -106,8 +104,8 @@ The original tab and its unsent draft remain available.
 [Watch the phone walkthrough](images/phone-walkthrough.webm)
 
 The silent recording follows the real interface through the project, work, task and live-session
-views, sends a fictional task message, then selects and sends the seven-day answer. All responses
-are fixtures; it demonstrates the interaction, not live agents or voice recognition.
+views, sends a task message, then selects and sends the seven-day answer. Owner replies are
+example text; it demonstrates the interaction, not live agents or voice recognition.
 
 The [current decision boards](../design/wireframes/CONVERSATION_FIRST.md) illustrate these states;
 [phone/desktop walkthroughs](DEVELOPMENT.md#browser-walkthroughs) retain implementation evidence
@@ -128,10 +126,11 @@ To try a project, follow [setup](SETUP.md).
 
 ## Capture source and maintenance
 
-[Fixture data and capture instructions](../design/readme/README.md) explain how to reproduce the
-images. The script builds on [Project](../web/src/routes/Project.tsx),
+[Example data and capture instructions](../design/readme/README.md) explain how to reproduce the
+images. The browser walkthrough renders [Project](../web/src/routes/Project.tsx),
 [Task](../web/src/routes/Task.tsx), [Live session](../web/src/routes/LiveSession.tsx) and
-[Needs you](../web/src/routes/NeedsYou.tsx), with no app styling overrides or private service data.
+[Needs you](../web/src/routes/NeedsYou.tsx) against a seeded disposable service, with no app styling
+overrides or private service data.
 Desktop images are 1440×900 and phone images 390×844, rendered at 2× for readable enlargement.
 Open any image for its full resolution. Responsive picture sources keep phone text readable
 when this page is viewed at narrow widths.
