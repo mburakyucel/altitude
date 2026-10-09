@@ -839,13 +839,16 @@ branch is deleted once the tip is on `origin/main` or a verified PR merged it; a
 found only on this machine stays and the `cleanup-worktree` event names it and its unmerged commit count.
 A running worker or failed fetch retries on the next tick; any other refusal is a recorded note, not a
 fault. A done task's cleanup then fast-forwards a self-deploying checkout.
-Invocations that merge or target this repository’s required PR check hold a separate `flock`
+Invocations with `--merge` hold a separate `flock`
 on `altitude-land.lock` in the repository's common Git directory, from before ownership reads and
 fetch through checks and merge. All its worktrees share the lock; task-state locks remain short,
 so messages and Stop stay available. Admission waits at most one hour, reports
 the seconds waited, and refreshes ownership and holds before publication. Current main is merged
 into the task branch before pushing when needed, preserving adopted ancestry and triggering fresh
-head checks. A conflicting integration is aborted with local work retained for owner reconciliation.
+head checks. Base-only movement during checks or merge automatically repeats integration,
+publication and fresh checks under the original publication deadline. Head or PR identity movement
+refuses. Adopted PR pushes remain fast-forward only. A conflicting integration is aborted with local
+work retained for owner reconciliation.
 For a completed review whose assessment is stale, the current L2's merging invocation retains the
 turn while the owner explicitly reassesses the pinned candidate through the existing review command.
 CI and assessment share one deadline, an hour after publication unless `--wait` shortens it, so a
@@ -857,21 +860,26 @@ assessing each request.
 Proposal and changes findings remain separate; a changes assessment does not retire a proposal.
 Fresh context invalidation, including during final merge validation, uses the same wait and original
 deadline. Final candidate, checks, ownership and hold validation repeats after assessment.
-Missing or unfinished review, candidate
-movement or ownership loss refuses. No review identity or disposition is automatically transferred.
+Missing or unfinished review, head or PR identity movement or ownership loss refuses.
+No review identity or disposition is automatically transferred.
 The final review/context check precedes recorded approval application, preserving holds on review refusal.
 The process owns the turn: return, exception or termination releases it without daemon recovery.
-There is no persistent queue or FIFO guarantee. Dry runs and nonmerging preparation in other repositories do not take
-the turn. External Git/GitHub writers, older landing code, CI runs and
-hand-run suites do not share it, so exact base/head refusals remain necessary.
+There is no persistent queue or FIFO guarantee. Dry runs and nonmerging invocations never take
+the turn. External Git/GitHub writers, other installations, older landing code, CI runs and
+hand-run suites do not share it. This repository's strict GitHub up-to-date required-check rule
+protects the final merge against other installations; the local turn alone cannot. Base-only merge
+refusals repeat integration and checks within the original deadline, with ownership, reviews,
+holds, approval and issue-closure gates repeated. No GitHub settings change is needed.
 This repository requires its GitHub-hosted PR `check` to run the full `make check` suite. Owners
 and helpers run relevant tests during development; landing does not repeat the full suite locally.
 CI proves its tested merge tree equals the PR head tree. Landing requires that successful PR
 check on the current head and verifies that the head includes current main. A branch missing
-current main needs reconciliation and a fresh PR run on the new head. Altitude serializes final
+current main is integrated by `--merge` and needs a fresh PR run on the new head. Altitude serializes final
 validation and merge, rechecks identity and holds, and verifies the merged tree against the
 tested tree. Missing, pending, failed or stale CI blocks; CI outages have no local bypass.
-The gate governs Altitude merges; GitHub updates outside Altitude remain unprotected.
+The task hold and review protocol govern Altitude merges. Concurrent hosted runs are bounded by
+GitHub capacity: 11 jobs per check against the plan's 20 concurrent jobs. A new PR push cancels
+that PR's superseded check run; main and manual runs are never cancelled.
 See [policy, evidence and activation](DEVELOPMENT.md#ci-and-candidate-identity).
 Planned file lists guide coordination without limiting edits or landing. The owner stages selected
 files or hunks and reviews `git diff --cached`; `alt land` commits exactly that index, preserving
