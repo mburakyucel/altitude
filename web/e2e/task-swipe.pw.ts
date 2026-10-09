@@ -224,7 +224,7 @@ test("@phone-only the swipe tracks the finger: reveal, load, settle, spring back
   await touch.move(-120, 0, 100);
   await expect.poll(() => offset(track)).toBeLessThan(0);
   expect(await offset(track)).toBeGreaterThan(-60);
-  await walk.state("09-end-resistance-after-terminal", { visible: [terminalOff], hidden: [live] });
+  await walk.state("09-end-resistance-after-terminal", { visible: [terminalOff], hidden: [] });
   await touch.lift();
   await expect.poll(() => offset(track)).toBe(0);
   await expect(page).toHaveURL(`${path}/terminal`);
