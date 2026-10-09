@@ -22,6 +22,12 @@ export function statusExcerpt(value: unknown): string {
   return short.replace(/[.!;:]$/, "");
 }
 
+/** A Stop L3 requested: its queued request names the requester, an executed one its block. */
+export function stoppedByCoordinator(task: TaskRow): boolean {
+  const request = record(task["daemon_request"]);
+  return Boolean(task["stop_id"]) && (request["id"] === task["stop_id"] ? request["actor"] : task["block_actor"]) === "l3";
+}
+
 function questionRecords(task: TaskRow): Record<string, unknown>[] {
   const group = record(task["question_group"]);
   const rows = group["questions"] ?? task["questions"];
@@ -48,10 +54,13 @@ export function taskExplanation(task: TaskRow, decision?: Decision): string | nu
       : "A system problem paused work.";
     return `${cause} ${question ? sentence(`Coordinator needed: ${question}`) : "Waiting for the coordinator to check the blocker."}`;
   }
-  if (steering === "stopping") return "Stopping at your request; waiting for the session to end.";
+  const byCoordinator = stoppedByCoordinator(task);
+  if (steering === "stopping") return `Stopping at ${byCoordinator ? "the coordinator’s" : "your"} request; waiting for the session to end.`;
   if (steering === "stop_unconfirmed") return "Stop is unconfirmed; the session may still be running.";
-  if (steering === "stopped") return "Stopped by you; continue when you’re ready.";
-  if ((task["stop_id"] && !task.resume_after && steering !== "resuming") || decision?.kind === "stopped") return "You requested a stop; confirmation is in the task.";
+  if (steering === "stopped") return byCoordinator ? "Stopped by the coordinator; its note is in the conversation." : "Stopped by you; continue when you’re ready.";
+  if ((task["stop_id"] && !task.resume_after && steering !== "resuming") || decision?.kind === "stopped") {
+    return `${byCoordinator ? "The coordinator" : "You"} requested a stop; confirmation is in the task.`;
+  }
   if (state === "running") return null;
   if (state === "queued" && task.planned_wait) {
     if (task.planned_wait.after) {

@@ -2348,7 +2348,7 @@ unreadable state leaves the recorded review shown and says so on stderr. Any ope
 quick answer hands the task back; the next park by the L2 or L3 without a queued message returns the turn and
 marks still-open questions `asked_again`. `tasks.block_status` gives the CLI list/status, queue and
 restart notice one wait label (`<operator>'s turn · …`, `L2 replying to <operator>`,
-`paused · fault …`, `stopped by <operator>`, `waiting on L3`, `paused`). Question
+`paused · fault …`, `stopped by <operator>` or `stopped by L3`, `waiting on L3`, `paused`). Question
 state is independent of worker state: a discussion wake, capacity wait or ordinary resume never
 records a decision. On receiving guidance, the owner assesses each question before lengthy work.
 Unaffected choices remain answerable; doubtful ones are withdrawn with a reason in chat and re-asked

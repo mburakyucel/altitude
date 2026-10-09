@@ -6,7 +6,7 @@ import { clock } from "./Bubbles";
 import type { DotState } from "../shell/projects";
 import { questionPath, turnLabel } from "../data/decisions";
 import { setSelectedProject } from "../shell/scope";
-import { statusExcerpt, taskExplanation } from "../data/taskStatus";
+import { statusExcerpt, stoppedByCoordinator, taskExplanation } from "../data/taskStatus";
 
 /*
  * The task card (SPEC.md §3.5): state dot, title, meta line, chevron; the link opens the task page. The
@@ -67,7 +67,8 @@ export function taskCardFacts(task: TaskRow, overview: Overview | undefined, pro
   if (state === "done") return { dot: "idle", meta: pr != null ? `Done · PR #${pr} merged` : "Done" };
   if (state === "rejected") return { dot: "idle", meta: "Rejected" };
   if (fault && explanation) return { dot: "danger", meta: explanation };
-  if (stopped && explanation) return { dot: "danger", meta: explanation };
+  // L3's Stop is Altitude's wait, like any block waiting on L3 (§3.5); the operator's own Stop stays red.
+  if (stopped && explanation) return { dot: stoppedByCoordinator(task) ? "running" : "danger", meta: explanation };
   if (replying) return { dot: "running", meta: "L2 replying to you" };
   if (state === "queued" && task.planned_wait) return { dot: "idle", meta: `Planned · ${explanation}` };
   if (state === "queued" || held) {

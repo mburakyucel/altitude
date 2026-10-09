@@ -974,7 +974,7 @@ live-panel control while disclosing long reasons. Closing details restores the o
 selection and reading position. A failure remains visible, not only inside details.
 
 Compact task states use the §3.5 labels (**L2 working**, **Waiting for coordinator**, **Your turn · …**,
-**L2 replying to you**, **Work interrupted**, **Paused**, **Stopped by you**); **Merge held** can
+**L2 replying to you**, **Work interrupted**, **Paused**, **Stopped by you**, **Stopped by coordinator**); **Merge held** can
 accompany any of these. Details separates each full reason. Waiting on L3 adds no operator badge.
 An operator question sits at the end of the chat with no generic Resume while the question is open.
 When it is offscreen, **1 question ↓** (or its count) floats above the composer. **Latest ↓** appears

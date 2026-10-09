@@ -703,6 +703,29 @@ def task_messages(project: str, slug: str, limit: int | None = None) -> list[dic
     return rows
 
 
+def stopped_by(task: dict) -> str | None:
+    """Who requested the current Stop (L3 or the operator): its request names the requester, an executed one its block."""
+    if not task.get("stop_id"):
+        return None
+    request = task.get("daemon_request") or {}
+    return request.get("actor") if request.get("id") == task["stop_id"] else task.get("block_actor")
+
+
+def note_stop(project: str, slug: str, stop_id: str, reason: str) -> None:
+    """L3's Stop waits on L3 and leaves its reason as one L3 note in the conversation; it asks nobody anything."""
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if task.get("stop_id") != stop_id:
+            return
+        task["waiting_on"] = "l3"
+        S.save_task(project, task)
+        S.regen_state_md(project)
+        path = S.task_dir(project, slug) / "conversation.jsonl"
+        if not any(row["id"] == stop_id for row in _rows(path, "task conversation")):
+            _append_jsonl(path, {"id": stop_id, "at": _conversation_time(), "role": "l3", "by": "l3",
+                                 "text": reason, "summary": "Stopped the task"})
+
+
 def steering_view(task: dict, events: list[dict], *, job_root=None) -> dict:
     """UI wording derives from the existing worker operation and its termination receipt."""
     request = task.get("daemon_request") or {}
@@ -1333,9 +1356,10 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
         task.pop("turn_released", None)
         task["blocked_reason"] = reason
         task["block_actor"] = actor
-        if questions is not None and (actor not in ("l2", "l3") or task.get("fault")):
-            raise TransitionError("structured questions require an L2/L3 human dilemma, not an operational block")
-        if actor in ("l2", "l3") and not task.get("fault"):
+        # Only the owner's own block asks: L3 asks through escalate, and a Stop by anyone is state.
+        if questions is not None and (actor != "l2" or task.get("fault")):
+            raise TransitionError("structured questions require an L2 human dilemma, not an operational block")
+        if actor == "l2" and not task.get("fault"):
             _publish_block_questions(task, reason, actor, questions, recommendation,
                                      recommendation_label, recommendation_why, design=captured)
             if not task.get("resume_after"):  # a message queued for the next turn keeps it the L2's
@@ -1909,7 +1933,7 @@ def _publish_block_members(task: dict, reason: str, actor: str, payload: dict | 
 def _legacy_question_origin(project: str, task: dict) -> dict | None:
     """Read whether a legacy block has authoritative human-question evidence, without adopting it."""
     if (task.get("questions") or task.get("state") != "blocked" or not task.get("blocked_reason")
-            or task.get("fault")):
+            or task.get("fault") or task.get("stop_id")):
         return None
     events = S.read_events(project, task["slug"])
     block_index = next((i for i in range(len(events) - 1, -1, -1)
@@ -2351,7 +2375,7 @@ def block_status(project: str, task: dict) -> tuple[str, str]:
     if task.get("fault"):
         return "fault", f"paused · fault {task['fault']}"
     if task.get("stop_id"):
-        return "stopped", f"stopped by {name}"
+        return "stopped", f"stopped by {'L3' if stopped_by(task) == 'l3' else name}"
     stopped = task.get("state") in ("blocked", "reported")
     count, number = len(operator_questions(task)) if stopped else 0, review_pr(project, task)
     waits = []
@@ -2421,7 +2445,8 @@ def decisions(project: str) -> list[dict]:
         if review := review_row(project, task):
             rows.append(review)
         if (not questions and task["state"] == "blocked" and not task.get("resume_after")
-                and (task.get("waiting_on") == OPERATOR_MESSAGE_ROLE or task.get("stop_id"))):
+                and (task.get("waiting_on") == OPERATOR_MESSAGE_ROLE
+                     or task.get("stop_id") and stopped_by(task) != "l3")):
             rows.append(decision_row(project, task))
     return rows
 

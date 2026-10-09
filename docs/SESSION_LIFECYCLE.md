@@ -880,6 +880,14 @@ Stopping until termination is evidenced, and Stop unconfirmed if termination can
 Check status reads evidence; it does not repeat the Stop command. Drafts stay editable throughout.
 Desktop Escape requests Stop only when no input, dialog, recording, menu or overlay owns it.
 
+A Stop is task state, never a question, and its audience follows who requested it. Only an owner's own
+block publishes questions; L3 asks through `task escalate`. The operator's Stop shows **Stopped by you**,
+keeps its Needs you row and waits for their Continue. L3's `task stop` names L3 as the block's actor,
+waits on L3 and records its reason once in the conversation as an L3 note (**L3 · Stopped the task**);
+the task header says **Stopped by coordinator**, task rows keep Altitude's running wait dot, the queue
+says "stopped by L3" and Needs you stays quiet. Daemon and recovery blocks never publish a question:
+a fault waits on L3, and a park without a recorded wait stays paused.
+
 Earlier and racing messages stay held until a correction or Continue explicitly names the confirmed
 Stop the page observed. A stale running tab can queue a message but cannot undo Stop. Continue keeps
 the unsent draft; a correction is appended after held messages. The existing daemon resume preserves
@@ -1431,8 +1439,8 @@ indication alongside independent questions and merge holds. Worker death means t
 before completion; its raw worker identity and output remain in Task details and incident evidence.
 An open coordinator prerequisite survives a replaced fault reason and remains visible. No text
 inference clears a fault, requests operator action, assumes a reboot or promises recovery.
-Queue and restart inventories retain their operational labels. **Stopped by you** requires confirmed
-steering evidence; a row with only a stop request points to the task for confirmation. Planned waits
+Queue and restart inventories retain their operational labels. **Stopped by you** (or **Stopped by
+the coordinator** for L3's Stop) requires confirmed steering evidence; a row with only a stop request points to the task for confirmation. Planned waits
 name the prerequisite title when available, while capacity and recorded resume checkpoints use the
 queue's own wait. Presentation changes none of these lifecycle states or controls.
 
