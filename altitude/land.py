@@ -1193,15 +1193,15 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     replaced, deadline = [], None
     while True:  # A base that moves while this landing holds its turn is integrated, published and checked again.
         try:
-            if merge and _git(root, "merge-base", "--is-ancestor", f"origin/{base}", "HEAD").returncode != 0:
+            publishing_base = _need(_git(root, "rev-parse", f"origin/{base}"), "publishing base")
+            if merge and _git(root, "merge-base", "--is-ancestor", publishing_base, "HEAD").returncode != 0:
                 _note(f"integrating current origin/{base} before publishing the candidate")
                 try:
-                    _need(_git(root, "merge", "--no-edit", f"origin/{base}", timeout=300), "integrate current base")
+                    _need(_git(root, "merge", "--no-edit", publishing_base, timeout=300), "integrate current base")
                 except LandError:
                     if (git_dir / "MERGE_HEAD").exists():
                         _need(_git(root, "merge", "--abort"), "abort base integration; resolve the worktree before retrying")
                     raise
-            publishing_base = _need(_git(root, "rev-parse", f"origin/{base}"), "publishing base")
             replaced += _push(root, publish_branch, recorded_tip,
                               source_branch=branch if adoption else None)
             pushed_head = _need(_git(root, "rev-parse", f"origin/{publish_branch}"), "cannot capture the pushed PR head")

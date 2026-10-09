@@ -254,6 +254,25 @@ class TestLand(AltitudeCase):
         self.assertNotEqual(pins[0]["head_sha"], result["head"])
         self.assertEqual(self.git("show", f"{result['head']}:src/before-pin.py"), "base\n")
 
+    def test_a_sibling_fetch_during_integration_does_not_replace_the_integrated_base(self):
+        self.configure_ci()
+        self.staged_change()
+        real, moved = land._git, []
+
+        def sibling_fetch(root, *args, **kwargs):
+            result = real(root, *args, **kwargs)
+            if args[:2] == ("merge-base", "--is-ancestor") and not moved:
+                moved.append(args[2])
+                self.advance_base("src/sibling-fetch.py")
+                self.git("fetch", "origin", "main")  # nonmerging sibling updates the common remote ref
+            return result
+
+        self.patch(land, "_git", side_effect=sibling_fetch)
+        result = land.land("shared fetch during integration", cwd=self.repo, wait=60, merge=True)
+        self.assertTrue(result["merged"])
+        self.assertEqual(self.git("show", f"{result['head']}:src/sibling-fetch.py"), "base\n")
+        self.git("merge-base", "--is-ancestor", moved[0], result["head"])
+
     def test_a_hold_placed_during_a_refused_merge_blocks_the_retry(self):
         refused, approval = self.refused_merge("new hold")
         with self.assertRaisesRegex(land.LandError, "predates the current merge hold"):
