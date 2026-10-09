@@ -9,7 +9,7 @@ class TestStopAudience(AltitudeCase):
         self.patch(engines, "stop_l2_worker", return_value="stopped")
 
     def task(self, state="running", title="Stop audience"):
-        task = T.new(self.project, title, "Do it.", actor="burak")
+        task = T.new(self.project, title, "Do it.", actor=config.OPERATOR_ACTOR)
         task.update({"state": state, "attempt": 1, "agent_id": "agent-old", "session_id": "session-old",
                      "l2_engine": "claude"})
         S.save_task(self.project, task)

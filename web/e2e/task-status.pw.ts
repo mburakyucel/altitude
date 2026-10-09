@@ -36,7 +36,7 @@ for (const scene of scenes) test(`task status: ${scene.key}, row and page`, asyn
   const planned = "planned" in scene;
   const task = { ...source, title: "Verify installation", state: planned ? "queued" : "blocked",
     fault, blocked_reason: scene.reason, waiting_on: coordinatorStop ? "l3" : audience, handed_back: null, resume_after: null,
-    block_actor: coordinatorStop ? "l3" : stopped ? "burak" : "l2",
+    block_actor: coordinatorStop ? "l3" : stopped ? "operator" : "l2",
     hold_merge: "Review the completed change before merging.", stop_id: stopped ? "fictional-stop" : null,
     steering: { state: stopped ? "stopped" : "idle", stop_id: stopped ? "fictional-stop" : null, generation: null, error: null },
     planned_wait: planned ? { reason: "publish-installation-package", after: "publish-installation-package", after_title: "Publish the installation package" } : null,

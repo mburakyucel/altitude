@@ -172,7 +172,7 @@ describe("task explanations", () => {
     expect(taskExplanation({ ...executed, steering: { state: "stopped" } }))
       .toBe("Stopped by the coordinator; its note is in the conversation.");
     expect(taskExplanation(executed)).toBe("The coordinator requested a stop; confirmation is in the task.");
-    expect(taskExplanation({ ...blocked, stop_id: "stop-request", block_actor: "burak", steering: { state: "stopped" } }))
+    expect(taskExplanation({ ...blocked, stop_id: "stop-request", block_actor: "operator", steering: { state: "stopped" } }))
       .toBe("Stopped by you; continue when you’re ready.");
   });
 
