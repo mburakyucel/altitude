@@ -1226,8 +1226,8 @@ when every shard succeeded: a failed, cancelled or skipped shard fails it. Typec
 in every web shard because each one's browser walkthroughs need the build.
 Every run, whether from a fork or a repository branch, has a read-only token and no secrets, and no
 workflow runs on the maintainer's machine. Standard hosted runners are free for public
-repositories. GitHub's fork-workflow approval setting (require approval for first-time
-contributors) stays on, so such a contributor's run starts once the maintainer approves it.
+repositories. GitHub's fork-workflow approval setting requires approval for all outside
+contributors, so every outside contributor's run starts only once the maintainer approves it.
 The PR `check` is required by `alt land` in every repository whose base commit ships that workflow;
 owners and helpers run relevant tests during development instead of repeating a full local suite at
 every landing. Python, web unit tests, typecheck/build and both browser viewports must execute and
