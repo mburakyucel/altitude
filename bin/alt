@@ -937,7 +937,7 @@ def main(argv=None) -> None:
                 sys.exit(f"alt: {e}")
         elif args.icmd == "publish":
             try:
-                out(incidents.publish_issue(p, args.id))
+                out(incidents.publish_issue(p, args.id, anyway=True))
             except ValueError as e:
                 sys.exit(f"alt: {e}")
         else:

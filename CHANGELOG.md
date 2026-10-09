@@ -5,6 +5,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Incidents on an installed copy record whether a newer followed release is known. When one is,
+  the incident stays local with an update-first notice; a repeat after updating gets its own
+  incident. `alt incident publish` still publishes a held record on request.
+
 ## v0.1.1 — 2026-10-09
 
 Patch release of the early preview: alpha quality, with rough edges and the known limitations below.
