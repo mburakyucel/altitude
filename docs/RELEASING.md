@@ -38,7 +38,7 @@ The web package's private build metadata is not a separate product version.
 
 ## Candidate and release gates
 
-This repository's required self-hosted PR `check` runs the full `make check` gate with candidate
+This repository's required GitHub-hosted PR `check` runs the full `make check` gate with candidate
 SHA/tree evidence. The [delivery policy](DEVELOPMENT.md#ci-and-candidate-identity) preserves review
 and publication decisions. The separately dispatched
 [installation lifecycle workflow](DEVELOPMENT.md#installation-lifecycle-acceptance) is optional
@@ -126,12 +126,13 @@ decision; the audit itself changes nothing.
 ## Publish a release
 
 Pushing a `v0.*` tag runs `.github/workflows/release.yml` on a GitHub-hosted runner with GitHub's
-own token and no other secrets; it never creates a tag. The job refuses to publish unless the
-tag's commit is on `main`, that exact commit has a successful push `check` run of the self-hosted
-workflow, and `CHANGELOG.md` has the version's dated section. It then builds the release files from
-the tag, attests their build provenance and creates the GitHub release with that section as its
-notes. A `-rc.N` tag is published as a prerelease; any other version becomes the latest release,
-which the [one-command install](SETUP.md#install-the-application) fetches.
+own token and no other secrets; it never creates a tag. The job refuses to publish unless the tag's
+commit is on `main`, that exact commit has a successful push `check` run of
+`.github/workflows/hosted-checks.yml`, and `CHANGELOG.md` has the version's dated section. It then
+builds the release files from the tag, attests their build provenance and creates the GitHub release
+with that section as its notes. A `-rc.N` tag is published as a prerelease; any other version
+becomes the latest release, which the [one-command install](SETUP.md#install-the-application)
+fetches.
 
 ```sh
 git tag v0.1.0 <approved SHA>

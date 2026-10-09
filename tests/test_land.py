@@ -1753,7 +1753,7 @@ class TestCheckEvidence(AltitudeCase):
         self.assertTrue(query_calls)
         self.assertTrue(all("owner=team" in a and "repo=demo" in a for a in query_calls))
 
-    def test_adopted_pr_checks_block_then_pass_and_preserve_history(self):
+    def test_adopted_pr_checks_block_then_pass_and_squash(self):
         self.git("push", "-q", "origin", "HEAD:proposal/external")
         pull = json.loads((self.ghdir / "pr.json").read_text())
         pull.update(url="https://github.com/team/demo/pull/101", headRefName="proposal/external",
@@ -1770,7 +1770,12 @@ class TestCheckEvidence(AltitudeCase):
         result = land.land("applicable checks passed", cwd=self.repo, wait=0, merge=True)
         self.assertEqual((result["pr"], result["checks"], result["merged"]), (101, "pass", True))
         self.assertEqual(S.load_task("demo", "fix-x")["adopted_pr"], receipt)
-        self.assertEqual(self.git("show", "-s", "--format=%P", "origin/main").strip(), f"{self.base} {self.head}")
+        # Squash-only repositories refuse merge commits, so an adopted PR squashes like ordinary landing.
+        self.assertEqual(self.git("show", "-s", "--format=%P", "origin/main").strip(), self.base)
+        merges = [call for call in self.gh_log() if call[:2] == ["pr", "merge"]]
+        self.assertIn("--squash", merges[-1])
+        self.assertNotIn("--merge", merges[-1])
+        self.assertNotIn("--delete-branch", merges[-1])
 
     def test_policy_required_skipped_job_cannot_be_excluded_by_optional_metadata(self):
         self.optional_deploy()
@@ -1939,7 +1944,7 @@ class TestRequiredPrCheck(AltitudeCase):
     classify = TestCheckEvidence.classify
     merge_candidate = TestCheckEvidence.merge_candidate
     diverge_base = TestCheckEvidence.diverge_base
-    workflow_path = ".github/workflows/self-hosted-checks.yml"
+    workflow_path = ".github/workflows/hosted-checks.yml"
     source = TestCheckEvidence.source
 
     def setUp(self):
@@ -2039,18 +2044,18 @@ class TestRequiredPrCheck(AltitudeCase):
         self.assertIsNone(missing["local_tests"])
         self.assert_not_merged()
 
-    def only_the_hosted_skip_registered(self):
-        """GitHub registers the hosted job, skipped by design here, seconds before the required `check`."""
-        hosted = copy.deepcopy(self.required_check)
-        hosted.update(name="hosted-check", status="COMPLETED", conclusion="SKIPPED", isRequired=False)
-        hosted["checkSuite"]["workflowRun"]["file"]["path"] = ".github/workflows/hosted-checks.yml"
-        self.contexts().update(self.connection([hosted]))
+    def only_a_nonrequired_skip_registered(self):
+        """GitHub registers a skipped nonrequired job seconds before the required `check`."""
+        skipped = copy.deepcopy(self.required_check)
+        skipped.update(name="lint", status="COMPLETED", conclusion="SKIPPED", isRequired=False)
+        skipped["checkSuite"]["workflowRun"]["file"]["path"] = ".github/workflows/lint.yml"
+        self.contexts().update(self.connection([skipped]))
         S.write_json(self.ghdir / "checks.json", [{"bucket": "skipping"}])
         S.write_json(self.ghdir / "check_evidence.json", self.evidence)
-        return hosted
+        return skipped
 
-    def test_merge_waits_for_the_required_check_to_register_after_the_hosted_skip(self):
-        hosted = self.only_the_hosted_skip_registered()
+    def test_merge_waits_for_the_required_check_to_register_after_a_nonrequired_skip(self):
+        skipped = self.only_a_nonrequired_skip_registered()
         self.assertEqual(self.classify(), "missing")
         polls = []
 
@@ -2058,7 +2063,7 @@ class TestRequiredPrCheck(AltitudeCase):
             polls.append(_seconds)
             self.required_check.update(status="QUEUED" if len(polls) == 1 else "COMPLETED",
                                        conclusion=None if len(polls) == 1 else "SUCCESS")
-            self.contexts().update(self.connection([hosted, self.required_check]))
+            self.contexts().update(self.connection([skipped, self.required_check]))
             S.write_json(self.ghdir / "checks.json", [{"bucket": "pending" if len(polls) == 1 else "pass"},
                                                       {"bucket": "skipping"}])
             S.write_json(self.ghdir / "check_evidence.json", self.evidence)
@@ -2070,11 +2075,11 @@ class TestRequiredPrCheck(AltitudeCase):
         self.assertEqual((result["checks"], result["merged"], len(polls)), ("pass", True, 2))
         notice = stderr.getvalue()
         self.assertIn(f"required check check has not registered on head {self.head}", notice)
-        self.assertIn("registered: hosted-check skipped (not required)", notice)
+        self.assertIn("registered: lint skipped (not required)", notice)
         self.assertIn("PR checks pending", notice)
 
     def test_required_check_that_never_registers_is_reported_missing_at_the_bound(self):
-        self.only_the_hosted_skip_registered()
+        self.only_a_nonrequired_skip_registered()
         now = {"seconds": 0.0}
         stderr = io.StringIO()
         with mock.patch.object(land, "time", wraps=land.time) as clock, contextlib.redirect_stderr(stderr):
@@ -2084,12 +2089,12 @@ class TestRequiredPrCheck(AltitudeCase):
         self.assertEqual((result["checks"], result["merged"], result["local_tests"]), ("missing", False, None))
         self.assertEqual(clock.sleep.call_count, 60 // land.CHECK_POLL_SECONDS)
         self.assertIn("not merging: checks are 'missing'; required check check has not registered on head "
-                      f"{self.head}; registered: hosted-check skipped (not required)", stderr.getvalue())
+                      f"{self.head}; registered: lint skipped (not required)", stderr.getvalue())
         self.assert_not_merged()
 
     def test_assessment_timeout_reports_the_unregistered_required_check(self):
         from altitude import reviews
-        self.only_the_hosted_skip_registered()
+        self.only_a_nonrequired_skip_registered()
         S.save_task("demo", {**S.load_task("demo", "fix-x"), "attempt": 1})
         self.setenv("ALTITUDE_ACTOR", "l2")
         self.setenv("ALTITUDE_ATTEMPT", "1")
@@ -2101,7 +2106,7 @@ class TestRequiredPrCheck(AltitudeCase):
             clock.sleep.side_effect = lambda seconds: now.__setitem__("seconds", now["seconds"] + seconds)
             with self.assertRaisesRegex(land.LandError, "owner assessment wait timed out with checks are 'missing'; "
                                         "required check check has not registered on head .*; "
-                                        r"registered: hosted-check skipped \(not required\); candidate remains"):
+                                        r"registered: lint skipped \(not required\); candidate remains"):
                 land.land("assessment and registration both time out", cwd=self.repo, wait=30, merge=True)
         self.assert_not_merged()
 

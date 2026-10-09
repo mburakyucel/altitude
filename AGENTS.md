@@ -95,11 +95,11 @@ and keeps its pass/fail evidence, so the operator does not run validation by han
 acceptance that no run covered and the concrete blocker for each gap.
 
 Owners and helpers run tests relevant to their changes during development. This repository's
-required self-hosted PR `check` runs the full `make check` suite. `alt land` requires a successful
-run for the current head and tested tree, with current main included in that head. A branch missing
+required PR `check` runs the full `make check` suite on a GitHub-hosted runner. `alt land`
+requires a successful run for the current head and tested tree, with current main included in that head. A branch missing
 current main needs reconciliation and fresh PR checks on the new head. Final validation and merges
 are serialized across Altitude owners. Missing, pending, failed or stale CI blocks delivery,
-including during runner outages; there is no local
+including during CI outages; there is no local
 bypass. Review and UX/operator holds still apply. GitHub merges outside Altitude remain
 unprotected; other projects keep their existing gates. See
 [CI and candidate identity](docs/DEVELOPMENT.md#ci-and-candidate-identity).

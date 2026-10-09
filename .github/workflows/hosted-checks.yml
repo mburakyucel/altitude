@@ -1,22 +1,22 @@
-name: Hosted checks
+name: Checks
 
-# Pull requests that the self-hosted `check` does not admit (fork heads and
-# authors other than the repository owner) run the same suite on a
-# GitHub-hosted runner: read-only token, no secrets, nothing on the owner's
-# machine. Altitude integrates a reviewed contribution on a repository branch,
-# where the required self-hosted `check` runs before the merge.
+# Every pull request, push to main and manual dispatch runs the full suite on a GitHub-hosted runner
+# with a read-only token and no secrets. Altitude requires the PR job before merging; main runs
+# verify delivery, and release publication requires the push run of the tagged commit.
 on:
   workflow_dispatch:
   pull_request:
+    branches: [main]
+  push:
     branches: [main]
 
 permissions:
   contents: read
 
 jobs:
-  hosted-check:
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name != github.repository || github.actor != github.repository_owner
-    runs-on: ubuntu-latest
+  # Keep the job id `check` and no `name:`: `alt land` and release.yml select this job by id.
+  check:
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       CI: 'true'
@@ -24,23 +24,48 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
+
+      # #380: a PR run tests GitHub's merge of the pinned base and head, whose tree must equal the head tree.
+      - name: Verify the exact candidate
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 - <<'PY'
+          import json, os, subprocess
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          if os.environ['GITHUB_EVENT_NAME'] == 'pull_request':
+              pr = json.load(open(os.environ['GITHUB_EVENT_PATH']))['pull_request']
+              base, head = pr['base']['sha'], pr['head']['sha']
+              assert git('rev-list', '--parents', '-n', '1', 'HEAD').split()[1:] == [base, head]
+              subprocess.run(['git', 'merge-base', '--is-ancestor', base, head], check=True)
+              assert git('rev-parse', 'HEAD^{tree}') == git('rev-parse', head + '^{tree}')
+          PY
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
 
-      - name: Verify exact commit and install frozen dependencies
+      # The image integration fixtures use the detected ffmpeg converter and Little CMS (docs/DEVELOPMENT.md).
+      - name: Install the image converter
         run: |
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg liblcms2-2
+          ffmpeg -version | head -n 1
+
+      # Corepack selects the pinned pnpm from web/package.json only when pnpm starts inside web/.
+      - name: Install frozen dependencies and Chromium
+        working-directory: web
+        run: |
           export PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/browsers"
           echo "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" >> "$GITHUB_ENV"
           corepack enable
           python3 --version
           node --version
           pnpm --version
-          pnpm --dir web install --frozen-lockfile
-          pnpm --dir web exec playwright install --with-deps chromium
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
 
       - name: Full deterministic checks
         run: make check

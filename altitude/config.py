@@ -48,7 +48,7 @@ SOURCE_BRANCH = os.environ.get("ALTITUDE_SOURCE_BRANCH") or "main"
 #: Altitude's own repository: the destination First run fills in when the operator turns incident publishing on.
 ALTITUDE_REPOSITORY = "mburakyucel/altitude"
 # A repository whose base commit ships this workflow requires its PR `check` on the exact candidate head.
-PR_CHECK_WORKFLOW = ".github/workflows/self-hosted-checks.yml"
+PR_CHECK_WORKFLOW = ".github/workflows/hosted-checks.yml"
 PR_CHECK_NAME = "check"
 PERSONAS = SOURCE / "personas"
 SCHEMAS = SOURCE / "schemas"

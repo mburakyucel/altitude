@@ -5,6 +5,15 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Every pull request, push to main and manual dispatch runs the required `check` on a GitHub-hosted
+  runner with a read-only token and no secrets; no workflow runs on the maintainer's machine. A
+  failed run keeps its browser report as a seven-day artifact, and release publication requires
+  the tagged commit's successful push run of the same workflow (#469).
+
+- `alt land --merge` squashes an adopted PR into one commit on main, as it does every other PR, so
+  landing works where the repository allows only squash merges. The adopted branch keeps its history
+  and is not deleted.
+
 ## v0.1.0 — 2026-10-08
 
 First stable release of the early preview: alpha quality, with rough edges and the known limitations

@@ -856,15 +856,15 @@ movement or ownership loss refuses. No review identity or disposition is automat
 The final review/context check precedes recorded approval application, preserving holds on review refusal.
 The process owns the turn: return, exception or termination releases it without daemon recovery.
 There is no persistent queue or FIFO guarantee. Dry runs and nonmerging preparation in other repositories do not take
-the turn. External Git/GitHub writers, older landing code, self-hosted runner executions and
+the turn. External Git/GitHub writers, older landing code, CI runs and
 hand-run suites do not share it, so exact base/head refusals remain necessary.
-This repository requires its self-hosted PR `check` to run the full `make check` suite. Owners
+This repository requires its GitHub-hosted PR `check` to run the full `make check` suite. Owners
 and helpers run relevant tests during development; landing does not repeat the full suite locally.
 CI proves its tested merge tree equals the PR head tree. Landing requires that successful PR
 check on the current head and verifies that the head includes current main. A branch missing
 current main needs reconciliation and a fresh PR run on the new head. Altitude serializes final
 validation and merge, rechecks identity and holds, and verifies the merged tree against the
-tested tree. Missing, pending, failed or stale CI blocks; runner outages have no local bypass.
+tested tree. Missing, pending, failed or stale CI blocks; CI outages have no local bypass.
 The gate governs Altitude merges; GitHub updates outside Altitude remain unprotected.
 See [policy, evidence and activation](DEVELOPMENT.md#ci-and-candidate-identity).
 Planned file lists guide coordination without limiting edits or landing. The owner stages selected
@@ -983,8 +983,8 @@ remains effective.
 The receipt binds PR number/URL, origin, base, original branch/head, actor, attempt, reason and time.
 The original head must remain an ancestor during landing and resume.
 The task keeps its local branch and publishes a fast-forward refspec to the original PR branch;
-adopted pushes never retry with force. Landing incorporates main with a merge commit, preserving
-the adopted history. Adoption cannot be widened to a later external head.
+adopted pushes never retry with force. Landing incorporates main into the task branch with a merge
+commit, preserving the adopted branch history. Adoption cannot be widened to a later external head.
 The existing PR is reused, outstanding required reviews or requested changes and drafts block merge,
 and the live task owner/hold/active receipt are rechecked before merging. The fetched base branch
 is authoritative; lagging `baseRefOid` metadata does not replace it. Check evidence confirms the
@@ -994,13 +994,13 @@ skipped checks. Completed skipped checks identified as nonrequired by GitHub are
 interpreting workflow conditions. Failed, cancelled and pending checks still block, including
 nonrequired checks; pending checks use the existing wait. Unknown requiredness or ambiguous
 candidate association refuses delivery. At least one check must actually pass under the hosted gate.
-For other projects without CI, the full local suite runs on a clean merge candidate:
-one parent for squash delivery, two for adopted history. The suite is one `--test-cmd` argv
+For other projects without CI, the full local suite runs on a clean single-parent squash
+candidate, for adopted PRs too. The suite is one `--test-cmd` argv
 command run without a shell. Workflows on either pinned side keep the hosted gate, so a head that
 deletes them cannot select the local suite. A dry run reports the fetched base, the exact head or
 the staged tree, per-side workflow detection and the gate it would use, and names what only a real
-landing settles; it commits, pushes, opens, tests and merges nothing. Adopted PRs use a
-GitHub merge commit and request no branch deletion. See the [supported workflow](CLI.md#adopt-an-existing-pr)
+landing settles; it commits, pushes, opens, tests and merges nothing. Adopted PRs squash like
+ordinary delivery and request no branch deletion. See the [supported workflow](CLI.md#adopt-an-existing-pr)
 and [dry run and gate selection](CLI.md#dry-run-and-gate-selection).
 
 Operator merge decisions originate in task chat, UI choices or project chat. The owner applies a
@@ -1729,14 +1729,11 @@ The same browser specs run at 390×844 with mobile user agent and touch and at 1
 smoke spec reads the real route tree and checks content, assets, console/uncaught errors, API
 failures and horizontal overflow. `walkthrough.ts` drives actions, asserts visible text/roles
 appearing and disappearing, and saves named screenshots on passing and failing walkthroughs.
-Traces are retained only on failure. Outputs stay under ignored `web/ui-artifacts/`. The self-hosted
-workflow retains logs and candidate identity through the runner's local evidence exporter. Failed
-runs also retain the self-contained HTML report and attachments; passing runs keep small receipts.
-GitHub artifact uploads, duplicate raw results and caches are excluded. A passing required check
-with its console log is sufficient delivery evidence; owners retrieve a failed report only for
-diagnosis or on a reviewer's request; L3 coordinates cleanup of unneeded exports when the runner's
-budget refuses admission. See the
-[retention and retrieval contract](DEVELOPMENT.md#ci-and-candidate-identity).
+Traces are retained only on failure. Outputs stay under ignored `web/ui-artifacts/`. A failed
+required check uploads the self-contained HTML report and its attachments as a seven-day GitHub
+artifact; passing runs upload nothing. A passing required check with its console log is sufficient
+delivery evidence; owners download a failed report only for diagnosis or on a reviewer's request.
+See [CI and candidate identity](DEVELOPMENT.md#ci-and-candidate-identity).
 The committed design tree holds maintained boards and their spec; review galleries and routine
 renderings are not source artifacts. Curated documentation illustrations retain a maintained source.
 The required PR job runs every suite phase and preserves candidate identity. Bundled Chromium
