@@ -328,6 +328,11 @@ class QuestionGroups(AltitudeCase):
         self.assertEqual(len(self.block_notices()), notices, "L3 already holds the remainder")
         with self.assertRaisesRegex(T.TransitionError, "name it with --remaining"):
             self.resolve(question, message, for_operator=True)
+        retry = {"reason": "Build both engines.", "remaining": "Must the coordinator skip the settings?"}
+        self.resolve(question, message, **retry)
+        with self.assertRaisesRegex(T.TransitionError, "already resolved"):
+            self.resolve(question, message, **retry, for_operator=True)
+        self.assertEqual((self.open_members(), len(self.block_notices())), ([(question["id"], 2, "l3")], notices))
 
     def test_operator_remainder_on_a_blocked_task_keeps_the_operator_turn(self):
         group = self.ask()

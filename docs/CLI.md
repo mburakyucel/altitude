@@ -1319,7 +1319,7 @@ It changes no independent worker, capacity or fault state and has no inherited r
 provide a recommendation only when it applies to the remaining question. On a blocked task, each
 resolution recomputes `waiting_on` from the open members: an open operator member means waiting on
 the operator, only L3 members means waiting on L3, and none means not waiting. Harmless follow-ups require
-no resolution operation. A repeated identical resolution reuses its record; stale or conflicting
+no resolution operation. A repeated identical resolution, including the remainder's audience, reuses its record; stale or conflicting
 resolutions are refused. Neither this command nor ordinary resume releases a merge hold.
 
 The [owner's decision guidance](../personas/l2.md#conversation-and-decisions) governs assessment

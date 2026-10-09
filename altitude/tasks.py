@@ -2087,17 +2087,18 @@ def resolve_question(project: str, slug: str, identity: str, revision: int | Non
         row = ({"role": "l2", "by": "l2"} if withdrawn else
                _decision_source(project, slug, question, message_id, source, l3_authority=l3_authority))
         receipt = question.get("resolution") or {}
+        audience = ("operator" if for_operator else "l3") if remaining else None
         if question["status"] != "open":
             if (receipt.get("message_id"), receipt.get("source"), receipt.get("disposition"), receipt.get("text"),
-                    receipt.get("remaining"), receipt.get("l3_authority")) == (
-                    message_id, source, disposition, reason.strip(), remaining, l3_authority):
+                    receipt.get("remaining"), receipt.get("remaining_audience"), receipt.get("l3_authority")) == (
+                    message_id, source, disposition, reason.strip(), remaining, audience, l3_authority):
                 return question_view(project, task, question)
             raise TransitionError("question was already resolved or superseded; refresh the conversation")
         actor = OPERATOR_MESSAGE_ROLE if source == "project" else row.get("by") or row["role"]
         if disposition == "answered":
             require_design(project, slug, question)
         receipt = _close_question(question, disposition, reason.strip(), actor, message_id, source)
-        receipt["remaining"] = remaining
+        receipt.update(remaining=remaining, remaining_audience=audience)
         if l3_authority:
             receipt.update(l3_authority=l3_authority, recorded_by="l2", recorded_attempt=expected_attempt)
         _store_groups(task)
@@ -2106,8 +2107,7 @@ def resolve_question(project: str, slug: str, identity: str, revision: int | Non
         if remaining:
             _publish_question(task, remaining.strip(), "l2", recommendation=recommendation,
                               label=recommendation_label, why=recommendation_why, force_revision=True,
-                              previous=question, group=group, bump=False,
-                              audience="operator" if for_operator else "l3")
+                              previous=question, group=group, bump=False, audience=audience)
         if task["state"] == "blocked" and not task.get("fault"):
             _wait_on_open_members(task)
         S.save_task(project, task)
