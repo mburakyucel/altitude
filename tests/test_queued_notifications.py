@@ -151,6 +151,21 @@ class TestQueuedNotifications(AltitudeCase):
         self.assertIn("Fictional follow-up", self.prompts[-2])
         self.assertIn("Fictional restart inventory.", self.prompts[-1])
 
+    def test_send_now_runs_a_kept_chat_without_waiting_for_its_retry_time(self):
+        self.mode = "expired-limit"
+        l3.queue_message(self.project, "Fictional refused chat", trigger="chat", role=config.OPERATOR_ACTOR)
+        turn_id = l3.deliver_queued(self.project)["turn_id"]
+        [kept] = self.queue()
+        self.assertIn("retry_at", kept)
+        self.mode = "ok"
+
+        l3.send_now(self.project, kept["id"])
+        l3.deliver_queued(self.project)
+
+        self.assertEqual(self.queue(), [])
+        self.assertEqual(self.rows_of(turn_id), [("user", "chat"), ("assistant", "chat")])
+        self.assertEqual(l3.send_now(self.project, kept["id"])["status"], "delivered")
+
     def test_kept_chat_waiting_for_its_retry_time_is_overtaken_only_by_send_now(self):
         self.mode = "expired-limit"
         l3.queue_message(self.project, "Fictional refused chat", trigger="chat", role=config.OPERATOR_ACTOR)

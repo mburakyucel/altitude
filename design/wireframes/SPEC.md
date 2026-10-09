@@ -1672,7 +1672,8 @@ only when the server admits it; claimed, delivered or removed rows have no queue
 admitted while no L3 engine can run keeps its bubble with the muted queued status (**Queued · runs
 next**) and Send now beneath it, disabled with the server's explanation; there is no error line and no
 Remove, because it was already sent. It runs before system work once an engine is available, and its
-reply appears beneath the same bubble.
+reply appears beneath the same bubble. A kept message older than the loaded conversation appears in the
+queued rows with the same status and Send now, still without Remove.
 Both controls have 44px phone targets and wrap with their explanations on narrow screens.
 A running turn shows
 either a system line in progress (§3.4) or, for a `chat` turn, a typing indicator under the

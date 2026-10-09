@@ -289,9 +289,11 @@ export default function Conversation({
   const neverStarted = project.isSuccess && !project.data.l3?.session_id && view && view.history.length === 0 && !view.active;
   const queued = view?.queued ?? [];
   const queuePositions = new Map(queued.filter(row => row.trigger !== "project-message").map((row, index) => [row.id, index]));
-  // A kept message is already in the conversation: its queued state shows under its own bubble, not in the list.
-  const kept = new Map(queued.flatMap((row) => row.turn_id ? [[row.turn_id, row] as const] : []));
-  const waiting = queued.filter((row) => !row.turn_id);
+  // A kept message is already in the conversation: its queued state shows under its own bubble, or in the list
+  // when that bubble is older than the loaded history.
+  const shown = new Set(turns.map((turn) => turn.id));
+  const kept = new Map(queued.flatMap((row) => row.turn_id && shown.has(row.turn_id) ? [[row.turn_id, row] as const] : []));
+  const waiting = queued.filter((row) => !row.turn_id || !shown.has(row.turn_id));
   const queuedStatus = (row: QueuedMessage) => <span className="queued-status text-muted">{row.send_now ? "Sending now" : queuePositions.get(row.id) === 0 ? "Queued · runs next" : `Queued · ${(queuePositions.get(row.id) ?? 0) + 1} in line`}</span>;
   const sendNowFor = (row: QueuedMessage) => (
     <SendNow visible pending={Boolean(row.send_now || (sendNow.isPending && sendNow.variables === row.id))}
@@ -430,9 +432,9 @@ export default function Conversation({
                   {!row.trigger || row.trigger === "chat" ? (
                     <div className="queued-actions">
                     {sendNowFor(row)}
-                    <button type="button" className="link" disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending} onClick={() => dequeue.mutate(row.id)}>
+                    {row.turn_id ? null : <button type="button" className="link" disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending} onClick={() => dequeue.mutate(row.id)}>
                       {dequeue.isPending && dequeue.variables === row.id ? "Removing…" : "Remove"}
-                    </button>
+                    </button>}
                     </div>
                   ) : null}
                 </li>

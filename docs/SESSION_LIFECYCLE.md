@@ -1237,7 +1237,7 @@ its id. An operator message, sent directly or from the queue, stays in the conve
 with no error row; the queue keeps it with its `turn_id`, text and images. Kept messages lead the queue in
 send order, behind only an accepted Send now row, and run unfolded under their original turn id, so each
 reply appears beneath its message with trigger `chat`. A kept message offers Send now but not Remove,
-since it was already sent. When routing still offers an engine right after the refusal, the kept rows wait
+since it was already sent; Send now runs it without waiting for a retry delay. When routing still offers an engine right after the refusal, the kept rows wait
 1, 5, 15, then 60 minutes (`retry_at`) so the drain cannot loop; a waiting notification lets later messages
 proceed, while a waiting operator message lets only a Send now row overtake it. An engine hold already
 stops the drain, so kept rows run as soon as an engine is eligible; a pinned L3 waits for its own engine

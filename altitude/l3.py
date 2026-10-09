@@ -1054,6 +1054,7 @@ def send_now(project: str, message_id: str) -> dict:
             if why := send_now_unavailable(project):
                 raise ValueError(why)
             row["send_now"] = True
+            row.pop("retry_at", None)  # The operator's explicit request runs now, not after a kept row's retry delay.
             _write_queue(queue_path(project), [row, *(item for item in rows if item["id"] != message_id)])
             turn = _active.get(project)
             interrupt = _interrupts.get(turn["id"]) if turn else None

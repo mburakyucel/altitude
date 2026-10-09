@@ -251,6 +251,18 @@ describe("queued L3 Send now", () => {
     expect(screen.queryByRole("button", { name: "Send now" })).toBeNull();
   });
 
+  it("lists a kept message whose bubble is older than the loaded history, without Remove", async () => {
+    mockFetch({ chat: { ...chatView, send_now_reason: "No engine is available. The message stays queued.", queued: [
+      { id: "old-held", turn_id: "old-held", at: ago(90), text: "Earlier kept question", trigger: "chat", role: "user" },
+    ] } });
+    renderApp({ route: "/projects/altitude" });
+    const list = await screen.findByRole("list", { name: "Queued messages" });
+    expect(within(list).getByText("Earlier kept question")).toBeVisible();
+    expect(within(list).getByText("Queued · runs next")).toBeVisible();
+    expect(within(list).getByRole("button", { name: "Send now" })).toBeDisabled();
+    expect(within(list).queryByRole("button", { name: "Remove" })).toBeNull();
+  });
+
   it("explains unavailable delivery without offering system rows an action", async () => {
     mockFetch({ chat: { ...chatView, send_now_reason: "No engine is available", queued: [
       { id: "chat", text: "Wait for capacity", trigger: "chat" }, { id: "system", text: "System work", trigger: "restart" },
