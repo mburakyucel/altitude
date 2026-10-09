@@ -82,6 +82,12 @@ svg.i.sm{width:14px;height:14px}
 .tcard{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-card);background:var(--card);max-width:480px;color:var(--text-primary)}
 .tcard .tt{font-weight:600;font-size:14px;line-height:1.3}.tcard .tm{font-size:12px;color:var(--text-muted);margin-top:2px}
 .tcard .go{margin-left:auto;color:var(--text-muted)}
+.offer{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+.offer .ob{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 14px 0 10px;border:1px solid var(--border);border-radius:999px;background:var(--card);font-size:13px;font-weight:600;color:var(--accent-text);white-space:nowrap}
+.offer .ob[aria-disabled]{color:var(--text-muted)}
+.offer .ot{font-size:13px;color:var(--text-muted);min-width:0}
+.offer .err{flex-basis:100%;font-size:13px;color:var(--danger)}
+.dots{display:inline-flex;gap:4px;padding:6px 0}.dots i{width:6px;height:6px;border-radius:50%;background:var(--text-muted);opacity:.6}
 .composer{border:1px solid var(--border);border-radius:var(--radius-composer);background:var(--card);box-shadow:var(--shadow);padding:14px 12px 10px 18px;width:100%;max-width:720px;margin:0 auto}
 .composer .ph2{color:var(--text-muted);font-size:15px;min-height:24px;line-height:24px}
 .composer .draft{color:var(--text-primary);font-size:15px;min-height:24px;line-height:24px}
@@ -452,7 +458,7 @@ def board(name, w, h, inner):
 
 # =====================================================================
 # Desktop 1: project view (Main)
-def desktop_project(with_panel=True):
+def desktop_project(with_panel=True, convo=None):
     cols = "260px minmax(0,1fr) 340px" if with_panel else "260px minmax(0,1fr)"
     header_right = (
         f'<div class="acts"><span class="ib{" on" if with_panel else ""}">{I("panel")}</span><span class="ib">{I("more")}</span></div>'
@@ -467,7 +473,7 @@ def desktop_project(with_panel=True):
         '<main class="pane">'
         '<header class="ph"><div><h1>altitude</h1><div class="sub">L3 answered 12 min ago on Claude · 3 tasks in flight · 3 questions need you</div></div>'
         + header_right + '</header>' + tabs +
-        '<div class="convo"><div class="col">' + convo_altitude() + '</div>'
+        '<div class="convo"><div class="col">' + (convo or convo_altitude()) + '</div>'
         '<div style="height:22px"></div>'
         + composer(hint="L3 answers or creates one task. Shift + Enter for a new line.") +
         '</div></main>'
@@ -582,10 +588,10 @@ mobile_convo = (
     '<div class="l3"><p>Passed that to the task’s L2. Every board will ship in a desktop and an iPhone version in the same PR.</p></div>'
 )
 
-def mobile_chat(sheet=False):
+def mobile_chat(sheet=False, convo=None):
     inner = (
         '<div class="m"><div></div>' + mheader_project() +
-        '<div class="mbody"><div class="mcol">' + mobile_convo + '</div></div>'
+        '<div class="mbody"><div class="mcol">' + (convo or mobile_convo) + '</div></div>'
         '<div class="mcomp">' + composer("Message L3", mobile=True) + '</div>'
         + tabbar("chat") + '</div>'
     )
@@ -1002,6 +1008,40 @@ state_sheet("ConversationStates", "Conversation and report states", [
     ("Report empty / error", "Retry repeats the read", '<p class="muted">No report yet.</p><p class="danger">Could not load the report. <a href="#">Retry</a></p>'),
 ], 740)
 
+# A coordinator reply that could become a task offers one action (SPEC.md §3.3 Create task).
+OFFER_TITLE = "Refresh Needs you as soon as an answer is sent"
+
+def offer(state="ready"):
+    label = {"ready": "Create task", "sending": "Sending…", "failed": "Create task"}[state]
+    icon = I("spin", "i sm") if state == "sending" else I("work", "i sm")
+    err = '<span class="err" role="alert">Not sent. Check the connection and press it again.</span>' if state == "failed" else ""
+    return (f'<div class="offer"><span class="ob"{" aria-disabled=\"true\"" if state == "sending" else ""}>{icon}{label}</span>'
+            f'<span class="ot">{OFFER_TITLE}</span>{err}</div>')
+
+offer_question = '<div class="me">The Needs you badge on my phone still said 2 after I answered both questions. Bug?</div>'
+offer_reply = ('<div class="l3"><p>Yes, a small one. The badge reads the queue on its next refresh, so after an answer it '
+               'can lag up to 20 seconds. Nothing is lost; it only looks wrong. Refetching the queue right after an '
+               'answer is sent fixes it.</p>')
+offer_pressed = f'<div class="me">Create task: {OFFER_TITLE}</div>'
+offer_done = ('<div class="l3"><p>Created it. It starts as soon as a slot is free; nothing needs you meanwhile.</p>'
+              + tcard(OFFER_TITLE, "Queued · starts when a slot is free", "dot q") + '</div>')
+typing = '<span class="dots" role="status" aria-label="L3 is answering"><i></i><i></i><i></i></span>'
+
+board("ReplyTask", 1440, 900, desktop_project(True, '<div class="day">Today</div>' + offer_question + offer_reply + offer() + '</div>'))
+board("MobileReplyTask", 390, 844, mobile_chat(False, offer_question + offer_reply + offer() + '</div>'))
+
+state_sheet("ReplyTaskStates", "Create task: states", [
+    ("Reply without the action", "an answer, a report, or a task already created", offer_question + '<div class="l3"><p>Merged an hour ago as PR #175. It shows after the next restart; nothing waits on you.</p></div>'),
+    ("Reply with the action", "L3 recommends work but has not been asked to start it", offer_question + offer_reply + offer() + '</div>'),
+    ("Pressed", "the action dims for the moment the message takes to save", offer_reply + offer("sending") + '</div>'),
+    ("Waiting", "the action leaves; the instruction is your next message", offer_reply + '</div>' + offer_pressed + typing),
+    ("Waiting while L3 is busy", "the ordinary queued row, with Send now and Remove", offer_reply + '</div><p class="muted" style="margin:0">Create task: ' + OFFER_TITLE + ' · Queued · runs next</p>'),
+    ("Task queued", "L3's answer carries the ordinary task card", offer_reply + '</div>' + offer_pressed + offer_done),
+    ("Not sent", "the action stays and says why; pressing it again retries", offer_reply + offer("failed") + '</div>'),
+    ("L3 could not answer", "the ordinary failed turn with Retry", offer_reply + '</div>' + offer_pressed + '<p class="muted">L3 could not answer this turn. <a href="#">Retry</a></p>'),
+    ("Answered by typing", "any message you send instead retires the action", offer_reply + '</div><div class="me">Not now, after the release.</div><div class="l3"><p>Noted. I will bring it up after the release.</p></div>'),
+], 1720)
+
 report_content = (
     '<p class="muted"><a href="Task.html">← Persist paths when L3 resumes a task</a></p><h1>Report</h1>'
     '<h2>Landed</h2><ul><li>PR #178 merged · Persist task paths</li><li>Main checks success</li><li>Deploy: healthy</li></ul>'
@@ -1096,6 +1136,8 @@ ROUTES = [
     ("Models dialog states", "ModelsStates", None),
     ("System turns in chat: reports, faults, FYIs", "SystemTurnStates", None),
     ("Conversation and report states", "ConversationStates", None),
+    ("Create task: a reply that could become a task", "ReplyTask", "MobileReplyTask"),
+    ("Create task states", "ReplyTaskStates", None),
     ("Project lifecycle states", "ProjectLifecycleStates", None),
 ]
 ROUTES = conversation_first_boards(OUT, board, I) + ROUTES
