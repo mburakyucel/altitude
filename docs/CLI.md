@@ -1286,7 +1286,8 @@ recommendation fields preserve its approach; parking or revision preserves its r
 alt task resolve <slug> --question <id> [--revision <n>] --message <source-id> \
   --source task|project --disposition answered|superseded --reason <chosen-scope-or-closure-reason> \
   [--l3-authority <specific-evidence-and-rationale>] \
-  [--remaining <still-relevant-question>] [--recommendation <approach> --label <action> --why <reason>]
+  [--remaining <still-relevant-question> [--for-operator]] \
+  [--recommendation <approach> --label <action> --why <reason>]
 
 alt task resolve <slug> --question <id> [--revision <n>] --disposition withdrawn --reason <why>
 ```
@@ -1311,15 +1312,19 @@ choices require the original operator source; an L3 recommendation or discussion
 Use `answered` for the settled approach. Use `superseded` when authoritative changed direction makes
 the question irrelevant; the reason names that change, without claiming acceptance of the old
 recommendation. With `--remaining`, the operation preserves the resolved scope and publishes a new
-revision containing only the relevant unanswered parts. That remainder keeps its audience without
-changing independent worker, capacity or fault state and has no inherited default;
-provide a recommendation only when it applies to the remaining question. Harmless follow-ups require
-no resolution operation. A repeated identical resolution reuses its record; stale or conflicting
+revision containing only the relevant unanswered parts. Like a block, the remainder asks L3 unless
+`--for-operator` names it plainly the operator's; it does not inherit the original audience, and it
+queues L3's notification at once, so parking it later with its own text publishes nothing again.
+It changes no independent worker, capacity or fault state and has no inherited recommendation;
+provide a recommendation only when it applies to the remaining question. On a blocked task, each
+resolution recomputes `waiting_on` from the open members: an open operator member means waiting on
+the operator, only L3 members means waiting on L3, and none means not waiting. Harmless follow-ups require
+no resolution operation. A repeated identical resolution, including the remainder's audience, reuses its record; stale or conflicting
 resolutions are refused. Neither this command nor ordinary resume releases a merge hold.
 
 The [owner's decision guidance](../personas/l2.md#conversation-and-decisions) governs assessment
 of new guidance, withdrawal and re-asking. `withdrawn` records L2 judgment without `--message`,
-`--source`, `--l3-authority`, `--remaining` or recommendation fields. It removes that member's
+`--source`, `--l3-authority`, `--remaining`, `--for-operator` or recommendation fields. It removes that member's
 controls and retains its history; it grants no approval and discards no work. No message classifier
 or automatic withdrawal is involved.
 
