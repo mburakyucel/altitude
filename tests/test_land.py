@@ -206,10 +206,14 @@ class TestLand(AltitudeCase):
         def github(args, cwd, timeout=120):
             if args[:3] == ["gh", "pr", "merge"] and not refused:
                 refused.append(args[-1])
-                if race in ("main moved", "new hold"):
+                if race in ("main moved", "new hold", "publisher lost"):
                     self.advance_base("src/outside.py")
                 if race == "new hold":
                     T.set_hold_merge("demo", "fix-x", "Hold again: wait for the release")
+                if race == "publisher lost":
+                    task = S.load_task("demo", "fix-x")
+                    S.save_task("demo", {**task, "title": "Fixture delivery"})
+                    T.block("demo", "fix-x", "Fixture owner stopped", expected_attempt=1)
                 return subprocess.CompletedProcess(args, 1, "", "Head branch is not up to date with the base branch")
             return real(args, cwd, timeout=timeout)
 
@@ -234,6 +238,14 @@ class TestLand(AltitudeCase):
             land.land("approved delivery", cwd=self.repo, wait=60, merge=True, approval=approval["id"])
         self.assertEqual((len(refused), [a for a in self.gh_log() if a[:2] == ["pr", "merge"]]), (1, []))
         self.assertEqual(self.git("rev-parse", "HEAD").strip(), refused[0])
+
+    def test_owner_losing_publication_authority_during_base_movement_does_not_republish(self):
+        refused, approval = self.refused_merge("publisher lost")
+        with self.assertRaisesRegex(land.LandError, "task is not running"):
+            land.land("owner stopped during merge", cwd=self.repo, wait=60, merge=True, approval=approval["id"])
+        self.assertEqual(self.git("rev-parse", "origin/worktree-fix-x").strip(), refused[0])
+        self.assertEqual(self.git("rev-parse", "HEAD").strip(), refused[0])
+        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
     def test_main_moving_between_push_and_pin_gets_an_integrated_head(self):
         self.configure_ci()

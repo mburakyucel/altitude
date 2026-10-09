@@ -1193,6 +1193,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     replaced, deadline = [], None
     while True:  # A base that moves while this landing holds its turn is integrated, published and checked again.
         try:
+            _require_current_publisher(project, slug, S.load_task(project, slug), authority)
             publishing_base = _need(_git(root, "rev-parse", f"origin/{base}"), "publishing base")
             if merge and _git(root, "merge-base", "--is-ancestor", publishing_base, "HEAD").returncode != 0:
                 _note(f"integrating current origin/{base} before publishing the candidate")

@@ -1348,8 +1348,9 @@ Each admitted invocation rechecks ownership and holds, fetches current main, and
 the task branch when needed before pushing and checking the fresh candidate. This preserves
 adopted history. Conflicts abort integration and retain local work for the owner; dirty edits are
 not stashed. If only main moves after publication, the merging command incorporates it, pushes a
-new head and waits for fresh checks within the original publication deadline. It repeats ownership,
-review, hold, approval and `--closes-issue` gates for that candidate; review assessments never transfer
+new head and waits for fresh checks within the original publication deadline. It checks current
+ownership before integrating and publishing each candidate, and repeats review, hold, approval and
+`--closes-issue` gates; review assessments never transfer
 automatically. Head or PR identity movement refuses instead of retrying. Adopted PRs retain their
 history and accept only fast-forward pushes. Required checks and original approval sources still
 govern delivery.
