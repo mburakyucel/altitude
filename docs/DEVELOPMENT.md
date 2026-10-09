@@ -1237,11 +1237,13 @@ CI verifies that it tests the exact commit and, for a pull request, that GitHub'
 the event's base and head as parents, that the head includes that base and that the tested merge
 tree equals the head tree. Landing requires the specific successful PR
 job on the current head, verifies that current main is an ancestor of that head, and serializes
-publication, CI waiting and merge across Altitude owners, including nonmerging invocations.
-For reviewed merging candidates, CI and explicit owner reassessment share one bounded wait while
-the same process retains the repository turn. `tests/test_land_contention.py` drives real competing
-landing processes, Git and fixture reviewers through main integration, in-turn assessment, fresh
-required checks (one pending for more than ten minutes on a scaled landing clock), timeout,
+only the final confirm-and-merge across Altitude owners; publication and CI waits run side by side.
+For reviewed merging candidates, CI and explicit owner reassessment share one bounded wait outside
+the repository turn. When another merge moves main first, the same invocation integrates it and waits
+for the new head's fresh check. `tests/test_land_contention.py` drives real competing
+landing processes, Git and fixture reviewers: a green candidate on current main merging while
+another owner's check is pending (for more than ten minutes on a scaled landing clock), main moving
+during a check or an assessment, concurrent nonmerging publications, timeout,
 termination, ownership loss and material-edit refusal. Proposal followed by implementation review
 reports both stale assessments together; messages during admission, hosted CI or local validation
 require explicit assessment in the same landing invocation. Invalid dispositions
@@ -1249,10 +1251,10 @@ leave the candidate unmerged and its operator hold intact, and final validation 
 assessment deadline. `tests/test_reviews.py` checks the review identity and changed evidence in refusals.
 Original review receipts remain unchanged. Fixtures establish the application protocol, not live engine support for
 background tool sessions or provider compatibility.
-CI runs outside the command do not share its turn. Any base or head movement after candidate pinning
-refuses the merge. A later invocation can reuse the successful head when main is already an
-ancestor of it: the merge still has the identical tested tree. Ordinary competing merges introduce
-commits outside the head and require reconciliation, a push and fresh checks on the new head.
+CI runs outside the command do not share its turn. Head movement after candidate pinning refuses
+the merge, and base movement is integrated into a new head that needs its own fresh checks. A later
+invocation can reuse the successful head when main is already an ancestor of it: the merge still has
+the identical tested tree.
 Landing verifies the merged tree against the tested tree; commit metadata can differ.
 Missing, pending, failed, skipped, cancelled, stale or unrelated required runs block. A required run
 that has not registered on the head yet keeps the bounded wait going; one still absent at the bound

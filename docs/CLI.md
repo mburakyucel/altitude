@@ -1329,30 +1329,39 @@ resolution remains an operation of the running or blocked owning L2.
 
 ### Concurrent landings
 
-`alt land` takes the repository turn when it merges or targets this repository's required PR
-check, with or without `--merge`. It waits before fetching, publishing or checking CI, prints
-when waiting and when its turn starts, and returns seconds waited as `waited` (zero without a
-wait). This preserves shared candidate admission from I-20260923-062538 while CI runs the suite.
+`alt land --merge` publishes its candidate and waits for that candidate's own checks and owner
+assessment without any repository-wide lock, so concurrent owners' hosted checks run side by side.
+Only the final step takes the repository turn: confirming that the candidate is still current
+(main unmoved, head, checks, ownership and holds), then merging. A green candidate on current main
+therefore merges as soon as the turn is free, which takes seconds, never another owner's CI run.
+Landing prints when it waits for the turn and when it starts, and returns seconds waited as `waited`
+(zero without a wait). Admission waits at most 3600 seconds; a timeout leaves the published
+candidate unmerged. Nonmerging invocations never take the turn.
+
+When another merge moves main before the candidate merges, during its check, its assessment or at
+the turn, the same invocation prints which main it found, merges it into the task branch, pushes
+the new head and waits for that head's fresh check, with the time left in `--wait`; its earlier green
+result is never reused. A conflict aborts the integration and leaves local work for the owner. Once
+`--wait` is spent, the integrated head stays published with its pending check and a later run
+merges it. A nonmerging invocation whose main moves stops with the PR published.
 Keep the command and owner session alive; ordinary contention needs no L3 landing-window request.
-Admission waits at most 3600 seconds. The shared CI and owner-assessment wait that follows has the
-same 3600-second bound, so a merging candidate keeps the turn while its fresh required check is
-queued or running and one green check leads to one merge; `--wait` only shortens it. GitHub registers
+The CI and owner-assessment wait is bounded at 3600 seconds after publication, so one green check on
+current main leads to one merge; `--wait` only shortens it. GitHub registers
 a head's checks one at a time, so a required check absent from the head is waited for within the same
 bound rather than read as skipped; landing names it and the checks that have registered, such as a
 skipped nonrequired job. Landing prints the remaining bound when it first sees pending or
 unregistered required checks. A required check that never registers within the bound ends the wait as
-`missing` with that observation and does not merge. An admission timeout refuses without selecting
-a candidate or publishing changes; retry explicitly when ready.
+`missing` with that observation and does not merge.
 
-Each admitted invocation rechecks ownership and holds, fetches current main, and merges it into
-the task branch when needed before pushing and checking the fresh candidate. This preserves
-adopted history. Conflicts abort integration and retain local work for the owner; dirty edits are
-not stashed. Required checks, review and original approval sources still govern delivery.
-Failure or cancellation releases the turn; the next owner proceeds with its own candidate.
+A merging invocation fetches current main and merges it into the task branch when needed before
+pushing and checking the candidate. This preserves adopted history. Conflicts abort integration and
+retain local work for the owner; dirty edits are not stashed. Ownership and holds are rechecked before
+the turn and again before merging. Required checks, review and original approval sources still govern
+delivery. Failure or cancellation releases the turn; the next owner proceeds with its own candidate.
 Task messages and Stop remain available. Repeating a completed merge creates no duplicate PR.
 
 When integration or task context makes completed review assessments stale, a merging L2 invocation
-keeps its turn while the owner explicitly assesses the pinned candidate. CI and assessment share the same `--wait`
+waits, outside the turn, while the owner explicitly assesses the pinned candidate. CI and assessment share the same `--wait`
 deadline; failed or unavailable checks end the wait. Keep landing alive in a native background/tool
 session and read its partial output. Inspect the printed head/base and current conversation, post any
 explanation for all affected reviews, then run `alt task review assess --review-id <id> --file <assessment.json>`
@@ -1365,14 +1374,15 @@ original landing result. A changes assessment does not retire a proposal assessm
 No assessment or finding disposition is carried forward automatically. If code needs edits or another
 review, cancel landing and prepare a new candidate. Missing or unfinished review, changed local/remote
 head/base, and lost ownership refuse; `--wait 0` and operator-run landings refuse stale assessment
-immediately. Timeout or termination releases the turn with the pushed candidate retained and unmerged.
-Context changes detected during final merge validation use the same assessment wait and original
-deadline, without releasing the repository turn. Final review/context, CI, holds and approval checks
-run again after assessment; review refusal leaves the merge hold intact.
+immediately. Timeout or termination leaves the pushed candidate retained and unmerged.
+Context changes detected during final merge validation release the turn and use the same assessment
+wait and original deadline. Final review/context, CI, holds and approval checks run again after
+assessment; review refusal leaves the merge hold intact.
 
-The turn is a process-owned repository lock, not a durable or FIFO queue. Dry runs and nonmerging preparation
-in other repositories do not wait for it. CI runs and a `make check` run by hand outside
-`alt land` do not share it; a hand run without `CI` set uses two browser workers. External
+The turn is a process-owned repository lock, not a durable or FIFO queue. Dry runs and nonmerging
+invocations do not take it. CI runs and a `make check` run by hand outside
+`alt land` do not share it; a hand run without `CI` set uses two browser workers. Without hosted
+CI, the full local candidate suite runs inside the turn, because it uses this machine. External
 writers and older landing versions can still change refs: stale base/head evidence refuses merge
 and is never reused or retried automatically. Only invocations using this installed version share serialization.
 
@@ -1399,7 +1409,8 @@ alt land --message "fix: describe the change" --merge
 Landing publishes the PR and waits for its required `check` on the current head; it does not
 run the full suite locally. The task branch includes current main. A branch missing current main
 needs reconciliation, a push and fresh PR checks on the new head. Final validation and merge are
-serialized across Altitude owners; the merged tree must equal the tested tree. Failed, pending, missing, skipped,
+serialized across Altitude owners, while each candidate's CI runs outside that turn; the merged tree
+must equal the tested tree. Failed, pending, missing, skipped,
 cancelled, stale or unrelated required runs block. GitHub-managed scans on the head, such as CodeQL
 default setup, need no PR identity but must pass like any other check: a failing scan blocks and a
 pending one is waited for. `--test-cmd` supplies no bypass for this gate.
@@ -1766,7 +1777,7 @@ pushes; rejected pushes never retry with force. `--merge` squashes the PR into o
 as ordinary landing does, and requests no branch deletion; the PR keeps its original commits.
 Host-side branch deletion settings remain the repository operator's policy.
 
-`--merge` incorporates current main into the task branch while holding the repository turn. If
+`--merge` incorporates current main into the task branch before publishing, and again whenever main moves before the merge. If
 that integration conflicts, reconcile manually while preserving the adopted commits with a merge
 commit:
 

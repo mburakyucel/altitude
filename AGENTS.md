@@ -99,7 +99,7 @@ required PR `check` runs the full `make check` suite as parallel shards on GitHu
 and passes only when every shard passes. `alt land`
 requires a successful run for the current head and tested tree, with current main included in that head. A branch missing
 current main needs reconciliation and fresh PR checks on the new head. Final validation and merges
-are serialized across Altitude owners. Missing, pending, failed or stale CI blocks delivery,
+are serialized across Altitude owners; CI waits are not. Missing, pending, failed or stale CI blocks delivery,
 including during CI outages; there is no local
 bypass. Review and UX/operator holds still apply. GitHub merges outside Altitude remain
 unprotected; other projects keep their existing gates. See

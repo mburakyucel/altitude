@@ -10,6 +10,11 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   failed run keeps its browser report as a seven-day artifact, and release publication requires
   the tagged commit's successful push run of the same workflow (#469).
 
+- `alt land --merge` takes the repository-wide landing turn only to confirm its candidate is still
+  current and merge it, so a PR that is green on current main merges without waiting for other
+  owners' CI runs. When another merge moves main first, the same command integrates it and waits
+  for the new head's fresh check. Landings that do not merge take no turn.
+
 - `alt land --merge` squashes an adopted PR into one commit on main, as it does every other PR, so
   landing works where the repository allows only squash merges. The adopted branch keeps its history
   and is not deleted.

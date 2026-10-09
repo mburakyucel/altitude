@@ -1,7 +1,7 @@
 """Concurrent owners use real processes, task storage, worktrees and a bare Git remote.
 
 Only GitHub and the candidate test command are fixtures. File barriers pause a real
-candidate check so the competing caller demonstrably reaches the landing wait.
+candidate check: a hosted check outside the repository turn, a local candidate suite inside it.
 """
 import contextlib
 import json
@@ -57,9 +57,8 @@ def run_owner(project, slug, worktree, fixture, output, options):
         (fixture / 'required-pr-check').touch()
         (fixture / 'hosted-barrier').touch()
         (fixture / 'checks.json').write_text('[{"bucket": "pass"}]')
-    invoke = land.land.__wrapped__ if options.pop('without_lock', False) else land.land
     try:
-        result = invoke('Independent fix ' + slug, cwd=worktree, wait=options.pop('wait', 0),
+        result = land.land('Independent fix ' + slug, cwd=worktree, wait=options.pop('wait', 0),
                         test_cmd='fixture-candidate-check', **options)
         payload = {'result': result}
     except Exception as exc:
@@ -212,11 +211,12 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         return result
 
     def contending(self):
+        """The first owner's local candidate suite holds the turn; the second publishes, then waits for it."""
         first = self.start('first')
         self.checked('first')
         second = self.start('second')
         self.waiting(second)
-        self.assertFalse((self.owners['second'][1] / 'log.jsonl').exists())
+        self.assertEqual(self.calls('second', ['pr', 'merge']), [])
         return first, second
 
     def reviewed(self, slug, *, assess=True, proposal=False, findings=()):
@@ -260,36 +260,58 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
                              'explicit owner reassessment wait')
         self.assertTrue(process.is_alive())
 
-    def test_merging_owner_keeps_turn_through_a_check_longer_than_600_seconds(self):
-        # PR #718: a 600-second CI wait released an approved candidate's turn before its fresh check finished.
+    def test_green_current_pr_merges_while_another_owner_waits_for_its_check(self):
+        # PR #748 waited behind other owners' full CI runs; PR #718: a CI wait must outlast 600 seconds.
         scale = 300
         self.ship_check_workflow()
-        first_fixture, second_fixture = self.owners['first'][1], self.owners['second'][1]
+        first_fixture = self.owners['first'][1]
         first = self.start('first', required_check=True, wait=None, clock_scale=scale)
         self.checked('first')
         (first_fixture / 'checks.json').write_text('[{"bucket": "pending"}]')
-        second = self.start('second', required_check=True, wait=None)
-        self.waiting(second)
         self.release('first')
         self.await_condition(lambda: 'PR checks pending' in (first[1] / 'notes').read_text(), 'pending check')
-        self.assertIn('polling for up to', (first[1] / 'notes').read_text())
         time.sleep(900 / scale)  # Past the old 600-second default on landing's clock, within its hour.
         self.assertTrue(first[0].is_alive())
-        self.assertFalse((second_fixture / 'log.jsonl').exists())
-        self.assertNotIn('acquired', (second[1] / 'notes').read_text())
+        self.release('second')
+        second = self.start('second', required_check=True)
+        second_result = self.merged('second', self.finish(second))
+        self.assertEqual((second_result['checks'], second_result['waited']), ('pass', 0))
+        self.assertNotIn('waiting for another merge', (second[1] / 'notes').read_text())
+        second_merge = json.loads((self.owners['second'][1] / 'pr.json').read_text())['mergeCommit']['oid']
+        # Main moved under the first candidate: it integrates main and waits for its own fresh check.
+        self.await_condition(lambda: (first[1] / 'notes').read_text().count('pushed head') == 2,
+                             'integrated head published')
+        self.assertTrue(first[0].is_alive())
+        self.assertEqual(self.calls('first', ['pr', 'merge']), [])
         (first_fixture / 'checks.json').write_text('[{"bucket": "pass"}]')
         result = self.merged('first', self.finish(first))
-        self.assertEqual(result['checks'], 'pass')
         notes = (first[1] / 'notes').read_text()
-        self.assertEqual((notes.count('pushed head'), notes.count('integrating current')), (1, 0))
-        self.release('second')
-        second_result = self.merged('second', self.finish(second))
-        notes = (second[1] / 'notes').read_text()
-        self.assertEqual((notes.count('integrating current'), notes.count('pushed head')), (1, 1))
-        first_merge = json.loads((first_fixture / 'pr.json').read_text())['mergeCommit']['oid']
-        self.assertEqual(git('merge-base', first_merge, second_result['head'], cwd=self.repo).strip(), first_merge)
+        self.assertIn(f'main moved to {second_merge}', notes)
+        self.assertIn("waiting for PR #101's fresh check on the new head", notes)
+        self.assertEqual(notes.count('integrating current'), 1)
+        self.assertEqual(git('merge-base', second_merge, result['head'], cwd=self.repo).strip(), second_merge)
+        evidence = json.loads((first_fixture / 'last_check_evidence.json').read_text())['pullRequest']
+        self.assertEqual((evidence['headRefOid'], evidence['baseRef']['target']['oid']), (result['head'], second_merge))
 
-    def test_reviewed_waiter_reassesses_integrated_head_without_losing_turn(self):
+    def test_main_moving_with_no_wait_left_publishes_the_integrated_head_unmerged(self):
+        self.ship_check_workflow()
+        fixture = self.owners['first'][1]
+        first = self.start('first', required_check=True, wait=0)
+        self.checked('first')
+        (self.repo / 'external.txt').write_text('external\n')
+        git('add', 'external.txt', cwd=self.repo)
+        git('commit', '-qm', 'external main movement', cwd=self.repo)
+        git('push', '-q', 'origin', 'main', cwd=self.repo)
+        (fixture / 'checks.json').write_text('[{"bucket": "pending"}]')
+        self.release('first')
+        result = self.finish(first)['result']
+        self.assertEqual((result['checks'], result['merged']), ('pending', False))
+        self.assertIn('main moved to', (first[1] / 'notes').read_text())
+        self.assertEqual(self.calls('first', ['pr', 'merge']), [])
+        self.assertEqual(git('rev-parse', 'worktree-first', cwd=self.remote).strip(), result['head'])
+        self.assertEqual(git('show', result['head'] + ':external.txt', cwd=self.repo), 'external\n')
+
+    def test_reviewed_owner_reassesses_integrated_head_outside_the_turn(self):
         self.ship_check_workflow()
         self.reviewed('second', proposal=True)
         T.set_hold_merge(self.project, 'second', 'Operator approval of this delivery')
@@ -299,8 +321,9 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         old_review = S.load_task(self.project, 'second')['reviews'][0]
         first = self.start('first', required_check=True)
         self.checked('first')
-        second = self.start('second', required_check=True, wait=20, approval=approval['id'])
-        self.waiting(second)
+        second = self.start('second', required_check=True, wait=60, approval=approval['id'])
+        self.await_condition(lambda: (second[1] / 'notes').exists()
+                             and 'pushed head' in (second[1] / 'notes').read_text(), 'second publication')
         T.message(self.project, 'second', 'l3', 'Preserve both independent results after integration.')
         self.release('first')
         self.merged('first', self.finish(first))
@@ -318,11 +341,18 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.assertEqual(git('diff', '--name-only', 'origin/main', 'HEAD', cwd=worktree).strip(), 'second.txt')
         self.assertEqual(self.calls('second', ['pr', 'merge']), [])
         self.assertEqual(S.load_task(self.project, 'second')['reviews'][0]['reconciled'], old_review['reconciled'])
+        # The owner's assessment wait holds no turn: a third owner merges meanwhile.
         self.owner('third', 103)
-        third = self.start('third', required_check=True)
-        self.waiting(third)
-        self.assertFalse((self.owners['third'][1] / 'log.jsonl').exists())
-        # Real message handling and assess run concurrently with the process holding the turn.
+        git('merge', '-q', '--ff-only', 'origin/main', cwd=self.owners['third'][0])
+        self.release('third')
+        self.merged('third', self.finish(self.start('third', required_check=True)))
+        third_merge = json.loads((self.owners['third'][1] / 'pr.json').read_text())['mergeCommit']['oid']
+        self.await_condition(lambda: (second[1] / 'notes').read_text().count('pushed head') == 3,
+                             'second integrates the third merge')
+        self.await_condition(lambda: (second[1] / 'notes').read_text().count('waiting for owner assessment') >= 2,
+                             'renewed assessment wait')
+        integrated = git('rev-parse', 'HEAD', cwd=worktree).strip()
+        self.assertEqual(git('merge-base', third_merge, integrated, cwd=self.repo).strip(), third_merge)
         self.assess('second')
         self.assertEqual(S.load_task(self.project, 'second')['hold_merge'], 'Operator approval of this delivery')
         self.assertEqual(self.calls('second', ['pr', 'merge']), [])
@@ -332,10 +362,7 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.assertEqual(result['checks'], 'pass')
         evidence = json.loads((fixture / 'last_check_evidence.json').read_text())['pullRequest']
         self.assertEqual(evidence['headRefOid'], integrated)
-        self.assertEqual(evidence['baseRef']['target']['oid'],
-                         json.loads((self.owners['first'][1] / 'pr.json').read_text())['mergeCommit']['oid'])
-        self.release('third')
-        self.merged('third', self.finish(third))
+        self.assertEqual(evidence['baseRef']['target']['oid'], third_merge)
         saved = S.load_task(self.project, 'second')['reviews'][0]
         self.assertEqual(saved['snapshot'], old_review['snapshot'])
         self.assertEqual(saved['merged_head'], integrated)
@@ -432,18 +459,16 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.release('second')
         self.merged('second', self.finish(self.start('second')))
 
-    def test_killed_assessment_wait_releases_turn_to_competing_owner(self):
+    def test_assessment_wait_leaves_the_turn_to_a_competing_owner(self):
         self.stale_review()
         first = self.start('first', wait=20)
         self.assessment_wait(first)
-        second = self.start('second')
-        self.waiting(second)
+        self.release('second')
+        self.merged('second', self.finish(self.start('second')))
+        self.assertTrue(first[0].is_alive())
         os.killpg(first[0].pid, signal.SIGKILL)
         first[0].join(5)
-        self.assertEqual(first[0].exitcode, -signal.SIGKILL)
         self.assertEqual(self.calls('first', ['pr', 'merge']), [])
-        self.release('second')
-        self.merged('second', self.finish(second))
 
     def test_replaced_owner_during_assessment_releases_turn(self):
         self.stale_review()
@@ -502,7 +527,7 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.release('first')
         self.merged('first', self.finish(self.start('first')))
 
-    def test_external_main_change_during_assessment_refuses_and_releases_turn(self):
+    def test_main_change_during_assessment_is_integrated_and_assessed(self):
         self.stale_review()
         first = self.start('first', wait=20)
         self.assessment_wait(first)
@@ -510,10 +535,13 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         git('add', 'external.txt', cwd=self.repo)
         git('commit', '-qm', 'External main update', cwd=self.repo)
         git('push', '-q', 'origin', 'main', cwd=self.repo)
-        self.assertRegex(self.finish(first)['error'], 'differs from the pinned|base or head moved')
+        self.await_condition(lambda: 'integrating current' in (first[1] / 'notes').read_text(), 'integration')
+        self.await_condition(lambda: (first[1] / 'notes').read_text().count('waiting for owner assessment') >= 2,
+                             'assessment of the integrated head')
         self.assertEqual(self.calls('first', ['pr', 'merge']), [])
-        self.release('second')
-        self.merged('second', self.finish(self.start('second')))
+        self.assess('first')
+        result = self.merged('first', self.finish(first))
+        self.assertEqual(git('show', result['head'] + ':external.txt', cwd=self.repo), 'External main update\n')
 
     def test_failed_required_check_ends_assessment_wait_without_merging(self):
         self.ship_check_workflow()
@@ -566,31 +594,21 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.waiting(retry)
         self.release('first')
         self.merged('first', self.finish(first))
-        self.assertEqual(self.finish(retry)['result']['checks'], 'merged')
+        # The retry's pinned PR is no longer open when it reaches the turn; a later run reports it merged.
+        self.assertIn('base or head moved', self.finish(retry)['error'])
         self.assertEqual(len(self.calls('first', ['pr', 'merge'])), 1)
+        self.assertEqual(self.finish(self.start('first'))['result']['checks'], 'merged')
 
-    def test_without_serialization_sibling_merge_invalidates_green_candidate(self):
-        first = self.start('first', without_lock=True)
-        self.checked('first')
-        second = self.start('second', without_lock=True)
-        self.checked('second')
-        self.release('first')
-        self.merged('first', self.finish(first))
-        self.release('second')
-        result = self.finish(second)['result']
-        self.assertFalse(result['merged'])
-        self.assertTrue(result['local_tests']['passed'])
-        self.assertIn('base or the head moved', result['local_tests']['error'])
-        self.assertEqual(self.calls('second', ['pr', 'merge']), [])
-
-    def test_hosted_head_checks_use_integrated_head_after_waiting(self):
+    def test_hosted_head_checks_use_integrated_head_after_main_moves(self):
         for _, fixture in self.owners.values():
             (fixture / 'hosted-barrier').touch()
             (fixture / 'checks.json').write_text('[{"bucket": "pass"}]')
-        first, second = self.contending()
+        first = self.start('first', wait=20)
+        second = self.start('second', wait=20)
+        self.checked('first')
+        self.checked('second')  # Both hosted checks run at once, outside the turn.
         self.release('first')
         self.merged('first', self.finish(first))
-        self.checked('second')
         first_merge = json.loads((self.owners['first'][1] / 'pr.json').read_text())['mergeCommit']['oid']
         self.release('second')
         result = self.merged('second', self.finish(second))
@@ -601,14 +619,14 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.assertEqual(evidence['pullRequest']['headRefOid'], result['head'])
         self.assertEqual(evidence['pullRequest']['baseRef']['target']['oid'], first_merge)
 
-    def test_lock_wait_times_out_without_publication_or_disrupting_holder(self):
+    def test_turn_wait_times_out_without_merging_or_disrupting_holder(self):
         first = self.start('first')
         self.checked('first')
         second = self.start('second', lock_timeout=.05)
         payload = self.finish(second)
         self.assertEqual(payload['type'], 'LandError')
-        self.assertIn('timed out', payload['error'].lower())
-        self.assertFalse((self.owners['second'][1] / 'log.jsonl').exists())
+        self.assertIn('timed out; the candidate remains published and unmerged', payload['error'])
+        self.assertEqual(self.calls('second', ['pr', 'merge']), [])
         self.release('first')
         self.merged('first', self.finish(first))
 
@@ -655,17 +673,17 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.release('second')
         self.merged('second', self.finish(second))
 
-    def test_cancelled_waiter_does_not_publish_and_holder_finishes(self):
+    def test_cancelled_waiter_does_not_merge_and_holder_finishes(self):
         first, second = self.contending()
         os.killpg(second[0].pid, signal.SIGKILL)
         second[0].join(5)
         self.release('first')
         self.merged('first', self.finish(first))
-        self.assertFalse((self.owners['second'][1] / 'log.jsonl').exists())
+        self.assertEqual(self.calls('second', ['pr', 'merge']), [])
         self.release('second')
         self.merged('second', self.finish(self.start('second')))
 
-    def test_waiter_rechecks_new_hold_before_publication(self):
+    def test_waiter_rechecks_new_hold_before_merging(self):
         first = self.start('first')
         self.checked('first')
         second = self.start('second')
@@ -676,9 +694,9 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.release('first')
         self.merged('first', self.finish(first))
         self.assertIn('merge hold', self.finish(second)['error'])
-        self.assertFalse((self.owners['second'][1] / 'log.jsonl').exists())
+        self.assertEqual(self.calls('second', ['pr', 'merge']), [])
 
-    def test_replaced_waiter_cannot_publish_after_acquiring_lock(self):
+    def test_replaced_waiter_cannot_merge(self):
         first, second = self.contending()
         task = S.load_task(self.project, 'second')
         task['attempt'] = 2
@@ -686,7 +704,7 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.release('first')
         self.merged('first', self.finish(first))
         self.assertIn('no longer current', self.finish(second)['error'])
-        self.assertFalse((self.owners['second'][1] / 'log.jsonl').exists())
+        self.assertEqual(self.calls('second', ['pr', 'merge']), [])
 
     def test_task_messages_and_resume_requests_remain_live_during_landing_wait(self):
         first, second = self.contending()
@@ -706,7 +724,7 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.release('first')
         self.merged('first', self.finish(first))
         self.assertIn('task is not running', self.finish(second)['error'])
-        self.assertFalse((self.owners['second'][1] / 'log.jsonl').exists())
+        self.assertEqual(self.calls('second', ['pr', 'merge']), [])
 
     def ship_check_workflow(self):
         """The base ships the check workflow, so both owners' landings require the PR `check`."""
@@ -719,29 +737,20 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         for worktree, _ in self.owners.values():
             git('merge', '-q', '--ff-only', 'main', cwd=worktree)
 
-    def test_required_checks_started_together_run_one_after_the_other(self):
-        # I-20260923-062538: two candidate `make check` runs on one machine timed out each other's walkthroughs.
+    def test_nonmerging_publications_wait_for_their_checks_together(self):
+        # Hosted checks share no machine; only merges take the repository turn.
         self.ship_check_workflow()
         first = self.start('first', merge=False, required_check=True)
-        self.checked('first')
         second = self.start('second', merge=False, required_check=True)
-        self.waiting(second)
-        self.assertFalse((self.owners['second'][1] / 'tested.json').exists())
-        self.assertFalse((self.owners['second'][1] / 'log.jsonl').exists())
-        self.release('first')
-        first_result = self.finish(first)['result']
-        self.assertEqual((first_result['checks'], first_result['merged'], first_result['waited']), ('pass', False, 0))
+        self.checked('first')
         self.checked('second')
+        self.release('first')
         self.release('second')
-        result = self.finish(second)['result']
-        self.assertEqual((result['checks'], result['merged']), ('pass', False))
-        self.assertGreaterEqual(result['waited'], 0)
-        for slug, number in (('first', 101), ('second', 102)):
-            tested = json.loads((self.owners[slug][1] / 'tested.json').read_text())
-            self.assertEqual(tested['tree'], git('rev-parse', tested['candidate'] + '^{tree}', cwd=self.repo).strip())
-            self.assertFalse((S.task_dir(self.project, slug) / 'local-checks').exists())
+        for slug, call in (('first', first), ('second', second)):
+            result = self.finish(call)['result']
+            self.assertEqual((result['checks'], result['merged'], result['waited']), ('pass', False, 0))
+            self.assertNotIn('waiting for another merge', (call[1] / 'notes').read_text())
             self.assertEqual(self.calls(slug, ['pr', 'merge']), [])
-        self.assertIn('landing turn acquired after', (second[1] / 'notes').read_text())
 
     def test_nonmerge_publication_does_not_wait_for_another_candidate(self):
         first = self.start('first')
