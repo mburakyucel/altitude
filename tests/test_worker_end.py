@@ -142,15 +142,17 @@ class TestWorkerEnd(AltitudeCase):
                 self.assertFalse(engines.worker_live("claude", saved, job_root=job_root))
                 self.command.unlink()
 
-    def test_successful_or_resumed_turn_waiting_on_its_command_keeps_running(self):
-        for slug, result, recovers in (("waiting", "success", False), ("recovered", LIMIT, True)):
-            with self.subTest(slug):
-                task, job_root = self.launch(slug, engine_ends=False, result=result, recovers=recovers)
-                self.assertEqual(engines.worker("claude", task, job_root=job_root)["state"], "working")
-                self.reconcile()
-                self.assertEqual(S.load_task(self.project, slug)["state"], "running")
-                self.assertTrue(_running(int(self.command.read_text())))
-                live = S.read_json(config.MONITOR_DIR / f"live-{self.project}--{slug}.json")
-                self.assertEqual(live["agent"]["state"], "working")
-                os.kill(int(self.command.read_text()), signal.SIGKILL)
-                self.command.unlink()
+    def keeps_running(self, slug, result, *, recovers=False):
+        task, job_root = self.launch(slug, engine_ends=False, result=result, recovers=recovers)
+        self.assertEqual(engines.worker("claude", task, job_root=job_root)["state"], "working")
+        self.reconcile()
+        self.assertEqual(S.load_task(self.project, slug)["state"], "running")
+        self.assertTrue(_running(int(self.command.read_text())))
+        live = S.read_json(config.MONITOR_DIR / f"live-{self.project}--{slug}.json")
+        self.assertEqual(live["agent"]["state"], "working")
+
+    def test_successful_turn_waiting_on_its_command_keeps_running(self):
+        self.keeps_running("waiting", "success")
+
+    def test_activity_after_a_failed_turn_keeps_the_worker_running(self):
+        self.keeps_running("recovered", LIMIT, recovers=True)
