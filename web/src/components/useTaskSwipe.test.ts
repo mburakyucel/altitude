@@ -5,39 +5,54 @@ const width = 390;
 
 describe("swipe arithmetic", () => {
   it("follows the finger toward the other view and stops at one width", () => {
-    expect(dragOffset(-80, width, false)).toBe(-80);
-    expect(dragOffset(80, width, true)).toBe(80);
-    expect(dragOffset(-600, width, false)).toBe(-width);
-    expect(dragOffset(0, width, false)).toBe(0);
+    expect(dragOffset(-80, width, 0, 2)).toBe(-80);
+    expect(dragOffset(80, width, 1, 2)).toBe(80);
+    expect(dragOffset(-600, width, 0, 2)).toBe(-width);
+    expect(dragOffset(0, width, 0, 2)).toBe(0);
   });
 
   it("gives less and less past either end", () => {
-    const short = dragOffset(60, width, false);
-    const long = dragOffset(300, width, false);
+    const short = dragOffset(60, width, 0, 2);
+    const long = dragOffset(300, width, 0, 2);
     expect(short).toBeGreaterThan(0);
     expect(short).toBeLessThan(60);
     expect(long).toBeGreaterThan(short);
     expect(long).toBeLessThan(width * 0.55);
     expect(long - short).toBeLessThan(300 - 60);
-    expect(dragOffset(-300, width, true)).toBeCloseTo(-long, 6);
+    expect(dragOffset(-300, width, 1, 2)).toBeCloseTo(-long, 6);
   });
 
   it("completes a slow release from half the width and springs back before it", () => {
-    expect(completes(-194, 0, width, false)).toBe(false);
-    expect(completes(-195, 0, width, false)).toBe(true);
-    expect(completes(195, 0, width, true)).toBe(true);
+    expect(completes(-194, 0, width, 0, 2)).toBe(false);
+    expect(completes(-195, 0, width, 0, 2)).toBe(true);
+    expect(completes(195, 0, width, 1, 2)).toBe(true);
   });
 
   it("completes a fling in the drag's direction at any distance and springs back from a fling against it", () => {
-    expect(completes(-30, -0.4, width, false)).toBe(true);
-    expect(completes(-30, -0.39, width, false)).toBe(false);
-    expect(completes(-300, 0.6, width, false)).toBe(false);
-    expect(completes(60, 0.9, width, true)).toBe(true);
+    expect(completes(-30, -0.4, width, 0, 2)).toBe(true);
+    expect(completes(-30, -0.39, width, 0, 2)).toBe(false);
+    expect(completes(-300, 0.6, width, 0, 2)).toBe(false);
+    expect(completes(60, 0.9, width, 1, 2)).toBe(true);
   });
 
   it("never completes past either end", () => {
-    expect(completes(300, 2, width, false)).toBe(false);
-    expect(completes(-300, -2, width, true)).toBe(false);
+    expect(completes(300, 2, width, 0, 2)).toBe(false);
+    expect(completes(-300, -2, width, 1, 2)).toBe(false);
+  });
+
+  it("moves through three views in order, one step each way, and never wraps", () => {
+    expect(dragOffset(-80, width, 0, 3)).toBe(-80);
+    expect(dragOffset(-80, width, 1, 3)).toBe(-80);
+    expect(dragOffset(80, width, 1, 3)).toBe(80);
+    expect(dragOffset(80, width, 2, 3)).toBe(80);
+    expect(dragOffset(-80, width, 2, 3)).toBeGreaterThan(-80);
+    expect(dragOffset(-80, width, 2, 3)).toBeCloseTo(-dragOffset(80, width, 0, 3), 6);
+    expect(completes(-195, 0, width, 0, 3)).toBe(true);
+    expect(completes(-195, 0, width, 1, 3)).toBe(true);
+    expect(completes(195, 0, width, 1, 3)).toBe(true);
+    expect(completes(195, 0, width, 2, 3)).toBe(true);
+    expect(completes(-300, -2, width, 2, 3)).toBe(false);
+    expect(completes(300, 2, width, 0, 3)).toBe(false);
   });
 
   it("measures release speed over the last hundred milliseconds, the release included", () => {

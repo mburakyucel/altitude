@@ -83,8 +83,11 @@ test("@phone-only content swipes preserve both reading positions, draft and sele
   await expect(live.getByRole("button", { name: "Follow", exact: true })).toBeVisible();
   await expect(tool).toHaveAttribute("open", "");
   expect(await liveScroll.evaluate((node) => node.scrollTop)).toBeCloseTo(180, 0);
-  await swipe(page, 290, 340, -220);
-  await expect(live).toBeVisible(); // There is no wrap beyond the last view.
+  // Terminal is the last view: past it there is no wrap.
+  await tabs.getByRole("link", { name: "Terminal", exact: true }).click();
+  await expect(page.getByText("Terminal is off", { exact: true })).toBeVisible();
+  await swipe(page, 290, 400, -220);
+  await expect(page).toHaveURL(`${path}/terminal`);
   await tabs.getByRole("link", { name: "Conversation", exact: true }).click();
   await expect(conversation).toBeVisible();
   await swipe(page, 100, 320, 220);
@@ -213,16 +216,18 @@ test("@phone-only the swipe tracks the finger: reveal, load, settle, spring back
   await touch.lift();
   await expect.poll(() => offset(track)).toBe(0);
   await expect(page).toHaveURL(path);
-  await tabs.getByRole("link", { name: "Live session", exact: true }).click();
-  await expect(live).toBeVisible();
+  // The fixture task has a worktree, so Terminal is the last view.
+  await tabs.getByRole("link", { name: "Terminal", exact: true }).click();
+  const terminalOff = page.getByText("Terminal is off", { exact: true });
+  await expect(terminalOff).toBeVisible();
   touch = await finger(page, 300, 400);
   await touch.move(-120, 0, 100);
   await expect.poll(() => offset(track)).toBeLessThan(0);
   expect(await offset(track)).toBeGreaterThan(-60);
-  await walk.state("09-end-resistance-after-live", { visible: [live], hidden: [] });
+  await walk.state("09-end-resistance-after-terminal", { visible: [terminalOff], hidden: [] });
   await touch.lift();
   await expect.poll(() => offset(track)).toBe(0);
-  await expect(page).toHaveURL(`${path}/live`);
+  await expect(page).toHaveURL(`${path}/terminal`);
   await tabs.getByRole("link", { name: "Conversation", exact: true }).click();
   await expect(conversation).toBeVisible();
   // Reduced motion: nothing moves with the finger; a release past the threshold switches at once.
