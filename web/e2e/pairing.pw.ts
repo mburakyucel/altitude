@@ -187,6 +187,31 @@ test("a code pairs the browser, and removing it in Settings returns it to the pa
   expect(devices.devices.map((device: { name: string }) => device.name)).toEqual(["Playwright browser"]);
 });
 
+test("Settings shows the address-only QR and certificate check beside a real pairing code", async ({ page, request }, info) => {
+  const walk = walkthrough(page, info);
+  await walk.open("/");
+  await pairWith(page, await code(request));
+  await page.goto("/settings/devices");
+  const panel = page.getByRole("region", { name: "Pair another device" });
+  const directions = { address: "https://pairing.example.test:9443", qr: ["11111110100100011011101111111", "10000010100110110110101000001", "10111010011001110011101011101", "10111010110110001111001011101", "10111010011101000001001011101", "10000010011010100111001000001", "11111110101010101010101111111", "00000000101001100100100000000", "10110111010001101111101001011", "01101000100000011001111110001", "10101010001100110110001110110", "01101101011111110001111000001", "01100010101010000101000101100", "00001000010111000101001000111", "11000011111110100011110100111", "10011101110111000000011000010", "11011011000000001010110111010", "00000101001111011010100101110", "10101111100110010110000110100", "00011101011110001110111100100", "01010111000101000110111111100", "00000000111001100001100011111", "11111110100111000111101011010", "10000010110110000000100011011", "10111010000010111110111110110", "10111010110000110011100111001", "10111010101111000100000100101", "10000010001111110010101011010", "11111110100100011001101101010"],
+    certificate: { name: "Altitude CA 4F7K", check: "AA BB CC DD EE FF 00 11" } };
+  // Only network directions are a presentation fixture; code issuance stays in real API/storage.
+  await page.route("**/api/devices/code", async (route) => {
+    const answer = await route.fetch();
+    await route.fulfill({ response: answer, json: { ...await answer.json(), ...directions } });
+  });
+  const image = panel.getByRole("img", { name: `QR code for ${directions.address}` });
+  await walk.state("01-before-code", { visible: [panel.getByRole("button", { name: "Make a pairing code" })], hidden: [image] });
+  await walk.state("02-address-qr-and-check", {
+    action: () => panel.getByRole("button", { name: "Make a pairing code" }).click(),
+    visible: [image, panel.getByLabel("Pairing code"), panel.getByText(/Certificate “Altitude CA 4F7K”/),
+      panel.getByText(directions.certificate.check)], hidden: [panel.getByText(/pair\?code=/)],
+  });
+  const previous = await panel.getByLabel("Pairing code").textContent();
+  await walk.state("03-new-code", { action: () => panel.getByRole("button", { name: "Make a new code" }).click(), visible: [image], hidden: [] });
+  await expect(panel.getByLabel("Pairing code")).not.toHaveText(previous!);
+});
+
 test("the pairing screen waits for Altitude and offers a retry when it cannot reach it", async ({ page }, info) => {
   const walk = walkthrough(page, info);
   const { heading } = screen(page);
