@@ -1235,11 +1235,17 @@ and other conversations separate. Each waiting chat row remains individually rem
 including after an accepted Send now;
 messages arriving after that snapshot wait for the next turn. A message queued but not started is not
 a turn in flight, so it neither holds the quiet-point restart nor is lost by one. The queue waits
-while no L3 option is available. A system notification (block, restart, incident or upstream issue) whose
-turn every option refuses before any provider output returns to the front of the queue with its id and
-waits 1, 5, 15, then 60 minutes (`retry_at`) while later messages proceed; it is delivered once L3 is
-available. A turn with provider output is never replayed, and a refused operator message keeps its
-Retry instead. An Auto-selected turn resumes only the chosen provider's session;
+while no L3 option is available. A turn that every option refuses before any provider output keeps its rows.
+A system notification (block, restart, incident or upstream issue) returns to the front of the queue with
+its id. An operator message, sent directly or from the queue, stays in the conversation as its own bubble
+with no error row; the queue keeps it with its `turn_id`, text and images. Kept messages lead the queue in
+send order, behind only an accepted Send now row, and run unfolded under their original turn id, so each
+reply appears beneath its message with trigger `chat`. A kept message offers Send now but not Remove,
+since it was already sent; Send now runs it without waiting for a retry delay. When routing still offers an engine right after the refusal, the kept rows wait
+1, 5, 15, then 60 minutes (`retry_at`) so the drain cannot loop; a waiting notification lets later messages
+proceed, while a waiting operator message lets only a Send now row overtake it. An engine hold already
+stops the drain, so kept rows run as soon as an engine is eligible; a pinned L3 waits for its own engine
+and model. A turn with provider output is never replayed and keeps its Retry. An Auto-selected turn resumes only the chosen provider's session;
 choosing another configured model on that provider retains its conversation.
 
 An operator queue row's **Send now** promotes it ahead of other rows and runs it alone as the next
