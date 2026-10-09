@@ -1186,7 +1186,7 @@ class TestChatQueue(AltitudeCase):
                         self.assertTrue(kwargs["interrupt"].wait(5))
                         interrupted.set()
                         self.assertTrue(release.wait(5))
-                        result.update(interrupted=True, error="Interrupted for a queued message", safe_to_retry=False,
+                        result.update(interrupted=True, error=None, safe_to_retry=False,
                                       context_tokens=0)
                     return result
 
@@ -1215,7 +1215,10 @@ class TestChatQueue(AltitudeCase):
                     self.assertFalse(worker.is_alive())
                     self.assertTrue(results[0]["interrupted"])
                     self.assertEqual(l3.info(self.project)["sessions"][engine]["context_percent"], 12)
-                    self.assertIn("Interrupted for a queued message.", l3.chat_history(self.project)[-1]["text"])
+                    stopped = l3.chat_history(self.project)[-1]
+                    self.assertEqual((stopped["role"], stopped["text"], stopped["interrupted"]),
+                                     ("assistant", "Saved partial output", True))
+                    self.assertFalse(results[0]["completed"])
                     l3.deliver_queued(self.project)
                     self.assertEqual([row["id"] for row in self.queue_rows()], [older["id"], later["id"]])
                     self.assertTrue(prompts[1].endswith("Urgent correction"))

@@ -1803,6 +1803,15 @@
   font-size: 16px;
   line-height: 1.6;
 }
+/* Where the typing dots stopped: an interrupted reply's quiet end (SPEC.md §4.2). */
+.reply-stopped {
+  width: 8px;
+  height: 8px;
+  margin: 4px 0;
+  border-radius: 2px;
+  background: var(--text-muted);
+  opacity: 0.6;
+}
 .reply .session-prose {
   gap: 12px;
 }

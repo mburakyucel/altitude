@@ -315,7 +315,7 @@ export default function Conversation({
         <div key={turn.id} className="turn" data-turn={turn.id}>
           {turn.user ? <Bubble text={turn.user.text} at={turn.user.at} images={<MessageImages project={name} images={turn.user.images} />} /> : null}
           {turn.assistant ? (
-            <Reply text={turn.assistant.text} at={turn.assistant.at} role="assistant">
+            <Reply text={turn.assistant.text} at={turn.assistant.at} role="assistant" stopped={turn.assistant.interrupted === true}>
               {turn.assistant.tasks?.length ? <TurnTasks project={name} slugs={turn.assistant.tasks} titles={tasks} /> : null}
             </Reply>
           ) : turn.error ? (

@@ -102,22 +102,26 @@ export function Bubble({ text, at, pending = false, receipt, images, children }:
   );
 }
 
-/** A reply: left-aligned prose, no bubble. */
+/** A reply: left-aligned prose, no bubble. A `stopped` reply ends in a small still square where the
+ * typing dots stopped: the operator's next message took the turn (SPEC.md §4.2). */
 export function Reply({
   text,
   at,
   role,
+  stopped = false,
   children,
 }: {
   text: string;
   at?: string | null;
   role?: string;
+  stopped?: boolean;
   children?: ReactNode;
 }) {
   return (
     <MessageRow at={at} role={role}>
       <div className="reply">
-        <Prose text={text} />
+        {text ? <Prose text={text} /> : null}
+        {stopped ? <span className="reply-stopped" role="img" aria-label="Stopped early" title="Stopped for your next message" /> : null}
         {children}
       </div>
     </MessageRow>

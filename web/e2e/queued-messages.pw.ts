@@ -31,12 +31,13 @@ test("separate queued messages remove independently and the remaining batch reac
   await page.route("**/api/l2/remove", async (route) => { await gate; await route.continue(); }, { times: 1 });
   try {
     await row("Discard this instruction.").getByRole("button", { name: "Remove", exact: true }).click();
-    await walk.state("03-removing-keeps-text-until-confirmed", { visible: [row("Discard this instruction.").getByRole("button", { name: "Removing…" })], hidden: [convo.getByText("Message removed", { exact: true })] });
+    await walk.state("03-removing-keeps-text-until-confirmed", { visible: [row("Discard this instruction.").getByRole("button", { name: "Removing…" })], hidden: [] });
     await expect(row("First instruction.").getByRole("button", { name: "Remove", exact: true })).toBeDisabled();
   } finally { release(); }
-  await walk.state("04-only-selected-message-removed", { visible: [convo.getByText("Message removed", { exact: true }), row("First instruction."), row("Third instruction.")], hidden: [convo.getByText("Discard this instruction.", { exact: true })] });
+  await walk.state("04-only-selected-message-removed", { visible: [row("First instruction."), row("Third instruction.")], hidden: [convo.getByText("Discard this instruction.", { exact: true })] });
   await page.reload();
-  await expect(convo.getByText("Message removed", { exact: true })).toBeVisible();
+  await expect(row("Third instruction.")).toBeVisible();
+  await expect(convo.getByText("Discard this instruction.", { exact: true })).toBeHidden();
   expect((await status()).tasks[0].pending.map((message: { text: string }) => message.text)).toEqual(["First instruction.", "Third instruction."]);
   await page.getByRole("button", { name: "Stop", exact: true }).click();
   await walk.state("05-stop-keeps-waiting-messages-removable", { visible: [page.getByRole("button", { name: "Continue" }), row("First instruction.").getByRole("button", { name: "Remove", exact: true })], hidden: [] });
@@ -70,13 +71,13 @@ test("removal refuses a raced pickup and distinguishes denied, failed and uncert
   await convo.getByRole("button", { name: "Send", exact: true }).click();
   await page.route("**/api/l2/remove", (route) => route.fulfill({ status: 403, json: { error: "Permission denied" } }), { times: 1 });
   await remove.click();
-  await walk.state("01-removal-denied-keeps-message", { visible: [convo.getByText("You do not have permission to remove this message."), convo.getByText("Keep the original evidence.", { exact: true })], hidden: [convo.getByText("Message removed", { exact: true })] });
+  await walk.state("01-removal-denied-keeps-message", { visible: [convo.getByText("You do not have permission to remove this message."), convo.getByText("Keep the original evidence.", { exact: true })], hidden: [] });
   await page.route("**/api/l2/remove", (route) => route.abort(), { times: 1 });
   await remove.click();
-  await walk.state("02-removal-transport-error-never-claims-success", { visible: [convo.getByText("Removal unconfirmed. Check this message’s status before trying again.")], hidden: [convo.getByText("Message removed", { exact: true })] });
+  await walk.state("02-removal-transport-error-never-claims-success", { visible: [convo.getByText("Removal unconfirmed. Check this message’s status before trying again."), convo.getByText("Keep the original evidence.", { exact: true })], hidden: [] });
   await page.route("**/api/l2/remove", async (route) => { await control("unconfirmed-delivery"); await route.continue(); }, { times: 1 });
   await remove.click();
-  await walk.state("03-pickup-wins-removal-race", { visible: [convo.getByText("This message can no longer be removed. Refresh its delivery status."), convo.getByText("Delivery unconfirmed · cannot remove")], hidden: [remove, convo.getByText("Message removed", { exact: true })] });
+  await walk.state("03-pickup-wins-removal-race", { visible: [convo.getByText("This message can no longer be removed. Refresh its delivery status."), convo.getByText("Delivery unconfirmed · cannot remove")], hidden: [remove] });
   await page.reload();
   await field.fill("Next batch remains separate.");
   await convo.getByRole("button", { name: "Send", exact: true }).click();
@@ -84,5 +85,5 @@ test("removal refuses a raced pickup and distinguishes denied, failed and uncert
   await control("prelaunch-recovery");
   await walk.state("04-prelaunch-recovery-restores-remove", { visible: [remove, convo.getByText("Next batch remains separate.", { exact: true })], hidden: [] });
   await control("uncertain-recovery");
-  await walk.state("05-uncertain-restored-batch-cannot-remove", { visible: [convo.getByText("Delivery unconfirmed · cannot remove").last()], hidden: [remove, convo.getByText("Message removed", { exact: true })] });
+  await walk.state("05-uncertain-restored-batch-cannot-remove", { visible: [convo.getByText("Delivery unconfirmed · cannot remove").last()], hidden: [remove] });
 });

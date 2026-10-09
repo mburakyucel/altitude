@@ -191,8 +191,7 @@ test("late L2 receipt preserves polled removal, message order and the next draft
   const draft = "An unsent draft after both instructions.";
   const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
   const field = page.getByRole("textbox", { name: "Message the L2", exact: true });
-  const removed = conversation.getByText("Removed · not sent to the session", { exact: true });
-  const bubbles = conversation.locator(".bubble").filter({ hasText: /Message removed|Withdraw this instruction|Keep this later instruction/ });
+  const bubbles = conversation.locator(".bubble").filter({ hasText: /Withdraw this instruction|Keep this later instruction/ });
   let releaseReceipt!: () => void;
   const receiptGate = new Promise<void>((resolve) => { releaseReceipt = resolve; });
   let saved!: () => void;
@@ -226,8 +225,7 @@ test("late L2 receipt preserves polled removal, message order and the next draft
     // Removal and the later send use the real API/storage while the browser still awaits its receipt.
     expect((await request.post("/api/l2/remove", { data: { project: "atlas", slug, id: receipt.id } })).ok()).toBe(true);
     expect((await request.post("/api/l2/message", { data: { project: "atlas", slug, text: later } })).ok()).toBe(true);
-    await expect(bubbles).toHaveText(["Message removed", later]);
-    await expect(removed).toBeVisible();
+    await expect(bubbles).toHaveText([later]);
     await field.fill(draft);
     for (let index = 0; index < 2; index++) {
       if (info.project.name === "phone") {
@@ -240,7 +238,7 @@ test("late L2 receipt preserves polled removal, message order and the next draft
         await toggle.click();
       }
     }
-    await walk.state("01-canonical-removal-before-late-receipt", { visible: [removed, field], hidden: [conversation.getByText(text, { exact: true })] });
+    await walk.state("01-canonical-removal-before-late-receipt", { visible: [bubbles, field], hidden: [conversation.getByText(text, { exact: true })] });
     await expect(field).toHaveValue(draft);
     // Keep the receipt's subsequent refresh pending so it cannot hide a stale cache mutation.
     holdReads = true;
@@ -248,9 +246,9 @@ test("late L2 receipt preserves polled removal, message order and the next draft
     releaseReceipt();
     await response;
     await heldRead;
-    await expect(bubbles).toHaveText(["Message removed", later]);
+    await expect(bubbles).toHaveText([later]);
     await expect(field).toHaveValue(draft);
-    await walk.state("02-late-receipt-keeps-removal-order-and-draft", { visible: [removed, field], hidden: [conversation.getByText(text, { exact: true }), conversation.locator(".msg-row[data-pending]")] });
+    await walk.state("02-late-receipt-keeps-removal-order-and-draft", { visible: [bubbles, field], hidden: [conversation.getByText(text, { exact: true }), conversation.locator(".msg-row[data-pending]")] });
     expect(submissions).toBe(1);
     const task = await (await request.get(`/api/task/atlas/${slug}`)).json();
     expect(task.messages.filter((row: { id: string }) => row.id === receipt.id)).toHaveLength(1);

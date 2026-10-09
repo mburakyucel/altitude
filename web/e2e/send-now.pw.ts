@@ -42,7 +42,7 @@ test.describe("L2 Send now", () => {
     expect((await status()).calls.filter((call: { prompt?: string }) => call.prompt?.includes("Check this immediately."))).toHaveLength(1);
     await expect(row("Earlier instruction stays queued.").getByRole("button", { name: "Remove", exact: true })).toBeVisible();
     await row("Earlier instruction stays queued.").getByRole("button", { name: "Remove", exact: true }).click();
-    await walk.state("l2-05-removed", { visible: [convo.getByText("Message removed", { exact: true })], hidden: [convo.getByRole("button", { name: "Send now", exact: true })] });
+    await walk.state("l2-05-removed", { visible: [selected], hidden: [row("Earlier instruction stays queued."), convo.getByRole("button", { name: "Send now", exact: true })] });
     expect((await status()).tasks[0].edit).toContain("An existing edit stays");
   });
 
@@ -188,16 +188,21 @@ test.describe("L3 Send now", () => {
       expect((await request.post("/fixture/release")).ok()).toBe(true);
       await expect(convo.getByText(`${next} answered.`, { exact: true })).toBeVisible();
     };
+    const turn = (text: string) => convo.locator(".turn").filter({ has: page.locator(".bubble", { hasText: text }) });
+    const stopped = convo.getByRole("img", { name: "Stopped early", exact: true });
     await walk.open("/projects/atlas");
     await interrupt("Keep working", "Deliver this next", 1);
-    await walk.state("l3-05-interrupted-partial", {
-      visible: [convo.getByText("Two checks failed on the review branch, and the first log", { exact: false })],
-      hidden: [convo.locator(".queued-row")],
+    await walk.state("l3-07-interrupted-partial", {
+      visible: [turn("Keep working").getByText("Two checks failed on the review branch, and the first log", { exact: false }),
+        turn("Keep working").getByRole("img", { name: "Stopped early", exact: true })],
+      hidden: [convo.getByText(/Interrupted/), convo.locator(".queued-row"), turn("Deliver this next").getByRole("img", { name: "Stopped early" })],
     });
     await interrupt("Hold on", "Use the other branch", 3);
-    await walk.state("l3-06-interrupted-empty", {
-      visible: [convo.getByText("Use the other branch answered.", { exact: true })],
-      hidden: [convo.locator(".queued-row")],
+    await walk.state("l3-08-interrupted-empty", {
+      visible: [turn("Hold on").getByRole("img", { name: "Stopped early", exact: true }), turn("Use the other branch").getByText("Use the other branch answered.", { exact: true })],
+      hidden: [convo.getByText(/Interrupted|could not answer/), convo.locator(".queued-row")],
     });
+    await expect(stopped).toHaveCount(2);
+    await expect(turn("Hold on").locator(".reply p")).toHaveCount(0);
   });
 });
