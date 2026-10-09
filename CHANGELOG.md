@@ -13,11 +13,8 @@ installations' update check follow; it is not a stability promise. It runs on Li
 systemd user service (target: Ubuntu 24.04) and, experimentally, on macOS 15 or newer on Apple
 silicon. Install it with
 `curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/latest/download/install.sh | sh`
-([setup](docs/SETUP.md#install-the-application)). It is published while the repository is private,
-so its files carry no build attestation. Until the repository is public, that command and the update
-check cannot download anything; download `install.py`, `altitude-v0.1.0.tar.gz` and its `.sha256`
-signed in (`gh release download v0.1.0 --repo mburakyucel/altitude`) and
-[run the installer by hand](docs/SETUP.md#install-by-hand).
+([setup](docs/SETUP.md#install-the-application)). It was published while the repository was
+private, so its files carry no build attestation.
 
 Known limitations:
 
@@ -27,8 +24,9 @@ Known limitations:
   restart adoption on a spare account (#225), certificate trust in browsers and on devices (#645)
   and the download from GitHub itself are not verified. The installer needs Homebrew's `python@3.12`
   and `openssl@3`; voice on a Mac uses the browser's recognition.
-- On Linux, a clean physical machine and an update from one published release to another are not
-  verified; the update from `v0.1.0-rc.2` to this release has not been run.
+- On Linux, the one-line install from GitHub and the update from `v0.1.0-rc.2` to this release
+  through its own update check and `alt update`, with rollback of a failing update, pass in a fresh
+  Ubuntu 24.04 virtual machine. A clean physical machine is not verified.
 - The Linux container deployment remains a candidate under validation; on a Mac it is unverified
   (#643). See [its limits](docs/CONTAINERS.md).
 - Live engine providers are not tested; engine behavior rests on deterministic fixtures.
@@ -39,10 +37,9 @@ Known limitations:
 
 Updating from a release candidate:
 
-- An installation from `v0.1.0-rc.2` follows stable releases and is offered this release. Its
-  lookup and download are anonymous, so while the repository is private they find nothing: download `altitude-v0.1.0.tar.gz` and its `.sha256` signed in (`gh release download`) and
-  run `alt update --archive … --sha256 …` ([setup](docs/SETUP.md#update-from-a-release-candidate)).
-  Configuration, TLS identity and data are kept, and the Linux service unit is unchanged.
+- An installation from `v0.1.0-rc.2` follows stable releases and is offered this release; run
+  `alt update` ([setup](docs/SETUP.md#update-from-a-release-candidate)). Configuration, TLS identity
+  and data are kept, and the Linux service unit is unchanged.
 - A machine whose `v0.1.0-rc.1` installation failed at service start has no installed version to
   update: clear its refused service unit, run `alt recover` as setup describes, then install this
   release.

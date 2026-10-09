@@ -21,7 +21,8 @@ and fixture engines. It has not executed on GitHub; the same harness runs in a
 [local VM](DEVELOPMENT.md#local-vm-run) or on any disposable developer VM. Neither is an
 installation command for your own machine. It covers real user-service activation, HTTPS, update/recovery and uninstall retention (the local VM
 also checks the service starts again after a restart and runs the built `install.sh` against a
-release server inside the VM),
+release server inside the VM; its public run installs the latest release with the command below and
+updates `v0.1.0-rc.2` to it, both from GitHub itself),
 without establishing browser/device certificate trust, live provider readiness or a minimal OS install.
 On an Apple silicon Mac, the [macOS VM run](DEVELOPMENT.md#macos-vm-run) checks in fresh, offline
 macOS guests that the built `install.sh` stops with its documented fix for each missing prerequisite,
@@ -68,8 +69,7 @@ installs the latest published release as the account that will use Altitude:
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/latest/download/install.sh | sh
 ```
 
-The command downloads anonymously, so it needs the repository to be public; until then,
-[install by hand](#install-by-hand) from files downloaded while signed in. `latest` names the
+The command downloads anonymously and needs no GitHub sign-in. `latest` names the
 newest stable release and skips release candidates; to install one exact release,
 replace `latest/download` with `download/<tag>`, for example `download/v0.1.0`. On the Mac, installation,
 updates, rollback, uninstall and starting again at login pass in fresh macOS virtual machines; the
@@ -146,10 +146,10 @@ enable its Corepack pnpm shim for project builds. See [noninteractive toolchain 
 
 ### Install by hand
 
-The same installer runs by hand from the release files, for example offline or while the repository
-is private: download `install.py`, the versioned `.tar.gz` archive and its `.sha256` from the release
-(signed in, `gh release download v0.1.0 --repo mburakyucel/altitude`), and verify the checksum's
-source; a checksum from the same untrusted download does not establish authenticity.
+The same installer runs by hand from the release files, for example on a machine without internet
+access: download `install.py`, the versioned `.tar.gz` archive and its `.sha256` from the
+[release](https://github.com/mburakyucel/altitude/releases), and verify the checksum's source; a
+checksum from the same untrusted download does not establish authenticity.
 
 ```sh
 python3.12 install.py --archive altitude-v0.1.0.tar.gz --sha256 '<release SHA-256>'
@@ -159,14 +159,9 @@ alt doctor
 
 ### Update from a release candidate
 
-A copy installed from `v0.1.0-rc.2` follows stable releases only and is offered `v0.1.0` and later
-stable releases. The lookup and download are anonymous requests to GitHub, which find nothing while
-the repository is private; until then, download the archive while signed in to GitHub and install it:
-
-```sh
-gh release download v0.1.0 --repo mburakyucel/altitude --pattern 'altitude-v0.1.0.tar.gz*'
-alt update --archive altitude-v0.1.0.tar.gz --sha256 "$(cat altitude-v0.1.0.tar.gz.sha256)"
-```
+A copy installed from `v0.1.0-rc.2` follows stable releases only: it is offered `v0.1.0` and later
+stable releases, and `alt update` installs the offered release, keeping configuration, TLS identity
+and data.
 
 ### Installation with a coding agent
 

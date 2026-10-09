@@ -728,7 +728,7 @@ blocks automating it.
 | Environment | Entry point | Establishes | Does not establish | Status |
 | --- | --- | --- | --- | --- |
 | Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration, systemd unit-file parsing (`systemd-analyze verify`, without systemd running) and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, native macOS, container deployment | In use |
-| Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run), in a task through the [validation runner](#validation-runner)) | Fresh install, user-service start, update, failed-update recovery, service start after a restart, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`) and an installation over a failed one (`RECOVERY`), on Ubuntu 24.04 x86_64 | Login/logout, the guest's own download from GitHub, storage migration (no application state is created), other distributions | In use |
+| Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run), in a task through the [validation runner](#validation-runner)) | Fresh install, user-service start, update, failed-update recovery, service start after a restart, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`) and an installation over a failed one (`RECOVERY`); with `PUBLIC`, setup's command and the installed daemon's update lookup and `alt update` against GitHub itself, on Ubuntu 24.04 x86_64 | Login/logout, a physical machine, the app's Update button from a published release, storage migration (no application state is created), other distributions | In use |
 | Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under an [operator grant](CLI.md#operator-grant)) | The built `install.sh` through its public command in fresh macOS 26 arm64 guests with automatic login and no network: its refusals with their documented fixes for missing Python, OpenSSL 3 not first on PATH and an account with no desktop session; the [macOS installation lane](#macos-installation-lane)'s lifecycle under a throwaway HOME; and the account's own installation, its HTTPS health and `alt doctor`, its LaunchAgent started again by the automatic login after a restart, and uninstall | A physical second Mac, other macOS versions, logout/login without a restart, browser/device CA trust, the guest's own download from GitHub, the real check and notice schedule, the app's rendered notice, a release candidate's lookup | In use on Apple silicon |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Validation container | `alt task validate -- COMMAND` ([validation runner](#validation-runner)); `make browser-sandbox` | A committed candidate's command in a disposable rootless Podman container, including nested rootless containers and Playwright's Chromium with its own sandbox | Running Altitude itself in a container, other hosts' kernels or Podman versions, native macOS | In use on Linux x86_64 |
@@ -959,7 +959,13 @@ daemon's startup lookup must offer the candidate in `alt doctor` and the overvie
 app's **Update** button sends, from a paired session, must install it through `alt update --version`,
 downloading only the candidate's archive and checksum, and afterwards nothing is offered. Both
 baseline and candidate must carry this lookup, so the phase needs same-source versions. The hosts
-entries and unprivileged-port setting these phases need are restored afterwards.
+entries and unprivileged-port setting these phases need are restored afterwards. The `public-install`
+and `public-update` phases need a guest that reaches GitHub and two published releases, the candidate
+being the one `releases/latest` names. `public-install` runs setup's command for `releases/latest`
+after checking that the `install.sh` it serves is the candidate's. `public-update` installs the
+baseline with the same command for its tag, waits for its daemon's own release lookup to offer the
+candidate in `alt doctor` and the terminal's notice, runs `alt update` and must keep settings, TLS
+identity and data; an update whose startup fails must then restore the candidate.
 Retain its results before discarding the VM. The hosted workflow
 runs none of these phases and does not prove a minimal OS install or login/logout behavior, browser/device CA trust,
 a download from GitHub's published release, native confinement or provider compatibility. There is no browser test
@@ -979,9 +985,9 @@ and leaves the evidence in the results directory:
 make installation-vm RESULTS=/tmp/altitude-vm SOURCE=origin/main
 ```
 
-`BASELINE=<tag>` makes a published release the baseline: the runner downloads its assets with `gh`
-(the operator's GitHub login, so a private repository works), checks each against the release's
-`SHA256SUMS` and the archive's declared version and commit against the tag, and builds only the candidate from `SOURCE`,
+`BASELINE=<tag>` makes a published release the baseline: the runner downloads every asset the
+release lists anonymously, checks each against the release's `SHA256SUMS` and the archive's declared
+version and commit against the tag on GitHub, and builds only the candidate from `SOURCE`,
 under the next minor version so the update is never a downgrade. Every phase then installs the
 published files, `install.sh` included, and updates from them to the candidate. The guest stays
 offline, so the published files run exactly, but its own anonymous download from GitHub does not:
@@ -1002,25 +1008,36 @@ baseline, since systemd refuses the unit it writes:
 make installation-vm RESULTS=/tmp/altitude-vm SOURCE=origin/main BASELINE=v0.1.0-rc.1 RECOVERY=1
 ```
 
+`PUBLIC=1` with a published `BASELINE` builds nothing and runs only the `public-install` and
+`public-update` phases: the candidate is the stable release GitHub's `releases/latest` redirects to
+(a release candidate there stops the run), downloaded and checked like the baseline. The guest keeps
+its online card, and a route that refuses this host's address on that card replaces the unplugging;
+before the phases the internet must answer and this host must not. Each phase's own downloads and
+the installed daemon's release lookup then go to GitHub:
+
+```sh
+make installation-vm RESULTS=/tmp/altitude-vm BASELINE=v0.1.0-rc.2 PUBLIC=1
+```
+
 The runner downloads the current Ubuntu 24.04 cloud image, checks its signed checksum with the
 installed Ubuntu cloud-image keyring and caches it under `~/.cache/altitude-installation-vm`. Each
 run boots a copy-on-write overlay with 2 CPUs, 4 GiB of memory and a 12 GiB disk, logs in with a
 per-run SSH key over a loopback-only port, and deletes the overlay, key and seed afterwards, also
 when the run is stopped. The guest has two network cards on separate QEMU user networks. One is
 online only while cloud-init installs Git, GitHub CLI and OpenSSL, and is then unplugged. The other
-is restricted to the SSH forward. Before the harness starts, the runner probes the internet and a
+is restricted to the SSH forward. The online card has no IPv6. Before the harness starts, the runner probes the internet and a
 listener it opens on the host's loopback. Through the online card both must answer and through the
 restricted card the host must not; after unplugging, nothing may answer. Any other outcome, or a
 probe that cannot run, stops the run. After the lifecycle passes, the runner runs `bootstrap`, `update`
 (not with `BASELINE`, whose published code makes its own lookup) and `reboot-install`, restarts the VM, checks that it is still isolated and runs `reboot-verify`. Results hold the harness evidence and build logs plus `vm.json` (source
-commit, published baseline release with its commit and checksums when used, whether it was a recovery run, harness commit and whether its scripts were modified, image and signature, QEMU version, guest OS and kernel, probe outcomes, each phase's exit) and the VM console
+commit, published baseline release with its commit and checksums when used, whether it was a recovery or public run, with
+`PUBLIC` the release `latest` named and its commit and checksums, harness commit and whether its scripts were modified, image and signature, QEMU version, guest OS and kernel, probe outcomes, each phase's exit) and the VM console
 and QEMU logs; `harness.log` and the `harness-*.log` files are written as the phases run. The runner prints each stage with its
 elapsed time; after the first image download, a run takes about three and a half minutes, two of them
 while the restarted guest waits for its unplugged card. Inside a task, `make installation-vm` runs this
 through the [validation runner](#validation-runner) with KVM. The committed `SOURCE` (default `HEAD`)
 is built inside the container, results go to the task folder's `validation/<n>/`, and the cloud image
-is cached in `~/.altitude-validation/cache`. The container has no GitHub login, so `BASELINE` runs
-need the operator's own shell or a [operator grant](CLI.md#operator-grant). The runner never touches
+is cached in `~/.altitude-validation/cache`. The runner never touches
 the host's Altitude service, trust stores or network configuration. `CAPTURE=1` adds an accelerated replay
 of the run as `captures/installation-vm.gif` ([validation captures](#validation-captures)).
 
