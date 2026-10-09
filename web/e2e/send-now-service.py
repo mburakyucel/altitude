@@ -42,7 +42,7 @@ def main():
             assert interrupt.wait(30), "Send now did not interrupt the fixture turn"
             stopped.set()
             assert release.wait(30), "The interrupted turn was not released"
-            return {"interrupted": True, "error": "Interrupted for a queued message",
+            return {"interrupted": True, "error": None,
                     "text": partial, "session_id": "fixture-send-now"}
         return {"text": f"{text} answered.", "session_id": "fixture-send-now"}
 

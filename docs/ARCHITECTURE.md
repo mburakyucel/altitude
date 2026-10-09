@@ -107,7 +107,7 @@ platform termination checks remain the authority for recovery.
 An inbox-owned operator message offers Remove until the exact batch is claimed. Cancellation uses
 the same project lock as resume and hook pickup, records removal in the existing message delivery
 metadata, and excludes only that ID from pending input. Original text stays in conversation evidence;
-the UI shows Message removed, and CLI history/search retain an explicit removal marker. Removed text
+the message leaves the task conversation, and CLI history/search retain an explicit removal marker. Removed text
 cannot serve as a new decision source. Quick choices and messages
 already cited by recorded decisions remain intact. Removal changes no Stop, question, fault or resume
 request. Claimed messages say Sending to session and cannot be removed; a launch attempt retains
@@ -1928,7 +1928,9 @@ the record as the typing indicator for a chat turn, or as the line "L3 is handli
 server-triggered one; the tab that started the turn keeps its streamed reply instead. The stream's
 first line names the turn (`{"turn": {id, started_at, trigger}}`) before any text, and the
 history rows carry the same id, so the local rows stay until history owns the turn and a stored
-assistant or error row wins over a raced active snapshot.
+assistant or error row wins over a raced active snapshot. An assistant row marked `interrupted`
+renders its partial reply, if any, ending in a small still square where the typing indicator stopped;
+it carries no sentence, and its accessible name is "Stopped early".
 
 The conversation reads `/api/chat/<project>?limit=60`. The limit counts human chat rows and system
 rows (server-triggered turns and FYIs) separately, so a burst of system events never pushes the latest
@@ -2018,7 +2020,10 @@ writer lock; retries reuse the selected row or its history receipt. An accepted 
 removable until claim, including when no engine is available after admission. Removal does not undo
 an interruption already requested. The daemon requests interruption
 of the captured active chat turn through the engine seam, retains partial output and session identity,
-and records **Interrupted for a queued message**. Its turn lock remains held until the engine job and
+and saves the partial reply, possibly empty, as an assistant row marked `interrupted`. Confirmed
+interruption is not an engine error: the turn is incomplete and never replayed. A fresh session's
+recent-conversation context labels that row interrupted, and the chat audit packet keeps the marker.
+Its turn lock remains held until the engine job and
 its descendants have ended. A system turn finishes at its existing boundary to preserve notification,
 CI and report delivery; the promoted row says **Runs next after system work**. System queue rows
 cannot be promoted or removed. No available engine, an active chat still starting, or a launch pause

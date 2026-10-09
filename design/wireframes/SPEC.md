@@ -1062,8 +1062,8 @@ evidence is missing. Each eligible queued operator bubble has a bordered **Send 
 Send now explains **Stops work and reviews to deliver now.** It requests the
 existing Stop and same-session continuation for that message. Quick-choice receipts and
 messages already used by recorded decisions keep their evidence. **Removing…** disables removal until
-the response; success replaces only that bubble's text with **Message removed** and **Removed · not
-sent to the session**. Original text remains in durable evidence. Claim shows **Sending to session ·
+the response; success removes only that bubble from the conversation. Original text remains in
+durable evidence. Claim shows **Sending to session ·
 cannot remove**, and uncertain handoff shows **Delivery unconfirmed · cannot remove**, with no Remove.
 A prelaunch failure restores the queued controls. A refused removal refreshes delivery and names the
 refusal beside that message; denied and unconfirmed requests show their own inline error. Saved or
@@ -1634,7 +1634,10 @@ keeps its accent circle with the arrow. Phone names the active work in the heade
 on queued rows; desktop also shows "L3 is mid-turn · runs next" under the field. Queued rows stay
 inside the message area until they run, with bordered **Send now** beside **Remove** while permitted.
 Send now puts that row first, interrupts an active chat at its engine's safe boundary, and runs the
-selected message next. System work finishes before the selected message runs. Pending rows say
+selected message next; the interrupted reply keeps any partial text and ends in a small muted
+square (8px, `--text-muted` at 60%) where the typing dots stopped, alone when nothing was written,
+with no sentence. Its hover title is "Stopped for your next message" and its accessible name
+"Stopped early". System work finishes before the selected message runs. Pending rows say
 **Sending now…**, with **Waiting for current turn to stop** or **Runs next after system work** as
 appropriate; Send now is disabled. Remove is disabled while the HTTP request is pending and remains
 available after acceptance until claim, even when an engine becomes unavailable. Removal does not
