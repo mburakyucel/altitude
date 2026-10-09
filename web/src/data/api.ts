@@ -977,7 +977,7 @@ export function useTask(project: string, slug: string) {
 const TaskDesignSchema = z.object({
   title: z.string(), revision: z.number(), text: z.string(),
   images: z.array(z.object({ title: z.string(), url: z.string() })),
-  question_url: z.string(), current_question_url: z.string().nullable(), superseded: z.boolean(),
+  current_question_url: z.string().nullable(), superseded: z.boolean(),
 });
 
 export function useTaskDesign(project: string, slug: string, question: string, revision: string) {
