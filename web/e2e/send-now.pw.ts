@@ -168,7 +168,7 @@ test.describe("L3 Send now", () => {
     await walk.state("l3-04-joined-turn", { visible: [convo.getByText("Checking the current work.", { exact: true }), convo.locator(".turn").getByText("Deliver this next", { exact: true })], hidden: [row("Deliver this next")] });
     expect((await status()).delivered).toEqual(["Earlier queued message\n\nDeliver this next"]);
     expect((await request.post("/fixture/release")).ok()).toBe(true);
-    await walk.state("l3-12-turn-answers-sent-message", { visible: [convo.getByText("Read: Earlier queued message Deliver this next.", { exact: true })], hidden: [row("Deliver this next"), row("Earlier queued message")] });
+    await walk.state("l3-12-turn-answers-sent-message", { visible: [convo.getByText("Read: Earlier queued message", { exact: true }), convo.getByText("Deliver this next.", { exact: true })], hidden: [row("Deliver this next"), row("Earlier queued message")] });
     await expect.poll(async () => (await (await request.get("/api/chat/atlas")).json()).active).toBeNull();
     expect((await status()).calls.map((call: { text: string }) => call.text)).toEqual(["Keep working"]);
     await expect(convo.getByText("Deliver this next", { exact: true })).toHaveCount(1);
