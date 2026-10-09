@@ -221,36 +221,33 @@ class TestChatTurns(AltitudeCase):
         self.patch(platform, "job_command", side_effect=lambda unit, command, env, **kw: command)
         self.patch(engines, "_codex_session_model", return_value={"engine_model": "fake-model"})
 
-    def test_a_delivered_message_splits_the_reply_on_both_engines(self):
-        for engine, execute in (("claude", engines.claude_print), ("codex", engines.codex_turn)):
-            with self.subTest(engine=engine):
-                self.tool.unlink(missing_ok=True)
-                sends, calls = self.tmp / f"{engine}.sends", []
+    def test_a_delivered_message_splits_the_native_coordinator_reply(self):
+        self.tool.unlink(missing_ok=True)
+        sends, calls = self.tmp / "claude.sends", []
 
-                def on_send(message_id, outcome, text):
-                    calls.append((message_id, outcome, text))
+        def on_send(message_id, outcome, text):
+            calls.append((message_id, outcome, text))
 
-                def started(_pid):
-                    def send():  # once the turn's command is running
-                        while not self.tool.exists():
-                            time.sleep(0.02)
-                        engines.send_into_turn(sends, "m1", TEXT)
-                    threading.Thread(target=send, daemon=True).start()
+        def started(_pid):
+            def send():  # once the turn's command is running
+                while not self.tool.exists():
+                    time.sleep(0.02)
+                engines.send_into_turn(sends, "m1", TEXT)
+            threading.Thread(target=send, daemon=True).start()
 
-                result = execute("Start the work.", cwd=self.repo, timeout=60, sends=sends, on_send=on_send,
-                                 on_start=started)
-                self.assertIsNone(result["error"], result)
-                self.assertEqual(calls[0][:2], ("m1", "delivered"))
-                if engine == "claude":
-                    self.assertEqual(calls[0][2], "Waiting on the command.")
-                self.assertEqual(result["text"], f"Read: {TEXT}")
+        result = engines.claude_print("Start the work.", cwd=self.repo, timeout=60, sends=sends, on_send=on_send,
+                                     on_start=started)
+        self.assertIsNone(result["error"], result)
+        self.assertEqual(calls[0][:2], ("m1", "delivered"))
+        self.assertEqual(calls[0][2], "Waiting on the command.")
+        self.assertEqual(result["text"], f"Read: {TEXT}")
 
-    def test_a_codex_server_that_exits_at_once_reports_its_own_error(self):
+    def test_a_codex_exec_that_exits_at_once_reports_its_own_error(self):
         script = self.tmp / "signed-out"
         script.write_text(f"#!{sys.executable}\nimport sys\nsys.stderr.write('codex: not signed in\\n')\nsys.exit(3)\n")
         script.chmod(0o755)
         with mock.patch.object(config, "CODEX_BIN", str(script)):
-            result = engines.codex_turn("hello", cwd=self.repo, timeout=30)
+            result = engines.codex_exec("hello", cwd=self.repo, timeout=30)
         self.assertEqual(result["returncode"], 3)
         self.assertEqual(result["error"], "codex: not signed in")
 

@@ -124,11 +124,22 @@ class TestNativeImages(ImageDeliveryCase):
                                   images=[self.image])
                     result = (engines.claude_print("inspect the screenshot", settings=self.tmp / "settings.json", **common)
                               if engine == "claude" else
-                              engines.codex_turn("inspect the screenshot", sandbox_settings=[], **common))
+                              engines.codex_exec("inspect the screenshot", sandbox_settings=[], **common))
                 self.assertEqual(result["session_id"], "session")
-                self.assertEqual(popen.call_args.args[0][-len(engines._driver_command()):], engines._driver_command())
+                command = popen.call_args.args[0]
                 process.received.ended.wait(10)
-                self.assert_input(engine, process.received.getvalue(), resume=resume)
+                if engine == "claude":
+                    self.assertEqual(command[-len(engines._driver_command()):], engines._driver_command())
+                    self.assert_input(engine, process.received.getvalue(), resume=resume)
+                else:
+                    self.assertEqual(command[command.index("--image") + 1], self.image["path"])
+                    self.assertEqual("resume" in command, resume)
+                    self.assertIn("original-model", command)
+                    self.assertIn("--ignore-user-config", command)
+                    text = process.received.getvalue()
+                    for expected in ("inspect the screenshot", "message-one", self.image["id"],
+                                     "attached visually in the listed order"):
+                        self.assertIn(expected, text)
 
     def test_task_fresh_and_resumed_workers_keep_engine_model_session_and_images(self):
         for engine in ("claude", "codex"):

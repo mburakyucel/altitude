@@ -49,15 +49,6 @@ class TestEngineRawCapture(AltitudeCase):
         self.assertEqual(result["raw_stderr"], "codex diagnostic\n")
         self.assertEqual(result["usage"], {"input_tokens": 3})
 
-    def test_codex_coordinator_turn_returns_both_raw_streams(self):
-        stdout = json.dumps({"type": "turn.completed", "usage": {"input_tokens": 3}}) + "\n"
-        with mock.patch.object(engines.subprocess, "Popen", return_value=FakeProcess(stdout, "codex diagnostic\n")):
-            result = engines.codex_turn("prompt", cwd=self.tmp)
-
-        self.assertEqual(result["raw_stdout"], stdout)
-        self.assertEqual(result["raw_stderr"], "codex diagnostic\n")
-        self.assertEqual(result["usage"], {"input_tokens": 3})
-
     def test_claude_print_returns_raw_stream_json_and_stderr(self):
         event = {"type": "result", "result": "done", "session_id": "sid", "is_error": False}
         result = self.claude_print(FakeProcess(json.dumps(event) + "\n", "claude diagnostic\n"))

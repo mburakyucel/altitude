@@ -304,45 +304,29 @@ class TestCodexAdapter(AltitudeCase):
                                      "DBUS_SESSION_BUS_ADDRESS": "unix:path=/manager/bus"})
         self.assertEqual(json.loads(result.stdout), {"project": "altitude", "task": "task", "secret": None, "bus": None})
 
-    def test_coordinator_turn_sends_the_whole_prompt_and_reads_the_last_message(self):
-        # The job starts reading a second late, and the prompt exceeds every pipe buffer: a coordinator turn on a
-        # loaded Mac once waited its whole limit for the rest of its prompt (#617).
+    def test_synchronous_turn_sends_the_whole_prompt_on_stdin_and_reads_the_last_message(self):
+        # The engine starts reading after the turn's first half-second poll, and the prompt exceeds every pipe
+        # buffer: a coordinator turn on a loaded Mac once waited its whole limit for the rest of its prompt (#617).
         engine = self.tmp / "codex"
         engine.write_text(f"#!{sys.executable}\n" + (
-            "import hashlib, json, sys\n"
-            "received = {'argv': sys.argv[1:]}\n"
-            "def out(message):\n"
-            "    print(json.dumps(message), flush=True)\n"
-            "def note(text):\n"
-            "    out({'method': 'item/completed', 'params': {'item': {'type': 'agentMessage', 'id': text[:8], 'text': text}}})\n"
-            "for raw in sys.stdin:\n"
-            "    message = json.loads(raw)\n"
-            "    method, params = message.get('method'), message.get('params') or {}\n"
-            "    if method == 'initialize':\n"
-            "        out({'id': message['id'], 'result': {}})\n"
-            "    elif method in ('thread/start', 'thread/resume'):\n"
-            "        received['open'] = {'method': method, **params}\n"
-            "        out({'id': message['id'], 'result': {'thread': {'id': params.get('threadId') or 'new'}}})\n"
-            "    elif method == 'turn/start':\n"
-            "        received['sha256'] = hashlib.sha256(params['input'][0]['text'].encode()).hexdigest()\n"
-            "        out({'id': message['id'], 'result': {'turn': {'id': 'turn-1'}}})\n"
-            "        out({'method': 'turn/started', 'params': {'turn': {'id': 'turn-1'}}})\n"
-            "        note('first')\n"
-            "        note(json.dumps(received))\n"
-            "        out({'method': 'thread/tokenUsage/updated', 'params': {'tokenUsage': {'total': {'inputTokens': 7}}}})\n"
-            "        out({'method': 'turn/completed', 'params': {'turn': {'id': 'turn-1', 'status': 'completed'}}})\n"))
+            "import hashlib, json, sys, time\n"
+            "time.sleep(1)\n"
+            "received = {'argv': sys.argv[1:], 'sha256': hashlib.sha256(sys.stdin.buffer.read()).hexdigest()}\n"
+            "for event in ({'type': 'thread.started', 'thread_id': 'thr-l3'},\n"
+            "              {'type': 'item.completed', 'item': {'type': 'agent_message', 'text': 'first'}},\n"
+            "              {'type': 'item.completed', 'item': {'type': 'agent_message', 'text': json.dumps(received)}},\n"
+            "              {'type': 'turn.completed', 'usage': {'input_tokens': 7}}):\n"
+            "    print(json.dumps(event), flush=True)\n"))
         engine.chmod(0o755)
         prompt = "Keep the public result stable. ✓\n" * 8192
         self.patch(config, "CODEX_BIN", str(engine))
-        self.patch(platform, "job_command",
-                   side_effect=lambda unit, command, env, **kw: ["/bin/sh", "-c", 'sleep 1; exec "$@"', "job", *command])
-        out = engines.codex_turn(prompt, cwd=self.worktree, effort="high", resume="thr-l3", model="gpt-x",
+        self.patch(platform, "job_command", side_effect=lambda unit, command, env, **kw: command)
+        out = engines.codex_exec(prompt, cwd=self.worktree, effort="high", resume="thr-l3",
                                  extra_env={"ALTITUDE_ACTOR": "l3"}, timeout=30)
         received = json.loads(out["text"])
-        self.assertEqual(received["argv"][:2], ["app-server", "--strict-config"])
+        self.assertEqual(received["argv"][:2], ["exec", "resume"])
+        self.assertEqual(received["argv"][-2:], ["thr-l3", "-"])
         self.assertIn('model_reasoning_effort="high"', received["argv"])
-        self.assertEqual(received["open"], {"method": "thread/resume", "threadId": "thr-l3", "model": "gpt-x",
-                                            "approvalPolicy": "never"})
         self.assertEqual(received["sha256"], hashlib.sha256(prompt.encode()).hexdigest())
         self.assertEqual((out["reported_session_id"], out["usage"], out["error"]), ("thr-l3", {"input_tokens": 7}, None))
 

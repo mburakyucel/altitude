@@ -725,8 +725,9 @@ turn that takes the message in, in `web/e2e/send-now.pw.ts`. Run the focused can
 alt task validate -- make ui-validate UI_ARGS=send-now.pw.ts
 ```
 
-Named states cover loading, queued controls, sending into the current turn, the split reply, delivered
-and removed rows, denied and unconfirmed requests, unavailable delivery and waiting for system work.
+The state walkthrough covers loading, queued controls, sending into the current turn, the split reply,
+delivered and removed rows, denied and unconfirmed requests, unavailable delivery, waiting for the
+current chat turn and waiting for system work.
 `tests/test_engine_driver.py` runs the real engine driver against `tests/fake_engine.py`, a fixture
 speaking both engines' streaming protocols: delivery with a command in flight, the turn-end race, a
 message after the job ended, and receipts written without altd. Python fixtures additionally cover

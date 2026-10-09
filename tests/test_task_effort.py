@@ -1,6 +1,8 @@
 """Task effort selection, native launch arguments, and conversation-preserving resume."""
+import io
 import json
 import subprocess
+from types import SimpleNamespace
 from unittest import mock
 
 from tests.support import ALT, AltitudeCase
@@ -281,16 +283,12 @@ class TestEffortCommand(AltitudeCase):
         for resume in (None, "conversation"):
             for effort in (None, "high", "ultra"):
                 with self.subTest(resume=resume, effort=effort):
-                    process = PrintProcess(output)
+                    process = SimpleNamespace(pid=123, returncode=0, stdin=io.StringIO(), communicate=lambda *args, **kwargs: (output, ""))
                     with mock.patch.object(engines.subprocess, "Popen", return_value=process) as launch:
-                        result = engines.codex_turn("request", cwd=self.repo, effort=effort, resume=resume)
+                        result = engines.codex_exec("request", cwd=self.repo, effort=effort, resume=resume)
                     self.assertIsNone(result["error"])
-                    self.assertEqual(launch.call_args.args[0][-len(engines._driver_command()):],
-                                     engines._driver_command())
-                    spec = launch_spec(process)
-                    command = spec["command"]
-                    self.assertEqual(command[:2], [config.CODEX_BIN, "app-server"])
-                    self.assertEqual(spec["resume"], resume)
+                    command = launch.call_args.args[0]
+                    self.assertEqual("resume" in command, resume is not None)
                     selected = [arg for arg in command if arg.startswith("model_reasoning_effort=")]
                     self.assertEqual(selected, [] if effort is None else [f'model_reasoning_effort="{effort}"'])
 

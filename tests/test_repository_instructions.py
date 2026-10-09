@@ -99,7 +99,7 @@ class TestRepositoryInstructions(AltitudeCase):
             for engine in config.ENGINES:
                 project = f"{kind}-{engine}"
                 self.register(project)
-                seam = "codex_turn" if engine == "codex" else "claude_print"
+                seam = "codex_exec" if engine == "codex" else "claude_print"
                 for resume in (False, True):
                     with self.subTest(kind=kind, engine=engine, resume=resume):
                         def execute(prompt, **kwargs):

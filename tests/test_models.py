@@ -76,50 +76,28 @@ class TestSessionModel(AltitudeCase):
         self.assertEqual(live["agent"]["engine_model"], "actual-model")
 
     def test_synchronous_runner_observes_model_before_process_exit(self):
-        # The real driver runs an app-server engine that records this turn's context when the turn starts, as
-        # Codex does, and finishes only once the caller has observed it: the prompt arrives exactly once.
-        script = '''import json, os, pathlib, sys, time
+        # Real pipes exercise communicate's timeout/resume behavior: input is sent exactly once.
+        script = '''import json, pathlib, sys, time
 from datetime import datetime, timezone
-rollout, log = pathlib.Path(os.environ["FAKE_ROLLOUT"]), pathlib.Path(os.environ["FAKE_ENGINE_LOG"])
-def out(message):
-    print(json.dumps(message), flush=True)
-for raw in sys.stdin:
-    message = json.loads(raw)
-    method, params = message.get("method"), message.get("params") or {}
-    with log.open("a") as f:
-        f.write(raw)
-    if method == "initialize":
-        out({"id": message["id"], "result": {}})
-    elif method == "thread/start":
-        out({"id": message["id"], "result": {"thread": {"id": "thread-1"}}})
-    elif method == "turn/start":
-        time.sleep(0.3)  # the turn's context is recorded once the turn is under way, not with the thread
-        rollout.write_text(json.dumps({"type": "turn_context", "timestamp": datetime.now(timezone.utc).isoformat(),
-                                       "payload": {"model": "actual-model", "effort": "high"}}) + "\\n")
-        out({"id": message["id"], "result": {"turn": {"id": "turn-1"}}})
-        out({"method": "turn/started", "params": {"turn": {"id": "turn-1"}}})
-        time.sleep(1.2)
-        assert rollout.with_suffix(".observed").exists(), "metadata callback must run while this turn is live"
-        out({"method": "thread/tokenUsage/updated", "params": {"tokenUsage": {"total": {"inputTokens": 7}}}})
-        out({"method": "turn/completed", "params": {"turn": {"id": "turn-1", "status": "completed"}}})
+assert sys.stdin.read() == "one prompt"
+print(json.dumps({"type":"thread.started", "thread_id":"thread-1"}), flush=True)
+p = pathlib.Path(sys.argv[1])
+p.write_text(json.dumps({"type":"turn_context", "timestamp":datetime.now(timezone.utc).isoformat(),
+                        "payload":{"model":"actual-model", "effort":"high"}}) + "\\n")
+time.sleep(1.2)
+assert p.with_suffix(".observed").exists(), "metadata callback must run while this turn is live"
+print(json.dumps({"type":"turn.completed", "usage":{"input_tokens":7}}), flush=True)
 '''
-        engine = self.tmp / "codex"
-        engine.write_text(f"#!{sys.executable}\n{script}")
-        engine.chmod(0o755)
-        log = self.tmp / "engine.log"
         observations = []
         def observed(metadata):
             observations.append(metadata)
             self.rollout.with_suffix(".observed").touch()
 
-        with mock.patch.object(config, "CODEX_BIN", str(engine)), \
-             mock.patch.object(platform, "job_command", side_effect=lambda unit, command, env, **kw: command):
-            result = engines.codex_turn("one prompt", cwd=self.tmp, timeout=5,
-                                        extra_env={"CODEX_HOME": str(self.home), "FAKE_ROLLOUT": str(self.rollout),
-                                                   "FAKE_ENGINE_LOG": str(log)},
-                                        on_session=observed)
-        turns = [row for row in map(json.loads, log.read_text().splitlines()) if row.get("method") == "turn/start"]
-        self.assertEqual([turn["params"]["input"][0]["text"] for turn in turns], ["one prompt"])
+        with mock.patch.object(platform, "job_command",
+                               return_value=[sys.executable, "-c", script, str(self.rollout)]):
+            result = engines.codex_exec("one prompt", cwd=self.tmp, timeout=5,
+                                       extra_env={"CODEX_HOME": str(self.home)},
+                                       on_session=observed)
         self.assertEqual(observations, [{"session_id": "thread-1", "engine_model": "actual-model",
                                          "engine_reasoning_effort": "high"}])
         self.assertEqual(result["engine_model"], "actual-model")

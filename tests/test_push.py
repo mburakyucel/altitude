@@ -272,7 +272,7 @@ class TestPush(AltitudeCase):
             return {"text": "Read.", "session_id": "fixture-session", "reported_session_id": "fixture-session",
                     "usage": {"input_tokens": 10}, "context_tokens": 10, "error": None, "tools": []}
 
-        for seam in ("claude_print", "codex_turn"):
+        for seam in ("claude_print", "codex_exec"):
             self.patch(engines, seam, side_effect=execute)
         l3.deliver_queued(self.project)
 

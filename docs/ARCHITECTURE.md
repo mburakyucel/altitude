@@ -580,10 +580,9 @@ and complete validation gate remain authoritative. See [toolchain setup](DEVELOP
 Current gaps are concrete: engine-specific references remain in session, dispatch, transcript and
 telemetry code outside the seam. The launch environment filters
 some engine variables and applies role/model/permission settings, so native access configurations
-are not all passed through unchanged. The Codex coordinator loads the operator's own Codex configuration
-beneath Altitude's settings, which win: the routed model, the built-in model provider, Altitude's permission
-profile and approval policy, no hooks or notification command, and the Altitude broker as the only MCP server. `--strict-config` refuses unknown keys. A project `l3_codex_model` can supply a model
-override. Private reviewers and the conversation audit keep `--ignore-user-config`. Adding an engine still needs implementation and end-to-end
+are not all passed through unchanged. The Codex coordinator uses `--ignore-user-config`, retaining
+authentication while omitting user model/provider configuration; a project `l3_codex_model` can
+supply a model override. Adding an engine still needs implementation and end-to-end
 verification; it is not a registration-only plug-in operation. The [roadmap](ROADMAP.md#early-user-onboarding-and-public-release)
 records these follow-up candidates without expanding this documentation milestone into a rewrite.
 
@@ -2014,12 +2013,13 @@ messages. Each turn drains it at its own boundary rather than at the next tick: 
 messages for the same conversation fold into one turn in arrival order, each on its own line, while
 image-bearing and server-triggered messages keep their own turn, and nothing runs while a turn holds the project's L3 lock.
 
-**Send now** hands the whole queued operator group for that conversation to the running chat turn in
-arrival order, without stopping its work. The selected row identifies the group, not a message to move
-ahead of its neighbours. Messages arriving after the claim remain queued. Every engine job runs through `engines.engine_driver`, which
-starts the engine with its input held open: Claude reads stream-json input and receives the message as a
-user line, with running commands moved to the background; Codex runs as `codex app-server`, which takes
-it through `turn/steer`. The request writes the group into the turn's `sends` folder; the driver claims
+**Send now** promotes the whole queued operator group for that conversation in arrival order, without
+stopping its work. The selected row identifies the group, not a message to move ahead of its neighbours.
+Messages arriving after the claim remain queued. The Codex coordinator keeps its isolated
+`codex exec --ignore-user-config` invocation: its group runs next after the current turn, with
+**Runs next after this turn** on the queued rows. Claude project chat supports native delivery:
+`engines.engine_driver` holds stream-json input open and supplies the group as a user line, with
+running commands moved to the background. The request writes the group into the turn's `sends` folder; the driver claims
 it by renaming and records the outcome as the file's final name. Once the engine confirms it, the reply so
 far becomes that turn's answer, each message joins the history under its own turn id, and the rest of the reply
 streams beneath them. Each message retains its own visible row and receipt. The claimed rows show
@@ -2033,11 +2033,14 @@ overtakes an image in that group. System turns keep their existing boundary to
 preserve notification, CI and report delivery. System queue rows cannot be promoted or removed. After a
 turn, and at the next drain after a restart, each sent row settles from its outcome file: a message the
 engine may have read is recorded once in the history and never runs again; one it never read runs next.
-No available engine, a restart in progress or a launch pause explains why it cannot be sent. Stop is the
-only control that ends a turn. The browser requests this action by message ID.
+No available engine, a restart in progress or a launch pause explains why it cannot be sent. There is
+no timer or automatic hard interruption; task-chat Stop remains the explicit control that ends work.
+The browser requests Send now by message ID.
 
 In the task chat, the same control claims the queued removable operator group under the project lock,
 records the claim on the task and writes the group in arrival order to the worker's `sends` folder.
+Both task-owner engines use native delivery: stream-json user input with backgrounded commands, or
+`codex app-server` with `turn/steer`, behind the engine seam.
 The worker keeps running; its inbox hook neither announces the claimed messages nor ends the turn for
 them. When the engine confirms the group, the driver records each message's delivery receipt on the
 task itself, so a restart of altd loses nothing, and the rows leave the inbox. Each message retains its

@@ -22,9 +22,12 @@ def main():
     S.regen_state_md(project)
 
     def answer(_prompt, **options):
-        turn_id = l3.active(project)["id"]
-        text = next(row["text"] for row in l3.chat_history(project, None)
-                    if row.get("turn_id") == turn_id and row["role"] == "user")
+        active = l3.active(project)
+        queue_ids = set(active.get("queue_ids", []))
+        text = "\n\n".join(row["text"] for row in l3.chat_history(project, None)
+                           if row["role"] == "user" and
+                           (row.get("turn_id") == active["id"] or
+                            queue_ids.intersection(row.get("queue_ids", []))))
         calls.append({"text": text, "resume": options.get("resume")})
         if options.get("on_start"):
             options["on_start"](None)
@@ -34,7 +37,10 @@ def main():
         if text == "Keep working":
             if options.get("on_text"):
                 options["on_text"]("Checking the current work.")
-            sends = options["sends"]
+            sends = options.get("sends")
+            if sends is None:
+                assert release.wait(30), "The boundary-only turn was not released"
+                return {"text": "Kept working.", "session_id": "fixture-send-now"}
             deadline = time.monotonic() + 30
             while not list(sends.glob("*.json")):  # what the engine's driver watches for
                 if release.is_set():  # a walkthrough that sends nothing into this turn
@@ -63,6 +69,10 @@ def main():
             return super().do_GET()
 
         def do_POST(self):
+            if self.path == "/fixture/boundary":
+                self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                engines.coordinator_native_send = lambda _engine: False
+                return self._json({"ok": True})
             if self.path == "/fixture/system":
                 self.rfile.read(int(self.headers.get("Content-Length", "0")))
                 l3.queue_message(project, "Fixture system work", trigger="restart")

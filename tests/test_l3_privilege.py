@@ -349,11 +349,12 @@ class TestL3CheckoutConfinement(AltitudeCase):
                     "usage": {"input_tokens": 1}, "error": None, "returncode": 0, "tools": []}
 
         with mock.patch.object(l3, "_select", return_value=self.choice("codex")), \
-             mock.patch.object(engines, "codex_exec", side_effect=AssertionError("coordinator turns use codex_turn")), \
-             mock.patch.object(engines, "codex_turn", side_effect=fake_codex):
+             mock.patch.object(engines, "codex_exec", side_effect=fake_codex):
             l3.turn(self.project, "Read the checkout, then try git fetch.")
 
         runtime = Path(seen["cwd"])
+        self.assertTrue(seen["ignore_user_config"])
+        self.assertNotIn("sends", seen)
         settings = seen["sandbox_settings"]
         self.assertFalse(runtime.exists(), "the per-turn Codex runtime is disposed after the engine exits")
         self.assertEqual(settings, engines.codex_l3_permissions(runtime, project=self.project))
@@ -398,11 +399,9 @@ class TestL3CheckoutConfinement(AltitudeCase):
         self.assertEqual((gh_read.returncode, gh_read.stdout.strip()), (0, "checks are green"))
         self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", (runtime / "bin" / "systemctl").read_text())
 
-    def test_coordinator_codex_settings_win_over_the_personal_codex_configuration(self):
-        """The coordinator loads the operator's own Codex configuration (no --ignore-user-config) and keeps
-        --strict-config; Altitude's command-line settings come after the file and replace every key there that could
-        widen its authority. The real engine driver runs a fake `codex app-server` that applies the personal file,
-        then each -c in order (the precedence Codex documents for -c overrides)."""
+    def test_coordinator_codex_ignores_personal_configuration(self):
+        """The isolated exec contract omits personal writable roots, hooks and MCP servers.
+        A deterministic CLI fixture records arguments and models --ignore-user-config, without provider calls."""
         home = self.tmp / "codex-home"
         home.mkdir()
         self.setenv("CODEX_HOME", str(home))
@@ -411,14 +410,13 @@ class TestL3CheckoutConfinement(AltitudeCase):
             'notify = ["/bin/sh", "-c", "personal-notify"]\n[features]\nhooks = true\n'
             '[mcp_servers.personal]\ncommand = "personal-mcp"\n'
             '[model_providers.personal-proxy]\nbase_url = "http://127.0.0.1:9/v1"\n')
-        loaded, read = self.tmp / "codex-loaded.json", self.tmp / "codex-read.jsonl"
+        loaded = self.tmp / "codex-loaded.json"
         self.setenv("FAKE_CODEX_LOADED", str(loaded))
-        self.setenv("FAKE_ENGINE_LOG", str(read))
         fake = self.tmp / "codex"
         fake.write_text(f"""#!{sys.executable}
-import json, os, runpy, sys, tomllib
+import json, os, sys, tomllib
 from pathlib import Path
-effective = tomllib.loads((Path(os.environ["CODEX_HOME"]) / "config.toml").read_text())
+effective = {{}} if "--ignore-user-config" in sys.argv else tomllib.loads((Path(os.environ["CODEX_HOME"]) / "config.toml").read_text())
 for flag, setting in zip(sys.argv[1:], sys.argv[2:]):
     if flag == "-c":
         key, _, value = setting.partition("=")
@@ -428,8 +426,9 @@ for flag, setting in zip(sys.argv[1:], sys.argv[2:]):
             table = table.setdefault(part, {{}})
         table[leaf] = tomllib.loads("value=" + value)["value"]
 Path(os.environ["FAKE_CODEX_LOADED"]).write_text(json.dumps({{"argv": sys.argv[1:], "effective": effective}}))
-sys.argv = [{str(Path(__file__).parent / "fake_engine.py")!r}, "app-server"]
-runpy.run_path(sys.argv[0], run_name="__main__")
+sys.stdin.read()
+print(json.dumps({{"type": "thread.started", "thread_id": "fake-thread"}}))
+print(json.dumps({{"type": "item.completed", "item": {{"type": "agent_message", "text": "Done."}}}}))
 """)
         fake.chmod(0o700)
         real_popen, jobs = subprocess.Popen, []
@@ -447,31 +446,21 @@ runpy.run_path(sys.argv[0], run_name="__main__")
 
         self.assertEqual((result["text"], result["session_id"], result["error"]), ("Done.", "fake-thread", None))
         self.assertEqual(len(jobs), 1)
-        self.assertIn(f"CODEX_HOME={home}", jobs[0], "the operator's own Codex home and configuration load")
+        self.assertIn(f"CODEX_HOME={home}", jobs[0], "authentication home remains CLI-owned")
         launched = json.loads(loaded.read_text())
         argv, effective = launched["argv"], launched["effective"]
-        self.assertEqual(argv[0], "app-server")
+        self.assertEqual(argv[0], "exec")
         self.assertIn("--strict-config", argv)
-        self.assertNotIn("--ignore-user-config", argv)
-        self.assertNotIn("-m", argv)
-        overrides = [argv[index + 1] for index, flag in enumerate(argv) if flag == "-c"]
-        for setting in ('model_provider="openai"', "features.hooks=false", "notify=[]", 'approval_policy="never"',
-                        'default_permissions="altitude-l3"', "permissions.altitude-l3.network.enabled=false"):
-            self.assertIn(setting, overrides)
-        self.assertEqual(sum(setting.startswith("mcp_servers") for setting in overrides), 1)
-        self.assertTrue(next(setting for setting in overrides if setting.startswith("mcp_servers")).startswith(
-            "mcp_servers={altitude="), "one whole-table setting replaces the personal MCP servers")
-        self.assertEqual((effective["model_provider"], effective["approval_policy"], effective["notify"]),
-                         ("openai", "never", []))
-        self.assertIs(effective["features"]["hooks"], False)
+        self.assertIn("--ignore-user-config", argv)
+        self.assertEqual(argv[argv.index("-m") + 1], "gpt-fixture")
+        self.assertNotIn("model_provider", effective)
+        self.assertNotIn("notify", effective)
+        self.assertNotIn("features", effective)
         self.assertEqual(set(effective["mcp_servers"]), {"altitude"})
+        self.assertEqual(effective["approval_policy"], "never")
         self.assertEqual(effective["default_permissions"], "altitude-l3")
         self.assertIs(effective["permissions"]["altitude-l3"]["network"]["enabled"], False)
-        self.assertEqual(effective["model"], "personal-model", "the routed model is not a configuration override")
-        opened = [json.loads(line) for line in read.read_text().splitlines()]
-        thread = next(line for line in opened if line.get("method") == "thread/start")
-        self.assertEqual((thread["params"]["model"], thread["params"]["approvalPolicy"]), ("gpt-fixture", "never"),
-                         "the routed model opens the thread, above the personal default")
+        self.assertNotIn("model", effective, "the routed model is explicit on the command line")
 
     def test_i_20260924_054556_alt_shim_reads_stdin_only_for_a_dash_body(self):
         """The harness can leave stdin open for argument text; the shim must not wait on it."""
@@ -740,14 +729,15 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
         self.assertNotIn("Edit", command[command.index("--tools") + 1])
 
         settings = engines.codex_l3_permissions(runtime, project=self.project)
-        codex = popen("codex", [{"type": "thread.started", "thread_id": "sid"}])
-        with mock.patch.object(engines.subprocess, "Popen", side_effect=codex):
-            engines.codex_turn("prompt", cwd=runtime, sandbox_settings=settings)
-        job, process = seen["codex"]
-        self.assertEqual(job[-len(engines._driver_command()):], engines._driver_command())
-        self.assertTrue(process.stdin.fed.wait(5))
-        command = process.stdin.spec["command"]
-        self.assertEqual(command[:3], [config.CODEX_BIN, "app-server", "--strict-config"])
+        process = mock.MagicMock(pid=1, returncode=0)
+        process.communicate.return_value = (json.dumps({"type": "thread.started", "thread_id": "sid"}), "")
+        with mock.patch.object(engines.subprocess, "Popen", return_value=process) as execute:
+            engines.codex_exec("prompt", cwd=runtime, sandbox_settings=settings, ignore_user_config=True)
+        command = execute.call_args.args[0]
+        self.assertIn("exec", command)
+        self.assertNotIn("app-server", command)
+        self.assertIn("--ignore-user-config", command)
+        self.assertIn("--strict-config", command)
         self.assertEqual([command[index + 1] for index, flag in enumerate(command) if flag == "-c"], settings)
 
     def test_i_20260903_075410_project_add_establishes_the_broker_before_l3_starts(self):

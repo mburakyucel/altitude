@@ -676,7 +676,7 @@ def chat_state(project: str, limit: int = 60) -> dict:
                 sending = turn and turn.get("sends") and row.get("sending") == turn["sends"].name
                 row["send_now_reason"] = ("Sending into the current turn" if sending else unavailable
                                           or ("Runs next after system work" if turn and turn["trigger"] != "chat"
-                                              else "Runs next"))
+                                              else "Runs next after this turn" if turn else "Runs next"))
         return {"history": chat_history(project, limit), "queued": waiting,
                 "active": _turn_identity(turn), "busy": turn_lock.locked(),
                 "send_now_reason": unavailable}
@@ -701,8 +701,6 @@ def _publish_active_turn(project: str, trigger: str, claim=None, slug: str | Non
         claimed = claim is None or claim(turn)
         if claimed:
             _active[project] = turn
-            if trigger == "chat":
-                turn["sends"] = _sends_root(project) / turn["id"]
     if not claimed:
         yield None
         return
@@ -1497,6 +1495,13 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
             pass  # Unavailable optional audit evidence must not prevent ordinary conversation.
     engine = choice["engine"]
+    with _lifecycle_guard(project):
+        if trigger == "chat" and engines.coordinator_native_send(engine):
+            active_turn["sends"] = _sends_root(project) / active_turn["id"]
+        else:
+            sends = active_turn.pop("sends", None)
+            if sends:
+                _settle_sends(project, sends)
     S.regen_state_md(project)
     inf = info(project)
     sessions = inf.setdefault("sessions", {})
@@ -1529,7 +1534,7 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
     if engine == "codex":
         res = _codex_turn(project, prompt, trigger, turn_started_at, active_turn, choice, inf, session, fresh,
                           handoff, model=choice.get("model"), on_start=on_start, slug=slug,
-                          on_result=on_result, on_split=on_split,
+                          on_result=on_result,
                           **({"images": images} if images else {}))
     else:
         text = _header(project, trigger, fresh, slug) + handoff + prompt
@@ -1598,7 +1603,7 @@ def _save_session(inf: dict, session: dict, engine: str, sid: str | None, pct: f
 
 def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, active_turn: dict, choice: dict,
                 inf: dict, session: dict, fresh: bool, handoff: str, *, model: str | None, on_start=None,
-                slug: str | None = None, images=(), on_result=None, on_split=None) -> dict:
+                slug: str | None = None, images=(), on_result=None) -> dict:
     """One Codex L3 turn from a disposable runtime directory: the same persona and daemon `alt` door as Claude,
     inside Codex's own sandbox (writes only in that one runtime; the checkout and Altitude home are readable)."""
     sid = None if fresh else session.get("session_id")
@@ -1618,13 +1623,13 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, a
     record_session({"engine_model": None, "engine_reasoning_effort": None})
     S.project_log(project, "l3-codex", reason=choice["why"], trigger=trigger, resume=bool(sid))
     try:
-        result = engines.codex_turn(
+        result = engines.codex_exec(
             body, cwd=runtime, timeout=_ci_turn_timeout(project, slug, trigger, config.L3_CODEX_TURN_TIMEOUT), model=model,
             effort=choice.get("effort"), resume=sid, on_start=on_start,
-            **_send_options(project, active_turn, choice["engine"], on_split),
             **({"images": images} if images else {}),
             extra_env=_l3_env(project, runtime),
-            sandbox_settings=engines.codex_l3_permissions(runtime, project=project), on_session=record_session)
+            sandbox_settings=engines.codex_l3_permissions(runtime, project=project),
+            ignore_user_config=True, on_session=record_session)
     finally:
         _remove_runtime(runtime)
     turn_id = active_turn["id"]

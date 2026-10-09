@@ -531,6 +531,11 @@ def _driver_input(spec: dict) -> str:
     return json.dumps(spec) + "\n"
 
 
+def coordinator_native_send(engine: str) -> bool:
+    """Whether the isolated coordinator invocation accepts a message inside its running turn."""
+    return engine == "claude"
+
+
 def send_into_turn(sends: Path, message_id: str, text: str) -> None:
     """Hand one message to the driver of a running turn. The driver claims the file before it writes to the engine,
     and its final name records the outcome: `.delivered`, `.returned` (the turn had ended) or `.unconfirmed`."""
@@ -2096,15 +2101,13 @@ def codex_l3_permissions(cwd: Path, *, project: str) -> list[str]:
     # Unix allowlist is macOS-only. MCP stdio is the supported boundary; its adapter has no shell verb.
     adapter = (f"import sys; sys.path.insert(0, {str(config.SOURCE.resolve())!r}); "
                f"from altitude.engines import codex_l3_mcp; codex_l3_mcp({str(broker)!r})")
-    # The coordinator loads the operator's own Codex configuration; these settings come after it and win. The whole
-    # MCP table is replaced, so the broker is the only server; personal hooks and notify commands do not run, and
-    # coordinator traffic goes only to Codex's built-in provider.
-    broker_server = ("{altitude={command=" + json.dumps(sys.executable) + ",args=" + json.dumps(["-I", "-c", adapter])
-                     + ',required=true,tool_timeout_sec=150,tools={coordinator={approval_mode="approve"}}}}')
     return [f'default_permissions="{profile}"', f'permissions.{profile}.extends=":read-only"',
             f"permissions.{profile}.filesystem={filesystem}",
             f"permissions.{profile}.network.enabled=false", 'approval_policy="never"',
-            "mcp_servers=" + broker_server, 'model_provider="openai"', "features.hooks=false", "notify=[]",
+            "mcp_servers.altitude.command=" + json.dumps(sys.executable),
+            "mcp_servers.altitude.args=" + json.dumps(["-I", "-c", adapter]),
+            "mcp_servers.altitude.required=true", "mcp_servers.altitude.tool_timeout_sec=150",
+            'mcp_servers.altitude.tools.coordinator.approval_mode="approve"',
             "developer_instructions=" + json.dumps("Use the altitude coordinator MCP tool for every alt verb "
                 "and gh/service read. Supply argument arrays and stdin text, not shell commands. "
                 "The shell sandbox cannot connect to the broker. Repository and service writes remain denied.")]
@@ -2523,114 +2526,67 @@ def _agent_messages(events: list[dict]) -> list[str]:
 
 
 @config.admitted_provider
-def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int = 900,
-               extra_env: dict | None = None, sandbox_settings: list[str] | None = None) -> dict:
-    """One synchronous `codex exec` turn for a private conversation review, in Codex's own sandbox with the prompt on
-    stdin and the operator's Codex configuration ignored. The transient unit is the one workers use, so altd's
-    `NoNewPrivileges` hardening never reaches the nested bwrap, and its runtime limit stops the whole tree."""
-    cmd = [config.CODEX_BIN, "exec", "--json", "--strict-config", "--skip-git-repo-check", "-C", str(cwd),
-           "--ignore-user-config"]
+def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int = 900, effort: str | None = None,
+               extra_env: dict | None = None, resume: str | None = None, on_start=None,
+               sandbox_settings: list[str] | None = None, ignore_user_config: bool = True, on_session=None,
+               images: list[dict] | tuple = ()) -> dict:
+    """One synchronous Codex turn (L3) in Codex's own workspace-write sandbox, prompt on stdin (verified with
+    codex 0.152). `codex exec resume <thread> -` continues the thread. The transient unit is the one workers use,
+    so altd's `NoNewPrivileges` hardening never reaches the nested bwrap, and a timeout stops the whole tree.
+    Send now stays queued for the next coordinator turn; this invocation has no interrupt channel."""
+    content = _engine_input("codex", prompt, images)
+    prompt = content[0]["text"]
+    image_args = [arg for item in content[1:] for arg in ("--image", item["path"])]
+    cmd = [config.CODEX_BIN, "exec", *(["resume"] if resume else []), *image_args, "--json", "--strict-config",
+           "--skip-git-repo-check", *([] if resume else ["-C", str(cwd)])]
+    if ignore_user_config:
+        cmd.append("--ignore-user-config")
     if model:
         cmd += ["-m", model]
     for setting in sandbox_settings if sandbox_settings is not None else codex_sandbox(cwd):
         cmd += ["-c", setting]
-    cmd.append("-")
+    if effort:
+        cmd += ["-c", f'model_reasoning_effort="{effort}"']
+    cmd += [resume, "-"] if resume else ["-"]
     unit = _codex_unit(f"sync-{uuid.uuid4().hex}")
     started_at = datetime.now(timezone.utc).isoformat()
-    proc = subprocess.Popen(platform.job_command(unit, cmd, codex_env(extra_env), runtime_max=timeout),
+    proc = subprocess.Popen(platform.job_command(unit, cmd, codex_env(extra_env),
+                            runtime_max=timeout),
                             cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, env=codex_env(extra_env, retain_user_bus=True), start_new_session=True)
-    # The writer owns stdin, so communicate() below only reads.
+    # The writer owns stdin, so the polling communicate() below only reads.
     prompt_input, proc.stdin = proc.stdin, None
     threading.Thread(target=_feed, args=(prompt_input, prompt), daemon=True).start()
+    if on_start:
+        on_start(proc.pid)
+    metadata = {}
+    deadline = time.monotonic() + timeout
+    def observe(stdout):
+        nonlocal metadata
+        thread = _codex_thread(_codex_parse(stdout or ""))
+        metadata = _codex_session_model(thread, started_at, _codex_home(codex_env(extra_env)))
+        if metadata and on_session:
+            on_session({"session_id": thread, **metadata})
     try:
-        stdout, stderr = proc.communicate(timeout=timeout)
+        while True:
+            remaining = deadline - time.monotonic()
+            try:
+                stdout, stderr = proc.communicate(timeout=remaining if metadata else min(0.5, remaining))
+                break
+            except subprocess.TimeoutExpired as exc:
+                if time.monotonic() >= deadline:
+                    raise
+                observe((exc.output or b"").decode("utf-8", errors="replace"))
     except subprocess.TimeoutExpired:
         platform.job_stop(unit)
         proc.kill()
         proc.communicate()
         raise
-    events = _codex_parse(stdout or "")
-    metadata = _codex_session_model(_codex_thread(events), started_at, _codex_home(codex_env(extra_env)))
-    return _codex_outcome(events, proc.returncode, stdout, stderr, text=(_agent_messages(events) or [""])[-1],
-                          resume=None, model=model, metadata=metadata)
-
-
-@config.admitted_provider
-def codex_turn(prompt: str, *, cwd: Path, model: str | None = None, timeout: int = 900, effort: str | None = None,
-               extra_env: dict | None = None, resume: str | None = None, on_start=None,
-               sandbox_settings: list[str] | None = None, on_session=None, images: list[dict] | tuple = (),
-               sends: Path | None = None, on_send=None) -> dict:
-    """One coordinator turn through `codex app-server` (see `_CodexDriver`) in the job workers use, so altd's
-    `NoNewPrivileges` hardening never reaches the nested bwrap and the job's runtime limit stops the whole tree.
-    The operator's own Codex configuration loads beneath `sandbox_settings`, which Altitude passes last and which win.
-    Send now works as in `claude_print`; `text` is the turn's last message after the last delivered one."""
-    cmd = [config.CODEX_BIN, "app-server", "--strict-config"]
-    for setting in sandbox_settings if sandbox_settings is not None else codex_sandbox(cwd):
-        cmd += ["-c", setting]
-    if effort:
-        cmd += ["-c", f'model_reasoning_effort="{effort}"']
-    content = _engine_input("codex", prompt, images)
-    unit = _codex_unit(f"sync-{uuid.uuid4().hex}")
-    started_at = datetime.now(timezone.utc).isoformat()
-    proc = subprocess.Popen(platform.job_command(unit, _driver_command(), codex_env(extra_env), runtime_max=timeout),
-                            cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, env=codex_env(extra_env, retain_user_bus=True), start_new_session=True)
-    spec = {"engine": "codex", "command": cmd, "input": content, "cwd": str(cwd), "model": model, "resume": resume,
-            "sends": str(sends) if sends is not None else None}
-    threading.Thread(target=_feed, args=(proc.stdin, _driver_input(spec)), daemon=True).start()
-    if on_start:
-        on_start(proc.pid)
-    stdout_capture, stderr_capture = _BoundedRawCapture(), _BoundedRawCapture()
-
-    def drain_stderr() -> None:
-        while chunk := proc.stderr.read(65536):
-            stderr_capture.add(chunk)
-
-    drain = threading.Thread(target=drain_stderr, daemon=True)
-    drain.start()
-    events, segment, metadata, observers, returned = [], [], {}, [], threading.Event()
-
-    def observe_model(thread_id: str) -> None:
-        """The turn's model is in its rollout once the turn is running, after the thread has started."""
-        while not metadata and proc.poll() is None and not returned.is_set():
-            metadata.update(_codex_session_model(thread_id, started_at, _codex_home(codex_env(extra_env))))
-            if metadata and on_session:
-                on_session({"session_id": thread_id, **metadata})
-            elif not metadata:
-                returned.wait(0.5)
-
-    try:
-        for line in proc.stdout:
-            stdout_capture.add(line)
-            event = next(iter(_codex_parse(line)), None)
-            if event is None:
-                continue
-            events.append(event)
-            if event.get("type") == "thread.started" and event.get("thread_id") and not observers:
-                observers.append(threading.Thread(target=observe_model, args=(event["thread_id"],), daemon=True))
-                observers[0].start()
-            elif event.get("type") == "item.completed" and (event.get("item") or {}).get("type") == "agent_message":
-                segment.append(str(event["item"].get("text") or ""))
-            elif event.get("type") == "altitude.send":
-                if on_send:
-                    on_send(event.get("message_id"), event.get("outcome"), (segment or [""])[-1].strip())
-                if event.get("outcome") != "returned":
-                    segment = []
-        proc.wait()
-    finally:
-        proc.stdout.close()
-        drain.join(timeout=2)
-        proc.stderr.close()
-        returned.set()
-        for observer in observers:
-            observer.join()  # no session report after the turn has returned
-    stdout, _ = stdout_capture.render()
-    stderr, _ = stderr_capture.render()
     if not metadata:
-        metadata = _codex_session_model(_codex_thread(events), started_at, _codex_home(codex_env(extra_env)))
-    return _codex_outcome(events, proc.returncode, stdout, stderr, text=(segment or [""])[-1], resume=resume,
-                          model=model, metadata=metadata)
+        observe(stdout)
+    events = _codex_parse(stdout or "")
+    return _codex_outcome(events, proc.returncode, stdout, stderr, text=(_agent_messages(events) or [""])[-1],
+                          resume=resume, model=model, metadata=metadata)
 
 
 def _review_env() -> dict:

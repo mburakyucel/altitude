@@ -25,7 +25,7 @@ class TestL3Continuity(AltitudeCase):
                     "usage": {"input_tokens": 10}, "context_tokens": 10, "error": None,
                     "tools": [{"name": "shell", "command": "tool-evidence-must-not-replay"}]}
 
-        seam = "claude_print" if engine == "claude" else "codex_turn"
+        seam = "claude_print" if engine == "claude" else "codex_exec"
         with mock.patch.object(l3, "_select", return_value={"engine": engine, "why": "fixture"}), \
              mock.patch.object(engines, seam, side_effect=execute):
             result = l3.turn(project or self.project, prompt, trigger=trigger)
@@ -155,7 +155,7 @@ class TestL3Continuity(AltitudeCase):
         accepted = {"session_id": "session-claude-1", "text": "Proposal recorded.", "usage": {}}
         choices = [{"engine": engine, "why": "fixture"} for engine in ("codex", "claude")]
         with mock.patch.object(l3, "_select", side_effect=choices), \
-             mock.patch.object(engines, "codex_turn", return_value=rejected), \
+             mock.patch.object(engines, "codex_exec", return_value=rejected), \
              mock.patch.object(engines, "claude_print", return_value=accepted) as execute:
             result = l3.turn(self.project, "Please record that proposal.")
         self.assertTrue(result["completed"])

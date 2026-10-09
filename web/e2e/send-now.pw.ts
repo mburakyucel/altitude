@@ -136,6 +136,34 @@ test.describe("L3 Send now", () => {
     await walk.state("l3-07-unavailable", { visible: [button, convo.locator(".queued-row").getByText("Keep the queued text", { exact: true })], hidden: [] });
   });
 
+  test("promotes the queued group for a boundary-only coordinator without interrupting", async ({ page, request }, info) => {
+    const walk = walkthrough(page, info);
+    const convo = page.getByRole("region", { name: "Conversation", exact: true });
+    const field = page.getByRole("textbox", { name: "Message L3 about atlas" });
+    const row = (text: string) => convo.locator(".queued-row").filter({ hasText: text });
+    const status = async () => (await (await request.get("/fixture/status")).json());
+    expect((await request.post("/fixture/boundary")).ok()).toBe(true);
+    await walk.open("/projects/atlas");
+    await field.fill("Keep working");
+    await convo.getByRole("button", { name: "Send", exact: true }).click();
+    await expect.poll(async () => (await status()).calls.length).toBe(1);
+    for (const text of ["First queued message", "Second queued message"]) {
+      await field.fill(text);
+      await convo.getByRole("button", { name: /^(Send|Queue)$/ }).click();
+      await expect(row(text)).toBeVisible();
+    }
+    await row("Second queued message").getByRole("button", { name: "Send now", exact: true }).click();
+    await page.reload();
+    await walk.state("l3-13-turn-boundary", { visible: [row("First queued message"), row("Second queued message").getByText("Runs next after this turn", { exact: true })], hidden: [] });
+    expect((await status()).calls).toHaveLength(1);
+    expect((await status()).delivered).toEqual([]);
+    expect((await request.post("/fixture/release")).ok()).toBe(true);
+    await walk.state("l3-14-boundary-delivered", { visible: [convo.getByText("Second queued message answered.", { exact: true })], hidden: [row("First queued message"), row("Second queued message")] });
+    expect((await status()).calls.map((call: { text: string }) => call.text)).toEqual(["Keep working", "First queued message\n\nSecond queued message"]);
+    await expect(convo.locator(".bubble").filter({ hasText: /^First queued message$/ })).toHaveCount(1);
+    await expect(convo.locator(".bubble").filter({ hasText: /^Second queued message$/ })).toHaveCount(1);
+  });
+
   test("delivers the queued group into the running chat turn and keeps each receipt", async ({ page, request }, info) => {
     const walk = walkthrough(page, info);
     const convo = page.getByRole("region", { name: "Conversation", exact: true });

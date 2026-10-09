@@ -55,8 +55,8 @@ See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](D
   Linux account that runs Altitude. Authenticate using the engine's native setup. CLI versions must support the headless,
   session and permission features in the [launcher](../altitude/engines.py); there is no tested
   version matrix yet. Codex task owners use the CLI's configured model unless an Auto option or
-  explicit pin supplies one. Its coordinator loads your Codex configuration beneath Altitude's own
-  settings and uses your configured model unless a route or model override supplies one. Configure Auto with the engine/models you intend to
+  explicit pin supplies one. Its coordinator runs with user configuration ignored and uses the CLI
+  default unless a model override is supplied. Configure Auto with the engine/models you intend to
   use; access to every default preference is not required.
 
 ## Install the application
@@ -726,10 +726,7 @@ in that tier. It never invents separate model allowances from a shared account r
 
 Single-engine Auto and explicit pins are supported; arbitrary provider/access configurations are not verified.
 In particular, the launcher filters some engine environment variables and supplies role settings;
-the Codex coordinator loads your Codex configuration, but Altitude's settings replace its model provider
-(Codex's built-in provider), permissions and approval policy, MCP servers (only Altitude's broker), hooks
-and notification command. Other keys, such as reasoning or display preferences, apply as configured, and
-`--strict-config` refuses a file with keys the CLI does not know.
+the Codex coordinator ignores user configuration, including custom provider settings in that file.
 Do not assume an interactive API/Bedrock configuration transfers unchanged to a launched session.
 See the [engine boundary and gaps](ARCHITECTURE.md#engine-integration-boundary).
 

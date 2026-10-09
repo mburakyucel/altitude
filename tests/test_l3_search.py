@@ -287,7 +287,7 @@ class TestL3Search(AltitudeCase):
             return {"session_id": sid, "reported_session_id": sid, "text": "Evidence retrieved.", "usage": {}}
 
         with mock.patch.object(engines, "claude_print", side_effect=execute), \
-             mock.patch.object(engines, "codex_turn", side_effect=execute):
+             mock.patch.object(engines, "codex_exec", side_effect=execute):
             first, second = config.ENGINES
             for engine in (first, first, second, first, second):
                 with mock.patch.object(l3, "_select", return_value={"engine": engine, "why": "fixture"}):

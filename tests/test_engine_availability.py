@@ -88,43 +88,30 @@ class TestFailureEvidence(AltitudeCase):
                          ("model", "fable", None))
         self.assertFalse(engines.usage_limit_path().exists())
 
-    @staticmethod
-    def codex_turns():
-        """The coordinator's app-server turn reads its job's output as it streams; a reviewer's exec turn reads it
-        at exit. Both report the same evidence."""
-        def streamed(stdout):
-            return mock.Mock(pid=123, returncode=1, stdout=io.StringIO(stdout), stderr=io.StringIO(""),
-                             stdin=io.StringIO())
-
-        def collected(stdout):
-            process = mock.Mock(pid=123, returncode=1)
-            process.communicate.return_value = (stdout, "")
-            return process
-        return (("codex_turn", streamed), ("codex_exec", collected))
-
     def test_codex_sync_uses_structured_failure_with_empty_stderr(self):
         stdout = stream({"type": "thread.started", "thread_id": "session"},
                         {"type": "turn.failed", "error": {"code": "model_not_found", "message": "missing"}})
-        for name, process in self.codex_turns():
-            with self.subTest(turn=name), mock.patch.object(engines.subprocess, "Popen", return_value=process(stdout)), \
-                 mock.patch.object(engines, "_codex_session_model", return_value={}):
-                result = getattr(engines, name)("hello", cwd=self.repo, model="missing")
-            self.assertIn("model_not_found", result["error"])
-            self.assertEqual(result["rejection"]["scope"], "model")
-            self.assertTrue(result["safe_to_retry"])
+        process = mock.Mock(pid=123, returncode=1, stdin=io.StringIO())
+        process.communicate.return_value = (stdout, "")
+        with mock.patch.object(engines.subprocess, "Popen", return_value=process), \
+             mock.patch.object(engines, "_codex_session_model", return_value={}):
+            result = engines.codex_exec("hello", cwd=self.repo, model="missing")
+        self.assertIn("model_not_found", result["error"])
+        self.assertEqual(result["rejection"]["scope"], "model")
+        self.assertTrue(result["safe_to_retry"])
 
     def test_codex_limit_evidence_never_allows_replay_after_tool_activity(self):
-        for name, process in self.codex_turns():
-            for activity in ([], [{"type": "item.started", "item": {"type": "mcp_tool_call"}}]):
-                stdout = stream({"type": "thread.started", "thread_id": "session"}, *activity,
-                                {"type": "turn.failed", "error": {"message": "You've hit your usage limit"}})
-                with self.subTest(turn=name, activity=activity), \
-                     mock.patch.object(engines.subprocess, "Popen", return_value=process(stdout)), \
-                     mock.patch.object(engines, "_codex_session_model", return_value={}):
-                    result = getattr(engines, name)("hello", cwd=self.repo)
-                self.assertTrue(result["limited"])
-                self.assertIsNone(result["rejection"])
-                self.assertEqual(result["safe_to_retry"], not activity)
+        for activity in ([], [{"type": "item.started", "item": {"type": "mcp_tool_call"}}]):
+            stdout = stream({"type": "thread.started", "thread_id": "session"}, *activity,
+                            {"type": "turn.failed", "error": {"message": "You've hit your usage limit"}})
+            process = mock.Mock(pid=123, returncode=1, stdin=io.StringIO())
+            process.communicate.return_value = (stdout, "")
+            with self.subTest(activity=activity), mock.patch.object(engines.subprocess, "Popen", return_value=process), \
+                 mock.patch.object(engines, "_codex_session_model", return_value={}):
+                result = engines.codex_exec("hello", cwd=self.repo)
+            self.assertTrue(result["limited"])
+            self.assertIsNone(result["rejection"])
+            self.assertEqual(result["safe_to_retry"], not activity)
 
     def test_claude_sync_keeps_all_activity_evidence_beyond_raw_capture(self):
         failure = {"type": "result", "is_error": True, "result": MODEL_ERROR}

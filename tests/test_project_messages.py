@@ -55,7 +55,7 @@ class TestProjectMessages(AltitudeCase):
                     return {"text": "Fixture triage complete; no task action.", "session_id": "fixture-session",
                             "reported_session_id": "fixture-session", "usage": {}}
                 with mock.patch.object(engines, "claude_print", side_effect=execute), \
-                     mock.patch.object(engines, "codex_turn", side_effect=execute), \
+                     mock.patch.object(engines, "codex_exec", side_effect=execute), \
                      mock.patch.object(l3, "_select", return_value={"engine": engine, "why": "fixture"}):
                     message = self.send(request_id="probe-" + engine)
                     self.assertEqual(message["sender"], self.project, "socket binding defeats request identity spoofing")
@@ -163,7 +163,7 @@ class TestProjectMessages(AltitudeCase):
                 return {"text": "Fixture ordinary turn complete.", "session_id": f"fixture-{engine}",
                         "reported_session_id": f"fixture-{engine}", "usage": {}}
             with mock.patch.object(engines, "claude_print", side_effect=execute), \
-                 mock.patch.object(engines, "codex_turn", side_effect=execute), \
+                 mock.patch.object(engines, "codex_exec", side_effect=execute), \
                  mock.patch.object(l3, "_select", return_value={"engine": engine, "why": "fixture"}):
                 for project in (self.project, self.peer, self.project):
                     self.assertTrue(l3.turn(project, "Ordinary fixture request")["completed"])
@@ -268,7 +268,7 @@ class TestProjectMessages(AltitudeCase):
                 with mock.patch.object(l3, "_select", side_effect=choices), \
                      mock.patch.object(l3.route, "note_limit"), \
                      mock.patch.object(engines, "claude_print", side_effect=refuse), \
-                     mock.patch.object(engines, "codex_turn", side_effect=refuse):
+                     mock.patch.object(engines, "codex_exec", side_effect=refuse):
                     self.assertFalse(l3.turn(self.peer, "Ordinary fixture request").get("completed"))
                 self.assertEqual(l3.queued(self.peer), pending)
                 self.assertEqual(self.rows(self.peer), previous)
@@ -294,7 +294,7 @@ class TestProjectMessages(AltitudeCase):
         with mock.patch.object(l3, "_select", side_effect=choices), \
              mock.patch.object(l3.route, "note_limit"), \
              mock.patch.object(engines, "claude_print", side_effect=execute), \
-             mock.patch.object(engines, "codex_turn", side_effect=execute):
+             mock.patch.object(engines, "codex_exec", side_effect=execute):
             result = l3.turn(self.peer, "Ordinary request")
         self.assertEqual((result["completed"], result["text"]), (False, "Partial fixture assistant output"))
         self.assertEqual(len(seen), 2)
@@ -309,7 +309,7 @@ class TestProjectMessages(AltitudeCase):
                       "reported_session_id": "fixture-failed", "usage": {}}
             with mock.patch.object(l3, "_select", return_value={"engine": engine, "why": "fixture"}), \
                  mock.patch.object(engines, "claude_print", return_value=result.copy()), \
-                 mock.patch.object(engines, "codex_turn", return_value=result.copy()):
+                 mock.patch.object(engines, "codex_exec", return_value=result.copy()):
                 self.assertFalse(l3.turn(self.peer, "Ordinary request")["completed"])
             self.assertEqual(len(l3.queued(self.peer)), 1)
             self.assertEqual(self.rows(self.peer), [])
@@ -340,7 +340,7 @@ class TestProjectMessages(AltitudeCase):
                         "session_id": "fixture-session", "reported_session_id": "fixture-session", "usage": {}}
             with mock.patch.object(l3, "_select", return_value={"engine": engine, "why": "fixture"}), \
                  mock.patch.object(engines, "claude_print", side_effect=execute), \
-                 mock.patch.object(engines, "codex_turn", side_effect=execute):
+                 mock.patch.object(engines, "codex_exec", side_effect=execute):
                 self.assertFalse(l3.turn(self.peer, "Ordinary triage")["completed"])
             rows = self.rows(self.peer)
             incoming = next(i for i, row in enumerate(rows) if row["turn_id"] == message["message_id"])
@@ -362,7 +362,7 @@ class TestProjectMessages(AltitudeCase):
             with mock.patch.object(l3, "_select", return_value={"engine": engine, "why": "fixture"}), \
                  mock.patch.object(l3, "_record_project_messages", side_effect=record), \
                  mock.patch.object(engines, "claude_print", return_value=result.copy()), \
-                 mock.patch.object(engines, "codex_turn", return_value=result.copy()):
+                 mock.patch.object(engines, "codex_exec", return_value=result.copy()):
                 self.assertFalse(l3.turn(self.peer, "Ordinary triage")["completed"])
             self.assertEqual(l3._pending_project_messages(self.peer), [])
 
@@ -384,7 +384,7 @@ class TestProjectMessages(AltitudeCase):
                 with mock.patch.object(l3, "_select", return_value={"engine": engine, "why": "fixture"}), \
                      mock.patch.object(l3, "chat_log" if failure == "chat" else "_write_queue", side_effect=fail), \
                      mock.patch.object(engines, "claude_print", return_value=result.copy()), \
-                     mock.patch.object(engines, "codex_turn", return_value=result.copy()):
+                     mock.patch.object(engines, "codex_exec", return_value=result.copy()):
                     response = l3.turn(self.peer, "Ordinary direct triage") if failure == "chat" else l3.deliver_queued(self.peer)
                 self.assertTrue(response["completed"])
                 self.assertFalse(response.get("error"))
@@ -420,7 +420,7 @@ class TestProjectMessages(AltitudeCase):
         with mock.patch.object(l3, "_pending_project_messages", side_effect=reconcile), \
              mock.patch.object(l3, "_select", return_value={"engine": config.ENGINES[0], "why": "fixture"}), \
              mock.patch.object(engines, "claude_print", side_effect=execute), \
-             mock.patch.object(engines, "codex_turn", side_effect=execute):
+             mock.patch.object(engines, "codex_exec", side_effect=execute):
             self.assertTrue(l3.turn(self.peer, "Ordinary direct request")["completed"])
             self.assertTrue(l3.deliver_queued(self.peer)["completed"])
         self.assertEqual(len(seen), 2)
@@ -449,7 +449,7 @@ class TestProjectMessages(AltitudeCase):
             with mock.patch.object(l3, "_record_project_messages", side_effect=malformed), \
                  mock.patch.object(l3, "_select", return_value={"engine": engine, "why": "fixture"}), \
                  mock.patch.object(engines, "claude_print", side_effect=execute), \
-                 mock.patch.object(engines, "codex_turn", side_effect=execute):
+                 mock.patch.object(engines, "codex_exec", side_effect=execute):
                 self.assertTrue(l3.turn(self.peer, "Ordinary request")["completed"])
             self.assertTrue(any(row["role"] == "assistant" and row["text"] == "Provider answer survives receipt failure"
                                 for row in l3.chat_history(self.peer, None)))
@@ -463,7 +463,7 @@ class TestProjectMessages(AltitudeCase):
                   "reported_session_id": "fixture-session"}
         with mock.patch.object(l3, "_select", return_value={"engine": config.ENGINES[0], "why": "fixture"}), \
              mock.patch.object(engines, "claude_print", return_value=result.copy()), \
-             mock.patch.object(engines, "codex_turn", return_value=result.copy()):
+             mock.patch.object(engines, "codex_exec", return_value=result.copy()):
             response = l3.turn(self.peer, "Ordinary request")
         self.assertTrue(response["completed"])
         self.assertIn("id", response["project_message_error"])

@@ -9,10 +9,8 @@ from altitude import config, engines, l3, platform, state as S, tasks as T
 
 
 def durable(engine: str, call) -> bool:
-    """Whether the coordinator turn outlives altd, bounded by its own timeout: Claude's print turn runs as a job when
-    asked; a Codex coordinator turn has no other mode (`TestCoordinatorJob`)."""
+    """Both coordinator transports bound their jobs beyond altd restart."""
     return call.kwargs["durable_timeout"] if engine == "claude" else "durable_timeout" not in call.kwargs
-
 
 class TestCIRecheckDelivery(AltitudeCase):
     def setUp(self):
@@ -55,7 +53,7 @@ class TestCIRecheckDelivery(AltitudeCase):
                     "usage": {"input_tokens": 10}, "context_tokens": 10, "cost": 0.0,
                     "error": error, "tools": []}
 
-        seam = "claude_print" if engine == "claude" else "codex_turn"
+        seam = "claude_print" if engine == "claude" else "codex_exec"
         with mock.patch.object(l3, "_select", return_value={"engine": engine, "why": "fixture"}), \
              mock.patch.object(engines, seam, side_effect=execute) as call:
             yield call
@@ -415,9 +413,11 @@ class TestCoordinatorJob(AltitudeCase):
         with mock.patch.object(engines.subprocess, "Popen",
                                side_effect=RuntimeError("fixture: execution intercepted")) as popen:
             with self.assertRaisesRegex(RuntimeError, "intercepted"):
-                engines.codex_turn("Probe evidence", cwd=self.repo, timeout=37)
+                engines.codex_exec("Probe evidence", cwd=self.repo, timeout=37)
         cmd = popen.call_args.args[0]
         self.assertEqual(cmd[0], platform.SYSTEMD_RUN)
         for flag in ("--property=RuntimeMaxSec=37", "--property=KillMode=control-group"):
             self.assertIn(flag, cmd)
-        self.assertEqual(cmd[-len(engines._driver_command()):], engines._driver_command())
+        self.assertIn(config.CODEX_BIN, cmd)
+        self.assertIn("exec", cmd)
+        self.assertIn("--ignore-user-config", cmd)

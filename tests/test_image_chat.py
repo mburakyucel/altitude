@@ -41,7 +41,7 @@ class TestImageConversations(AltitudeCase):
             return {"text": "Image inspected.", "session_id": "l3-fixture", "reported_session_id": "l3-fixture"}
 
         self.patch(engines, "claude_print", side_effect=answer)
-        self.patch(engines, "codex_turn", side_effect=answer)
+        self.patch(engines, "codex_exec", side_effect=answer)
         self.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()

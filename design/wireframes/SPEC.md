@@ -1059,8 +1059,9 @@ blocked tasks.
 The existing message bubble shows **Queued · waiting for a checkpoint**, **Queued · held until you
 continue**, **Delivered to session** only with handoff evidence, or **Delivery unconfirmed** when
 evidence is missing. Each eligible queued operator bubble has a bordered **Send now** beside **Remove**;
-Send now explains **Joins the current turn without stopping its work.** It hands that message to
-the running turn, which reads it as the operator's next message. Quick-choice receipts and
+Send now explains **Joins the current turn without stopping its work.** It hands the whole queued
+removable operator group to the running turn in arrival order; each message keeps its bubble and
+receipt, and later arrivals remain outside the claim. Quick-choice receipts and
 messages already used by recorded decisions keep their evidence. **Removing…** disables removal until
 the response; success replaces only that bubble's text with **Message removed** and **Removed · not
 sent to the session**. Original text remains in durable evidence. Claim shows **Sending to session ·
@@ -1635,15 +1636,18 @@ Messages sent while L3 is mid-turn queue and run at the next turn boundary in or
 keeps its accent circle with the arrow. Phone names the active work in the header and the run order
 on queued rows; desktop also shows "L3 is mid-turn · runs next" under the field. Queued rows stay
 inside the message area until they run, with bordered **Send now** beside **Remove** while permitted.
-Send now hands that row to the running chat turn, which reads it without stopping its work. Pending
-rows say **Sending now…** with **Sending into the current turn** and no Remove. Once the turn takes it in,
-the reply so far ends, the message appears as the operator's bubble, and the rest of the reply streams
-beneath it. A message with images, one sent during system work (**Runs next after system work**) or while
+Send now promotes the whole queued operator group in arrival order; each message keeps its bubble
+and receipt, and later arrivals remain outside the claim. A coordinator that delivers at turn boundaries
+shows **Runs next after this turn** while its current chat turn continues. With native delivery, pending
+rows say **Sending now…** with **Sending into the current turn** and no Remove. Once the turn takes them in,
+the reply so far ends, each message appears as its own operator bubble, and the rest of the reply streams
+beneath the group. A group with images, one sent during system work (**Runs next after system work**) or while
 no turn runs (**Runs next**) moves first and runs as the next turn; Remove stays available until claim.
 Remove is disabled while the HTTP request is pending. An unavailable engine or operator wait disables
 Send now with the server's explanation. Denied, conflict and unconfirmed requests retain the row
 and show their own inline error after refreshing canonical state. The row becomes its turn bubble
 only when the server admits it; claimed, delivered or removed rows have no queued actions.
+Send now has no timer and never stops running work; task-chat Stop remains the hard stop.
 Both controls have 44px phone targets and wrap with their explanations on narrow screens.
 A running turn shows
 either a system line in progress (§3.4) or, for a `chat` turn, a typing indicator under the

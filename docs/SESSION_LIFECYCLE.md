@@ -1226,10 +1226,12 @@ available. A turn with provider output is never replayed, and a refused operator
 Retry instead. An Auto-selected turn resumes only the chosen provider's session;
 choosing another configured model on that provider retains its conversation.
 
-An operator queue row's **Send now** hands the whole queued operator group for that conversation to
-the running chat turn in arrival order through that turn's `sends` folder. The selected row identifies
-the group; later arrivals remain queued. The turn's engine driver writes the group as the operator's
-next input, and the turn continues
+An operator queue row's **Send now** promotes the whole queued operator group for that conversation in
+arrival order. The selected row identifies the group; later arrivals remain queued. The isolated
+coordinator invocation delivers the group on its next turn, showing **Runs next after this turn**
+while the current chat turn runs. Where the engine supports native project-chat delivery (see
+[message delivery](ARCHITECTURE.md#message-delivery-and-voice)), the request writes the group through
+that turn's `sends` folder. The turn's engine driver writes the group as the operator's next input, and the turn continues
 without stopping. Once the engine confirms it, the reply so far is recorded as the turn's answer, the
 messages are recorded as separate user rows, each with its own turn id, queue id and receipt,
 and the rest of the reply belongs to the last new turn. The claimed rows say **Sending into the current
@@ -1242,6 +1244,8 @@ and at the next drain after a restart, a row still marked as sending settles fro
 message the engine may have read is recorded once and never replayed; one it never read runs next.
 Repeated requests return the same receipt. Engine unavailability and launch pauses leave the row queued
 with an explanation. The priority marker adds no quiet-point restart hold.
+No timer stops a running command or escalates Send now into a hard interruption. Task-chat Stop
+remains the explicit hard stop.
 
 Every fresh session, whether from first use, reset, context rotation or a confinement policy change,
 receives the project's latest 20 prior human chat messages from either provider, oldest first. A

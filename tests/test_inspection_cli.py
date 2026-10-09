@@ -322,7 +322,7 @@ class TestInspectionCLI(AltitudeCase):
                  "returncode": 0, "error": None, "tools": [{"name": "Bash", "command": wrapped}]}
         with mock.patch.object(l3, "_select", side_effect=choices), \
              mock.patch.object(engines, "claude_print", return_value=claude), \
-             mock.patch.object(engines, "codex_turn", return_value=codex):
+             mock.patch.object(engines, "codex_exec", return_value=codex):
             l3.turn(self.project, "first")
             l3.turn(self.project, "second")
         assistant = [row for row in l3.chat_history(self.project, None) if row["role"] == "assistant"]
@@ -350,10 +350,9 @@ class TestInspectionCLI(AltitudeCase):
         events = "\n".join([json.dumps({"type": "thread.started", "thread_id": "cx"}),
                              json.dumps({"type": "item.completed", "item": {
                                  "type": "command_execution", "command": wrapped}})]) + "\n"
-        process = SimpleNamespace(pid=1, returncode=0, stdin=io.StringIO(), stdout=io.StringIO(events),
-                                  stderr=io.StringIO(), wait=lambda: 0, poll=lambda: 0)
+        process = SimpleNamespace(pid=1, returncode=0, stdin=io.StringIO(), communicate=lambda *_a, **_k: (events, ""))
         with mock.patch.object(engines.subprocess, "Popen", return_value=process):
-            parsed = engines.codex_turn("prompt", cwd=self.tmp)
+            parsed = engines.codex_exec("prompt", cwd=self.tmp)
         self.assertEqual(parsed["tools"], [{"name": "Bash", "command": wrapped}])
 
     def test_service_status_is_one_read_only_systemctl_call(self):
