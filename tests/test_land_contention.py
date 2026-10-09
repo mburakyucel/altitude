@@ -615,7 +615,7 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.release('first')
         self.merged('first', self.finish(first))
 
-    def test_external_main_change_still_refuses_green_candidate(self):
+    def test_external_main_change_rechecks_integrated_local_candidate(self):
         first = self.start('first')
         self.checked('first')
         (self.repo / 'external.txt').write_text('external\n')
@@ -624,10 +624,10 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         git('push', 'origin', 'main', cwd=self.repo)
         self.release('first')
         result = self.finish(first)['result']
-        self.assertFalse(result['merged'])
+        self.assertTrue(result['merged'])
         self.assertTrue(result['local_tests']['passed'])
-        self.assertIn('base or the head moved', result['local_tests']['error'])
-        self.assertEqual(self.calls('first', ['pr', 'merge']), [])
+        self.assertEqual(git('show', f"{result['head']}:external.txt", cwd=self.repo), 'external\n')
+        self.assertEqual(len(self.calls('first', ['pr', 'merge'])), 1)
 
     def test_conflicting_waiter_keeps_committed_work_and_releases_lock(self):
         for slug, (worktree, _) in self.owners.items():

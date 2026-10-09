@@ -1356,6 +1356,8 @@ Landing prints when it waits for the turn and when it starts, and returns second
 candidate unmerged. Nonmerging invocations never take the turn.
 
 Keep the command and owner session alive; ordinary contention needs no L3 landing-window request.
+Run one landing command per task worktree; collect or cancel an existing command before retrying.
+The repository turn does not serialize publication in the same worktree.
 CI and owner assessment share a 3600-second bound after publication; `--wait` only shortens it.
 An exhausted deadline leaves the published candidate unmerged, without another integration.
 GitHub registers
