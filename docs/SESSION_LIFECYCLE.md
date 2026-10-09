@@ -536,7 +536,7 @@ persists a cross-process claim and moves that claim's exact message batch out of
 Each ordinary operator message offers Remove while the inbox still owns it. Removal and pickup share
 the project lock: only the selected ID leaves pending input, and later arrivals remain separate for
 the next checkpoint. The existing delivery metadata records removal while original conversation text
-remains evidence; the bubble becomes Message removed. Removed text cannot authorize a new decision.
+remains evidence; the message leaves the task conversation. Removed text cannot authorize a new decision.
 Quick-choice receipts and messages already used by recorded decisions cannot be removed. Cancellation
 does not undo a resume request, Stop, fault or question. Claimed messages say Sending to session and
 cannot be removed. A failure before launch restores removal; an attempted but unconfirmed handoff
@@ -1260,6 +1260,10 @@ Repeated requests return the same receipt. Engine unavailability and launch paus
 with an explanation. The priority marker adds no quiet-point restart hold.
 No timer stops a running command or escalates Send now into a hard interruption. Task-chat Stop
 remains the explicit hard stop.
+
+Historical interrupted turns retain their partial reply, possibly empty, and `interrupted: true`.
+The conversation shows only that partial text, or no assistant row when it is empty; these turns
+are never replayed.
 
 Every fresh session, whether from first use, reset, context rotation or a confinement policy change,
 receives the project's latest 20 prior human chat messages from either provider, oldest first. A

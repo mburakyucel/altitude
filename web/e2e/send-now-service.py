@@ -71,6 +71,17 @@ def main():
             return super().do_GET()
 
         def do_POST(self):
+            if self.path == "/fixture/interrupted-history":
+                self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                for turn, text, reply, interrupted in (
+                    ("partial", "Keep working", "Two checks failed on the review branch, and the first log", True),
+                    ("partial-next", "Deliver this next", "Deliver this next answered.", False),
+                    ("silent", "Hold on", "", True),
+                    ("silent-next", "Use the other branch", "Use the other branch answered.", False),
+                ):
+                    l3.chat_log(project, "user", text, trigger="chat", turn_id=turn)
+                    l3.chat_log(project, "assistant", reply, trigger="chat", turn_id=turn, interrupted=interrupted)
+                return self._json({"ok": True})
             if self.path == "/fixture/uncertain":
                 self.rfile.read(int(self.headers.get("Content-Length", "0")))
                 uncertain.set()

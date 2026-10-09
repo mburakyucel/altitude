@@ -496,7 +496,7 @@ def search(project: str, query: str, limit: int = 5) -> dict:
     def message_row(row, source):
         return {"source": source, "at": row.get("at"), "date_kind": "message",
                 "role": row.get("role"), "by": row.get("by"), "turn_id": row.get("turn_id"),
-                "removed_at": row.get("removed_at"), "text": row["text"],
+                "removed_at": row.get("removed_at"), "text": row["text"], **({"interrupted": True} if row.get("interrupted") else {}),
                 **({"project_message": row["project_message"]} if row.get("trigger") == "project-message" else {})}
 
     chat = local(root / "chat.jsonl")
@@ -1349,7 +1349,8 @@ def _handoff(history: list[dict], engine: str, since: str | None, *, fresh: bool
     lines = []
     for item in missed[-20:]:
         text = str(item.get("text") or "")
-        lines.append(f"- {item['role']}: {text[:800]}" + (" [truncated]" if len(text) > 800 else ""))
+        role = f"{item['role']} (interrupted by the operator's next message)" if item.get("interrupted") else item["role"]
+        lines.append(f"- {role}: {text[:800]}" + (" [truncated]" if len(text) > 800 else ""))
         if item.get("images") and project:
             try:
                 with S.project_lock(project):
@@ -1581,9 +1582,11 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
         chat_log(project, "assistant", res.get("text") or (res.get("error") or ""), trigger=trigger,
                  engine="claude", context_percent=pct, turns=res.get("turns"),
                  tools=_tool_log(res.get("tools") or []), turn_id=turn_id, **_created_meta(project, turn_id),
-                 **_slug_meta(slug), **({"completed": not bool(res.get("error"))} if trigger == "ci-recheck" else {}))
+                 **_slug_meta(slug),
+                 **({"completed": not bool(res.get("error"))} if trigger == "ci-recheck" else {}))
         S.regen_state_md(project)
-        res.update({"context_percent": pct, "completed": not bool(res.get("error")), "turn_id": turn_id})
+        res.update({"context_percent": pct, "completed": not bool(res.get("error")),
+                    "turn_id": turn_id})
     return res
 
 

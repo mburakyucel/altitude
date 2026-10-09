@@ -108,7 +108,7 @@ platform termination checks remain the authority for recovery.
 An inbox-owned operator message offers Remove until the exact batch is claimed. Cancellation uses
 the same project lock as resume and hook pickup, records removal in the existing message delivery
 metadata, and excludes only that ID from pending input. Original text stays in conversation evidence;
-the UI shows Message removed, and CLI history/search retain an explicit removal marker. Removed text
+the message leaves the task conversation, and CLI history/search retain an explicit removal marker. Removed text
 cannot serve as a new decision source. Quick choices and messages
 already cited by recorded decisions remain intact. Removal changes no Stop, question, fault or resume
 request. Claimed messages say Sending to session and cannot be removed; a launch attempt retains
@@ -1969,7 +1969,9 @@ the record as the typing indicator for a chat turn, or as the line "L3 is handli
 server-triggered one; the tab that started the turn keeps its streamed reply instead. The stream's
 first line names the turn (`{"turn": {id, started_at, trigger}}`) before any text, and the
 history rows carry the same id, so the local rows stay until history owns the turn and a stored
-assistant or error row wins over a raced active snapshot.
+assistant or error row wins over a raced active snapshot. An assistant row marked `interrupted`
+renders only its partial reply, with no notice; with no partial text it renders nothing, and the
+operator's next message follows directly under the stopped one.
 
 The conversation reads `/api/chat/<project>?limit=60`. The limit counts human chat rows and system
 rows (server-triggered turns and FYIs) separately, so a burst of system events never pushes the latest
@@ -2065,6 +2067,10 @@ far becomes that turn's answer, each message joins the history under its own tur
 streams beneath them. Each message retains its own visible row and receipt. The claimed rows show
 **Sending into the current turn** without **Remove** until then. Retries reuse the claim or the individual
 history receipts, and only one group is sent at a time.
+
+Historical assistant rows marked `interrupted` retain their partial reply, possibly empty.
+Fresh-session context, `alt l3 search` results and the chat audit packet keep that marker; those
+incomplete turns are never replayed.
 
 A group the turn can no longer take, because it ended first, returns to the queue front and runs next
 in arrival order. A group containing images, one sent during system work (**Runs next after system work**)

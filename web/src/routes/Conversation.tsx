@@ -322,10 +322,12 @@ export default function Conversation({
       rows.push(<SystemLine key={item.turn.id} turn={item.turn} project={name} titles={titles} />);
     } else {
       const { turn } = item;
+      // A saved interrupted reply said nothing: the operator's next message follows directly (SPEC.md §4.2).
+      const silent = turn.assistant?.interrupted === true && !turn.assistant.text.trim() && !turn.assistant.tasks?.length;
       rows.push(
-        <div key={turn.id} className="turn" data-turn={turn.id}>
+        <div key={turn.id} className="turn" data-turn={turn.id} data-joined={silent || undefined}>
           {turn.user ? <Bubble text={turn.user.text} at={turn.user.at} receipt={turn.user.delivery?.state === "unconfirmed" ? "Delivery unconfirmed" : undefined} images={<MessageImages project={name} images={turn.user.images} />} /> : null}
-          {turn.assistant ? (
+          {turn.assistant ? silent ? null : (
             <Reply text={turn.assistant.text} at={turn.assistant.at} role="assistant">
               {turn.assistant.tasks?.length ? <TurnTasks project={name} slugs={turn.assistant.tasks} titles={tasks} /> : null}
             </Reply>

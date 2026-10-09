@@ -43,7 +43,7 @@ test.describe("L2 Send now", () => {
     await expect(row("Earlier instruction joins too.").getByText("Delivered to session")).toBeVisible();
     await send("Remove this later message.");
     await row("Remove this later message.").getByRole("button", { name: "Remove", exact: true }).click();
-    await walk.state("l2-05-removed", { visible: [convo.getByText("Message removed", { exact: true })], hidden: [convo.getByRole("button", { name: "Send now", exact: true })] });
+    await walk.state("l2-05-removed", { visible: [selected], hidden: [row("Remove this later message."), convo.getByRole("button", { name: "Send now", exact: true })] });
     expect((await status()).tasks[0].edit).toContain("An existing edit stays");
   });
 
@@ -225,5 +225,26 @@ test.describe("L3 Send now", () => {
     await expect(convo.getByText("Deliver this next", { exact: true })).toHaveCount(1);
     await expect(convo.getByText("Earlier queued message", { exact: true })).toHaveCount(1);
     await expect(convo.getByText("Checking the current work.", { exact: true })).toHaveCount(1);
+  });
+
+  test("shows saved interrupted replies quietly, with and without partial output", async ({ page, request }, info) => {
+    const walk = walkthrough(page, info);
+    const convo = page.getByRole("region", { name: "Conversation", exact: true });
+    expect((await request.post("/fixture/interrupted-history")).ok()).toBe(true);
+    const turn = (text: string) => convo.locator(".turn").filter({ has: page.locator(".bubble", { hasText: text }) });
+    await walk.open("/projects/atlas");
+    await walk.state("l3-07-interrupted-partial", {
+      visible: [turn("Keep working").getByText("Two checks failed on the review branch, and the first log", { exact: false })],
+      hidden: [convo.getByText(/Interrupted/), convo.locator(".queued-row")],
+    });
+    await walk.state("l3-08-interrupted-empty", {
+      visible: [turn("Hold on").locator(".bubble"), turn("Use the other branch").getByText("Use the other branch answered.", { exact: true })],
+      hidden: [convo.getByText(/Interrupted|could not answer/), convo.locator(".queued-row"), turn("Hold on").locator(".reply")],
+    });
+    // The two operator messages sit back to back, as consecutive messages do.
+    const first = (await turn("Hold on").locator(".bubble").boundingBox())!;
+    const next = (await turn("Use the other branch").locator(".bubble").boundingBox())!;
+    expect(next.y - (first.y + first.height)).toBeLessThanOrEqual(12);
+    expect(next.y - (first.y + first.height)).toBeGreaterThanOrEqual(4);
   });
 });

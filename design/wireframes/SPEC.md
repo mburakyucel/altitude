@@ -1063,8 +1063,8 @@ Send now explains **Joins the current turn without stopping its work.** It hands
 removable operator group to the running turn in arrival order; each message keeps its bubble and
 receipt, and later arrivals remain outside the claim. Quick-choice receipts and
 messages already used by recorded decisions keep their evidence. **Removing…** disables removal until
-the response; success replaces only that bubble's text with **Message removed** and **Removed · not
-sent to the session**. Original text remains in durable evidence. Claim shows **Sending to session ·
+the response; success removes only that bubble from the conversation. Original text remains in
+durable evidence. Claim shows **Sending to session ·
 cannot remove**, and uncertain handoff shows **Delivery unconfirmed · cannot remove**, with no Remove.
 A prelaunch failure restores the queued controls. A refused removal refreshes delivery and names the
 refusal beside that message; denied and unconfirmed requests show their own inline error. Saved or
@@ -1665,7 +1665,9 @@ and receipt, and later arrivals remain outside the claim. A coordinator that del
 shows **Runs next after this turn** while its current chat turn continues. With native delivery, pending
 rows say **Sending now…** with **Sending into the current turn** and no Remove. Once the turn takes them in,
 the reply so far ends, each message appears as its own operator bubble, and the rest of the reply streams
-beneath the group. A message whose engine acknowledgement is uncertain retains **Delivery unconfirmed**
+beneath the group. Historical interrupted replies keep any partial text as an ordinary reply,
+with no notice. An empty interrupted reply leaves no row, so the two operator bubbles sit back to
+back (8px apart, the first bubble's time beside it). A message whose engine acknowledgement is uncertain retains **Delivery unconfirmed**
 under its bubble after settlement and reload; it is never replayed automatically.
 A group with images, one sent during system work (**Runs next after system work**) or while
 no turn runs (**Runs next**) moves first and runs as the next turn; Remove stays available until claim.

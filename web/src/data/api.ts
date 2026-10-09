@@ -730,6 +730,8 @@ export const ChatMessageSchema = z
     slug: z.string().nullish(),
     /** On the assistant row of a turn that created tasks: their slugs (SPEC.md §5.2 note 4). */
     tasks: z.array(z.string()).nullish(),
+    /** Retained interrupted chat history: its text is the partial reply, possibly empty. */
+    interrupted: z.boolean().nullish(),
   })
   .passthrough();
 
