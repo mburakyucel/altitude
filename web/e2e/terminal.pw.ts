@@ -403,3 +403,84 @@ test("the terminal scrolls back through its output by touch or wheel and follows
   await page.getByRole("button", { name: "Close", exact: true }).click();
   await expect(page).toHaveURL(/\/projects\/atlas$/);
 });
+
+/** A horizontal swipe by Chromium's touch input: a resting pause before lifting, so its distance decides the outcome. */
+async function swipe(page: Page, x: number, y: number, dx: number, hold?: () => Promise<void>) {
+  const input = await page.context().newCDPSession(page);
+  const touch = (type: "touchStart" | "touchMove" | "touchEnd", point?: { x: number; y: number }) =>
+    input.send("Input.dispatchTouchEvent", { type, touchPoints: point ? [point] : [] });
+  try {
+    await touch("touchStart", { x, y });
+    for (let step = 1; step <= 8; step++) await touch("touchMove", { x: x + dx * step / 8, y });
+    await page.waitForTimeout(150);
+    await hold?.();
+    await touch("touchEnd");
+  } finally { await input.detach(); }
+}
+
+test("@phone-only swipes move through Conversation, Live session and Terminal; a swipe on the terminal screen stays with it", { tag: "@chromium" }, async ({ page, request }, info) => {
+  test.setTimeout(90_000);
+  const walk = walkthrough(page, info);
+  const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
+  const live = page.getByRole("region", { name: "Live session", exact: true });
+  const panel = page.getByRole("region", { name: "Terminal", exact: true });
+  const tabs = page.getByRole("navigation", { name: "Task views" });
+  const output = page.locator(".terminal-screen .xterm-rows");
+  const track = page.locator(".task-track");
+  const offset = () => track.evaluate((node) => parseFloat(node.style.transform.replace(/[^\d.-]/g, "")) || 0);
+  const center = async (locator: typeof panel) => { const box = (await locator.boundingBox())!; return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; };
+  expect((await request.post("/api/terminal-access", { data: { enabled: true } })).ok()).toBe(true);
+
+  await walk.open(TASK);
+  await walk.state("01-conversation", { visible: [conversation, tabs.getByRole("link", { name: "Terminal" })], hidden: [live, panel] });
+  let at = await center(conversation.locator(".convo-scroll"));
+  await swipe(page, 290, at.y, -220);
+  await expect(page).toHaveURL(`${TASK}/live`);
+  await walk.state("02-left-swipe-live-session", { visible: [live], hidden: [conversation, panel] });
+
+  // Half-way to Terminal the drag shows its loading view; the shell opens only once the switch completes.
+  const opens: string[] = [];
+  page.on("request", (sent) => { if (sent.url().includes("/api/terminal/")) opens.push(sent.url()); });
+  at = await center(live.locator(".live-body"));
+  await swipe(page, 300, at.y, -195, async () => {
+    await expect.poll(offset).toBe(-195);
+    await walk.state("03-half-way-terminal-preview", { visible: [live, panel.getByRole("status", { name: "Starting the terminal" })], hidden: [output] });
+    expect(opens).toEqual([]);
+  });
+  await expect(page).toHaveURL(`${TASK}/terminal`);
+  await expect(output).toContainText("Runs as you in ");
+  await run(page, `printf 'wide-%s\\n' ${"x".repeat(120)}; seq -f 'line-%02g' 1 30`);
+  await expect(output).toContainText("line-30");
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await walk.state("04-left-swipe-terminal", {
+    visible: [panel, output.getByText("line-30"), tabs.getByRole("button", { name: "Close terminal" })],
+    hidden: [live, conversation],
+  });
+
+  // A swipe that starts on the terminal's text belongs to the terminal: the tab stays.
+  const screen = await page.locator(".terminal-screen").boundingBox();
+  await swipe(page, 80, screen!.y + screen!.height / 2, 240);
+  await expect(page).toHaveURL(`${TASK}/terminal`);
+  expect(await offset()).toBe(0);
+  await walk.state("05-swipe-on-terminal-text-stays", { visible: [panel, output.getByText("line-30")], hidden: [live] });
+
+  // Past the last view the track gives a little and never switches.
+  const note = await center(panel.locator(".terminal-note"));
+  await swipe(page, 300, note.y, -160, async () => {
+    await expect.poll(offset).toBeLessThan(0);
+    expect(await offset()).toBeGreaterThan(-60);
+    await walk.state("06-end-resistance-after-terminal", { visible: [panel], hidden: [] });
+  });
+  await expect.poll(offset).toBe(0);
+  await expect(page).toHaveURL(`${TASK}/terminal`);
+
+  // Right returns the same way, one view per swipe, and the shell keeps running.
+  await swipe(page, 90, note.y, 220);
+  await expect(page).toHaveURL(`${TASK}/live`);
+  await walk.state("07-right-swipe-live-session", { visible: [live], hidden: [panel, conversation] });
+  at = await center(live.locator(".live-body"));
+  await swipe(page, 90, at.y, 220);
+  await expect(page).toHaveURL(TASK);
+  await walk.state("08-right-swipe-conversation", { visible: [conversation], hidden: [live, panel] });
+  expect((await (await request.get("/api/terminal/atlas?task=prepare-index-migration")).json()).state).toBe("running");
+});

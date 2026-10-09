@@ -4,6 +4,11 @@ import { renderApp, setViewport } from "../test/render";
 import { hostMicrophone, hostVoiceServer, installVoiceBrowser, speak } from "../components/voiceTest";
 import type { TaskView } from "../data/api";
 
+// The xterm screen needs a real canvas; here it stands in with the real screen's frame.
+vi.mock("../components/TerminalScreen", () => ({
+  default: ({ id }: { id: string }) => <div className="terminal-frame"><div className="terminal-screen" data-testid="terminal-screen">{id}</div></div>,
+}));
+
 function jsonResponse(obj: unknown, status = 200): Response {
   return new Response(JSON.stringify(obj), {
     status,
@@ -120,6 +125,8 @@ interface StubOptions {
   sendNow?: () => Response | Promise<Response>;
 }
 
+const terminalRunning = { state: "running", id: "t1", enabled: true, folder: "/fixture/worktree", offset: 0, exit_code: null, reason: null, busy: null };
+
 describe("queued L2 Send now", () => {
   it("keeps the queued message through interruption until canonical delivery and sends its identity once", async () => {
     let release!: (response: Response) => void;
@@ -176,6 +183,7 @@ function stub(task: unknown, options: StubOptions = {}) {
     if (url.includes("/api/task/action")) return options.action ? options.action() : jsonResponse({ ok: true });
     if (url.includes("/api/transcript/")) return jsonResponse(transcript);
     if (url.includes("/api/l2/send-now")) return options.sendNow ? options.sendNow() : jsonResponse({ ok: true });
+    if (url.startsWith("/api/terminal/")) return jsonResponse(terminalRunning);
     if (url.includes("/api/task/")) {
       if (options.task) return options.task();
       const record = task as { messages?: unknown[] };
@@ -891,8 +899,8 @@ describe("Task on desktop", () => {
 });
 
 describe("Phone swipe lifecycle", () => {
-  const touch = (type: "touchStart" | "touchMove" | "touchEnd", x: number) => {
-    const scroller = document.querySelector(".convo-scroll")!;
+  const touch = (type: "touchStart" | "touchMove" | "touchEnd", x: number, on = ".convo-scroll") => {
+    const scroller = document.querySelector(on)!;
     const point = [{ clientX: x, clientY: 300 }];
     fireEvent[type](scroller, type === "touchEnd" ? { touches: [], changedTouches: point } : { touches: point, cancelable: true });
   };
@@ -938,7 +946,7 @@ describe("Phone swipe lifecycle", () => {
     expect(router.state.location.pathname).toBe(route);
     await waitFor(() => expect(router.state.location.pathname).toBe(`${route}/live`));
     await waitFor(() => expect(screen.queryByRole("region", { name: "Task conversation" })).toBeNull());
-    expect(track()).toHaveAttribute("data-live");
+    expect(track().style.marginLeft).toBe("-100%");
     expect(track().style.transform).toBe("");
     expect(live()).toBeVisible();
     expect(screen.getByLabelText("Message the L2")).not.toBeVisible();
@@ -1006,6 +1014,85 @@ describe("Phone swipe lifecycle", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe(`${route}/live`));
     expect(track().style.transform).toBe("");
     expect(live()).toBeVisible();
+  });
+
+  describe("with a terminal", () => {
+    const withTerminal = { ...running, worktree: "/fixture/worktree" };
+    const terminalReads = (fetchMock: ReturnType<typeof stub>) => fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/api/terminal/")).length;
+    const terminal = () => screen.queryByRole("region", { name: "Terminal" });
+    const swipeOn = async (on: string, from: number, to: number) => {
+      touch("touchStart", from, on);
+      touch("touchMove", to, on);
+      touch("touchEnd", to, on);
+    };
+
+    it("swipes left from Live session to Terminal, opening it only once the switch completes, and right back", async () => {
+      const fetchMock = stub(withTerminal);
+      const { router } = renderApp({ route: `${route}/live` });
+      await screen.findByRole("region", { name: "Live session" });
+      touch("touchStart", 300, ".live-body");
+      touch("touchMove", 100, ".live-body");
+      expect(track().style.transform).toBe("translateX(-200px)");
+      expect(within(terminal()!).getByRole("status", { name: "Starting the terminal" })).toBeVisible();
+      expect(terminalReads(fetchMock)).toBe(0);
+      touch("touchEnd", 100, ".live-body");
+      expect(track().style.transform).toBe("translateX(-390px)");
+      await waitFor(() => expect(router.state.location.pathname).toBe(`${route}/terminal`));
+      expect(await screen.findByTestId("terminal-screen")).toBeVisible();
+      expect(track().style.marginLeft).toBe("-200%");
+      expect(track().style.transform).toBe("");
+      expect(live()).toBeNull();
+      const tabs = screen.getByRole("navigation", { name: "Task views" });
+      expect(within(tabs).getByRole("link", { name: "Terminal" })).toHaveAttribute("aria-current", "page");
+      expect(within(tabs).getByRole("button", { name: "Close terminal" })).toBeVisible();
+      expect(screen.getAllByRole("navigation", { name: "Task views" })).toHaveLength(1);
+      await swipeOn(".terminal-note", 100, 300);
+      await waitFor(() => expect(router.state.location.pathname).toBe(`${route}/live`));
+      await waitFor(() => expect(screen.queryByTestId("terminal-screen")).toBeNull());
+      expect(live()).toBeVisible();
+      expect(within(screen.getByRole("navigation", { name: "Task views" })).queryByRole("button", { name: "Close terminal" })).toBeNull();
+    });
+
+    it("leaves a swipe on the terminal screen to the terminal and resists past the last view", async () => {
+      stub(withTerminal);
+      const { router } = renderApp({ route: `${route}/terminal` });
+      await screen.findByTestId("terminal-screen");
+      await swipeOn("[data-testid=terminal-screen]", 100, 300);
+      expect(track().style.transform).toBe("");
+      touch("touchStart", 300, ".terminal-note");
+      touch("touchMove", 100, ".terminal-note");
+      const offset = parseFloat(track().style.transform.replace(/[^\d.-]/g, ""));
+      expect(offset).toBeLessThan(0);
+      expect(offset).toBeGreaterThan(-100);
+      touch("touchEnd", 100, ".terminal-note");
+      await waitFor(() => expect(track().style.transform).toBe(""));
+      expect(router.state.location.pathname).toBe(`${route}/terminal`);
+      expect(screen.getByTestId("terminal-screen")).toBeVisible();
+    });
+
+    it("moves one view per swipe from Conversation, never skipping Live session", async () => {
+      stub(withTerminal);
+      const { router } = renderApp({ route });
+      await screen.findByRole("region", { name: "Task conversation" });
+      await swipeOn(".convo-scroll", 300, 100);
+      await waitFor(() => expect(router.state.location.pathname).toBe(`${route}/live`));
+      await swipeOn(".live-body", 300, 100);
+      await waitFor(() => expect(router.state.location.pathname).toBe(`${route}/terminal`));
+      expect(await screen.findByTestId("terminal-screen")).toBeVisible();
+    });
+
+    it("keeps two views when the task has no terminal: Live session is the last", async () => {
+      stub(running);
+      const { router } = renderApp({ route: `${route}/live` });
+      await screen.findByRole("region", { name: "Live session" });
+      expect(terminal()).toBeNull();
+      touch("touchStart", 300, ".live-body");
+      touch("touchMove", 100, ".live-body");
+      expect(parseFloat(track().style.transform.replace(/[^\d.-]/g, ""))).toBeGreaterThan(-100);
+      touch("touchEnd", 100, ".live-body");
+      await waitFor(() => expect(track().style.transform).toBe(""));
+      expect(router.state.location.pathname).toBe(`${route}/live`);
+    });
   });
 });
 

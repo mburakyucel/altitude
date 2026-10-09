@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, ReactNode, RefObject, SetStateAction } from "react";
+import { createPortal } from "react-dom";
 import { Link, NavLink, useLocation, useMatch, useNavigate, useParams } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
@@ -31,7 +32,7 @@ import { useViewport } from "../shell/breakpoints";
 import { Overlay } from "../shell/Overlay";
 import { PhoneHeader } from "../shell/PhoneHeader";
 import LiveSession from "./LiveSession";
-import Terminal from "../components/Terminal";
+import Terminal, { TerminalPreview } from "../components/Terminal";
 import { useTaskSwipe } from "../components/useTaskSwipe";
 import "./task-details.css";
 
@@ -738,10 +739,14 @@ function TaskPage({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [phone, readOnly, denied, voiceOwnsEscape, actions.confirm, steering]);
-  // The swipe moves between Conversation and Live session; the Terminal tab is reached by its tab.
-  const swipe = useTaskSwipe(phone && !detailsOpen && !voiceOwnsEscape && !terminalRoute, liveRoute, (live) => {
-    void navigate(`${base}${live ? "/live" : ""}${location.search}`, { replace: true, state: location.state });
+  // The phone's views in their tab order: a swipe moves one step and never wraps (SPEC.md §3.10).
+  const paths = terminalOffered ? ["", "/live", "/terminal"] : ["", "/live"];
+  const view = terminalRoute ? 2 : liveRoute ? 1 : 0;
+  const swipe = useTaskSwipe(phone && !detailsOpen && !voiceOwnsEscape, view, paths.length, (next) => {
+    void navigate(`${base}${paths[next]}${location.search}`, { replace: true, state: location.state });
   });
+  // The phone tab row stays above the sliding views; the terminal on screen places its × there.
+  const [tabSlot, setTabSlot] = useState<HTMLDivElement | null>(null);
   const control = <SteeringControls steering={steering} disabled={readOnly || denied} escape={!phone} />;
 
   // A drag that reveals Live session starts its transcript, so the incoming view loads while it slides in.
@@ -766,7 +771,7 @@ function TaskPage({
   // The shell's end, however it ends, returns to Live session.
   const terminal = <Terminal project={project} task={task.slug} keys={phone} closeIcon={phone}
     onLeave={() => void navigate(`${base}/live${location.search}`, { replace: true, state: location.state })}
-    head={phone ? tabs : (close) => <header className="live-head">{panelSwitch}{close}</header>} />;
+    head={phone ? (close) => tabSlot ? createPortal(tabs(close), tabSlot) : null : (close) => <header className="live-head">{panelSwitch}{close}</header>} />;
   const panel = !phone && terminalRoute ? terminal : <ProseScope project={project} repository={task.repository}><LiveSession project={project} task={task} engineLabel={facts.engineLabel} waiting={facts.waiting} steering={!phone && !panelInline ? steering : undefined} readOnly={readOnly || denied} active={!phone || liveRoute || swipe.dragging} heading={phone ? undefined : panelSwitch} /></ProseScope>;
   // A `run` block in this conversation opens the task's terminal with its command typed (SPEC.md §3.3).
   const runTarget = useMemo(() => Boolean(task.worktree) && task.state !== "done" && task.state !== "rejected"
@@ -775,9 +780,10 @@ function TaskPage({
       void navigate(`${base}/terminal${location.search}`, { replace: true, state: location.state });
     } }
     : { unavailable: "This task has no terminal now." }, [task.worktree, task.state, task.slug, project, base, location.search, location.state, navigate]);
-  const conversation = <ProseScope project={project} repository={task.repository}><ProseTerminal value={runTarget}><TaskConversation project={project} task={task} facts={facts} readOnly={readOnly} checking={checking} refresh={refresh} draft={draft} setDraft={setDraft} pending={pending} setPending={setPending} steering={steering} active={!phone || !liveRoute} denied={denied} setDenied={setDenied} questionVisit={questionVisit} selection={selection} onEscapeOwnership={setVoiceOwnsEscape} reviewControls={reviewControls} /></ProseTerminal></ProseScope>;
+  const conversation = <ProseScope project={project} repository={task.repository}><ProseTerminal value={runTarget}><TaskConversation project={project} task={task} facts={facts} readOnly={readOnly} checking={checking} refresh={refresh} draft={draft} setDraft={setDraft} pending={pending} setPending={setPending} steering={steering} active={!phone || view === 0} denied={denied} setDenied={setDenied} questionVisit={questionVisit} selection={selection} onEscapeOwnership={setVoiceOwnsEscape} reviewControls={reviewControls} /></ProseTerminal></ProseScope>;
 
   if (phone) {
+    const idleUnless = (index: number) => view !== index && !swipe.dragging ? idle : undefined;
     return (
       <>
       <PhoneHeader overview={overview} onTitleClick={() => setDetailsOpen(true)} titleExpanded={detailsOpen} status={
@@ -788,14 +794,15 @@ function TaskPage({
         <SteeringNotice steering={steering} />
         {!detailsOpen ? resumeError : null}
         {!detailsOpen && actions.error && actions.confirm ? <p className="task-line text-danger" role="alert">Could not {actions.confirm} the task. <button type="button" className="link" onClick={() => setDetailsOpen(true)}>Retry</button></p> : null}
-        {terminalRoute ? null : tabs(null)}
-        {terminalRoute ? <div className="task-views">{terminal}</div> : <div className="task-views">
-          {/* Both views stay laid out; the idle one is invisible until a drag reveals it (SPEC.md §3.10). */}
-          <div className="task-track" ref={swipe.track} data-live={liveRoute || undefined}>
-            <div className="task-view" style={liveRoute && !swipe.dragging ? idle : undefined}>{conversation}</div>
-            <div className="task-view" style={!liveRoute && !swipe.dragging ? idle : undefined}>{panel}</div>
+        <div className="task-tab-slot" ref={setTabSlot}>{terminalRoute ? null : tabs(null)}</div>
+        <div className="task-views">
+          {/* Every view stays laid out; the idle ones are invisible until a drag reveals one (SPEC.md §3.10). */}
+          <div className="task-track" ref={swipe.track} style={{ marginLeft: `${-100 * view}%` }}>
+            <div className="task-view" style={idleUnless(0)}>{conversation}</div>
+            <div className="task-view" style={idleUnless(1)}>{panel}</div>
+            {terminalOffered ? <div className="task-view" style={idleUnless(2)}>{terminalRoute ? terminal : <TerminalPreview />}</div> : null}
           </div>
-        </div>}
+        </div>
         {details}
       </div>
       </>
