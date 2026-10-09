@@ -28,6 +28,15 @@ export const MAX_RECORDING_MS = 595_000;
 const LAST_MINUTE_MS = 60_000;
 const WAVE_BARS = 28;
 const WAVEFORM_CLOSE_MS = 3000;
+/**
+ * How long a later browser-recognition capture may hear exact digital silence from a live microphone
+ * before it counts as dead: on iOS 27 Safari only a tab's first recognition session hears the
+ * microphone (WebKit bug 326069). A working microphone's noise floor is never exactly zero.
+ */
+const DEAD_MICROPHONE_MS = 3000;
+/** A longer pause between frames (a hidden page) leaves the microphone unobserved: silence counts again from zero. */
+const FRAME_GAP_MS = 500;
+const DEAD_MICROPHONE = "The microphone went silent. Close and reopen Altitude to dictate again. Typing works.";
 
 /** Give asynchronous audio graph shutdown a chance to finish before another microphone opens. */
 let waveformClosing: Promise<void> | null = null;
@@ -251,7 +260,7 @@ function openWaveform(stream: MediaStream): Waveform | null {
   }
 }
 
-function useWaveform(graph: Waveform | null, running: boolean) {
+function useWaveform(graph: Waveform | null, running: boolean, onSilent: RefObject<(() => void) | null>) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const levels = useRef<number[]>(new Array<number>(WAVE_BARS).fill(0));
 
@@ -259,8 +268,11 @@ function useWaveform(graph: Waveform | null, running: boolean) {
     if (!graph?.analyser || !running || !canvas.current) return;
     const { context, analyser, stream } = graph;
     let frame = 0;
-    const data = new Uint8Array(analyser.fftSize);
+    const data = new Float32Array(analyser.fftSize);
     let lastSample = -Infinity;
+    let silentSince: number | null = null;
+    let lastFrame = -Infinity;
+    let heard = false;
     const node = canvas.current;
     const draw = () => {
       if (!analyser || !node) return;
@@ -272,13 +284,24 @@ function useWaveform(graph: Waveform | null, running: boolean) {
         node.width = width;
         node.height = height;
       }
-      analyser.getByteTimeDomainData(data);
+      analyser.getFloatTimeDomainData(data);
       let sum = 0;
-      for (const sample of data) {
-        const v = (sample - 128) / 128;
-        sum += v * v;
-      }
+      for (const sample of data) sum += sample * sample;
       const level = Math.min(1, Math.sqrt(sum / data.length) * 4);
+      const now = performance.now();
+      if (sum > 0) heard = true;
+      else if (!heard) {
+        // Only continuously observed silence from a live microphone into a running graph counts.
+        const live = context.state === "running" &&
+          stream.getAudioTracks().every((track) => track.readyState === "live" && track.enabled && !track.muted);
+        if (!live) silentSince = null;
+        else if (silentSince === null || now - lastFrame > FRAME_GAP_MS) silentSince = now;
+        else if (now - silentSince >= DEAD_MICROPHONE_MS) {
+          heard = true;
+          onSilent.current?.();
+        }
+      }
+      lastFrame = now;
       if (performance.now() - lastSample >= 1000 && context) {
         lastSample = performance.now();
         traceVoice("waveform.sample", context, { state: context.state, time: context.currentTime,
@@ -387,7 +410,8 @@ export default function Composer({
     HostCapture.watchers.add(watched);
     return () => { HostCapture.watchers.delete(watched); };
   }, []);
-  const canvas = useWaveform(waveform.current, phase === "listening");
+  const silent = useRef<(() => void) | null>(null);
+  const canvas = useWaveform(waveform.current, phase === "listening", silent);
 
   useLayoutEffect(() => {
     const node = field.current;
@@ -835,6 +859,14 @@ export default function Composer({
     setPhase("idle");
     focusField();
   }, [conversation, focusField, releaseStream, releaseWaveform]);
+  silent.current = () => {
+    const active = recorder.current;
+    // Only a tab's later recognition sessions go deaf; nothing recognized yet means nothing is lost.
+    if (!(active instanceof RecognitionCapture) || !active.followsAnother || active.text) return;
+    traceVoice("capture.silent", active);
+    cancel("mic");
+    setVoiceFailure(DEAD_MICROPHONE);
+  };
 
   useEffect(() => {
     if (!active && capturePhase !== "idle" && !voiceSend) cancel();
