@@ -66,7 +66,7 @@ class TestAdoption(AltitudeCase):
         self.adopt(merge=True)
         previous = land._pr_view(self.repo, "101")
         S.write_json(self.ghdir / "prs.json", {"101": previous})
-        self.git("merge", "--ff-only", "origin/main")
+        self.git("merge", "-q", "--no-edit", "origin/main")  # main holds the first PR's squash
         head = self.commit("src/second.py", "Second external proposal")
         self.git("push", "-q", "origin", "HEAD:proposal/second")
         self.pull = {**self.pull, "number": 102, "url": "https://github.com/team/demo/pull/102",
@@ -101,8 +101,8 @@ class TestAdoption(AltitudeCase):
             self.adopt()
         merged = land.land("merge second proposal", cwd=self.repo, wait=0, merge=True)
         self.assertEqual((merged["pr"], merged["merged"]), (102, True))
-        self.git("merge-base", "--is-ancestor", first["head"], "origin/main")
-        self.git("merge-base", "--is-ancestor", second["head"], "origin/main")
+        self.assertEqual(self.git("show", "-s", "--format=%P", "origin/main").strip(), second["previous_merge"])
+        self.assertEqual(self.git("rev-parse", "origin/main^{tree}"), self.git("rev-parse", f"{second['head']}^{{tree}}"))
         self.assertEqual(S.load_task("demo", "fix-x")["adoption_history"], [first])
         for args in commands:
             if args[:2] == ["git", "push"]:
@@ -180,7 +180,7 @@ class TestAdoption(AltitudeCase):
         self.assertTrue(result["merged"])
         self.assertIsNone(S.load_task("demo", "fix-x")["hold_merge"])
 
-    def test_stale_base_metadata_uses_current_main_and_preserves_real_history(self):
+    def test_stale_base_metadata_uses_current_main_and_squashes_onto_it(self):
         old_base = self.git("rev-parse", "origin/main").strip()
         (self.project_repo / "base.txt").write_text("main advances independently\n")
         git("add", "base.txt", cwd=self.project_repo)
@@ -196,7 +196,8 @@ class TestAdoption(AltitudeCase):
         (self.ghdir / "merge_git.txt").touch()
         result = self.adopt(merge=True)
         self.assertTrue(result["merged"])
-        self.assertEqual(self.git("show", "-s", "--format=%P", "origin/main").strip(), f"{new_base} {head}")
+        self.assertEqual(self.git("show", "-s", "--format=%P", "origin/main").strip(), new_base)
+        self.assertEqual(self.git("rev-parse", "origin/main^{tree}"), self.git("rev-parse", f"{head}^{{tree}}"))
 
     def assert_unpublished(self, selected_index=None):
         self.assertIsNone(self.receipt())
@@ -205,7 +206,7 @@ class TestAdoption(AltitudeCase):
                              for a in self.gh_log()))
         self.assertEqual(git("rev-parse", "proposal/external", cwd=self.remote).strip(), self.original)
 
-    def test_cli_dry_run_then_task_additions_resume_and_history_preserving_merge(self):
+    def test_cli_dry_run_then_task_additions_resume_and_squash_merge(self):
         self.commit("src/already.py", "Existing task addition", "demo/fix-x")
         self.staged_change()
         run = subprocess.run([sys.executable, str(ALT), "land", "--message", "reconcile", "--adopt-pr", "101",
@@ -233,7 +234,7 @@ class TestAdoption(AltitudeCase):
         (self.ghdir / "merge_git.txt").touch()
         result = land.land("merge reviewed proposal", cwd=self.repo, wait=0, merge=True)
         self.assertTrue(result["merged"])
-        self.git("merge-base", "--is-ancestor", self.original, "origin/main")
+        self.assertEqual(self.git("rev-parse", "origin/main^{tree}"), self.git("rev-parse", "HEAD^{tree}"))
         self.assertEqual(self.git("branch", "--show-current").strip(), "worktree-fix-x")
         self.assertIn("proposal/external", git("branch", cwd=self.remote))
         self.assertNotIn("worktree-fix-x", git("branch", cwd=self.remote))
@@ -242,9 +243,9 @@ class TestAdoption(AltitudeCase):
         self.assertFalse(any("--force" in arg for args in pushes for arg in args))
         merges = [a for a in self.gh_log() if a[:2] == ["pr", "merge"]]
         self.assertEqual(len(merges), 1)
-        self.assertIn("--merge", merges[0])
+        self.assertIn("--squash", merges[0])
         self.assertNotIn("--delete-branch", merges[0])
-        self.assertNotIn("--squash", merges[0])
+        self.assertNotIn("--merge", merges[0])
         self.assertFalse(any(a[:2] == ["pr", "create"] for a in self.gh_log()))
         pushes_before = len([a for a in commands if a[:2] == ["git", "push"]])
         again = land.land("confirm merged result", cwd=self.repo, wait=0)
@@ -394,14 +395,14 @@ class TestAdoption(AltitudeCase):
             land.land("reviewed proposal", cwd=self.repo, merge=True, wait=0)
         self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
 
-    def test_no_ci_suite_gets_two_parent_candidate_with_original_ancestry(self):
+    def test_no_ci_suite_gets_the_squash_candidate_of_the_adopted_head(self):
         self.staged_change()
         S.write_json(self.ghdir / "checks.json", [])
         self.fake_runner("adoption-suite", script=f"""
 import subprocess
 parents = subprocess.check_output(['git', 'rev-list', '--parents', '-n', '1', 'HEAD'], text=True).split()
-assert len(parents) == 3, parents
-subprocess.run(['git', 'merge-base', '--is-ancestor', {self.original!r}, 'HEAD'], check=True)
+assert len(parents) == 2, parents
+subprocess.run(['git', 'diff', '--quiet', 'refs/heads/worktree-fix-x', 'HEAD'], check=True)
 assert not subprocess.check_output(['git', 'status', '--porcelain'], text=True).strip()
 print('3 passed')
 """)

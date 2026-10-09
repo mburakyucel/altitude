@@ -101,7 +101,7 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
             for context in contexts:
                 context['name'] = 'check'
                 context['checkSuite'].update(app={'databaseId': 15368},
-                    workflowRun={'event': 'pull_request', 'file': {'path': '.github/workflows/self-hosted-checks.yml'}})
+                    workflowRun={'event': 'pull_request', 'file': {'path': '.github/workflows/hosted-checks.yml'}})
         tree = subprocess.check_output'''))
         for name in ('fixture-candidate-check', 'make'):
             runner = self.tmp / 'bin' / name
@@ -712,7 +712,7 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         """The base ships the check workflow, so both owners' landings require the PR `check`."""
         workflow = self.repo / land.config.PR_CHECK_WORKFLOW
         workflow.parent.mkdir(parents=True)
-        workflow.write_text('on: [pull_request]\njobs:\n  check:\n    runs-on: self-hosted\n')
+        workflow.write_text('on: [pull_request]\njobs:\n  check:\n    runs-on: ubuntu-latest\n')
         git('add', land.config.PR_CHECK_WORKFLOW, cwd=self.repo)
         git('commit', '-q', '-m', 'require the PR check', cwd=self.repo)
         git('push', '-q', 'origin', 'main', cwd=self.repo)

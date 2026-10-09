@@ -1339,7 +1339,7 @@ same 3600-second bound, so a merging candidate keeps the turn while its fresh re
 queued or running and one green check leads to one merge; `--wait` only shortens it. GitHub registers
 a head's checks one at a time, so a required check absent from the head is waited for within the same
 bound rather than read as skipped; landing names it and the checks that have registered, such as a
-nonrequired skipped hosted job. Landing prints the remaining bound when it first sees pending or
+skipped nonrequired job. Landing prints the remaining bound when it first sees pending or
 unregistered required checks. A required check that never registers within the bound ends the wait as
 `missing` with that observation and does not merge. An admission timeout refuses without selecting
 a candidate or publishing changes; retry explicitly when ready.
@@ -1371,11 +1371,10 @@ deadline, without releasing the repository turn. Final review/context, CI, holds
 run again after assessment; review refusal leaves the merge hold intact.
 
 The turn is a process-owned repository lock, not a durable or FIFO queue. Dry runs and nonmerging preparation
-in other repositories do not wait for it. The containerized
-self-hosted runner and a `make check` run by hand outside `alt land` do not share it; a hand run
-without `CI` set uses two browser workers. External writers and older landing versions
-can still change refs: stale base/head evidence refuses merge and is never reused or retried
-automatically. Only invocations using this installed version share serialization.
+in other repositories do not wait for it. CI runs and a `make check` run by hand outside
+`alt land` do not share it; a hand run without `CI` set uses two browser workers. External
+writers and older landing versions can still change refs: stale base/head evidence refuses merge
+and is never reused or retried automatically. Only invocations using this installed version share serialization.
 
 After its push, landing pins the candidate from the fetched `origin/<branch>` tip, which must be
 the revision it pushed; any other tip is a head the landing did not push and refuses at once
@@ -1387,7 +1386,7 @@ to pass on that exact pushed head with current main included.
 
 ### This repository's required PR check
 
-Owners and helpers run relevant tests during development. The self-hosted PR `check` runs
+Owners and helpers run relevant tests during development. The GitHub-hosted PR `check` runs
 the full suite. Use the existing commands:
 
 ```sh
@@ -1404,8 +1403,8 @@ serialized across Altitude owners; the merged tree must equal the tested tree. F
 cancelled, stale or unrelated required runs block. `--test-cmd` supplies no bypass for this gate.
 
 After a bounded CI wait, retain the run and missing evidence, explicitly block and ask L3 for a
-[durable CI recheck](#durable-ci-recheck). A missing run needs trigger/runner recovery, not an
-invented run ID. Runner or storage outages pause merges until verified recovery and fresh checks.
+[durable CI recheck](#durable-ci-recheck). A missing run needs trigger recovery, not an
+invented run ID. GitHub Actions outages pause merges until verified recovery and fresh checks.
 Reviews and live merge holds remain mandatory. Opening a held PR does not authorize its merge.
 GitHub updates outside Altitude remain unprotected. Other repositories keep their hosted/no-CI
 behavior and local command choice. See [evidence and activation](DEVELOPMENT.md#ci-and-candidate-identity).
@@ -1736,7 +1735,7 @@ incorporate only changes belonging to this task; the original receipt remains un
 For a task explicitly assigned several existing PRs, finish the active PR before adopting the next.
 Fetch main, incorporate the next inspected PR without rewriting history, then repeat `--adopt-pr`
 with its number, full observed head and a reason naming its assignment. Landing verifies the
-previous PR is merged and its original and final heads are preserved on current main. It retains
+previous PR is merged and its merge commit is on current main. It retains
 the previous receipt unchanged in `adoption_history` and selects the new `adopted_pr` under the
 project lock. `alt task show` and `alt task events` retain the audit trail. No receipt editing is
 needed. Refused adoption validation leaves the active receipt unchanged. Once adoption is recorded,
@@ -1759,14 +1758,15 @@ Unknown requiredness remains blocked. These rules apply to ordinary and adopted 
 At least one hosted check must actually succeed; entirely skipped CI cannot use the no-CI fallback.
 Where no CI is configured, use `--test-cmd "<full suite>"` if the
 default `make test` is unsuitable; it runs as [one argv command](#dry-run-and-gate-selection)
-on the exact two-parent merge candidate. The live task
+on the exact squash merge candidate. The live task
 owner and merge hold are rechecked before merging. The original branch receives only fast-forward
-pushes; rejected pushes never retry with force. `--merge` uses a merge commit and requests no
-branch deletion, so the repository must permit that merge method. Host-side branch deletion
-settings remain the repository operator's policy.
+pushes; rejected pushes never retry with force. `--merge` squashes the PR into one commit on main,
+as ordinary landing does, and requests no branch deletion; the PR keeps its original commits.
+Host-side branch deletion settings remain the repository operator's policy.
 
-`--merge` incorporates current main while holding the repository turn. If that integration
-conflicts, reconcile manually while preserving the adopted commits with a merge commit:
+`--merge` incorporates current main into the task branch while holding the repository turn. If
+that integration conflicts, reconcile manually while preserving the adopted commits with a merge
+commit:
 
 ```sh
 git fetch origin main
