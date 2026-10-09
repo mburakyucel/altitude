@@ -658,8 +658,10 @@ source making the question obsolete. Queued guidance reaches the owner's next ch
 For an unnecessary escalation that L3 settles within existing delegated authority, the L2 records
 `--l3-authority` with specific evidence and rationale against the exact L3 task message and question
 revision. The receipt attributes the answer to L3 and the authority assessment to its owning L2/attempt;
-source and revision checks do not replace the owner's substantive judgment. Partial resolution preserves
-the original audience and independent worker, capacity and fault state. Genuine operator choices still
+source and revision checks do not replace the owner's substantive judgment. Partial resolution asks its
+remainder of L3 unless the owner names it for the operator, and preserves independent worker, capacity
+and fault state. While the task is blocked, the wait follows its open members: the operator's turn
+while one of theirs is open, L3's while only L3 members are, and no wait once none is. Genuine operator choices still
 need original operator authority, and neither this resolution nor its receipt releases a merge hold.
 Report handoff closes the prior dilemma without accepting its approach;
 the report review can raise its own question.
