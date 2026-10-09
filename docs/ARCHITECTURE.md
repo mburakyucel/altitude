@@ -839,13 +839,16 @@ branch is deleted once the tip is on `origin/main` or a verified PR merged it; a
 found only on this machine stays and the `cleanup-worktree` event names it and its unmerged commit count.
 A running worker or failed fetch retries on the next tick; any other refusal is a recorded note, not a
 fault. A done task's cleanup then fast-forwards a self-deploying checkout.
-Invocations that merge or target this repository’s required PR check hold a separate `flock`
+Invocations with `--merge` hold a separate `flock`
 on `altitude-land.lock` in the repository's common Git directory, from before ownership reads and
 fetch through checks and merge. All its worktrees share the lock; task-state locks remain short,
 so messages and Stop stay available. Admission waits at most one hour, reports
 the seconds waited, and refreshes ownership and holds before publication. Current main is merged
 into the task branch before pushing when needed, preserving adopted ancestry and triggering fresh
-head checks. A conflicting integration is aborted with local work retained for owner reconciliation.
+head checks. Base-only movement during checks or merge automatically repeats integration,
+publication and fresh checks under the original publication deadline. Head or PR identity movement
+refuses. Adopted PR pushes remain fast-forward only. A conflicting integration is aborted with local
+work retained for owner reconciliation.
 For a completed review whose assessment is stale, the current L2's merging invocation retains the
 turn while the owner explicitly reassesses the pinned candidate through the existing review command.
 CI and assessment share one deadline, an hour after publication unless `--wait` shortens it, so a
@@ -857,21 +860,26 @@ assessing each request.
 Proposal and changes findings remain separate; a changes assessment does not retire a proposal.
 Fresh context invalidation, including during final merge validation, uses the same wait and original
 deadline. Final candidate, checks, ownership and hold validation repeats after assessment.
-Missing or unfinished review, candidate
-movement or ownership loss refuses. No review identity or disposition is automatically transferred.
+Missing or unfinished review, head or PR identity movement or ownership loss refuses.
+No review identity or disposition is automatically transferred.
 The final review/context check precedes recorded approval application, preserving holds on review refusal.
 The process owns the turn: return, exception or termination releases it without daemon recovery.
-There is no persistent queue or FIFO guarantee. Dry runs and nonmerging preparation in other repositories do not take
-the turn. External Git/GitHub writers, older landing code, CI runs and
-hand-run suites do not share it, so exact base/head refusals remain necessary.
+There is no persistent queue or FIFO guarantee. Dry runs and nonmerging invocations never take
+the turn. External Git/GitHub writers, other installations, older landing code, CI runs and
+hand-run suites do not share it. This repository's strict GitHub up-to-date required-check rule
+protects the final merge against other installations; the local turn alone cannot. Base-only merge
+refusals repeat integration and checks within the original deadline, with ownership, reviews,
+holds, approval and issue-closure gates repeated. No GitHub settings change is needed.
 This repository requires its GitHub-hosted PR `check` to run the full `make check` suite. Owners
 and helpers run relevant tests during development; landing does not repeat the full suite locally.
 CI proves its tested merge tree equals the PR head tree. Landing requires that successful PR
 check on the current head and verifies that the head includes current main. A branch missing
-current main needs reconciliation and a fresh PR run on the new head. Altitude serializes final
+current main is integrated by `--merge` and needs a fresh PR run on the new head. Altitude serializes final
 validation and merge, rechecks identity and holds, and verifies the merged tree against the
 tested tree. Missing, pending, failed or stale CI blocks; CI outages have no local bypass.
-The gate governs Altitude merges; GitHub updates outside Altitude remain unprotected.
+The task hold and review protocol govern Altitude merges. Concurrent hosted runs are bounded by
+GitHub capacity: 11 jobs per check against the plan's 20 concurrent jobs. A new PR push cancels
+that PR's superseded check run; main and manual runs are never cancelled.
 See [policy, evidence and activation](DEVELOPMENT.md#ci-and-candidate-identity).
 Planned file lists guide coordination without limiting edits or landing. The owner stages selected
 files or hunks and reviews `git diff --cached`; `alt land` commits exactly that index, preserving
@@ -1503,7 +1511,14 @@ altd's environment, and nothing else; off keeps every incident on the machine as
 with that reason. The issue carries the label `incident`, the sanitized title, expected and actual behavior,
 the sanitized cause, a reproduction line that reads pending triage until L3 comments one, the
 Altitude version and the incident marker (incident id plus an opaque project digest). Evidence,
-task, project, logs and conversations never supply public content.
+task, project, logs and conversations never supply public content. On an installed release the
+system facts also carry the `update` line from `update.json` (a newer followed release, up to date,
+or not checked), read without a network request. When that record shows a newer release, automatic
+publication holds the issue as `pending — held: …` because the fault may already be fixed, and the
+fault FYI and L3 message tell the operator to update and retry. The fault ledger ties its incident
+to the installed version, so any repeat after the update files and publishes a new incident. A held
+record stays held; only `alt incident publish` files it.
+Source checkouts and container images neither check for releases nor hold.
 
 `incidents.sanitize` decodes the text and rewrites home paths, `.altitude` and incident file
 references, long hex ids and UUIDs, email addresses, credentials and private key blocks, task
@@ -2150,7 +2165,12 @@ button, so a phone keyboard does not open; Escape returns focus to the field. Th
 ignores callbacks after cancellation or its end, including while punctuation is pending.
 Abandoned captures do not queue inference when a pending model load completes or apply late
 punctuation output. Native-device capture and audio-session behavior require native evidence;
-scripted recognizer tests establish ordering and text isolation only. The microphone
+scripted recognizer tests establish ordering and text isolation only. An iOS 27 Safari report describes a recognizer that
+hears only a tab's first session; later sessions get a live, unmuted microphone that delivers silence
+until the tab is reopened ([WebKit bug 326069](https://bugs.webkit.org/show_bug.cgi?id=326069)); matching symptoms alone do not confirm a device's cause. A later recognition capture in the page
+whose live, enabled, unmuted microphone gives exact digital silence to a running waveform graph for
+three continuously observed seconds, before any words, therefore ends as a cancel with "The microphone went silent. Close and reopen Altitude to dictate again. Typing works."
+A working microphone's noise floor is never exactly zero; any sound disarms the check. The microphone
 diagnostic in **Settings → Voice input → Voice troubleshooting** is opt-in and page-local:
 `voiceTrace.ts` retains up to 256 metadata-only events for ten minutes, including track
 state, recognizer callbacks and one waveform state/signal-presence sample per second. It never
@@ -2331,9 +2351,10 @@ or its recorded resolution. A queued task without a question retains its ordinar
 
 A direct L2 block publishes its question into that human thread. A published or reworded member takes
 the block's audience; an unchanged operator member keeps the operator's, so re-parking never moves an
-escalation away, and `waiting_on` names the operator only while one of the group's open members is
-theirs. A block that publishes or revises
-questions queues one L3 notification, including operator-directed blocks. The message names
+escalation away. Each block, escalation or resolution on a blocked task recomputes `waiting_on` from
+the open members: the operator while one is theirs, L3 while only L3 members are open, and nobody once
+none is. A block that publishes or revises questions, or a resolution that publishes a remaining part,
+queues one L3 notification, including operator-directed ones. The message names
 open members, revisions and their required authority. Comparing existing question revisions keeps
 unchanged re-parking quiet without another receipt or tracker. L3 can coordinate record-backed and
 scope portions; notification does not approve operator decisions or change their audience.
