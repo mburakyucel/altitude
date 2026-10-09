@@ -68,10 +68,10 @@ One engine is enough, and each integration is
 
 ## Get started
 
-Altitude runs for one person on a Linux x86_64 machine with a systemd user manager. Ubuntu 24.04
-is the initial target; clean-machine and provider acceptance remain pending. A Mac with Apple silicon
-on macOS 15 or newer installs with the same command. Installation, updates, rollback, uninstall and
-starting again at login pass in fresh macOS virtual machines; the
+Altitude runs for one person on a Linux x86_64 machine with a systemd user manager or a Mac with
+Apple silicon on macOS 15 or newer; both install with the same command. On Linux, Ubuntu 24.04 is
+the initial target; clean-machine and provider acceptance remain pending. On a Mac, installation,
+updates, rollback, uninstall and starting again at login pass in fresh macOS virtual machines; the
 [native runtime's acceptance](docs/ROADMAP.md#native-macos-runtime) is pending, so macOS is
 experimental. You need Python 3.12+, Git, OpenSSL (on a Mac, Homebrew's `openssl@3`), an
 authenticated GitHub CLI and one authenticated coding CLI. Agent work uses your coding account's
