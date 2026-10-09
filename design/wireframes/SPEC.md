@@ -369,25 +369,25 @@ file-backed service; delayed refusals and microphone results are controlled brow
 
 When L3 is unsure whether the operator wants work started, its reply offers it instead of asking
 (boards `ReplyTask`, `MobileReplyTask` and their state sheets). The reply ends with one quiet outlined
-button, **Create task**, led by the Work tab's icon, then the task's short title in 13px muted text.
-The title is the button's accessible description. The button is 34px tall; on phone its touch area
-extends to 44px. Pressing sends the operator's next chat message, `Create task: <title>`; the draft,
-images and voice input in the composer stay untouched. L3 then creates the task from its reply and
-the conversation without asking again, and its answer carries the task card. There is no form,
-dialog or second copy of the reply.
+button, **Create task**, led by a plus, then the task's short title in 13px muted text. The title is
+the button's accessible description. The button is 34px tall; on phone its touch area extends to 44px.
+Pressing sends L3 the instruction `Create task: <title>` as the operator's next chat message, but the
+conversation shows no message: the button changes in place, and its icon and colour say where the press
+stands. The draft, images and voice input in the composer stay untouched. L3 creates the task from its
+reply and the conversation without asking again, and its answer carries the task card. There is no
+form, dialog or second copy of the reply.
 
-| State | What appears and disappears |
+| State | The button |
 | --- | --- |
-| Reply without an offer | Prose only: ordinary answers, reports, system lines and replies that created a task show nothing. |
-| Reply with an offer | Create task and the title under the latest reply only. |
-| Pressed | The button dims to "Sending…" with a spinner and ignores further presses. |
-| Sent | The button leaves; the operator's message appears, takes focus, and "Create task sent" is announced. The typing indicator follows. |
-| Queued while L3 is busy | The message waits in the ordinary queued row with Send now and Remove; Remove brings the button back. |
-| Task created | L3's answer with its task card; no button. |
-| Not sent | Altitude refused it: the button stays with the reason in danger text (`role=alert`); pressing again retries. |
-| Unconfirmed | The response was lost: "Checking…" with "Couldn’t confirm it was sent. Checking the conversation…" while the conversation is read. A saved message retires the button; an unsaved one shows "Not sent. Press it again." beside the button. |
-| L3 could not answer | The failed-turn line; its Retry sends the same press, never a second task. |
-| Answered another way | Any message the operator sends or queues, typed, spoken or with images, retires the button. A stale window's press is refused with "The conversation has moved on, so this was not sent." |
+| Reply without an offer | Absent: ordinary answers, reports, system lines and replies that created a task show nothing. |
+| Offered | Plus, Create task, and the title, under the latest reply only. |
+| Working | Accent fill and a spinner, from the press until L3 answers; it ignores presses and keeps focus. "Create task sent" is announced once Altitude saves the press. L3's typing indicator follows. |
+| Waiting for L3 | A clock while the press waits behind L3's current work, with × (Remove, 44px target) inside the pill. Remove brings the offer back. The press is not listed among queued messages. |
+| Task created | Green fill, check, "Task created"; L3's answer below carries the task card. It stays in the history. |
+| Answered without a task | Muted check: L3 answered the press without creating a task. |
+| Not sent | Altitude refused the press or did not save it: the offer stays with a short danger note (`role=alert`): Altitude's reason, "Not sent" or, when the conversation cannot be read, "Not confirmed". Pressing again is safe. |
+| L3 could not answer | Danger outline, retry icon, "Retry": it sends the same press and never makes a second task. No failed-turn line. |
+| Answered another way | Any message the operator sends or queues, typed, spoken or with images, retires the offer. A stale window's press is refused with "The conversation has moved on, so this was not sent." |
 
 `web/e2e/create-task.pw.ts` walks these states at both widths against a disposable service running the
 real coordinator verbs, queue and task store; lost and refused responses are browser overlays.

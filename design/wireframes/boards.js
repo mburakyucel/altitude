@@ -32,7 +32,7 @@ window.WIREFRAME_BOARDS = [
   { label: 'System turns in chat: reports, faults, FYIs', desktop: 'SystemTurnStates.html', desktopSize: { w: 1200, h: 1100, name: 'Sheet' } },
   { label: 'Conversation and report states', desktop: 'ConversationStates.html', desktopSize: { w: 1200, h: 740, name: 'Sheet' } },
   { label: 'Create task: a reply that could become a task', desktop: 'ReplyTask.html', mobile: 'MobileReplyTask.html' },
-  { label: 'Create task states', desktop: 'ReplyTaskStates.html', desktopSize: { w: 1200, h: 2000, name: 'Sheet' }, mobile: 'MobileReplyTaskStates.html' },
+  { label: 'Create task states', desktop: 'ReplyTaskStates.html', desktopSize: { w: 1200, h: 1280, name: 'Sheet' }, mobile: 'MobileReplyTaskStates.html' },
   { label: 'Project lifecycle states', desktop: 'ProjectLifecycleStates.html', desktopSize: { w: 1200, h: 1400, name: 'Sheet' } },
 ];
 

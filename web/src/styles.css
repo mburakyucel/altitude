@@ -1927,10 +1927,20 @@
   cursor: pointer;
 }
 .create-task-button:hover { border-color: var(--accent); }
-.create-task-button[aria-disabled="true"] { color: var(--text-muted); border-color: var(--border); cursor: default; }
+.create-task-button[aria-disabled="true"] { cursor: default; }
 .create-task-button::after { content: ""; position: absolute; left: -1px; right: -1px; top: 50%; height: var(--target-min); translate: 0 -50%; }
+/* The button's own state (SPEC.md §3.3): fill while working, clock while waiting, green when done, red to retry. */
+.create-task[data-state="busy"] .create-task-button { background: var(--accent-tint); border-color: transparent; }
+.create-task[data-state="wait"] .create-task-button { color: var(--text-secondary); padding-right: 36px; }
+.create-task[data-state="done"] .create-task-button { background: var(--success-bg); border-color: transparent; color: var(--success-text); }
+.create-task[data-state="sent"] .create-task-button { color: var(--text-muted); }
+.create-task[data-state="fail"] .create-task-button { border-color: var(--danger); color: var(--danger); }
+.create-task-pill { position: relative; display: inline-flex; }
+.create-task-remove { position: absolute; right: 4px; top: 50%; translate: 0 -50%; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--text-muted); cursor: pointer; }
+.create-task-remove:hover { background: var(--accent-tint); color: var(--text-primary); }
+.create-task-remove::after { content: ""; position: absolute; inset: 50% auto auto 50%; width: var(--target-min); height: var(--target-min); translate: -50% -50%; }
 .create-task-title { min-width: 0; color: var(--text-muted); font-size: var(--text-meta); overflow-wrap: anywhere; }
-.create-task-note { flex-basis: 100%; font-size: var(--text-meta); }
+.create-task-note { font-size: var(--text-meta); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 /* Messages waiting for the next turn boundary (§4.2): muted rows under the conversation. */
 .queued {

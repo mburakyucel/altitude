@@ -19,6 +19,9 @@ function chat(page: Page, request: APIRequestContext) {
   return {
     convo, field, status,
     button: convo.getByRole("button", { name: "Create task", exact: true }),
+    // The same button, by the state it shows (SPEC.md §3.3).
+    state: (name: string) => convo.getByRole("button", { name, exact: true }),
+    press: convo.getByText(PRESS, { exact: true }),
     title: convo.getByText(TITLE, { exact: true }),
     typing: convo.getByRole("status", { name: "L3 is answering" }),
     async ask(text: string, answer: string) {
@@ -58,15 +61,16 @@ test("an offering reply creates one task from one press", async ({ page, request
     await route.fallback();
   }, { times: 1 });
   await c.button.click();
-  await walk.state("create-task-03-pressed-sending", { visible: [c.convo.getByRole("button", { name: "Sending…" })], hidden: [] });
+  const working = c.state("Create task, working");
+  await walk.state("create-task-03-pressed-working", { visible: [working], hidden: [c.press] });
   releasePost();
-  const sent = c.convo.locator("[data-offer-turn]").filter({ hasText: PRESS }).last();
-  await walk.state("create-task-04-sent-and-waiting", { visible: [sent, c.typing], hidden: [c.button] });
-  await expect(sent).toBeFocused();
+  await expect(working).toBeFocused();
+  await walk.state("create-task-04-l3-working", { visible: [working, c.typing], hidden: [c.press, c.title] });
+  await expect(working).toBeFocused();
   await expect(c.field).toHaveValue("A draft that stays");
   expect((await request.post("/fixture/release")).ok()).toBe(true);
   const card = c.convo.locator(".task-card").filter({ hasText: TITLE });
-  await walk.state("create-task-05-task-queued", { visible: [card, c.convo.getByText("Created it from our conversation.", { exact: true })], hidden: [c.button, c.typing] });
+  await walk.state("create-task-05-task-created", { visible: [c.state("Task created"), card, c.convo.getByText("Created it from our conversation.", { exact: true })], hidden: [c.button, c.typing, c.press] });
   const { tasks, verbs } = await c.status();
   expect(tasks.map((task) => task.title)).toEqual([TITLE]);
   expect(tasks[0].offer_turn).toMatch(/^[0-9a-f]{12}$/);
@@ -76,10 +80,11 @@ test("an offering reply creates one task from one press", async ({ page, request
   expect(again.status()).toBe(409);
   await page.reload();
   await expect(card).toBeVisible();
+  await expect(c.state("Task created")).toBeVisible();
   await expect(c.button).toBeHidden();
 });
 
-test("a press waits in the queue while L3 is busy, and Remove brings the action back", async ({ page, request }, info) => {
+test("a press waits while L3 is busy, and Remove brings the action back", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const c = chat(page, request);
   await walk.open("/projects/atlas");
@@ -87,11 +92,16 @@ test("a press waits in the queue while L3 is busy, and Remove brings the action 
   expect((await request.post("/fixture/system")).ok()).toBe(true);
   await expect.poll(async () => (await (await request.get("/api/chat/atlas")).json()).active?.trigger).toBe("restart");
   await c.button.click();
-  const row = c.convo.locator(".queued-row").filter({ hasText: PRESS });
-  await walk.state("create-task-06-queued-while-busy", { visible: [row, row.getByRole("button", { name: "Remove", exact: true })], hidden: [c.button] });
-  await expect(row).toBeFocused();
-  await row.getByRole("button", { name: "Remove", exact: true }).click();
-  await walk.state("create-task-07-removed-action-back", { visible: [c.button], hidden: [row] });
+  const waiting = c.state("Create task, waiting for L3");
+  const remove = c.convo.getByRole("button", { name: "Remove", exact: true });
+  await walk.state("create-task-06-waiting-for-l3", { visible: [waiting, remove], hidden: [c.press, c.convo.getByRole("list", { name: "Queued messages" })] });
+  await expect(waiting).toBeFocused();
+  if (info.project.name === "phone") {
+    const hit = await remove.evaluate((node) => Number.parseFloat(getComputedStyle(node, "::after").height));
+    expect(hit).toBeGreaterThanOrEqual(44);
+  }
+  await remove.click();
+  await walk.state("create-task-07-removed-action-back", { visible: [c.button, c.title], hidden: [waiting, remove] });
   expect((await request.post("/fixture/release")).ok()).toBe(true);
   await expect.poll(async () => (await (await request.get("/api/chat/atlas")).json()).active).toBeNull();
   expect((await c.status()).tasks).toEqual([]);
@@ -109,15 +119,15 @@ test("refused, unconfirmed and failed presses never create a duplicate", async (
   await walk.state("create-task-08-not-sent", { visible: [c.button, c.convo.getByRole("alert").filter({ hasText: "The conversation has moved on, so this was not sent." })], hidden: [] });
   await page.route("**/api/chat", (route) => route.request().method() === "POST" ? route.abort() : route.fallback(), { times: 1 });
   await c.button.click();
-  await walk.state("create-task-09-unconfirmed-not-saved", { visible: [c.button, c.convo.getByRole("alert").filter({ hasText: "Not sent. Press it again." })], hidden: [] });
+  await walk.state("create-task-09-unconfirmed-not-saved", { visible: [c.button, c.convo.getByRole("alert").filter({ hasText: /^Not sent$/ })], hidden: [] });
   await c.mode({ fail: true });
   await c.button.click();
-  const failed = c.convo.locator(".turn-failed").filter({ hasText: "L3 could not answer this turn." });
-  await walk.state("create-task-10-l3-failed", { visible: [failed.getByRole("button", { name: "Retry", exact: true })], hidden: [c.button] });
+  const retry = c.state("Retry, Create task");
+  await walk.state("create-task-10-l3-failed", { visible: [retry], hidden: [c.button, c.press, c.convo.getByText("L3 could not answer this turn.")] });
   await c.mode({});
-  await failed.getByRole("button", { name: "Retry", exact: true }).click();
+  await retry.click();
   const card = c.convo.locator(".task-card").filter({ hasText: TITLE });
-  await walk.state("create-task-11-retried-task-queued", { visible: [card], hidden: [c.button] });
+  await walk.state("create-task-11-retried-task-created", { visible: [c.state("Task created"), card], hidden: [c.button, retry] });
   expect((await c.status()).tasks.map((task) => task.title)).toEqual([TITLE]);
 });
 

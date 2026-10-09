@@ -1908,7 +1908,8 @@ under the reply. When L3 is unsure whether the operator wants work started, its 
 `alt task offer '<title>'` instead of asking; altd keeps the title on that reply's assistant row
 (`offer`) when the turn created no task, and the conversation shows Create task with the title under
 the latest such reply (spec §3.3). A press posts `{project, offer_turn}` to `POST /api/chat`, and altd
-queues the operator's ordinary chat message `Create task: <title>` carrying `offer_turn`. altd accepts
+queues the operator's ordinary chat message `Create task: <title>` carrying `offer_turn`; the conversation
+shows that message, queued or in history, as the state of the button rather than as a message. altd accepts
 the press only while that reply is the latest human-facing row and no operator message waits in the
 queue; anything else is refused with 409 and the reason. A repeated press returns the message it already
 queued. The turn that answers it gives `alt task new` the reply's turn id, which altd records on the
