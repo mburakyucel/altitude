@@ -2144,7 +2144,7 @@ button, so a phone keyboard does not open; Escape returns focus to the field. Th
 ignores callbacks after cancellation or its end, including while punctuation is pending.
 Abandoned captures do not queue inference when a pending model load completes or apply late
 punctuation output. Native-device capture and audio-session behavior require native evidence;
-scripted recognizer tests establish ordering and text isolation only. An iOS 27 Safari report describes its recognizer
+scripted recognizer tests establish ordering and text isolation only. An iOS 27 Safari report describes a recognizer that
 hears only a tab's first session; later sessions get a live, unmuted microphone that delivers silence
 until the tab is reopened ([WebKit bug 326069](https://bugs.webkit.org/show_bug.cgi?id=326069)); matching symptoms alone do not confirm a device's cause. A later recognition capture in the page
 whose live, enabled, unmuted microphone gives exact digital silence to a running waveform graph for
