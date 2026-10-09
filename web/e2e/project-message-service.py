@@ -19,7 +19,7 @@ def main():
         return {"text": text, "session_id": "fixture-message-session",
                 "reported_session_id": "fixture-message-session", "usage": {}}
     engines.claude_print = execute
-    engines.codex_turn = execute
+    engines.codex_exec = execute
     exchange = None
 
     def send(sender, target, text, summary, request_id, reply_to=None):

@@ -20,7 +20,7 @@ def main():
         return {"text": "Fictional report reviewed; nothing waits on you.", "session_id": "fixture-session",
                 "reported_session_id": "fixture-session", "usage": {}, "error": None, "tools": []}
 
-    engines.claude_print = engines.codex_turn = answer
+    engines.claude_print = engines.codex_exec = answer
     for index, (question, reply) in enumerate((("Is the fictional backup plan ready?", "Yes, it is written down."),
                                                ("Which fictional mirror goes first?", "The north mirror."))):
         l3.chat_log(project, "user", question, trigger="chat", turn_id=f"human-{index}")
