@@ -351,10 +351,44 @@ class TestTrustCheck(AltitudeCase):
         first = server.TRUST.arm("192.0.2.7")
         armed = server.TRUST.probe("192.0.2.7")  # a connection opens under the first check
         second = server.TRUST.arm("192.0.2.7")  # Check again, before that connection's alert arrives
-        server.TRUST.refused(armed)
+        server.TRUST.settled(armed, refused=True)
         self.assertEqual(server.TRUST.probe("192.0.2.7"), second, "the later check still arms new connections")
+        server.TRUST.settled(second, refused=False)
         self.assertEqual(server.TRUST.confirm(first, "192.0.2.7", False), "untrusted")
         self.assertEqual(server.TRUST.confirm(second, "192.0.2.7", True), "trusted")
+
+    def test_a_refusal_is_never_overridden_by_a_pass_on_the_same_check(self):
+        challenge = server.TRUST.arm("192.0.2.7")
+        refusing, accepting = server.TRUST.probe("192.0.2.7"), server.TRUST.probe("192.0.2.7")
+        server.TRUST.settled(refusing, refused=True)
+        server.TRUST.settled(accepting, refused=False)
+        self.assertEqual(server.TRUST.confirm(challenge, "192.0.2.7", True), "untrusted")
+
+    def test_a_pass_waits_for_the_checks_other_handshakes_and_retries_past_its_bound(self):
+        self.patch(server.TRUST, "ARM_SECONDS", .05)
+        challenge = server.TRUST.arm("192.0.2.7")
+        stalled, accepting = server.TRUST.probe("192.0.2.7"), server.TRUST.probe("192.0.2.7")
+        server.TRUST.settled(accepting, refused=False)
+        self.assertEqual(server.TRUST.confirm(challenge, "192.0.2.7", True), "retry", "an open handshake may refuse")
+        server.TRUST.settled(stalled, refused=False)
+        self.assertEqual(server.TRUST.confirm(challenge, "192.0.2.7", True), "trusted")
+
+    def test_a_browser_that_refuses_then_ignores_the_error_is_never_trusted(self):
+        # Told to ignore certificate errors, Chromium refuses the second certificate with an alert, then connects
+        # again accepting it. That connection can arrive while the refusal's own thread is still recording it.
+        armed = self.call(self.bypassed, "POST", "/api/trust", {})[1]
+        path = f"/api/trust/{armed['challenge']}"
+        settled, recording = server.TRUST.settled, threading.Event()
+        self.addCleanup(recording.set)
+        def late(challenge, refused):
+            if refused:
+                recording.wait(5)
+            settled(challenge, refused)
+        self.patch(server.TRUST, "settled", late)
+        with self.assertRaises(ssl.SSLCertVerificationError):
+            self.call(self.bypassed, "GET", path)
+        threading.Timer(.3, recording.set).start()
+        self.assertEqual(self.call(ssl._create_unverified_context(), "GET", path), (200, {"trusted": False}))
 
     def test_an_abandoned_connection_says_nothing_about_trust(self):
         challenge = self.call(self.trusting, "POST", "/api/trust", {})[1]["challenge"]
