@@ -65,6 +65,8 @@ For contributors:
   without a warning.
 - A delta history audit skips recorded heads its clone lacks, and `docs/RELEASING.md` explains how
   to cover GitHub's pull-request refs.
+- The web app keeps one lockfile, `web/pnpm-lock.yaml`; the development-only `undici` and
+  `source-map-js` move to patched releases.
 
 Known limitations:
 
