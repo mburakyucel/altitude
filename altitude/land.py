@@ -353,8 +353,9 @@ def _restore_delivery_hold(task: dict, previous: int | None) -> str | None:
 
 def _record_delivery(project: str, slug: str, task: dict, authority: dict | None, *,
                      branch: str, base: str, number: int | None = None, head: str | None = None,
-                     previous: dict | None = None) -> dict:
-    """Current publication plus immutable events; a pending publication cannot complete the task."""
+                     previous: dict | None = None, reconciled: dict | None = None) -> dict:
+    """Current publication plus immutable events; a pending publication cannot complete the task.
+    `reconciled` names the recorded head and merge evidence a merged PR's newer head replaces."""
     receipt = dict(number=number, head=head, base=base, branch=branch)
     with S.project_lock(project):
         current = S.load_task(project, slug)
@@ -378,7 +379,8 @@ def _record_delivery(project: str, slug: str, task: dict, authority: dict | None
         S.save_task(project, current)
         if hold:
             S.append_event(project, slug, "hold-merge", why=hold, actor="l2", hold_id=current.get("hold_merge_id"))
-        S.append_event(project, slug, "delivery", **current["delivery"], previous=previous)
+        S.append_event(project, slug, "delivery", **current["delivery"], previous=previous,
+                       **({"reconciled": reconciled} if reconciled else {}))
         return current
 
 
@@ -415,14 +417,39 @@ def _continuation_base(root: Path, branch: str,
 def _merged_retry(root: Path, project: str, slug: str, task: dict, authority: dict | None,
                   branch: str, base: str, pr: dict, lease: list[str], issues: list[int]) -> dict:
     _require_closing_issues(root, pr["number"], issues)
-    if not (task.get("delivery") or {}).get("number"):
+    delivered = task.get("delivery") or {}
+    reconciled = None
+    if delivered.get("number") and ((delivered["number"], delivered.get("branch"), delivered.get("head"))
+                                    != (pr["number"], pr.get("headRefName"), pr["headRefOid"])):
+        reconciled = _merged_head_evidence(root, delivered, pr, base)
+    if not delivered.get("number") or reconciled:
         task = _record_delivery(project, slug, task, authority, branch=pr["headRefName"],
                                 base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"),
-                                number=pr["number"], head=pr["headRefOid"])
+                                number=pr["number"], head=pr["headRefOid"], reconciled=reconciled)
+    if reconciled:
+        _note(f"PR #{pr['number']} merged at {pr['headRefOid'][:12]}, after its recorded head "
+              f"{reconciled['head'][:12]} — current delivery reconciled")
     _note(f"PR #{pr['number']} already merged — nothing to push")
     return {"pr": pr["number"], "url": pr.get("url"), "checks": "merged",
             "merged": True, "branch": branch, "commit": None, "head": None,
             "lease": lease, "staged": [], "hold": task.get("hold_merge"), "replaced": [], "local_tests": None}
+
+
+def _merged_head_evidence(root: Path, delivered: dict, pr: dict, base: str) -> dict:
+    """#771: the recorded PR merged on GitHub after later pushes to its own branch. Adopt that newer head only
+    when it extends the recorded one and its merge is on current main, so an unrelated merge never completes the task."""
+    number, merge = pr["number"], (pr.get("mergeCommit") or {}).get("oid")
+    if delivered["number"] != number or delivered.get("branch") != pr.get("headRefName"):
+        raise LandError(f"PR #{number} from {pr.get('headRefName')!r} merged, but the current delivery records "
+                        f"PR #{delivered['number']} from {delivered.get('branch')!r}; it is not reconciled")
+    if not merge or not pr.get("headRefOid"):
+        raise LandError(f"cannot reconcile PR #{number}: its merged head or merge commit is unavailable")
+    _need(_git(root, "merge-base", "--is-ancestor", delivered["head"], pr["headRefOid"]),
+          f"cannot reconcile PR #{number}: recorded head {delivered['head'][:12]} is not an ancestor of "
+          f"its merged head {pr['headRefOid'][:12]}")
+    _need(_git(root, "merge-base", "--is-ancestor", merge, f"origin/{base}"),
+          f"cannot reconcile PR #{number}: its merge {merge[:12]} is not on current {base}")
+    return {"head": delivered["head"], "merge": merge, "url": pr.get("url")}
 
 
 def _ensure_pr(root: Path, branch: str, base: str, message: str, pr_title: str | None,
