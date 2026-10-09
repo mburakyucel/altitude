@@ -1153,10 +1153,12 @@ def deliver_queued(project: str) -> dict | None:
             if not rows:
                 return None
             take = 1
-            if rows[0].get("trigger") == "chat" and not rows[0].get("images") and not rows[0].get("send_now"):
+            # A Create task press is a turn of its own: the reply's button shows that turn, never typed text.
+            if (rows[0].get("trigger") == "chat" and not rows[0].get("images") and not rows[0].get("send_now")
+                    and not rows[0].get("offer_turn")):
                 while (take < len(rows) and rows[take].get("trigger") == "chat"
                        and rows[take].get("slug") == rows[0].get("slug") and not rows[take].get("images")
-                       and not rows[take].get("send_now")):
+                       and not rows[take].get("send_now") and not rows[take].get("offer_turn")):
                     take += 1
             selected = rows[:take]
             selected_ids = [row.get("id") for row in selected]

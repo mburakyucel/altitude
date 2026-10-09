@@ -1605,6 +1605,23 @@ class TestChatQueue(AltitudeCase):
         self.assertIn(slug, late["error"])
         self.assertEqual(self.queue_rows(), [])
 
+    def test_a_create_task_press_runs_as_its_own_turn_apart_from_typed_messages(self):
+        offer = self.offer_turn()
+        release = self.hold_l3()
+        self.assertEqual(self.press(offer)[0], 200)
+        status, typed = self.post_json("/api/chat", {"project": self.project, "text": "and check the phone badge too"})
+        self.assertEqual(status, 200, typed)
+        release()
+        created = {}
+        with self.deliverable(), mock.patch.object(engines, "claude_print", side_effect=self.creating_provider(created)):
+            l3.deliver_queued(self.project)
+            l3.deliver_queued(self.project)
+        press, _, follow_up, _ = self.chat_view()["history"][-4:]
+        self.assertEqual((press["text"], press["offer_turn"]), ("Create task: Refresh Needs you after an answer", offer))
+        self.assertEqual(follow_up["text"], "and check the phone badge too")
+        self.assertNotIn("offer_turn", follow_up)
+        self.assertNotIn("check the phone badge", created["prompts"][0])
+
     def test_retrying_a_failed_create_task_turn_never_makes_a_second_task(self):
         offer = self.offer_turn()
         self.assertEqual(self.press(offer)[0], 200)
