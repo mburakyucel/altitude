@@ -126,7 +126,7 @@ class TestChatInterruption(AltitudeCase):
         self.assertEqual(result["session_id"], "saved-session")
         self.assertEqual(result["text"], "Partial answer")
         self.assertTrue(result["interrupted"])
-        self.assertEqual(result["error"], "Interrupted for a queued message")
+        self.assertIsNone(result["error"], "a confirmed interruption is not a failure")
         self.assertFalse(result["safe_to_retry"])
         self.assertIn("saved-session", result["raw_stdout"])
 
