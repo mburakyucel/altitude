@@ -15,6 +15,12 @@ on:
 permissions:
   contents: read
 
+# A newer push to a PR cancels that PR's run of the head it replaced, which can no longer merge; runs on
+# main and manual runs are never cancelled.
+concurrency:
+  group: checks-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   shard:
     runs-on: ubuntu-24.04

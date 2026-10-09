@@ -1334,14 +1334,14 @@ resolution remains an operation of the running or blocked owning L2.
 
 ### Concurrent landings
 
-`alt land` takes the repository turn when it merges or targets this repository's required PR
-check, with or without `--merge`. It waits before fetching, publishing or checking CI, prints
+`alt land --merge` takes the repository turn before fetching, publishing or checking CI, prints
 when waiting and when its turn starts, and returns seconds waited as `waited` (zero without a
 wait). This preserves shared candidate admission from I-20260923-062538 while CI runs the suite.
 Keep the command and owner session alive; ordinary contention needs no L3 landing-window request.
-Admission waits at most 3600 seconds. The shared CI and owner-assessment wait that follows has the
+Dry runs and invocations without `--merge` never take the turn. Admission waits at most
+3600 seconds. The shared CI and owner-assessment wait that follows has the
 same 3600-second bound, so a merging candidate keeps the turn while its fresh required check is
-queued or running and one green check leads to one merge; `--wait` only shortens it. GitHub registers
+queued or running; `--wait` only shortens it. GitHub registers
 a head's checks one at a time, so a required check absent from the head is waited for within the same
 bound rather than read as skipped; landing names it and the checks that have registered, such as a
 skipped nonrequired job. Landing prints the remaining bound when it first sees pending or
@@ -1352,7 +1352,13 @@ a candidate or publishing changes; retry explicitly when ready.
 Each admitted invocation rechecks ownership and holds, fetches current main, and merges it into
 the task branch when needed before pushing and checking the fresh candidate. This preserves
 adopted history. Conflicts abort integration and retain local work for the owner; dirty edits are
-not stashed. Required checks, review and original approval sources still govern delivery.
+not stashed. If only main moves after publication, the merging command incorporates it, pushes a
+new head and waits for fresh checks within the original publication deadline. It checks current
+ownership and the adopted target before integrating and publishing each candidate, and repeats review, hold, approval and
+`--closes-issue` gates; review assessments never transfer
+automatically. Head or PR identity movement refuses instead of retrying. Adopted PRs retain their
+history and accept only fast-forward pushes. Required checks and original approval sources still
+govern delivery.
 Failure or cancellation releases the turn; the next owner proceeds with its own candidate.
 Task messages and Stop remain available. Repeating a completed merge creates no duplicate PR.
 
@@ -1369,17 +1375,22 @@ Assess every stale request, including proposals, before posting further explanat
 original landing result. A changes assessment does not retire a proposal assessment or its findings.
 No assessment or finding disposition is carried forward automatically. If code needs edits or another
 review, cancel landing and prepare a new candidate. Missing or unfinished review, changed local/remote
-head/base, and lost ownership refuse; `--wait 0` and operator-run landings refuse stale assessment
+head or PR identity, and lost ownership refuse; `--wait 0` and operator-run landings refuse stale assessment
 immediately. Timeout or termination releases the turn with the pushed candidate retained and unmerged.
 Context changes detected during final merge validation use the same assessment wait and original
 deadline, without releasing the repository turn. Final review/context, CI, holds and approval checks
 run again after assessment; review refusal leaves the merge hold intact.
 
-The turn is a process-owned repository lock, not a durable or FIFO queue. Dry runs and nonmerging preparation
-in other repositories do not wait for it. CI runs and a `make check` run by hand outside
+The turn is a process-owned repository lock, not a durable or FIFO queue. CI runs and a `make check`
+run by hand outside
 `alt land` do not share it; a hand run without `CI` set uses two browser workers. External
-writers and older landing versions can still change refs: stale base/head evidence refuses merge
-and is never reused or retried automatically. Only invocations using this installed version share serialization.
+writers, older landing versions and other installations do not share it. This repository's strict
+GitHub up-to-date required-check rule closes the race between final validation and merge across
+installations; the local lock alone does not. A base-only refusal repeats integration and checks
+within the original deadline; stale evidence never authorizes a merge. No GitHub setting change is
+needed. Nonmerging CI can run alongside a merging candidate, bounded by GitHub capacity: each check
+uses 11 jobs against the plan's 20 concurrent-job limit. A newer PR push cancels that PR's superseded
+check run; main and manual runs are never cancelled.
 
 After its push, landing pins the candidate from the fetched `origin/<branch>` tip, which must be
 the revision it pushed; any other tip is a head the landing did not push and refuses at once
@@ -1403,8 +1414,9 @@ alt land --message "fix: describe the change" --merge
 
 Landing publishes the PR and waits for its required `check` on the current head; it does not
 run the full suite locally. The task branch includes current main. A branch missing current main
-needs reconciliation, a push and fresh PR checks on the new head. Final validation and merge are
-serialized across Altitude owners; the merged tree must equal the tested tree. Failed, pending, missing, skipped,
+is integrated automatically by `--merge`, followed by a push and fresh PR checks on the new head.
+Final validation and merge are serialized across Altitude owners sharing the common Git directory;
+the merged tree must equal the tested tree. Failed, pending, missing, skipped,
 cancelled, stale or unrelated required runs block. GitHub-managed scans on the head, such as CodeQL
 default setup, need no PR identity but must pass like any other check: a failing scan blocks and a
 pending one is waited for. `--test-cmd` supplies no bypass for this gate.
@@ -1413,7 +1425,8 @@ After a bounded CI wait, retain the run and missing evidence, explicitly block a
 [durable CI recheck](#durable-ci-recheck). A missing run needs trigger recovery, not an
 invented run ID. GitHub Actions outages pause merges until verified recovery and fresh checks.
 Reviews and live merge holds remain mandatory. Opening a held PR does not authorize its merge.
-GitHub updates outside Altitude remain unprotected. Other repositories keep their hosted/no-CI
+GitHub's strict required-check rule protects this repository's base race; Altitude's task holds and
+review protocol govern its own merges. Other repositories keep their hosted/no-CI
 behavior and local command choice. See [evidence and activation](DEVELOPMENT.md#ci-and-candidate-identity).
 
 ### Dry run and gate selection
@@ -1481,6 +1494,14 @@ commits onto current main before opening a fresh PR. This handles squash history
 remote branch. Previously published changes are not duplicated. An unchanged retry reports
 `checks: merged` as historical delivery, never a new check pass, and creates nothing. If main
 already contains the follow-up, no extra PR is needed and the current receipt is reconciled.
+
+A PR merged on GitHub after later pushes to its branch carries a newer head than the recorded
+delivery, which verification refuses until `alt land` runs again. That retry records the merged head
+as the current delivery when it is the recorded PR from the recorded branch, the recorded head is an
+ancestor of the merged head, and the merge commit is on current main. The delivery event names the
+replaced head, merge commit and PR URL. A different PR or branch, or a recorded head outside the
+merged history, is refused and the record stays unchanged; a record that already matches is left as
+it is. The owner then refreshes `report.json` for the reconciled delivery.
 
 Every PR requires its own current checks and appropriate review. A recorded approval releasing
 one PR's hold restores the original requirement for the next PR. L3 applies a separate release
@@ -1781,8 +1802,9 @@ git merge --no-ff origin/main -m "Merge main for validation"
 ```
 
 Resolve conflicts in the task worktree, rerun applicable checks and review, and land again.
-Landing pins current origin main and the PR head, confirms GitHub's authoritative base target,
-and refuses actual base/head movement. A lagging PR `baseRefOid` alone does not block that pair.
+Landing pins current origin main and the PR head and confirms GitHub's authoritative base target.
+Base-only movement repeats integration and fresh checks within the original deadline; head or PR
+identity movement refuses. A lagging PR `baseRefOid` alone does not block that pair.
 Task merge holds, recorded operator approval and the normal report/archive workflow also apply
 to adopted PRs.
 
