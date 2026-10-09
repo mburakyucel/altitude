@@ -34,6 +34,12 @@ Conversations and tasks:
 - Task briefs tell owners never to restart Altitude's or any managed project's service without
   naming one installation's services.
 
+Phones and devices:
+
+- The pairing field formats the code as it is typed: letters are uppercased, other characters are
+  ignored and the dash appears after four characters. A pasted or autofilled code with or without
+  its dash pairs the same way.
+
 Landing:
 
 - `alt land` waits for a required check that has not registered on the candidate yet, instead of
