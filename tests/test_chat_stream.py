@@ -31,7 +31,7 @@ class TestChatStream(AltitudeCase):
             for _ in range(400):  # far more than the socket buffers hold once the client is gone
                 on_text("x" * 20_000)
                 seen["chunks"] += 1
-            on_split("A Send now message the turn took in")  # the split event is just as harmless to a lost client
+            on_split("A Send now message the turn took in", {"state": "delivered", "at": "2026-01-01T00:00:00Z"})
             finished.set()
             return {"session_id": "s1", "context_percent": 1.0, "turns": 1, "cost": 0.0, "engine": "claude"}
 
