@@ -1750,7 +1750,7 @@ def _publish_question(task: dict, text: str, actor: str, *, recommendation: str 
     if design is _UNSET:
         design = previous.get("design") if previous and (previous["status"] == "open" or force_revision) else None
     groups = _store_groups(task)
-    audience = audience or (previous["audience"] if force_revision else "l3" if task.get("waiting_on") == "l3" else "operator")
+    audience = audience or ("l3" if task.get("waiting_on") == "l3" else "operator")
     parsed = parse_dilemma(text)
     structured = options is not None
     selected = next((o for o in parsed["options"] if o["key"] == parsed["recommendation"]["option"]), None)
@@ -1847,10 +1847,18 @@ def _publish_block_questions(task: dict, reason: str, actor: str, payload: dict 
                              recommendation: str | None, label: str | None, why: str | None,
                              *, design: dict | None = None) -> list[dict]:
     members = _publish_block_members(task, reason, actor, payload, recommendation, label, why, design=design)
-    # The operator has the turn only while an open member is theirs; otherwise the block waits on L3.
-    if any(q["status"] == "open" and q["audience"] == "operator" for q in members):
-        task["waiting_on"] = OPERATOR_MESSAGE_ROLE
+    _wait_on_open_members(task)
     return members
+
+
+def _wait_on_open_members(task: dict) -> None:
+    """The operator has the turn only while an open member is theirs; otherwise the block waits on L3 while any
+    member is open, and on nobody once none is."""
+    audiences = {q["audience"] for q in task.get("questions", []) if q["status"] == "open"}
+    if audiences:
+        task["waiting_on"] = OPERATOR_MESSAGE_ROLE if "operator" in audiences else "l3"
+    else:
+        task.pop("waiting_on", None)
 
 
 def _publish_block_members(task: dict, reason: str, actor: str, payload: dict | None,
@@ -2045,10 +2053,11 @@ def _decision_source(project: str, slug: str, question: dict, message_id: str, s
 
 def resolve_question(project: str, slug: str, identity: str, revision: int | None, message_id: str | None, *,
                      disposition: str, reason: str, expected_attempt: int, source: str = "task",
-                     remaining: str | None = None, recommendation: str | None = None,
+                     remaining: str | None = None, for_operator: bool = False, recommendation: str | None = None,
                      recommendation_label: str | None = None, recommendation_why: str | None = None,
                      l3_authority: str | None = None) -> dict:
-    """The owner records a sourced decision or withdraws its question without granting authority."""
+    """The owner records a sourced decision or withdraws its question without granting authority. A remaining
+    part is the question's next revision, asked of L3 unless the owner names the operator, as a block does."""
     if disposition not in ("answered", "superseded", "withdrawn") or not reason.strip():
         raise TransitionError("resolution needs answered/superseded/withdrawn and a concrete reason")
     withdrawn = disposition == "withdrawn"
@@ -2059,6 +2068,8 @@ def resolve_question(project: str, slug: str, identity: str, revision: int | Non
         raise TransitionError("withdrawal records only the owner's reason, not a sourced decision or remaining question")
     if remaining is not None and not remaining.strip():
         raise TransitionError("remaining question must name the still-relevant unanswered parts")
+    if for_operator and remaining is None:
+        raise TransitionError("--for-operator addresses a remaining question; name it with --remaining")
     if l3_authority is not None:
         if not isinstance(l3_authority, str) or not l3_authority.strip():
             raise TransitionError("L3 authority needs specific evidence and a rationale")
@@ -2095,8 +2106,16 @@ def resolve_question(project: str, slug: str, identity: str, revision: int | Non
         if remaining:
             _publish_question(task, remaining.strip(), "l2", recommendation=recommendation,
                               label=recommendation_label, why=recommendation_why, force_revision=True,
-                              previous=question, group=group, bump=False)
+                              previous=question, group=group, bump=False,
+                              audience="operator" if for_operator else "l3")
+        if task["state"] == "blocked" and not task.get("fault"):
+            _wait_on_open_members(task)
         S.save_task(project, task)
+        if remaining:
+            # A later block that parks this member publishes nothing new, so its publication tells L3 now.
+            from . import l3
+            l3.queue_locked(project, block_question(task, f"keeps a resolved question's remaining part open: "
+                                                          f"{remaining.strip()[:800]}"), trigger="block", slug=slug)
         S.append_event(project, slug, "question-resolved", question_id=identity, revision=revision, **receipt)
         S.regen_state_md(project)
         return question_view(project, task, question)
@@ -2407,12 +2426,13 @@ def decisions(project: str) -> list[dict]:
     return rows
 
 
-def block_question(task: dict) -> str:
+def block_question(task: dict, asks: str | None = None) -> str:
     """Notify the coordinator of published questions without transferring decision authority."""
     slug = task["slug"]
     questions = "\n".join(f"- {q['id']} revision {q['revision']} (authority: {q['audience']}): {q['detail']}"
                           for q in task.get("questions", []) if q["status"] == "open")
-    return (f"Task `{slug}` blocked and asks: {task['blocked_reason'][:800]}\n{questions}\n\n"
+    asks = asks or f"blocked and asks: {task['blocked_reason'][:800]}"
+    return (f"Task `{slug}` {asks}\n{questions}\n\n"
             f"Read `alt task messages {slug}` and `alt task show {slug}`. When the brief, the docs, or a recorded "
             f"decision settles a member, answer with `alt task message {slug} \"<answer and evidence>\" --summary \"<one line>\"` so its owner "
             "can record the resolution. This notification grants no operator authority. Keep operator-required "

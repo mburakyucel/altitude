@@ -2325,9 +2325,10 @@ or its recorded resolution. A queued task without a question retains its ordinar
 
 A direct L2 block publishes its question into that human thread. A published or reworded member takes
 the block's audience; an unchanged operator member keeps the operator's, so re-parking never moves an
-escalation away, and `waiting_on` names the operator only while one of the group's open members is
-theirs. A block that publishes or revises
-questions queues one L3 notification, including operator-directed blocks. The message names
+escalation away. Each block, escalation or resolution on a blocked task recomputes `waiting_on` from
+the open members: the operator while one is theirs, L3 while only L3 members are open, and nobody once
+none is. A block that publishes or revises questions, or a resolution that publishes a remaining part,
+queues one L3 notification, including operator-directed ones. The message names
 open members, revisions and their required authority. Comparing existing question revisions keeps
 unchanged re-parking quiet without another receipt or tracker. L3 can coordinate record-backed and
 scope portions; notification does not approve operator decisions or change their audience.
