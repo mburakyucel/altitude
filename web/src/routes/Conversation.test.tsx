@@ -1075,6 +1075,17 @@ describe("Conversation", () => {
     await waitFor(() => expect(within(region).queryByRole("list", { name: "Queued messages" })).toBeNull());
   });
 
+  it("preserves an uncertain delivery receipt in stored project history", async () => {
+    mockFetch({ chat: { ...chatView, history: [
+      { at: ago(5), role: "user", text: "Possibly read", trigger: "chat", turn_id: "uncertain", delivery: { state: "unconfirmed", at: ago(5) } },
+    ] } });
+    renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    expect(within(region).getByText("Delivery unconfirmed", { exact: true })).toBeInTheDocument();
+    expect(within(region).getAllByText("Possibly read")).toHaveLength(1);
+    expect(within(region).queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
   it("offers Retry under a failed reply and resends the same prompt", async () => {
     const fetchMock = mockFetch({
       chat: {

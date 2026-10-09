@@ -1641,7 +1641,9 @@ and receipt, and later arrivals remain outside the claim. A coordinator that del
 shows **Runs next after this turn** while its current chat turn continues. With native delivery, pending
 rows say **Sending now…** with **Sending into the current turn** and no Remove. Once the turn takes them in,
 the reply so far ends, each message appears as its own operator bubble, and the rest of the reply streams
-beneath the group. A group with images, one sent during system work (**Runs next after system work**) or while
+beneath the group. A message whose engine acknowledgement is uncertain retains **Delivery unconfirmed**
+under its bubble after settlement and reload; it is never replayed automatically.
+A group with images, one sent during system work (**Runs next after system work**) or while
 no turn runs (**Runs next**) moves first and runs as the next turn; Remove stays available until claim.
 Remove is disabled while the HTTP request is pending. An unavailable engine or operator wait disables
 Send now with the server's explanation. Denied, conflict and unconfirmed requests retain the row

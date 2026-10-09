@@ -1052,7 +1052,8 @@ def _sends_root(project: str) -> Path:
     return config.project_dir(project) / "l3-sends"
 
 
-def _split_turn(project: str, active_turn: dict, message_id: str, text: str, *, engine: str) -> str | None:
+def _split_turn(project: str, active_turn: dict, message_id: str, text: str, *, engine: str,
+                delivery: dict) -> str | None:
     """A message the running turn took in ends the reply so far and opens the next exchange, as if it had arrived
     between two turns; the turn continues under the new id. Returns the message's text, or None if not this turn's."""
     with _lifecycle_guard(project), S.project_lock(project):
@@ -1070,7 +1071,7 @@ def _split_turn(project: str, active_turn: dict, message_id: str, text: str, *, 
         elif created:
             _created[following] = created
         chat_log(project, "user", row["text"], trigger="chat", engine=engine, turn_id=following,
-                 queue_ids=[message_id], **_slug_meta(row.get("slug")))
+                 queue_ids=[message_id], delivery=delivery, **_slug_meta(row.get("slug")))
         for item in rows:
             if item.get("image_turn_id") == previous:
                 item["image_turn_id"] = following
@@ -1092,9 +1093,10 @@ def _settle_sends(project: str, sends: Path) -> None:
                 kept.append(row)
             elif row["id"] in recorded:
                 continue
-            elif engines.recover_send(sends, row["send_group"]) != "returned":
+            elif (outcome := engines.recover_send(sends, row["send_group"])) != "returned":
                 chat_log(project, "user", row["text"], trigger="chat", turn_id=uuid.uuid4().hex[:12],
-                         queue_ids=[row["id"]], **_slug_meta(row.get("slug")))
+                         queue_ids=[row["id"]], delivery={"state": outcome, "at": S.now()},
+                         **_slug_meta(row.get("slug")))
             else:
                 kept.append({key: value for key, value in row.items() if key not in ("sending", "send_group")})
         if kept != rows:
@@ -1119,10 +1121,12 @@ def _send_options(project: str, active_turn: dict, engine: str, on_split=None) -
                                                         if not (key in ("sending", "send_group") and row.get("id") in members)}
                                                        for row in rows])
             return
+        delivery = {"state": outcome, "at": S.now()}
         for index, member in enumerate(members):
-            delivered = _split_turn(project, active_turn, member, text if index == 0 else "", engine=engine)
+            delivered = _split_turn(project, active_turn, member, text if index == 0 else "", engine=engine,
+                                    delivery=delivery)
             if delivered is not None and on_split:
-                on_split(delivered)
+                on_split(delivered, delivery)
 
     return {"sends": sends, "on_send": on_send}
 
@@ -1375,7 +1379,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
          image_message: dict | None = None, on_split=None) -> dict:
     """Run one L3 turn. `engine` pins this turn; otherwise the project pin or the weekly quota selects
     a provider. Each provider resumes only its own transcript. `slug` keeps the owning task reference on
-    a task-linked project conversation and its queued turn. `on_split(text)` follows a Send now message the turn
+    a task-linked project conversation and its queued turn. `on_split(text, delivery)` follows a Send now message the turn
     took in; the turn then continues under its new id."""
     requested = engine
     with _turn_scope(project, trigger, slug) as active_turn:

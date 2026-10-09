@@ -136,6 +136,29 @@ test.describe("L3 Send now", () => {
     await walk.state("l3-07-unavailable", { visible: [button, convo.locator(".queued-row").getByText("Keep the queued text", { exact: true })], hidden: [] });
   });
 
+  test("retains uncertain delivery receipts after settlement and reload", async ({ page, request }, info) => {
+    const walk = walkthrough(page, info);
+    const convo = page.getByRole("region", { name: "Conversation", exact: true });
+    const field = page.getByRole("textbox", { name: "Message L3 about atlas" });
+    const status = async () => (await (await request.get("/fixture/status")).json());
+    expect((await request.post("/fixture/uncertain")).ok()).toBe(true);
+    await walk.open("/projects/atlas");
+    await field.fill("Keep working");
+    await convo.getByRole("button", { name: "Send", exact: true }).click();
+    await expect.poll(async () => (await status()).calls.length).toBe(1);
+    await field.fill("Possibly received");
+    await convo.getByRole("button", { name: /^(Send|Queue)$/ }).click();
+    await convo.getByRole("button", { name: "Send now", exact: true }).click();
+    expect((await request.post("/fixture/deliver")).ok()).toBe(true);
+    await walk.state("l3-15-unconfirmed-receipt", { visible: [convo.getByText("Delivery unconfirmed", { exact: true })], hidden: [convo.locator(".queued-row")] });
+    expect((await request.post("/fixture/release")).ok()).toBe(true);
+    await expect.poll(async () => (await (await request.get("/api/chat/atlas")).json()).active).toBeNull();
+    await page.reload();
+    await walk.state("l3-16-unconfirmed-reloaded", { visible: [convo.getByText("Delivery unconfirmed", { exact: true })], hidden: [convo.locator(".queued-row")] });
+    expect((await status()).calls).toHaveLength(1);
+    await expect(convo.locator(".bubble").filter({ hasText: /^Possibly received$/ })).toHaveCount(1);
+  });
+
   test("promotes the queued group for a boundary-only coordinator without interrupting", async ({ page, request }, info) => {
     const walk = walkthrough(page, info);
     const convo = page.getByRole("region", { name: "Conversation", exact: true });

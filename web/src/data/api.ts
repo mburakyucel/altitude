@@ -669,12 +669,15 @@ const ProjectMessageSchema = z.object({
   status: z.enum(["sent", "queued", "supplied", "registration-changed"]),
 });
 
+const ChatDeliverySchema = z.object({ state: z.enum(["delivered", "unconfirmed"]), at: z.string() });
+
 export const ChatMessageSchema = z
   .object({
     at: z.string().nullish(),
     role: z.string(),
     text: z.string(),
     project_message: ProjectMessageSchema.optional(),
+    delivery: ChatDeliverySchema.optional(),
     images: z.array(MessageImageSchema).nullish(),
     trigger: z.string().nullish(),
     /** Explicit L3 selection recorded by tasks.fyi; historical authorship alone is ambiguous. */
@@ -1572,7 +1575,7 @@ export interface ChatStreamHandlers {
   onAccepted?: () => void;
   /** The turn's server-side identity, so the page can key its bubble on it while the reply streams. With `user`, a
    * Send now message joined the turn: the reply so far is complete and the rest answers `user` under this turn. */
-  onTurn?: (turn: ActiveTurn, user?: string) => void;
+  onTurn?: (turn: ActiveTurn, user?: string, delivery?: ChatMessage["delivery"]) => void;
 }
 
 /**
@@ -1602,7 +1605,7 @@ export async function streamChat(
   let done: ChatSent = {};
   const handleLine = (line: string) => {
     if (!line.trim()) return;
-    let parsed: { t?: unknown; done?: ChatDone; queued?: unknown; turn?: unknown; user?: unknown };
+    let parsed: { t?: unknown; done?: ChatDone; queued?: unknown; turn?: unknown; user?: unknown; delivery?: unknown };
     try {
       parsed = JSON.parse(line) as { t?: unknown; done?: ChatDone; queued?: unknown; turn?: unknown; user?: unknown };
     } catch {
@@ -1613,7 +1616,8 @@ export async function streamChat(
       if (turn.success) {
         done = { ...done, turn: turn.data };
         handlers.onAccepted?.();
-        handlers.onTurn?.(turn.data, typeof parsed.user === "string" ? parsed.user : undefined);
+        const delivery = ChatDeliverySchema.safeParse(parsed.delivery);
+        handlers.onTurn?.(turn.data, typeof parsed.user === "string" ? parsed.user : undefined, delivery.success ? delivery.data : undefined);
       }
     }
     if (typeof parsed.t === "string") handlers.onText(parsed.t);

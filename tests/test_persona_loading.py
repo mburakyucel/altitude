@@ -44,11 +44,11 @@ class _Output:
 
 
 class _ProviderProcess:
-    """Capture the provider boundary at the job driver's launch input and return only deterministic session
-    initialization/output."""
+    """Capture driver launch input or coordinator exec stdin, returning deterministic session/output."""
 
-    def __init__(self, kwargs, sequence):
+    def __init__(self, command, kwargs, sequence):
         self.kwargs, self.sequence = kwargs, sequence
+        self.exec_command = (command[command.index(config.CODEX_BIN):] if config.CODEX_BIN in command else None)
         self.pid, self.returncode, self.alive = 4242, 0, True
         self.started = threading.Event()
         self.synchronous = kwargs.get("text", False)
@@ -60,8 +60,8 @@ class _ProviderProcess:
         if self.started.is_set():
             return
         text = self.received.getvalue()
-        self.spec = json.loads(text if isinstance(text, str) else text.decode())
-        command = self.command = self.spec["command"]
+        self.spec = None if self.exec_command else json.loads(text if isinstance(text, str) else text.decode())
+        command = self.command = self.exec_command or self.spec["command"]
         self.persona_path = (Path(command[command.index("--append-system-prompt-file") + 1])
                              if "--append-system-prompt-file" in command else None)
         self.persona = self.persona_path.read_text() if self.persona_path else None
@@ -71,7 +71,8 @@ class _ProviderProcess:
             events = [{"type": "system", "subtype": "init", "session_id": session},
                       {"type": "result", "session_id": session, "result": "Fixture answer", "usage": {}}]
         else:
-            session = self.session = self.spec["resume"] or f"fixture-session-{self.sequence}"
+            resume = (command[-2] if "resume" in command else None) if self.exec_command else self.spec["resume"]
+            session = self.session = resume or f"fixture-session-{self.sequence}"
             events = [{"type": "thread.started", "thread_id": session},
                       {"type": "item.completed", "item": {"type": "agent_message", "text": "Fixture answer"}},
                       {"type": "turn.completed", "usage": {}}]
@@ -83,7 +84,12 @@ class _ProviderProcess:
 
     @property
     def prompt(self):
-        return self.spec["input"][0]["text"]
+        return self.received.getvalue() if self.exec_command else self.spec["input"][0]["text"]
+
+    def communicate(self, timeout=None):
+        self.started.wait(10)
+        self.alive = False
+        return self.output, ""
 
     def poll(self):
         return None if self.alive else self.returncode
@@ -117,9 +123,9 @@ class PersonaLoading(AltitudeCase):
         real_popen = subprocess.Popen
 
         def popen(command, **kwargs):
-            if command[-len(engines._driver_command()):] != engines._driver_command():
+            if config.CODEX_BIN not in command and command[-len(engines._driver_command()):] != engines._driver_command():
                 return real_popen(command, **kwargs)  # Real local Git fixtures still validate task provenance.
-            process = _ProviderProcess(kwargs, len(self.processes))
+            process = _ProviderProcess(command, kwargs, len(self.processes))
             self.processes.append(process)
             return process
 
@@ -132,8 +138,13 @@ class PersonaLoading(AltitudeCase):
             self.assertEqual("--resume" in process.command, resumed)
         else:
             self.assertIsNone(process.persona_path)
-            self.assertEqual(process.command[:2], [config.CODEX_BIN, "app-server"])
-            self.assertEqual(process.spec["resume"] is not None, resumed)
+            if role == "l3":
+                self.assertEqual(process.command[:2], [config.CODEX_BIN, "exec"])
+                self.assertIn("--ignore-user-config", process.command)
+                self.assertEqual("resume" in process.command, resumed)
+            else:
+                self.assertEqual(process.command[:2], [config.CODEX_BIN, "app-server"])
+                self.assertEqual(process.spec["resume"] is not None, resumed)
             if resumed:
                 self.assertNotIn(text, process.prompt, "existing threads do not reload the persona")
                 self.assertNotIn("FIXTURE PERSONA UPDATE", process.prompt)

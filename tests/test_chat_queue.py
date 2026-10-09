@@ -1279,6 +1279,10 @@ class TestChatQueue(AltitudeCase):
                 self.assertEqual([next(iter(line)) for line in lines], ["turn", "turn", "turn", "turn", "done"])
                 members = [seen[key] for key in ("older", "selected", "later")]
                 self.assertEqual([line["user"] for line in lines[1:4]], [row["text"] for row in members])
+                receipts = [row["delivery"] for row in seen["history"] if row.get("queue_ids")]
+                self.assertEqual([receipt["state"] for receipt in receipts], ["delivered"] * 3)
+                self.assertTrue(all(receipt["at"] for receipt in receipts))
+                self.assertEqual([line["delivery"] for line in lines[1:4]], receipts)
                 following = [line["turn"]["id"] for line in lines[1:4]]
                 self.assertEqual(len(set([first, *following])), 4)
                 self.assertEqual(lines[4]["done"]["turn_id"], following[-1])
@@ -1301,7 +1305,11 @@ class TestChatQueue(AltitudeCase):
                     first, selected = seen["turn"]["id"], seen["selected"]
                     rows = [(row["role"], row["text"], row.get("queue_ids")) for row in seen["history"]]
                     users = [("user", seen[key]["text"], [seen[key]["id"]]) for key in ("older", "selected", "later")]
+                    receipts = [row["delivery"] for row in seen["history"] if row.get("queue_ids")]
+                    self.assertEqual([receipt["state"] for receipt in receipts], ["unconfirmed"] * 3)
+                    self.assertTrue(all(receipt["at"] for receipt in receipts))
                     if outcome == "unconfirmed":  # reported mid-turn: the reply so far ends there, as for delivered
+                        self.assertEqual([line["delivery"] for line in seen["lines"][1:4]], receipts)
                         self.assertEqual([next(iter(line)) for line in seen["lines"]],
                                          ["turn", "turn", "turn", "turn", "done"])
                         self.assertEqual(rows, [("user", "Current instruction", None),
@@ -1347,7 +1355,7 @@ class TestChatQueue(AltitudeCase):
                     self.assert_delivered_once(seen)
 
     def test_restart_settles_the_send_now_claim_of_a_turn_that_is_gone(self):
-        for left in ("json", "writing"):
+        for left in ("json", "writing", "delivered", "unconfirmed"):
             with self.subTest(left=left), self.deliverable():
                 selected = l3.queue_message(self.project, "Urgent correction", trigger="chat", role=config.OPERATOR_ACTOR)
                 sibling = l3.queue_message(self.project, "Later instruction", trigger="chat", role=config.OPERATOR_ACTOR)
@@ -1357,8 +1365,8 @@ class TestChatQueue(AltitudeCase):
                     l3.send_now(self.project, selected["id"])
                 sends = l3._sends_root(self.project) / turn["id"]
                 drop = sends / f"{selected['id']}.json"
-                if left == "writing":  # its driver had claimed the message and was writing it to the engine
-                    drop.rename(drop.with_suffix(".writing"))
+                if left != "json":  # its driver had claimed or settled the message before the daemon stopped
+                    drop.rename(drop.with_suffix(f".{left}"))
                 self.assertEqual(self.queue_rows()[0]["sending"], turn["id"])
                 before = len(l3.chat_history(self.project, None))
                 recover, outcomes = engines.recover_send, []
@@ -1379,8 +1387,11 @@ class TestChatQueue(AltitudeCase):
                                      ["Urgent correction\n\nLater instruction"])
                     self.assertEqual([row.get("queue_ids") for row in history], [[selected["id"]], [sibling["id"]]])
                 else:
-                    self.assertEqual(outcomes, [("unconfirmed", [f"{selected['id']}.writing"]) ] * 2)
+                    outcome = "unconfirmed" if left == "writing" else left
+                    self.assertEqual(outcomes, [(outcome, [f"{selected['id']}.{left}"]) ] * 2)
                     self.assertEqual(execute.call_count, 0)
+                    self.assertEqual([row["delivery"]["state"] for row in history], [outcome] * 2)
+                    self.assertTrue(all(row["delivery"]["at"] for row in history))
                     self.assertEqual([(row["role"], row["text"], row.get("queue_ids")) for row in history],
                                      [("user", "Urgent correction", [selected["id"]]),
                                       ("user", "Later instruction", [sibling["id"]])])
@@ -1539,13 +1550,17 @@ class TestChatQueue(AltitudeCase):
                 drop.rename(drop.with_suffix(".delivered"))
                 with mock.patch.object(l3, "_write_queue", side_effect=OSError("Queue write unavailable")):
                     with self.assertRaisesRegex(OSError, "Queue write unavailable"):
-                        l3._split_turn(self.project, turn, rows[0]["id"], "", engine=config.ENGINES[0])
+                        l3._split_turn(self.project, turn, rows[0]["id"], "", engine=config.ENGINES[0],
+                                       delivery={"state": "delivered", "at": S.now()})
             with mock.patch.object(l3, "turn") as execute:
                 self.assertIsNone(l3.deliver_queued(self.project))
                 execute.assert_not_called()
             self.assertEqual([row["queue_ids"] for row in l3.chat_history(self.project, None)],
                              [[row["id"]] for row in rows])
             self.assertEqual(self.queue_rows(), [])
+
+            self.assertEqual([row["delivery"]["state"] for row in l3.chat_history(self.project, None)],
+                             ["delivered"] * 2)
 
     def test_send_now_group_is_not_repeated_in_fresh_session_history(self):
         rows = [l3.queue_message(self.project, text, trigger="chat", role=config.OPERATOR_ACTOR)

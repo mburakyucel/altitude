@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Deterministic external CLI for the native container browser journey; no provider. Speaks Codex app-server."""
+"""Deterministic container browser CLI; coordinator exec and worker app-server, no provider."""
 import json
 import os
 from pathlib import Path
@@ -17,7 +17,25 @@ def notify(method,params):
     out({'method':method,'params':params})
 
 
+def coordinator(prompt):
+    if 'Create the fictional browser task.' in prompt:
+        subprocess.run(['alt','task','new','--title','Browser fixture task','--hold-merge','Fixture review','-'],
+            input='Fictional container task. Preserve the draft and wait for operator Stop. No external operations.\n',
+            capture_output=True,text=True,check=True,timeout=20)
+    return 'Fictional container coordinator connected.'
+
+
 control=json.loads((Path.home()/'.fixture-control.json').read_text())
+if sys.argv[1:2]==['exec']:
+    prompt=sys.stdin.read()
+    session=sys.argv[-2] if 'resume' in sys.argv else str(uuid.uuid4())
+    out({'type':'thread.started','thread_id':session})
+    if control['intro_failure']:
+        out({'type':'turn.failed','error':'Fixture authentication refused'})
+        raise SystemExit(1)
+    out({'type':'item.completed','item':{'type':'agent_message','text':coordinator(prompt)}})
+    out({'type':'turn.completed','usage':{'input_tokens':1,'output_tokens':1}})
+    raise SystemExit(0)
 for raw in sys.stdin:
     message=json.loads(raw)
     method,identity,params=message.get('method'),message.get('id'),message.get('params') or {}
@@ -41,11 +59,7 @@ for raw in sys.stdin:
             time.sleep(90)
             raise SystemExit(0)
         else:
-            if 'Create the fictional browser task.' in prompt:
-                subprocess.run(['alt','task','new','--title','Browser fixture task','--hold-merge','Fixture review','-'],
-                    input='Fictional container task. Preserve the draft and wait for operator Stop. No external operations.\n',
-                    capture_output=True,text=True,check=True,timeout=20)
             notify('item/completed',{'item':{'type':'agentMessage','id':'message',
-                'text':'Fictional container coordinator connected.'}})
+                'text':coordinator(prompt)}})
             notify('thread/tokenUsage/updated',{'tokenUsage':{'total':{'inputTokens':1,'outputTokens':1}}})
             notify('turn/completed',{'turn':{'id':'turn-1','status':'completed'}})

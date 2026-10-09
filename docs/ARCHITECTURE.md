@@ -2033,6 +2033,8 @@ overtakes an image in that group. System turns keep their existing boundary to
 preserve notification, CI and report delivery. System queue rows cannot be promoted or removed. After a
 turn, and at the next drain after a restart, each sent row settles from its outcome file: a message the
 engine may have read is recorded once in the history and never runs again; one it never read runs next.
+Each history row retains its delivery outcome; an uncertain acknowledgement displays **Delivery unconfirmed**
+after settlement and reload.
 No available engine, a restart in progress or a launch pause explains why it cannot be sent. There is
 no timer or automatic hard interruption; task-chat Stop remains the explicit control that ends work.
 The browser requests Send now by message ID.

@@ -143,7 +143,8 @@ interface Local {
   uncertain?: boolean;
   replay?: ImageSubmission;
   /** Exchanges this turn completed before a Send now message joined it, shown until the history has them. */
-  earlier?: { turnId: string | null; text: string; reply: string }[];
+  delivery?: ChatMessage["delivery"];
+  earlier?: { turnId: string | null; text: string; reply: string; delivery?: ChatMessage["delivery"] }[];
 }
 
 /** A task the turn created, under the reply: the link slice 3 grows into the §3.5 card. */
@@ -261,11 +262,11 @@ export default function Conversation({
       try {
         result = images ? await sendImageChat(name, text, { request_id: images.request_id, images: images.images, image_ids: images.image_ids }) : await streamChat(name, text, {
           onAccepted: () => { onAccepted?.(); update((cur) => ({ ...cur, accepted: true })); },
-          onTurn: (turn, user) => {
+          onTurn: (turn, user, delivery) => {
             if (user === undefined) return update((cur) => ({ ...cur, turnId: turn.id }));
             void queryClient.invalidateQueries({ queryKey: ["chat", name] });
-            update((cur) => ({ ...cur, turnId: turn.id, text: user, reply: "", images: undefined,
-              earlier: [...(cur.earlier ?? []), { turnId: cur.turnId, text: cur.text, reply: cur.reply }] }));
+            update((cur) => ({ ...cur, turnId: turn.id, text: user, reply: "", images: undefined, delivery,
+              earlier: [...(cur.earlier ?? []), { turnId: cur.turnId, text: cur.text, reply: cur.reply, delivery: cur.delivery }] }));
           },
           onText: (chunk) => update((cur) => ({ ...cur, reply: cur.reply + chunk })),
         });
@@ -323,7 +324,7 @@ export default function Conversation({
       const { turn } = item;
       rows.push(
         <div key={turn.id} className="turn" data-turn={turn.id}>
-          {turn.user ? <Bubble text={turn.user.text} at={turn.user.at} images={<MessageImages project={name} images={turn.user.images} />} /> : null}
+          {turn.user ? <Bubble text={turn.user.text} at={turn.user.at} receipt={turn.user.delivery?.state === "unconfirmed" ? "Delivery unconfirmed" : undefined} images={<MessageImages project={name} images={turn.user.images} />} /> : null}
           {turn.assistant ? (
             <Reply text={turn.assistant.text} at={turn.assistant.at} role="assistant">
               {turn.assistant.tasks?.length ? <TurnTasks project={name} slugs={turn.assistant.tasks} titles={tasks} /> : null}
@@ -361,14 +362,14 @@ export default function Conversation({
     for (const segment of earlier) {
       rows.push(
         <div key={`local-${segment.turnId}`} className="turn" data-local>
-          <Bubble text={segment.text} at={new Date().toISOString()} />
+          <Bubble text={segment.text} at={new Date().toISOString()} receipt={segment.delivery?.state === "unconfirmed" ? "Delivery unconfirmed" : undefined} />
           {segment.reply ? <Reply text={segment.reply} role="assistant" /> : null}
         </div>,
       );
     }
     rows.push(
       <div key="local" className="turn" data-local>
-        <Bubble text={local.text} at={new Date().toISOString()} pending={!local.accepted} images={<PendingImages images={local.images} />} />
+        <Bubble text={local.text} at={new Date().toISOString()} receipt={local.delivery?.state === "unconfirmed" ? "Delivery unconfirmed" : undefined} pending={!local.accepted} images={<PendingImages images={local.images} />} />
         {local.replay ? <p className={`turn-failed ${local.error || local.uncertain ? "text-danger" : "text-muted"}`} role={local.error || local.uncertain ? "alert" : "status"}>
           {local.error ? `Not sent. ${local.error}` : local.uncertain ? "Could not confirm send." : "Sending images…"}{" "}
           {local.error || local.uncertain ? <button type="button" className="link" onClick={() => void send(local.text, undefined, local.error ? { ...local.replay!, request_id: crypto.randomUUID() } : local.replay).catch(() => undefined)}>Retry</button> : null}

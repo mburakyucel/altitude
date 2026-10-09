@@ -19,6 +19,14 @@ import json, os, sys, time, uuid
 from pathlib import Path
 def out(message):
     print(json.dumps(message), flush=True)
+if sys.argv[1:2] == ['exec']:  # isolated coordinator: one prompt, streamed exec events
+    prompt = sys.stdin.read()
+    session = sys.argv[-2] if 'resume' in sys.argv else str(uuid.uuid4())
+    out({'type':'thread.started', 'thread_id':session})
+    out({'type':'item.completed', 'item':{'type':'agent_message',
+        'text':'Fictional coordinator connected.'}})
+    out({'type':'turn.completed', 'usage':{'input_tokens':1, 'output_tokens':1}})
+    raise SystemExit(0)
 for raw in sys.stdin:  # Codex app-server: JSON-RPC over stdio
     message = json.loads(raw)
     method, identity, params = message.get('method'), message.get('id'), message.get('params') or {}

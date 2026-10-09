@@ -1242,6 +1242,7 @@ an image in the group; the remaining rows retain their relative order and normal
 system turns keep their existing boundary to preserve notification and report receipts. After each turn,
 and at the next drain after a restart, a row still marked as sending settles from its outcome file: a
 message the engine may have read is recorded once and never replayed; one it never read runs next.
+An uncertain delivery retains **Delivery unconfirmed** on each message after settlement and reload.
 Repeated requests return the same receipt. Engine unavailability and launch pauses leave the row queued
 with an explanation. The priority marker adds no quiet-point restart hold.
 No timer stops a running command or escalates Send now into a hard interruption. Task-chat Stop

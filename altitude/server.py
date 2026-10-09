@@ -2503,9 +2503,9 @@ class Handler(BaseHTTPRequestHandler):
                     # shows the server's own rows for this turn never doubles them (SPEC.md §4.2).
                     emit({"turn": l3.active(project)})
 
-                def split(text: str) -> None:
+                def split(text: str, delivery: dict) -> None:
                     # A Send now message the turn took in ends the reply so far; the reply continues under its turn.
-                    emit({"turn": l3.active(project), "user": text})
+                    emit({"turn": l3.active(project), "user": text, "delivery": delivery})
 
                 over = threading.Event()
 

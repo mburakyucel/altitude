@@ -9,7 +9,7 @@ from altitude import config, engines, l3, server, state as S
 
 def main():
     configure()
-    release, deliver = threading.Event(), threading.Event()
+    release, deliver, uncertain = threading.Event(), threading.Event(), threading.Event()
     calls, delivered = [], []
     project = "atlas"
     repo = config.PROJECT_ROOTS[0] / project
@@ -22,12 +22,13 @@ def main():
     S.regen_state_md(project)
 
     def answer(_prompt, **options):
-        active = l3.active(project)
+        active = l3._active[project]
         queue_ids = set(active.get("queue_ids", []))
         text = "\n\n".join(row["text"] for row in l3.chat_history(project, None)
                            if row["role"] == "user" and
                            (row.get("turn_id") == active["id"] or
                             queue_ids.intersection(row.get("queue_ids", []))))
+        assert _prompt.endswith(text), "The grouped history must match the actual engine input"
         calls.append({"text": text, "resume": options.get("resume")})
         if options.get("on_start"):
             options["on_start"](None)
@@ -50,9 +51,10 @@ def main():
             assert deliver.wait(30), "The fixture delivery was not released"
             drop = next(sends.glob("*.json"))
             message = json.loads(drop.read_text())
-            drop.rename(drop.with_suffix(".delivered"))
+            outcome = "unconfirmed" if uncertain.is_set() else "delivered"
+            drop.rename(drop.with_suffix(f".{outcome}"))
             delivered.append(message["text"])
-            options["on_send"](message["id"], "delivered", "Checking the current work.")
+            options["on_send"](message["id"], outcome, "Checking the current work.")
             assert release.wait(30), "The turn was not released"
             reply = f"Read: {message['text']}."
             if options.get("on_text"):
@@ -69,6 +71,10 @@ def main():
             return super().do_GET()
 
         def do_POST(self):
+            if self.path == "/fixture/uncertain":
+                self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                uncertain.set()
+                return self._json({"ok": True})
             if self.path == "/fixture/boundary":
                 self.rfile.read(int(self.headers.get("Content-Length", "0")))
                 engines.coordinator_native_send = lambda _engine: False
