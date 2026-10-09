@@ -8,7 +8,8 @@ except the run's clone and results folder, rootless networking with host loopbac
 limits bound the build, Podman and the container together. On macOS, where Podman would need a virtual machine of its
 own, the command runs as a job under the platform's validation Seatbelt profile, with a home and temporary folder in
 its run area and nothing of altd's environment. A macOS run can also have a disposable iOS Simulator iPhone, which
-altd creates and removes and the run reaches only through a relay to its Safari (`simulator`).
+altd creates and removes and the run reaches only through a relay to its Safari and two fixed native walks
+(`simulator`).
 The runner's storage sits beside Altitude's home, outside every worker's writable roots, and what a run produces
 reaches the task folder only through no-follow descriptors. Runs are recorded in the task's `machine.jsonl` like
 machine commands.
@@ -604,11 +605,11 @@ def _run(project: str, slug: str, task: dict, argv: list[str], *, kvm: bool, pub
         with _state:
             phone = None if _active["stopped"] else phone   # a run stopped while its clone was made boots no phone
         if phone:
-            device = sim.Phone(area / "simulator", phone)
+            device = sim.Phone(area / "simulator", phone, area / "walks")
             try:
                 socket_path = device.boot()
                 certificates = device.trust(https(area))
-                relay = sim.Relay(inspector(area), socket_path, config.PORT, device.open)
+                relay = sim.Relay(inspector(area), socket_path, config.PORT, device.open, device.walk)
             except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
                 raise ValueError(f"alt task validate: the iOS Simulator iPhone did not start: {exc}") from exc
             phone = {**{key: phone[key] for key in ("xcode", "runtime", "device")}, "safari": device.safari(),
