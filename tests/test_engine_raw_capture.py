@@ -26,6 +26,9 @@ class FakeProcess:
     def wait(self):
         return self.returncode
 
+    def poll(self):
+        return self.returncode
+
     def kill(self):
         self.returncode = -9
 

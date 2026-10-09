@@ -278,7 +278,7 @@ class TestCodexAdapter(AltitudeCase):
                 engines.codex_stop(wid, job_root=self.job_root)
 
     def test_a_timed_out_turn_stops_its_unit_with_the_inherited_environment(self):
-        proc = mock.Mock(pid=4242)
+        proc = mock.Mock(pid=4242, stdin=io.StringIO())
         proc.communicate.side_effect = [subprocess.TimeoutExpired("codex", 0), ("", "")]
         with mock.patch.object(engines.subprocess, "Popen", return_value=proc), \
              mock.patch.object(platform, "job_stop") as stop, self.assertRaises(subprocess.TimeoutExpired):

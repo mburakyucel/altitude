@@ -351,7 +351,7 @@ class TestInspectionCLI(AltitudeCase):
                              json.dumps({"type": "item.completed", "item": {
                                  "type": "command_execution", "command": wrapped}})]) + "\n"
         process = SimpleNamespace(pid=1, returncode=0, stdin=io.StringIO(), stdout=io.StringIO(events),
-                                  stderr=io.StringIO(), wait=lambda: 0)
+                                  stderr=io.StringIO(), wait=lambda: 0, poll=lambda: 0)
         with mock.patch.object(engines.subprocess, "Popen", return_value=process):
             parsed = engines.codex_turn("prompt", cwd=self.tmp)
         self.assertEqual(parsed["tools"], [{"name": "Bash", "command": wrapped}])
