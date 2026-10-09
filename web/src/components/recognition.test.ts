@@ -16,6 +16,17 @@ describe("RecognitionCapture", () => {
 
   const stream = { getTracks: () => [] } as unknown as MediaStream;
 
+  it("marks every capture after the page's first recognizer start", async () => {
+    vi.resetModules();
+    const { RecognitionCapture: Fresh } = await import("./recognition");
+    const first = new Fresh(stream, { lang: "en-US" });
+    const second = new Fresh(stream, { lang: "en-US" });
+    expect(second.followsAnother).toBe(false);
+    first.start();
+    second.start();
+    expect([first.followsAnother, second.followsAnother]).toEqual([false, true]);
+  });
+
   it("punctuates finalized phrases and shows the phrase being recognized as heard", async () => {
     punctuationFixture.punctuate = sentence;
     const capture = new RecognitionCapture(stream, { lang: "en-US" });
