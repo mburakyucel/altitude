@@ -21,20 +21,20 @@ remain separate [release prerequisites](ROADMAP.md#early-user-onboarding-and-pub
 
 ## Cadence and versions
 
-During active preview development, check readiness daily and release a useful batch of fixes or
-features as soon as it is validated. Several patch releases in one day are reasonable when fixes
-warrant them; there is no weekly wait or mandatory overnight observation period. Every candidate
-passes the complete gate and targeted validation. Higher-risk lifecycle, permissions or storage
-changes include an observation interval chosen for their failure modes and recorded in the
-readiness record. A checkpoint can conclude that no release is ready. There is no scheduled
-publication, release branch or freeze of unrelated development.
+During active preview development, L3 proposes a patch release whenever validated fixes have
+accumulated on main, at least daily, and the operator approves its version and SHA. Several patch
+releases in one day are reasonable when fixes warrant them; there is no weekly wait or mandatory
+overnight observation period. Every candidate passes the complete gate and targeted validation.
+Higher-risk lifecycle, permissions or storage changes include an observation interval chosen for
+their failure modes and recorded in the readiness record. A checkpoint can conclude that no release
+is ready. There is no scheduled publication, release branch or freeze of unrelated development.
 
-Tags are the source version authority: `v0.MINOR.PATCH`, beginning with `v0.1.0` when a first
-release is approved. Compatible fixes increment PATCH; features or breaking preview behavior
-increment MINOR and reset PATCH. Breaking behavior is described even during `0.x`. Candidate
-labels use `v0.1.0-rc.1`, incrementing `rc.N` when the candidate changes. Before tag publication,
-the candidate label is just a label in the readiness record. Never move a published tag.
-The web package's private build metadata is not a separate product version.
+Tags are the source version authority: `v0.MINOR.PATCH`, beginning with `v0.1.0`. Every release
+increments PATCH, whatever it contains. MINOR increments, resetting PATCH, only when the operator
+explicitly instructs it. Breaking behavior is described even during `0.x`. Candidate labels use
+`v0.1.0-rc.1`, incrementing `rc.N` when the candidate changes. Before tag publication, the candidate
+label is just a label in the readiness record. Never move a published tag. The web package's private
+build metadata is not a separate product version.
 
 ## Candidate and release gates
 

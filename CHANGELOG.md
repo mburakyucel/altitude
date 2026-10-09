@@ -5,14 +5,87 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+## v0.1.1 — 2026-10-09
+
+Patch release of the early preview: alpha quality, with rough edges and the known limitations below.
+It runs on Linux x86_64 with a systemd user service (target: Ubuntu 24.04) and on macOS 15 or newer
+on Apple silicon, the two platforms the early preview supports. Install it with
+`curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/latest/download/install.sh | sh`
+([setup](docs/SETUP.md#install-the-application)).
+
+Updating from `v0.1.0`: the installation offers this release in the app, in `alt doctor` and through
+`alt update`. Configuration, TLS identity and data are kept; nothing needs migrating.
+
+Conversations and tasks:
+
+- Messages you send in a task's chat while its Claude owner is working reach it as your own next
+  turn, so it acts on them as your instructions.
+- Decision alerts wait while L3 or the task's owner is still handling a decision, and alert once the
+  task rests with the decision still open, or 15 minutes after it was asked. Needs you shows the
+  decision at once. A banner for a decision that was answered, withdrawn or superseded closes on
+  every device.
+- Task owners run Altitude's own `alt` coordination commands without a Claude Code permission
+  prompt; Altitude still enforces each role's authority, merge holds and operator grants.
+- Codex receives long prompts reliably; a prompt larger than the pipe buffer could stall a turn
+  until its time limit.
+- Task briefs tell owners never to restart Altitude's or any managed project's service without
+  naming one installation's services.
+
+Landing:
+
+- `alt land` waits for a required check that has not registered on the candidate yet, instead of
+  stopping as if it were skipped.
+- `alt land` accepts GitHub-managed scans on the candidate commit, such as CodeQL's default setup. A
+  failing scan blocks the merge and a pending one keeps the wait going; a scan never stands in for
+  the required `check`.
+- `alt land --merge` squashes an adopted PR into one commit on main, as it does every other PR, so
+  landing works where the repository allows only squash merges. The adopted branch keeps its history
+  and is not deleted.
+
+Documentation and project rules:
+
+- The README describes macOS support and recent features, with captures of the current interface.
+- Altitude's repository rules treat everything pushed or published as public: commits, branch
+  names, PR and issue text, release notes and attached evidence carry no personal or private
+  information. The L2 and L3 personas point owners and coordinators to a repository's own rule for
+  public content.
+- Every release increments PATCH; MINOR increments only on the operator's explicit instruction
+  ([cadence and versions](docs/RELEASING.md#cadence-and-versions)).
+
+For contributors:
+
 - Every pull request, push to main and manual dispatch runs the required `check` on a GitHub-hosted
   runner with a read-only token and no secrets; no workflow runs on the maintainer's machine. A
   failed run keeps its browser report as a seven-day artifact, and release publication requires
   the tagged commit's successful push run of the same workflow (#469).
+- The complete `make check` passes in a macOS validation run.
+- `make installation-vm BASELINE=v0.1.0-rc.2 PUBLIC=1` installs `releases/latest` and updates a
+  published release candidate against GitHub itself in a fresh Ubuntu 24.04 virtual machine.
+- The iOS Simulator lane checks that Safari trusts a certificate chain from Altitude's own generator
+  without a warning.
+- A delta history audit skips recorded heads its clone lacks, and `docs/RELEASING.md` explains how
+  to cover GitHub's pull-request refs.
 
-- `alt land --merge` squashes an adopted PR into one commit on main, as it does every other PR, so
-  landing works where the repository allows only squash merges. The adopted branch keeps its history
-  and is not deleted.
+Known limitations:
+
+- Native macOS confirmation is still open: a physical second Mac, other macOS versions,
+  logout/login, sleep, confinement, Stop and restart adoption on a spare account (#225),
+  certificate trust in browsers and on physical devices (#645) and the download from GitHub itself
+  are not verified. The installer needs Homebrew's `python@3.12` and `openssl@3`; voice on a Mac
+  uses the browser's recognition.
+- On Linux, a clean physical machine is not verified, and the update from `v0.1.0` to this release
+  has not been run in a virtual machine.
+- The Linux container deployment remains a candidate under validation; on a Mac it is unverified
+  (#643). See [its limits](docs/CONTAINERS.md).
+- Live engine providers are not tested; engine behavior rests on deterministic fixtures.
+- Adding a phone (certificate profile, QR scan, Home Screen app) is walked in browsers and the iOS
+  Simulator, not yet on a physical iPhone or Android device (#645).
+- What a coordinator or owner reads from a terminal reaches its AI provider. Use a desktop or SSH
+  terminal for work neither should see.
+
+Recovery: a failed activation restores the previous version and keeps configuration, TLS identity
+and data; `alt recover` (or the release's `python3.12 install.py --recover`) completes an interrupted
+one. A faulty release is followed by a new version; tags and release files are never replaced.
 
 ## v0.1.0 — 2026-10-08
 
