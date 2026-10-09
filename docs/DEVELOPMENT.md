@@ -269,7 +269,7 @@ the command's JSON output.
 Chromium supplies a synthetic microphone and its permission for browser walkthroughs;
 no test requests a physical microphone. Fixture services choose host voice. Composer voice journeys
 (conversation, project isolation, task lifecycle, L2 progress, image input, file references,
-cross-engine review, reported continuation) overlay `/api/voice` and `/api/voice/live` with the
+adversarial review, reported continuation) overlay `/api/voice` and `/api/voice/live` with the
 fixture host in `web/e2e/hostVoice.ts`: the page's real audio worklet hears Chromium's fake
 microphone, and the fixture can hold, replace or fail the final words, drop the connection or forget
 the recording, so no speech model runs. Image-input voice journeys also hold `AudioContext.resume()`

@@ -1,26 +1,33 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ReviewSchema, TaskViewSchema } from "../data/api";
+import type { Review } from "../data/api";
 import { renderApp, setViewport } from "../test/render";
 
 const route = "/projects/atlas/tasks/index";
-const snapshot = { head: "abc123", base: "base123", tree: "tree123", context_hash: "context123", captured_context_hash: "captured123", selected_owner_evidence: true, limitations: ["Original image bytes are not reviewed."] };
-const completed = ReviewSchema.parse({ id: "review-one", requested_at: "2026-09-22T12:00:00Z", requested_by: "l2", state: "completed", engine_label: "Engine B", model: "Default", focus: "Pagination correctness", coverage: "assessed", snapshot,
+const snapshot = { head: "abc123", base: "base123", tree: "tree123", context_hash: "context123", captured_context_hash: "captured123", selected_owner_evidence: true, context_ids: ["evidence"], limitations: ["Original image bytes are not reviewed."] };
+const completed = ReviewSchema.parse({ id: "review-one", requested_at: "2026-09-22T12:00:00Z", requested_by: "l2", state: "completed", engine_label: "Engine B", model: "Default", same_engine: true, focus: "Pagination correctness", coverage: "assessed", snapshot,
   reconciled: { ...snapshot, head: "def456", reason: "The added test covers the fix." },
-  result: { text: "Two findings.", findings: [{ id: "one", severity: "high", title: "Expired cursor", body: "Expired cursors restart pagination." }, { id: "two", severity: "low", title: "Empty page", body: "The last page has no cursor." }] },
+  result: { text: "Pagination is sound once expired cursors are handled.", findings: [{ id: "one", severity: "high", title: "Expired cursor", body: "Expired cursors restart pagination." }, { id: "two", severity: "low", title: "Empty page", body: "The last page has no cursor." }] },
   dispositions: [{ finding_id: "one", disposition: "fixed", reason: "Added the expiration response." }, { finding_id: "two", disposition: "dismissed", reason: "The storage contract ends pagination." }],
-  can_withdraw: false, can_cancel: false, can_retry: false, can_review_latest: false });
+  can_withdraw: true, can_cancel: false, can_again: true });
+const requested = ReviewSchema.parse({ ...completed, id: "review-two", requested_by: "operator", state: "requested", result: null, reconciled: null, snapshot: null, dispositions: [], coverage: "unknown", waiting: "owner", can_again: false });
 const empty = TaskViewSchema.parse({ slug: "index", title: "Keep pagination stable", state: "running", messages: [{ id: "intro", role: "l2", text: "Checking pagination." }],
-  review: { available: true, why: "", engine_label: "Engine B", model: "Default", allowance_known: false, subjects: { proposal: { available: true, why: "", latest: null }, changes: { available: true, why: "", latest: null } }, latest: null, history: [] } });
-const withReview = (review = completed) => ({ ...empty, review: { ...empty.review!, subjects: { ...empty.review!.subjects, [review.subject]: { available: true, why: "", latest: review } }, latest: review, history: [review] },
-  messages: [...empty.messages!, { id: "anchor", role: "system" as const, text: "Review requested", review_id: review.id }] });
+  review: { subjects: { proposal: { available: true, why: "", latest: null }, changes: { available: true, why: "", latest: null } }, history: [] } });
+function withReviews(...reviews: Review[]) {
+  const subjects = { ...empty.review!.subjects };
+  for (const review of reviews) subjects[review.subject] = { available: review.can_again, why: "", latest: review,
+    open: reviews.filter((entry) => entry.subject === review.subject && entry.state !== "withdrawn").reduce((sum, entry) => sum + entry.unresolved.length, 0) };
+  return { ...empty, review: { subjects, history: reviews },
+    messages: [...empty.messages!, ...reviews.map((review) => ({ id: `anchor-${review.id}`, role: "system" as const, text: "Review requested", review_id: review.id }))] };
+}
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 function setup(initial = empty, post?: () => Response | Promise<Response>) {
   let task = initial;
   let failedRead = false;
   const fetcher = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
-    if (url.includes("/api/task/review")) return post ? post() : json({ ok: true, review: completed });
+    if (url.includes("/api/task/review")) return post ? post() : json({ ok: true, review: requested });
     if (url.includes("/api/task/")) return failedRead ? json({ error: "read failed" }, 503) : json(task);
     if (url.includes("/api/overview")) return json({ projects: [{ name: "atlas", managed: true }], queue: [], fyis: [], wip: { machine: 1, per_project: {}, waiting: [] }, quota: { known: false }, engines: [] });
     if (url.includes("/api/project/")) return json({ name: "atlas", tasks: [] });
@@ -29,153 +36,218 @@ function setup(initial = empty, post?: () => Response | Promise<Response>) {
   });
   vi.stubGlobal("fetch", fetcher);
   const app = renderApp({ route });
-  return { ...app, fetcher, failRead: (value: boolean) => { failedRead = value; }, update: async (next: typeof initial) => { task = next; await act(async () => { app.queryClient.setQueryData(["task", "atlas", "index"], task); }); } };
+  const posts = () => fetcher.mock.calls.filter(([url]) => String(url).includes("/api/task/review")).map(([, init]) => JSON.parse(init!.body as string));
+  const settled = () => waitFor(() => expect(app.queryClient.isMutating() + app.queryClient.isFetching()).toBe(0));
+  return { ...app, fetcher, posts, settled, failRead: (value: boolean) => { failedRead = value; }, update: async (next: typeof initial) => {
+    task = next;
+    // A refetch started by an earlier receipt carries the old saved state; let it land first.
+    await waitFor(() => expect(app.queryClient.isFetching()).toBe(0));
+    await act(async () => { app.queryClient.setQueryData(["task", "atlas", "index"], task); });
+  } };
 }
+const openDetails = async (user: ReturnType<typeof setup>["user"]) => {
+  await user.click(await screen.findByRole("button", { name: /^(?:Keep pagination stable — )?Task details$/ }));
+  return screen.getByRole("dialog", { name: "Task details" });
+};
+const card = (id: string) => within(document.getElementById(`review-${id}`)!);
 afterEach(() => setViewport(1024));
 
-describe("Review in task chat", () => {
-  it.each(["requested", "running", "completed", "failed", "cancelled"] as const)("opens an existing %s proposal alongside changes without invoking a reviewer", async (state) => {
-    const proposal = { ...completed, id: "proposal-review", subject: "proposal" as const, state, same_engine: true, fallback_reason: "No alternate engine is available.", can_review_again: state === "completed", coverage: "current" as const,
-      snapshot: { ...snapshot, proposal: { id: "proposal", at: "2026-09-22T11:00:00Z", text: "Filter deleted records before applying the page limit." } } };
-    const task = withReview();
-    task.review.history.push(proposal);
-    task.review.subjects.proposal = { available: true, why: "", latest: proposal };
-    const { user, fetcher } = setup(task);
-    await user.click(await screen.findByRole("button", { name: /^(?:Keep pagination stable — )?Task details$/ }));
-    const menu = screen.getByRole("dialog", { name: "Task details" });
-    expect(within(menu).getByRole("button", { name: "View changes review" })).toBeVisible();
-    expect(within(menu).queryByRole("button", { name: "Review proposal" })).toBeNull();
-    await user.click(within(menu).getByRole("button", { name: "View proposal review" }));
-    const row = within(document.getElementById("review-proposal-review")!);
-    expect(row.getByText("Filter deleted records before applying the page limit.")).toBeVisible();
-    expect(row.getByText(/Separate same-engine reviewer/)).toHaveTextContent("No alternate engine is available.");
-    expect(row.getByText(/Implementation is not reviewed/)).toBeVisible();
-    expect(row.getByText(/remaining allowance was unknown when requested/)).toBeVisible();
-    await user.click(row.getByText("Review details"));
-    await user.click(row.getByRole("link", { name: "View captured proposal" }));
-    expect(row.getByText("Filter deleted records before applying the page limit.")).toBeVisible();
-    expect(fetcher.mock.calls.filter(([url]) => String(url).includes("/api/task/review"))).toHaveLength(0);
-    if (state === "completed") {
-      await user.click(row.getByRole("button", { name: "Review again" }));
-      const posts = fetcher.mock.calls.filter(([url]) => String(url).includes("/api/task/review"));
-      expect(posts).toHaveLength(1);
-      expect(JSON.parse(posts[0]![1]!.body as string)).toMatchObject({ action: "rerun", review_id: "proposal-review" });
-    }
-  });
-
-  it("requests the selected subject and discloses fallback before spending", async () => {
-    const task = { ...empty, review: { ...empty.review!, same_engine: true, fallback_reason: "No alternate engine is available." } };
-    const { user, fetcher } = setup(task);
-    await user.click(await screen.findByRole("button", { name: /^(?:Keep pagination stable — )?Task details$/ }));
-    expect(screen.getByText(/Separate same-engine reviewer/)).toHaveTextContent("No alternate engine is available.");
-    await user.click(screen.getByRole("button", { name: "Review proposal" }));
-    const posts = fetcher.mock.calls.filter(([url]) => String(url).includes("/api/task/review"));
-    expect(posts).toHaveLength(1);
-    expect(JSON.parse(posts[0]![1]!.body as string)).toMatchObject({ action: "request", subject: "proposal" });
-  });
-  it.each([390, 1440])("reflects L2 review, coverage and dispositions without another request at %i", async (width) => {
+describe("Adversarial review", () => {
+  it.each([390, 1440])("task details shows a box per kind and a request queues once at %i", async (width) => {
     setViewport(width);
-    const { user, fetcher, router } = setup(withReview());
-    const field = await screen.findByLabelText("Message the L2");
-    await user.type(field, "Keep my draft");
-    expect(screen.getByText("Reviewed an earlier revision; L2 assessed the later edits.")).toBeVisible();
-    expect(screen.getByText("high · Expired cursor")).not.toBeVisible();
-    await user.click(screen.getByRole("button", { name: /^(?:Keep pagination stable — )?Task details$/ }));
-    const menu = screen.getByRole("dialog", { name: "Task details" });
-    expect(within(menu).queryByRole("button", { name: "Review changes" })).toBeNull();
-    await user.click(within(menu).getByRole("button", { name: "View changes review" }));
-    expect(router.state.location.search).toBe("?review=review-one");
-    expect(document.getElementById("review-review-one")).toHaveFocus();
-    expect(screen.getByText("high · Expired cursor")).toBeVisible();
-    expect(screen.getByText("Added the expiration response.")).toBeVisible();
-    expect(screen.getByText("Selected L2 evidence; all operator and coordinator messages included.")).toBeVisible();
-    expect(screen.getByText("Captured context: captured123")).toBeVisible();
-    expect(screen.getByText("Original image bytes are not reviewed.")).toBeVisible();
-    expect(screen.getByText("The storage contract ends pagination.")).toBeVisible();
-    await user.click(screen.getByText("Review details"));
-    expect(screen.getByText("high · Expired cursor")).not.toBeVisible();
-    expect(field).toHaveValue("Keep my draft");
-    expect(fetcher.mock.calls.some(([url]) => String(url).includes("/api/task/review"))).toBe(false);
-  });
-
-  it.each([390, 1440])("keeps an assessment with open findings visibly unresolved at %i", async (width) => {
-    setViewport(width);
-    const open = ReviewSchema.parse({ ...completed, unresolved: ["one"], dispositions: [{ finding_id: "one", disposition: "open", reason: "Needs a systemd experiment first." }, completed.dispositions[1]] });
-    const { user } = setup(withReview(open));
-    expect(await screen.findByText("Engine B changes review complete · 2 findings · 1 unresolved")).toBeVisible();
-    await user.click(screen.getByText("Review details"));
-    expect(screen.getByText("L2 — unresolved:")).toBeVisible();
-    expect(screen.getByText("Needs a systemd experiment first.")).toBeVisible();
-  });
-
-  it("shows allowance before requesting, suppresses repeats while saving, and reflects authoritative L2 progress", async () => {
     let accept!: (response: Response) => void;
     const pending = new Promise<Response>((resolve) => { accept = resolve; });
     const app = setup(empty, () => pending);
-    await app.user.click(await screen.findByRole("button", { name: /^(?:Keep pagination stable — )?Task details$/ }));
-    expect(screen.getByText(/remaining allowance is unknown/)).toBeVisible();
-    const request = screen.getByRole("button", { name: "Review changes" });
-    // The only actions in the review section are bordered buttons, never ghost text (SPEC §1.1 affordance check).
-    for (const name of ["Review proposal", "Review changes"]) { expect(screen.getByRole("button", { name })).toHaveClass("btn"); expect(screen.getByRole("button", { name })).not.toHaveClass("btn-ghost"); }
+    const details = await openDetails(app.user);
+    for (const name of ["Proposal review", "Implementation review"]) {
+      const box = within(within(details).getByRole("region", { name }));
+      expect(box.getByText("Not reviewed yet")).toBeVisible();
+      expect(box.getByRole("button", { name: "Request" })).toHaveClass("btn");
+    }
+    const request = within(within(details).getByRole("region", { name: "Implementation review" })).getByRole("button", { name: "Request" });
     await app.user.click(request);
     expect(request).toBeDisabled();
-    const requested = { ...completed, state: "requested" as const, result: null, reconciled: null, coverage: "unknown" as const, can_withdraw: true };
-    await app.update(withReview(requested));
+    expect(app.posts()).toEqual([expect.objectContaining({ action: "request", subject: "changes" })]);
+    expect(app.posts()[0]).not.toHaveProperty("review_id");
+    await app.update(withReviews(requested));
     await act(async () => { accept(json({ ok: true, review: requested })); });
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Review changes" })).toBeNull());
-    expect(screen.queryByRole("dialog", { name: "Task details" })).toBeNull();
-    expect(screen.getByText("L2 requested changes review · waiting for L2")).toBeVisible();
-    expect(app.fetcher.mock.calls.filter(([url]) => String(url).includes("/api/task/review"))).toHaveLength(1);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Task details" })).toBeNull());
+    expect(card("review-two").getByText("· requested by you")).toBeVisible();
+    expect(card("review-two").getByText("Queued. L2 starts it after its current step.")).toBeVisible();
+    expect(app.posts()).toHaveLength(1);
+  });
+
+  it.each([
+    ["queued while L2 works", { waiting: "owner" }, "· requested by you", "Queued. L2 starts it after its current step."],
+    ["queued until L2 resumes", { waiting: "resume" }, "· requested by you", "Queued. L2 starts it when it resumes."],
+    ["requested by L2", { requested_by: "l2", subject: "proposal" }, "· requested by L2", "L2 asked for a review of its proposal and starts it shortly."],
+    ["waiting for the reviewer", { waiting: "reviewer" }, "· requested by you", "Waiting for the reviewer: another review is running on this machine."],
+    ["in progress", { state: "running", requested_by: "l2", can_cancel: true }, "· in progress", "Reviewing the implementation…"],
+    ["stopping", { state: "running", cancel_requested: true }, "· stopping", "Stopping the reviewer…"],
+    ["didn’t finish", { state: "failed", error: "The reviewer stopped without reading the captured changes.", can_again: true }, "· didn’t finish", "The reviewer stopped without reading the captured changes."],
+    ["skipped", { state: "withdrawn", withdrawn_by: "operator", can_withdraw: false }, "· skipped", "Skipped by you"],
+  ] as const)("a card shows %s with who asked and what it waits for", async (_, change, state, text) => {
+    const review = ReviewSchema.parse({ ...requested, ...change });
+    setup(withReviews(review));
+    expect(await screen.findByText(state)).toBeVisible();
+    expect(card(review.id).getByText(text)).toBeVisible();
+  });
+
+  it("stop and try again act on the exact review", async () => {
+    const running = ReviewSchema.parse({ ...requested, state: "running", can_cancel: true });
+    const app = setup(withReviews(running));
+    await screen.findByText("· in progress");
+    await app.user.click(card(running.id).getByRole("button", { name: "Stop" }));
+    await app.settled();
+    const failed = ReviewSchema.parse({ ...requested, state: "cancelled", can_again: true });
+    await app.update(withReviews(failed));
+    await app.user.click(await card(failed.id).findByRole("button", { name: "Try again" }));
+    expect(app.posts()).toEqual([expect.objectContaining({ action: "cancel", review_id: running.id }),
+      expect.objectContaining({ action: "request", review_id: failed.id, subject: "changes" })]);
+  });
+
+  it.each([390, 1440])("a done review shows the verdict and counts, and View opens its findings at %i", async (width) => {
+    setViewport(width);
+    const app = setup(withReviews(completed));
+    const field = await screen.findByLabelText("Message the L2");
+    await app.user.type(field, "Keep my draft");
+    expect(card("review-one").getByText("Pagination is sound once expired cursors are handled.")).toBeVisible();
+    expect(card("review-one").getByText("2 findings, both resolved")).toBeVisible();
+    expect(screen.queryByText("Expired cursor")).toBeNull();
+    const details = await openDetails(app.user);
+    const box = within(within(details).getByRole("region", { name: "Implementation review" }));
+    expect(box.getByText("Pagination is sound once expired cursors are handled.")).toBeVisible();
+    expect(box.getByRole("button", { name: "Review again" })).toBeVisible();
+    await app.user.click(box.getByRole("button", { name: "View" }));
+    expect(app.router.state.location.search).toBe("?review=review-one");
+    expect(document.getElementById("review-review-one")).toHaveFocus();
+    const opened = card("review-one");
+    expect(opened.getByText("Expired cursor")).toBeVisible();
+    expect(opened.getByText("Fixed")).toBeVisible();
+    expect(opened.getByText("Dismissed")).toBeVisible();
+    expect(opened.getByText("Added the expiration response.")).toBeVisible();
+    expect(opened.getByText("Engine B · same engine as the task")).toBeVisible();
+    await app.user.click(opened.getByRole("button", { name: "Technical details" }));
+    expect(opened.getByText(/Reviewed head abc123/)).toBeVisible();
+    expect(opened.getByText(/Selected L2 evidence: evidence/)).toBeVisible();
+    expect(opened.getByText(/Original image bytes are not reviewed/)).toBeVisible();
+    await app.user.click(opened.getByRole("button", { name: "Hide implementation review details" }));
+    expect(screen.queryByText("Expired cursor")).toBeNull();
+    expect(field).toHaveValue("Keep my draft");
+    expect(app.posts()).toHaveLength(0);
+  });
+
+  it("review again names the latest review, which stays in task details while open findings block merge", async () => {
+    const app = setup(withReviews(completed));
+    await app.user.click(within(within(await openDetails(app.user)).getByRole("region", { name: "Implementation review" })).getByRole("button", { name: "Review again" }));
+    expect(app.posts()).toEqual([expect.objectContaining({ action: "request", subject: "changes", review_id: "review-one" })]);
+    await app.settled();
+    const open = ReviewSchema.parse({ ...completed, unresolved: ["one"], can_again: false, earlier: true,
+      dispositions: [{ finding_id: "one", disposition: "open", reason: "Needs a systemd experiment first." }, completed.dispositions[1]] });
+    await app.update(withReviews(open));
+    expect(await card("review-one").findByText("1 open, blocks merge")).toBeVisible();
+    expect(card("review-one").getByText(/earlier version/)).toBeVisible();
+    const box = within(within(await openDetails(app.user)).getByRole("region", { name: "Implementation review" }));
+    expect(box.getByText("1 open, blocks merge")).toBeVisible();
+    expect(box.queryByRole("button", { name: "Review again" })).toBeNull();
+  });
+
+  it("shows only the latest iteration of a kind, with earlier ones inside it", async () => {
+    const first = ReviewSchema.parse({ ...completed, id: "first", result: { ...completed.result!, text: "The change misses the landing gate." }, can_withdraw: false, can_again: false });
+    const second = ReviewSchema.parse({ ...completed, id: "second", previous: "first" });
+    const task = withReviews(first, second);
+    const { user } = setup(task);
+    await screen.findByText("Pagination is sound once expired cursors are handled.");
+    expect(document.getElementById("review-first")).toBeNull();
+    expect(card("second").getByText("Review 2", { exact: false })).toBeVisible();
+    await user.click(card("second").getByRole("button", { name: "Show implementation review details" }));
+    expect(card("second").getByText("Earlier reviews")).toBeVisible();
+    expect(card("second").getByText(/The change misses the landing gate/)).toBeVisible();
+  });
+
+  it("an earlier review an additional one left in the merge gate stays visible, inspectable and skippable", async () => {
+    const original = ReviewSchema.parse({ ...completed, id: "original", requested_by: "operator", unresolved: ["one"], can_again: false,
+      dispositions: [{ finding_id: "one", disposition: "open", reason: "Needs the storage owner's decision." }, completed.dispositions[1]] });
+    const additional = ReviewSchema.parse({ ...completed, id: "additional", additional: true, result: { text: "The addendum is sound.", findings: [] }, dispositions: [], can_again: false });
+    const app = setup(withReviews(original, additional));
+    await screen.findByText("The addendum is sound.");
+    expect(card("additional").getByText("1 open in an earlier review, blocks merge")).toBeVisible();
+    expect(document.querySelector("#review-additional .review-icon")).toHaveClass("review-icon-warn");
+    const details = await openDetails(app.user);
+    const box = within(within(details).getByRole("region", { name: "Implementation review" }));
+    expect(box.getByText("1 open in an earlier review, blocks merge")).toBeVisible();
+    expect(box.queryByRole("button", { name: "Review again" })).toBeNull();
+    await app.user.keyboard("{Escape}");
+    await app.user.click(card("additional").getByRole("button", { name: "Show implementation review details" }));
+    const earlier = card("additional").getByRole("button", { name: /Review 1/ });
+    expect(earlier).toHaveAttribute("aria-expanded", "false");
+    expect(within(earlier).getByText("1 open, blocks merge")).toBeVisible();
+    await app.user.click(earlier);
+    expect(card("additional").getByText("Needs the storage owner's decision.")).toBeVisible();
+    const entry = within(earlier.closest<HTMLElement>(".review-earlier-entry")!);
+    await app.user.click(entry.getByRole("button", { name: "Skip review" }));
+    await app.user.click(within(entry.getByRole("group", { name: "Skip review" })).getByRole("button", { name: "Skip review" }));
+    expect(app.posts()).toEqual([{ project: "atlas", slug: "index", action: "withdraw", review_id: "original" }]);
+  });
+
+  it("skip asks no reason and records the operator's choice", async () => {
+    const app = setup(withReviews(requested));
+    await screen.findByText("· requested by you");
+    await app.user.click(card("review-two").getByRole("button", { name: "Show implementation review details" }));
+    await app.user.click(card("review-two").getByRole("button", { name: "Skip review" }));
+    expect(card("review-two").getByText(/no longer blocks merging/)).toBeVisible();
+    expect(card("review-two").queryByRole("textbox")).toBeNull();
+    await app.user.click(within(card("review-two").getByRole("group", { name: "Skip review" })).getByRole("button", { name: "Skip review" }));
+    expect(app.posts()).toEqual([{ project: "atlas", slug: "index", action: "withdraw", review_id: "review-two" }]);
   });
 
   it("requires a successful status read after an uncertain POST and preserves the draft", async () => {
     const app = setup(empty, () => { app.failRead(true); return json({ error: "lost receipt" }, 502); });
     const field = await screen.findByLabelText("Message the L2");
     await app.user.type(field, "Unsent context");
-    await app.user.click(screen.getByRole("button", { name: /^(?:Keep pagination stable — )?Task details$/ }));
-    await app.user.click(screen.getByRole("button", { name: "Review changes" }));
-    const menu = screen.getByRole("dialog", { name: "Task details" });
-    await waitFor(() => expect(within(menu).getByRole("button", { name: "Refresh review status" })).toBeEnabled());
-    expect(within(menu).getByRole("button", { name: "Review changes" })).toBeDisabled();
+    const details = await openDetails(app.user);
+    const box = () => within(within(details).getByRole("region", { name: "Implementation review" }));
+    await app.user.click(box().getByRole("button", { name: "Request" }));
+    await waitFor(() => expect(within(details).getByRole("button", { name: "Refresh review status" })).toBeEnabled());
+    expect(box().getByRole("button", { name: "Request" })).toBeDisabled();
     app.failRead(false);
-    await app.update(withReview());
-    await app.user.click(within(menu).getByRole("button", { name: "Refresh review status" }));
-    await app.user.click(within(menu).getByRole("button", { name: "View changes review" }));
+    await app.update(withReviews(requested));
+    await app.user.click(within(details).getByRole("button", { name: "Refresh review status" }));
+    await app.user.click(box().getByRole("button", { name: "View" }));
     expect(field).toHaveValue("Unsent context");
-    expect(app.fetcher.mock.calls.filter(([url]) => String(url).includes("/api/task/review"))).toHaveLength(1);
+    expect(app.posts()).toHaveLength(1);
   });
 
-  it("shows unavailable and denied requests without claiming a review started", async () => {
-    const app = setup({ ...empty, review: { ...empty.review!, available: false, why: "No reviewer is available.", subjects: { proposal: { available: false, why: "No reviewer is available.", latest: null }, changes: { available: false, why: "No reviewer is available.", latest: null } } } }, () => json({ error: "denied" }, 403));
-    await app.user.click(await screen.findByRole("button", { name: /^(?:Keep pagination stable — )?Task details$/ }));
-    expect(screen.getAllByText("No reviewer is available.")).toHaveLength(2);
-    expect(screen.getByRole("button", { name: "Review proposal" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Review changes" })).toBeDisabled();
-    await app.update(empty);
-    await app.user.click(screen.getByRole("button", { name: "Review changes" }));
-    await waitFor(() => expect(within(screen.getByRole("dialog")).getByText("You do not have permission to request or change this review.")).toBeVisible());
-    expect(screen.queryByText(/review complete/)).toBeNull();
+  it("an unavailable kind says why without a button, and a denied request claims nothing", async () => {
+    const unavailable = { ...empty, review: { history: [], subjects: { proposal: { available: false, why: "No reviewer is available.", latest: null, open: 0 }, changes: { available: true, why: "", latest: null, open: 0 } } } };
+    const app = setup(unavailable, () => json({ error: "denied" }, 403));
+    const details = await openDetails(app.user);
+    const proposal = within(within(details).getByRole("region", { name: "Proposal review" }));
+    expect(proposal.getByText("No reviewer is available.")).toBeVisible();
+    expect(proposal.queryByRole("button")).toBeNull();
+    await app.user.click(within(within(details).getByRole("region", { name: "Implementation review" })).getByRole("button", { name: "Request" }));
+    await waitFor(() => expect(within(details).getByText("You do not have permission to request or change this review.")).toBeVisible());
+    expect(document.querySelector(".review-card")).toBeNull();
   });
 
-  it("discloses a changed reviewer and unknown allowance before retry", async () => {
-    const task = withReview({ ...completed, state: "failed", can_retry: true });
-    task.review.engine_label = "Engine C";
-    task.review.model = "Next model";
-    const { user } = setup(task);
-    await user.click(await screen.findByText("Review details"));
-    expect(screen.getByText(/Next review: Engine C · Next model/)).toHaveTextContent("remaining allowance is unknown");
-    expect(screen.getByRole("button", { name: "Retry review" })).toBeVisible();
+  it("a finished task keeps reviewed kinds without buttons", async () => {
+    const done = { ...withReviews(ReviewSchema.parse({ ...completed, can_again: false, can_withdraw: false })), state: "done" };
+    delete (done.review.subjects as Record<string, unknown>).proposal;
+    const { user } = setup(done);
+    const details = await openDetails(user);
+    expect(within(details).queryByRole("region", { name: "Proposal review" })).toBeNull();
+    expect(within(within(details).getByRole("region", { name: "Implementation review" })).queryByRole("button", { name: /Request|Review again|Try again/ })).toBeNull();
   });
 
   it("an old request receipt does not close another task’s details after navigation", async () => {
     let accept!: (response: Response) => void;
     const receipt = new Promise<Response>((resolve) => { accept = resolve; });
     const app = setup(empty, () => receipt);
-    await app.user.click(await screen.findByRole("button", { name: /^(?:Keep pagination stable — )?Task details$/ }));
-    await app.user.click(screen.getByRole("button", { name: "Review changes" }));
+    const details = await openDetails(app.user);
+    await app.user.click(within(within(details).getByRole("region", { name: "Implementation review" })).getByRole("button", { name: "Request" }));
     await act(async () => { await app.router.navigate("/projects/atlas/tasks/other-task"); });
-    await app.user.click(await screen.findByRole("button", { name: /^(?:Keep pagination stable — )?Task details$/ }));
-    await act(async () => { accept(json({ ok: true, review: completed })); });
+    await openDetails(app.user);
+    await act(async () => { accept(json({ ok: true, review: requested })); });
     expect(screen.getByRole("dialog", { name: "Task details" })).toBeVisible();
   });
 });

@@ -846,7 +846,7 @@ Lowering the cap lets running work continue. Fresh and resumed launches wait unt
 running count falls below it. Blocked tasks consume no capacity. Eligible ready resumes take available
 capacity before fresh launches across all projects. Operator waits, faults without verified recovery,
 future due times, busy project setup and unavailable engines reserve no slots and do not hold eligible work. The limit
-counts running tasks and active cross-engine reviewers, excluding engines' native helpers and L3 turns.
+counts running tasks and active adversarial reviewers, excluding engines' native helpers and L3 turns.
 `alt task status` reports pending admission waits in `wip_hold`; running tasks have none.
 Its `hold` field stays empty because project queue observations are not individual task holds.
 `blocked_reason`, `waiting_on`, `fault` and `hold_merge` retain the task's actual recorded holds.
@@ -1517,29 +1517,34 @@ list every open finding with that reference, so nothing is dropped silently. The
 that one problem on a delivery whose merges and heads verify, refuses a report without open findings,
 and is not available to the owner.
 
-### Cross-engine review
+### Adversarial review
 
 L2 proactively requests independent adversarial review for complex proposals before code and complex
-implementations; simple work stays light by judgment. The task menu offers **Review proposal** and
-**Review changes**. Each existing entry opens saved status, findings and L2 dispositions without
-invocation. **Review again**, **Review latest** and **Retry** are deliberate detail actions.
-Requests prefer an eligible alternate configured engine; otherwise they use a separate same-engine
-invocation with the same captured-input/read-only contract. Engine/model, fallback reason and
-account-allowance uncertainty appear before requesting and in saved evidence. One reviewer machine-wide
-uses one additional machine slot. L2 names acceptance criteria and key risks for focused adversarial
-review; the reviewer reports findings and coverage gaps without a duration cutoff. A reviewer that never
-reads its captured input fails with that reason rather than completing with no coverage. L2 observes the run
-and can cancel if it gets stuck or goes off scope. No suitable engine or capacity means explicitly
-unavailable; there is no queue, automatic retry or engine switch after launch. Fallback cannot bypass
-unavailable observation or cancellation. Reviewers use native reasoning defaults; the project's L2
-owner effort setting does not change reviewer eligibility.
+implementations; simple work stays light by judgment. Task details shows a **Proposal review** and an
+**Implementation review** box with the latest review's verdict and counts, and one **Request**,
+**Review again** or **Try again** button when a new review can start; the conversation shows one card
+per kind ([design](../design/wireframes/SPEC.md#adversarial-review)). Viewing a review never invokes a
+reviewer. The reviewer is a separate invocation with the captured-input/read-only contract. It uses an
+eligible alternate configured engine when there is one and otherwise the task's own engine, the
+ordinary path. Engine/model, any fallback reason and account-allowance uncertainty are saved with each
+review and shown under its technical details. A request waits on any open task, whatever L2 is doing: a
+waiting or blocked L2 is woken, and a stopped or faulted task keeps the request for its next resume.
+One reviewer runs machine-wide, using one additional machine slot; `run` refuses while another review
+is running, and the request waits for L2 to run it once the reviewer is free. L2 names acceptance
+criteria and key risks for focused adversarial review; the reviewer reports a one-sentence verdict,
+findings and coverage gaps without a duration cutoff. A reviewer that never reads its captured input
+fails with that reason rather than completing with no coverage. L2 observes the run and can cancel if
+it gets stuck or goes off scope. No suitable engine means explicitly unavailable; there is no automatic
+retry or engine switch after launch. Fallback cannot bypass unavailable observation or cancellation.
+Reviewers use native reasoning defaults; the project's L2 owner effort setting does not change
+reviewer eligibility.
 `--engine` and `--model` select the reviewer for one request without changing project defaults or
 other launches. The selection is the only candidate: installation, account/model rejection, quota and
 captured-input capability checks still apply, unknown allowance stays explicit, and an unavailable
 selection refuses the request or fails the run instead of substituting another reviewer. A bare model
 name needs `--engine` unless the engine seam recognizes it. The saved review keeps the requested
-`selection` beside the effective engine/model. A selection belongs to one request: a retry or rerun
-without one routes automatically and shows that reviewer. A retry, rerun or replacement keeps the prior
+`selection` beside the effective engine/model. A selection belongs to one request: a repeat without
+one routes automatically and shows that reviewer. A repeat or replacement keeps the prior
 focus unless it names a new one; an operator request's focus always stays and owner focus is added to it. Naming a request that is still waiting to run with `--previous` and a different
 selection replaces it: the new request keeps an operator requester's authority and the replaced one is
 recorded as withdrawn with its replacement.
@@ -1564,6 +1569,7 @@ alt task review assess --review-id <id> --file /tmp/assessment.json
 alt task review assess --review-id <proposal-review-id> --proposal-message <revised-message-id> --file /tmp/assessment.json
 alt task review cancel --review-id <id> --reason "The owner needs to stop"
 alt task review withdraw --review-id <id> --reason "Why this L2-requested review is unnecessary"
+# Repeat a finished review; --previous names the review it replaces:
 alt task review request --subject changes --previous <id> --focus "Review the later revision"
 # Review new material while earlier reviews and their open findings stay in the merge gate:
 alt task review request --subject proposal --additional --focus "Challenge the security addendum"
@@ -1574,7 +1580,8 @@ alt task review request --previous <waiting-id> --model <model>
 
 Task defaults to `ALTITUDE_TASK`; an explicit task follows the action. `--subject` defaults to
 `changes`. Commands fence mutations to the current owner attempt. Operator requests can only be
-skipped by the operator's UI action. Open questions do not prevent either subject: a request can continue a
+skipped by the operator's **Skip review**, which asks no reason; L2's withdrawal of its own request
+names one. Open questions do not prevent either subject: a request can continue a
 question-blocked owner solely to prepare, run and assess review. Every open question, its revision, its card
 and any merge hold stay unchanged, and implementation or merge still needs its own approval. Because review
 freshness covers the task conversation and decisions, a later answer or resolution needs reassessment before merge.
@@ -1609,7 +1616,7 @@ assessment then faces the ordinary freshness checks; withdrawal authority is unc
 `--additional` requests another review of the subject that replaces none, for example of a proposal
 addendum. It needs every current review finished and assessed, cannot name `--previous`, and has its
 own focus and requester. Earlier reviews keep their open findings, requester, focus and withdrawal
-authority, and still block merge however the additional review turns out. Retrying or re-running the
+authority, and still block merge however the additional review turns out. Repeating the
 additional review with `--previous` replaces only it.
 With no findings, use an empty array and an assessment reason. Commit fixes before
 assessing; post the outcome explanation before assessment so it is included in the final context.

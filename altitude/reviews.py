@@ -39,6 +39,12 @@ class AssessmentRequired(T.TransitionError):
                          "Task context includes the request, brief, messages and decisions.")
 
 
+def _load(project, slug):
+    task = S.load_task(project, slug)
+    task["project"] = project
+    return task
+
+
 def _owner(task, actor, expected_attempt=None, *, required=False):
     if actor not in ("l2", T.OPERATOR_MESSAGE_ROLE) or required and actor != "l2":
         raise T.TransitionError("Only the task owner or operator can manage its review.")
@@ -46,17 +52,18 @@ def _owner(task, actor, expected_attempt=None, *, required=False):
         raise T.TransitionError("The review command does not name the current owner attempt.")
 
 
-def _eligible(task, subject="changes"):
-    if task.get("fault") or task.get("stop_id") or task.get("planned_wait"):
-        return "Continue or settle the task before requesting review."
+def _open(task):
+    """A request queues on any open task; the owner takes it at its next checkpoint or resume."""
     if task.get("state") == "reported":
-        report = S.read_json(S.task_dir(task["project"], task["slug"]) / "report.json")
-        if not T.reported_continuable(task, report):
-            return "This task has no open delivery to review."
-    elif task.get("state") != "running" and not (task.get("state") == "blocked" and T.open_questions(task)):
-        return "Review is available when the task owner is running."
+        return T.reported_continuable(task, S.read_json(S.task_dir(task["project"], task["slug"]) / "report.json"))
+    return task.get("state") in ("running", "blocked", "queued")
+
+
+def _eligible(task, subject="changes"):
+    if not _open(task):
+        return "This task has no open delivery to review."
     if not task.get("worktree") or not task.get("l2_engine"):
-        return "The owner's worktree and engine must be known before review."
+        return "Review is available once L2 has started."
     if subject == "changes" and task.get("review_merged_head") and task["review_merged_head"] == _git(Path(task["worktree"]), "rev-parse", "HEAD"):
         return "This delivery already merged. Prepare the next delivery's checkpoint before requesting review."
     return None
@@ -97,7 +104,7 @@ def busy():
 def _capacity(task):
     from . import dispatch
     if active_count():
-        return "Another cross-engine review is running on this machine."
+        return "Another adversarial review is running on this machine."
     owners = sum(dispatch.occupies_slot(t) for p in config.load_projects() for t in S.list_tasks(p))
     # A reported owner must also resume before it can prepare/run the review.
     if owners + (task.get("state") in ("reported", "blocked")) + 1 > config.machine_wip():
@@ -181,9 +188,9 @@ def _unresolved(review):
     return [d["finding_id"] for d in review.get("dispositions", []) if d["disposition"] == "open"]
 
 
-def _request_wait(task, previous=None):
+def _request_wait(task, subject, previous=None):
     for row in _current_reviews(task):
-        if row["id"] == previous or row["state"] == "withdrawn":
+        if row["id"] == previous or row["state"] == "withdrawn" or row.get("subject", "changes") != subject:
             continue
         if row["state"] != "completed" or not row.get("reconciled"):
             return "Address the existing review request before requesting another review."
@@ -197,24 +204,29 @@ def _project_review(review, task, identity):
     matches = lambda saved: all(saved.get(k) == identity.get(k) for k in ("head", "base", "context_hash", "proposal_id", "proposal_hash"))
     coverage = ("unknown" if identity is None else "current" if snapshot and matches(snapshot)
                 else "assessed" if assessed and matches(assessed) else "earlier")
-    mutable = task.get("state") in ("running", "blocked", "reported") and review in _current_reviews(task)
+    mutable = _open(task) and review in _current_reviews(task)
     latest = next((r for r in reversed(task.get("reviews", [])) if r.get("subject", "changes") == review.get("subject", "changes")), None)
-    rerunnable = task.get("state") in ("running", "blocked", "reported") and review == latest and not _unresolved(review)
-    row.update(coverage=coverage, unresolved=_unresolved(review), can_withdraw=mutable and review["state"] not in ("withdrawn", "running"),
+    finished = review["state"] in ("failed", "cancelled", "withdrawn") or review["state"] == "completed" and bool(assessed)
+    # "Earlier version" names new content (commits or a revised proposal); a moved main or conversation is
+    # L2's routine reassessment before landing, which require_merge still enforces.
+    saved = assessed or snapshot
+    row.update(coverage=coverage, unresolved=_unresolved(review),
+               earlier=bool(identity and saved and any(saved.get(k) != identity.get(k) for k in ("head", "proposal_id", "proposal_hash"))),
+               can_withdraw=mutable and review["state"] not in ("withdrawn", "running"),
                can_cancel=mutable and review["state"] == "running" and not review.get("cancel_requested"),
-               can_retry=mutable and review["state"] in ("failed", "cancelled"),
-               can_review_latest=rerunnable and review["state"] == "completed" and bool(assessed) and coverage != "current",
-               can_review_again=rerunnable and review["state"] == "completed" and bool(assessed) and coverage == "current")
+               can_again=_open(task) and review == latest and finished and not _unresolved(review))
+    if review["state"] == "requested":
+        woken = task.get("state") == "blocked" and task.get("resume_request") and not task.get("stop_id") and not task.get("fault")
+        row["waiting"] = ("reviewer" if active_count() else "owner" if task.get("state") == "running" or woken else "resume")
     return row
 
 
 def view(project, slug):
     from . import route
-    task = S.load_task(project, slug)
-    task["project"] = project
+    task = _load(project, slug)
     settings = config.load_projects().get(project)
     choice = route.pick_review(task, settings) if settings else {"why": "Project is not managed."}
-    common = (None if choice.get("engine") else choice.get("why") or "No reviewer is available.") or _capacity(task)
+    common = None if choice.get("engine") else choice.get("why") or "No reviewer is available."
     subjects, history, identities = {}, [], {}
     for review in task.get("reviews", []):
         proposal_id = ((review.get("reconciled") or review.get("snapshot") or {}).get("proposal_id")
@@ -224,20 +236,21 @@ def view(project, slug):
                 identities[proposal_id], _ = _identity(project, task, candidate=False, proposal_id=proposal_id)
             except (T.TransitionError, OSError, subprocess.SubprocessError, KeyError):
                 identities[proposal_id] = None
-        row = _project_review(review, task, identities[proposal_id])
-        why = _eligible(task, review.get("subject", "changes")) or common or _request_wait(task, review["id"])
-        for key in ("can_retry", "can_review_latest", "can_review_again"):
-            row[key] = row[key] and not why
-        history.append(row)
+        history.append(_project_review(review, task, identities[proposal_id]))
+    # Open findings of every current review of a kind, including one an additional review left in the merge gate.
+    gate = {subject: sum(len(_unresolved(r)) for r in _current_reviews(task)
+                         if r.get("subject", "changes") == subject and r["state"] != "withdrawn") for subject in ("proposal", "changes")}
+    for row in history:
+        subject = row.get("subject", "changes")
+        row["can_again"] = row["can_again"] and not (gate[subject] or _eligible(task, subject) or common or _request_wait(task, subject, row["id"]))
     for subject in ("proposal", "changes"):
         latest = next((r for r in reversed(history) if r.get("subject", "changes") == subject), None)
-        why = _eligible(task, subject) or common or _request_wait(task)
-        subjects[subject] = {"available": not bool(why), "why": why or "", "latest": latest}
-    return {**{k: subjects["changes"][k] for k in ("available", "why")}, "subjects": subjects,
-            "engine_label": choice.get("label"), "model": choice.get("model"),
-            "same_engine": bool(choice.get("same_engine")), "fallback_reason": choice.get("fallback_reason", ""),
-            "allowance_known": bool(choice.get("allowance_known")),
-            "latest": history[-1] if history else None, "history": history}
+        why = _eligible(task, subject) or common or _request_wait(task, subject)
+        # A kind with a review keeps showing it; an unreviewed kind shows only while a request could start.
+        if latest or _open(task):
+            subjects[subject] = {"available": latest["can_again"] if latest else not why, "why": why or "", "latest": latest,
+                                 "open": gate[subject]}
+    return {"subjects": subjects, "history": history}
 
 
 def request(project, slug, *, actor, request_id, focus="", source_id=None, previous=None, expected_attempt=None, subject=None,
@@ -253,8 +266,7 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
     if additional and previous:
         raise T.TransitionError("An additional review replaces no review; name --previous only to replace one.")
     with merge_lock(project, slug, wait=False), dispatch.launch_lock(), S.project_lock(project):
-        task = S.load_task(project, slug)
-        task["project"] = project
+        task = _load(project, slug)
         _owner(task, actor, expected_attempt)
         rows = task.setdefault("reviews", [])
         prior = _find(task, previous) if previous else None
@@ -297,9 +309,7 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
                 return _project_review(latest, task, None)
             if latest["state"] == "completed" and not latest.get("reconciled"):
                 raise T.TransitionError("Assess the completed review before requesting another.")
-        if why := _request_wait(task, previous):
-            raise T.TransitionError(why)
-        if why := _capacity(task):
+        if why := _request_wait(task, subject, previous):
             raise T.TransitionError(why)
         if subject == "changes":
             root = Path(task["worktree"])
@@ -336,8 +346,9 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
             latest.update(state="withdrawn", withdrawn_by=actor, finished_at=S.now(), replaced_by=request_id,
                           withdrawal_reason=f"Replaced by review {request_id} with reviewer {route.option_label(choice)}.")
         if task["state"] == "reported":
-            task = T.continue_report(project, task, actor=actor, reason="Cross-engine review requested")
-        if task["state"] == "blocked":
+            task = T.continue_report(project, task, actor=actor, reason="Adversarial review requested")
+        # Like an owner notice, a request wakes a waiting owner; Stop and a fault hold it until the next resume.
+        if task["state"] == "blocked" and not task.get("stop_id") and not task.get("fault"):
             task.update(resume_request=request_id, resume_after=S.now())
         S.save_task(project, task)
         S.append_event(project, slug, "review-requested", review_id=request_id, by=requester)
@@ -481,8 +492,7 @@ def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None,
     with config.restart_lock() as quiet, dispatch.launch_lock(), S.project_lock(project):
         if not quiet or config.restart_in_progress():
             raise T.TransitionError("Altitude is activating an update. Run the accepted review after activation.")
-        task = S.load_task(project, slug)
-        task["project"] = project
+        task = _load(project, slug)
         _owner(task, actor, expected_attempt, required=True)
         review = _find(task, review_id)
         if review["state"] != "requested":
@@ -512,14 +522,14 @@ def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None,
     try:
         identity, snapshot, runtime = _capture(project, task, review, context_ids, proposal_id)
         with S.project_lock(project):
-            current = S.load_task(project, slug)
+            current = _load(project, slug)
             live = _find(current, review_id)
             live["snapshot"] = identity
             S.save_task(project, current)
 
         def started(worker):
             with S.project_lock(project):
-                current = S.load_task(project, slug)
+                current = _load(project, slug)
                 live = _find(current, review_id)
                 live["worker"] = worker
                 S.save_task(project, current)
@@ -530,7 +540,7 @@ def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None,
         def waiting():
             connected = on_wait is None or on_wait()
             with S.project_lock(project):
-                current = S.load_task(project, slug)
+                current = _load(project, slug)
                 live = _find(current, review_id)
                 if not connected:
                     live.update(cancel_requested=True, cancel_reason="Review caller disconnected")
@@ -544,18 +554,18 @@ def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None,
         result = engines.review(prompt, engine=review["engine"], snapshot=snapshot, runtime=runtime,
                                 model=review["model"], on_start=started, on_wait=waiting)
     except (OSError, ValueError, T.TransitionError, subprocess.SubprocessError) as exc:
-        saved = _find(S.load_task(project, slug), review_id)
+        saved = _find(_load(project, slug), review_id)
         worker = saved.get("worker")
         result = {"error": str(exc), "termination_confirmed": engines.review_active(worker) is False if worker else not invoked}
     except (KeyboardInterrupt, SystemExit):
-        saved = _find(S.load_task(project, slug), review_id)
+        saved = _find(_load(project, slug), review_id)
         worker = saved.get("worker")
         result = {"error": "Review execution interrupted.",
                   "termination_confirmed": engines.review_active(worker) is False if worker else not invoked}
         raise
     finally:
         with S.project_lock(project):
-            current = S.load_task(project, slug)
+            current = _load(project, slug)
             live = _find(current, review_id)
             result = result or {"error": "Review execution interrupted.", "termination_confirmed": False}
             if result.get("diagnostics") is not None:
@@ -577,12 +587,12 @@ def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None,
             _inflight.discard(key)
         if not confirmed:
             _termination_fault(project, current, review_id)
-    return view(project, slug)["latest"] if current["reviews"][-1]["id"] == review_id else _project_review(live, current, None)
+    return next(row for row in view(project, slug)["history"] if row["id"] == review_id)
 
 
 def assess(project, slug, review_id, *, actor, expected_attempt, dispositions, reason, proposal_id=None):
     with merge_lock(project, slug), S.project_lock(project):
-        task = S.load_task(project, slug)
+        task = _load(project, slug)
         _owner(task, actor, expected_attempt, required=True)
         review = _find(task, review_id)
         if task.get("state") != "running" or review["state"] != "completed" or not isinstance(reason, str) or not reason.strip():
@@ -605,7 +615,7 @@ def assess(project, slug, review_id, *, actor, expected_attempt, dispositions, r
 
 def cancel(project, slug, review_id, *, actor, reason="", expected_attempt=None):
     with S.project_lock(project):
-        task = S.load_task(project, slug)
+        task = _load(project, slug)
         _owner(task, actor, expected_attempt)
         review = _find(task, review_id)
         if review["state"] != "running":
@@ -615,7 +625,7 @@ def cancel(project, slug, review_id, *, actor, reason="", expected_attempt=None)
         S.save_task(project, task)
     if worker and engines.review_stop(worker):
         with S.project_lock(project):
-            task = S.load_task(project, slug)
+            task = _load(project, slug)
             review = _find(task, review_id)
             if review["state"] == "running":
                 review.update(state="cancelled", finished_at=S.now())
@@ -625,24 +635,24 @@ def cancel(project, slug, review_id, *, actor, reason="", expected_attempt=None)
 
 def withdraw(project, slug, review_id, *, actor, reason="", expected_attempt=None):
     with merge_lock(project, slug), S.project_lock(project):
-        task = S.load_task(project, slug)
+        task = _load(project, slug)
         _owner(task, actor, expected_attempt)
         review = _find(task, review_id)
-        if task.get("state") not in ("running", "blocked", "reported"):
+        if not _open(task):
             raise T.TransitionError("Finished review history is read-only.")
         if review["state"] == "running":
             raise T.TransitionError("Cancel the running review and confirm it has stopped before withdrawing it.")
         if actor == "l2" and review["requested_by"] != "l2":
             raise T.TransitionError("Only the operator can skip an operator-requested review.")
-        if not isinstance(reason, str) or not reason.strip():
+        if not isinstance(reason, str) or actor == "l2" and not reason.strip():
             raise T.TransitionError("Record why the review is withdrawn.")
-        review.update(state="withdrawn", withdrawn_by=actor, withdrawal_reason=reason, finished_at=S.now())
+        review.update(state="withdrawn", withdrawn_by=actor, withdrawal_reason=reason.strip() or "Skipped by the operator.", finished_at=S.now())
         S.save_task(project, task)
         return _project_review(review, task, None)
 
 
 def require_merge(project, slug, pair):
-    task = S.load_task(project, slug)
+    task = _load(project, slug)
     current = [review for review in _current_reviews(task) if review["state"] != "withdrawn"]
     for review in current:
         if review["state"] != "completed" or not review.get("reconciled"):
@@ -665,7 +675,7 @@ def require_merge(project, slug, pair):
 
 
 def cancel_attached(project, slug, reason):
-    for review in S.load_task(project, slug).get("reviews", []):
+    for review in _load(project, slug).get("reviews", []):
         if review["state"] == "running":
             cancel(project, slug, review["id"], actor=T.OPERATOR_MESSAGE_ROLE, reason=reason)
 
@@ -692,7 +702,7 @@ def poll(project):
             active = engines.review_active(worker) if worker else None
             if active is False:
                 with S.project_lock(project):
-                    current = S.load_task(project, task["slug"])
+                    current = _load(project, task["slug"])
                     row = _find(current, review["id"])
                     if row["state"] == "running":
                         row.update(state="failed", error="Review interrupted; no complete result was saved. Retry explicitly.", finished_at=S.now())
