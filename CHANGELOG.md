@@ -21,6 +21,8 @@ Conversations and tasks:
 - The coordinator creates a task in the same turn when a message makes clear that work should
   happen, and asks first only when it is unclear whether any work is wanted. Open product choices go
   to the owner's proposal checkpoint.
+- Findings or actions a task produces for you reach project chat with their exact steps, also when
+  the task finishes without a PR.
 - Messages you send in a task's chat while its Claude owner is working reach it as your own next
   turn, so it acts on them as your instructions.
 - On a phone, swiping sideways on a task page moves one tab at a time through Conversation, Live
