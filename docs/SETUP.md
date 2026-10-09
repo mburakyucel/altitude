@@ -71,7 +71,8 @@ curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/re
 
 The command downloads anonymously and needs no GitHub sign-in. `latest` names the
 newest stable release and skips release candidates; to install one exact release,
-replace `latest/download` with `download/<tag>`, for example `download/v0.1.0`. On the Mac, installation,
+replace `latest/download` with `download/<tag>`, using a tag from the
+[releases](https://github.com/mburakyucel/altitude/releases). On the Mac, installation,
 updates, rollback, uninstall and starting again at login pass in fresh macOS virtual machines; the
 [roadmap](ROADMAP.md#native-macos-runtime) lists the native checks still open.
 
@@ -108,17 +109,18 @@ The command trusts GitHub's HTTPS and the published, immutable release for `inst
 Every release carries GitHub's release attestation for its files. Releases the release workflow
 publishes from the public repository also attest each file's build provenance; `v0.1.0` and its
 release candidates were published while the repository was private and have no build provenance.
-To verify a release's script before running it, set `VERSION` to its tag:
+To verify the latest release's script before running it:
 
 ```sh
-VERSION=v0.1.0   # replace with the release's tag
+VERSION=$(gh release view --repo mburakyucel/altitude --json tagName --jq .tagName) &&
 curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/mburakyucel/altitude/releases/download/$VERSION/install.sh" &&
   gh release verify-asset "$VERSION" install.sh --repo mburakyucel/altitude &&
   sh install.sh
 ```
 
-For a release with build provenance, `gh attestation verify install.sh --repo mburakyucel/altitude`
-also checks that the release workflow built the file.
+For one exact release, set `VERSION` to its tag instead. For a release with build provenance,
+`gh attestation verify install.sh --repo mburakyucel/altitude` also checks that the release
+workflow built the file.
 
 On a Mac the service is the LaunchAgent `~/Library/LaunchAgents/dev.altitude.altd.plist` of your
 login, logging to `~/Library/Logs/altitude/altd.log`; the application lives in
@@ -154,7 +156,7 @@ access: download `install.py`, the versioned `.tar.gz` archive and its `.sha256`
 checksum from the same untrusted download does not establish authenticity.
 
 ```sh
-python3.12 install.py --archive altitude-v0.1.0.tar.gz --sha256 '<release SHA-256>'
+python3.12 install.py --archive altitude-<tag>.tar.gz --sha256 '<release SHA-256>'
 export PATH="$HOME/.local/bin:$PATH"
 alt doctor
 ```
