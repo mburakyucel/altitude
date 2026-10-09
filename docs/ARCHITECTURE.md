@@ -2054,6 +2054,13 @@ messages. Each turn drains it at its own boundary rather than at the next tick: 
 messages for the same conversation fold into one turn in arrival order, each on its own line, while
 image-bearing and server-triggered messages keep their own turn, and nothing runs while a turn holds the project's L3 lock.
 
+An operator message whose turn finds no eligible engine, or whose every option refuses before provider
+output, is kept rather than failed. Its user row stays in history under the turn id and no error row is
+written; the queue keeps one chat row carrying that `turn_id`, its text and any images. `l3._keep` orders the
+queue as an accepted Send now row, then kept messages in send order, then the rest, and the claim of a kept
+row publishes the same turn id without logging the message again, so the reply lands beneath it. The
+page shows a kept message's queued status under its own bubble rather than in the queued list.
+
 **Send now** promotes only the selected operator row and gives it its own next turn. Other queued
 rows keep their relative order and ordinary folding. Admission, removal and claim share the queue's
 writer lock; retries reuse the selected row or its history receipt. An accepted Send now row remains

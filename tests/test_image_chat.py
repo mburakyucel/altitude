@@ -253,6 +253,31 @@ class TestImageConversations(AltitudeCase):
         with self.assertRaises(images.ImageError):
             images.lookup(self.project, [message["images"][0]["id"]])
 
+    def test_refused_image_message_keeps_its_images_and_turn_until_delivered(self):
+        self.request("/api/chat", self.body())
+        limited = {"text": "", "session_id": "", "error": "Fixture allowance exhausted.", "tools": [], "safe_to_retry": True,
+                   "limited": {"scope": "engine", "why": "Fixture allowance exhausted.", "until": "2999-01-01T00:00:00+00:00"}}
+        with mock.patch.object(engines, "claude_print", return_value=limited), \
+                mock.patch.object(engines, "codex_exec", return_value=limited):
+            result = l3.deliver_queued(self.project)
+
+        self.assertTrue(result["undelivered"])
+        [kept] = l3.queued(self.project)
+        self.assertEqual(kept["turn_id"], result["turn_id"])
+        self.assertTrue(kept["images"])
+        self.assertNotIn("image_turn_id", kept)
+        history = l3.chat_history(self.project, None)
+        self.assertEqual([(row["role"], row["turn_id"]) for row in history], [("user", result["turn_id"])])
+        self.assertEqual(history[0]["images"], kept["images"])
+
+        l3._write_queue(l3.queue_path(self.project), [{**kept, "retry_at": "2000-01-01T00:00:00+00:00"}])
+        self.assertTrue(l3.deliver_queued(self.project).get("completed"))
+
+        self.assertEqual(len(self.calls[-1][1].get("images", [])), 1)
+        self.assertEqual(l3.queued(self.project), [])
+        self.assertEqual([(row["role"], row["turn_id"]) for row in l3.chat_history(self.project, None)],
+                         [("user", result["turn_id"]), ("assistant", result["turn_id"])])
+
     def test_native_error_with_partial_reply_keeps_saved_image_retry(self):
         self.request("/api/chat", self.body())
         with mock.patch.object(engines, "claude_print", return_value={

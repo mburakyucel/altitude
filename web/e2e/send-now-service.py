@@ -2,7 +2,7 @@
 import threading
 
 from service_support import configure, serve
-from altitude import config, engines, l3, server, state as S
+from altitude import config, engines, l3, route, server, state as S
 
 
 def main():
@@ -11,6 +11,7 @@ def main():
     stopped = threading.Event()
     calls = []
     interrupts = []
+    exhausted = threading.Event()
     project = "atlas"
     repo = config.PROJECT_ROOTS[0] / project
     repo.mkdir(parents=True)
@@ -25,6 +26,10 @@ def main():
         turn_id = l3.active(project)["id"]
         text = next(row["text"] for row in l3.chat_history(project, None)
                     if row.get("turn_id") == turn_id and row["role"] == "user")
+        if exhausted.is_set():
+            # The provider refuses before any output, as a spent usage window does.
+            return {"text": "", "session_id": "", "error": "Fixture usage window exhausted.", "tools": [], "safe_to_retry": True,
+                    "limited": {"scope": "engine", "why": "Fixture usage window exhausted.", "until": "2999-01-01T00:00:00+00:00"}}
         calls.append({"text": text, "resume": options.get("resume")})
         if options.get("on_start"):
             options["on_start"](None)
@@ -63,6 +68,17 @@ def main():
             if self.path == "/fixture/release":
                 self.rfile.read(int(self.headers.get("Content-Length", "0")))
                 release.set()
+                return self._json({"ok": True})
+            if self.path == "/fixture/exhausted":
+                self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                exhausted.set()
+                return self._json({"ok": True})
+            if self.path == "/fixture/recovered":
+                self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                exhausted.clear()
+                route.note_limit(config.ENGINES[0], {"scope": "engine", "why": "Fixture window reset.",
+                                                     "until": "2000-01-01T00:00:00+00:00"})
+                server.request_l3_drain(project)
                 return self._json({"ok": True})
             if self.path == "/fixture/unavailable":
                 self.rfile.read(int(self.headers.get("Content-Length", "0")))

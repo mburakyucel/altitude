@@ -748,6 +748,8 @@ export const QueuedMessageSchema = z
     send_now_reason: z.string().nullish(),
     /** A follow-up on a decision names its task (SPEC.md §5.2 note 6). */
     slug: z.string().nullish(),
+    /** A kept message: already in the conversation under this turn, waiting for an available engine (SPEC.md §4.2). */
+    turn_id: z.string().nullish(),
   })
   .passthrough();
 

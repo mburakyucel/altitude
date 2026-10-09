@@ -920,7 +920,7 @@ def main(argv=None) -> None:
         return
     if c == "chat":
         res = l3.turn(_project(args), _stdin_or_file(args), trigger=args.trigger, engine=args.engine, on_text=lambda t: (sys.stdout.write(t), sys.stdout.flush()))
-        print(); out({k: res.get(k) for k in ("session_id", "context_percent", "turns", "cost", "error", "engine")}); return
+        print(); out({k: res.get(k) for k in ("session_id", "context_percent", "turns", "cost", "error", "engine", "queued")}); return
     if c == "l3-reset":
         l3.reset(_project(args)); out("L3 will start fresh on the next turn"); return
     if c == "incident":

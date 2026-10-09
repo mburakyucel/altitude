@@ -1668,7 +1668,11 @@ available after acceptance until claim, even when an engine becomes unavailable.
 undo an interruption already requested. An unavailable engine, active chat still starting or operator
 wait disables Send now with the server's explanation. Denied, conflict and unconfirmed requests retain the row
 and show their own inline error after refreshing canonical state. The row becomes its turn bubble
-only when the server admits it; claimed, delivered or removed rows have no queued actions.
+only when the server admits it; claimed, delivered or removed rows have no queued actions. A message
+admitted while no L3 engine can run keeps its bubble with the muted queued status (**Queued · runs
+next**) and Send now beneath it, disabled with the server's explanation; there is no error line and no
+Remove, because it was already sent. It runs before system work once an engine is available, and its
+reply appears beneath the same bubble.
 Both controls have 44px phone targets and wrap with their explanations on narrow screens.
 A running turn shows
 either a system line in progress (§3.4) or, for a `chat` turn, a typing indicator under the
