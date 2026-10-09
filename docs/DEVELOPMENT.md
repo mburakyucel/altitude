@@ -724,17 +724,20 @@ If the required runner/protections are unavailable or browser preflight fails, r
 block with `--fault`; no operator grant supplies outside-worker browser acceptance. Altitude's
 fictional exception grants no authority for another project's checks.
 
-The queued-message **Send now** walkthrough uses real queue/task storage with deterministic
-engine interruption in `web/e2e/send-now.pw.ts`. Run the focused candidate with:
+The queued-message **Send now** walkthrough uses real queue/task storage with a deterministic engine
+turn that takes the message in, in `web/e2e/send-now.pw.ts`. Run the focused candidate with:
 
 ```sh
 alt task validate -- make ui-validate UI_ARGS=send-now.pw.ts
 ```
 
-Named states cover loading, queued controls, interruption pending, delivered and removed rows,
-denied and unconfirmed requests, unavailable delivery and waiting for system work. Unit and Python
-fixtures additionally cover selected-message ordering, concurrent pickup, question/fault supersession,
-Stop recovery and engine job termination. The emulated iPhone lane remains separate evidence.
+The state walkthrough covers loading, queued controls, sending into the current turn, the split reply,
+delivered and removed rows, denied and unconfirmed requests, unavailable delivery, waiting for the
+current chat turn and waiting for system work.
+`tests/test_engine_driver.py` runs the real engine driver against `tests/fake_engine.py`, a fixture
+speaking both engines' streaming protocols: delivery with a command in flight, the turn-end race, a
+message after the job ended, and receipts written without altd. Python fixtures additionally cover
+claims, Stop recovery and exactly-once delivery across restart. The emulated iPhone lane remains separate evidence.
 
 ## Validation captures
 
@@ -1302,8 +1305,9 @@ required check on the current head, with its GitHub console log, is sufficient d
 task folder only to diagnose a failed run or when a reviewer asks, match its run URL and attempt to
 the candidate, and open it with `pnpm --dir web exec playwright show-report /path/to/report`.
 
-An owner keeps a bounded CI wait in its active session. If it cannot obtain the required result,
-it records the run and missing evidence, explicitly blocks and asks L3 for the existing finite
+An owner reruns a failed flaky shard itself on the same head (`gh run rerun --failed <run>`); a
+recheck only observes. An owner keeps a bounded CI wait in its active session. If it cannot obtain
+the required result, it records the run and missing evidence, explicitly blocks and asks L3 for the existing finite
 [`recheck-ci`](CLI.md#durable-ci-recheck). No run means trigger recovery, not an invented run ID.
 GitHub Actions outages pause delivery until verified recovery and fresh CI. A probe
 does not resume the owner, settle a question or release a hold; L3 owns that reconciliation.

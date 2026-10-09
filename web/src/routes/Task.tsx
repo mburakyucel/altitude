@@ -445,7 +445,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
       // A removed message leaves the conversation; its text stays in the record (SPEC.md §3.10).
       rows.push(!REPLIERS.has(message.role) ? <Bubble key={key} text={message.text} at={message.at}
         images={<MessageImages project={project} images={message.images} />}
-        receipt={message.delivery ? message.delivery.send_now_pending ? "Sending now · waiting for the session" : message.delivery.state === "sending" ? "Sending to session · cannot remove" : message.delivery.state === "delivered" ? "Delivered to session" : message.delivery.state === "queued" ?
+        receipt={message.delivery ? message.delivery.send_now_pending ? "Sending now · joining the current turn" : message.delivery.state === "sending" ? "Sending to session · cannot remove" : message.delivery.state === "delivered" ? "Delivered to session" : message.delivery.state === "queued" ?
           ["stopping", "stopped", "stop_unconfirmed"].includes(steering.state) ? "Queued · held until you continue" : task.state === "queued" && !task["dispatched"] ? "Queued · waiting for the L2 to start" : "Queued · waiting for a checkpoint" : "Delivery unconfirmed · cannot remove" : undefined}>
         {message.delivery?.removable || message.delivery?.send_now_pending || (sendNow.isError && sendNow.variables === message.id) || (removal.isError && removal.variables === message.id) ? <div className="queued-actions">
         <SendNow visible={message.delivery?.state === "queued" && Boolean(message.delivery.removable || message.delivery.send_now_pending)} task
