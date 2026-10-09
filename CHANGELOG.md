@@ -60,7 +60,8 @@ Landing:
 
 Documentation and project rules:
 
-- The README describes macOS support and recent features, with captures of the current interface.
+- The README describes macOS support and recent features, with captures of the current interface,
+  and setup documents running Altitude from a source checkout.
 - Altitude's repository rules treat everything pushed or published as public: commits, branch
   names, PR and issue text, release notes and attached evidence carry no personal or private
   information. The L2 and L3 personas point owners and coordinators to a repository's own rule for
