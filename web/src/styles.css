@@ -273,6 +273,9 @@
     font-weight: 600;
     color: var(--text-secondary);
   }
+  .session-tool[data-kind="command"] .session-tool-name {
+    min-width: 0;
+  }
   .session-call {
     min-width: 0;
     flex: 1;

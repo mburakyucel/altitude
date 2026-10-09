@@ -1079,7 +1079,8 @@ The live transcript has tinted prompt blocks, the worker's prose, compact tool r
 output, and the lifecycle boundaries the record supplies (state transitions, stops, holds). Every
 row shows its recorded time in the §3.4 format, or **time unavailable**. The **Activity & evidence**
 list prefixes each task event with its time the same way. A shell command's tool label is "$"; other rows use the recorded tool name, including
-Edit for a file change. The hint reads "N lines", "running · 4 min" (time since the call while the
+Edit for a file change. Short tool names share a fixed label column; the "$" takes only its own
+width, so the command starts right after it. The hint reads "N lines", "running · 4 min" (time since the call while the
 worker runs; "running…" when the call is untimed), "error", or "no output"; write rows
 carry no diff counts. **Raw events** toggles the transcript to the raw list; its hover title states
 the server's redaction rule. There is no transcript search field. Footer states are "Following live
