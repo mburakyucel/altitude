@@ -532,7 +532,7 @@ def _run_send_now(project: str, slug: str, *, admission_held: str | None = None)
 
 
 MACHINE_SETTINGS = ("wip", "voice", "projects_folder", "operator_name", "incident_repository", "terminal", "update_check",
-                    "new_tasks")
+                    "update_automatic", "new_tasks")
 
 
 UNSET = object()
@@ -564,7 +564,7 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
             config.validate_operator_name(value)
         elif setting == "incident_repository":
             config.validate_incident_repository(value)
-        elif setting in ("terminal", "update_check") and not isinstance(value, bool):
+        elif setting in ("terminal", "update_check", "update_automatic") and not isinstance(value, bool):
             raise ValueError(f"the {setting.replace('_', ' ')} setting is on or off")
         elif setting in config.DEFAULT_SETTINGS:
             config.validate_project_default(setting, value)

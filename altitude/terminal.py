@@ -158,6 +158,14 @@ def stop(unit: str) -> None:
 
 def open_terminal(project: str, slug: str | None) -> dict:
     """Start the terminal, or return the one already running for this task or project."""
+    with config.restart_lock() as admitted:
+        if not admitted or config.restart_in_progress():
+            raise TerminalError("Altitude is updating. Open the terminal again when it finishes.", 409)
+        return _open_terminal(project, slug)
+
+
+def _open_terminal(project: str, slug: str | None) -> dict:
+    """Register the terminal before the shared restart gate lets automatic admission inspect it."""
     path = folder(project, slug)
     with _lock:  # held while registering, so turning the terminal off either sees this one or refuses it
         if not enabled():
@@ -460,6 +468,12 @@ def sweep() -> None:
     with _lock:
         for key in [key for key in _ended if _finished(*key)]:
             del _ended[key]
+
+
+def any_open() -> bool:
+    """Whether a terminal is running; a service restart would end it, so an automatic update waits."""
+    with _lock:
+        return any(not term.ended for term in _terminals.values())
 
 
 def close_all() -> None:

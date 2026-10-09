@@ -21,6 +21,7 @@ import sys
 import tarfile
 import tempfile
 import time
+import uuid
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 
@@ -191,25 +192,86 @@ def check_for_update(now: float | None = None) -> None:
 
 
 def update_status() -> dict | None:
-    """What the app, `alt doctor` and the CLI notice show; None for a source deployment."""
+    """What the app, `alt doctor` and the CLI notice show; None for a source deployment.
+
+    `automatic` is the switch that installs an offered release at a quiet point; `installed` names the release an
+    automatic update installed into this running version, so the page can say Altitude updated itself."""
     from . import config, platform
     if platform.containerized():
         return {"current": (config.RELEASE or {}).get("version"), "available": None, "check": False,
-                "command": None, "checked": None, "attempt": None, "managed": "image",
-                "reason": platform.IMAGE_MANAGED}
+                "automatic": False, "automatic_pending": False, "command": None, "checked": None, "attempt": None, "installed": None,
+                "managed": "image", "reason": platform.IMAGE_MANAGED}
     if config.RELEASE is None:
         return None
     current = config.RELEASE["version"]
     _, record = _update_record()
-    check = config.machine_settings().get("update_check") is not False
+    settings = config.machine_settings()
+    check = settings.get("update_check") is not False
     latest = record.get("latest") if check else None
     newer = bool(latest) and VERSION.fullmatch(latest.get("version", "")) and version_key(latest["version"]) > version_key(current)
-    attempt = record.get("attempt") if (record.get("attempt") or {}).get("version") != current else None
-    if attempt and attempt["state"] == "running" and time.time() - attempt["started"] > UPDATE_STALE_SECONDS:
-        attempt = {**attempt, "state": "failed", "error": UPDATE_FAILED}
-    return {"current": current, "available": latest if newer else None, "check": check, "command": "alt update",
+    last = record.get("attempt") or {}
+    automatic = check and settings.get("update_automatic") is not False
+    attempt = last if last.get("state") in ("running", "failed") and last.get("version") != current else None
+    installed = ({"version": current, "notes": f"{config.RELEASE['repository']}/releases/tag/{current}"}
+                 if last.get("automatic") and last.get("version") == current and last.get("state") == "succeeded" else None)
+    return {"current": current, "available": latest if newer else None, "check": check,
+            "automatic": automatic, "automatic_pending": bool(automatic and newer and last.get("state") != "running"
+                and latest["version"] not in record.get("automatic_attempts", [])), "command": "alt update",
             "checked": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(record["checked"])) if record.get("checked") else None,
-            "attempt": attempt}
+            "attempt": attempt, "installed": installed}
+
+
+def update_running() -> bool:
+    """The durable request fences admission until its owner finishes or a lock-protected reconciliation ends it."""
+    from . import config, platform
+    if platform.containerized() or config.RELEASE is None:
+        return False
+    return (_update_record()[1].get("attempt") or {}).get("state") == "running"
+
+
+def _reconcile_update_locked(prefix: Path) -> None:
+    """Caller owns install.lock: no live updater can be downloading, activating or recovering here."""
+    if (prefix / "pending.json").exists():
+        return
+    with _changing_update_record() as record:
+        attempt = record.get("attempt") or {}
+        if attempt.get("state") != "running":
+            return
+        current = prefix / "current"
+        if current.is_symlink() and attempt.get("version") == metadata(_version_path(prefix, os.readlink(current)))["version"]:
+            record["attempt"] = {**attempt, "state": "succeeded"}
+        elif time.time() - attempt["started"] >= UPDATE_STALE_SECONDS:
+            record["attempt"] = {**attempt, "state": "failed", "error": UPDATE_FAILED}
+
+
+def reconcile_update() -> None:
+    from . import config, platform
+    if platform.containerized() or config.RELEASE is None:
+        return
+    try:
+        with _lock(_prefix()):
+            _reconcile_update_locked(_prefix())
+    except InstallationBusy:
+        pass  # The real transaction, not its age in the UI, owns the fence.
+
+
+def _require_no_update(prefix: Path) -> None:
+    """A detached request owns the interval before its child acquires install.lock."""
+    from . import config
+    if config.RELEASE is None:
+        return
+    _reconcile_update_locked(prefix)
+    if update_running():
+        raise UpdateRefused("Another update or recovery is already running")
+
+
+def automatic_update() -> str | None:
+    """The offered release the daemon installs at its next quiet point; each version is tried once."""
+    reconcile_update()
+    status = update_status()
+    if not status or not status["automatic_pending"]:
+        return None
+    return status["available"]["version"]
 
 
 def update_notice() -> str | None:
@@ -224,61 +286,90 @@ def update_notice() -> str | None:
     except OSError:
         return None
     version = status["available"]["version"]
-    return (f"Altitude {version} is available: run alt update "
-            f"(notes: {config.RELEASE['repository']}/releases/tag/{version})")
+    when = "installs when Altitude is next idle; alt update installs it now" if status["automatic_pending"] else "run alt update"
+    return f"Altitude {version} is available: {when} (notes: {config.RELEASE['repository']}/releases/tag/{version})"
 
 
 class UpdateRefused(ValueError):
     """A request the page may explain: its message names no path or internal state."""
 
 
-def request_update(version: str) -> dict:
-    """The app's Update button: the exact newer release it showed, run as `alt update --version` in its own unit."""
+def request_update(version: str, *, automatic: bool = False) -> dict:
+    """The app's Update button, or the daemon's automatic update: the exact newer release on offer, run as
+    `alt update --version` in its own unit."""
     from . import platform
     if platform.containerized():
         raise UpdateRefused(platform.IMAGE_MANAGED)
-    # One locked step checks and records the attempt, so a second click cannot start a second update, and the
-    # attempt exists before the detached update starts, so that update's own failure always finds it.
-    with _changing_update_record() as record:
-        status = update_status()
-        if not status or not status["available"] or status["available"]["version"] != version:
-            raise UpdateRefused("Only the newer release Altitude is showing can be installed from the app")
-        if (status["attempt"] or {}).get("state") == "running" and status["attempt"]["version"] == version:
-            return status
-        record["attempt"] = {"version": version, "state": "running", "started": time.time()}
+    from . import config
+    if config.RELEASE is None:
+        raise UpdateRefused("Only an installed release can update from the app")
+    ident = uuid.uuid4().hex
     try:
+        with _lock(_prefix()):
+            _reconcile_update_locked(_prefix())
+            with _changing_update_record() as record:
+                status = update_status()
+                if not status["available"] or status["available"]["version"] != version:
+                    raise UpdateRefused("Only the newer release Altitude is showing can be installed from the app")
+                last = record.get("attempt") or {}
+                if last.get("state") == "running":
+                    if last["version"] == version and not automatic:
+                        return status
+                    raise UpdateRefused("Another update or recovery is already running")
+                if (_prefix() / "pending.json").exists():
+                    raise UpdateRefused("Another update or recovery is already running")
+                if automatic:
+                    if not status["automatic"] or version in record.get("automatic_attempts", []):
+                        raise UpdateRefused("This release is not waiting for an automatic update")
+                    record["automatic_attempts"] = [*record.get("automatic_attempts", []), version]
+                record["attempt"] = {"id": ident, "version": version, "state": "running", "started": time.time(),
+                                     "automatic": automatic}
+        # The durable reservation owns this handoff; release the lock so an immediately
+        # scheduled child can acquire it before detach returns.
         saved = json.loads(_settings().read_text())
-        platform.detach(f"altitude-update-{version}",
+        platform.detach(f"altitude-update-{ident}",
                         [saved["python"], "-B", str(_prefix() / "current/bin/alt"), "update", "--version", version],
-                        {**saved["environment"], "ALTITUDE_CONFIG": str(_settings()), "PYTHONDONTWRITEBYTECODE": "1"})
+                        {**saved["environment"], "ALTITUDE_CONFIG": str(_settings()), "PYTHONDONTWRITEBYTECODE": "1",
+                         "ALTITUDE_UPDATE_ATTEMPT": ident})
+    except InstallationBusy as exc:
+        raise UpdateRefused("Another update or recovery is already running") from exc
     except (OSError, ValueError, RuntimeError):
         with contextlib.suppress(OSError, ValueError):
-            _fail_attempt(version)
+            _finish_attempt(ident, "failed")
         raise
     return update_status()
 
 
-def _fail_attempt(version: str) -> None:
-    """Mark this version's running attempt failed; the details stay in the terminal or the update unit's log."""
+def _finish_attempt(ident: str, state: str) -> None:
+    """Only this transaction changes its receipt; details stay in its terminal or job log."""
     with _changing_update_record() as record:
         attempt = record.get("attempt") or {}
-        if attempt.get("state") == "running" and attempt.get("version") == version:
-            record["attempt"] = {**attempt, "state": "failed", "error": UPDATE_FAILED}
+        if attempt.get("state") == "running" and attempt.get("id") == ident:
+            record["attempt"] = {**attempt, "state": state, **({"error": UPDATE_FAILED} if state == "failed" else {})}
 
 
 def update(version: str | None = None) -> dict:
     """Install the named release, or the newest one this installation follows, through the same verification and activation."""
     from . import platform
     platform.require_native_application()
-    try:
-        return _update(version)
-    except (OSError, ValueError, RuntimeError):
-        if version:
-            _fail_attempt(version)
-        raise
+    ident = os.environ.get("ALTITUDE_UPDATE_ATTEMPT")
+    with _lock(_prefix(), wait=bool(ident)):
+        _reconcile_update_locked(_prefix())
+        last = _update_record()[1].get("attempt") or {}
+        if ident:
+            if last.get("id") != ident or last.get("state") != "running" or last.get("version") != version:
+                raise UpdateRefused("This update request has expired or already ended")
+        else:
+            _require_no_update(_prefix())
+            ident = uuid.uuid4().hex
+        try:
+            return _update(version, ident)
+        except (OSError, ValueError, RuntimeError):
+            _finish_attempt(ident, "failed")
+            raise
 
 
-def _update(version: str | None) -> dict:
+def _update(version: str | None, ident: str) -> dict:
     from . import config
     repository = release_repository()
     current = config.RELEASE["version"]
@@ -293,12 +384,20 @@ def _update(version: str | None) -> dict:
         return {"version": current, "updated": False, "detail": f"Altitude {current} is already installed"}
     elif version_key(version) < version_key(current):
         raise ValueError(f"{version} is older than the installed {current}; alt recover restores the previous version")
+    if (_prefix() / "pending.json").exists():
+        raise RuntimeError("Interrupted activation exists; run alt recover before updating")
+    with _changing_update_record() as record:
+        if (record.get("attempt") or {}).get("id") != ident:
+            record["attempt"] = {"id": ident, "version": version, "state": "running", "started": time.time(),
+                                 "automatic": False}
     base = f"https://github.com/{repository}/releases/download/{version}/altitude-{version}.tar.gz"
     with tempfile.TemporaryDirectory(prefix="altitude-update-") as folder:
         archive = Path(folder) / f"altitude-{version}.tar.gz"
         archive.write_bytes(_get(base, ARCHIVE_LIMIT))
         checksum = _get(base + ".sha256", 1024).decode(errors="replace").split()[:1]
-        result = install(archive, checksum[0] if checksum else "", _prefix(), newer=version)
+        with _prepare_install(archive, checksum[0] if checksum else "", _prefix(), newer=version) as prepared:
+            result = _activate(*prepared, newer=version)
+    _finish_attempt(ident, "succeeded")
     # Devices already trust this installation, so the summary leaves out its paths and trust steps.
     return {"version": version, "updated": True, "service": result["service"], "url": result["url"],
             "notes": f"https://github.com/{repository}/releases/tag/{version}"}
@@ -343,14 +442,18 @@ def _launcher(prefix: Path, saved: dict, settings: Path, entry: str = "current/b
             f"exec {shlex.quote(saved['python'])} -B {shlex.quote(str(prefix / entry))} \"$@\"\n")
 
 
+class InstallationBusy(RuntimeError):
+    """Another lifecycle process owns the installation transaction."""
+
+
 @contextmanager
-def _lock(prefix: Path):
+def _lock(prefix: Path, *, wait: bool = False):
     prefix.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (prefix / "install.lock").open("a") as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(lock, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
         except BlockingIOError as exc:
-            raise RuntimeError("Another installation operation is running") from exc
+            raise InstallationBusy("Another installation operation is running") from exc
         yield
 
 
@@ -466,7 +569,13 @@ def recover(prefix: Path | None = None) -> dict:
     with _lock(prefix), config.restart_lock(exclusive=True) as quiet:
         if not quiet:
             raise RuntimeError("Recovery waits for dispatch, L3 or report verification; retry shortly")
-        return _recover(prefix)
+        if not (prefix / "pending.json").exists():
+            _require_no_update(prefix)
+        result = _recover(prefix)
+        if result.get("recovered"):
+            attempt = _update_record()[1].get("attempt") or {}
+            _finish_attempt(attempt.get("id"), "failed")
+        return result
 
 
 def _recover(prefix: Path) -> dict:
@@ -547,6 +656,7 @@ def service(operation: str) -> dict | str:
     prefix = _prefix()
     require_service_owner()
     with _lock(prefix), config.restart_lock(exclusive=True) as quiet:
+        _require_no_update(prefix)
         if not quiet or (prefix / "pending.json").exists():
             raise RuntimeError("Service lifecycle waits for active work or installation recovery")
         platform.control(operation)
@@ -558,8 +668,9 @@ def service(operation: str) -> dict | str:
         return native
 
 
-def install(archive: Path, checksum: str, prefix: Path | None = None, *, newer: str | None = None) -> dict:
-    """Verify, stage and activate an archive. `newer` names the published release an update expects:
+@contextmanager
+def _prepare_install(archive: Path, checksum: str, prefix: Path | None = None, *, newer: str | None = None):
+    """Verify and stage an archive. `newer` names the published release an update expects:
     the verified archive must be that version, and newer than the one installed when the lock is held."""
     global __package__
     if __package__ not in (None, ""):
@@ -578,7 +689,7 @@ def install(archive: Path, checksum: str, prefix: Path | None = None, *, newer: 
             sys.dont_write_bytecode = True
             sys.path.insert(0, str(stage))
             __package__ = "altitude"
-        from altitude import config, platform, tls
+        from altitude import config, platform
         platform.require_native_application()
         platform.require_supported()
         registered = json.loads(config.PROJECTS_FILE.read_text()) if config.PROJECTS_FILE.exists() else {}
@@ -595,89 +706,102 @@ def install(archive: Path, checksum: str, prefix: Path | None = None, *, newer: 
                 raise RuntimeError("Installation prefix must be separate from runtime, TLS and project writable roots")
             if settings.is_relative_to(protected.resolve()):
                 raise RuntimeError("Installation configuration must be outside runtime, TLS and project writable roots")
-        with _lock(prefix):
-            if (prefix / "pending.json").exists():
-                raise RuntimeError("Interrupted activation exists; run alt recover before updating")
-            current = prefix / "current"
-            if current.exists() and not current.is_symlink():
-                raise RuntimeError("The current application path is not an owned version link")
-            previous = os.readlink(current) if current.is_symlink() else None
-            if previous:
-                installed = metadata(_version_path(prefix, previous))["version"]
-                if newer is not None and version_key(newer) <= version_key(installed):
-                    raise ValueError(f"Altitude {installed} is already installed; {newer} is not newer")
-            service = platform.service_path()
-            previous_service = service.read_text() if service.exists() else None
-            native = _require_owned_unit()
-            if native["LoadState"] == "loaded" and previous_service is None:
-                raise RuntimeError("An existing Altitude service is loaded from another location")
-            launcher = Path.home() / ".local/bin/alt"
-            if settings.exists():
-                saved = json.loads(settings.read_text())
-                if Path(saved["prefix"]).resolve() != prefix:
-                    raise RuntimeError("The configuration belongs to another installation")
-            else:
-                saved = {"prefix": str(prefix), "python": str(Path(sys.executable).resolve()),
-                         "environment": config.installation_environment()}
-            unit_text = platform.definition(prefix, Path(saved["python"]), settings, saved["environment"])
-            command = _launcher(prefix, saved, settings)
-            if previous_service is not None and previous_service != unit_text:
-                raise RuntimeError("Existing Altitude service belongs to another installation or was customized; migration must be explicit")
-            if launcher.exists() and (launcher.is_symlink() or launcher.read_text() != command):
-                raise RuntimeError("Existing alt command belongs to another installation; leave it in place")
-            wrappers = {prefix / "launchers" / release["version"] / "alt":
-                        _launcher(prefix, saved, settings, f"versions/{release['version']}/bin/alt")}
-            wrappers.update({prefix / "hooks" / hook: _launcher(prefix, saved, settings, f"current/hooks/{hook}")
-                             for hook in ("pre-commit", "pre-push", "pre-merge-commit", "reference-transaction")})
-            for path, content in wrappers.items():
-                if path.is_symlink() or (path.exists() and path.read_text() != content):
-                    raise RuntimeError("An installation wrapper was customized; existing files are retained")
-            if not settings.exists():
-                atomic(settings, json.dumps(saved, indent=2) + "\n")
-            destination = _version_path(prefix, f"versions/{release['version']}")
-            destination.parent.mkdir(exist_ok=True)
-            if destination.exists():
-                if metadata(destination) != release:
-                    raise RuntimeError("A version is immutable; this version already has different contents")
-            else:
-                shutil.copytree(stage, destination)
-            for path, content in wrappers.items():
-                atomic(path, content, 0o755)
-            tls.initialize()
-            # This is the same narrow gate used by dispatch, resume, L3 and report verification.
-            deadline = time.monotonic() + 60
-            while True:
-                with config.restart_lock(exclusive=True) as quiet:
-                    if quiet:
-                        receipt = {"previous": previous, "candidate": str(destination.relative_to(prefix)),
-                                   "previous_version": json.loads((current / "release.json").read_text())["version"] if previous else None,
-                                   "service": previous_service, "candidate_service": unit_text,
-                                   "candidate_launcher": command, "active": native.get("ActiveState") == "active"}
-                        atomic(prefix / "pending.json", json.dumps(receipt) + "\n")
-                        try:
-                            _link(prefix, str(destination.relative_to(prefix)))
-                            atomic(service, unit_text, 0o644)
-                            atomic(launcher, command, 0o755)
-                            platform.control("reload")
-                            if previous_service is None:
-                                platform.control("enable")
-                            if previous_service is None or receipt["active"]:
-                                platform.control("restart")
-                                _probe(release["version"], prefix=prefix)
-                        except Exception as exc:
-                            try:
-                                _recover(prefix)
-                            except Exception as rollback:
-                                raise RuntimeError(f"Activation failed ({exc}); recovery is incomplete ({rollback}). Run alt recover.") from exc
-                            raise RuntimeError(f"Activation failed; previous installation restored: {exc}") from exc
-                        (prefix / "pending.json").unlink()
-                        break
-                if time.monotonic() >= deadline:
-                    raise RuntimeError("Update staged; activation waits for dispatch, L3 or report verification. Retry this version.")
-                time.sleep(0.25)
-            return {"version": release["version"], "prefix": str(prefix), "url": tls.url(),
-                    "service": "running" if previous_service is None or receipt["active"] else "stopped",
-                    "trust": tls.info(), "retained": "previous versions and all user data", "next": "Follow trust.trust_steps in each desktop or phone browser. Use the public ca_cert file locally, or alt tls-share on a configured private network. Compare the CA name and full fingerprint before trusting it, then verify the exact HTTPS URL without a warning and pair with the code `alt pair` prints."}
+        yield stage, release, prefix, settings
+
+
+def install(archive: Path, checksum: str, prefix: Path | None = None, *, newer: str | None = None) -> dict:
+    """Verify an archive before acquiring the shared lifecycle transaction and activating it."""
+    with _prepare_install(archive, checksum, prefix, newer=newer) as prepared:
+        with _lock(prepared[2]):
+            _require_no_update(prepared[2])
+            return _activate(*prepared, newer=newer)
+
+
+def _activate(stage: Path, release: dict, prefix: Path, settings: Path, *, newer: str | None) -> dict:
+    """Activate verified contents while the caller owns install.lock, including download for an update."""
+    from . import config, platform, tls
+    if (prefix / "pending.json").exists():
+        raise RuntimeError("Interrupted activation exists; run alt recover before updating")
+    current = prefix / "current"
+    if current.exists() and not current.is_symlink():
+        raise RuntimeError("The current application path is not an owned version link")
+    previous = os.readlink(current) if current.is_symlink() else None
+    if previous:
+        installed = metadata(_version_path(prefix, previous))["version"]
+        if newer is not None and version_key(newer) <= version_key(installed):
+            raise ValueError(f"Altitude {installed} is already installed; {newer} is not newer")
+    service = platform.service_path()
+    previous_service = service.read_text() if service.exists() else None
+    native = _require_owned_unit()
+    if native["LoadState"] == "loaded" and previous_service is None:
+        raise RuntimeError("An existing Altitude service is loaded from another location")
+    launcher = Path.home() / ".local/bin/alt"
+    if settings.exists():
+        saved = json.loads(settings.read_text())
+        if Path(saved["prefix"]).resolve() != prefix:
+            raise RuntimeError("The configuration belongs to another installation")
+    else:
+        saved = {"prefix": str(prefix), "python": str(Path(sys.executable).resolve()),
+                 "environment": config.installation_environment()}
+    unit_text = platform.definition(prefix, Path(saved["python"]), settings, saved["environment"])
+    command = _launcher(prefix, saved, settings)
+    if previous_service is not None and previous_service != unit_text:
+        raise RuntimeError("Existing Altitude service belongs to another installation or was customized; migration must be explicit")
+    if launcher.exists() and (launcher.is_symlink() or launcher.read_text() != command):
+        raise RuntimeError("Existing alt command belongs to another installation; leave it in place")
+    wrappers = {prefix / "launchers" / release["version"] / "alt":
+                _launcher(prefix, saved, settings, f"versions/{release['version']}/bin/alt")}
+    wrappers.update({prefix / "hooks" / hook: _launcher(prefix, saved, settings, f"current/hooks/{hook}")
+                     for hook in ("pre-commit", "pre-push", "pre-merge-commit", "reference-transaction")})
+    for path, content in wrappers.items():
+        if path.is_symlink() or (path.exists() and path.read_text() != content):
+            raise RuntimeError("An installation wrapper was customized; existing files are retained")
+    if not settings.exists():
+        atomic(settings, json.dumps(saved, indent=2) + "\n")
+    destination = _version_path(prefix, f"versions/{release['version']}")
+    destination.parent.mkdir(exist_ok=True)
+    if destination.exists():
+        if metadata(destination) != release:
+            raise RuntimeError("A version is immutable; this version already has different contents")
+    else:
+        shutil.copytree(stage, destination)
+    for path, content in wrappers.items():
+        atomic(path, content, 0o755)
+    tls.initialize()
+    # This is the same narrow gate used by dispatch, resume, L3 and report verification.
+    deadline = time.monotonic() + 60
+    while True:
+        with config.restart_lock(exclusive=True) as quiet:
+            if quiet:
+                receipt = {"previous": previous, "candidate": str(destination.relative_to(prefix)),
+                           "previous_version": json.loads((current / "release.json").read_text())["version"] if previous else None,
+                           "service": previous_service, "candidate_service": unit_text,
+                           "candidate_launcher": command, "active": native.get("ActiveState") == "active"}
+                atomic(prefix / "pending.json", json.dumps(receipt) + "\n")
+                try:
+                    _link(prefix, str(destination.relative_to(prefix)))
+                    atomic(service, unit_text, 0o644)
+                    atomic(launcher, command, 0o755)
+                    platform.control("reload")
+                    if previous_service is None:
+                        platform.control("enable")
+                    if previous_service is None or receipt["active"]:
+                        platform.control("restart")
+                        _probe(release["version"], prefix=prefix)
+                except Exception as exc:
+                    try:
+                        _recover(prefix)
+                    except Exception as rollback:
+                        raise RuntimeError(f"Activation failed ({exc}); recovery is incomplete ({rollback}). Run alt recover.") from exc
+                    raise RuntimeError(f"Activation failed; previous installation restored: {exc}") from exc
+                (prefix / "pending.json").unlink()
+                break
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Update staged; activation waits for dispatch, L3 or report verification. Retry this version.")
+        time.sleep(0.25)
+    return {"version": release["version"], "prefix": str(prefix), "url": tls.url(),
+            "service": "running" if previous_service is None or receipt["active"] else "stopped",
+            "trust": tls.info(), "retained": "previous versions and all user data", "next": "Follow trust.trust_steps in each desktop or phone browser. Use the public ca_cert file locally, or alt tls-share on a configured private network. Compare the CA name and full fingerprint before trusting it, then verify the exact HTTPS URL without a warning and pair with the code `alt pair` prints."}
 
 
 def uninstall() -> dict:
@@ -686,6 +810,7 @@ def uninstall() -> dict:
     prefix = _prefix()
     _require_saved_environment(json.loads(_settings().read_text()))
     with _lock(prefix), config.restart_lock(exclusive=True) as quiet:
+        _require_no_update(prefix)
         if not quiet:
             raise RuntimeError("Uninstall waits for dispatch, L3 or report verification")
         # A stopped daemon does not stop its independent workers. Retain their pinned inputs.

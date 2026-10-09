@@ -132,7 +132,7 @@ def require_native_application() -> None:
 def container_setting_error(setting: str, value) -> str | None:
     if setting == "terminal":
         return container_unavailable("Terminal")
-    if setting == "update_check":
+    if setting in ("update_check", "update_automatic"):
         return container_unavailable("Update")
     if setting == "voice" and value == "host":
         return container_unavailable("Voice")

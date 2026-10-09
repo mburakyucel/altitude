@@ -9,6 +9,18 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   the incident stays local with an update-first notice; a repeat after updating gets its own
   incident. `alt incident publish` still publishes a held record on request.
 
+## v0.1.2 — 2026-10-09
+
+Patch release of the early preview, with the same Linux x86_64 and Apple silicon macOS targets
+and known limitations as `v0.1.1`.
+
+- Installed copies update automatically by default at a quiet point with no browser terminal
+  open. Running workers continue; new work waits during installation. Settings can switch back
+  to asking before an update. Each version gets one automatic attempt, with activation recovery
+  and explicit retry after failure. The app shows the installed version and release notes.
+- Copies on `v0.1.0` or `v0.1.1` need one manual update to reach automatic updates. Source
+  deployments and containers retain their source/image lifecycle.
+
 ## v0.1.1 — 2026-10-09
 
 Patch release of the early preview: alpha quality, with rough edges and the known limitations below.

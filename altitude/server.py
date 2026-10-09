@@ -1142,6 +1142,10 @@ def tick() -> None:
         auto_restart()
     except Exception as e:  # noqa: BLE001
         log(f"auto-restart: {e}\n{traceback.format_exc()}")
+    try:
+        auto_update()
+    except Exception as e:  # noqa: BLE001 — the attempt is already marked failed; the cause stays in this log
+        log(f"auto-update: {e}\n{traceback.format_exc()}")
     # Off the timer thread: five unreachable devices must not delay dispatch, resumes or the digest.
     spawn("push", push.notify, log)
     if config.RELEASE is not None:
@@ -1881,16 +1885,17 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
 
     def _update_post(self, parts: list[str], body: dict) -> None:
-        """The app's Update button and the update-check switch, behind the terminal's request checks."""
+        """The app's Update button and the update switches, behind the terminal's request checks."""
         denied = self._terminal_denied(json_body=True, subject="Update")
         if denied:
             return self._json({"error": denied}, 403)
         try:
-            if parts == ["api", "update-check"]:
+            if parts in (["api", "update-check"], ["api", "update-automatic"]):
                 if body.keys() - {"enabled"} or not isinstance(body.get("enabled"), bool):
                     return self._json({"error": "Choose on or off."}, 400)
-                view = _save_machine("update_check", body["enabled"],
-                                     "Update check on" if body["enabled"] else "Update check off")
+                setting = parts[1].replace("-", "_")
+                view = _save_machine(setting, body["enabled"], f"{setting.replace('_', ' ').capitalize()} "
+                                     + ("on" if body["enabled"] else "off"))
                 return self._json({**view, "update": installation.update_status()})
             if parts != ["api", "update"] or body.keys() - {"version"} or not isinstance(body.get("version"), str):
                 return self._json({"error": "Name the version to install."}, 400)
@@ -2254,7 +2259,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"challenge": TRUST.arm(self.client_address[0])})
             if api == "devices" and len(parts) == 3:
                 return self._devices_post(parts[2], o)
-            if api in ("update", "update-check"):
+            if api in ("update", "update-check", "update-automatic"):
                 return self._update_post(parts, o)
             if parts == ["api", "validation-access"]:
                 return self._validation_post(o)
@@ -2704,6 +2709,26 @@ class RestartBusy(RuntimeError):
     pass
 
 
+def auto_update() -> None:
+    """Install the offered release at the quiet point when automatic updates are on (operator, 2026-10-09: a fix
+    should not wait for every installation to update by hand). The restart that activation causes ends an open
+    terminal, so one defers it; detached workers survive it. Each version is tried once."""
+    if platform.containerized() or config.RELEASE is None:
+        return
+    version = installation.automatic_update()
+    if not version:
+        return
+    with config.restart_lock(exclusive=True) as quiet:
+        # Recorded under the gate, so no dispatch, L3 turn or review can start between this check and the fence.
+        if not quiet or terminal.any_open() or restart_waiting_for(check_activity=False):
+            return
+        try:
+            installation.request_update(version, automatic=True)
+        except installation.UpdateRefused:
+            return   # `alt update`, recovery or activation already runs
+    log(f"quiet point: installing Altitude {version} automatically")
+
+
 def restart_service() -> dict:
     platform.require_native_application()
     if config.RELEASE is not None:
@@ -2871,7 +2896,8 @@ def machine_view() -> dict:
             "container_shell": platform.container_shell_command(),
             "validation": validation.enabled(), "validation_unavailable": platform.validation_unavailable(),
             "deployment": "container" if platform.containerized() else "native",
-            "update_check": not platform.containerized() and config.machine_settings().get("update_check") is not False}
+            "update_check": not platform.containerized() and config.machine_settings().get("update_check") is not False,
+            "update_automatic": not platform.containerized() and config.machine_settings().get("update_automatic") is not False}
 
 
 def _save_machine(setting: str, value, reason: str) -> dict:

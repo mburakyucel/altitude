@@ -1009,11 +1009,12 @@ must be refused with nothing installed; the unaltered one must install a healthy
 then uninstalled. The `update` phase installs the baseline while the account's server answers for
 GitHub's release list and release downloads: the release host and its `api.` host resolve to the
 guest's loopback, and the account's user manager gives the service and its update job the throwaway
-authority as `SSL_CERT_FILE`. The listing names a newer draft, the candidate and the baseline. The
-daemon's startup lookup must offer the candidate in `alt doctor` and the overview; the request the
-app's **Update** button sends, from a paired session, must install it through `alt update --version`,
-downloading only the candidate's archive and checksum, and afterwards nothing is offered. Both
-baseline and candidate must carry this lookup, so the phase needs same-source versions. The hosts
+authority as `SSL_CERT_FILE`. The listing initially names the baseline and an ignored draft, then
+publishes the candidate. The daemon must install it automatically with no browser terminal open,
+record success and serve the candidate's healthy version with a new PID. The harness then turns
+automatic updates off and publishes a newer synthetic release; a paired app **Update** request
+installs it explicitly. Each update downloads only its archive and checksum. Both baseline and
+candidate carry this behavior, so the phase needs same-source versions. The hosts
 entries and unprivileged-port setting these phases need are restored afterwards. The `public-install`
 and `public-update` phases need a guest that reaches GitHub and two published releases, the candidate
 being the one `releases/latest` names. `public-install` runs setup's command for `releases/latest`
@@ -1121,12 +1122,14 @@ it and the installation keeps them, so no request reaches GitHub. It then:
   byte is refused with nothing installed, and the unaltered one installs the LaunchAgent and a
   service whose HTTPS health on the generated CA reports the release's version and commit, with
   `alt doctor` passing apart from its expected findings;
-- publishes `v0.0.2`; the installed daemon's check records it, and the app's overview, the
-  once-a-day `alt` notice and `alt doctor` report it; `alt update` activates it;
-- publishes `v0.0.3`; a paired device's Update button starts the detached
+- publishes `v0.0.2`; the daemon installs it automatically with no browser terminal open, and
+  the overview reports its successful automatic installation;
+- turns automatic updates off, publishes `v0.0.3`, checks its overview, terminal notice and
+  doctor offer, and installs it with `alt update`;
+- publishes `v0.0.4`; a paired device's Update button starts the detached
   `dev.altitude.job.altitude-update-…` launchd job, which activates it and is removed;
-- publishes `v0.0.4`, whose startup exits; `alt update` restores `v0.0.3`, which keeps
-  serving;
+- turns automatic updates on and publishes `v0.0.5`, whose startup exits; automatic activation
+  restores `v0.0.4`. Two subsequent checks preserve the failed attempt and make no further download;
 - uninstalls: the LaunchAgent, its launchd job and the update job are gone, settings, TLS identity
   and fictional history and project files remain.
 

@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 
 from tests.support import AltitudeCase, local_terminal_launch, local_terminal_stop, make_repo, terminal_session as session
-from altitude import config, dispatch, engines, l3, platform, server, state as S, tasks as T, terminal
+from altitude import config, dispatch, engines, installation, l3, platform, server, state as S, tasks as T, terminal
 
 SHELL = ["bash", "--noprofile", "--norc"]
 class TerminalCase(AltitudeCase):
@@ -89,6 +89,36 @@ class TerminalCase(AltitudeCase):
 
 
 class TestTerminalLifecycle(TerminalCase):
+    def test_terminal_registration_holds_the_restart_gate(self):
+        self.turn(True)
+        launch = terminal.launch
+
+        def during_launch(*args, **kwargs):
+            with config.restart_lock(exclusive=True) as quiet:
+                self.assertFalse(quiet, "restart cannot enter before this terminal is registered")
+            return launch(*args, **kwargs)
+
+        self.patch(terminal, "launch", side_effect=during_launch)
+        self.open()
+        self.assertTrue(terminal.any_open())
+        with config.restart_lock(exclusive=True) as quiet:
+            self.assertTrue(quiet)
+            self.assertTrue(terminal.any_open(), "the updater sees the registered terminal inside its gate")
+
+    def test_update_reservation_refuses_new_terminals_without_launching(self):
+        self.turn(True)
+        self.patch(config, "RELEASE", {"version": "v0.1.0"})
+        self.patch(config, "INSTALL_PREFIX", self.tmp / "installation")
+        S.write_json(config.ROOT / "update.json", {"attempt": {"id": "fixture", "version": "v0.2.0",
+                                                               "state": "running", "started": time.time()}})
+        with self.assertRaises(terminal.TerminalError) as caught:
+            self.open()
+        self.assertEqual(caught.exception.status, 409)
+        self.assertFalse(terminal.any_open())
+        installation._finish_attempt("fixture", "failed")
+        self.open()
+        self.assertTrue(terminal.any_open())
+
     def test_off_until_turned_on(self):
         with self.assertRaises(terminal.TerminalError) as caught:
             terminal.open_terminal(self.project, None)

@@ -306,16 +306,33 @@ timer thread: one anonymous request to GitHub for the repository in `release.jso
 an hour when offline. A stable installation reads GitHub's latest release, so it follows stable
 releases only; an installation from a release candidate reads the thirty newest releases and also
 follows newer candidates. Drafts never count. `update.json` in the runtime home keeps the newest followed release found and
-any update the app started, and the daemon, the app's request and
-the update itself change it under one lock; source deployments neither check nor record. The `update_check` machine setting turns the check off and hides what it found. The
+the latest update attempt and versions already attempted automatically. The daemon, the app's
+request and the updater change this record under one lock; source deployments and containers
+neither check nor record. The `update_check` machine setting turns the check off and hides what it found. The
 overview's `update` field and `alt doctor` report the installed version and a newer one; an
 interactive `alt` command prints one line about it at most once a day from that record, never to
 agents. `POST /api/update` accepts only the exact newer version the record shows and starts
 `alt update --version` in a job of its own (`platform.detach`), so the update outlives
 the service restart it causes; it passes the operator terminal's request checks, and Altitude has
 no login, so anyone who can open the page can start an update to that verified release, never a
-downgrade or another build. An update that fails, or has not finished after thirty minutes, reads
-as failed until retried; the installed version keeps running or is restored by activation recovery.
+downgrade or another build.
+
+The `update_automatic` machine setting defaults to true. At the existing restart quiet point,
+the daemon holds the exclusive restart gate, checks that no browser terminal is open, and reserves
+the offered version before starting the same detached updater. Terminal creation holds the shared
+gate through registration. The reservation fences new dispatch/resume work and terminal creation;
+running workers continue. Turning automatic updates off restores the confirm-and-update flow;
+turning checks off also prevents automatic starts, without changing the saved automatic preference.
+Neither setting cancels an admitted update. Sources and containers retain their existing lifecycle.
+
+The installation lock covers the entire manual or detached update, including download and recovery.
+A unique attempt identity reserves the interval before the detached child acquires that lock;
+expired children cannot run or finish a later request. Each release gets one automatic attempt,
+retained in `update.json`; explicit retries remain available. Failed activation restores the prior
+version, or keeps the recovery receipt if recovery cannot finish. An abandoned reservation becomes
+failed after thirty minutes only while the installation lock is free and no activation receipt is
+pending. Age in the UI never releases a live updater's fence. The app announces a successful
+automatic update with its installed version and release notes after reconnecting.
 The page shows a failure only as "Run alt update in a terminal to see why."; causes, which can name
 private paths, stay in the daemon log, the update unit's journal or the terminal.
 
