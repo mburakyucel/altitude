@@ -281,11 +281,15 @@ class TrustCheck:
         import time
         with self._settled:
             entry = self._challenges.get(challenge)
-            if entry is None or entry["address"] != address or entry["until"] <= time.monotonic():
+            live = lambda: self._challenges.get(challenge) is entry and entry["until"] > time.monotonic()
+            if entry is None or entry["address"] != address or not live():
                 return "unknown"
             if probed:
                 self._armed.pop(address, None)
-                if self._settled.wait_for(lambda: not entry["handshakes"], self.ARM_SECONDS):
+                done = self._settled.wait_for(lambda: not entry["handshakes"], self.ARM_SECONDS)
+                if not live():  # pruned or expired while waiting, so its handshakes are no longer counted
+                    return "unknown"
+                if done:
                     entry["outcome"] = entry["outcome"] or "trusted"
             if entry["outcome"] is None:
                 self._armed[address] = (time.monotonic() + self.ARM_SECONDS, challenge)

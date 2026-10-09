@@ -385,8 +385,8 @@ that armed that connection as untrusted, disarms the address and answers on the 
 A refusal is final for its challenge. A browser that ignores certificate errors connects again
 accepting the second certificate, possibly before altd has recorded the refusal, so an answer on
 the second certificate first waits up to five seconds for the challenge's other handshakes to end;
-one still open then gets a retry. Three attempts without an answer read Couldn't check: a failed request alone never means
-untrusted. A request on a connection opened before the
+one still open then gets a retry. Three attempts without an answer read Couldn't check: a failed
+request alone never means untrusted. A request on a connection opened before the
 challenge, including a TLS 1.2 or resumed one, gets a retry. altd issues no TLS session tickets,
 so every TLS 1.3 connection presents a certificate. The screen offers the code only once the check
 passes; the server does not yet refuse a pairing on it. With an external certificate, altd holds no
