@@ -76,6 +76,7 @@ identify validated versions; publishing one is the maintainer's explicit decisio
 
 ## Share useful evidence
 
-Use fictional projects and sanitized minimal reproductions. Live browser artifacts, task
-conversations and incident records stay private. Do not attach credentials, tokens, full runtime
-state or private session logs.
+Everything you push or post is public; leave out personal or private details as the
+[public content rule](AGENTS.md#boundaries) describes. Use fictional projects and sanitized
+minimal reproductions. Live browser artifacts, task conversations and incident records stay
+private. Do not attach credentials, tokens, full runtime state or private session logs.
