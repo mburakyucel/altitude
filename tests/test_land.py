@@ -193,6 +193,130 @@ class TestLand(AltitudeCase):
         self.assertEqual(merged_task["review_merged_head"], result["head"])
         self.assertEqual(merged_task["reviews"][-1]["merged_head"], result["head"])
 
+    def refused_merge(self, race):
+        """GitHub refuses the first merge of an approved PR; `race` is what happened meanwhile."""
+        from altitude import tasks as T
+        self.configure_ci()
+        self.staged_change()
+        self.set_current_l2()
+        T.set_hold_merge("demo", "fix-x", "Operator approval before merging")
+        approval = T.message("demo", "fix-x", T.OPERATOR_MESSAGE_ROLE, "Merge it after checks.")
+        real, refused = land._run, []
+
+        def github(args, cwd, timeout=120):
+            if args[:3] == ["gh", "pr", "merge"] and not refused:
+                refused.append(args[-1])
+                if race in ("main moved", "new hold", "publisher lost", "publisher replaced", "adoption changed"):
+                    self.advance_base("src/outside.py")
+                if race == "new hold":
+                    T.set_hold_merge("demo", "fix-x", "Hold again: wait for the release")
+                if race == "publisher lost":
+                    task = S.load_task("demo", "fix-x")
+                    S.save_task("demo", {**task, "title": "Fixture delivery"})
+                    T.block("demo", "fix-x", "Fixture owner stopped", expected_attempt=1)
+                if race == "publisher replaced":
+                    task = S.load_task("demo", "fix-x")
+                    S.save_task("demo", {**task, "attempt": 2})
+                if race == "adoption changed":
+                    self.git("push", "-q", "origin", f"{refused[0]}:refs/heads/proposal/other")
+                    receipt = {"number": 102, "url": "https://github.com/team/demo/pull/102",
+                               "branch": "proposal/other", "base": "main", "head": refused[0],
+                               "origin": "https://github.com/team/demo.git", "reason": "Fixture adoption"}
+                    land._record_adoption("demo", "fix-x", receipt, None, previous=None, dry_run=False)
+                return subprocess.CompletedProcess(args, 1, "", "Head branch is not up to date with the base branch")
+            return real(args, cwd, timeout=timeout)
+
+        self.patch(land, "_run", side_effect=github)
+        return refused, approval
+
+    def test_merge_refused_after_an_outside_merge_integrates_main_and_merges_under_the_approval(self):
+        refused, approval = self.refused_merge("main moved")
+        result = land.land("approved delivery", cwd=self.repo, wait=60, merge=True, approval=approval["id"])
+        self.assertTrue(result["merged"])
+        self.assertNotEqual(result["head"], refused[0])
+        self.assertEqual(self.git("show", f"{result['head']}:src/outside.py"), "base\n")
+        merges = [a for a in self.gh_log() if a[:2] == ["pr", "merge"]]
+        self.assertEqual([m[-1] for m in merges], [result["head"]])  # the refused attempt never reached GitHub's fake
+        task = S.load_task("demo", "fix-x")
+        self.assertIsNone(task["hold_merge"])
+        self.assertEqual(task["merge_approval"]["approval"], approval["id"])
+
+    def test_merge_refused_with_main_unchanged_is_not_retried(self):
+        refused, approval = self.refused_merge("nothing moved")
+        with self.assertRaisesRegex(land.LandError, "not up to date"):
+            land.land("approved delivery", cwd=self.repo, wait=60, merge=True, approval=approval["id"])
+        self.assertEqual((len(refused), [a for a in self.gh_log() if a[:2] == ["pr", "merge"]]), (1, []))
+        self.assertEqual(self.git("rev-parse", "HEAD").strip(), refused[0])
+
+    def test_owner_losing_publication_authority_during_base_movement_does_not_republish(self):
+        refused, approval = self.refused_merge("publisher lost")
+        with self.assertRaisesRegex(land.LandError, "task is not running"):
+            land.land("owner stopped during merge", cwd=self.repo, wait=60, merge=True, approval=approval["id"])
+        self.assertEqual(self.git("rev-parse", "origin/worktree-fix-x").strip(), refused[0])
+        self.assertEqual(self.git("rev-parse", "HEAD").strip(), refused[0])
+        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
+
+    def test_replaced_owner_does_not_republish_after_base_movement(self):
+        refused, approval = self.refused_merge("publisher replaced")
+        with self.assertRaisesRegex(land.LandError, "no longer current"):
+            land.land("owner replaced during merge", cwd=self.repo, wait=60, merge=True, approval=approval["id"])
+        self.assertEqual(self.git("rev-parse", "origin/worktree-fix-x").strip(), refused[0])
+        self.assertEqual(self.git("rev-parse", "HEAD").strip(), refused[0])
+
+    def test_changed_adoption_does_not_republish_the_previous_target_after_base_movement(self):
+        refused, approval = self.refused_merge("adoption changed")
+        with self.assertRaisesRegex(land.LandError, "adoption changed"):
+            land.land("adoption changed during merge", cwd=self.repo, wait=60, merge=True, approval=approval["id"])
+        self.assertEqual(self.git("rev-parse", "origin/worktree-fix-x").strip(), refused[0])
+        self.assertEqual(self.git("rev-parse", "HEAD").strip(), refused[0])
+        self.assertEqual(S.load_task("demo", "fix-x")["adopted_pr"]["number"], 102)
+        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
+
+    def test_main_moving_between_push_and_pin_gets_an_integrated_head(self):
+        self.configure_ci()
+        self.staged_change()
+        real, pins = land._snapshot_pair, []
+
+        def pin(*args):
+            if not pins:
+                self.advance_base("src/before-pin.py")
+            pair = real(*args)
+            pins.append(pair)
+            return pair
+
+        self.patch(land, "_snapshot_pair", side_effect=pin)
+        result = land.land("moving during publication", cwd=self.repo, wait=60, merge=True)
+        self.assertTrue(result["merged"])
+        self.assertEqual(len(pins), 2)
+        self.assertNotEqual(pins[0]["head_sha"], result["head"])
+        self.assertEqual(self.git("show", f"{result['head']}:src/before-pin.py"), "base\n")
+
+    def test_a_sibling_fetch_during_integration_does_not_replace_the_integrated_base(self):
+        self.configure_ci()
+        self.staged_change()
+        real, moved = land._git, []
+
+        def sibling_fetch(root, *args, **kwargs):
+            result = real(root, *args, **kwargs)
+            if args[:2] == ("merge-base", "--is-ancestor") and not moved:
+                moved.append(args[2])
+                self.advance_base("src/sibling-fetch.py")
+                self.git("fetch", "origin", "main")  # nonmerging sibling updates the common remote ref
+            return result
+
+        self.patch(land, "_git", side_effect=sibling_fetch)
+        result = land.land("shared fetch during integration", cwd=self.repo, wait=60, merge=True)
+        self.assertTrue(result["merged"])
+        self.assertEqual(self.git("show", f"{result['head']}:src/sibling-fetch.py"), "base\n")
+        self.git("merge-base", "--is-ancestor", moved[0], result["head"])
+
+    def test_a_hold_placed_during_a_refused_merge_blocks_the_retry(self):
+        refused, approval = self.refused_merge("new hold")
+        with self.assertRaisesRegex(land.LandError, "predates the current merge hold"):
+            land.land("approved delivery", cwd=self.repo, wait=60, merge=True, approval=approval["id"])
+        self.assertEqual((len(refused), [a for a in self.gh_log() if a[:2] == ["pr", "merge"]]), (1, []))
+        self.assertEqual(S.load_task("demo", "fix-x")["hold_merge"], "Hold again: wait for the release")
+
     def test_cross_engine_assessment_rechecks_context_after_final_merge_validation(self):
         self.final_validation_context(wait=False)
 
@@ -959,7 +1083,8 @@ class TestLand(AltitudeCase):
         self.assertIn(["pr", "merge", "101", "--squash", "--delete-branch", "--match-head-commit", head],
                       self.gh_log())
 
-    def test_a_base_that_moves_during_the_suite_is_not_merged(self):
+    def moving_suite(self):
+        """The base moves while the first local suite runs."""
         self.staged_change()
         self.no_checks()
         self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
@@ -967,51 +1092,63 @@ class TestLand(AltitudeCase):
 
         def moving(cwd, test_cmd):
             output = real(cwd, test_cmd)
-            self.advance_base("src/late.py")
+            if len(self.runner_calls()) == 1:
+                self.advance_base("src/late.py")
             return output
 
         self.patch(land, "_local_suite", side_effect=moving)
-        result = land.land("fix: moving base", cwd=self.repo, wait=0, merge=True)
-        self.assertFalse(result["merged"])
-        self.assertTrue(result["local_tests"]["passed"])
-        self.assertIn("moved", result["local_tests"]["error"])
+
+    def test_a_base_that_moves_during_the_suite_is_not_merged_after_the_wait(self):
+        self.moving_suite()
+        with self.assertRaisesRegex(land.LandError, "origin/main moved .* remains published and unmerged"):
+            land.land("fix: moving base", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual(len(self.runner_calls()), 1)
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
-    def test_main_moving_between_publication_and_pinning_is_integrated(self):
-        self.staged_change()
-        self.no_checks()
-        self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
-        real = land._snapshot_pair
+    def test_a_base_that_moves_during_the_suite_is_integrated_and_tested_again(self):
+        self.moving_suite()
+        first_head = None
+        real_snapshot = land._snapshot_pair
 
-        def merge_lands_first(*args, **kwargs):
-            if not (self.tmp / "base-src-race.py").exists():
-                self.advance_base("src/race.py")  # another owner merges right after this push
-            return real(*args, **kwargs)
+        def snapshot(*args):
+            nonlocal first_head
+            pair = real_snapshot(*args)
+            first_head = first_head or pair["head_sha"]
+            return pair
 
-        self.patch(land, "_snapshot_pair", side_effect=merge_lands_first)
-        result = land.land("fix: pinning race", cwd=self.repo, wait=0, merge=True)
+        self.patch(land, "_snapshot_pair", side_effect=snapshot)
+        result = land.land("fix: moving base", cwd=self.repo, wait=60, merge=True)
+        moved = self.git("rev-parse", "origin/main").strip()
         self.assertTrue(result["merged"])
-        self.assertTrue(result["local_tests"]["passed"])
-        self.assertEqual(self.git("show", f"{result['head']}:src/race.py"), "base\n")
-        moved = git("rev-parse", "HEAD", cwd=self.tmp / "base-src-race.py").strip()
-        self.assertEqual(result["local_tests"]["base"], moved)
+        self.assertEqual((result["local_tests"]["base"], result["local_tests"]["head"]), (moved, result["head"]))
+        self.assertNotEqual(result["head"], first_head)
+        self.assertEqual(self.git("show", f"{result['head']}:src/late.py"), "base\n")
+        self.assertEqual(len(self.runner_calls()), 2)
+        merges = [a for a in self.gh_log() if a[:2] == ["pr", "merge"]]
+        self.assertEqual(merges, [["pr", "merge", "101", "--squash", "--delete-branch", "--match-head-commit",
+                                   result["head"]]])
 
     def test_ci_added_after_no_checks_classification_is_not_merged(self):
         """Regression: classification and candidate snapshot used to be separate, adopt-new-tip operations."""
         self.staged_change()
         self.no_checks()
         self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
-        real = land._checks_value
+        real, added = land._checks_value, []
 
         def classify_then_add_workflow(root, number, pair):
             state = real(root, number, pair)
-            if not (self.tmp / "base-.github-workflows-late.yml").exists():
+            if not added:
                 self.advance_base(".github/workflows/late.yml", "on: [pull_request]\n")
+                added.append(pair["base_sha"])
             return state
 
         self.patch(land, "_checks_value", side_effect=classify_then_add_workflow)
-        result = land.land("fix: classification race", cwd=self.repo, wait=0, merge=True)
-        self.assertNotEqual(result["checks"], "none-configured")
+        with self.assertRaisesRegex(land.LandError, "origin/main moved"):
+            land.land("fix: classification race", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual(self.runner_log(), [])
+        # With time left the integrated head is classified again: the base now ships CI, so no local suite runs.
+        result = land.land("fix: classification race", cwd=self.repo, wait=1, merge=True)
+        self.assertEqual(result["checks"], "skipped")
         self.assertFalse(result["merged"])
         self.assertEqual(self.runner_log(), [])
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])

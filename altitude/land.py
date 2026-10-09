@@ -46,11 +46,11 @@ class LandError(RuntimeError):
 
 
 class BaseMoved(LandError):
-    """Main moved under an otherwise unchanged pinned candidate; a merging landing integrates it and checks again."""
+    """A fresh read proves that only the base moved: the PR, its head and both branch names still match the pin."""
 
 
 class _Reassess(Exception):
-    """New review context arrived after the final check; leave the turn and wait for the owner's assessment."""
+    """Leave the merge turn before waiting for a renewed owner assessment."""
 
 
 def _run(args: list[str], cwd: Path, timeout: int = 120) -> subprocess.CompletedProcess:
@@ -148,6 +148,15 @@ def _require_unowned_pr(project: str, slug: str, branch: str, number: int | None
                 adopted.get("branch") == branch or other.get("branch") == branch
                 or number is not None and (adopted.get("number") == number or number in other.get("prs", []))):
             raise LandError(f"PR or branch already belongs to task {other['slug']}")
+
+
+def _require_delivery_owner(project: str, slug: str, task: dict, current: dict, authority: dict | None,
+                            *, branch: str, number: int | None = None) -> None:
+    """Refresh the publication boundary under the caller's project lock."""
+    _require_current_publisher(project, slug, current, authority)
+    _require_unowned_pr(project, slug, branch, number)
+    if current.get("adopted_pr") != task.get("adopted_pr"):
+        raise LandError("task adoption changed during landing")
 
 
 def _fetch_remote_tip(root: Path, branch: str) -> str | None:
@@ -375,10 +384,7 @@ def _record_delivery(project: str, slug: str, task: dict, authority: dict | None
     receipt = dict(number=number, head=head, base=base, branch=branch)
     with S.project_lock(project):
         current = S.load_task(project, slug)
-        _require_current_publisher(project, slug, current, authority)
-        _require_unowned_pr(project, slug, branch, number)
-        if current.get("adopted_pr") != task.get("adopted_pr"):
-            raise LandError("task adoption changed during landing")
+        _require_delivery_owner(project, slug, task, current, authority, branch=branch, number=number)
         old = current.get("delivery") or {}
         if all(old.get(k) == v for k, v in receipt.items()):
             return current
@@ -589,7 +595,7 @@ def _checks_evidence(root: Path, pair: dict) -> str:
         identity = (pr["number"], pr["state"], pr["baseRefName"], pr["headRefName"],
                     base["target"]["oid"], pr["headRefOid"])
         if identity != (pair["number"], "OPEN", pair["base"], pair["branch"], pair["base_sha"], pair["head_sha"]):
-            _assert_pair_current(root, pair)  # main moving under the candidate is BaseMoved
+            _assert_pair_current(root, pair)  # BaseMoved when only the base moved
             raise LandError("PR base or head moved while reading exact check evidence")
         required = {(item["context"], (item.get("app") or {}).get("databaseId"))
                     for item in (base["branchProtectionRule"] or {}).get("requiredStatusChecks") or []}
@@ -735,20 +741,17 @@ def _snapshot_pair(root: Path, branch: str, number: int, base: str, expected_hea
 
 
 def _assert_pair_current(root: Path, pair: dict) -> None:
-    """Fail unless both origin refs and GitHub's PR still name the pinned pair."""
+    """Fail unless both origin refs and GitHub's PR still name the pinned pair; BaseMoved when only the base moved."""
     base_sha = _fetch_rev(root, pair["base"])
     head_sha = _fetch_rev(root, pair["branch"])
     pr = _pr_view(root, str(pair["number"])) or {}
-    actual = (base_sha, head_sha, pr.get("headRefOid"), pr.get("state"),
-              pr.get("baseRefName"), pr.get("headRefName"))
-    expected = (pair["base_sha"], pair["head_sha"], pair["head_sha"], "OPEN",
-                pair["base"], pair["branch"])
-    if actual[1:] == expected[1:] and base_sha != pair["base_sha"]:
-        raise BaseMoved(f"main moved to {base_sha} after PR #{pair['number']}'s candidate was pinned on "
-                        f"{pair['base_sha']}")
-    if actual != expected:
+    actual = (head_sha, pr.get("headRefOid"), pr.get("state"), pr.get("baseRefName"), pr.get("headRefName"))
+    if actual != (pair["head_sha"], pair["head_sha"], "OPEN", pair["base"], pair["branch"]):
         raise LandError("the PR base or head moved after the merge candidate was pinned — "
                         "re-run alt land to classify, test and merge one current pair")
+    if base_sha != pair["base_sha"]:
+        raise BaseMoved(f"origin/{pair['base']} moved from {pair['base_sha']} to {base_sha} after the merge "
+                        "candidate was pinned")
 
 
 def _workflows(root: Path, pair: dict) -> dict[str, bool]:
@@ -941,6 +944,16 @@ def _merge(root: Path, branch: str, number: int, base: str, expected_head: str,
     return True
 
 
+def _merge_pair(root: Path, pair: dict, *, delete_branch: bool) -> bool:
+    """Merge the pinned pair; a refusal caused only by a moved base (a strict up-to-date rule) is BaseMoved."""
+    try:
+        return _merge(root, pair["branch"], pair["number"], pair["base"], pair["head_sha"],
+                      delete_branch=delete_branch)
+    except LandError:
+        _assert_pair_current(root, pair)
+        raise
+
+
 def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge=None,
                           delete_branch: bool = True) -> tuple[bool, dict]:
     """Test one exact base/head pair and merge only while both tips still match it."""
@@ -951,6 +964,8 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge
         _assert_pair_current(root, pair)
         with _candidate(root, base_sha, head_sha) as path:
             tests = _local_suite(path, test_cmd)
+    except BaseMoved:
+        raise
     except LandError as exc:
         _note(f"not merging: {exc}")
         return False, {"command": test_cmd, "passed": False, "returncode": None, "tests": None,
@@ -961,6 +976,8 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge
         return False, tests
     try:
         _assert_pair_current(root, pair)
+    except BaseMoved:
+        raise
     except LandError:
         tests["error"] = "the base or the head moved while the merge candidate was under test"
         _note(f"not merging: {tests['error']} — re-run alt land to test and merge the current pair")
@@ -970,6 +987,8 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge
         after_checks = _checks_evidence(root, pair)
     try:
         _assert_pair_current(root, pair)
+    except BaseMoved:
+        raise
     except LandError:
         tests["error"] = "the base or the head moved while final checks were being read"
         _note(f"not merging: {tests['error']}")
@@ -979,8 +998,7 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge
         _note(f"not merging: {tests['error']} — re-run alt land under the current gate")
         return False, tests
     with before_merge() if before_merge else contextlib.nullcontext():
-        merged = _merge(root, pair["branch"], pair["number"], pair["base"], head_sha,
-                        delete_branch=delete_branch)
+        merged = _merge_pair(root, pair, delete_branch=delete_branch)
     return merged, tests
 
 
@@ -993,19 +1011,13 @@ def _checks_outcome(checks: str, pair: dict) -> str:
     return f"checks are {checks!r}" + (f"; {pair['unregistered']}" if checks == "missing" else "")
 
 
-def _review_refusal(root: Path, pair: dict, exc: Exception) -> LandError:
-    """A review refusal caused by another merge moving main is that move, not a review fault."""
-    _assert_pair_current(root, pair)
-    return LandError(str(exc))
-
-
 def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority, deadline):
-    """Wait, outside the repository turn, while the owner assesses an integrated head and CI runs."""
+    """Wait outside the repository turn for the owner assessment and candidate checks."""
     from . import reviews
     notified, announced = None, None
     actor = authority.get("actor") if authority is not None else os.environ.get("ALTITUDE_ACTOR")
     while True:
-        stale = refusal = None
+        stale = refused = None
         if merge:
             # Only local review reads share admission's lock; network reads and sleeps
             # leave review requests available, including during nonmerging publication.
@@ -1018,9 +1030,10 @@ def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority, de
                         raise LandError(str(exc)) from exc
                     stale = exc
                 except T.TransitionError as exc:
-                    refusal = exc
-        if refusal:
-            raise _review_refusal(root, pair, refusal) from refusal
+                    refused = exc
+        if refused:
+            _assert_pair_current(root, pair)  # BaseMoved when the review candidate differs only by a moved base
+            raise LandError(str(refused)) from refused
         checks = _checks_value(root, pair["number"], pair)
         notice = str(stale) if stale else None
         if stale and notice != notified:
@@ -1031,7 +1044,7 @@ def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority, de
                   f"Cancel landing if code needs edits.\n{stale}")
         notified = notice
         if checks in ("pending", "missing") and checks != announced:
-            _note(f"{pair['unregistered'] if checks == 'missing' else f"PR checks pending on head {pair['head_sha']} (PR #{pair['number']})"}; "
+            _note(f"{pair['unregistered'] if checks == 'missing' else 'PR checks pending on head ' + pair['head_sha']}; "
                   f"polling for up to {max(0, round(deadline - time.monotonic()))}s")
             announced = checks
         if checks not in ("pending", "missing", "pass", "none-configured"):
@@ -1216,132 +1229,124 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             commit = _need(_git(root, "rev-parse", "HEAD"), "rebased commit")
         if _git(root, "diff", "--quiet", f"origin/{base}", "HEAD").returncode == 0:
             return _merged_retry(root, project, slug, task, authority, branch, base, continued_pr, lease, closes_issues)
-    def publish(recorded_tip: str | None) -> tuple[list[str], str]:
-        if merge and _git(root, "merge-base", "--is-ancestor", f"origin/{base}", "HEAD").returncode != 0:
-            _note(f"integrating current origin/{base} before publishing the candidate")
-            try:
-                _need(_git(root, "merge", "--no-edit", f"origin/{base}", timeout=300), "integrate current base")
-            except LandError:
-                if (git_dir / "MERGE_HEAD").exists():
-                    _need(_git(root, "merge", "--abort"), "abort base integration; resolve the worktree before retrying")
-                raise
-        replaced = _push(root, publish_branch, recorded_tip, source_branch=branch if adoption else None)
-        head = _need(_git(root, "rev-parse", f"origin/{publish_branch}"), "cannot capture the pushed PR head")
-        _note(f"pushed head {head}")
-        return replaced, head
-
-    def pin(head: str) -> dict:
-        nonlocal task, hold_merge
-        task = _record_delivery(project, slug, task, authority, branch=publish_branch, number=number,
-                                head=head, base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"))
-        hold_merge = task.get("hold_merge")
-        pinned = _snapshot_pair(root, publish_branch, number, base, head)
-        if merge and _git(root, "merge-base", "--is-ancestor", pinned["base_sha"], head).returncode != 0:
-            raise BaseMoved(f"main moved to {pinned['base_sha']} before PR #{number}'s head {head} was pinned")
-        return pinned
-
-    replaced, pushed_head = publish(recorded_tip)
-    pr = _ensure_pr(root, publish_branch, base, message, pr_title, pr_body_file, task_ref, pr=pr)
-    number = pr.get("number")
-    pair = None
-    wait = LAND_WAIT_TIMEOUT if wait is None else min(max(wait, 0), LAND_WAIT_TIMEOUT)
-    deadline = time.monotonic() + wait
-    merged, local_tests, waited = pr.get("state") == "MERGED", None, 0
-    def check_before_merge():
-        current_pr = _pr_view(root, str(number)) or {}
-        if (current_pr.get("isDraft") is True
-                or current_pr.get("reviewDecision") not in (None, "", "APPROVED")):
-            raise LandError("PR is not review-ready or has outstanding required reviews/changes")
-        if adoption:
-            if (current_pr.get("number") != adoption["number"] or current_pr.get("url") != adoption["url"]
-                    or current_pr.get("isCrossRepository") is not False):
-                raise LandError("adopted PR identity changed before merge")
-            if (current_pr.get("isDraft") is not False
-                    or current_pr.get("reviewDecision") not in ("", "APPROVED")):
-                raise LandError("adopted PR is not review-ready or has outstanding required reviews/changes")
-            _assert_pair_current(root, pair)
-        current = S.load_task(project, slug)
-        _require_current_publisher(project, slug, current, authority)
-        if current.get("adopted_pr") != adoption:
-            raise LandError("task adoption changed before merge")
-        _require_closing_issues(root, number, closes_issues)
-        if current.get("hold_merge") and not approval:
-            raise LandError(f"task carries a merge hold: {current['hold_merge']}")
-        return current, current_pr
-    @contextlib.contextmanager
-    def before_merge():
-        from . import reviews
-        with reviews.merge_lock(project, slug):
-            current, current_pr = check_before_merge()
-            _assert_pair_current(root, pair)
-            try:
-                reviews.require_merge(project, slug, pair)
-            except reviews.AssessmentRequired as exc:
-                raise _Reassess() from exc  # Leave the turn before waiting on the owner.
-            except T.TransitionError as exc:
-                raise _review_refusal(root, pair, exc) from exc
-            if current.get("hold_merge"):
-                try:
-                    T.apply_merge_approval(project, slug, approval, current_pr, head=pair["head_sha"], actor="l2",
-                                           reason="owner applied the operator's task-chat approval")
-                except T.TransitionError as exc:
-                    raise LandError(str(exc)) from exc
-            yield
-            with S.project_lock(project):
-                current = S.load_task(project, slug)
-                current["review_merged_head"] = pair["head_sha"]
-                for review in reviews._current_reviews(current):
-                    review["merged_head"] = pair["head_sha"]
-                S.save_task(project, current)
-
-    while True:
+    replaced, deadline, waited = [], None, 0
+    while True:  # A moved base gets a fresh publication and check outside the merge turn.
         try:
-            if pair is None:
-                pair = pin(pushed_head)
-            checks = _wait_for_candidate(root, project, slug, pair, merge=merge, wait=wait,
-                                         authority=authority, deadline=deadline)
-            _require_closing_issues(root, number, closes_issues)
-            if not merge or merged or checks not in ("pass", "none-configured"):
+            with S.project_lock(project):
+                _require_delivery_owner(project, slug, task, S.load_task(project, slug), authority,
+                                        branch=publish_branch, number=(pr or {}).get("number"))
+            publishing_base = _need(_git(root, "rev-parse", f"origin/{base}"), "publishing base")
+            if merge and _git(root, "merge-base", "--is-ancestor", publishing_base, "HEAD").returncode != 0:
+                _note(f"integrating current origin/{base} before publishing the candidate")
+                try:
+                    _need(_git(root, "merge", "--no-edit", publishing_base, timeout=300), "integrate current base")
+                except LandError:
+                    if (git_dir / "MERGE_HEAD").exists():
+                        _need(_git(root, "merge", "--abort"), "abort base integration; resolve the worktree before retrying")
+                    raise
+            replaced += _push(root, publish_branch, recorded_tip,
+                              source_branch=branch if adoption else None)
+            pushed_head = _need(_git(root, "rev-parse", f"origin/{publish_branch}"), "cannot capture the pushed PR head")
+            _note(f"pushed head {pushed_head}")
+            pr = _ensure_pr(root, publish_branch, base, message, pr_title, pr_body_file, task_ref, pr=pr)
+            number = pr.get("number")
+            task = _record_delivery(project, slug, task, authority, branch=publish_branch, number=number,
+                                    head=pushed_head, base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"))
+            hold_merge = task.get("hold_merge")
+            pair = _snapshot_pair(root, publish_branch, number, base, pushed_head)
+            if deadline is None:  # one wait covers every head this landing publishes
+                wait = LAND_WAIT_TIMEOUT if wait is None else min(max(wait, 0), LAND_WAIT_TIMEOUT)
+                deadline = time.monotonic() + wait
+            if merge and pair["base_sha"] != publishing_base:
+                # An outside merge between integration and pinning must also get a fresh integrated head.
+                _assert_pair_current(root, {**pair, "base_sha": publishing_base})
+            merged, local_tests = pr.get("state") == "MERGED", None
+            def check_before_merge():
+                current_pr = _pr_view(root, str(number)) or {}
+                if (current_pr.get("isDraft") is True
+                        or current_pr.get("reviewDecision") not in (None, "", "APPROVED")):
+                    raise LandError("PR is not review-ready or has outstanding required reviews/changes")
+                if adoption:
+                    if (current_pr.get("number") != adoption["number"] or current_pr.get("url") != adoption["url"]
+                            or current_pr.get("isCrossRepository") is not False):
+                        raise LandError("adopted PR identity changed before merge")
+                    if (current_pr.get("isDraft") is not False
+                            or current_pr.get("reviewDecision") not in ("", "APPROVED")):
+                        raise LandError("adopted PR is not review-ready or has outstanding required reviews/changes")
+                    _assert_pair_current(root, pair)
+                with S.project_lock(project):
+                    current = S.load_task(project, slug)
+                    _require_delivery_owner(project, slug, task, current, authority,
+                                            branch=publish_branch, number=number)
+                _require_closing_issues(root, number, closes_issues)
+                if current.get("hold_merge") and not approval:
+                    raise LandError(f"task carries a merge hold: {current['hold_merge']}")
+                return current, current_pr
+            @contextlib.contextmanager
+            def before_merge():
+                from . import reviews
+                with reviews.merge_lock(project, slug):
+                    current, current_pr = check_before_merge()
+                    _assert_pair_current(root, pair)
+                    try:
+                        reviews.require_merge(project, slug, pair)
+                    except reviews.AssessmentRequired as exc:
+                        raise _Reassess() from exc
+                    except T.TransitionError as exc:
+                        _assert_pair_current(root, pair)
+                        raise LandError(str(exc)) from exc
+                    if current.get("hold_merge"):
+                        try:
+                            T.apply_merge_approval(project, slug, approval, current_pr, head=pair["head_sha"], actor="l2",
+                                                   reason="owner applied the operator's task-chat approval")
+                        except T.TransitionError as exc:
+                            raise LandError(str(exc)) from exc
+                    yield
+                    with S.project_lock(project):
+                        current = S.load_task(project, slug)
+                        current["review_merged_head"] = pair["head_sha"]
+                        for review in reviews._current_reviews(current):
+                            review["merged_head"] = pair["head_sha"]
+                        S.save_task(project, current)
+
+            while True:
+                checks = _wait_for_candidate(root, project, slug, pair, merge=merge, wait=wait,
+                                             authority=authority, deadline=deadline)
+                _require_closing_issues(root, number, closes_issues)
+                try:
+                    if merge and not merged and checks in ("pass", "none-configured"):
+                        check_before_merge()  # Refuse lost ownership or holds before admitting a local suite.
+                        with _repository_turn(root) as turn_wait:
+                            waited += turn_wait
+                            _assert_pair_current(root, pair)
+                            if checks == "none-configured":
+                                merged, local_tests = _merge_on_local_suite(
+                                    root, pair, test_cmd, before_merge=before_merge, delete_branch=not adoption)
+                            else:
+                                checks = _checks_value(root, number, pair)
+                                if checks == "pass":
+                                    with before_merge():
+                                        merged = _merge_pair(root, pair, delete_branch=not adoption)
+                                    if pair["required_pr_check"]:
+                                        commit_sha = ((_pr_view(root, str(number)) or {}).get("mergeCommit") or {}).get("oid")
+                                        if not commit_sha or _need(_git(root, "rev-parse", f"{commit_sha}^{{tree}}"),
+                                                                   "merged tree") != pair["tree"]:
+                                            raise LandError("merged tree does not match the tested PR tree; "
+                                                            "report delivery for recovery")
+                    elif merge and not merged:
+                        _note(f"not merging: {_checks_outcome(checks, pair)}")
+                except _Reassess:
+                    continue  # The turn is released before waiting for a renewed assessment.
                 break
-            current = S.load_task(project, slug)
-            _require_current_publisher(project, slug, current, authority)
-            if current.get("hold_merge") and not approval:
-                raise LandError(f"task carries a merge hold: {current['hold_merge']}")
-            # Only the final confirm-and-merge is serialized; another merge since the check moves main.
-            with _repository_turn(root) as turn_wait:
-                waited += turn_wait
-                _assert_pair_current(root, pair)
-                if checks == "none-configured":
-                    merged, local_tests = _merge_on_local_suite(
-                        root, pair, test_cmd, before_merge=before_merge, delete_branch=not adoption)
-                else:
-                    checks = _checks_value(root, number, pair)
-                    if checks == "pass":
-                        with before_merge():
-                            merged = _merge(root, publish_branch, number, base, pushed_head,
-                                            delete_branch=not adoption)
-                        if pair["required_pr_check"]:
-                            commit_sha = ((_pr_view(root, str(number)) or {}).get("mergeCommit") or {}).get("oid")
-                            if not commit_sha or _need(_git(root, "rev-parse", f"{commit_sha}^{{tree}}"),
-                                                       "merged tree") != pair["tree"]:
-                                raise LandError("merged tree does not match the tested PR tree; "
-                                                "report delivery for recovery")
-            break
-        except _Reassess:
+        except BaseMoved as exc:
+            if not merge or deadline is None or time.monotonic() >= deadline:
+                raise LandError(f"{exc}; the candidate remains published and unmerged — re-run alt land to "
+                                "integrate it, test and merge one current pair") from exc
+            _note(f"{exc}; integrating it and checking the new head within the same wait")
+            recorded_tip = pushed_head
             continue
-        except BaseMoved as moved:
-            if not merge:
-                raise LandError(f"{moved}; PR #{number} stays published at {pushed_head} — a merging alt land "
-                                "integrates current main and waits for its fresh check") from moved
-            _note(f"{moved}; integrating it and waiting for PR #{number}'s fresh check on the new head, "
-                  f"{max(0, round(deadline - time.monotonic()))}s remaining in --wait")
-        _need(_git(root, "fetch", "-q", "origin", base), f"git fetch origin {base}")
-        more, pushed_head = publish(pushed_head)
-        replaced += more
-        pair = None
-    if merge and not merged and checks not in ("pass", "none-configured"):
-        _note(f"not merging: {_checks_outcome(checks, pair)}")
+        break
+
     return {"pr": number, "url": pr.get("url"), "checks": checks, "merged": merged,
             "branch": branch, "commit": commit, "head": pushed_head, "lease": lease, "staged": staged,
-            "hold": hold_merge, "replaced": replaced, "local_tests": local_tests, "adopted_pr": adoption,
-            "waited": waited}
+            "hold": hold_merge, "replaced": replaced, "local_tests": local_tests, "adopted_pr": adoption, "waited": waited}

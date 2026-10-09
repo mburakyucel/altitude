@@ -128,7 +128,7 @@ class ConversationOwner(FakeL2):
             disposition, reason, remaining = cases[text]
             T.resolve_question("atlas", slug, question["id"], question["revision"], message["id"],
                                disposition=disposition, reason=reason, remaining=remaining,
-                               expected_attempt=task["attempt"])
+                               for_operator=remaining is not None, expected_attempt=task["attempt"])
             answer = reason + (" The backup region is still open." if remaining else " I will continue with that direction.")
         T.message("atlas", slug, "l2", answer)
         return {"message_id": message["id"], "answer": answer}

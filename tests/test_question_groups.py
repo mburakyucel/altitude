@@ -301,6 +301,75 @@ class QuestionGroups(AltitudeCase):
         self.assertEqual(current["anchor_id"], group["anchor_id"])
         self.resolve(group["questions"][1], message, disposition="superseded", reason="Cleanup no longer applies.")
 
+    def open_members(self):
+        return [(q["id"], q["revision"], q["audience"]) for q in S.load_task(self.project, self.slug)["questions"]
+                if q["status"] == "open"]
+
+    def block_notices(self):
+        return [row["text"] for row in l3.queued(self.project) if row.get("trigger") == "block"]
+
+    def test_remaining_part_asks_l3_once_and_leaves_the_operator_nothing(self):
+        question = self.ask({"questions": [{"question": "Build both engines, and may the coordinator load settings?"}]})["questions"][0]
+        self.assertEqual(question["audience"], "operator")
+        T.resume(self.project, self.slug)
+        message = T.message(self.project, self.slug, "burak", "Build both; check the settings restriction with L3.")
+        self.resolve(question, message, reason="Build both engines.", remaining="Must the coordinator skip the settings?")
+        self.assertEqual(self.open_members(), [(question["id"], 2, "l3")])
+        self.assertEqual(T.decisions(self.project), [])
+        notice = self.block_notices()[-1]
+        self.assertIn(f"{question['id']} revision 2 (authority: l3): Must the coordinator skip the settings?", notice)
+        self.assertNotIn("revision 1", notice)
+        notices = len(self.block_notices())
+        T.block(self.project, self.slug, "Must the coordinator skip the settings?", actor="l2", expected_state="running",
+                expected_attempt=1, updates={"waiting_on": "l3"}, tell_l3=True)
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual(self.open_members(), [(question["id"], 2, "l3")], "parking the remainder adds no member")
+        self.assertEqual((task["waiting_on"], T.wait_label(self.project, task)), ("l3", "waiting on L3"))
+        self.assertEqual(len(self.block_notices()), notices, "L3 already holds the remainder")
+        with self.assertRaisesRegex(T.TransitionError, "name it with --remaining"):
+            self.resolve(question, message, for_operator=True)
+        retry = {"reason": "Build both engines.", "remaining": "Must the coordinator skip the settings?"}
+        self.resolve(question, message, **retry)
+        with self.assertRaisesRegex(T.TransitionError, "already resolved"):
+            self.resolve(question, message, **retry, for_operator=True)
+        self.assertEqual((self.open_members(), len(self.block_notices())), ([(question["id"], 2, "l3")], notices))
+
+    def test_operator_remainder_on_a_blocked_task_keeps_the_operator_turn(self):
+        group = self.ask()
+        message = T.message(self.project, self.slug, "burak", "Fourteen days; I still need to choose cleanup.")
+        self.resolve(group["questions"][0], message, remaining="When should cleanup run?", for_operator=True)
+        self.resolve(group["questions"][1], message, disposition="superseded", reason="Folded into the remainder.")
+        self.resolve(group["questions"][2], message, disposition="superseded", reason="The search team owns it.")
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual(self.open_members(), [(group["questions"][0]["id"], 2, "operator")])
+        self.assertEqual(task["waiting_on"], "burak")
+        self.assertEqual([q["question"] for q in T.decisions(self.project)], ["When should cleanup run?"])
+
+    def test_waiting_follows_open_members_as_they_close(self):
+        name = T.config.operator_label()
+        operator = self.ask({"questions": [{"question": "Which team owns the rollout?"}]})["questions"][0]
+        T.resume(self.project, self.slug)
+        T.block(self.project, self.slug, "Set rollout details.", actor="l2", expected_state="running",
+                expected_attempt=1, updates={"waiting_on": "l3"}, tell_l3=True,
+                questions={"questions": [{"id": operator["id"], "question": operator["detail"]},
+                                         {"question": "Which suite covers the rollout?"}]})
+        coordinator = next(q for q in self.group()["questions"] if q["audience"] == "l3")
+        self.assertEqual([a for _, _, a in self.open_members()], ["operator", "l3"])
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual((task["waiting_on"], T.wait_label(self.project, task)), ("burak", f"{name}'s turn · 1 question"))
+        self.assertIn("(authority: operator)", self.block_notices()[-1])
+        T.resolve_question(self.project, self.slug, operator["id"], None, None, expected_attempt=1,
+                           disposition="withdrawn", reason="The brief names the owning team.")
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual((task["waiting_on"], T.wait_label(self.project, task)), ("l3", "waiting on L3"))
+        self.assertEqual(T.decisions(self.project), [])
+        self.assertNotIn(operator["id"], T.block_question(task))
+        T.resolve_question(self.project, self.slug, coordinator["id"], None, None, expected_attempt=1,
+                           disposition="withdrawn", reason="The suite is already named in the brief.")
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual((task["state"], task.get("waiting_on"), T.wait_label(self.project, task)),
+                         ("blocked", None, "paused"))
+
     def test_group_revision_preserves_missing_members_and_refuses_obsolete_choices(self):
         group = self.ask()
         updated = copy.deepcopy(self.payload["questions"][0])

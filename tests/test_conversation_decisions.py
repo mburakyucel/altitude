@@ -171,7 +171,7 @@ class ConversationDecisions(AltitudeCase):
     def test_partial_answer_retains_only_relevant_remainder_then_new_direction_closes_it(self):
         question = self.ask("How long should we keep the index, and when should cleanup run?")
         message = T.message(self.project, self.slug, "burak", "Keep it fourteen days; I still need to decide cleanup.")
-        result = self.resolve(message, remaining="When should cleanup run after fourteen days?")
+        result = self.resolve(message, remaining="When should cleanup run after fourteen days?", for_operator=True)
         self.assertEqual(result["resolution"]["remaining"], "When should cleanup run after fourteen days?")
         remaining = self.current()
         self.assertEqual((remaining["id"], remaining["revision"]), (question["id"], question["revision"] + 1))
@@ -272,9 +272,11 @@ class ConversationDecisions(AltitudeCase):
                 source = T.message(self.project, self.slug, "l3", "The lease covers tests; security policy still needs the operator.")
                 before = S.load_task(self.project, self.slug)
                 self.resolve(source, reason="Tests are already assigned.", l3_authority="The recorded task lease includes tests/.",
-                             remaining="May we change the security policy?")
+                             remaining="May we change the security policy?", for_operator=True)
                 after = S.load_task(self.project, self.slug)
-                for key in ("state", "waiting_on", "fault", "resume_after", "resume_request", "blocked_reason",
+                # A fault keeps its L3 recovery wait; otherwise the open operator remainder gives the operator the turn.
+                self.assertEqual(after["waiting_on"], waiting if fault else "burak")
+                for key in ("state", "fault", "resume_after", "resume_request", "blocked_reason",
                             "agent_id", "session_id", "attempt", "hold_merge"):
                     self.assertEqual(after.get(key), before.get(key), key)
                 remainder = self.current()
@@ -519,6 +521,18 @@ class ConversationDecisions(AltitudeCase):
         result = self.alt(*args, env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.current()["resolution"]["message_id"], message["id"])
+
+    def test_cli_remaining_part_goes_to_l3_unless_named_for_the_operator(self):
+        env = {"ALTITUDE_ACTOR": "l2", "ALTITUDE_PROJECT": self.project, "ALTITUDE_TASK": self.slug, "ALTITUDE_ATTEMPT": "1"}
+        for flags, audience in (([], "l3"), (["--for-operator"], "operator")):
+            with self.subTest(audience=audience):
+                question = self.ask(f"Keep the index, and when should cleanup run ({audience})?")
+                message = T.message(self.project, self.slug, "burak", "Keep it; cleanup is still open.")
+                result = self.alt("task", "resolve", self.slug, "--question", question["id"], "--message", message["id"],
+                                  "--disposition", "answered", "--reason", "Keep the index.",
+                                  "--remaining", f"When should cleanup run ({audience})?", *flags, env=env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual((self.current()["revision"], self.current()["audience"]), (question["revision"] + 1, audience))
 
     def test_withdraw_cli_requires_current_owner_and_no_operator_source(self):
         question = self.current()

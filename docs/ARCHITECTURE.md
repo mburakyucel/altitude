@@ -850,7 +850,8 @@ Current main is merged into the task branch before pushing when needed, preservi
 and triggering fresh head checks. When another merge moves main before this one, during the check,
 the assessment or at the turn, the same invocation integrates the new main, pushes and pins the new
 head, and waits for its fresh check; nonmerging invocations stop with the PR published. A conflicting
-integration is aborted with local work retained for owner reconciliation.
+integration is aborted with local work retained for owner reconciliation. Head or PR identity movement
+refuses; adopted PR pushes remain fast-forward only.
 For a completed review whose assessment is stale, the current L2's merging invocation waits while the
 owner explicitly reassesses the pinned candidate through the existing review command.
 CI and assessment share one deadline, an hour after publication unless `--wait` shortens it, across
@@ -862,21 +863,26 @@ assessing each request.
 Proposal and changes findings remain separate; a changes assessment does not retire a proposal.
 Fresh context invalidation, including during final merge validation, leaves the turn and uses the same
 wait and original deadline. Final candidate, checks, ownership and hold validation repeats after assessment.
-Missing or unfinished review, candidate
-movement or ownership loss refuses. No review identity or disposition is automatically transferred.
+Missing or unfinished review, head or PR identity movement or ownership loss refuses.
+No review identity or disposition is automatically transferred.
 The final review/context check precedes recorded approval application, preserving holds on review refusal.
 The process owns the turn: return, exception or termination releases it without daemon recovery.
-There is no persistent queue or FIFO guarantee. Dry runs and nonmerging preparation in other repositories do not take
-the turn. External Git/GitHub writers, older landing code, CI runs and
-hand-run suites do not share it, so exact base/head refusals remain necessary.
+There is no persistent queue or FIFO guarantee. Dry runs and nonmerging invocations never take
+the turn. External Git/GitHub writers, other installations, older landing code, CI runs and
+hand-run suites do not share it. This repository's strict GitHub up-to-date required-check rule
+protects the final merge against other installations; the local turn alone cannot. Base-only merge
+refusals repeat integration and checks within the original deadline, with ownership, reviews,
+holds, approval and issue-closure gates repeated. No GitHub settings change is needed.
 This repository requires its GitHub-hosted PR `check` to run the full `make check` suite. Owners
 and helpers run relevant tests during development; landing does not repeat the full suite locally.
 CI proves its tested merge tree equals the PR head tree. Landing requires that successful PR
 check on the current head and verifies that the head includes current main. A branch missing
-current main needs reconciliation and a fresh PR run on the new head. Altitude serializes final
+current main is integrated by `--merge` and needs a fresh PR run on the new head. Altitude serializes final
 validation and merge, rechecks identity and holds, and verifies the merged tree against the
 tested tree. Missing, pending, failed or stale CI blocks; CI outages have no local bypass.
-The gate governs Altitude merges; GitHub updates outside Altitude remain unprotected.
+The task hold and review protocol govern Altitude merges. Concurrent hosted runs are bounded by
+GitHub capacity: 11 jobs per check against the plan's 20 concurrent jobs. A new PR push cancels
+that PR's superseded check run; main and manual runs are never cancelled.
 See [policy, evidence and activation](DEVELOPMENT.md#ci-and-candidate-identity).
 Planned file lists guide coordination without limiting edits or landing. The owner stages selected
 files or hunks and reviews `git diff --cached`; `alt land` commits exactly that index, preserving
@@ -2335,9 +2341,10 @@ or its recorded resolution. A queued task without a question retains its ordinar
 
 A direct L2 block publishes its question into that human thread. A published or reworded member takes
 the block's audience; an unchanged operator member keeps the operator's, so re-parking never moves an
-escalation away, and `waiting_on` names the operator only while one of the group's open members is
-theirs. A block that publishes or revises
-questions queues one L3 notification, including operator-directed blocks. The message names
+escalation away. Each block, escalation or resolution on a blocked task recomputes `waiting_on` from
+the open members: the operator while one is theirs, L3 while only L3 members are open, and nobody once
+none is. A block that publishes or revises questions, or a resolution that publishes a remaining part,
+queues one L3 notification, including operator-directed ones. The message names
 open members, revisions and their required authority. Comparing existing question revisions keeps
 unchanged re-parking quiet without another receipt or tracker. L3 can coordinate record-backed and
 scope portions; notification does not approve operator decisions or change their audience.

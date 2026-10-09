@@ -1286,7 +1286,8 @@ recommendation fields preserve its approach; parking or revision preserves its r
 alt task resolve <slug> --question <id> [--revision <n>] --message <source-id> \
   --source task|project --disposition answered|superseded --reason <chosen-scope-or-closure-reason> \
   [--l3-authority <specific-evidence-and-rationale>] \
-  [--remaining <still-relevant-question>] [--recommendation <approach> --label <action> --why <reason>]
+  [--remaining <still-relevant-question> [--for-operator]] \
+  [--recommendation <approach> --label <action> --why <reason>]
 
 alt task resolve <slug> --question <id> [--revision <n>] --disposition withdrawn --reason <why>
 ```
@@ -1311,15 +1312,19 @@ choices require the original operator source; an L3 recommendation or discussion
 Use `answered` for the settled approach. Use `superseded` when authoritative changed direction makes
 the question irrelevant; the reason names that change, without claiming acceptance of the old
 recommendation. With `--remaining`, the operation preserves the resolved scope and publishes a new
-revision containing only the relevant unanswered parts. That remainder keeps its audience without
-changing independent worker, capacity or fault state and has no inherited default;
-provide a recommendation only when it applies to the remaining question. Harmless follow-ups require
-no resolution operation. A repeated identical resolution reuses its record; stale or conflicting
+revision containing only the relevant unanswered parts. Like a block, the remainder asks L3 unless
+`--for-operator` names it plainly the operator's; it does not inherit the original audience, and it
+queues L3's notification at once, so parking it later with its own text publishes nothing again.
+It changes no independent worker, capacity or fault state and has no inherited recommendation;
+provide a recommendation only when it applies to the remaining question. On a blocked task, each
+resolution recomputes `waiting_on` from the open members: an open operator member means waiting on
+the operator, only L3 members means waiting on L3, and none means not waiting. Harmless follow-ups require
+no resolution operation. A repeated identical resolution, including the remainder's audience, reuses its record; stale or conflicting
 resolutions are refused. Neither this command nor ordinary resume releases a merge hold.
 
 The [owner's decision guidance](../personas/l2.md#conversation-and-decisions) governs assessment
 of new guidance, withdrawal and re-asking. `withdrawn` records L2 judgment without `--message`,
-`--source`, `--l3-authority`, `--remaining` or recommendation fields. It removes that member's
+`--source`, `--l3-authority`, `--remaining`, `--for-operator` or recommendation fields. It removes that member's
 controls and retains its history; it grants no approval and discards no work. No message classifier
 or automatic withdrawal is involved.
 
@@ -1333,31 +1338,32 @@ resolution remains an operation of the running or blocked owning L2.
 assessment without any repository-wide lock, so concurrent owners' hosted checks run side by side.
 Only the final step takes the repository turn: confirming that the candidate is still current
 (main unmoved, head, checks, ownership and holds), then merging. A green candidate on current main
-therefore merges as soon as the turn is free, which takes seconds, never another owner's CI run.
+therefore takes the next available turn without waiting for another owner's hosted CI run.
 Landing prints when it waits for the turn and when it starts, and returns seconds waited as `waited`
 (zero without a wait). Admission waits at most 3600 seconds; a timeout leaves the published
 candidate unmerged. Nonmerging invocations never take the turn.
 
-When another merge moves main before the candidate merges, during its check, its assessment or at
-the turn, the same invocation prints which main it found, merges it into the task branch, pushes
-the new head and waits for that head's fresh check, with the time left in `--wait`; its earlier green
-result is never reused. A conflict aborts the integration and leaves local work for the owner. Once
-`--wait` is spent, the integrated head stays published with its pending check and a later run
-merges it. A nonmerging invocation whose main moves stops with the PR published.
 Keep the command and owner session alive; ordinary contention needs no L3 landing-window request.
-The CI and owner-assessment wait is bounded at 3600 seconds after publication, so one green check on
-current main leads to one merge; `--wait` only shortens it. GitHub registers
+CI and owner assessment share a 3600-second bound after publication; `--wait` only shortens it.
+An exhausted deadline leaves the published candidate unmerged, without another integration.
+GitHub registers
 a head's checks one at a time, so a required check absent from the head is waited for within the same
 bound rather than read as skipped; landing names it and the checks that have registered, such as a
 skipped nonrequired job. Landing prints the remaining bound when it first sees pending or
 unregistered required checks. A required check that never registers within the bound ends the wait as
 `missing` with that observation and does not merge.
 
-A merging invocation fetches current main and merges it into the task branch when needed before
-pushing and checking the candidate. This preserves adopted history. Conflicts abort integration and
-retain local work for the owner; dirty edits are not stashed. Ownership and holds are rechecked before
-the turn and again before merging. Required checks, review and original approval sources still govern
-delivery. Failure or cancellation releases the turn; the next owner proceeds with its own candidate.
+A merging invocation rechecks ownership and holds, fetches current main, and merges it into
+the task branch when needed before pushing and checking the fresh candidate. This preserves
+adopted history. Conflicts abort integration and retain local work for the owner; dirty edits are
+not stashed. If only main moves after publication, the merging command incorporates it, pushes a
+new head and waits for fresh checks within the original publication deadline. It checks current
+ownership and the adopted target before integrating and publishing each candidate, and repeats review, hold, approval and
+`--closes-issue` gates; review assessments never transfer
+automatically. Head or PR identity movement refuses instead of retrying. Adopted PRs retain their
+history and accept only fast-forward pushes. Required checks and original approval sources still
+govern delivery.
+Failure or cancellation releases the turn; the next owner proceeds with its own candidate.
 Task messages and Stop remain available. Repeating a completed merge creates no duplicate PR.
 
 When integration or task context makes completed review assessments stale, a merging L2 invocation
@@ -1373,18 +1379,23 @@ Assess every stale request, including proposals, before posting further explanat
 original landing result. A changes assessment does not retire a proposal assessment or its findings.
 No assessment or finding disposition is carried forward automatically. If code needs edits or another
 review, cancel landing and prepare a new candidate. Missing or unfinished review, changed local/remote
-head/base, and lost ownership refuse; `--wait 0` and operator-run landings refuse stale assessment
-immediately. Timeout or termination leaves the pushed candidate retained and unmerged.
+head or PR identity, and lost ownership refuse; `--wait 0` and operator-run landings refuse stale assessment
+immediately. Timeout or termination releases the turn with the pushed candidate retained and unmerged.
 Context changes detected during final merge validation release the turn and use the same assessment
-wait and original deadline. Final review/context, CI, holds and approval checks run again after
-assessment; review refusal leaves the merge hold intact.
+wait and original deadline. Final review/context, CI, holds and approval checks
+run again after assessment; review refusal leaves the merge hold intact.
 
-The turn is a process-owned repository lock, not a durable or FIFO queue. Dry runs and nonmerging
-invocations do not take it. CI runs and a `make check` run by hand outside
+The turn is a process-owned repository lock, not a durable or FIFO queue. CI runs and a `make check`
+run by hand outside
 `alt land` do not share it; a hand run without `CI` set uses two browser workers. Without hosted
-CI, the full local candidate suite runs inside the turn, because it uses this machine. External
-writers and older landing versions can still change refs: stale base/head evidence refuses merge
-and is never reused or retried automatically. Only invocations using this installed version share serialization.
+CI, the full local candidate suite runs inside the turn because it uses this machine. External
+writers, older landing versions and other installations do not share it. This repository's strict
+GitHub up-to-date required-check rule closes the race between final validation and merge across
+installations; the local lock alone does not. A base-only refusal repeats integration and checks
+within the original deadline; stale evidence never authorizes a merge. No GitHub setting change is
+needed. Hosted CI runs outside the turn, bounded by GitHub capacity: each check
+uses 11 jobs against the plan's 20 concurrent-job limit. A newer PR push cancels that PR's superseded
+check run; main and manual runs are never cancelled.
 
 After its push, landing pins the candidate from the fetched `origin/<branch>` tip, which must be
 the revision it pushed; any other tip is a head the landing did not push and refuses at once
@@ -1408,9 +1419,10 @@ alt land --message "fix: describe the change" --merge
 
 Landing publishes the PR and waits for its required `check` on the current head; it does not
 run the full suite locally. The task branch includes current main. A branch missing current main
-needs reconciliation, a push and fresh PR checks on the new head. Final validation and merge are
-serialized across Altitude owners, while each candidate's CI runs outside that turn; the merged tree
-must equal the tested tree. Failed, pending, missing, skipped,
+is integrated automatically by `--merge`, followed by a push and fresh PR checks on the new head.
+Final validation and merge are serialized across Altitude owners sharing the common Git directory;
+each candidate's hosted CI runs outside that turn. The merged tree must equal the tested tree.
+Failed, pending, missing, skipped,
 cancelled, stale or unrelated required runs block. GitHub-managed scans on the head, such as CodeQL
 default setup, need no PR identity but must pass like any other check: a failing scan blocks and a
 pending one is waited for. `--test-cmd` supplies no bypass for this gate.
@@ -1419,7 +1431,8 @@ After a bounded CI wait, retain the run and missing evidence, explicitly block a
 [durable CI recheck](#durable-ci-recheck). A missing run needs trigger recovery, not an
 invented run ID. GitHub Actions outages pause merges until verified recovery and fresh checks.
 Reviews and live merge holds remain mandatory. Opening a held PR does not authorize its merge.
-GitHub updates outside Altitude remain unprotected. Other repositories keep their hosted/no-CI
+GitHub's strict required-check rule protects this repository's base race; Altitude's task holds and
+review protocol govern its own merges. Other repositories keep their hosted/no-CI
 behavior and local command choice. See [evidence and activation](DEVELOPMENT.md#ci-and-candidate-identity).
 
 ### Dry run and gate selection
@@ -1795,8 +1808,9 @@ git merge --no-ff origin/main -m "Merge main for validation"
 ```
 
 Resolve conflicts in the task worktree, rerun applicable checks and review, and land again.
-Landing pins current origin main and the PR head, confirms GitHub's authoritative base target,
-and refuses actual base/head movement. A lagging PR `baseRefOid` alone does not block that pair.
+Landing pins current origin main and the PR head and confirms GitHub's authoritative base target.
+Base-only movement repeats integration and fresh checks within the original deadline; head or PR
+identity movement refuses. A lagging PR `baseRefOid` alone does not block that pair.
 Task merge holds, recorded operator approval and the normal report/archive workflow also apply
 to adopted PRs.
 

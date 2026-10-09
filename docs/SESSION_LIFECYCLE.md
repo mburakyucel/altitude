@@ -658,8 +658,10 @@ source making the question obsolete. Queued guidance reaches the owner's next ch
 For an unnecessary escalation that L3 settles within existing delegated authority, the L2 records
 `--l3-authority` with specific evidence and rationale against the exact L3 task message and question
 revision. The receipt attributes the answer to L3 and the authority assessment to its owning L2/attempt;
-source and revision checks do not replace the owner's substantive judgment. Partial resolution preserves
-the original audience and independent worker, capacity and fault state. Genuine operator choices still
+source and revision checks do not replace the owner's substantive judgment. Partial resolution asks its
+remainder of L3 unless the owner names it for the operator, and preserves independent worker, capacity
+and fault state. While the task is blocked, the wait follows its open members: the operator's turn
+while one of theirs is open, L3's while only L3 members are, and no wait once none is. Genuine operator choices still
 need original operator authority, and neither this resolution nor its receipt releases a merge hold.
 Report handoff closes the prior dilemma without accepting its approach;
 the report review can raise its own question.
@@ -936,9 +938,11 @@ A merging landing fetches the base, incorporates it into the task branch, publis
 head's own checks and owner assessment, keeping the owner session alive. Only the final
 confirm-and-merge takes the repository turn, which waits at most one hour and reports seconds waited;
 external runner executions do not share it. When another merge moves main first, the same command
-integrates it and waits for its fresh check. Task messages and Stop use their ordinary lifecycle while
-it waits. Failure, timeout or process exit releases the turn; resuming an owner requires a new command
-and fresh checks, never a saved green result.
+integrates it, pushes and waits for fresh checks within its original publication deadline, repeating
+ownership, review, hold, approval and issue-closure gates. Head or PR identity movement refuses;
+adopted PR pushes remain fast-forward only. Nonmerging invocations never take the turn. Task messages
+and Stop use their ordinary lifecycle while it waits. Failure, timeout or process exit releases the
+turn; a later invocation validates the current candidate and checks afresh.
 An owner whose branch needs manual conflict reconciliation updates it in the worktree; a conflict
 they cannot resolve goes to L3 through an ordinary `alt task block`, without `--fault`.
 The delivery gate requires Python, web, build and phone/desktop browser checks. Review captures stay
@@ -946,9 +950,13 @@ outside Git, accessible until review is complete under the [project UI rule](../
 Owners and helpers run relevant tests during development. This repository's GitHub-hosted PR
 `check` runs full `make check`, including concurrent Python/web phases and both browser viewports.
 `alt land` requires successful CI for the current head and tested tree, without a duplicate
-local full run. The branch includes current main; a branch missing it needs reconciliation
-and fresh PR checks on the new head. Final validation and merge are serialized across Altitude
-owners, while each candidate's CI runs outside that turn, and the merged tree must equal the tested tree. GitHub updates outside Altitude remain unprotected.
+local full run. The branch includes current main; `--merge` integrates a missing base and waits
+for fresh PR checks on the new head. Final validation and merge are serialized across Altitude
+owners sharing the common Git directory, while each candidate's hosted CI runs outside that turn.
+The merged tree must equal the tested tree.
+Other installations do not share the turn; this repository's strict GitHub up-to-date required-check
+rule protects their final merge race. GitHub merges do not enforce Altitude's task holds and review
+protocol. Superseded PR checks are cancelled on a new PR push; main and manual runs are never cancelled.
 A passing required check with its GitHub console log is sufficient delivery evidence. A failed run
 uploads its browser report and traces as a seven-day artifact, which owners download into the task
 only for diagnosis or on a reviewer's request. A bounded CI wait
