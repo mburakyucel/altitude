@@ -7,7 +7,8 @@ The whole lifecycle runs in one invocation; `reboot-install` and `reboot-verify`
 its check after the VM restarts. `recovery` installs the candidate over a baseline whose installation
 failed, after the documented cleanup. `bootstrap` runs the built install.sh through its public curl | sh command against a release
 server on this machine's loopback, whose name the root wrapper points here. `update` installs the baseline while that server
-answers for GitHub's release list and downloads, and the app's Update request must carry it to the candidate. `mac` runs the whole macOS lifecycle under the throwaway HOME installation_mac.py gives it (see
+answers for GitHub's release list and downloads, and the app's Update request must carry it to the candidate.
+`public-install` and `public-update` run docs/SETUP.md's command against GitHub itself (see Lifecycle.public). `mac` runs the whole macOS lifecycle under the throwaway HOME installation_mac.py gives it (see
 MacLifecycle).
 """
 from __future__ import annotations
@@ -180,6 +181,7 @@ class Lifecycle:
         assert report["certificate_trust"]["state"] == "unknown", report
         assert report["engines"] and all(item["available"] is None for item in report["engines"])
         assert report["engine_access"].startswith("unknown")
+        return report
 
     def disposable(self):
         assert os.getuid() != 0 and pwd.getpwuid(os.getuid()).pw_name.startswith("alt-install-")
@@ -229,6 +231,17 @@ class Lifecycle:
         self.install(old, old_sha)
         initial = self.healthy("installed", before)
         self.doctor("installed", before)
+        retained = self.retain()
+        self.run("update", self.alt, "update", "--archive", new, "--sha256", new_sha)
+        updated = self.healthy("updated", after)
+        assert updated["pid"] != initial["pid"], "Update did not replace the daemon"
+        self.doctor("updated", after)
+        self.roll_back(new_package, new_sha, after)
+        assert all(digest(path) == value for path, value in retained.items()), "Update/recovery changed retained data"
+        self.uninstall(retained)
+
+    def retain(self) -> dict:
+        """Fictional data beside the installation, and its settings and TLS identity, each with its digest."""
         # Keep projects unregistered: no task or coordinator may start in this test.
         sentinels = [self.home / ".altitude/fictional/history.jsonl",
                      self.home / "Projects/fictional/worktree/notes.txt",
@@ -236,25 +249,22 @@ class Lifecycle:
         for path in sentinels:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('Fictional retained installation acceptance data\n')
-        retained = {path: digest(path) for path in [*sentinels, self.settings, *self.tls.glob("*")] if path.is_file()}
-        self.run("update", self.alt, "update", "--archive", new, "--sha256", new_sha)
-        updated = self.healthy("updated", after)
-        assert updated["pid"] != initial["pid"], "Update did not replace the daemon"
-        self.doctor("updated", after)
-        bad, broken = failed_archive(new_package, self.home / "failed-startup.tar.gz")
+        return {path: digest(path) for path in [*sentinels, self.settings, *self.tls.glob("*")] if path.is_file()}
+
+    def roll_back(self, package: Path, checksum: str, current: dict):
+        """An update to PACKAGE rebuilt so its daemon exits at startup restores CURRENT by itself."""
+        bad, broken = failed_archive(package, self.home / "failed-startup.tar.gz")
         write_json(self.results / "failure-manifest.json", broken)
         self.result["artifacts"].append({"kind": "failure-injection", "sha256": digest(bad),
             "version": broken["version"], "commit": broken["commit"],
-            "derived_from_sha256": new_sha, "change": "bin/alt records its daemon invocation then exits; manifest rehashed"})
+            "derived_from_sha256": checksum, "change": "bin/alt records its daemon invocation then exits; manifest rehashed"})
         failure = self.run("failed-update", self.alt, "update", "--archive", bad, "--sha256", digest(bad), success=False)
         assert "previous installation restored" in failure, failure
         marker = json.loads((self.results / "failed-startup.json").read_text())
         assert marker["argv"] == ["serve"] and marker["version"] == broken["version"] and marker["pid"] > 0
-        self.healthy("recovered", after)
-        self.doctor("recovered", after)
+        self.healthy("recovered", current)
+        self.doctor("recovered", current)
         assert (self.prefix / "versions" / broken["version"]).is_dir()
-        assert all(digest(path) == value for path, value in retained.items()), "Update/recovery changed retained data"
-        self.uninstall(retained)
 
     def uninstall(self, retained: dict):
         port = int(self.env["ALTITUDE_PORT"])
@@ -493,10 +503,56 @@ class Lifecycle:
         self.uninstall({})
         self.result["passed"] = True
 
+    def public(self, update: bool):
+        """docs/SETUP.md's command run against GitHub itself, as a new user runs it.
+
+        The runner downloaded both published releases and found that releases/latest names the candidate. Without UPDATE,
+        the command installs releases/latest. With UPDATE, it installs the baseline by its tag; the daemon's own release
+        lookup must offer the candidate in alt doctor and the terminal's notice, alt update must install it from GitHub
+        keeping settings, TLS identity and data, and an update whose startup fails must restore it."""
+        old, old_sha, _, before, new, new_sha, new_package, after = self.prepare()
+        self.result["limits"][:2] = [
+            "Published releases through GitHub's own downloads and release lookup; the engines are fixtures named by "
+            "their documented executable settings, and the harness picks the port",
+            "No minimal OS, login/logout or device trust acceptance"]
+        first, folder = (before, self.baseline) if update else (after, self.candidate)
+        url = f"{first['repository']}/releases/{'download/' + first['version'] if update else 'latest/download'}/install.sh"
+        self.run("public-script", "curl", "--proto", "=https", "--tlsv1.2", "-fsSL", "-o", self.home / "install.sh", url)
+        assert digest(self.home / "install.sh") == digest(folder / "install.sh"), f"{url} is not {first['version']}'s install.sh"
+        installed = self.run("public-install", "sh", "-c", f"curl --proto '=https' --tlsv1.2 -fsSL {url} | sh", timeout=300)
+        assert f"Altitude {first['version']} is installed" in installed, installed
+        initial = self.healthy("installed", first)
+        self.doctor("installed", first)
+        if update:
+            retained = self.retain()
+            record = self.home / ".altitude/update.json"
+            deadline = time.monotonic() + 120  # the daemon looks up releases as it starts
+            while not (record.is_file() and "latest" in json.loads(record.read_text() or "{}")):
+                assert time.monotonic() < deadline, "The daemon recorded no release lookup"
+                time.sleep(1)
+            write_json(self.results / "offered-update-record.json", json.loads(record.read_text()))
+            offered = self.doctor("offered", before)
+            assert (offered["update"]["available"] or {}).get("version") == after["version"], offered["update"]
+            # The notice is written to a terminal only.
+            notice = self.run("notice", "script", "-qec", f"{self.alt} doctor > /dev/null", "/dev/null")
+            assert f"Altitude {after['version']} is available: run alt update" in notice, notice
+            self.run("update", self.alt, "update", timeout=300)
+            updated = self.healthy("updated", after)
+            assert updated["pid"] != initial["pid"], "Update did not replace the daemon"
+            assert self.doctor("updated", after)["update"]["available"] is None
+            assert all(digest(path) == value for path, value in retained.items()), "The update changed retained data"
+            self.roll_back(new_package, new_sha, after)
+            assert all(digest(path) == value for path, value in retained.items()), "Recovery changed retained data"
+            self.uninstall(retained)
+        else:
+            self.uninstall({})
+        self.result["passed"] = True
+
     def execute(self, phase: str = "all"):
         try:
             {"all": self.exercise, "bootstrap": self.bootstrap, "update": self.update, "reboot-install": self.reboot_install,
-             "reboot-verify": self.reboot_verify, "recovery": self.recovery}[phase]()
+             "reboot-verify": self.reboot_verify, "recovery": self.recovery,
+             "public-install": lambda: self.public(update=False), "public-update": lambda: self.public(update=True)}[phase]()
         except Exception as exc:
             self.result["error"] = f"{type(exc).__name__}: {exc}"
             raise

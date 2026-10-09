@@ -32,12 +32,12 @@ ifdef ALTITUDE_TASK
 else
 	python3 scripts/ios_simulator.py $(RESULTS)
 endif
-installation-vm: ## installation lifecycle, install.sh bootstrap and reboot in a throwaway KVM VM (RESULTS=dir [SOURCE=ref] [BASELINE=published tag [RECOVERY=1]] [CAPTURE=1]); inside a task, through the validation runner
+installation-vm: ## installation lifecycle, install.sh bootstrap and reboot in a throwaway KVM VM (RESULTS=dir [SOURCE=ref] [BASELINE=published tag [RECOVERY=1 | PUBLIC=1]] [CAPTURE=1]); inside a task, through the validation runner
 ifdef ALTITUDE_TASK
-	alt task validate --kvm -- make installation-vm RESULTS=/results SOURCE="$(or $(SOURCE),HEAD)" $(if $(BASELINE),BASELINE="$(BASELINE)") $(if $(RECOVERY),RECOVERY=1) $(if $(CAPTURE),CAPTURE=1)
+	alt task validate --kvm -- make installation-vm RESULTS=/results SOURCE="$(or $(SOURCE),HEAD)" $(if $(BASELINE),BASELINE="$(BASELINE)") $(if $(RECOVERY),RECOVERY=1) $(if $(PUBLIC),PUBLIC=1) $(if $(CAPTURE),CAPTURE=1)
 else
 	$(if $(RESULTS),,$(error Set RESULTS to a directory for the evidence))
-	python3 scripts/installation_vm.py "$(RESULTS)" --source "$(or $(SOURCE),HEAD)" $(if $(BASELINE),--baseline-release "$(BASELINE)") $(if $(RECOVERY),--recovery) $(if $(CAPTURE),--capture)
+	python3 scripts/installation_vm.py "$(RESULTS)" --source "$(or $(SOURCE),HEAD)" $(if $(BASELINE),--baseline-release "$(BASELINE)") $(if $(RECOVERY),--recovery) $(if $(PUBLIC),--public) $(if $(CAPTURE),--capture)
 endif
 installation-mac: ## installation lifecycle on this Mac under a throwaway HOME and LaunchAgent label: install.sh, update detection, alt update, the Update button, failed-update recovery, uninstall (RESULTS=dir [SOURCE=ref]); outside the worker sandbox, inside a task with alt task run
 	$(if $(RESULTS),,$(error Set RESULTS to a directory for the evidence))

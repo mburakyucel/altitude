@@ -2,10 +2,11 @@
 # Only on an explicitly disposable Ubuntu VM. Never run on a development host.
 # PHASE reboot-install keeps the installed account for the machine to restart; reboot-verify then
 # checks it and removes it. PHASE bootstrap points the release host, and PHASE update also its api. host, at this
-# machine's loopback for the duration of the test. Each phase writes to RESULTS_DIR/PHASE.
+# machine's loopback for the duration of the test. PHASE public-install and public-update download from GitHub itself.
+# Each phase writes to RESULTS_DIR/PHASE.
 set -euo pipefail
-if [[ ($# != 5 && $# != 6) || $1 != --disposable-vm || ! ${6:-all} =~ ^(all|bootstrap|update|reboot-install|reboot-verify|recovery)$ ]]; then
-    echo 'Usage: sudo bash scripts/test_installation_lifecycle.sh --disposable-vm BASELINE_DIR CANDIDATE_DIR RESULTS_DIR [BASELINE_COMMIT..]SOURCE_COMMIT [bootstrap|update|reboot-install|reboot-verify|recovery]' >&2
+if [[ ($# != 5 && $# != 6) || $1 != --disposable-vm || ! ${6:-all} =~ ^(all|bootstrap|update|reboot-install|reboot-verify|recovery|public-install|public-update)$ ]]; then
+    echo 'Usage: sudo bash scripts/test_installation_lifecycle.sh --disposable-vm BASELINE_DIR CANDIDATE_DIR RESULTS_DIR [BASELINE_COMMIT..]SOURCE_COMMIT [bootstrap|update|reboot-install|reboot-verify|recovery|public-install|public-update]' >&2
     exit 2
 fi
 # BASELINE_COMMIT.. names a published baseline built from another commit.
