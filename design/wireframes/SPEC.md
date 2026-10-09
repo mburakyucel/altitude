@@ -389,6 +389,9 @@ form, dialog or second copy of the reply.
 | L3 could not answer | Danger outline, retry icon, "Retry": it sends the same press and never makes a second task. No failed-turn line. |
 | Answered another way | Any message the operator sends or queues, typed, spoken or with images, retires the offer. A stale window's press is refused with "The conversation has moved on, so this was not sent." |
 
+A press runs as its own L3 turn, never folded into typed messages queued with it. Once its reply has left
+the loaded history, a press reads as its message, with the ordinary queue controls or failed-turn Retry.
+
 `web/e2e/create-task.pw.ts` walks these states at both widths against a disposable service running the
 real coordinator verbs, queue and task store; lost and refused responses are browser overlays.
 

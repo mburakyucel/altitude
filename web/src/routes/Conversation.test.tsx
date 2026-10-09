@@ -1224,6 +1224,15 @@ describe.each([390, 1440])("Create task under a reply at %ipx (SPEC.md §3.3)", 
     await waitFor(() => expect(posted(fetchMock, "/api/chat")).toEqual({ project: "altitude", offer_turn: offered.turn_id }));
   });
 
+  it("lists a queued press with Send now and Remove once its reply has left the loaded history", async () => {
+    serve(() => jsonResponse({}), () => ({ ...chatView, history, queued: [pressRow] }) as ChatView);
+    renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    const list = await within(region).findByRole("list", { name: "Queued messages" });
+    expect(within(list).getByText(`Create task: ${title}`)).toBeInTheDocument();
+    expect(within(list).getByRole("button", { name: "Remove" })).toBeInTheDocument();
+  });
+
   it("retries a failed Create task turn from the button with the same reply reference, not as typed text", async () => {
     const fetchMock = serve(() => jsonResponse({ queued: pressRow }), () => ({ ...chatView, history: [
       ...history, asked, offered,

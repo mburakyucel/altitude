@@ -334,6 +334,8 @@ export default function Conversation({
     && !queued.some((row) => !row.project_message && (!row.trigger || row.trigger === "chat"))
     && !(view?.active?.trigger === "chat" && view.active.id !== lastChat.id) ? lastChat : null;
   // A press is a turn or queued row naming the reply it answers; the latest one says where Create task stands.
+  // Once that reply has left the loaded history, the press reads as its message with the ordinary controls.
+  const offering = new Set(turns.filter((turn) => turn.assistant?.offer).map((turn) => turn.id));
   const pressTurns = new Map(turns.filter((turn) => turn.user?.offer_turn).map((turn) => [turn.user!.offer_turn!, turn]));
   const queuedPresses = new Map(queued.filter((row) => row.offer_turn).map((row) => [row.offer_turn!, row]));
   const createTaskState = (turn: Turn): CreateTaskState | null => {
@@ -343,7 +345,7 @@ export default function Conversation({
     if (answer) return answer.assistant ? (answer.assistant.tasks?.length ? "done" : "sent") : answer.error ? "fail" : "busy";
     return offerTurn === turn ? "ready" : null;
   };
-  const listed = queued.filter((row) => !row.offer_turn);
+  const listed = queued.filter((row) => !row.offer_turn || !offering.has(row.offer_turn));
 
   const rows: ReactNode[] = [];
   let lastDay = "";
@@ -364,8 +366,7 @@ export default function Conversation({
       rows.push(<SystemLine key={item.turn.id} turn={item.turn} project={name} titles={titles} />);
     } else {
       const { turn } = item;
-      // A press shows on its reply's button; once that reply has left the loaded history, it reads as its message.
-      const pressed = Boolean(turn.user?.offer_turn && turns.some((other) => other.id === turn.user!.offer_turn && other.assistant?.offer));
+      const pressed = Boolean(turn.user?.offer_turn && offering.has(turn.user.offer_turn));
       const refused = pressError?.turnId === turn.id ? pressError.message : null;
       const offer = turn.assistant?.offer ? createTaskState(turn) : null;
       const waiting = queuedPresses.get(turn.id);
