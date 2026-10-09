@@ -392,7 +392,7 @@ def main(argv=None) -> None:
     rp = ts.add_parser("reply", help="current L2: append a human-readable reply to this task's conversation")
     rp.add_argument("text", nargs="*", metavar="[slug] text|-", help="optionally led by this task's slug, as in the sibling verbs; - or nothing reads stdin"); rp.add_argument("--file")
     rp.add_argument("--capture", type=int, metavar="RUN", help="attach this validation run's captures; the reply links to them")
-    review = ts.add_parser("review", help="request, run and assess a cross-engine review of the owned task")
+    review = ts.add_parser("review", help="request, run and assess an adversarial review of the owned task")
     review_actions = review.add_subparsers(dest="review_action", required=True)
     for action in ("status", "request", "run", "assess", "cancel", "withdraw"):
         rv = review_actions.add_parser(action)
@@ -402,7 +402,7 @@ def main(argv=None) -> None:
             rv.add_argument("--request-id", help="stable identity for retries of this request")
             rv.add_argument("--focus", default="")
             rv.add_argument("--source-message", help="original chat message requesting this review")
-            rv.add_argument("--previous", help="review to retry, rerun, or replace while it waits to run")
+            rv.add_argument("--previous", help="review this request replaces: a finished one to repeat, or a waiting one to reselect")
             rv.add_argument("--additional", action="store_true",
                             help="another review of the subject that replaces none; current reviews and their open findings keep gating merge")
             rv.add_argument("--engine", choices=config.ENGINES, help="reviewer engine for this request only; never substituted")
@@ -988,15 +988,30 @@ def main(argv=None) -> None:
     if c == "pair":
         if ACTOR != config.OPERATOR_ACTOR:
             sys.exit("alt pair: only the operator pairs devices")
-        from altitude import access, tls
+        from altitude import access, qr, tls
         code = access.issue_code()
-        # The code works without the service, so a missing link never blocks recovering access.
+        print(f"Pairing code: {code['code']} (one device, the next {code['minutes']} minutes). "
+              "A new code cancels this one.")
+        # The code works without the service, so a missing address never blocks recovering access. The code
+        # never rides in a link: the device opens the address before it trusts Altitude's certificate.
         try:
-            link = f"On the device, open {tls.service()['url']}/pair?code={code['code']}\nor type the code"
+            found = tls.service()
         except tls.TLSFailure as exc:
-            link = f"No link: {exc}\nType the code"
-        print(f"Pairing code: {code['code']} (one device, the next {code['minutes']} minutes)\n"
-              f"{link} on its Pair this device screen. A new code cancels this one.")
+            print(f"Type the code on the device's Pair this device screen. No address: {exc}")
+            return
+        print(f"On the device, open {found['url']} and type the code on its Pair this device screen.")
+        try:
+            tls.phone_address(found)
+            print("Or scan this with a phone to open it:\n" + qr.terminal(found["url"]))
+        except tls.TLSFailure:
+            pass  # loopback or plain HTTP: no phone can open this address
+        if found["tls"] and (found["tls_dir"] / "ca.crt").exists():  # an external certificate has no CA here
+            try:
+                authority = tls.identity(found["tls_dir"] / "ca.crt")
+                print(f"Before installing Altitude's certificate there, check it is named {authority['name']} and "
+                      f"its SHA-256 ends with:\n  {tls.check_value(authority['sha256'])}")
+            except (tls.TLSFailure, OSError) as exc:
+                print(f"Altitude's certificate cannot be read to check it: {exc}")
         return
 
 

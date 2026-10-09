@@ -370,10 +370,12 @@ export default function Conversation({
       const refused = pressError?.turnId === turn.id ? pressError.message : null;
       const offer = turn.assistant?.offer ? createTaskState(turn) : null;
       const waiting = queuedPresses.get(turn.id);
+      // Send now stopped this reply before it said anything: the operator's next message follows directly (SPEC.md §4.2).
+      const silent = turn.assistant?.interrupted === true && !turn.assistant.text.trim() && !turn.assistant.tasks?.length;
       rows.push(
-        <div key={turn.id} className="turn" data-turn={turn.id}>
+        <div key={turn.id} className="turn" data-turn={turn.id} data-joined={silent || undefined}>
           {turn.user && !pressed ? <Bubble text={turn.user.text} at={turn.user.at} images={<MessageImages project={name} images={turn.user.images} />} /> : null}
-          {turn.assistant ? (
+          {turn.assistant ? silent ? null : (
             <Reply text={turn.assistant.text} at={turn.assistant.at} role="assistant">
               {turn.assistant.tasks?.length ? <TurnTasks project={name} slugs={turn.assistant.tasks} titles={tasks} /> : null}
               {offer ? (

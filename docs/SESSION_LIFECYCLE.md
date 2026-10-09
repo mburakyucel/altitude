@@ -212,33 +212,37 @@ duplicating the persona. They do not prove live helper consumption, model compli
 Existing helpers retain their native context; changed instructions reach a new assignment after
 source activation. Live-provider testing remains deferred.
 
-## Cross-engine review
+## Adversarial review
 
 L2 proactively seeks independent adversarial review of complex proposals before code and complex
-implementations, keeping simple work light by judgment. The operator's **Review proposal** and
-**Review changes** task-menu actions create attributed requests and pending owner inbox entries.
-Running owners receive them at the next message checkpoint; a reported owner with an open delivery
-uses the existing continuation path.
-Stopped, faulted, undispatched and finished owners explain why review is unavailable. A proposal
-request can continue an owner with an approval question solely to prepare, run and assess review;
-the question remains open and implementation still needs its approval. Changes review remains
-unavailable while question-blocked. Each subject's existing review opens saved status, findings and
-L2 dispositions without invocation. Review again, Review latest and Retry are explicit detail actions.
+implementations, keeping simple work light by judgment. The operator's **Request**, **Review again**
+and **Try again** buttons in the Proposal review and Implementation review boxes create attributed
+requests and pending owner inbox entries on any open task. Running owners receive them at the next
+message checkpoint. A waiting or blocked owner is woken through the ordinary resume request; a
+reported owner with an open delivery uses the existing continuation path. A stopped or faulted owner is
+not resumed: the request waits, shown as such, and reaches L2 when the task resumes. Undispatched and
+finished tasks explain why review is unavailable. A request can continue an owner with an approval
+question solely to prepare, run and assess review; the question remains open and implementation still
+needs its approval. Viewing a review opens saved status, findings and L2 dispositions without
+invocation.
 
 The owner commits the chosen checkpoint, supplies original context and, for proposals, names the
 exact original L2 proposal message in `alt task review run --proposal-message`. Missing proposal input
 prevents invocation. The service captures immutable inputs and reserves one additional machine
-slot atomically, with one reviewer machine-wide. Capacity contention keeps the accepted request
-pending for a later explicit run. It prefers an eligible alternate engine and otherwise
-uses a separate same-engine invocation under the same read-only contract, unless the request selects
+slot atomically, with one reviewer machine-wide. Capacity contention refuses the run and keeps the
+accepted request waiting for the reviewer until a later explicit run. It prefers an eligible alternate
+engine and otherwise uses a separate same-engine invocation, the ordinary path, under the same
+read-only contract, unless the request selects
 one engine/model, which is rechecked at run and fails rather than being substituted. Engine/model, fallback reason
 and account-allowance uncertainty stay in the request and saved evidence. Fallback never bypasses
 capacity or unavailable observation/cancellation. The synchronous command returns the complete
 result or explicit failure without a review-duration deadline. L2 supplies focused scope and key risks;
-the reviewer returns material findings and coverage gaps without unrelated exploration. L2 observes
+the reviewer returns a one-sentence verdict, material findings and coverage gaps without unrelated
+exploration. L2 observes
 the run and can cancel if it gets stuck or goes off scope. Authorized owner work can continue in
 parallel, but every accepted request prevents merge until L2 records finding dispositions and assesses
-its subject, or the requester is authorized to withdraw. L2 can record a finding as `open` to assess
+its subject, or the requester withdraws it: the operator's Skip review needs no reason, and L2 names
+one for its own request. L2 can record a finding as `open` to assess
 honestly without clearing it; an open finding keeps the review uncleared, merge refused and the
 review unreplaceable until a later assessment fixes or dismisses it with evidence. A proposal request never supersedes a pending
 changes request. L2 replies in normal prose; original results remain in review details. Proposal review
@@ -286,7 +290,7 @@ Evidence survives cancellation, uncertain termination
 and explicit retries in its original review record. Successful review results retain their existing
 contract. Diagnostics neither reconstruct missing historical evidence nor prove reviewer recovery;
 the coordinator still requires verified recovery before an explicit retry.
-See [commands and evidence](CLI.md#cross-engine-review).
+See [commands and evidence](CLI.md#adversarial-review).
 
 ## Fresh dispatch
 
@@ -536,7 +540,7 @@ persists a cross-process claim and moves that claim's exact message batch out of
 Each ordinary operator message offers Remove while the inbox still owns it. Removal and pickup share
 the project lock: only the selected ID leaves pending input, and later arrivals remain separate for
 the next checkpoint. The existing delivery metadata records removal while original conversation text
-remains evidence; the bubble becomes Message removed. Removed text cannot authorize a new decision.
+remains evidence; the message leaves the task conversation. Removed text cannot authorize a new decision.
 Quick-choice receipts and messages already used by recorded decisions cannot be removed. Cancellation
 does not undo a resume request, Stop, fault or question. Claimed messages say Sending to session and
 cannot be removed. A failure before launch restores removal; an attempted but unconfirmed handoff
@@ -1244,8 +1248,9 @@ in the queue file until claim, and Remove remains available while the queue owns
 cannot undo an interruption already requested. An active chat still starting explains why Send now
 is unavailable until the engine reports its launch. The daemon sets only the
 captured chat turn's interruption signal; the engine seam stops that invocation's owned job and
-confirms its termination before the L3 lock is released. Partial output and session identity remain,
-and the turn says **Interrupted for a queued message**. That turn is never replayed. Active system
+confirms its termination before the L3 lock is released. Partial output and session identity remain:
+the turn's assistant row holds the partial reply, possibly empty, and `interrupted: true`, and the
+conversation shows only that partial text, or nothing when it is empty. That turn is never replayed. Active system
 turns finish normally to preserve their existing notification and report receipts; a promoted row
 says **Runs next after system work**. A stale or repeated request cannot interrupt a replacement
 turn or submit the message twice. Engine unavailability and launch pauses leave the row queued with

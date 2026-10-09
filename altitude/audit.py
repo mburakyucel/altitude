@@ -115,7 +115,8 @@ def _history(project: str, now: datetime) -> tuple[list[dict], bool]:
             continue
         rows.append({"source": f"{project}/chat.jsonl#byte={start}",
                      "turn_id": row.get("turn_id"), "at": row["at"], "role": row["role"],
-                     "text": row.get("text", ""), "tasks": row.get("tasks", [])})
+                     "text": row.get("text", ""), "tasks": row.get("tasks", []),
+                     **({"interrupted": True} if row.get("interrupted") else {})})
     return rows, truncated
 
 

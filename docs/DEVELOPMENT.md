@@ -269,7 +269,7 @@ the command's JSON output.
 Chromium supplies a synthetic microphone and its permission for browser walkthroughs;
 no test requests a physical microphone. Fixture services choose host voice. Composer voice journeys
 (conversation, project isolation, task lifecycle, L2 progress, image input, file references,
-cross-engine review, reported continuation) overlay `/api/voice` and `/api/voice/live` with the
+adversarial review, reported continuation) overlay `/api/voice` and `/api/voice/live` with the
 fixture host in `web/e2e/hostVoice.ts`: the page's real audio worklet hears Chromium's fake
 microphone, and the fixture can hold, replace or fail the final words, drop the connection or forget
 the recording, so no speech model runs. Image-input voice journeys also hold `AudioContext.resume()`
@@ -617,10 +617,13 @@ unless `STEPS` (its `--steps`) names some, separated by spaces or commas:
   opens **Profile Downloaded** in Settings, reads the profile's name and, under **More Details**, the
   certificate's SHA-256, taps **Install** past the unsigned-profile warning and its confirmation, and
   turns the CA on under **General › About › Certificate Trust Settings**, past the root certificate
-  warning. The name and SHA-256 must be the served CA's and the CA turned on must be it; a page served
-  with that CA's server certificate must then load as a secure context with no warning
-  (`profile-https.png`). The phone never trusted that CA before, as the `https` control shows for
-  another CA of the generator.
+  warning. The name and SHA-256 must be the served CA's and the CA turned on must be it. The CA also
+  issued the [pairing screen's trust check](ARCHITECTURE.md) its second certificate before its key was
+  deleted. Altitude served with that CA's certificate (`web/e2e/trust-service.py`, which treats the
+  phone's loopback connection as another device's) must then load as a secure context with no warning,
+  its trust check must answer Trusted with no request of Safari's failing (`profile-trusted.png`), and
+  a code must pair the phone (`profile-paired.png`). The phone never trusted that CA before, as the
+  `https` control shows for another CA of the generator.
 - `home-screen`: the Home Screen walk at the app's root and at the task's address. It opens the address
   in Safari, taps **Share** in the page menu, **Add to Home Screen** and **Add**, finds the icon on the
   Home Screen and opens it.

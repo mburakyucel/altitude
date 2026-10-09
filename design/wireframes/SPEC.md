@@ -464,45 +464,50 @@ FYI, Follow-ups, Deviations, Spend, Report notes, and Digest. Report notes and t
 Digest links land at its section. States: loading (a title-shaped skeleton); empty ("No report
 yet."); error ("Could not load the report." and Retry).
 
-#### Cross-engine review in the task conversation
+#### Adversarial review
 
-The existing task menu offers **Review proposal** and **Review changes**, one bordered button per subject.
-An existing request changes its entry to **View proposal review** or **View changes review**, with
-Requested, In progress, Complete, Earlier version, Failed or Cancelled underneath. Opening any existing
-review shows saved status, findings and L2 dispositions in the conversation and never invokes a reviewer,
-including L2-initiated reviews. **Review again**, **Review latest** and **Retry** are explicit actions
-inside details. A new revision requires the previous request to be addressed. A proposal review remains available when changes
-review is requested. No permanent review button, card, tab or separate reviewer conversation appears.
+Task details shows two bordered boxes, **Proposal review** and **Implementation review**, with no
+wrapper around them. Each box shows its latest review: a state icon, "<name> · <state>" (requested by
+you or L2, in progress, stopping, done, didn't finish, skipped), the reviewer's one-sentence verdict,
+counts and **View**. With no review yet it says "Not reviewed yet", or why review is unavailable. One
+button starts the next review when one can start: **Request**, **Review again** after an assessed
+review with nothing open, or **Try again** after one that didn't finish. There is no button while that
+kind is queued, running or has open findings, including an earlier review's. Finished tasks show the boxes without buttons, and hide a
+kind that was never reviewed. The reviewer is a separate invocation; same-engine review is the
+ordinary path, and an alternate engine is used when one is configured.
 
-Before requesting, show the selected engine/model, configured allowance (including unknown), focused
-read-only scope and merge wait. Prefer an eligible alternate engine; otherwise label the separate
-same-engine invocation with its fallback reason, also retained in saved evidence. No duration selector,
-programmatic deadline, automatic retry or engine switch follows launch. Capacity or unavailable
-observation/cancellation cannot be bypassed by fallback.
+Requests queue on any open task whatever L2 is doing. A waiting or blocked L2 is woken; a stopped or
+faulted task is not resumed, and its request waits for the next resume. Requesting closes task
+details and preserves the draft, reading position and listening state.
 
-L2 proactively seeks adversarial review for complex proposals before code and complex implementations;
-simple work stays light by judgment. For proposal review L2 selects the exact original proposal message;
-the operator sees its link and version, with no message-ID form. Missing proposal input is explained
-before invoking a reviewer. Review can continue L2 while an approval question is open solely to prepare,
-run and assess the proposal review; the original question stays open. Captured text and committed source
-define coverage; images require a textual account and remain explicitly outside text review coverage.
-Proposal findings never imply implementation acceptance. Later proposal/source/context changes show their
-coverage and need L2 assessment or a deliberate new review; pending changes requests remain visible.
+The conversation shows one card per kind, at the latest request's anchor; earlier iterations fold
+inside it. The card's sentence reads:
 
-A compact attributed system row tracks requested/running/completed/failed/cancelled/withdrawn state.
-L2 explains useful findings and fixes in ordinary prose. **Review details** reveals original findings,
-L2 dispositions, subject, selected proposal/context IDs and exact checkpoint evidence. It starts folded;
-collapsing removes details. Current coverage, earlier work and later L2 assessment are distinguished even when
-folded. An assessment that leaves findings open adds **N unresolved** to the row and labels each such
-finding **L2 — unresolved**; it never clears the review. No findings never means permission to merge. Failure keeps the request unresolved and exposes
-explicit retry or authorized skip; uncertain termination retains capacity and explains recovery.
+| State | Sentence |
+| --- | --- |
+| Requested by you | Queued. L2 starts it after its current step. / Queued. L2 starts it when it resumes. |
+| Requested by L2 | L2 asked for a review of its proposal (implementation) and starts it shortly. |
+| Waiting for the reviewer slot | Waiting for the reviewer: another review is running on this machine. |
+| In progress | Reviewing the proposal (implementation)…, with **Stop** and "Requested by L2/you". |
+| Didn't finish | The failure, or "Stopped before it finished.", with **Try again**. |
+| Done | The verdict, then counts: "2 findings, both resolved", "3 findings · 2 open, blocks merge", "L2 is responding", "Review 2", "earlier version", "1 open in an earlier review, blocks merge". |
+| Skipped | "Skipped by you" or "Skipped by L2". |
 
-Empty history adds no conversation row. Loading/saving disables repeats. Unavailable explains why in
-the menu; denied/uncertain delivery uses inline feedback and saved-status refresh. Menu dismissal,
-details expansion and request delivery preserve the draft and reading position. Listening and voice
-submission retain the composer journey. `cross-engine-review.pw.ts` walks these states at phone and
-desktop widths; `cross-engine-review-integration.pw.ts` walks real persisted request, alternate-engine
-fixtures, immutable snapshot/result, L2 initiation, failure/retry, unavailable, staleness and dispositions.
+The chevron opens the card: each finding with **Open**, **Fixed**, **Dismissed** or **New**, its
+severity, body, location and L2's answer; what the reviewer did not cover; earlier reviews as one line
+each, which opens to that review's own findings, footer and Skip review, since a review an additional
+review left in the merge gate still blocks merge; and a footer naming the reviewer ("<engine> · same engine as the task" or "alternate engine"),
+**Technical details** and **Skip review**. Technical details shows the model, any fallback reason,
+focus, the captured proposal and the reviewed and assessed checkpoints. Skip review asks for
+confirmation without a reason; the review stops blocking merge and its findings stay visible. **View**
+in task details opens and focuses the card. Open findings block merge; no findings never means
+permission to merge.
+
+Loading and saving disable the buttons. Unavailable explains why in the box; denied and uncertain
+delivery use inline feedback with a saved-status refresh. `adversarial-review.pw.ts` walks these states
+at phone and desktop widths; `adversarial-review-integration.pw.ts` walks real persisted requests,
+same-engine and alternate-engine fixtures, L2 requests, failure and try again, unavailable,
+earlier-version coverage and dispositions.
 
 ### 3.5 Task card (inline and in the work panel)
 
@@ -1096,8 +1101,8 @@ evidence is missing. Each eligible queued operator bubble has a bordered **Send 
 Send now explains **Stops work and reviews to deliver now.** It requests the
 existing Stop and same-session continuation for that message. Quick-choice receipts and
 messages already used by recorded decisions keep their evidence. **Removing…** disables removal until
-the response; success replaces only that bubble's text with **Message removed** and **Removed · not
-sent to the session**. Original text remains in durable evidence. Claim shows **Sending to session ·
+the response; success removes only that bubble from the conversation. Original text remains in
+durable evidence. Claim shows **Sending to session ·
 cannot remove**, and uncertain handoff shows **Delivery unconfirmed · cannot remove**, with no Remove.
 A prelaunch failure restores the queued controls. A refused removal refreshes delivery and names the
 refusal beside that message; denied and unconfirmed requests show their own inline error. Saved or
@@ -1483,7 +1488,9 @@ once in the row ("It will need a new code to open Altitude again.", or "This bro
 the current one) with **Cancel**, focused, and a red **Remove device**; Escape cancels. Removing the
 current device shows §3.16. Below,
 **Pair another device** makes a code: the code large in monospace, "Works once, for the next 10
-minutes", the copyable `/pair?code=` link and **Make a new code**.
+minutes. On the other device, open <HTTPS address> and type it." (without HTTPS: "type it on the Pair this
+device screen."), the address's QR code with "Scan with a phone to open Altitude.", "Certificate "<name>" —
+SHA-256 ends with <last 8 pairs>" (monospace) and **Make a new code**. The code never appears in a link.
 With HTTPS, a **Certificate** card follows: "Set up HTTPS trust on Linux, macOS, iPhone, iPad or Android.
 Open a setup link and QR code here, or run `alt tls-share` on the computer running
 Altitude.", the primary **Set up a device** button, "Before trusting the downloaded certificate, check that its
@@ -1616,32 +1623,54 @@ Composer listening, denied, unavailable, cancellation and transcript states rema
 
 ### 3.16 Pair this device
 
-An unpaired browser sees one centred card instead of the app, at every route: the Altitude mark,
-**Pair this device**, "Altitude opens only on devices you pair. On the computer running Altitude, in
-a terminal or over SSH, run:", the copyable `alt pair` command, "Then type the code it shows. A device
-that is already paired can also make a code in Settings › Devices.", a large monospace **Pairing code**
-field (one-time-code autofill), a full-width **Pair** button, disabled while the field is
-empty, and under it "Did the browser warn about the certificate before showing this page? Pair only
-after it opens without a warning." The guidance points container users to the host launcher's public
-certificate export, and native users to **Set up a device** in trusted, paired Settings or `alt tls-share`
-on the hosting computer. For localhost it directs the operator to `alt doctor` and the public `ca_cert`
-file. A `/pair?code=` link fills the field, submits once and removes the code from the address bar.
-Pairing opens the route the browser asked for.
+An unpaired browser sees one centred card instead of the app, at every route: the Altitude mark and
+**Pair this device** with three items, each with a mark (✓ done, ○ to do, a spinner while checking, ! needs
+attention). The code never rides in a URL. Pairing opens the route the browser asked for.
+
+1. **HTTPS address**: "You opened Altitude's HTTPS address.", or on the computer running Altitude over plain
+   HTTP "This is the computer running Altitude." Plain HTTP elsewhere fails with "This Altitude serves plain
+   HTTP. Pair on the computer running it."; the other items are absent.
+2. **Trust Altitude's certificate** with a pill: Not trusted yet, Checking…, Trusted or Couldn't check. The
+   computer running Altitude is Trusted at once. Elsewhere the item shows instructions for the device:
+   iPhone and iPad (including iPadOS reporting a Mac with touch) get **Download the profile**, the Profile
+   Downloaded check (one Certificate named "<CA name>", SHA-256 ending with the 8 pairs `alt pair` shows,
+   otherwise Remove and stop), the Certificate Trust Settings switch and "Come back here; this checks
+   itself."; Android gets **Download the certificate** and the CA certificate install; other browsers get
+   **Download the certificate**, the name and SHA-256 check, importing it as a trusted authority and
+   restarting the browser, and a **Setup guide** link. The page never shows the SHA-256 itself: the
+   reference is the computer. The check runs as the page opens, whenever it becomes visible again and on
+   **Check again**; Trusted collapses the instructions. With an externally supplied certificate Altitude
+   cannot check: "Altitude can't check this automatically. Open this address in a new Private tab; if it
+   loads without a warning, tap Continue." and **Continue** marks it done.
+3. **Pair**, once the certificate is trusted: "Enter the code from `alt pair`, or from Settings › Devices on
+   a paired device.", a large monospace **Pairing code** field (one-time-code autofill), a
+   full-width **Pair** button, disabled while the field is empty, and "Each code works once, for 10
+   minutes. This device stays paired until you remove it in Settings."
 
 | State | What appears and what actions do |
 | --- | --- |
 | Loading | The mark alone while Altitude answers whether this browser is paired. |
 | Unreachable | "Could not reach Altitude." and Retry. |
-| Empty | The card with an empty field; Pair disabled. |
+| Local | ✓ This is the computer running Altitude, ✓ Trusted, and the Pair item. |
+| Plain HTTP | ! with the plain-HTTP sentence; no other items. |
+| Not trusted yet | ○ with the device's instructions, its reason ("Not trusted yet. The usual missing step is the switch in Certificate Trust Settings." on iPhone/iPad, "…Install the certificate as a CA certificate." on Android, "…Import the certificate as a trusted authority, then restart the browser." elsewhere) and **Check again**; no Pair item. |
+| Checking | A spinner, the Checking… pill and a disabled **Check again**. |
+| Couldn't check | ! and "Couldn't check." with **Check again**, never phrased as untrusted. |
+| External certificate | ○ with the Private tab sentence and **Continue**. |
+| Trusted | ✓ Trusted, instructions collapsed, the Pair item with an empty field; Pair disabled. |
 | Typing | The field owns the dash: it keeps letters and digits, uppercased, up to eight, and shows `ABCD-` once four are typed. A typed dash or space is ignored; deleting the dash deletes the fourth character. A pasted `abcd 2345` or `ABCD-2345` shows `ABCD-2345`. An edit inside the code keeps the caret at the edit. |
 | Pairing | Pairing… and a disabled field and button. |
 | Wrong code | "That code is not right. N tries left." under the field; typing clears it. |
 | Cancelled or used code | "Too many wrong codes, so this one is cancelled. Make a new one." or "This code has expired or was already used. Make a new one." |
-| Removed | Any 401 returns here with "This device is no longer paired. Pair it again to continue." above the instructions. |
+| Removed | Any 401 returns here with "This device is no longer paired. Pair it again to continue." above the items. |
 
-Application walkthroughs: `web/e2e/pairing.pw.ts` at 390×844 and 1440×900 walks every state above,
-pairing by link, Settings › Devices with a new code, Remove with Cancel, removing the current device,
-and at phone width an iPhone's Safari and Home Screen app pairing as separate devices.
+Application walkthroughs: `web/e2e/pairing.pw.ts` at 390×844 and 1440×900 walks every state above: the
+local states and pairing with a real code, Settings › Devices with a new code, Remove with Cancel, removing
+the current device, and with answered access and trust replies a device on the network not trusted,
+checking, trusted and paired, Couldn't check, plain HTTP with and without an address and an external
+certificate; at phone width an iPhone's profile instructions, and its Safari and Home Screen app pairing as
+separate devices. `web/e2e/trust.pw.ts` walks Chromium over real HTTPS past the certificate warning, and
+ignoring certificate errors, to Not trusted yet with no Pair item.
 
 ## 4. Behaviour rules
 
@@ -1668,7 +1697,10 @@ keeps its accent circle with the arrow. Phone names the active work in the heade
 on queued rows; desktop also shows "L3 is mid-turn · runs next" under the field. Queued rows stay
 inside the message area until they run, with bordered **Send now** beside **Remove** while permitted.
 Send now puts that row first, interrupts an active chat at its engine's safe boundary, and runs the
-selected message next. System work finishes before the selected message runs. Pending rows say
+selected message next. The interrupted reply keeps any partial text as an ordinary reply, with no
+notice: the operator knows they interrupted it. A reply stopped before any text leaves no row, so the
+two operator bubbles sit back to back (8px apart, the first bubble's time beside it).
+System work finishes before the selected message runs. Pending rows say
 **Sending now…**, with **Waiting for current turn to stop** or **Runs next after system work** as
 appropriate; Send now is disabled. Remove is disabled while the HTTP request is pending and remains
 available after acceptance until claim, even when an engine becomes unavailable. Removal does not

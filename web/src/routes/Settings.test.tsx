@@ -369,3 +369,42 @@ describe("Set up a device", () => {
     expect(screen.getByRole("button", { name: "Set up a device" })).toBeEnabled();
   });
 });
+
+describe("Pair another device", () => {
+  function codeFixture(code: Record<string, unknown>) {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/devices") return json({ devices: [], current: null, certificate: null });
+      if (path === "/api/devices/code") return json(code);
+      if (path === "/api/overview") return json({ projects: [], queue: [], engines: [], wip: { machine: 0, per_project: {}, waiting: [] }, quota: { known: false } });
+      if (path === "/api/machine") return json({ operator: null, incident_repository: null, altitude_repository: "fixture/altitude", terminal: false });
+      if (path === "/api/voice") return json(saved);
+      return json({}, 404);
+    }));
+  }
+
+  it("shows the code with the address to open, its QR and the certificate's check, and never a code link", async () => {
+    codeFixture({ code: "ABCD-2345", minutes: 10, address: "https://192.168.1.20:8890", qr: ["1010101", "0101010", "1111111", "0000000", "1010101", "0101010", "1111111"],
+      certificate: { name: "Altitude CA 4F7K", check: "AA BB CC DD EE FF 00 11" } });
+    const { user } = renderApp({ route: "/settings/devices" });
+    const card = await screen.findByRole("region", { name: "Pair another device" });
+    await user.click(within(card).getByRole("button", { name: "Make a pairing code" }));
+    expect(await within(card).findByLabelText("Pairing code")).toHaveTextContent("ABCD-2345");
+    expect(within(card).getByText(/Works once, for the next 10 minutes\. On the other device, open/)).toHaveTextContent("open https://192.168.1.20:8890 and type it.");
+    expect(within(card).getByRole("img", { name: "QR code for https://192.168.1.20:8890" })).toBeInTheDocument();
+    expect(within(card).getByText("Scan with a phone to open Altitude.")).toBeVisible();
+    expect(within(card).getByText(/Certificate “Altitude CA 4F7K” — SHA-256 ends with/)).toHaveTextContent("AA BB CC DD EE FF 00 11");
+    expect(within(card).queryByText(/pair\?code=/)).toBeNull();
+    expect(within(card).getByRole("button", { name: "Make a new code" })).toBeVisible();
+  });
+
+  it("without HTTPS, says to type the code on the Pair this device screen", async () => {
+    codeFixture({ code: "ABCD-2345", minutes: 10, address: null, qr: null, certificate: null });
+    const { user } = renderApp({ route: "/settings/devices" });
+    const card = await screen.findByRole("region", { name: "Pair another device" });
+    await user.click(within(card).getByRole("button", { name: "Make a pairing code" }));
+    expect(await within(card).findByText("Works once, for the next 10 minutes. On the other device, type it on the Pair this device screen.")).toBeVisible();
+    expect(within(card).queryByRole("img")).toBeNull();
+    expect(within(card).queryByText(/SHA-256/)).toBeNull();
+  });
+});

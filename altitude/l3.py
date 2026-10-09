@@ -560,7 +560,7 @@ def search(project: str, query: str, limit: int = 5) -> dict:
     def message_row(row, source):
         return {"source": source, "at": row.get("at"), "date_kind": "message",
                 "role": row.get("role"), "by": row.get("by"), "turn_id": row.get("turn_id"),
-                "removed_at": row.get("removed_at"), "text": row["text"],
+                "removed_at": row.get("removed_at"), "text": row["text"], **_interrupted_meta(row),
                 **({"project_message": row["project_message"]} if row.get("trigger") == "project-message" else {})}
 
     chat = local(root / "chat.jsonl")
@@ -1306,7 +1306,8 @@ def _handoff(history: list[dict], engine: str, since: str | None, *, fresh: bool
     lines = []
     for item in missed[-20:]:
         text = str(item.get("text") or "")
-        lines.append(f"- {item['role']}: {text[:800]}" + (" [truncated]" if len(text) > 800 else ""))
+        role = f"{item['role']} (interrupted by the operator's next message)" if item.get("interrupted") else item["role"]
+        lines.append(f"- {role}: {text[:800]}" + (" [truncated]" if len(text) > 800 else ""))
         if item.get("images") and project:
             try:
                 with S.project_lock(project):
@@ -1508,8 +1509,6 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
                     "routing": choice})
         if on_result:
             on_result({**res, "completed": not bool(res.get("error") or res.get("rejection") or res.get("limited"))})
-        if res.get("interrupted"):
-            res["text"] = _interrupted_text(res)
         if (res.get("rejection") or res.get("limited")) and res.get("safe_to_retry"):
             res.update(completed=False, turn_id=turn_id)
             return res
@@ -1531,15 +1530,17 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
         chat_log(project, "assistant", res.get("text") or (res.get("error") or ""), trigger=trigger,
                  engine="claude", context_percent=pct, turns=res.get("turns"),
                  tools=_tool_log(res.get("tools") or []), turn_id=turn_id, **_created_meta(project, turn_id),
-                 **_slug_meta(slug), **({"completed": not bool(res.get("error"))} if trigger == "ci-recheck" else {}))
+                 **_slug_meta(slug), **_interrupted_meta(res),
+                 **({"completed": not bool(res.get("error"))} if trigger == "ci-recheck" else {}))
         S.regen_state_md(project)
-        res.update({"context_percent": pct, "completed": not bool(res.get("error")), "turn_id": turn_id})
+        res.update({"context_percent": pct, "completed": not (res.get("error") or res.get("interrupted")),
+                    "turn_id": turn_id})
     return res
 
 
-def _interrupted_text(result: dict) -> str:
-    text = str(result.get("text") or "").strip()
-    return (text + "\n\n" if text else "") + "Interrupted for a queued message."
+def _interrupted_meta(result: dict) -> dict:
+    """Send now stopped this chat turn: its text is the partial reply, possibly empty, and it is never replayed."""
+    return {"interrupted": True} if result.get("interrupted") else {}
 
 
 def _interrupt_options(project: str, turn_id: str) -> dict:
@@ -1625,7 +1626,7 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, t
         on_result({**out, "interrupted": result.get("interrupted"),
                    "completed": not bool(out.get("error") or out.get("rejection") or out.get("limited"))})
     if result.get("interrupted"):
-        out.update(text=_interrupted_text(result), interrupted=True, safe_to_retry=False)
+        out.update(interrupted=True, safe_to_retry=False)
     if (out.get("rejection") or out.get("limited")) and out.get("safe_to_retry"):
         return out
     pct = engines.context_percent(tokens, "codex") if tokens else 0.0
@@ -1643,10 +1644,10 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, t
     save_info(project, inf)
     chat_log(project, "assistant", out["text"], trigger=trigger, engine="codex",
              context_percent=pct, cache_tokens=usage.get("cached_input_tokens"), tools=_tool_log(out["tools"]),
-             turn_id=turn_id, **_created_meta(project, turn_id), **_slug_meta(slug),
+             turn_id=turn_id, **_created_meta(project, turn_id), **_slug_meta(slug), **_interrupted_meta(out),
              **({"completed": not bool(out.get("error"))} if trigger == "ci-recheck" else {}))
     S.regen_state_md(project)
-    out.update({"context_percent": pct, "completed": not bool(out.get("error"))})
+    out.update({"context_percent": pct, "completed": not (out.get("error") or out.get("interrupted"))})
     return out
 
 
