@@ -56,8 +56,11 @@ class TestEngineDriver(AltitudeCase):
                 self.setUp()
                 proc = self.drive(engine)
                 self.wait_for_tool(proc)
+                os.kill(int(self.tool.with_suffix(".pid").read_text()), 0)
+                self.assertFalse(self.tool.with_suffix(".completed").exists())
                 engines.send_into_turn(self.sends, "m1", TEXT)
                 events = self.finish(proc)
+                self.assertEqual(self.tool.with_suffix(".completed").read_text(), "completed")
                 marker = events.index({"type": "altitude.send", "message_id": "m1", "outcome": "delivered"})
                 later = json.dumps(events[marker:])
                 self.assertIn(f"Read: {TEXT}", later)
@@ -114,6 +117,46 @@ class TestEngineDriver(AltitudeCase):
         self.assertEqual(engines.recover_send(self.sends, "m1"), "unconfirmed")
         self.assertEqual(engines.recover_send(self.sends, "never-written"), "returned")
 
+    def test_a_delayed_initial_echo_cannot_acknowledge_a_later_message(self):
+        driver = object.__new__(engines._ClaudeDriver)
+        driver.lock = threading.Lock()
+        driver.waiting = {"initial": None, "send": "m1"}
+        driver.ended_at = None
+        driver.close, driver.settle = mock.Mock(), mock.Mock()
+        driver.ended()
+        for identity in ("initial", "unrelated", None):
+            driver.acknowledge(identity)
+        self.assertEqual(driver.waiting, {"send": "m1"})
+        driver.close.assert_not_called()
+        driver.settle.assert_not_called()
+        driver.acknowledge("send")
+        driver.acknowledge("send")
+        driver.settle.assert_called_once_with("m1", "delivered")
+
+    def test_a_completed_turn_with_no_steer_reply_closes_without_replaying_the_message(self):
+        spec = {"engine": "codex", "command": [sys.executable, str(FAKE), "app-server"],
+                "input": engines._engine_input("codex", "Start.", ()), "sends": str(self.sends),
+                "cwd": str(self.repo)}
+        engines.send_into_turn(self.sends, "m1", TEXT)
+        env = {**os.environ, "FAKE_ENGINE_TOOL": str(self.tool), "FAKE_ENGINE_DROP_STEER_ACK": "1"}
+        driver = engines._CodexDriver(spec, env)
+        self.addCleanup(lambda: driver.child.poll() is None and driver.child.kill())
+        self.addCleanup(driver.child.stdout.close)
+        events = []
+        driver.emit = events.append
+        timeout = threading.Timer(5, lambda: driver.child.poll() is None and driver.child.kill())
+        timeout.start()
+        try:
+            with mock.patch.object(engines, "SEND_ECHO_WAIT", 0.05):
+                self.assertEqual(driver.run(), 0)
+        finally:
+            timeout.cancel()
+            timeout.join()
+        self.assertEqual(self.tool.with_suffix(".completed").read_text(), "completed")
+        self.assertIn({"type": "turn.completed", "usage": {"input_tokens": 5, "output_tokens": 2}}, events)
+        self.assertIn({"type": "altitude.send", "message_id": "m1", "outcome": "unconfirmed"}, events)
+        self.assertEqual(engines.recover_send(self.sends, "m1"), "unconfirmed")
+
     def test_codex_server_requests_are_refused_rather_than_left_waiting(self):
         self.finish(self.drive("codex", tool=False, ask=True))
         answer = next(row for row in self.received() if row.get("id") == "ask-1")
@@ -150,7 +193,7 @@ class TestEngineDriver(AltitudeCase):
         with S.project_lock(self.project):
             current = S.load_task(self.project, task["slug"])
             current.update(state="running", agent_id="worker", session_id="fake-session")
-            T.claim_send_now(self.project, current, message["id"], self.sends)
+            T.claim_send_now(self.project, current, [message], self.sends)
         proc = self.drive("claude", task={"project": self.project, "slug": task["slug"]})
         self.wait_for_tool(proc)
         self.finish(proc)

@@ -422,10 +422,11 @@ def send_now_unavailable(project: str, task: dict) -> str | None:
 
 
 def request_send_now(project: str, slug: str, message_id: str) -> dict:
-    """Hand an existing operator row to the running owner's current turn, without stopping or resending it."""
+    """Hand the queued operator messages, `message_id` among them, to the running owner's current turn in order,
+    without stopping or resending them."""
     with S.project_lock(project):
         task = S.load_task(project, slug)
-        if (task.get("send_now") or {}).get("id") == message_id:
+        if message_id in T.send_now_ids(task):
             return {"status": "sending", "idempotent": True}
         row = next((row for row in T.task_messages(project, slug) if row["id"] == message_id), None)
         if row is None or not T.from_operator(row):
@@ -438,17 +439,20 @@ def request_send_now(project: str, slug: str, message_id: str) -> dict:
             return {"status": "delivered", "idempotent": True}
         if message_id not in T.removable_messages(project, slug, task):
             raise T.TransitionError("This message is already owned by a decision or delivery.")
-        if row.get("images"):
+        queued = T.removable_messages(project, slug, task)
+        group = [row for row in T.pending(project, slug) if row["id"] in queued]
+        if any(row.get("images") for row in group):
             raise T.TransitionError(IMAGE_SEND_NOW)
         if reason := send_now_unavailable(project, task):
             raise T.TransitionError(reason)
-        T.claim_send_now(project, task, message_id,
+        T.claim_send_now(project, task, group,
                          engines.worker_sends(task["agent_id"], job_root=l2_job_root(project, slug)))
-        S.append_event(project, slug, "send-now", message_id=message_id, agent_id=task["agent_id"])
+        S.append_event(project, slug, "send-now", message_ids=[row["id"] for row in group], agent_id=task["agent_id"])
         return {"status": "sending", "idempotent": False}
 
 
-#: A message's images are attached when its turn starts, so they never join a running one.
+#: A message's images are attached when its turn starts, so they never join a running one, nor do the messages queued
+#: with them, which keep their order.
 IMAGE_SEND_NOW = "Messages with images arrive at the owner's next turn."
 
 

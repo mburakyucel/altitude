@@ -88,8 +88,9 @@ the lightest useful execution shape. Its conversation with the operator is store
 the operator messages it directly without routing through L3. Messages queue on the task and reach the
 worker at its next checkpoint; the operator's own messages reach it only as a user turn, at the next session
 turn. An explicit Stop ends a worker. **Send now** on an inbox-owned operator
-message hands it to the running turn, which reads it as the operator's next input without stopping its
-work (see [message delivery](#message-delivery-and-voice)). The remaining inbox rows retain their order for later checkpoints. Task message writers hold the project
+message hands the queued operator group to the running turn in arrival order, without stopping its
+work (see [message delivery](#message-delivery-and-voice)). Each message keeps its own visible row and
+delivery receipt; messages arriving after the claim wait for a later checkpoint. Task message writers hold the project
 lock and atomically replace each conversation or inbox file, so concurrent readers see complete records.
 Appending a message to a blocked
 task also persists a due `resume_after` request, except non-waking coordinator discussion on a
@@ -2013,35 +2014,40 @@ messages. Each turn drains it at its own boundary rather than at the next tick: 
 messages for the same conversation fold into one turn in arrival order, each on its own line, while
 image-bearing and server-triggered messages keep their own turn, and nothing runs while a turn holds the project's L3 lock.
 
-**Send now** hands the selected operator row to the running chat turn, which reads it as the operator's
-next message without stopping its work. Every engine job runs through `engines.engine_driver`, which
+**Send now** hands the whole queued operator group for that conversation to the running chat turn in
+arrival order, without stopping its work. The selected row identifies the group, not a message to move
+ahead of its neighbours. Messages arriving after the claim remain queued. Every engine job runs through `engines.engine_driver`, which
 starts the engine with its input held open: Claude reads stream-json input and receives the message as a
 user line, with running commands moved to the background; Codex runs as `codex app-server`, which takes
-it through `turn/steer`. The request writes the message into the turn's `sends` folder; the driver claims
+it through `turn/steer`. The request writes the group into the turn's `sends` folder; the driver claims
 it by renaming and records the outcome as the file's final name. Once the engine confirms it, the reply so
-far becomes that turn's answer, the message joins the history under a new turn, and the rest of the reply
-streams beneath it. The queue row shows **Sending into the current turn** without **Remove** until then.
-Retries reuse the row or its history receipt, and only one message is sent at a time.
+far becomes that turn's answer, each message joins the history under its own turn id, and the rest of the reply
+streams beneath them. Each message retains its own visible row and receipt. The claimed rows show
+**Sending into the current turn** without **Remove** until then. Retries reuse the claim or the individual
+history receipts, and only one group is sent at a time.
 
-A message the turn can no longer take, because it ended first, returns to the queue front and runs next
-as its own turn. A message with images, one sent during system work (**Runs next after system work**) or
-while no turn runs (**Runs next**) also gets the next turn; system turns keep their existing boundary to
+A group the turn can no longer take, because it ended first, returns to the queue front and runs next
+in arrival order. A group containing images, one sent during system work (**Runs next after system work**)
+or while no turn runs (**Runs next**) also waits for next-turn delivery in arrival order; text never
+overtakes an image in that group. System turns keep their existing boundary to
 preserve notification, CI and report delivery. System queue rows cannot be promoted or removed. After a
 turn, and at the next drain after a restart, each sent row settles from its outcome file: a message the
 engine may have read is recorded once in the history and never runs again; one it never read runs next.
 No available engine, a restart in progress or a launch pause explains why it cannot be sent. Stop is the
 only control that ends a turn. The browser requests this action by message ID.
 
-In the task chat, the same control claims the selected inbox row under the project lock, records the
-claim on the task and writes the message to the worker's `sends` folder. The worker keeps running; its
-inbox hook neither announces the claimed message nor ends the turn for it. When the engine confirms the
-message, the driver records its delivery receipt on the task itself, so a restart of altd loses nothing,
-and the row leaves the inbox. A message returned at the turn's end stays queued for the next turn. After
+In the task chat, the same control claims the queued removable operator group under the project lock,
+records the claim on the task and writes the group in arrival order to the worker's `sends` folder.
+The worker keeps running; its inbox hook neither announces the claimed messages nor ends the turn for
+them. When the engine confirms the group, the driver records each message's delivery receipt on the
+task itself, so a restart of altd loses nothing, and the rows leave the inbox. Each message retains its
+own conversation row. A group returned at the turn's end stays queued for the next turn. After
 a Stop, a lost job or the end of the task, the claim settles from the outcome file before any later turn
 takes the inbox: a message the worker never read is delivered at the next turn, and one it may have read
-is recorded as unconfirmed and never sent again. A message with images, a question wait, a fault, a
-Stop, another owner action, another message being sent, or a worker launched before this driver keeps the
-message for the next turn instead. Operator grants and merge holds keep their existing rules.
+is recorded as unconfirmed and never sent again. Images anywhere in the queued group keep the whole
+group waiting for next-turn delivery in order. A question wait, a fault, a Stop, another owner action,
+another group being sent, or a worker launched before this driver also keeps the group for the next
+turn instead. Operator grants and merge holds keep their existing rules.
 
 The project conversation and the task conversation use one
 composer component, `web/src/components/Composer.tsx`, with no page-specific props.

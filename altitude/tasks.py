@@ -751,7 +751,7 @@ def removable_messages(project: str, slug: str, task: dict) -> set[str]:
     if task.get("state") not in ("running", "blocked", "queued"):
         return set()
     protected = {row["id"] for row in (task.get("resume_claim") or {}).get("messages", [])}
-    protected.add((task.get("send_now") or {}).get("id"))
+    protected.update(send_now_ids(task))
     protected.update(task.get("message_deliveries") or {})
     for question in task.get("questions", []):
         protected.add((question.get("acceptance_message") or {}).get("id"))
@@ -788,12 +788,13 @@ def _message_views(project: str, slug: str, task: dict, delivered: list[dict]) -
     receipts = {row["message_id"]: {"at": row.get("at")} for row in delivered}
     receipts = {**(task.get("message_deliveries") or {}), **receipts}
     queued = {row["id"] for row in pending(project, slug)}
-    selected = (task.get("send_now") or {}).get("id")
-    claimed = {row["id"] for row in (task.get("resume_claim") or {}).get("messages", [])} | {selected}
+    selected = send_now_ids(task)
+    claimed = {row["id"] for row in (task.get("resume_claim") or {}).get("messages", [])} | selected
     removable = removable_messages(project, slug, task) - receipts.keys()
     from . import dispatch
     unavailable = dispatch.send_now_unavailable(project, task) if removable else None
     rows = task_messages(project, slug)
+    group_has_images = any(row.get("images") for row in rows if row["id"] in removable)
     for row in rows:
         if row["role"] not in (OPERATOR_MESSAGE_ROLE, "l3"):
             continue
@@ -803,8 +804,8 @@ def _message_views(project: str, slug: str, task: dict, delivered: list[dict]) -
         row["delivery"] = {"state": state, "at": receipt.get("at") if receipt else None,
                            "removable": row["id"] in removable}
         if from_operator(row) and state in ("queued", "sending"):
-            sending_now = row["id"] == selected
-            blocked = dispatch.IMAGE_SEND_NOW if row.get("images") else unavailable
+            sending_now = row["id"] in selected
+            blocked = dispatch.IMAGE_SEND_NOW if group_has_images else unavailable
             reason = ("Sending into the current turn." if sending_now
                       else blocked if row["id"] in removable else "This message is already being delivered.")
             row["delivery"].update(send_now=row["id"] in removable and not blocked,
@@ -984,14 +985,20 @@ def release_resume_claim(project: str, slug: str, claim_id: str, *, consume_requ
         return True
 
 
-def claim_send_now(project: str, task: dict, message_id: str, sends: Path) -> None:
-    """Called under the project lock: the running worker's driver takes the message into its current turn (see
-    `engines._Driver`). The message stays in the inbox, out of the owner's notices, until the driver settles it."""
-    task["send_now"] = {"id": message_id, "agent_id": task["agent_id"], "sends": str(sends), "at": S.now()}
+def send_now_ids(task: dict) -> set[str]:
+    """The messages a Send now claim hands to the running turn."""
+    return set((task.get("send_now") or {}).get("ids", []))
+
+
+def claim_send_now(project: str, task: dict, rows: list[dict], sends: Path) -> None:
+    """Called under the project lock: the running worker's driver takes the messages into its current turn, in order,
+    as one hand-off named by the first (see `engines._Driver`). They stay in the inbox, out of the owner's notices,
+    until the driver settles them."""
+    ids = [row["id"] for row in rows]
+    task["send_now"] = {"id": ids[0], "ids": ids, "agent_id": task["agent_id"], "sends": str(sends), "at": S.now()}
     S.save_task(project, task)
-    row = next(row for row in pending(project, task["slug"]) if row["id"] == message_id)
     from . import engines
-    engines.send_into_turn(sends, message_id, row["text"])
+    engines.send_into_turn(sends, ids[0], render_inbox(rows))
 
 
 def settle_send_now(project: str, slug: str, message_id: str, outcome: str, *, agent_id: str | None,
@@ -1004,17 +1011,20 @@ def settle_send_now(project: str, slug: str, message_id: str, outcome: str, *, a
 
 
 def _settle_send_now(project: str, task: dict, message_id: str, outcome: str, **receipt) -> None:
-    if (task.get("send_now") or {}).get("id") == message_id:
-        task.pop("send_now")
+    claim = task.get("send_now") or {}
+    if claim.get("id") != message_id:
+        return  # already settled from the same outcome file
+    task.pop("send_now")
     if outcome == "returned":
         return  # still in the inbox, for the session's next user turn
     delivered = outcome == "delivered"
-    task.setdefault("message_deliveries", {})[message_id] = {
-        "state": "delivered" if delivered else "unconfirmed", "at": S.now() if delivered else None, **receipt}
+    for settled in claim["ids"]:
+        task.setdefault("message_deliveries", {})[settled] = {
+            "state": "delivered" if delivered else "unconfirmed", "at": S.now() if delivered else None, **receipt}
     path = S.task_dir(project, task["slug"]) / "inbox.jsonl"
     rows = _rows(path, "task inbox")
-    if any(row["id"] == message_id for row in rows):
-        left = [row for row in rows if row["id"] != message_id]
+    if any(row["id"] in claim["ids"] for row in rows):
+        left = [row for row in rows if row["id"] not in claim["ids"]]
         if left:
             S.atomic_write(path, "".join(json.dumps(row, sort_keys=True) + "\n" for row in left))
         else:

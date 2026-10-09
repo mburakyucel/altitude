@@ -1,6 +1,7 @@
 """The L3 coordinator: one serialized turn, with a resumable session per provider."""
 from __future__ import annotations
 import argparse
+import fcntl
 import hashlib
 import heapq
 import json
@@ -218,14 +219,26 @@ def save_info(project: str, data: dict) -> None:
     S.write_json(info_path(project), data)
 
 
-def chat_log(project: str, role: str, text: str, **meta) -> dict:
+@contextmanager
+def _chat_write(project: str):
+    """Serialize appends with a group's atomic history replacement, including CLI writers."""
     path = config.project_dir(project) / "chat.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path.with_suffix(".lock"), "a") as guard:
+        fcntl.flock(guard, fcntl.LOCK_EX)
+        try:
+            yield path
+        finally:
+            fcntl.flock(guard, fcntl.LOCK_UN)
+
+
+def chat_log(project: str, role: str, text: str, **meta) -> dict:
     row = {"at": S.now(), "role": role, "text": text, **meta}
-    with open(path, "a") as stream:
-        stream.write(json.dumps(row, sort_keys=True) + "\n")
-        stream.flush()
-        os.fsync(stream.fileno())
+    with _chat_write(project) as path:
+        with open(path, "a") as stream:
+            stream.write(json.dumps(row, sort_keys=True) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
     return row
 
 
@@ -999,8 +1012,8 @@ def send_now_unavailable(project: str) -> str | None:
 
 
 def send_now(project: str, message_id: str) -> dict:
-    """Hand one operator row to the running chat turn, which takes it in without stopping (see
-    `engines._Driver`); otherwise, and for a message with images, it runs next."""
+    """Hand the waiting operator group to the running chat turn in queue order, without stopping it.
+    A group containing images, or without a running chat turn, runs next ahead of system work."""
     with config.provider_admission() as held:
         if held:
             raise ValueError(held)
@@ -1020,15 +1033,20 @@ def send_now(project: str, message_id: str) -> dict:
                 raise ValueError("Another message is being sent now. Wait for its delivery.")
             if why := send_now_unavailable(project):
                 raise ValueError(why)
-            row["send_now"] = True
+            group = [item for item in rows if item.get("trigger") == "chat"
+                     and item.get("role") == config.OPERATOR_ACTOR and item.get("slug") == row.get("slug")
+                     and not item.get("image_turn_id")]
             turn = _active.get(project)
-            if turn and turn.get("sends") and not row.get("images"):
-                row["sending"] = turn["sends"].name
-            # The row records the hand-off before the turn can read it, so a message the turn took in is never
-            # run again as its own turn.
-            _write_queue(queue_path(project), [row, *(item for item in rows if item["id"] != message_id)])
-            if row.get("sending"):
-                engines.send_into_turn(turn["sends"], message_id, row["text"])
+            native = (turn and turn.get("sends") and turn.get("slug") == row.get("slug")
+                      and not any(item.get("images") for item in group))
+            for item in group:
+                item["send_now"] = True
+                if native:
+                    item.update(sending=turn["sends"].name, send_group=group[0]["id"])
+            # Persist every member before publishing the single native drop. One outcome owns the whole group.
+            _write_queue(queue_path(project), [*group, *(item for item in rows if item not in group)])
+            if native:
+                engines.send_into_turn(turn["sends"], group[0]["id"], "\n\n".join(item["text"] for item in group))
             return {"ok": True, "status": "sending"}
 
 
@@ -1070,14 +1088,17 @@ def _settle_sends(project: str, sends: Path) -> None:
         path = queue_path(project)
         rows = _queue_rows(path)
         kept = []
+        recorded = {message_id for row in chat_history(project, None) for message_id in row.get("queue_ids", [])}
         for row in rows:
             if row.get("sending") != sends.name:
                 kept.append(row)
-            elif engines.recover_send(sends, row["id"]) != "returned":
+            elif row["id"] in recorded:
+                continue
+            elif engines.recover_send(sends, row["send_group"]) != "returned":
                 chat_log(project, "user", row["text"], trigger="chat", turn_id=uuid.uuid4().hex[:12],
                          queue_ids=[row["id"]], **_slug_meta(row.get("slug")))
             else:
-                kept.append({key: value for key, value in row.items() if key != "sending"})
+                kept.append({key: value for key, value in row.items() if key not in ("sending", "send_group")})
         if kept != rows:
             _write_queue(path, kept)
     shutil.rmtree(sends, ignore_errors=True)
@@ -1089,17 +1110,21 @@ def _send_options(project: str, active_turn: dict, engine: str, on_split=None) -
         return {}
 
     def on_send(message_id: str, outcome: str, text: str) -> None:
+        with S.project_lock(project):
+            members = [row["id"] for row in _queue_rows(queue_path(project))
+                       if row.get("send_group") == message_id and row.get("sending") == sends.name]
         if outcome == "returned":
             with S.project_lock(project):
                 rows = _queue_rows(queue_path(project))
-                if any(row.get("id") == message_id and row.get("sending") == sends.name for row in rows):
+                if members:
                     _write_queue(queue_path(project), [{key: value for key, value in row.items()
-                                                        if not (key == "sending" and row.get("id") == message_id)}
+                                                        if not (key in ("sending", "send_group") and row.get("id") in members)}
                                                        for row in rows])
             return
-        delivered = _split_turn(project, active_turn, message_id, text, engine=engine)
-        if delivered is not None and on_split:
-            on_split(delivered)
+        for index, member in enumerate(members):
+            delivered = _split_turn(project, active_turn, member, text if index == 0 else "", engine=engine)
+            if delivered is not None and on_split:
+                on_split(delivered)
 
     return {"sends": sends, "on_send": on_send}
 
@@ -1162,10 +1187,10 @@ def deliver_queued(project: str) -> dict | None:
             if not rows:
                 return None
             take = 1
-            if rows[0].get("trigger") == "chat" and not rows[0].get("images") and not rows[0].get("send_now"):
+            if rows[0].get("trigger") == "chat" and not rows[0].get("images"):
                 while (take < len(rows) and rows[take].get("trigger") == "chat"
                        and rows[take].get("slug") == rows[0].get("slug") and not rows[take].get("images")
-                       and not rows[take].get("send_now")):
+                       and bool(rows[take].get("send_now")) == bool(rows[0].get("send_now"))):
                     take += 1
             selected = rows[:take]
             selected_ids = [row.get("id") for row in selected]
@@ -1177,6 +1202,7 @@ def deliver_queued(project: str) -> dict | None:
                     eligible = [row for row in current if _queue_ready(project, row)]
                     if [row.get("id") for row in eligible[:take]] != selected_ids:
                         return False
+                    active_turn["queue_ids"] = selected_ids
                     if selected[0].get("images"):
                         next(row for row in current if row["id"] == selected[0]["id"])["image_turn_id"] = active_turn["id"]
                         _write_queue(path, current)
@@ -1199,11 +1225,22 @@ def deliver_queued(project: str) -> dict | None:
                     if not selected[0].get("images"):
                         _write_queue(path, [row for row in current if row.get("id") not in selected_ids])
                     try:
-                        chat_log(project, "user", prompt, trigger=trigger, engine=choice["engine"],
-                                 at=active_turn["started_at"], turn_id=active_turn["id"], queue_ids=selected_ids,
-                                 **_slug_meta(slug),
-                                 **({key: selected[0][key] for key in ("images", "request_id", "request_digest")}
-                                    if selected[0].get("images") else {}))
+                        if selected[0].get("send_now") and not selected[0].get("images"):
+                            bubbles = [{"role": "user", "text": row["text"], "trigger": trigger,
+                                        "engine": choice["engine"], "at": active_turn["started_at"],
+                                        "turn_id": active_turn["id"] if index == len(selected) - 1 else uuid.uuid4().hex[:12],
+                                        "queue_ids": [row["id"]], **_slug_meta(slug)}
+                                       for index, row in enumerate(selected)]
+                            with _chat_write(project) as history_path:
+                                history = history_path.read_text() if history_path.exists() else ""
+                                S.atomic_write(history_path, history + "".join(json.dumps(row, sort_keys=True) + "\n"
+                                                                             for row in bubbles))
+                        else:
+                            chat_log(project, "user", prompt, trigger=trigger, engine=choice["engine"],
+                                     at=active_turn["started_at"], turn_id=active_turn["id"], queue_ids=selected_ids,
+                                     **_slug_meta(slug),
+                                     **({key: selected[0][key] for key in ("images", "request_id", "request_digest")}
+                                        if selected[0].get("images") else {}))
                     except Exception:
                         _write_queue(path, current)
                         raise
@@ -1479,7 +1516,9 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
                     "context_percent": 0, "rotated_from": sid, "rotated_at": session["rotated_at"]})
         save_info(project, inf)
         sid = None
-    history = [row for row in chat_history(project, None if fresh else 60) if row.get("turn_id") != turn_id]
+    current_queue_ids = set(active_turn.get("queue_ids", []))
+    history = [row for row in chat_history(project, None if fresh else 60)
+               if row.get("turn_id") != turn_id and not current_queue_ids.intersection(row.get("queue_ids", []))]
     handoff = _handoff(history, engine, session.get("last_turn"), fresh=fresh, project=project)
     turn_started_at = active_turn["started_at"]
     selection = {"effort": choice.get("requested_effort"), "launch_effort": choice.get("effort"),

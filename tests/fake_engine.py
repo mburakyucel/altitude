@@ -9,12 +9,29 @@ the Codex server asks the client for an approval first and records the answer.
 """
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
 TOOL = os.environ.get("FAKE_ENGINE_TOOL")
 SESSION, MODEL = os.environ.get("FAKE_ENGINE_SESSION"), os.environ.get("FAKE_ENGINE_MODEL", "fake-model")
 TEXT = os.environ.get("FAKE_ENGINE_TEXT", "Done.")
+
+
+def command():
+    """A real child remains alive until its fake engine releases the tool after receiving the message."""
+    child = subprocess.Popen([sys.executable, "-c",
+                              "import pathlib, sys; sys.stdin.read(); pathlib.Path(sys.argv[1]).write_text('completed')",
+                              TOOL + ".completed"], stdin=subprocess.PIPE)
+    Path(TOOL + ".pid").write_text(str(child.pid))
+    Path(TOOL).write_text("running")
+    return child
+
+
+def finish_command(child):
+    child.stdin.close()
+    if child.wait(timeout=10):
+        raise RuntimeError("fake tool failed")
 
 
 def out(event: dict) -> None:
@@ -47,7 +64,7 @@ def claude() -> None:
         out({"type": "assistant", "message": {"model": MODEL, "content": [
             {"type": "tool_use", "id": "tool-1", "name": "Bash", "input": {"command": "sleep 3600"}}]}})
         say("Waiting on the command. ")
-        Path(TOOL).write_text("running")
+        child = command()
         heard, backgrounded = None, False
         while heard is None or not backgrounded:
             message = next(lines)
@@ -59,6 +76,7 @@ def claude() -> None:
                                                               "request_id": message["request_id"]}})
                 backgrounded = True
         Path(TOOL).write_text("backgrounded")
+        finish_command(child)
         say(f"Read: {heard}")
     else:
         say(TEXT)
@@ -101,14 +119,16 @@ def codex() -> None:
                 active = "turn-1"
                 notify("item/started", {"item": {"type": "commandExecution", "id": "tool-1", "command": "sleep 3600",
                                                  "status": "inProgress"}})
-                Path(TOOL).write_text("running")
+                child = command()
             else:
                 complete(TEXT)
         elif method == "turn/steer":
             if active != params.get("expectedTurnId"):
                 reply(identity, error={"code": -32600, "message": "no active turn to steer"})
                 continue
-            reply(identity, {"turnId": active})
+            if not os.environ.get("FAKE_ENGINE_DROP_STEER_ACK"):
+                reply(identity, {"turnId": active})
+            finish_command(child)
             notify("item/completed", {"item": {"type": "commandExecution", "id": "tool-1", "command": "sleep 3600",
                                                "status": "completed", "aggregatedOutput": "", "exitCode": 0}})
             active = None

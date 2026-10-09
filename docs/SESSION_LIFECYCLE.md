@@ -541,15 +541,18 @@ Quick-choice receipts and messages already used by recorded decisions cannot be 
 does not undo a resume request, Stop, fault or question. Claimed messages say Sending to session and
 cannot be removed. A failure before launch restores removal; an attempted but unconfirmed handoff
 retains Delivery unconfirmed and cannot be removed even when recovery restores the inbox batch.
-**Send now** is available for an inbox-owned operator message without images while its owner is
-running a turn through the engine driver. Under the project lock, the request records a `send_now` claim
-on the task and writes the message to the worker's `sends` folder; it neither stops the worker nor
-launches another. The driver writes it into the running turn as the operator's next message (see
+**Send now** hands the whole queued removable operator group to the running owner in arrival order.
+It is available while the owner runs through the engine driver and no message in the group has images.
+Under the project lock, the request records a `send_now` claim on the task and writes the group to the
+worker's `sends` folder; it neither stops the worker nor launches another. The driver writes the group
+into the running turn as the operator's next input (see
 [message delivery](ARCHITECTURE.md#message-delivery-and-voice)) and, once the engine confirms it, records
-the delivery receipt on the task and removes the row from the inbox. The claimed row says Sending into
-the current turn and cannot be removed; the inbox hook neither announces it nor ends the turn for it,
-and only one message is sent at a time. A message the turn returns at its end stays queued for the next
-turn. A Stop, a lost job, a report or the end of the task settles a remaining claim from the driver's
+each message's delivery receipt on the task and removes the claimed rows from the inbox. Each message
+retains its own conversation row. The claimed rows say Sending into the current turn and cannot be
+removed; the inbox hook neither announces them nor ends the turn for them, and only one group is sent
+at a time. Later arrivals wait outside that claim. A group the turn returns at its end stays queued for
+the next turn. Images anywhere in the group keep the whole group queued for next-turn delivery in
+arrival order. A Stop, a lost job, a report or the end of the task settles a remaining claim from the driver's
 outcome file before any later turn takes the inbox, so a message the engine may have read is never
 delivered again. Question waits, faults, Stop, another owner action and workers started before the driver
 explain why Send now is unavailable; the message then waits for the next turn.
@@ -1209,9 +1212,8 @@ Leaving a voice composer releases microphone tracks and cancels recording or Sto
 An explicit voice Send completes for its original project or task despite navigation; pending status
 and any recoverable failure stay in that source conversation. Outstanding microphone permissions and
 transcription results cannot populate a different conversation.
-L3 runs headless, so its only checkpoint is the turn boundary: a message the operator
-sends while a turn is in flight is appended to the project's durable L3 queue and run there, never
-injected into the running turn. The finishing turn drains the queue itself, one turn at a time and in
+An ordinary message the operator sends while an L3 turn is in flight is appended to the project's
+durable L3 queue and waits for the turn boundary. The finishing turn drains the queue itself, one turn at a time and in
 arrival order, batching consecutive chat rows for the same conversation while keeping system turns
 and other conversations separate. Each waiting chat row remains individually removable until claim,
 except while Send now hands it to the running turn;
@@ -1224,14 +1226,17 @@ available. A turn with provider output is never replayed, and a refused operator
 Retry instead. An Auto-selected turn resumes only the chosen provider's session;
 choosing another configured model on that provider retains its conversation.
 
-An operator queue row's **Send now** hands it to the running chat turn through that turn's `sends`
-folder; the turn's engine driver writes it in as the operator's next message, and the turn continues
+An operator queue row's **Send now** hands the whole queued operator group for that conversation to
+the running chat turn in arrival order through that turn's `sends` folder. The selected row identifies
+the group; later arrivals remain queued. The turn's engine driver writes the group as the operator's
+next input, and the turn continues
 without stopping. Once the engine confirms it, the reply so far is recorded as the turn's answer, the
-message is recorded as the next user row under a new turn id with its queue id, and the rest of the
-reply belongs to that new turn. The row says **Sending into the current turn** and cannot be removed
-until it settles. A message the turn returns at its end, one with images, one sent during a system turn
-(**Runs next after system work**) or while no turn runs (**Runs next**) moves to the queue front and
-runs alone as the next turn; the remaining rows retain their relative order and normal folding. Active
+messages are recorded as separate user rows, each with its own turn id, queue id and receipt,
+and the rest of the reply belongs to the last new turn. The claimed rows say **Sending into the current
+turn** and cannot be removed until they settle. A group the turn returns at its end, one containing
+images, one sent during a system turn (**Runs next after system work**) or while no turn runs
+(**Runs next**) moves to the queue front for next-turn delivery in arrival order. Text never overtakes
+an image in the group; the remaining rows retain their relative order and normal folding. Active
 system turns keep their existing boundary to preserve notification and report receipts. After each turn,
 and at the next drain after a restart, a row still marked as sending settles from its outcome file: a
 message the engine may have read is recorded once and never replayed; one it never read runs next.

@@ -709,6 +709,9 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
             def wait(self):
                 return self.returncode
 
+            def poll(self):
+                return self.returncode
+
             def kill(self):
                 self.returncode = -9
 

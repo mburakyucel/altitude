@@ -37,6 +37,8 @@ def main():
             sends = options["sends"]
             deadline = time.monotonic() + 30
             while not list(sends.glob("*.json")):  # what the engine's driver watches for
+                if release.is_set():  # a walkthrough that sends nothing into this turn
+                    return {"text": "Kept working.", "session_id": "fixture-send-now"}
                 assert time.monotonic() < deadline, "Send now did not reach the running turn"
                 time.sleep(0.05)
             assert deliver.wait(30), "The fixture delivery was not released"

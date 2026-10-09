@@ -681,8 +681,7 @@ class _ClaudeDriver(_Driver):
 
     def acknowledge(self, identity: str | None) -> None:
         with self.lock:
-            key = identity if identity in self.waiting else next(iter(self.waiting), None)
-            message_id = self.waiting.pop(key, None) if key is not None else None
+            message_id = self.waiting.pop(identity, None)
             if self.ended_at is not None and not self.waiting:
                 self.close()
         if message_id:
@@ -796,7 +795,7 @@ class _CodexDriver(_Driver):
         self.arrived = threading.Condition(self.lock)
         self.ids = iter(range(1, 1 << 62))
         self.turn: str | None = None
-        self.steering = 0
+        self.steers: dict[int, str] = {}
         self.completed = False
         self.usage: dict = {}
         self.model: str | None = None
@@ -817,27 +816,26 @@ class _CodexDriver(_Driver):
             raise _Refused(f"{method}: {(reply['error'] or {}).get('message') or reply['error']}")
         return reply.get("result") or {}
 
-    def deliver(self, message: dict) -> str:
+    def deliver(self, message: dict) -> str | None:
+        """Settled by the server's answer where it arrives, so the turn's output after it follows the marker."""
         with self.lock:
             if self.closed or not self.turn:
                 return "returned"
-            turn, self.steering = self.turn, self.steering + 1
-        try:
-            self.call("turn/steer", {"threadId": self.session_id, "expectedTurnId": turn,
-                                     "clientUserMessageId": message["id"],
-                                     "input": [{"type": "text", "text": message["text"], "text_elements": []}]})
-            return "delivered"
-        except (_Refused, OSError):
-            return "returned"  # refused (no active turn, or another one), or never written
-        except RuntimeError:
-            return "unconfirmed"  # written, but the server ended before answering
-        finally:
-            with self.lock:
-                self.steering -= 1
-                self.arrived.notify_all()
+            identity = next(self.ids)
+            try:
+                self.write({"id": identity, "method": "turn/steer", "params": {
+                    "threadId": self.session_id, "expectedTurnId": self.turn, "clientUserMessageId": message["id"],
+                    "input": [{"type": "text", "text": message["text"], "text_elements": []}]}})
+            except OSError:
+                return "returned"
+            self.steers[identity] = message["id"]
+            return None
 
     def unsettled(self) -> list[str]:
-        return []
+        """Written, but the server ended before answering."""
+        pending = list(self.steers.values())
+        self.steers.clear()
+        return pending
 
     def status(self) -> int:
         """The server exits cleanly once its input closes, so an unfinished turn sets the job's status."""
@@ -894,7 +892,12 @@ class _CodexDriver(_Driver):
                             "code": -32601, "message": "Altitude answers no client requests"}})
             elif "id" in message:
                 with self.lock:
-                    self.replies[message["id"]] = message
+                    steered = self.steers.pop(message["id"], None)
+                    if steered is None:
+                        self.replies[message["id"]] = message
+                if steered:  # a refused steer found no active turn, or another one
+                    self.settle(steered, "returned" if "error" in message else "delivered")
+                with self.lock:
                     self.arrived.notify_all()
             elif message.get("method"):
                 self.notify(message["method"], message.get("params") or {})
@@ -930,8 +933,12 @@ class _CodexDriver(_Driver):
             self.emit({"type": "error", "message": str(exc)})
         finally:
             with self.lock:
-                while self.steering:
-                    self.arrived.wait(1)
+                deadline = time.monotonic() + SEND_ECHO_WAIT
+                while self.steers and not self.eof.is_set():
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    self.arrived.wait(remaining)
                 self.close()
             reader.join()
 

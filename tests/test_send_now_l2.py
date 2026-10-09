@@ -1,4 +1,5 @@
-"""Send now hands a queued operator message to the running owner's driver, which writes it into the current turn.
+"""Send now hands the queued operator messages, in order, to the running owner's driver, which writes them into the
+current turn as one hand-off named by the first.
 
 The owner's job is never stopped for it. The driver's outcome settles the row: delivered and unconfirmed rows leave
 the inbox, a returned row waits for the next user turn, and a claim its driver never settled is recovered from the
@@ -61,11 +62,12 @@ class TestSendNowL2(AltitudeCase):
         return [row["id"] for row in rows]
 
     def claimed(self, engine):
-        """A running owner with three queued messages, the middle one handed to its driver."""
+        """A running owner whose two queued messages went to its driver on Send now for the second, and a message
+        queued after that."""
         task = self.launch(engine)
-        first, selected, last = [self.send(task, text) for text in ("earlier", "selected", "later")]
+        first, selected = [self.send(task, text) for text in ("earlier", "selected")]
         self.assertEqual(self.request(task, selected), {"status": "sending", "idempotent": False})
-        return task, first, selected, last
+        return task, first, selected, self.send(task, "later")
 
     def no_stop(self):
         return (mock.patch.object(engines, "stop_l2_worker", side_effect=AssertionError("Send now stopped the job")),
@@ -77,24 +79,26 @@ class TestSendNowL2(AltitudeCase):
         for engine in config.ENGINES:
             with self.subTest(engine=engine):
                 task = self.launch(engine)
-                first, selected, last = [self.send(task, text) for text in ("earlier", "selected", "later")]
+                first, selected = [self.send(task, text) for text in ("earlier", "selected")]
                 self.assertTrue(self.delivery(task, selected)["send_now"])
                 stop_worker, stop_unit = self.no_stop()
                 with stop_worker, stop_unit, mock.patch.object(dispatch, "run_task_operation") as operation:
                     self.assertEqual(self.request(task, selected), {"status": "sending", "idempotent": False})
-                    self.assertEqual(self.request(task, selected), {"status": "sending", "idempotent": True})
+                    for member in (selected, first):
+                        self.assertEqual(self.request(task, member), {"status": "sending", "idempotent": True})
+                    last = self.send(task, "later")
                     with self.assertRaisesRegex(T.TransitionError, "Another message is being sent now"):
                         self.request(task, last)
                     operation.assert_not_called()
                 sends = self.sends(task)
-                self.assertEqual(sorted(path.name for path in sends.iterdir()), [f"{selected['id']}.json"])
-                self.assertEqual(json.loads((sends / f"{selected['id']}.json").read_text()),
-                                 {"id": selected["id"], "text": "selected"})
+                self.assertEqual(sorted(path.name for path in sends.iterdir()), [f"{first['id']}.json"])
+                self.assertEqual(json.loads((sends / f"{first['id']}.json").read_text()),
+                                 {"id": first["id"], "text": T.render_inbox([first, selected])})
                 current = S.load_task(self.project, task["slug"])
                 claim = current["send_now"]
-                self.assertEqual(set(claim), {"id", "agent_id", "sends", "at"})
-                self.assertEqual((claim["id"], claim["agent_id"], claim["sends"]),
-                                 (selected["id"], task["agent_id"], str(sends)))
+                self.assertEqual(set(claim), {"id", "ids", "agent_id", "sends", "at"})
+                self.assertEqual((claim["id"], claim["ids"], claim["agent_id"], claim["sends"]),
+                                 (first["id"], self.ids([first, selected]), task["agent_id"], str(sends)))
                 self.assertEqual(current["state"], "running")
                 self.assertEqual(current["agent_id"], task["agent_id"])
                 self.assertIsNone(current.get("daemon_request"))
@@ -102,16 +106,17 @@ class TestSendNowL2(AltitudeCase):
                 self.assertEqual(self.worker.workers[task["agent_id"]]["state"], "working")
                 self.assertEqual(self.ids(T.pending(self.project, task["slug"])),
                                  self.ids([first, selected, last]))
-                self.assertEqual(self.delivery(task, selected), {
-                    "state": "sending", "at": None, "removable": False,
-                    "send_now": False, "send_now_pending": True, "send_now_reason": SENDING})
-                with self.assertRaisesRegex(T.TransitionError, "can no longer be removed"):
-                    T.remove_message(self.project, task["slug"], selected["id"])
+                for member in (first, selected):
+                    self.assertEqual(self.delivery(task, member), {
+                        "state": "sending", "at": None, "removable": False,
+                        "send_now": False, "send_now_pending": True, "send_now_reason": SENDING})
+                    with self.assertRaisesRegex(T.TransitionError, "can no longer be removed"):
+                        T.remove_message(self.project, task["slug"], member["id"])
                 other = self.delivery(task, last)
                 self.assertEqual((other["state"], other["removable"], other["send_now"], other["send_now_pending"]),
                                  ("queued", True, False, False))
                 self.assertIn("Another message is being sent now", other["send_now_reason"])
-                T.remove_message(self.project, task["slug"], last["id"])  # siblings stay removable
+                T.remove_message(self.project, task["slug"], last["id"])  # a later message stays removable
 
     # ---- the driver's outcome ------------------------------------------------------------------------------
 
@@ -119,24 +124,25 @@ class TestSendNowL2(AltitudeCase):
         for engine in config.ENGINES:
             with self.subTest(engine=engine):
                 task, first, selected, last = self.claimed(engine)
-                T.settle_send_now(self.project, task["slug"], selected["id"], "delivered",
+                T.settle_send_now(self.project, task["slug"], first["id"], "delivered",
                                   agent_id=task["agent_id"], session_id=task["session_id"])
                 current = S.load_task(self.project, task["slug"])
                 self.assertNotIn("send_now", current)
-                receipt = current["message_deliveries"][selected["id"]]
-                self.assertEqual((receipt["state"], receipt["agent_id"], receipt["session_id"]),
-                                 ("delivered", task["agent_id"], task["session_id"]))
-                self.assertTrue(receipt["at"])
                 inbox = (S.task_dir(self.project, task["slug"]) / "inbox.jsonl").read_text()
-                self.assertNotIn(selected["id"], inbox)
-                self.assertEqual(self.ids(T.pending(self.project, task["slug"])), self.ids([first, last]))
-                self.assertEqual(self.delivery(task, selected)["state"], "delivered")
-                self.assertTrue(self.delivery(task, first)["send_now"])
-                self.assertEqual(self.request(task, selected), {"status": "delivered", "idempotent": True})
-                # The turn ends; the next resume carries the siblings only.
+                for member in (first, selected):
+                    receipt = current["message_deliveries"][member["id"]]
+                    self.assertEqual((receipt["state"], receipt["agent_id"], receipt["session_id"]),
+                                     ("delivered", task["agent_id"], task["session_id"]))
+                    self.assertTrue(receipt["at"])
+                    self.assertNotIn(member["id"], inbox)
+                    self.assertEqual(self.delivery(task, member)["state"], "delivered")
+                    self.assertEqual(self.request(task, member), {"status": "delivered", "idempotent": True})
+                self.assertEqual(self.ids(T.pending(self.project, task["slug"])), self.ids([last]))
+                self.assertTrue(self.delivery(task, last)["send_now"])
+                # The turn ends; the next resume carries the later message only.
                 T.block(self.project, task["slug"], "Turn ended", resume_pending=True)
                 dispatch.resume(self.project, task["slug"])
-                self.assertEqual(self.worker.calls[-1]["prompt"], T.render_inbox([first, last]))
+                self.assertEqual(self.worker.calls[-1]["prompt"], T.render_inbox([last]))
                 self.assertEqual(T.pending(self.project, task["slug"]), [])
                 self.assertEqual(self.delivery(task, selected)["state"], "delivered")
 
@@ -144,44 +150,49 @@ class TestSendNowL2(AltitudeCase):
         for engine in config.ENGINES:
             with self.subTest(engine=engine):
                 task = self.launch(engine)
-                selected = self.send(task, "selected")
+                first, selected = self.send(task, "earlier"), self.send(task, "selected")
                 self.request(task, selected)
-                T.settle_send_now(self.project, task["slug"], selected["id"], "returned", agent_id=task["agent_id"])
+                T.settle_send_now(self.project, task["slug"], first["id"], "returned", agent_id=task["agent_id"])
                 current = S.load_task(self.project, task["slug"])
                 self.assertNotIn("send_now", current)
-                self.assertNotIn(selected["id"], current.get("message_deliveries") or {})
-                self.assertEqual(T.pending(self.project, task["slug"]), [selected])
-                delivery = self.delivery(task, selected)
-                self.assertEqual((delivery["state"], delivery["removable"], delivery["send_now"]),
-                                 ("queued", True, True))
+                self.assertEqual(current.get("message_deliveries") or {}, {})
+                self.assertEqual(T.pending(self.project, task["slug"]), [first, selected])
+                for member in (first, selected):
+                    delivery = self.delivery(task, member)
+                    self.assertEqual((delivery["state"], delivery["removable"], delivery["send_now"]),
+                                     ("queued", True, True))
                 blocked = T.block(self.project, task["slug"], "Turn ended", resume_pending=True)
                 self.assertTrue(blocked["resume_after"])
                 self.assertEqual(blocked["resume_request"], selected["id"])
                 dispatch.resume(self.project, task["slug"])
-                self.assertEqual(self.worker.calls[-1]["prompt"], T.render_inbox([selected]))
+                self.assertEqual(self.worker.calls[-1]["prompt"], T.render_inbox([first, selected]))
                 self.assertEqual(T.pending(self.project, task["slug"]), [])
 
     def test_unconfirmed_message_leaves_the_inbox_and_is_never_redelivered(self):
         for engine in config.ENGINES:
             with self.subTest(engine=engine):
                 task, first, selected, last = self.claimed(engine)
-                T.settle_send_now(self.project, task["slug"], selected["id"], "unconfirmed", agent_id=task["agent_id"])
+                T.settle_send_now(self.project, task["slug"], first["id"], "unconfirmed", agent_id=task["agent_id"])
                 current = S.load_task(self.project, task["slug"])
                 self.assertNotIn("send_now", current)
-                receipt = current["message_deliveries"][selected["id"]]
-                self.assertEqual((receipt["state"], receipt["at"], receipt["agent_id"]),
-                                 ("unconfirmed", None, task["agent_id"]))
-                self.assertEqual(self.ids(T.pending(self.project, task["slug"])), self.ids([first, last]))
-                delivery = self.delivery(task, selected)
-                self.assertEqual((delivery["state"], delivery["removable"]), ("unconfirmed", False))
+                for member in (first, selected):
+                    receipt = current["message_deliveries"][member["id"]]
+                    self.assertEqual((receipt["state"], receipt["at"], receipt["agent_id"]),
+                                     ("unconfirmed", None, task["agent_id"]))
+                    delivery = self.delivery(task, member)
+                    self.assertEqual((delivery["state"], delivery["removable"]), ("unconfirmed", False))
+                self.assertEqual(self.ids(T.pending(self.project, task["slug"])), self.ids([last]))
                 T.block(self.project, task["slug"], "Turn ended", resume_pending=True)
                 dispatch.resume(self.project, task["slug"])
-                self.assertEqual(self.worker.calls[-1]["prompt"], T.render_inbox([first, last]))
+                self.assertEqual(self.worker.calls[-1]["prompt"], T.render_inbox([last]))
 
-    def test_a_settlement_for_another_message_leaves_the_claim(self):
-        task, first, selected, _ = self.claimed(config.ENGINES[0])
-        T.settle_send_now(self.project, task["slug"], first["id"], "returned", agent_id=task["agent_id"])
-        self.assertEqual(S.load_task(self.project, task["slug"])["send_now"]["id"], selected["id"])
+    def test_a_settlement_for_another_hand_off_leaves_the_claim(self):
+        task, first, selected, last = self.claimed(config.ENGINES[0])
+        for other in (selected, last):
+            T.settle_send_now(self.project, task["slug"], other["id"], "delivered", agent_id=task["agent_id"])
+        current = S.load_task(self.project, task["slug"])
+        self.assertEqual(current["send_now"]["id"], first["id"])
+        self.assertEqual(current.get("message_deliveries") or {}, {})
 
     # ---- Stop, a lost job, and recovery ------------------------------------------------------------------
 
@@ -194,7 +205,7 @@ class TestSendNowL2(AltitudeCase):
                     task, first, selected, last = self.claimed(engine)
                     sends = self.sends(task)
                     if left:
-                        os.rename(sends / f"{selected['id']}.json", sends / f"{selected['id']}.{left}")
+                        os.rename(sends / f"{first['id']}.json", sends / f"{first['id']}.{left}")
                     with mock.patch.object(engines, "stop_l2_worker", wraps=self.worker.stop_l2_worker) as stop:
                         dispatch.stop(self.project, task["slug"], reason="Operator stop")
                     stop.assert_called_once()
@@ -202,22 +213,23 @@ class TestSendNowL2(AltitudeCase):
                     stopped = S.load_task(self.project, task["slug"])
                     self.assertEqual(stopped["state"], "blocked")
                     self.assertTrue(stopped["stop_id"])
-                    self.assertEqual(stopped["send_now"]["id"], selected["id"])  # the block keeps the claim
+                    self.assertEqual(stopped["send_now"]["id"], first["id"])  # the block keeps the claim
                     self.assertEqual(self.delivery(task, selected)["state"], "sending")
                     claim = T.claim_resume(self.project, task["slug"])
-                    expected = [first, selected, last] if carried else [first, last]
+                    expected = [first, selected, last] if carried else [last]
                     self.assertEqual(self.ids(claim["messages"]), self.ids(expected))
                     current = S.load_task(self.project, task["slug"])
                     self.assertNotIn("send_now", current)
                     if receipt:
-                        state = current["message_deliveries"][selected["id"]]
-                        self.assertEqual((state["state"], state["agent_id"]), (receipt, task["agent_id"]))
-                        self.assertTrue((sends / f"{selected['id']}.{left}").exists())
+                        for member in (first, selected):
+                            state = current["message_deliveries"][member["id"]]
+                            self.assertEqual((state["state"], state["agent_id"]), (receipt, task["agent_id"]))
+                        self.assertTrue((sends / f"{first['id']}.{left}").exists())
                     else:
-                        self.assertNotIn(selected["id"], current.get("message_deliveries") or {})
-                        # A driver still running can no longer take it.
-                        self.assertFalse((sends / f"{selected['id']}.json").exists())
-                        self.assertTrue((sends / f"{selected['id']}.returned").exists())
+                        self.assertEqual(current.get("message_deliveries") or {}, {})
+                        # A driver still running can no longer take them.
+                        self.assertFalse((sends / f"{first['id']}.json").exists())
+                        self.assertTrue((sends / f"{first['id']}.returned").exists())
                     T.release_resume_claim(self.project, task["slug"], claim["id"], consume_request=False)
                     self.assertEqual(self.ids(T.pending(self.project, task["slug"])), self.ids(expected))
                     again = T.claim_resume(self.project, task["slug"])
@@ -240,7 +252,8 @@ class TestSendNowL2(AltitudeCase):
                 self.assertEqual(current["state"], "running")
                 self.assertNotIn("send_now", current)
                 self.assertEqual(T.pending(self.project, task["slug"]), [])
-                self.assertEqual(self.delivery(task, selected)["state"], "delivered")
+                self.assertEqual([self.delivery(task, member)["state"] for member in (first, selected)],
+                                 ["delivered", "delivered"])
                 # The new worker has its own driver, and the settled message is not offered again.
                 self.assertNotEqual(self.sends(S.load_task(self.project, task["slug"])), self.sends(task))
                 self.assertEqual(self.request(task, selected), {"status": "delivered", "idempotent": True})
@@ -248,29 +261,28 @@ class TestSendNowL2(AltitudeCase):
     def test_a_lost_job_blocked_by_the_monitor_recovers_the_claim_at_resume(self):
         task, first, selected, last = self.claimed(config.ENGINES[0])
         sends = self.sends(task)
-        os.rename(sends / f"{selected['id']}.json", sends / f"{selected['id']}.delivered")
+        os.rename(sends / f"{first['id']}.json", sends / f"{first['id']}.delivered")
         blocked = T.block(self.project, task["slug"], "Worker exited", resume_pending=True)
-        self.assertEqual(blocked["send_now"]["id"], selected["id"])
+        self.assertEqual(blocked["send_now"]["id"], first["id"])
         self.assertTrue(blocked["resume_after"])
         dispatch.resume(self.project, task["slug"])
-        self.assertEqual(self.worker.calls[-1]["prompt"], T.render_inbox([first, last]))
+        self.assertEqual(self.worker.calls[-1]["prompt"], T.render_inbox([last]))
         self.assertEqual(self.delivery(task, selected)["state"], "delivered")
 
     def test_a_report_after_the_driver_died_continues_only_for_a_message_the_owner_never_read(self):
         for left, continues in (("delivered", False), ("json", True)):
             with self.subTest(left=left):
-                task, _, selected, _ = self.claimed(config.ENGINES[0])
-                T.take_inbox(self.project, task["slug"], {row["id"] for row in T.pending(self.project, task["slug"])
-                                                          if row["id"] != selected["id"]})
+                task, first, selected, last = self.claimed(config.ENGINES[0])
+                T.take_inbox(self.project, task["slug"], {last["id"]})
                 sends = self.sends(task)
                 if left == "delivered":
-                    os.rename(sends / f"{selected['id']}.json", sends / f"{selected['id']}.delivered")
+                    os.rename(sends / f"{first['id']}.json", sends / f"{first['id']}.delivered")
                 if continues:
                     with self.assertRaisesRegex(T.TransitionError, "pending messages require continuation"):
                         T.report(self.project, task["slug"], {"verdict": "ok", "problems": []})
                     current = S.load_task(self.project, task["slug"])
                     self.assertEqual(current["state"], "blocked")
-                    self.assertEqual([row["id"] for row in T.pending(self.project, task["slug"])], [selected["id"]])
+                    self.assertEqual(self.ids(T.pending(self.project, task["slug"])), self.ids([first, selected]))
                 else:
                     current = T.report(self.project, task["slug"], {"verdict": "ok", "problems": []})
                     self.assertEqual(current["state"], "reported")
@@ -278,9 +290,9 @@ class TestSendNowL2(AltitudeCase):
                 self.assertNotIn("send_now", current)
 
     def test_ending_the_task_settles_an_unsettled_claim(self):
-        task, _, selected, _ = self.claimed(config.ENGINES[0])
+        task, first, selected, _ = self.claimed(config.ENGINES[0])
         sends = self.sends(task)
-        os.rename(sends / f"{selected['id']}.json", sends / f"{selected['id']}.delivered")
+        os.rename(sends / f"{first['id']}.json", sends / f"{first['id']}.delivered")
         rejected = T.reject(self.project, task["slug"], "Operator ended this task")
         self.assertEqual(rejected["state"], "rejected")
         self.assertNotIn("send_now", rejected)
@@ -335,13 +347,16 @@ class TestSendNowL2(AltitudeCase):
         give_driver(job_root, task["agent_id"])
         self.assertEqual(self.request(task, message), {"status": "sending", "idempotent": False})
 
-    def test_a_message_with_images_waits_for_the_next_turn(self):
+    def test_a_message_with_images_keeps_its_group_for_the_next_turn(self):
         task = self.launch(config.ENGINES[0])
         message = self.send(task, "See the screenshot", uploads=[upload()])
-        self.assert_refused(task, message, dispatch.IMAGE_SEND_NOW)
-        delivery = self.delivery(task, message)
-        self.assertEqual((delivery["send_now"], delivery["send_now_reason"], delivery["removable"]),
-                         (False, dispatch.IMAGE_SEND_NOW, True))
+        later = self.send(task, "And then this")
+        for member in (message, later):
+            self.assert_refused(task, member, dispatch.IMAGE_SEND_NOW)
+        for member in (message, later):
+            delivery = self.delivery(task, member)
+            self.assertEqual((delivery["send_now"], delivery["send_now_reason"], delivery["removable"]),
+                             (False, dispatch.IMAGE_SEND_NOW, True))
 
     def test_only_a_queued_operator_message_can_be_sent_now(self):
         task = self.launch(config.ENGINES[0])
@@ -378,11 +393,12 @@ class TestSendNowL2(AltitudeCase):
             return int(headers.split()[1]), json.loads(payload)
 
         task = self.launch(config.ENGINES[0])
-        selected, other = self.send(task, "selected"), self.send(task, "other")
+        selected = self.send(task, "selected")
         body = {"project": self.project, "slug": task["slug"]}
         with mock.patch.object(server, "spawn", side_effect=AssertionError("Send now spawned work")):
             self.assertEqual(post({**body, "id": selected["id"]}), (200, {"status": "sending", "idempotent": False}))
             self.assertEqual(post({**body, "id": selected["id"]}), (200, {"status": "sending", "idempotent": True}))
+            other = self.send(task, "other")
             status, refusal = post({**body, "id": other["id"]})
         self.assertEqual(status, 409)
         self.assertIn("Another message is being sent now", refusal["error"])
@@ -390,7 +406,7 @@ class TestSendNowL2(AltitudeCase):
 
 
 class TestSendNowInboxHook(AltitudeCase):
-    """The inbox hook neither lists the message the driver is writing nor ends the turn for it."""
+    """The inbox hook neither lists the messages the driver is writing nor ends the turn for them."""
 
     def setUp(self):
         super().setUp()
@@ -410,18 +426,20 @@ class TestSendNowInboxHook(AltitudeCase):
         return done.stdout
 
     def test_the_claimed_message_is_not_waiting_and_does_not_end_the_turn(self):
+        first = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Stop the deploy.")
         selected = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Use the staging copy.")
         self.assertEqual(dispatch.request_send_now(self.project, self.slug, selected["id"])["status"], "sending")
 
         self.assertEqual(self.run_hook("PostToolUse"), "")
         self.assertEqual(self.run_hook("Stop"), "")
         self.assertIsNone(S.load_task(self.project, self.slug).get("turn_released"))
-        self.assertEqual(T.pending(self.project, self.slug), [selected])
+        self.assertEqual(T.pending(self.project, self.slug), [first, selected])
 
         other = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Say macOS is supported.")
         context = json.loads(self.run_hook("PostToolUse"))["hookSpecificOutput"]["additionalContext"]
         self.assertIn(f"1 message from Operator (message id {other['id']}) waits", context)
         self.assertNotIn(selected["id"], context)
+        self.assertNotIn(first["id"], context)
         self.assertEqual(self.run_hook("Stop"), "")
         self.assertIsNotNone(S.load_task(self.project, self.slug).get("turn_released"))
-        self.assertEqual(S.load_task(self.project, self.slug)["send_now"]["id"], selected["id"])
+        self.assertEqual(S.load_task(self.project, self.slug)["send_now"]["ids"], [first["id"], selected["id"]])
