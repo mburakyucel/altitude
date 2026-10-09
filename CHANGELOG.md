@@ -23,6 +23,8 @@ Conversations and tasks:
   to the owner's proposal checkpoint.
 - Messages you send in a task's chat while its Claude owner is working reach it as your own next
   turn, so it acts on them as your instructions.
+- On a phone, swiping sideways on a task page moves one tab at a time through Conversation, Live
+  session and Terminal (when the task offers one).
 - Decision alerts wait while L3 or the task's owner is still handling a decision, and alert once the
   task rests with the decision still open, or 15 minutes after it was asked. Needs you shows the
   decision at once. A banner for a decision that was answered, withdrawn or superseded closes on
@@ -67,6 +69,9 @@ For contributors:
   runner with a read-only token and no secrets; no workflow runs on the maintainer's machine. A
   failed run keeps its browser report as a seven-day artifact, and release publication requires
   the tagged commit's successful push run of the same workflow (#469).
+- The required `check` runs `make check` as ten parallel shards on GitHub-hosted runners and passes
+  only when every shard passes; `make check-python SHARD=i/N` and `make check-web SHARD=i/N` run one
+  shard locally.
 - The complete `make check` passes in a macOS validation run.
 - `make installation-vm BASELINE=v0.1.0-rc.2 PUBLIC=1` installs `releases/latest` and updates a
   published release candidate against GitHub itself in a fresh Ubuntu 24.04 virtual machine.
