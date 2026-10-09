@@ -9,6 +9,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
   current and merge it, so a PR that is green on current main merges without waiting for other
   owners' CI runs. When another merge moves main first, the same command integrates it and waits
   for the new head's fresh check. Landings that do not merge take no turn.
+- Incidents on an installed copy record whether a newer followed release is known. When one is,
+  the incident stays local with an update-first notice; a repeat after updating gets its own
+  incident. `alt incident publish` still publishes a held record on request.
 
 ## v0.1.1 — 2026-10-09
 

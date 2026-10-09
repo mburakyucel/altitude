@@ -556,7 +556,9 @@ and raw stream chunks and event lines never do. An incident L3 files reports its
 text. The System section lists what the record captured when the incident was filed: platform, OS
 name and version, kernel, architecture, machine model (the Mac model identifier, or the DMI vendor
 and product family on Linux), Altitude version (with the release commit) and deployment kind
-(source checkout, installed release or container image), and for an incident with a task the engine
+(source checkout, installed release or container image), for an installed release the `update` line
+from the daemon's last release check (`v0.1.1 available`, `up to date`, or `not checked` when the
+check is off or has not run), and for an incident with a task the engine
 with its CLI version and the worker's confinement. Host and account names, home paths, addresses,
 serial numbers and hardware UUIDs are never collected. Publication decodes the text, then
 rewrites home paths, `.altitude` and incident file references, long hex ids and UUIDs, email
@@ -577,7 +579,17 @@ label missing, a refused body, an unconfigured target) it holds `pending — <re
 project log gets an `incident-issue` event; nothing retries on its own. `alt incident publish <id>`
 retries: it reuses the repository's `incident` issue whose body carries this incident's marker
 before creating, so an interrupted create never produces two issues. A record whose issue is
-already a URL returns it without GitHub. `alt incident list`, project API incident rows and
+already a URL returns it without GitHub.
+
+An installed release whose last check found a newer release holds the issue instead: the fault may
+already be fixed. The record holds `pending — held: reported on v0.1.0 while v0.1.1 is available;
+update first`, the project log's `incident-issue` event has status `held`, and the fault FYI and L3
+message open with "Altitude v0.1.0 is installed and v0.1.1 is available: update …, then retry."
+The fault ledger ties its incident to the installed version, so any repeat after updating, an
+unchanged blocker included, files a new incident on the new version and publishes it. The held
+record stays held; only `alt incident publish <id>` files it, for example when the update itself
+fails. Source checkouts and container
+images record no `update` line and never hold. `alt incident list`, project API incident rows and
 `STATE.md` show the link or the pending reason; `alt incident list` and the API rows also carry the
 record's `summary` and `system`, so the coordinator sees them before publication.
 
