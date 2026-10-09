@@ -120,10 +120,12 @@ test("Settings shows the version, the command that installs a newer one and the 
   const automaticSwitches: unknown[] = [];
   let automatic = true;
   let refuseAutomatic = false;
+  let saveGate: Promise<void> | null = null;
   await page.route("**/api/update-automatic", async (route) => {
     const { enabled } = route.request().postDataJSON() as { enabled: boolean };
     automaticSwitches.push(enabled);
     if (refuseAutomatic) return route.fulfill({ status: 403, json: { error: "Change refused." } });
+    if (saveGate) await saveGate;
     automatic = enabled;
     const machine = (await (await page.request.get("/api/machine")).json()) as Json;
     state.update = { ...state.update, automatic, automatic_pending: automatic };
@@ -160,6 +162,7 @@ test("Settings shows the version, the command that installs a newer one and the 
 
   const notice = page.getByRole("status", { name: "New version" });
   await walk.state("13a-automatic-pending", {
+    action: () => autoToggle.scrollIntoViewIfNeeded(),
     visible: [notice.getByText(/will install automatically at the next quiet point, when no browser terminal is open/), autoToggle],
     hidden: [notice.getByRole("button", { name: "Update", exact: true })],
   });
@@ -174,8 +177,20 @@ test("Settings shows the version, the command that installs a newer one and the 
     action: () => autoToggle.click(), visible: [notice.getByRole("button", { name: "Update", exact: true })], hidden: [page.getByRole("alert")],
   });
   await expect(autoToggle).not.toBeChecked();
-  await autoToggle.click();
+  let releaseSave!: () => void;
+  saveGate = new Promise<void>((resolve) => { releaseSave = resolve; });
+  try {
+    await walk.state("13d-automatic-saving", {
+      action: () => autoToggle.click(), visible: [page.getByText("Saving…", { exact: true })], hidden: [],
+    });
+    await expect(autoToggle).toBeDisabled();
+    await expect(toggle).toBeDisabled();
+  } finally {
+    releaseSave();
+    saveGate = null;
+  }
   await expect(autoToggle).toBeChecked();
+  await expect(autoToggle).toBeEnabled();
 
   await walk.state("14-settings-check-off", {
     action: () => toggle.click(),
@@ -206,6 +221,7 @@ test("Settings shows the version, the command that installs a newer one and the 
   await notice.getByRole("button", { name: "Dismiss new version notice" }).click();
   const about = page.getByRole("region", { name: "About" });
   await walk.state("16-dismissed-failure-settings-retry", {
+    action: () => about.getByRole("button", { name: "Try again" }).scrollIntoViewIfNeeded(),
     visible: [about.getByText(/The update to v0.2.0 did not finish/), about.getByRole("button", { name: "Try again" })], hidden: [notice],
   });
   await about.getByRole("button", { name: "Try again" }).click();
