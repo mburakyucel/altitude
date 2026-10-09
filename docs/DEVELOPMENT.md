@@ -661,7 +661,9 @@ the relay cannot answer, and granting them would record this Mac's room and send
 journey therefore uses a tone from Safari's own audio engine as the microphone and a scripted
 recognizer. It establishes the composer's capture lifecycle, waveform graph, timers, focus and
 keyboard behavior in iOS Safari, but not native audio capture, the native recognizer or spoken
-words. Those remain a physical-iPhone observation with the diagnostics on.
+words. Those remain a physical-iPhone observation with the diagnostics on. The tone is never exactly
+silent, so the walk does not reach the silent-microphone stop that answers iOS 27's once-per-tab
+recognizer; unit tests cover that stop.
 
 The inspector steps' taps are page events marked as user gestures; the walks' taps are UI testing's
 touches on the Simulator's screen. The lane establishes iOS Safari's rendering, layout and WebKit APIs
