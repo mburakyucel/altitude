@@ -55,6 +55,54 @@ test("an unpaired browser sees only the pairing screen, and wrong and cancelled 
   });
 });
 
+test("the pairing code field places the dash itself as the code is typed, pasted or edited", async ({ page, request }, info) => {
+  const walk = walkthrough(page, info);
+  const { field, pair, app } = screen(page);
+  await walk.open("/");
+  await expect(field).toHaveValue("");
+  await walk.state("01-three-characters", { action: () => field.pressSequentially("abc"), visible: [field, pair], hidden: [app] });
+  await expect(field).toHaveValue("ABC");
+  await walk.state("02-four-characters", { action: () => field.press("d"), visible: [field], hidden: [app] });
+  await expect(field).toHaveValue("ABCD-");
+  await field.press("-");  // the dash is already there
+  await expect(field).toHaveValue("ABCD-");
+  await field.press("Backspace");  // it takes the fourth character, never the dash
+  await expect(field).toHaveValue("ABC");
+  await walk.state("03-complete", { action: () => field.pressSequentially("d-2345"), visible: [field], hidden: [app] });
+  await expect(field).toHaveValue("ABCD-2345");
+  await field.press("6");  // eight characters at most
+  await expect(field).toHaveValue("ABCD-2345");
+  // An edit inside the code reformats around it, and the caret stays at the edit.
+  await field.press("Home");
+  await field.press("ArrowRight");
+  await field.press("ArrowRight");
+  await field.press("Backspace");
+  await expect(field).toHaveValue("ACD2-345");
+  await field.press("B");
+  await expect(field).toHaveValue("ABCD-2345");
+  expect(await field.evaluate((input: HTMLInputElement) => input.selectionStart)).toBe(2);
+  // A paste or autofill replaces the selection in one insertion, which WebKit's harness can do without a clipboard.
+  for (const pasted of ["ABCD2345", "ABCD-2345", "abcd-2345", "  abcd-2345 "]) {
+    await field.selectText();
+    await page.keyboard.insertText(pasted);
+    await expect(field, `pasting ${JSON.stringify(pasted)}`).toHaveValue("ABCD-2345");
+  }
+  // A typed code pairs whatever its case or dash.
+  const typed = (await code(request)).replace("-", "").toLowerCase();
+  let release = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/pair", async (route) => { await held; await route.continue(); });
+  await field.fill("");
+  await field.pressSequentially(typed);
+  await expect(field).toHaveValue(`${typed.slice(0, 4)}-${typed.slice(4)}`.toUpperCase());
+  const pairing = page.getByRole("button", { name: "Pairing…" });
+  await walk.state("04-pairing", { action: () => pair.click(), visible: [pairing], hidden: [app] });
+  await expect(pairing).toBeDisabled();
+  await expect(field).toBeDisabled();
+  release();
+  await walk.state("05-paired", { visible: [app], hidden: [field] });
+});
+
 test("a pairing link pairs the browser, and removing it in Settings returns it to the pairing screen", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const { heading, removed, app } = screen(page);
