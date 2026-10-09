@@ -9,6 +9,7 @@ The run reaches the phone's Web Inspector only through a Unix socket in its own 
 Safari's web pages and nothing else on the phone: other inspectable processes are hidden, any other request closes the
 connection, and a page whose address is on Altitude's port is hidden and closes a connection attached to it. Its one
 request of its own opens an http(s) loopback address in Safari, the way a run puts its first page on the phone.
+The phone trusts one CA of the run's own, made by Altitude's certificate generator, so the run can serve it HTTPS.
 See docs/DEVELOPMENT.md#ios-simulator-runs.
 """
 from __future__ import annotations
@@ -28,7 +29,7 @@ import threading
 import time
 from urllib.parse import urlsplit
 
-from . import platform
+from . import platform, tls
 
 XCRUN = "/usr/bin/xcrun"
 SAFARI = "com.apple.mobilesafari"
@@ -103,6 +104,14 @@ class Phone:
                             self.chosen["runtime_id"], timeout=left()).strip()
         _simctl(self.devices, "bootstatus", self.udid, "-b", timeout=left())
         return _simctl(self.devices, "getenv", self.udid, "RWI_LISTEN_SOCKET", timeout=left()).strip()
+
+    def trust(self, folder: Path) -> dict:
+        """Make the run's HTTPS identity in `folder` with Altitude's own generator and trust its CA as a root in the
+        phone, as the operator's iPhone trusts theirs. The CA's key is gone before the run starts. Returns the
+        certificates' details."""
+        tested = tls.fixture(folder)
+        _simctl(self.devices, "keychain", self.udid, "add-root-cert", str(folder / "ca.crt"))
+        return tested
 
     def safari(self) -> str:
         """Safari's version on the phone, from its bundle."""

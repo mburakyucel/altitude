@@ -191,6 +191,61 @@ def _renew(directory: Path, host: str | None) -> ssl.SSLContext:
         raise TLSFailure(f"Cannot renew HTTPS in {directory}: {exc}. Existing certificate and key are retained.") from exc
 
 
+def _create(directory: Path, host: str | None) -> None:
+    """A new CA and a leaf it issues for `host` in the empty private folder `directory`, loaded and verified."""
+    for name in ("ca", "server"):
+        _openssl("ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", directory / f"{name}.key")
+        (directory / f"{name}.key").chmod(0o600)
+    kind, name = _host(host)
+    permitted = [*_PRIVATE, *([f"DNS:{name}"] if kind == "DNS" else [])]
+    _openssl("req", "-x509", "-new", "-key", directory / "ca.key", "-sha256", "-days", "3650",
+             "-out", directory / "ca.crt", "-subj", "/CN=Altitude local CA",
+             "-addext", "basicConstraints=critical,CA:TRUE,pathlen:0",
+             "-addext", "keyUsage=critical,keyCertSign,cRLSign",
+             "-addext", "nameConstraints=critical," + ",".join(f"permitted;{n}" for n in dict.fromkeys(permitted)))
+    _issue(directory, directory, host)
+    _load(directory)
+    _verify(directory, host)
+
+
+def fixture(directory: Path) -> dict:
+    """A disposable identity for a test device, from the generator `initialize` uses, for this machine's loopback
+    address: `directory` gets the CA certificate and the server's certificate and key. The CA's key is deleted once the
+    server certificate is issued, so nothing else is ever signed with it. Returns both certificates' details."""
+    directory.mkdir(mode=0o700)
+    _create(directory, "127.0.0.1")
+    for name in ("ca.key", "server.csr", "server.ext"):
+        (directory / name).unlink()
+    return {name: details(directory / f"{name}.crt") for name in ("ca", "server")}
+
+
+def details(certificate: Path) -> dict:
+    """What a TLS client checks in `certificate`, as evidence: names, validity, key, signature, extensions and
+    SHA-256, as OpenSSL prints them."""
+    text = _openssl("x509", "-noout", "-text", "-fingerprint", "-sha256", "-nameopt", "RFC2253",
+                    "-certopt", "no_sigdump", "-in", certificate).stdout
+
+    def field(label: str) -> str | None:
+        found = re.search(rf"^\s*{label}\s*:\s*(.*)$", text, re.M)
+        return found and found.group(1).strip()
+    extensions, lines = {}, text.partition("X509v3 extensions:\n")[2].splitlines()
+    header = len(lines[0]) - len(lines[0].lstrip()) if lines else 0
+    for line in lines:
+        depth = len(line) - len(line.lstrip())
+        if not line.strip() or depth < header:
+            break
+        if depth == header:
+            key, _, critical = line.strip().partition(":")
+            values = extensions.setdefault(key.removeprefix("X509v3 "), [critical.strip()] if critical.strip() else [])
+        else:
+            values.append(line.strip())
+    return {"subject": field("Subject"), "issuer": field("Issuer"), "not_before": field("Not Before"),
+            "not_after": field("Not After"), "signature": field("Signature Algorithm"),
+            "key": " ".join(filter(None, (field("Public Key Algorithm"), field("Public-Key"), field("NIST CURVE")))),
+            "extensions": {key: "; ".join(values) for key, values in extensions.items()},
+            "sha256": re.search(r"Fingerprint=([0-9A-F:]+)", text).group(1)}
+
+
 def initialize(host: str | None = None) -> dict:
     """Create one CA and leaf atomically; an existing external identity is never rewritten."""
     directory = config.TLS_DIR
@@ -204,19 +259,7 @@ def initialize(host: str | None = None) -> dict:
         with tempfile.TemporaryDirectory(prefix=".altitude-tls-", dir=directory.parent) as temporary:
             staging = Path(temporary) / "identity"
             staging.mkdir(mode=0o700)
-            for name in ("ca", "server"):
-                _openssl("ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", staging / f"{name}.key")
-                (staging / f"{name}.key").chmod(0o600)
-            kind, name = _host(host)
-            permitted = [*_PRIVATE, *([f"DNS:{name}"] if kind == "DNS" else [])]
-            _openssl("req", "-x509", "-new", "-key", staging / "ca.key", "-sha256", "-days", "3650",
-                     "-out", staging / "ca.crt", "-subj", "/CN=Altitude local CA",
-                     "-addext", "basicConstraints=critical,CA:TRUE,pathlen:0",
-                     "-addext", "keyUsage=critical,keyCertSign,cRLSign",
-                     "-addext", "nameConstraints=critical," + ",".join(f"permitted;{n}" for n in dict.fromkeys(permitted)))
-            _issue(staging, staging, host)
-            _load(staging)
-            _verify(staging, host)
+            _create(staging, host)
             (staging / "server.csr").unlink()
             (staging / "server.ext").unlink()
             (staging / _MARKER).write_text("1\n")

@@ -3,11 +3,12 @@
 
 Serves this checkout's built web app with fixture engines and fictional data on loopback, pairs the phone's Safari,
 opens a project's work in the phone layout, taps into a task and back, walks voice input's restart after the X (issue
-#698) with diagnostics on, checks what Add to Home Screen would take from the app, then opens the device setup page of
+#698) with diagnostics on, checks what Add to Home Screen would take from the app, loads a page over HTTPS with the
+run's certificate from Altitude's generator, whose CA altd trusted in the phone, then opens the device setup page of
 a fictional CA and taps Download the profile. It keeps a page snapshot at each step, Safari's console, the browser's
-versions and the voice diagnostic report. A step that does not reach its state, horizontal overflow, a console error
-or a profile Safari does not fetch fails the walkthrough. The run's final screenshot shows Safari's answer to the
-profile.
+versions and the voice diagnostic report. A step that does not reach its state, horizontal overflow, a console error,
+a certificate warning, an untrusted certificate Safari accepts or a profile Safari does not fetch fails the
+walkthrough. The run's final screenshot shows Safari's answer to the profile.
 
 It runs inside `alt task validate --simulator` (`make ui-simulator`): altd's relay to that iPhone's Safari is the socket
 in $SIMULATOR_INSPECTOR, and nothing here reaches the Simulator service. Evidence goes to RESULTS, by default
@@ -18,11 +19,13 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import http.server
 import json
 import os
 from pathlib import Path
 import plistlib
 import socket
+import ssl
 import struct
 import subprocess
 import sys
@@ -512,6 +515,95 @@ def home_screen(safari: Safari, url: str, paths: list[str], results: Path) -> di
             "reached": "the approved Climb icon, name and standalone display at the root, project and task addresses"}
 
 
+class Secure:
+    """A page on an HTTPS loopback port served with `context`, recording the paths it answers and the handshakes it
+    refuses."""
+
+    def __init__(self, context: ssl.SSLContext, page: bytes):
+        self.requests, self.refused = [], []
+        secure = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                secure.requests.append(self.path)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(page)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(page)
+
+            def log_message(self, *args) -> None:
+                pass
+
+        class Server(http.server.ThreadingHTTPServer):
+            block_on_close = False
+
+            def get_request(self):
+                connection, address = self.socket.accept()
+                connection.settimeout(10)
+                try:
+                    return context.wrap_socket(connection, server_side=True), address
+                except OSError as exc:
+                    secure.refused.append(str(exc))
+                    connection.close()
+                    raise
+
+        self.server = Server(("127.0.0.1", 0), Handler)
+        self.origin = f"https://127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.2}, daemon=True).start()
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def https(safari: Safari, results: Path) -> dict:
+    """A page served over HTTPS with the identity altd made with Altitude's certificate generator and trusted in the
+    phone ($SIMULATOR_HTTPS), through the serving context Altitude's server loads: Safari fetches from it and loads it
+    as a secure context, with no certificate warning. As a control, a fetch from a second identity of the same
+    generator, which the phone does not trust, must be refused, so a pass shows that Safari checked the chain. Safari's
+    own words about a refusal are recorded."""
+    folder, nonce = Path(os.environ["SIMULATOR_HTTPS"]), uuid.uuid4().hex
+    page = (f'<!doctype html><meta name="viewport" content="width=device-width"><title>{nonce}</title>'
+            "<h1>HTTPS without a warning</h1><p>Served with this run's Altitude certificate.</p>").encode()
+    with tempfile.TemporaryDirectory() as other:
+        tls.fixture(Path(other) / "untrusted")
+        untrusted = Secure(tls._load(Path(other) / "untrusted"), page)
+    trusted = Secure(tls._load(folder), page)
+
+    def fetched(origin: str) -> tuple[str, list[str]]:
+        """How a fetch from `origin` by the current page ended, and what Safari's console said about `origin`."""
+        safari.evaluate(f"window.__fetched = 'pending'; fetch({json.dumps(origin + '/fetch')}, {{mode: 'no-cors'}})"
+                        ".then(() => window.__fetched = 'loaded', (e) => window.__fetched = String(e)); 0")
+        outcome = safari.wait("window.__fetched !== 'pending' && window.__fetched", f"the fetch from {origin}")
+        end = time.monotonic() + 1   # Safari's console messages about it arrive beside the answer
+        while time.monotonic() < end:
+            safari.pump()
+        return outcome, [m.get("text", "") for m in safari.console if origin in f"{m.get('url', '')} {m.get('text', '')}"]
+
+    try:
+        outcome, said = fetched(trusted.origin)
+        if outcome != "loaded":
+            raise RuntimeError(f"Safari refused the run's trusted certificate: {outcome}; Safari: {said}; "
+                               f"the server: {trusted.refused}")
+        safari.evaluate(f"location.href = {json.dumps(trusted.origin + '/')}; 0")
+        safari.wait(f"location.href === {json.dumps(trusted.origin + '/')} && document.title === {json.dumps(nonce)}"
+                    " && isSecureContext", "the HTTPS page, without a certificate warning")
+        safari.snapshot(results / "05-https.png")
+        control, said = fetched(untrusted.origin)
+        if control == "loaded" or untrusted.requests or not untrusted.refused:
+            raise RuntimeError(f"Safari did not refuse an untrusted certificate: {control}; the server answered "
+                               f"{untrusted.requests} and refused {untrusted.refused}")
+    finally:
+        trusted.close()
+        untrusted.close()
+    return {"step": "05-https", "url": trusted.origin + "/", "served": tls.details(folder / "server.crt")["sha256"],
+            "control": {"origin": untrusted.origin, "fetch": control, "safari": said, "server": untrusted.refused},
+            "reached": "an HTTPS page with the run's trusted Altitude certificate, without a warning; an untrusted "
+                       "one refused"}
+
+
 def certificate_setup(safari: Safari, app: str, results: Path) -> dict:
     """The device setup page for a fictional CA, as `alt tls-share` offers it: it names the CA and its SHA-256, and
     Download the profile makes Safari fetch the profile, which the share sends in full. Whether Safari accepts it shows
@@ -531,7 +623,7 @@ def certificate_setup(safari: Safari, app: str, results: Path) -> dict:
         rows = tls.fingerprint_rows(authority["sha256"])
         safari.wait(f"document.body && [{json.dumps(authority['name'])}, ...{json.dumps(rows)}]"
                     ".every((text) => document.body.innerText.includes(text))", "the setup page with the CA's SHA-256")
-        safari.snapshot(results / "05-setup.png")
+        safari.snapshot(results / "06-setup.png")
         safari.evaluate("[...document.links].find((a) => a.textContent === 'Download the profile').click(); 0",
                         gesture=True)
         if not sent.wait(30):
@@ -539,7 +631,7 @@ def certificate_setup(safari: Safari, app: str, results: Path) -> dict:
         time.sleep(3)  # for Safari's prompt to appear in the final screenshot
     finally:
         share.close()
-    return {"step": "05-profile", "url": share.link, "ca": authority["name"], "sha256": authority["sha256"],
+    return {"step": "06-profile", "url": share.link, "ca": authority["name"], "sha256": authority["sha256"],
             "reached": "the setup page's CA and SHA-256, and the profile sent to Safari in full"}
 
 
@@ -581,6 +673,7 @@ def main() -> int:
         except FAILURES as exc:
             record["cleanup"] = str(exc)
         if not record["error"]:
+            record["steps"].append(https(safari, args.results))
             record["steps"].append(certificate_setup(safari, ready["url"], args.results))
     except FAILURES as exc:
         record["error"] = str(exc)
@@ -595,7 +688,9 @@ def main() -> int:
     if record.get("cleanup") and not record["error"]:
         record["error"] = record["cleanup"]
     console = safari.console if safari else []
-    errors = [m for m in console if m.get("level") == "error"]
+    controls = [step["control"]["origin"] for step in record["steps"] if "control" in step]
+    errors = [m for m in console if m.get("level") == "error"   # bar the control's expected refusal
+              and not any(origin in f"{m.get('url', '')} {m.get('text', '')}" for origin in controls)]
     (args.results / "console.log").write_text("".join(
         f"{m.get('level')}: {m.get('text')} ({m.get('url', '')}:{m.get('line', '')})\n" for m in console))
     if errors and not record["error"]:
