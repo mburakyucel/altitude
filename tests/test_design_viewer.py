@@ -129,6 +129,16 @@ class TestDesignViewer(AltitudeCase):
                                  f"/design/{self.project}/{self.pass_}/design/wireframes/index.html")
         self.assertEqual(self._get(f"/design/{self.project}")[0], 403)  # the CLI has no browser to pass
 
+    def test_the_redirect_header_carries_only_the_registered_name(self):
+        cookie = f"Cookie: {access.COOKIE}={self.device_key}\r\n"
+        for path in (f"/design/{self.project}%0D%0ASet-Cookie:%20forged=1", f"/design/{self.project}%0A",
+                     f"/design/{self.project.upper()}"):
+            with self.subTest(path=path):
+                status, headers, _ = self._get(path, cookie)
+                self.assertEqual(status, 404)
+                self.assertNotIn("location", headers)
+                self.assertNotIn("set-cookie", headers)
+
     def test_a_project_without_boards_is_a_plain_404(self):
         for path in (f"/design/{self.bare}", f"/design/{self.bare}/design/wireframes/index.html",
                      "/design/not-a-project/design/wireframes/index.html", "/design", "/design/"):
