@@ -206,7 +206,7 @@ class TestLand(AltitudeCase):
         def github(args, cwd, timeout=120):
             if args[:3] == ["gh", "pr", "merge"] and not refused:
                 refused.append(args[-1])
-                if race in ("main moved", "new hold", "publisher lost"):
+                if race in ("main moved", "new hold", "publisher lost", "publisher replaced", "adoption changed"):
                     self.advance_base("src/outside.py")
                 if race == "new hold":
                     T.set_hold_merge("demo", "fix-x", "Hold again: wait for the release")
@@ -214,6 +214,15 @@ class TestLand(AltitudeCase):
                     task = S.load_task("demo", "fix-x")
                     S.save_task("demo", {**task, "title": "Fixture delivery"})
                     T.block("demo", "fix-x", "Fixture owner stopped", expected_attempt=1)
+                if race == "publisher replaced":
+                    task = S.load_task("demo", "fix-x")
+                    S.save_task("demo", {**task, "attempt": 2})
+                if race == "adoption changed":
+                    self.git("push", "-q", "origin", f"{refused[0]}:refs/heads/proposal/other")
+                    receipt = {"number": 102, "url": "https://github.com/team/demo/pull/102",
+                               "branch": "proposal/other", "base": "main", "head": refused[0],
+                               "origin": "https://github.com/team/demo.git", "reason": "Fixture adoption"}
+                    land._record_adoption("demo", "fix-x", receipt, None, previous=None, dry_run=False)
                 return subprocess.CompletedProcess(args, 1, "", "Head branch is not up to date with the base branch")
             return real(args, cwd, timeout=timeout)
 
@@ -245,6 +254,22 @@ class TestLand(AltitudeCase):
             land.land("owner stopped during merge", cwd=self.repo, wait=60, merge=True, approval=approval["id"])
         self.assertEqual(self.git("rev-parse", "origin/worktree-fix-x").strip(), refused[0])
         self.assertEqual(self.git("rev-parse", "HEAD").strip(), refused[0])
+        self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
+
+    def test_replaced_owner_does_not_republish_after_base_movement(self):
+        refused, approval = self.refused_merge("publisher replaced")
+        with self.assertRaisesRegex(land.LandError, "no longer current"):
+            land.land("owner replaced during merge", cwd=self.repo, wait=60, merge=True, approval=approval["id"])
+        self.assertEqual(self.git("rev-parse", "origin/worktree-fix-x").strip(), refused[0])
+        self.assertEqual(self.git("rev-parse", "HEAD").strip(), refused[0])
+
+    def test_changed_adoption_does_not_republish_the_previous_target_after_base_movement(self):
+        refused, approval = self.refused_merge("adoption changed")
+        with self.assertRaisesRegex(land.LandError, "adoption changed"):
+            land.land("adoption changed during merge", cwd=self.repo, wait=60, merge=True, approval=approval["id"])
+        self.assertEqual(self.git("rev-parse", "origin/worktree-fix-x").strip(), refused[0])
+        self.assertEqual(self.git("rev-parse", "HEAD").strip(), refused[0])
+        self.assertEqual(S.load_task("demo", "fix-x")["adopted_pr"]["number"], 102)
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
     def test_main_moving_between_push_and_pin_gets_an_integrated_head(self):

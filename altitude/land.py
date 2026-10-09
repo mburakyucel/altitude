@@ -139,6 +139,15 @@ def _require_unowned_pr(project: str, slug: str, branch: str, number: int | None
             raise LandError(f"PR or branch already belongs to task {other['slug']}")
 
 
+def _require_delivery_owner(project: str, slug: str, task: dict, current: dict, authority: dict | None,
+                            *, branch: str, number: int | None = None) -> None:
+    """Refresh the publication boundary under the caller's project lock."""
+    _require_current_publisher(project, slug, current, authority)
+    _require_unowned_pr(project, slug, branch, number)
+    if current.get("adopted_pr") != task.get("adopted_pr"):
+        raise LandError("task adoption changed during landing")
+
+
 def _fetch_remote_tip(root: Path, branch: str) -> str | None:
     """Refresh and return origin/<branch>; a branch that does not exist yet has no tip to lease."""
     ref = f"refs/remotes/origin/{branch}"
@@ -363,10 +372,7 @@ def _record_delivery(project: str, slug: str, task: dict, authority: dict | None
     receipt = dict(number=number, head=head, base=base, branch=branch)
     with S.project_lock(project):
         current = S.load_task(project, slug)
-        _require_current_publisher(project, slug, current, authority)
-        _require_unowned_pr(project, slug, branch, number)
-        if current.get("adopted_pr") != task.get("adopted_pr"):
-            raise LandError("task adoption changed during landing")
+        _require_delivery_owner(project, slug, task, current, authority, branch=branch, number=number)
         old = current.get("delivery") or {}
         if all(old.get(k) == v for k, v in receipt.items()):
             return current
@@ -1193,7 +1199,9 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
     replaced, deadline = [], None
     while True:  # A base that moves while this landing holds its turn is integrated, published and checked again.
         try:
-            _require_current_publisher(project, slug, S.load_task(project, slug), authority)
+            with S.project_lock(project):
+                _require_delivery_owner(project, slug, task, S.load_task(project, slug), authority,
+                                        branch=publish_branch, number=(pr or {}).get("number"))
             publishing_base = _need(_git(root, "rev-parse", f"origin/{base}"), "publishing base")
             if merge and _git(root, "merge-base", "--is-ancestor", publishing_base, "HEAD").returncode != 0:
                 _note(f"integrating current origin/{base} before publishing the candidate")
@@ -1236,10 +1244,10 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                             or current_pr.get("reviewDecision") not in ("", "APPROVED")):
                         raise LandError("adopted PR is not review-ready or has outstanding required reviews/changes")
                     _assert_pair_current(root, pair)
-                current = S.load_task(project, slug)
-                _require_current_publisher(project, slug, current, authority)
-                if current.get("adopted_pr") != adoption:
-                    raise LandError("task adoption changed before merge")
+                with S.project_lock(project):
+                    current = S.load_task(project, slug)
+                    _require_delivery_owner(project, slug, task, current, authority,
+                                            branch=publish_branch, number=number)
                 _require_closing_issues(root, number, closes_issues)
                 if current.get("hold_merge") and not approval:
                     raise LandError(f"task carries a merge hold: {current['hold_merge']}")
