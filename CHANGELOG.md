@@ -5,6 +5,13 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Adversarial review is one request and one result. Task details shows a Proposal review and an
+  Implementation review box with the latest verdict and a single Request, Review again or Try again
+  button; the conversation shows one card per kind with earlier iterations inside it. Requests queue
+  on any open task and wake a waiting L2, the operator skips a review without giving a reason, and
+  same-engine review is presented as the ordinary path. The `retry` and `rerun` review actions are
+  removed: a repeat is a `request` naming the review it replaces.
+
 ## v0.1.1 — 2026-10-09
 
 Patch release of the early preview: alpha quality, with rough edges and the known limitations below.
@@ -108,13 +115,6 @@ Known limitations:
 Recovery: a failed activation restores the previous version and keeps configuration, TLS identity
 and data; `alt recover` (or the release's `python3.12 install.py --recover`) completes an interrupted
 one. A faulty release is followed by a new version; tags and release files are never replaced.
-
-- Adversarial review is one request and one result. Task details shows a Proposal review and an
-  Implementation review box with the latest verdict and a single Request, Review again or Try again
-  button; the conversation shows one card per kind with earlier iterations inside it. Requests queue
-  on any open task and wake a waiting L2, the operator skips a review without giving a reason, and
-  same-engine review is presented as the ordinary path. The `retry` and `rerun` review actions are
-  removed: a repeat is a `request` naming the review it replaces.
 
 ## v0.1.0 — 2026-10-08
 
