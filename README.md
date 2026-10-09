@@ -118,7 +118,7 @@ projects or start tasks; I will choose my project in the app.
 
 | Start here | Go deeper |
 | --- | --- |
-| [Setup](docs/SETUP.md) | [Architecture](docs/ARCHITECTURE.md) · [Session lifecycle](docs/SESSION_LIFECYCLE.md) |
+| [Setup](docs/SETUP.md) · [Run from source](docs/SETUP.md#run-from-a-source-checkout) | [Architecture](docs/ARCHITECTURE.md) · [Session lifecycle](docs/SESSION_LIFECYCLE.md) |
 | [Walkthrough](docs/WALKTHROUGH.md) | [CLI reference](docs/CLI.md) · [Operations](docs/OPERATIONS.md) |
 | [Contributing](CONTRIBUTING.md) | [Development and checks](docs/DEVELOPMENT.md) |
 | [Roadmap](docs/ROADMAP.md) | [Release checkpoints](docs/RELEASING.md) · [Changelog](CHANGELOG.md) |
