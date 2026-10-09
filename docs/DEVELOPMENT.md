@@ -1247,6 +1247,7 @@ the repository turn. When another merge moves main first, the same invocation in
 for the new head's fresh check. Concurrent worktrees can race to update a remote-tracking ref;
 landing repeats that specific failed fetch once and requires a successful fresh fetch, sharing
 dispatch's collision classification. Other fetch failures still refuse delivery.
+Landing fetches only the requested branches, without tags, and reports a collision retry.
 `tests/test_fetch_concurrency.py` forces this race during a real Git transfer.
 `tests/test_land_contention.py` drives real competing
 landing processes, Git and fixture reviewers: a green candidate on current main merging while

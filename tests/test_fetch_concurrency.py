@@ -92,16 +92,20 @@ class TestFetchConcurrency(AltitudeCase):
         self.assertIn("altitude/change.py", pending["files"])
 
     def test_landing_recovers_when_another_worktree_wins_the_fetch(self):
+        upstream = self.tmp / "upstream"
+        git("tag", "fixture-release", cwd=upstream)
+        git("push", "origin", "fixture-release", cwd=upstream)
         with mock.patch.object(land, "_run", wraps=land._run) as commands, ThreadPoolExecutor() as pool:
             first = pool.submit(land._fetch_rev, self.repo, "main")
             try:
                 self.wait_for_pack()
-                git("fetch", "origin", "main", cwd=self.worker)
+                git("fetch", "--no-tags", "origin", "main", cwd=self.worker)
             finally:
                 self.release.touch()
             self.assertEqual(first.result(timeout=30), self.new)
         self.assertEqual(sum(call.args[0][:2] == ["git", "fetch"] for call in commands.call_args_list), 2)
         self.assertEqual(git("rev-parse", "HEAD", cwd=self.repo).strip(), self.old)
+        self.assertEqual(git("tag", "--list", cwd=self.repo).strip(), "")
 
     def test_deployment_progresses_after_competing_landing_fetch(self):
         self.deployment_race(lambda: self.assertEqual(land._fetch_rev(self.worker, "main"), self.new))

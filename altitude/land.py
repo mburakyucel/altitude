@@ -59,6 +59,7 @@ def _run(args: list[str], cwd: Path, timeout: int = 120) -> subprocess.Completed
         env = config.subprocess_env()
         if args[:2] == ["git", "fetch"]:
             env["LC_ALL"] = "C"  # The shared, narrow collision classifier reads Git's diagnostic.
+            args = [*args[:2], "--no-tags", *args[2:]]
         if args[0] == "gh":
             # #252: neither GH_REPO nor gh's preferred upstream may select a different adoption target.
             env.pop("GH_REPO", None)
@@ -78,6 +79,7 @@ def _git(root: Path, *args: str, timeout: int = 120) -> subprocess.CompletedProc
     if args[0] == "fetch":
         ref = args[-1].split(":")[-1].removeprefix("refs/remotes/origin/")
         if git_policy.fetch_ref_collision(result, ref):
+            _note(f"another worktree updated origin/{ref} during fetch; retrying once")
             result = _run(["git", *args], root, timeout=timeout)
     return result
 
