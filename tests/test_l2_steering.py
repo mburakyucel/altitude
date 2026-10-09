@@ -2,6 +2,9 @@
 import fcntl
 import http.client
 import json
+import os
+import subprocess
+import sys
 import threading
 from pathlib import Path
 from unittest import mock
@@ -263,6 +266,70 @@ class TestL2Steering(AltitudeCase):
                 self.assertEqual(S.load_task(self.project, failed["slug"])["fault"], "l2-died")
                 self.assertNotIn(failed["slug"], dispatch.resume_due(self.project))
                 self.assertEqual(self.view(failed)["messages"][0]["delivery"]["state"], "queued")
+
+    def hook(self, task, event):
+        """The real inbox hook, as the Claude session's settings run it."""
+        env = dict(os.environ, ALTITUDE_HOME=str(config.ROOT), ALTITUDE_PROJECT=self.project, ALTITUDE_TASK=task["slug"])
+        payload = {"hook_event_name": event, "session_id": task["session_id"],
+                   **({"tool_name": "Bash"} if event == "PostToolUse" else {"stop_hook_active": False})}
+        done = subprocess.run([sys.executable, str(config.HOOKS / "inbox.py")], input=json.dumps(payload), text=True,
+                              capture_output=True, env=env, timeout=60)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout) if done.stdout else {}
+
+    def finish_turn(self, task):
+        self.engine.workers[task["agent_id"]].update(state="done", status="exited")
+        item = next(row for row in dispatch.poll(self.project) if row["task"]["slug"] == task["slug"])
+        server.on_l2_finished(self.project, item)
+        self.assertFalse(S.load_task(self.project, task["slug"]).get("fault"))
+        dispatch.resume(self.project, task["slug"])
+        return self.engine.calls[-1]
+
+    def test_operator_words_reach_a_running_claude_owner_as_its_next_user_turn(self):
+        # #612: the engine's action classifier reads user turns, never hook context, as the user's intent.
+        task = self.launch("claude")
+        words = self.send(task, "Say macOS is supported.")
+        T.message(self.project, task["slug"], "l3", "Rebase before landing.")
+
+        context = self.hook(task, "PostToolUse")["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("Rebase before landing.", context)
+        self.assertNotIn("Say macOS is supported.", context)
+        self.assertIn(f"message id {words['id']}) waits for this session's next user turn", context)
+        self.assertEqual(self.hook(task, "Stop"), {}, "the turn ends instead of holding the owner in it")
+        # Coordination arriving between the stop and the resume joins the batch, as every resume prompt does.
+        late = T.message(self.project, task["slug"], "l3", "Late coordination.")
+
+        resumed = self.finish_turn(task)
+
+        self.assertEqual((resumed["engine"], resumed["session_id"]), ("claude", task["session_id"]))
+        self.assertIn(T.render_inbox([words]), resumed["prompt"])
+        self.assertIn(T.render_inbox([late]), resumed["prompt"])
+        self.assertNotIn("Rebase before landing.", resumed["prompt"], "hook context is not repeated as user input")
+        delivered = {row["id"]: row["delivery"]["state"] for row in self.view(task)["messages"]}
+        self.assertEqual(delivered[words["id"]], "delivered")
+        self.assertIsNone(S.load_task(self.project, task["slug"]).get("turn_released"))
+
+    def test_removing_the_waiting_message_after_the_turn_ends_resumes_without_a_fault(self):
+        task = self.launch("claude")
+        row = self.send(task, "Actually, never mind.")
+        self.assertEqual(self.hook(task, "Stop"), {})
+        T.remove_message(self.project, task["slug"], row["id"])
+
+        resumed = self.finish_turn(task)
+
+        self.assertEqual(resumed["session_id"], task["session_id"])
+        self.assertNotIn("never mind", resumed["prompt"])
+        self.assertEqual(S.load_task(self.project, task["slug"])["state"], "running")
+
+    def test_an_unreleased_clean_exit_without_messages_is_still_a_fault(self):
+        task = self.launch("claude")
+        self.engine.workers[task["agent_id"]].update(state="done", status="exited")
+        item = next(row for row in dispatch.poll(self.project) if row["task"]["slug"] == task["slug"])
+        with mock.patch.object(server.incidents, "system_fault") as fault:
+            server.on_l2_finished(self.project, item)
+        blocked = S.load_task(self.project, task["slug"])
+        self.assertEqual((blocked["state"], blocked.get("resume_after")), ("blocked", None))
+        self.assertEqual(fault.call_args.args[0], "l2-died")
 
     def test_stop_failure_never_confirms_and_resume_failure_restores_exact_queue(self):
         for engine in config.ENGINES:

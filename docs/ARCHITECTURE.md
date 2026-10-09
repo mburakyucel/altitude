@@ -86,7 +86,8 @@ remain governed by the existing boundaries.
 L2 receives the request, repository context, expected files, worktree, branch, and merge policy, and chooses
 the lightest useful execution shape. Its conversation with the operator is stored apart from tool logs, so
 the operator messages it directly without routing through L3. Messages queue on the task and reach the
-worker at its next checkpoint; an explicit Stop ends a worker. **Send now** on an inbox-owned operator
+worker at its next checkpoint; the operator's own messages reach it only as a user turn, at the next session
+turn. An explicit Stop ends a worker. **Send now** on an inbox-owned operator
 message interrupts current work through the same Stop path and resumes the saved session with that
 message as its next input. The remaining inbox rows retain their order for later checkpoints. Task message writers hold the project
 lock and atomically replace each conversation or inbox file, so concurrent readers see complete records.
@@ -115,7 +116,8 @@ again. Successful input handoff and matching session initialization record deliv
 bound batch; native hook attachments can independently prove delivery.
 Inbox absence alone stays unconfirmed. Reading an inbox concurrently consumed by a resume sees an
 empty queue, without turning that absence into delivery proof. A clean worker turn with queued steering resumes the saved
-session, while engine failures and explicit question blocks retain their existing recovery paths.
+session, as does a clean exit after the hook ended the turn for operator messages that were then removed,
+while engine failures and explicit question blocks retain their existing recovery paths.
 No-code completion checks for accepted steering under the same task lock as archival. A pending
 message keeps the saved owner session available for continuation instead of finalizing its earlier result.
 An explicit question block needs a later message or resume request; pre-block inbox messages stay
@@ -510,9 +512,13 @@ worker confinement and Altitude's role, task-attempt, merge-hold and operator-gr
 apply. Other external commands retain their native permission checks. The other launcher already
 admits coordination within its network-enabled workspace-write sandbox. The allowance is shared
 by Linux and macOS launches; it grants no additional filesystem or service access.
-Running-task messages retain their existing hook delivery. Hook context does not establish user
-authorization for the native classifier, so operator-requested external actions remain an open
-part of [issue #612](https://github.com/mburakyucel/altitude/issues/612).
+The native classifier reads user turns, never hook context, as the user's intent
+([issue #612](https://github.com/mburakyucel/altitude/issues/612)). The operator's own task messages therefore
+reach a running owner only as a user turn: the inbox hook names them in a waiting notice, and when the
+owner stops with nothing else to deliver, the turn ends and altd resumes the same session with them as
+the prompt, as the clean-turn resume does for an engine without hooks. L3, server and other-owner
+messages, tool output and files keep hook delivery. A resume prompt carries every waiting message with
+its sender. Streamed launch input with images is marked as the human's, as a text prompt is.
 
 | Module | Integration responsibility |
 | --- | --- |
@@ -598,7 +604,7 @@ roles can outlive the model/tool assumptions behind it. Customization belongs in
 instructions and the engines' native skills, hooks and agent facilities where appropriate.
 
 Required background results belong to the active owner session. The existing native Stop hook
-combines queued steering with an instruction to wait for in-flight tasks, using the engine's
+combines queued coordination with an instruction to wait for in-flight tasks, using the engine's
 background-task payload. It acts only while the task is running; explicit blocks and operator Stop
 retain their exit paths. It creates no job registry, automatic retry or alternative completion path.
 Report freshness and delivery verification remain authoritative; native coverage limits are explicit

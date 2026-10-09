@@ -86,6 +86,7 @@ class ImageDeliveryCase(AltitudeCase):
             body = json.loads(payload)
             self.assertEqual((body["type"], body["message"]["role"]), ("user", "user"))
             self.assertIsNone(body["parent_tool_use_id"])
+            self.assertEqual(body["origin"], {"kind": "human"}, "a streamed prompt keeps the text prompt's user standing")
             content = body["message"]["content"]
             self.assertEqual(base64.b64decode(content[1]["source"]["data"]), PNG)
             self.assertEqual(content[1]["source"]["media_type"], "image/png")
