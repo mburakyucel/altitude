@@ -520,7 +520,14 @@ concurrent reads see complete messages. The owner receives the exact text with i
 message ID, plus the answered question's ID for a Needs you answer; it already holds the brief,
 persona and its own questions, so no question state or procedure is attached. Hooks fired inside a
 helper subagent leave the inbox to the owner. Ordinary sends do not interrupt work. The engine seam supplies the inbox at a native hook
-checkpoint when supported, or resumes the saved session after a clean CLI turn finishes. A failed
+checkpoint when supported, or resumes the saved session after a clean CLI turn finishes. The operator's own
+messages always arrive as a user turn, because the engine's action classifier reads only user turns as the
+user's intent (#612). At a hook checkpoint, a running Claude owner reads L3, server and other-owner messages as
+hook context and a notice naming the operator's waiting messages by ID. When it stops with only operator
+messages waiting, the hook records that it released this worker's turn and lets the turn end; the clean
+exit resumes the same session with the waiting batch as its prompt, or continues from the progress file
+when the operator removed those messages meanwhile. The batch includes any message that arrived before the
+claim, each with its sender. A failed
 worker retains the fault path even with pending steering. For a blocked task the same locked append
 records a due `resume_after` request, except when Stop holds the inbox. The L3
 CLI returns without fetching or writing the deployment checkout; altd sees the durable request on its next tick
@@ -920,8 +927,9 @@ Claude resume uses foreground `claude -p --resume` inside the task's transient u
 uses `codex exec resume <thread-id> -` with the inbox on stdin from the same task worktree.
 Both engines have one contract: the persona may invoke the scoped Altitude
 CLI, and the backend applies the identity, clean-Git, isolation, and merge-policy checks relevant to each
-command and effect boundary. Claude hooks add telemetry and inbox delivery; they are not the backend authority
-check.
+command and effect boundary. Claude hooks add telemetry, coordination delivery and the operator-message notice;
+they are not the backend authority check. Claude launches with images stream the prompt as one user message
+marked as the human's.
 Landings that merge or target this repository’s required PR check wait up to one hour for a
 repository turn, keeping the owner session alive and reporting seconds waited. The turn serializes
 publication and check waiting; external runner executions do not share it. The admitted command rereads task authority and holds, fetches the
