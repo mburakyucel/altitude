@@ -2022,7 +2022,8 @@ an interruption already requested. The daemon requests interruption
 of the captured active chat turn through the engine seam, retains partial output and session identity,
 and saves the partial reply, possibly empty, as an assistant row marked `interrupted`. Confirmed
 interruption is not an engine error: the turn is incomplete and never replayed. A fresh session's
-recent-conversation context labels that row interrupted, and the chat audit packet keeps the marker.
+recent-conversation context labels that row interrupted, and `alt l3 search` results and the chat
+audit packet keep the marker.
 Its turn lock remains held until the engine job and
 its descendants have ended. A system turn finishes at its existing boundary to preserve notification,
 CI and report delivery; the promoted row says **Runs next after system work**. System queue rows
