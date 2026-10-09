@@ -279,6 +279,7 @@ transcription, image send, navigation and denied states run at both viewports.
 `SpeechRecognition` it drives itself (Playwright's Chromium has no vendor recognition), walking
 words while listening, landed, Send at once, cancel, failed, denied and no-recognizer states at
 both viewports, and asserts that nothing reaches `/api/voice/live`. Vitest uses `FakeSpeechRecognition` from `voiceTest.ts` the same way.
+Its Chromium silent-restart walk uses a tone followed by exactly silent synthetic streams and a scripted recognizer in project and task composers, checking the hint, draft, microphone focus and released tracks at both viewports. It establishes application detection, not native Safari recovery.
 `host-voice.pw.ts` overlays `/api/voice` with `host` and answers `/api/voice/live` from a page-level
 fixture, so no model runs; the page's real audio worklet turns the synthetic microphone into 16 kHz
 chunks. It walks starting, live words (flowing in frame by frame, and at once under reduced motion), transcribing, landed, cancel, Send, stopped, busy, needs
@@ -661,7 +662,9 @@ the relay cannot answer, and granting them would record this Mac's room and send
 journey therefore uses a tone from Safari's own audio engine as the microphone and a scripted
 recognizer. It establishes the composer's capture lifecycle, waveform graph, timers, focus and
 keyboard behavior in iOS Safari, but not native audio capture, the native recognizer or spoken
-words. Those remain a physical-iPhone observation with the diagnostics on.
+words. Those remain a physical-iPhone observation with the diagnostics on. The tone is never exactly
+silent, so the walk does not reach the silent-microphone stop that answers iOS 27's once-per-tab
+recognizer; unit tests and the Chromium silent-restart walkthrough cover that stop.
 
 The inspector steps' taps are page events marked as user gestures; the walks' taps are UI testing's
 touches on the Simulator's screen. The lane establishes iOS Safari's rendering, layout and WebKit APIs
@@ -1226,8 +1229,8 @@ Each check uses 11 jobs against the plan's 20 concurrent-job limit, so concurren
 does not imply many full checks can execute at once.
 Every run, whether from a fork or a repository branch, has a read-only token and no secrets, and no
 workflow runs on the maintainer's machine. Standard hosted runners are free for public
-repositories. GitHub's fork-workflow approval setting (require approval for first-time
-contributors) stays on, so such a contributor's run starts once the maintainer approves it.
+repositories. GitHub's fork-workflow approval setting requires approval for all outside
+contributors, so every outside contributor's run starts only once the maintainer approves it.
 The PR `check` is required by `alt land` in every repository whose base commit ships that workflow;
 owners and helpers run relevant tests during development instead of repeating a full local suite at
 every landing. Python, web unit tests, typecheck/build and both browser viewports must execute and

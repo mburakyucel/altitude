@@ -1465,6 +1465,53 @@ class TestLand(AltitudeCase):
         self.assertEqual(res["checks"], "merged")  # its own value — never reported as a pass
         self.assertEqual([a[:2] for a in self.gh_log()], [["pr", "view"]])
 
+    def merged_after_later_push(self):
+        """#771: landing records head one, the owner pushes head two, and GitHub merges the PR at head two."""
+        self.staged_change()
+        land.land("fix: first", cwd=self.repo, wait=0)
+        recorded = S.load_task("demo", "fix-x")["delivery"]["head"]
+        self.staged_change("src/later.py")
+        self.git("commit", "-q", "-m", "later")
+        self.git("push", "-q", "origin", "HEAD:worktree-fix-x")
+        (self.ghdir / "merge_git.txt").touch()
+        subprocess.run(["gh", "pr", "merge", "101", "--squash"], cwd=self.repo, check=True)
+        return recorded, self.git("rev-parse", "HEAD").strip()
+
+    def test_merged_pr_at_a_later_head_reconciles_the_current_delivery(self):
+        recorded, merged_head = self.merged_after_later_push()
+        result = land.land("fix: first", cwd=self.repo, wait=0)
+        self.assertEqual((result["pr"], result["checks"], result["merged"]), (101, "merged", True))
+        delivery = S.load_task("demo", "fix-x")["delivery"]
+        self.assertEqual((delivery["number"], delivery["head"]), (101, merged_head))
+        event = [e for e in S.read_events("demo", "fix-x") if e["kind"] == "delivery"][-1]
+        merge = json.loads((self.ghdir / "pr.json").read_text())["mergeCommit"]["oid"]
+        self.assertEqual((event["head"], event["reconciled"]["head"], event["reconciled"]["merge"]),
+                         (merged_head, recorded, merge))
+        self.assertEqual([a[:2] for a in self.gh_log() if a[:2] in (["pr", "create"], ["pr", "edit"])],
+                         [["pr", "create"]])
+
+    def test_merged_pr_reconciliation_refuses_another_pr_branch_or_history(self):
+        recorded, merged_head = self.merged_after_later_push()
+        unrelated = self.git("commit-tree", "HEAD^{tree}", "-p", recorded, "-m", "unrelated").strip()
+        task = S.load_task("demo", "fix-x")
+        for change, refusal in (({"number": 99}, "records PR #99"),
+                                ({"number": 99, "head": merged_head}, "records PR #99"),
+                                ({"branch": "worktree-other"}, "from 'worktree-other'"),
+                                ({"branch": "worktree-other", "head": merged_head}, "from 'worktree-other'"),
+                                ({"head": unrelated}, "is not an ancestor of its merged head")):
+            stale = {**task["delivery"], **change}
+            S.save_task("demo", {**task, "delivery": stale})
+            with self.subTest(change=change), self.assertRaisesRegex(land.LandError, refusal):
+                land.land("fix: first", cwd=self.repo, wait=0)
+            self.assertEqual(S.load_task("demo", "fix-x")["delivery"], stale)
+
+    def test_merged_pr_matching_the_record_leaves_it_unchanged(self):
+        self.staged_change()
+        land.land("fix: merge me", cwd=self.repo, wait=0, merge=True)
+        before = (S.load_task("demo", "fix-x")["delivery"], S.read_events("demo", "fix-x"))
+        self.assertTrue(land.land("fix: merge me", cwd=self.repo, wait=0)["merged"])
+        self.assertEqual((S.load_task("demo", "fix-x")["delivery"], S.read_events("demo", "fix-x")), before)
+
     def test_closed_unmerged_pr_is_followed_by_a_fresh_pr_from_the_same_task(self):
         # A superseded PR's branch keeps its stale commit; the next delivery replaces it under the lease.
         self.staged_change("src/stale.py")

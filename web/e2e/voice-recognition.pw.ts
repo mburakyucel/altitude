@@ -57,6 +57,69 @@ const PUNCTUATED_LISTENING = "Can you check why the CI job failed on the main br
 
 const hear = (page: Page, finals: string[], interim = "") => page.evaluate(([f, i]) => (window as unknown as { fixtureRecognizer: { hear(f: string[], i: string): void } }).fixtureRecognizer.hear(f, i), [finals, interim] as const);
 
+test("browser recognition: silent restart keeps the draft and explains recovery", { tag: "@chromium" }, async ({ page, request }, info) => {
+  const project = await fixtureProject(request);
+  const task = await fixtureTask(request, project.name);
+  const walk = walkthrough(page, info);
+  const v = views(page, info);
+  await browserBackend(page);
+  await page.addInitScript(FAKE_RECOGNIZER);
+  // Real audio graphs and synthetic streams: the first microphone has a tone, later ones exact
+  // silence. This exercises the detector and UI, not Safari's native microphone or recognizer.
+  await page.addInitScript(`
+    const NativeAudioContext = window.AudioContext;
+    let captures = 0;
+    window.fixtureAudio = [];
+    Object.defineProperty(navigator.mediaDevices, "getUserMedia", { configurable: true, value: async () => {
+      const context = new NativeAudioContext();
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      gain.gain.value = captures++ === 0 ? 0.1 : 0;
+      const destination = context.createMediaStreamDestination();
+      oscillator.connect(gain).connect(destination);
+      oscillator.start();
+      await context.resume();
+      window.fixtureAudio.push({ context, stream: destination.stream });
+      return destination.stream;
+    }});
+  `);
+  await page.route((url) => url.pathname === `/api/task/${project.name}/${task.slug}`,
+    (route) => route.fulfill({ json: { ...task, state: "running" } }));
+  await walk.open(project.path);
+  await v.field.fill("Typed draft");
+  await v.mic.click();
+  await expect(v.listening).toBeVisible();
+  await hear(page, [], "discard this");
+  await expect(v.field).toHaveValue("Typed draft discard this");
+  await v.cancel.click();
+  await expect(v.field).toHaveValue("Typed draft");
+  const failure = v.main.getByRole("alert").filter({ hasText: "The microphone went silent." });
+  for (const [index, path] of [project.path, `${project.path}/tasks/${task.slug}`].entries()) {
+    if (index) {
+      await page.goto(path);
+      // Full navigation resets page history: prime the task's first recognition session.
+      await v.field.fill("Typed draft");
+      await v.mic.click();
+      await expect(v.listening).toBeVisible();
+      await hear(page, [], "discard task words");
+      await v.cancel.click();
+    }
+    await walk.state(`silent-${index}-listening`, {
+      action: () => v.mic.click(),
+      visible: [v.listening, v.wave, v.stop, v.cancel], hidden: [failure],
+    });
+    await walk.state(`silent-${index}-hint-draft-kept`, {
+      visible: [failure, v.field, v.mic], hidden: [v.listening, v.wave, v.stop, v.cancel],
+    });
+    await expect(failure).toHaveText("The microphone went silent. Close and reopen Altitude to dictate again. Typing works.");
+    await expect(v.field).toHaveValue("Typed draft");
+    await expect(v.field).toBeEditable();
+    await expect(v.mic).toBeFocused();
+    await expect.poll(() => page.evaluate("window.fixtureAudio.at(-1).stream.getTracks().every(track => track.readyState === 'ended')")).toBe(true);
+  }
+  await page.evaluate("Promise.all(window.fixtureAudio.map(({ context }) => context.close()))");
+});
+
 test("voice diagnostics: opt-in report distinguishes suspended restart and excludes conversation content", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);

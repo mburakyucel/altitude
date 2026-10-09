@@ -2,7 +2,7 @@ import { act, screen, waitFor } from "@testing-library/react";
 import { render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode, useState } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import Composer, { combineDraft, formatTimer } from "./Composer";
 import type { ComposerProps } from "./Composer";
 import { ApiError } from "../data/api";
@@ -1488,6 +1488,77 @@ describe("Composer", () => {
     await act(async () => closed());
     expect(close).toHaveBeenCalledTimes(2);
     expect(onSubmit).toHaveBeenCalledTimes(action === "Send" ? 1 : 0);
+  });
+
+  it("browser recognition: a later capture whose live microphone stays exactly silent stops with a hint (WebKit bug 326069)", async () => {
+    const { track } = installVoiceBrowser({ backend: "browser" });
+    Object.assign(track, { readyState: "live", enabled: true, muted: false });
+    let frame: FrameRequestCallback | null = null;
+    vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => { frame = callback; return 1; }));
+    vi.stubGlobal("cancelAnimationFrame", vi.fn(() => { frame = null; }));
+    let sample = 0;
+    const graphs: { state: string }[] = [];
+    vi.stubGlobal("AudioContext", class {
+      state = "running";
+      constructor() { graphs.push(this); }
+      createAnalyser() { return { fftSize: 4, getFloatTimeDomainData: (data: Float32Array) => data.fill(sample) }; }
+      createMediaStreamSource() { return { connect: vi.fn() }; }
+      close = vi.fn(async () => undefined);
+    });
+    const paint = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+    let now = 0;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    onTestFinished(() => { paint.mockRestore(); clock.mockRestore(); });
+    const draw = (ms: number) => act(() => { now += ms; frame?.(now); });
+    const view = mount({ initial: "Draft" });
+    const listenFor = async (ms: number, level = 0) => {
+      sample = level;
+      await view.user.click(screen.getByRole("button", { name: "Start voice input" }));
+      await screen.findByRole("button", { name: "Stop voice input" });
+      for (let elapsed = 0; elapsed < ms; elapsed += 100) draw(100);
+    };
+    const wait = (ms: number) => { for (let elapsed = 0; elapsed < ms; elapsed += 100) draw(100); };
+    // A capture that hears its microphone keeps listening and lands its words.
+    await listenFor(4000, 0.02);
+    act(() => FakeSpeechRecognition.instances.at(-1)!.hear(["first words"]));
+    await view.user.click(screen.getByRole("button", { name: "Stop voice input" }));
+    await waitFor(() => expect(view.field).toHaveValue("Draft first words"));
+    // A later capture whose live, unmuted microphone gives exact zeros is the dead session.
+    await listenFor(2500);
+    expect(screen.getByRole("button", { name: "Stop voice input" })).toBeInTheDocument();
+    wait(1000);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Start voice input" })).toHaveFocus());
+    expect(screen.getByText("The microphone went silent. Close and reopen Altitude to dictate again. Typing works.")).toBeInTheDocument();
+    expect(FakeSpeechRecognition.instances.at(-1)!.aborted).toBe(1);
+    expect(view.field).toHaveValue("Draft first words");
+    expect(view.field).not.toHaveFocus();
+    // Only continuously observed silence counts: a suspended graph, a muted track or an unobserved
+    // pause (a hidden page) between two silent stretches starts over.
+    await listenFor(2000);
+    graphs.at(-1)!.state = "suspended";
+    wait(4000);
+    graphs.at(-1)!.state = "running";
+    wait(2000);
+    Object.assign(track, { muted: true });
+    wait(1000);
+    Object.assign(track, { muted: false });
+    wait(2000);
+    draw(5000);
+    wait(2000);
+    expect(screen.getByRole("button", { name: "Stop voice input" })).toBeInTheDocument();
+    await view.user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+    // Silence that ends in sound, or a muted microphone, is not the dead session.
+    await listenFor(1000);
+    sample = 0.001;
+    wait(5000);
+    sample = 0;
+    wait(5000);
+    expect(screen.getByRole("button", { name: "Stop voice input" })).toBeInTheDocument();
+    expect(screen.queryByText(/The microphone went silent/)).not.toBeInTheDocument();
+    await view.user.click(screen.getByRole("button", { name: "Cancel voice input" }));
+    Object.assign(track, { muted: true });
+    await listenFor(5000);
+    expect(screen.getByRole("button", { name: "Stop voice input" })).toBeInTheDocument();
   });
 
   it.each(["browser", "host"] as const)("%s microphone can retry after a waveform close never answers", async (backend) => {
