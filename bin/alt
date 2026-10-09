@@ -332,7 +332,9 @@ def main(argv=None) -> None:
     resolution.add_argument("--revision", type=int, help="default: the current revision"); resolution.add_argument("--message")
     resolution.add_argument("--source", choices=("task", "project"), default="task")
     resolution.add_argument("--disposition", choices=("answered", "superseded", "withdrawn"), required=True)
-    resolution.add_argument("--reason", required=True); resolution.add_argument("--remaining")
+    resolution.add_argument("--reason", required=True)
+    resolution.add_argument("--remaining", help="the still-unanswered part, published as this question's next revision for L3")
+    resolution.add_argument("--for-operator", action="store_true", help="the remaining part is plainly the operator's: ask them, not L3")
     resolution.add_argument("--l3-authority", help="evidence and rationale that L3's answer settles an unnecessary escalation")
     resolution.add_argument("--recommendation"); resolution.add_argument("--label"); resolution.add_argument("--why")
     ts.add_parser("show", help="compatibility alias for task status --json").add_argument("slug")
@@ -781,7 +783,8 @@ def main(argv=None) -> None:
                 sys.exit("alt task resolve: only the current L2 may resolve its own task question")
             out(T.resolve_question(p, args.slug, args.question, args.revision, args.message,
                                    expected_attempt=int(attempt), source=args.source, disposition=args.disposition,
-                                   reason=args.reason, remaining=args.remaining, recommendation=args.recommendation,
+                                   reason=args.reason, remaining=args.remaining, for_operator=args.for_operator,
+                                   recommendation=args.recommendation,
                                    recommendation_label=args.label, recommendation_why=args.why,
                                    l3_authority=args.l3_authority))
         elif tc == "message":
