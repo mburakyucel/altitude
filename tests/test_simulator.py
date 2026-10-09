@@ -20,12 +20,44 @@ from tests import test_validation as base
 from altitude import capture as C, config, platform, simulator as sim, state as S, tasks as T, validation
 from tests.test_capture import gif
 
-XCRUN = f"#!{sys.executable}\n" + r'''"""xcrun stand-in: xcodebuild's version and simctl on private device sets, failing a step on request."""
-import json, os, shutil, sys, uuid
+XCRUN = f"#!{sys.executable}\n" + r'''"""xcrun stand-in: xcodebuild's version, its build and test of the walks, and simctl on private device
+sets, failing a step on request."""
+import json, os, plistlib, shutil, sys, uuid
 from pathlib import Path
 args = sys.argv[1:]
 with open(os.environ["FAKE_SIMCTL_LOG"], "a") as out:
     out.write(json.dumps(args) + "\n")
+if args[:2] == ["xcodebuild", "build-for-testing"]:   # the walks' test run file, unless the build fails on request
+    if os.environ.get("FAKE_WALK") == "unbuilt":
+        print("Walks.swift:1: error: the fixture does not compile")
+        sys.exit(65)
+    products = Path(args[args.index("-derivedDataPath") + 1]) / "Build" / "Products"
+    products.mkdir(parents=True)
+    (products / "Walks_Walks_iphonesimulator27.0-arm64-x86_64.xctestrun").write_text(args[args.index("-project") + 1])
+    sys.exit(0)
+if args[:2] == ["xcodebuild", "test-without-building"]:   # one walk: its record and screenshot, as the runner writes them
+    import signal, time
+    option = lambda prefix: next(a for a in args if a.startswith(prefix))[len(prefix):]
+    out, mode = Path(os.environ["TEST_RUNNER_WALK_OUT"]), os.environ.get("FAKE_WALK", "")
+    (out / "first.png").write_bytes(b"\x89PNG fixture step")
+    steps = [{"step": "first", "status": "completed", "screenshot": "first.png",
+              "detail": f"{os.environ['TEST_RUNNER_WALK_URL']} {os.environ['TEST_RUNNER_WALK_CODE']}".strip()}]
+    (out / "walk.json").write_text(json.dumps({"steps": steps, "seen": {} if mode else {"finished": "yes"}}))
+    if option("-only-testing:Walks/Walks/") == "testHomeScreen":   # the web clip iOS keeps in the phone's data
+        clip = Path(option("-DVTSimulatorSetLocation=")) / option("platform=iOS Simulator,id=") / "data/Library/WebClips"
+        clip = clip / f"{uuid.uuid4().hex}.webclip"
+        clip.mkdir(parents=True)
+        (clip / "Info.plist").write_bytes(plistlib.dumps({"Title": "Altitude", "URL": "http://127.0.0.1:5555/",
+                                                          "FullScreen": True, "IconIsPrecomposed": 1}))
+        (clip / "icon.png").write_bytes(b"\x89PNG fixture icon")
+    if mode == "crash":
+        print("Walks-Runner (4242) encountered an error (Test crashed with signal trap.)")
+        sys.exit(65)
+    if mode == "hang":   # until interrupted, as Ctrl-C ends a test run
+        signal.signal(signal.SIGINT, lambda *_: (Path(os.environ["FAKE_SIMCTL_LOG"] + ".interrupted").touch(), sys.exit(1)))
+        while True:
+            time.sleep(0.05)
+    sys.exit(0)
 if args[0] == "xcodebuild":
     print("Xcode 27.0\nBuild version 27A266a")
     sys.exit(0)
@@ -228,8 +260,14 @@ class RelayCase(TestCase):
         self.port = 18890
         self.phone = FakeInspector(self.tmp / "phone.sock", self.port)
         self.addCleanup(self.phone.close)
-        self.opened = []
-        self.relay = sim.Relay(self.tmp / "run.sock", str(self.tmp / "phone.sock"), self.port, self.opened.append)
+        self.opened, self.walked = [], []
+
+        def walk(name, url, code):
+            self.walked.append((name, url, code))
+            if url.endswith("/fails"):
+                raise RuntimeError("the walks did not build: fixture")
+            return {"steps": [{"step": "first", "status": "completed"}]}, {"first.png": b"\x89PNG step"}
+        self.relay = sim.Relay(self.tmp / "run.sock", str(self.tmp / "phone.sock"), self.port, self.opened.append, walk)
         self.addCleanup(self.relay.close)
 
     def client(self):
@@ -308,6 +346,35 @@ class TestRelay(RelayCase):
                 client.send(sim.OPEN, {"url": url})
                 self.assertIn(error, client.until(sim.OPENED)["error"])
         self.assertEqual(self.opened, ["http://127.0.0.1:5555/", "http://localhost:5555/a"])
+
+    def test_a_run_asks_only_for_the_two_walks_at_loopback_addresses_off_altitudes_port(self):
+        client = self.client()
+        for argument, error in (
+                ({"walk": "home-screen", "url": "http://127.0.0.1:5555/", "code": "ABCD-2345"}, ""),
+                ({"walk": "profile", "url": "http://127.0.0.1:5555/#ios"}, ""),
+                ({"walk": "settings", "url": "http://127.0.0.1:5555/"}, "walks only home-screen and profile"),
+                ({"url": "http://127.0.0.1:5555/"}, "walks only home-screen and profile"),
+                ({"walk": ["profile"], "url": "http://127.0.0.1:5555/"}, "walks only home-screen and profile"),
+                ({"walk": "home-screen", "url": f"http://127.0.0.1:{self.port}/"}, "never opens Altitude's own port"),
+                ({"walk": "profile", "url": "https://192.0.2.1:5555/"}, "only http(s)"),
+                ({"walk": "profile", "url": "http://127.0.0.1:5555/", "code": "ABCD-2345"}, "only a pairing code"),
+                ({"walk": "home-screen", "url": "http://127.0.0.1:5555/", "code": "abcd-2345"}, "only a pairing code"),
+                ({"walk": "home-screen", "url": "http://127.0.0.1:5555/", "code": "ABCD-2345\n"}, "only a pairing code"),
+                ({"walk": "home-screen", "url": "http://127.0.0.1:5555/", "code": 7}, "only a pairing code"),
+                ({"walk": "profile", "url": "http://127.0.0.1:5555/fails"}, "the walks did not build: fixture")):
+            with self.subTest(argument):
+                client.send(sim.WALK, argument)
+                answer = client.until(sim.WALKED)
+                self.assertIn(error, answer["error"])
+                if not error:
+                    self.assertEqual(json.loads(answer["walk"]), {"steps": [{"step": "first", "status": "completed"}]})
+                    self.assertEqual(answer["files"], {"first.png": b"\x89PNG step"})
+                else:
+                    self.assertNotIn("walk", answer)
+        self.assertEqual(self.walked, [("home-screen", "http://127.0.0.1:5555/", "ABCD-2345"),
+                                       ("profile", "http://127.0.0.1:5555/#ios", ""),
+                                       ("profile", "http://127.0.0.1:5555/fails", "")])
+        self.assertNotIn("_rpc_altitudeWalk:", self.received(), "the phone never sees the request")
 
     def test_replies_to_the_run_stay_whole_while_the_phone_sends_large_messages(self):
         client = self.client()
@@ -422,6 +489,7 @@ class TestSimulatorRuns(base.MacRunnerCase):
         self.setenv("FAKE_SIMCTL_LOG", str(self.log))
         self.setenv("FAKE_SIMCTL_LIST", json.dumps(LISTING))
         self.setenv("FAKE_SIMCTL_FAIL", None)
+        self.setenv("FAKE_WALK", None)
         safari = self.tmp / "MobileSafari.app"
         safari.mkdir()
         (safari / "Info.plist").write_bytes(plistlib.dumps({"CFBundleShortVersionString": "27.0",
@@ -446,8 +514,31 @@ json.dump({"apps": sorted(apps), "opened": opened, "socket": os.environ["SIMULAT
           open(os.path.join(os.environ["VALIDATION_RESULTS"], "relay.json"), "w"))
 ''')
 
+        self.walker = self.tmp / "walker.py"
+        self.walker.write_text(r'''import json, os, socket, sys
+sys.path.insert(0, sys.argv[1])
+from altitude import simulator as sim
+sock = socket.socket(socket.AF_UNIX)
+sock.connect(os.environ["SIMULATOR_INSPECTOR"])
+answers = []
+for request in json.loads(sys.argv[2]):
+    sim._write(sock, sim.WALK, request)
+    while (message := sim._read(sock))["__selector"] != sim.WALKED:
+        pass
+    answer = message["__argument"]
+    answers.append({"error": answer["error"], "walk": answer.get("walk") and json.loads(answer["walk"]),
+                    "files": {name: data.decode("latin-1") for name, data in answer.get("files", {}).items()}})
+json.dump(answers, open(os.path.join(os.environ["VALIDATION_RESULTS"], "walks.json"), "w"))
+''')
+
     def calls(self):
         return [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
+
+    def walk(self, *requests):
+        result = self.validate([sys.executable, str(self.walker), str(Path(__file__).resolve().parents[1]),
+                                json.dumps(requests)], simulator=True)
+        self.assertEqual((result["exit"], result["ended"], result["cleanup"]), (0, "exit", None), result["output"])
+        return result, json.loads((Path(result["results"]) / "walks.json").read_text())
 
     def drive(self, **options):
         return self.validate([sys.executable, str(self.client), str(Path(__file__).resolve().parents[1])],
@@ -495,6 +586,59 @@ json.dump({"apps": sorted(apps), "opened": opened, "socket": os.environ["SIMULAT
             tuple(validation.candidate_dirs(validation.home() / "runs" / area_name)),
             validation.home() / "runs" / area_name / f"{result['unit']}.log", config.PORT),
             "the run's profile is the one every macOS run has")
+
+    def test_a_run_walks_its_own_phone_with_the_walks_altd_builds_from_its_own_code(self):
+        home = {"walk": "home-screen", "url": "http://127.0.0.1:5555/projects/atlas", "code": "ABCD-2345"}
+        result, answers = self.walk(home, {"walk": "profile", "url": "http://127.0.0.1:5555/#ios"}, home)
+        self.assertEqual([answer["error"] for answer in answers], ["", "", ""])
+        first, profile, again = (answer["walk"] for answer in answers)
+        self.assertEqual(first["steps"], [{"step": "first", "status": "completed", "screenshot": "first.png",
+                                           "detail": "http://127.0.0.1:5555/projects/atlas ABCD-2345"}])
+        self.assertEqual(profile["steps"][0]["detail"], "http://127.0.0.1:5555/#ios")
+        self.assertEqual(first["clip"], {"Title": "Altitude", "URL": "http://127.0.0.1:5555/", "FullScreen": True})
+        self.assertEqual(again["clip"], first["clip"], "each Home Screen walk reads the clip it made")
+        self.assertNotIn("clip", profile)
+        self.assertEqual(answers[0]["files"], {"first.png": "\x89PNG fixture step", "web-clip-icon.png": "\x89PNG fixture icon"})
+        self.assertEqual(answers[1]["files"], {"first.png": "\x89PNG fixture step"})
+        area = validation.home() / "runs" / result["unit"][len(validation.UNIT_PREFIX):-len(".service")]
+        builds = [call for call in self.calls() if call[:2] == ["xcodebuild", "build-for-testing"]]
+        self.assertEqual(len(builds), 1, "the walks are built once per run")
+        self.assertEqual(builds[0][builds[0].index("-project") + 1], str(area / "walks" / "source" / "Walks.xcodeproj"),
+                         "built from altd's own copy in the run's private folder, never the candidate's clone")
+        self.assertEqual(builds[0][builds[0].index("-derivedDataPath") + 1], str(area / "walks" / "build"))
+        tests = [call for call in self.calls() if call[:2] == ["xcodebuild", "test-without-building"]]
+        [udid] = {call[call.index("-destination") + 1].split("id=")[1] for call in tests}
+        for call, name in zip(tests, ("testHomeScreen", "testProfile", "testHomeScreen")):
+            self.assertIn(f"-only-testing:Walks/Walks/{name}", call)
+            self.assertIn(f"-DVTSimulatorSetLocation={area / 'simulator'}", call, "only the run's own device set")
+            self.assertTrue(call[call.index("-xctestrun") + 1].startswith(str(area / "walks" / "build")))
+        simctl = [call[3:] for call in self.calls() if call[:3] == ["simctl", "--set", str(area / "simulator")]]
+        closed = [call[2] for call in simctl if call[0] == "terminate"]
+        self.assertEqual(closed, list(sim.APPS) * 3, "every walk closes the apps it used")
+        self.assertTrue(all(call[1] == udid for call in simctl if call[0] == "terminate"))
+        self.assertEqual(self.runs(), [], "the walks' build and evidence go with the run area")
+
+    def test_a_walk_whose_runner_crashes_hangs_or_does_not_build_is_a_recorded_failure(self):
+        request = {"walk": "profile", "url": "http://127.0.0.1:5555/#ios"}
+        self.patch(sim, "WALK_SECONDS", 1)
+        for mode, error in (("crash", "xcodebuild exit 65: Walks-Runner (4242) encountered an error (Test crashed "
+                                      "with signal trap.)"),
+                            ("hang", "xcodebuild did not finish within 1 s")):
+            with self.subTest(mode):
+                self.setenv("FAKE_WALK", mode)
+                _, [answer] = self.walk(request)
+                self.assertEqual(answer["error"], "", "the walk answers with its record")
+                self.assertEqual(answer["walk"]["error"], error)
+                self.assertEqual([step["step"] for step in answer["walk"]["steps"]], ["first"],
+                                 "the steps it reached stay")
+        self.assertTrue(Path(f"{self.log}.interrupted").exists(), "a walk past its time is interrupted, as Ctrl-C does")
+        self.setenv("FAKE_WALK", "unbuilt")
+        self.log.unlink()
+        _, [answer] = self.walk(request)
+        self.assertEqual(answer, {"error": "the walks did not build: xcodebuild exit 65: Walks.swift:1: error: the "
+                                           "fixture does not compile", "walk": None, "files": {}})
+        self.assertNotIn("test-without-building", [step for call in self.calls() for step in call])
+        self.assertEqual(self.runs(), [])
 
     def converting(self, failure: str | None = None):
         """The ffmpeg capability at its seam: the recording becomes a fixture GIF, or fails with `failure`."""
@@ -666,7 +810,8 @@ class TestBoot(TestCase):
             return {"create": "PHONE\n", "getenv": "/tmp/inspector.sock\n"}.get(args[0], "")
         with mock.patch.object(sim, "_simctl", side_effect=simctl), \
                 mock.patch.object(sim.time, "monotonic", side_effect=lambda: clock[0]):
-            phone = sim.Phone(Path(SUITE) / f"boot-{os.getpid()}-{time.monotonic_ns()}", {"device_id": "d", "runtime_id": "r"})
+            phone = sim.Phone(Path(SUITE) / f"boot-{os.getpid()}-{time.monotonic_ns()}", {"device_id": "d", "runtime_id": "r"},
+                              Path(SUITE) / "walks")
             self.addCleanup(phone.devices.rmdir)
             self.assertEqual(phone.boot(), "/tmp/inspector.sock")
         self.assertEqual(calls, [("create", sim.BOOT_SECONDS), ("bootstatus", sim.BOOT_SECONDS - 20),

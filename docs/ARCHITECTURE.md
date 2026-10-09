@@ -1145,7 +1145,9 @@ runner closed for recovery. Validation holds the shared restart fence through it
 evidence recording and cleanup, and refuses admission once restart is requested. On a Mac,
 `--simulator` adds a disposable iOS Simulator iPhone (`altitude/simulator.py`): altd creates it in a
 private device set in the run's area and removes it afterwards, and the run, which stays refused the
-Simulator service, reaches only that phone's Safari pages through altd's filtering relay. See the
+Simulator service, reaches only that phone's Safari pages through altd's filtering relay, and two fixed native
+walks (Add to Home Screen, and a profile through Settings) that altd builds from its own code (`altitude/walks/`)
+and runs on that phone with Apple's UI testing. See the
 [validation runner](DEVELOPMENT.md#validation-runner).
 Claude Code runs as a foreground CLI inside an independent job with Altitude's
 hooks for inbox delivery and telemetry. On macOS that job also runs under Altitude's Seatbelt profile: it
