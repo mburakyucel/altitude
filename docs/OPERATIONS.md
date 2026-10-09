@@ -495,11 +495,12 @@ refuses the untrusted certificate silently. Every Altitude installation creates 
 trusting one installation, for example a Linux host, does not trust another, such as a Mac. Open the
 address in a new Private tab: if Safari reports the connection as not private,
 [set up the phone](SETUP.md#set-up-a-phone) for this installation, confirm the Private tab loads
-without a warning, then remove the shortcut and add it again. Every generated CA is named "Altitude
-local CA", so Certificate Trust Settings can list several same-named entries. Turn on only the one
-from this installation's verified profile. When the entries cannot be told apart, remove the
-Altitude profiles under General → VPN & Device Management, then install and verify each
-installation's profile again through its own setup.
+without a warning, then remove the shortcut and add it again. Each generated CA is named "Altitude
+CA" with its own four-character label, which `alt pair` and Settings → Devices show; turn on only
+that entry in Certificate Trust Settings. CAs created before the label all share the name "Altitude
+local CA" and keep it. Turn on only the one from this installation's verified profile; when such
+entries cannot be told apart, remove the Altitude profiles under General → VPN & Device Management,
+then install and verify each installation's profile again through its own setup.
 
 The delivered browser checks verify served files and icon geometry at phone and desktop sizes.
 Native iOS/Safari and Android/Chrome installation and refresh behavior require device observation;

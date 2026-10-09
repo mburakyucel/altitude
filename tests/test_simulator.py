@@ -561,8 +561,8 @@ json.dump(answers, open(os.path.join(os.environ["VALIDATION_RESULTS"], "walks.js
         self.assertEqual(relay["files"], ["ca.crt", "server.crt", "server.key"], "the CA's key is gone before the run")
         self.assertEqual(Path(f"{self.log}.roots").read_text(), relay["ca"], "the phone trusts the run's CA")
         certificates = result["simulator"].pop("certificates")
-        self.assertEqual((certificates["ca"]["subject"], certificates["server"]["issuer"]),
-                         ("CN=Altitude local CA", "CN=Altitude local CA"))
+        self.assertRegex(certificates["ca"]["subject"], r"^CN=Altitude CA [2-9A-HJ-NP-Z]{4}$")
+        self.assertEqual(certificates["server"]["issuer"], certificates["ca"]["subject"])
         self.assertIn("IP Address:127.0.0.1", certificates["server"]["extensions"]["Subject Alternative Name"])
         devices = str(validation.home() / "runs" / area_name / "simulator")
         simctl = [call[1:] for call in self.calls() if call[0] == "simctl"]
