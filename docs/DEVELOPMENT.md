@@ -1201,6 +1201,10 @@ Landing verifies the merged tree against the tested tree; commit metadata can di
 Missing, pending, failed, skipped, cancelled, stale or unrelated required runs block. A required run
 that has not registered on the head yet keeps the bounded wait going; one still absent at the bound
 reports `missing`.
+GitHub-managed scans, such as CodeQL default setup, run on the candidate commit with the `dynamic`
+event and no pull request. They are bound by that commit alone, never qualify as the PR `check`, and
+count like every other check on the candidate: a failing scan blocks and a pending one keeps the wait
+going. Every other workflow run must come from a push or pull request event of this PR's branch.
 Review and task/UX holds remain enforced. The operator chooses Altitude-only enforcement without
 a GitHub plan upgrade: GitHub web/API merges and other updates outside Altitude remain unprotected.
 All main updates must use `alt land` for its guarantee.
