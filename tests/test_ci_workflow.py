@@ -35,6 +35,11 @@ class TestRequiredCheckWorkflow(AltitudeCase):
                       '  push:\n    branches: [main]\n', self.workflow)
         self.assertNotIn('pull_request_target', self.workflow)
 
+    def test_only_a_pull_requests_superseded_run_is_cancelled(self):
+        # A landing that integrates a moved main pushes a new head; the replaced head's run cannot merge.
+        self.assertIn('concurrency:\n  group: checks-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}\n'
+                      "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n", self.workflow)
+
     def test_required_check_passes_only_when_every_shard_succeeded(self):
         [gate] = self.steps('check')
         self.assertIn('SHARDS: ${{ needs.shard.result }}\n', gate)
