@@ -12,13 +12,10 @@ admitted work available. Stop the controller for a consistent backup; status alo
 
 This is the runtime guide for an already configured installation. New users should start with
 [setup](SETUP.md); contributors should use [development and checks](DEVELOPMENT.md).
-The shipped [service unit](../systemd/altitude.service) is a maintainer deployment template:
-its checkout path, PATH and tunnel binding need deliberate configuration for another machine.
-On a Mac, `make install-service` writes the same settings as a LaunchAgent for the checkout
-(`scripts/source_launch_agent.py`), with `ALTITUDE_HOST` and the PATH it runs with (the address defaults to
-`127.0.0.1`) and, when the checkout is not on `main`, that branch as `ALTITUDE_SOURCE_BRANCH`. Its PATH needs `pnpm` (`corepack enable pnpm`), since a self-restart
-rebuilds the web app.
-Private archives generate their own user service; they do not install that source template.
+A source deployment runs as the user service `make install-service` installs from the checkout: the
+shipped [service unit](../systemd/altitude.service) on Linux, or a LaunchAgent written by
+`scripts/source_launch_agent.py` on a Mac. [Run from a source checkout](SETUP.md#run-from-a-source-checkout)
+describes its setup, settings and removal. Releases generate their own user service instead.
 
 ## Runtime and inspection
 
@@ -312,7 +309,7 @@ own coalitions. The prior bundle is restored if verification fails, then recover
 and verifies API and UI health from another new process. The failure retains the activation error
 and states whether recovery is verified or fails; restored files alone do not establish healthy
 recovery. Without a prior bundle, it reports that recovery is unavailable. There is
-no separate web service and no `sudo` is required. Node 22.22.2+ (22.x) or 24.15+ (24.x) and `pnpm` are required; dependency
+no separate web service and no `sudo` is required. Node 22.22.2+ (22.x), 24.15+ (24.x) or 26+ and `pnpm` are required; dependency
 retrieval may be needed when the local pnpm store is cold. Refresh the browser after it succeeds.
 
 Deterministic restart fixtures establish removal ordering, worker isolation and activation/rollback

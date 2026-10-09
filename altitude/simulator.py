@@ -44,7 +44,7 @@ FRAME_SECONDS = 30               # for the rest of a message once its first byte
 SESSIONS = 4                     # run connections at once; a walkthrough uses one
 OPEN = "_rpc_altitudeOpenURL:"    # the relay's own request: {"url": ...}, answered by OPENED with {"error": ...}
 OPENED = "_rpc_altitudeOpenedURL:"
-WALK = "_rpc_altitudeWalk:"       # {"walk": a name in WALKS, "url": ..., "code": ...}, answered by WALKED with
+WALK = "_rpc_altitudeWalk:"       # {"walk": a name in WALKS, "url": ...}, answered by WALKED with
 WALKED = "_rpc_altitudeWalked:"   # {"error": ..., "walk": its record as JSON, "files": {name: PNG}}
 WALKS = {"home-screen": "testHomeScreen", "profile": "testProfile"}
 WALK_SOURCE = Path(__file__).resolve().parent / "walks"
@@ -52,7 +52,6 @@ BUILD_SECONDS = 600              # for building the walks once per run
 WALK_SECONDS = 420               # for one walk; its own waits end well within it
 XCODEBUILD_STOP = 60             # seconds for xcodebuild to end its test runner once interrupted
 FILE_LIMIT = 16 << 20            # bytes in one screenshot or icon returned to the run
-PAIRING = re.compile(r"[2-9A-HJ-NP-Z]{4}-[2-9A-HJ-NP-Z]{4}")   # a pairing code, as access.issue_code makes it
 UNAVAILABLE = "--simulator needs a Mac with Xcode and an installed iOS Simulator runtime"
 
 #: What the run may ask of the phone. `_rpc_forward*` requests name a Safari application, and a page or sender the
@@ -142,9 +141,8 @@ class Phone:
     def open(self, url: str) -> None:
         _simctl(self.devices, "openurl", self.udid, url, timeout=30)
 
-    def walk(self, name: str, url: str, code: str = "") -> tuple[dict, dict]:
-        """Walk `name` (WALKS) at `url` with Apple's UI testing, typing the pairing `code` into the Home Screen app when
-        one is given. Returns the walk's record, its steps and what it saw, with an `error` when the runner failed or
+    def walk(self, name: str, url: str) -> tuple[dict, dict]:
+        """Walk `name` (WALKS) at `url` with Apple's UI testing. Returns the walk's record, its steps and what it saw, with an `error` when the runner failed or
         did not finish, and its screenshots by name; the Home Screen walk adds the web clip it made. The apps the walk
         used are closed after it, so none keeps a connection to the run's pages."""
         with self.walking:
@@ -154,7 +152,7 @@ class Phone:
             (folder / "files").mkdir(parents=True)
             clips = self.devices / self.udid / "data" / "Library" / "WebClips"
             before = set(os.listdir(clips)) if clips.is_dir() else set()
-            env = {**os.environ, "TEST_RUNNER_WALK_URL": url, "TEST_RUNNER_WALK_CODE": code,
+            env = {**os.environ, "TEST_RUNNER_WALK_URL": url,
                    "TEST_RUNNER_WALK_OUT": str(folder / "files")}
             failed = _xcodebuild(["test-without-building", "-xctestrun", str(tests), "-destination",
                                   f"platform=iOS Simulator,id={self.udid}", f"-only-testing:Walks/Walks/{WALKS[name]}",
@@ -300,13 +298,10 @@ def _altitudes(url: object, port: int) -> bool:
 
 
 def walkable(argument: dict, port: int) -> str | None:
-    """Why the relay will not walk `argument`, or None: one of WALKS at an address it would open, with a pairing code
-    only for the Home Screen app."""
-    name, code = argument.get("walk"), argument.get("code", "")
+    """Why the relay will not walk `argument`, or None: one of WALKS at an address it would open."""
+    name = argument.get("walk")
     if not isinstance(name, str) or name not in WALKS:
         return f"the relay walks only {' and '.join(WALKS)}"
-    if not isinstance(code, str) or code and (name != "home-screen" or not PAIRING.fullmatch(code)):
-        return "a walk takes only a pairing code, for the Home Screen app"
     return openable(argument.get("url"), port)
 
 
@@ -421,7 +416,7 @@ class _Session:
             error, answer = walkable(argument, self.port), {}
             if not error:
                 try:
-                    record, files = self.walk(argument["walk"], argument["url"], argument.get("code", ""))
+                    record, files = self.walk(argument["walk"], argument["url"])
                     answer = {"walk": json.dumps(record), "files": files}
                 except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
                     error = str(exc)
@@ -485,7 +480,7 @@ class _Session:
 
 class Relay:
     """Serves the run's socket at `path` while the run lasts; each connection gets its own connection to the phone's
-    Web Inspector at `inspector`. `open_url(url)` and `walk(name, url, code)` answer the run's own requests."""
+    Web Inspector at `inspector`. `open_url(url)` and `walk(name, url)` answer the run's own requests."""
 
     def __init__(self, path: Path, inspector: str, port: int, open_url, walk):
         self.path, self.inspector, self.port, self.open_url, self.walk = path, inspector, port, open_url, walk
