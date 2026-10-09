@@ -1,8 +1,10 @@
 name: Checks
 
-# Every pull request, push to main and manual dispatch runs the full suite on a GitHub-hosted runner
-# with a read-only token and no secrets. Altitude requires the PR job before merging; main runs
-# verify delivery, and release publication requires the push run of the tagged commit.
+# Every pull request, push to main and manual dispatch runs the full suite on GitHub-hosted runners
+# with a read-only token and no secrets: each `shard` job runs one disjoint slice of `make check` on
+# its own runner, and the `check` job passes only when all of them passed. Altitude requires the PR
+# `check` before merging; main runs verify delivery, and release publication requires the push run
+# of the tagged commit.
 on:
   workflow_dispatch:
   pull_request:
@@ -14,10 +16,25 @@ permissions:
   contents: read
 
 jobs:
-  # Keep the job id `check` and no `name:`: `alt land` and release.yml select this job by id.
-  check:
+  shard:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 30
+    strategy:
+      # Every shard finishes, so one run reports every failure.
+      fail-fast: false
+      matrix:
+        # `make check-<suite> SHARD=i/n` takes every n-th test from the i-th; each suite lists i = 1..n.
+        include:
+          - {suite: python, shard: 1/4}
+          - {suite: python, shard: 2/4}
+          - {suite: python, shard: 3/4}
+          - {suite: python, shard: 4/4}
+          - {suite: web, shard: 1/6}
+          - {suite: web, shard: 2/6}
+          - {suite: web, shard: 3/6}
+          - {suite: web, shard: 4/6}
+          - {suite: web, shard: 5/6}
+          - {suite: web, shard: 6/6}
     env:
       CI: 'true'
     steps:
@@ -67,14 +84,31 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm exec playwright install --with-deps chromium
 
-      - name: Full deterministic checks
-        run: make check
+      # A shard has its runner to itself, so Python uses every CPU instead of half.
+      - name: Run this shard
+        env:
+          SUITE: ${{ matrix.suite }}
+          SHARD: ${{ matrix.shard }}
+        run: make "check-$SUITE" SHARD="$SHARD" WORKERS="$(nproc)"
 
       - name: Retain the failed browser report
-        if: failure()
+        if: failure() && matrix.suite == 'web'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: browser-report-${{ github.run_attempt }}
+          name: browser-report-${{ strategy.job-index }}-${{ github.run_attempt }}
           path: web/ui-artifacts/report
           if-no-files-found: ignore
           retention-days: 7
+
+  # Keep the job id `check` and no `name:`: `alt land` and release.yml select this job by id.
+  # It always runs, so a failed, cancelled or skipped shard fails it instead of skipping it.
+  check:
+    needs: shard
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every shard to pass
+        env:
+          SHARDS: ${{ needs.shard.result }}
+        run: test "$SHARDS" = success
