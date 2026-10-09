@@ -166,9 +166,12 @@ GitHub `owner/repository`, Altitude's own filled in or a fork you name, or
 `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` in altd's environment names one for a non-interactive
 install. Every incident then becomes one sanitized issue there, and `alt incident list` shows the
 link or the pending reason. An issue publishes the failure summary and a System section (platform,
-OS, kernel, architecture, machine model, Altitude version and deployment kind, and the failed
-worker's engine, CLI version and confinement); the raw worker output, evidence and host identities
-stay in the local record. The saved setting outranks the environment, including when it turns
+OS, kernel, architecture, machine model, Altitude version and deployment kind, whether a newer
+release was known, and the failed worker's engine, CLI version and confinement); the raw worker
+output, evidence and host identities stay in the local record. A fault on an installed copy that is
+behind a newer release keeps its issue on the machine, held with "update first": update, and if the
+fault comes back it is filed on the new version. `alt incident publish <id>` files a held issue
+anyway, for example when the update itself fails. The saved setting outranks the environment, including when it turns
 publishing off. Altitude's repository is public, so its issues are public; a fork you manage keeps
 them under your control. An installed application keeps the environment value in its saved settings, so `alt install` from a shell where
 it is exported carries it into the service; a source deployment sets it in the user service unit's
