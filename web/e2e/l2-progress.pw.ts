@@ -301,6 +301,10 @@ for (const index of [0, 1]) {
     });
     await expect(live.locator(".live-pulse")).toHaveAttribute("data-tone", "muted");
     await expect(liveCue.locator(".dot")).not.toHaveAttribute("data-pulse");
+    // The command starts right after its "$", not after a column sized for tool names.
+    await expect(call.locator(".session-tool-name")).toHaveText("$");
+    const [prompt, command] = await call.evaluate((node) => [".session-tool-name", ".session-call"].map((selector) => node.querySelector(selector)!.getBoundingClientRect()));
+    expect(command.left - prompt.right).toBeLessThanOrEqual(12);
     await toConversation();
     await walk.state("05-conversation-quiet-hides-preview", { visible: [convo.getByRole("textbox", { name: "Message the L2" })], hidden: [preview] });
     await page.emulateMedia({ reducedMotion: "reduce" });
