@@ -541,20 +541,18 @@ Quick-choice receipts and messages already used by recorded decisions cannot be 
 does not undo a resume request, Stop, fault or question. Claimed messages say Sending to session and
 cannot be removed. A failure before launch restores removal; an attempted but unconfirmed handoff
 retains Delivery unconfirmed and cannot be removed even when recovery restores the inbox batch.
-**Send now** is available for an inbox-owned operator message while its saved-session owner is running
-and eligible to resume. Admission shares the inbox writer lock and records the existing Stop fence
-before hook pickup can take the row. If pickup already owns it, the action returns its receipt without
-another interruption. The daemon stops the observed worker through the engine seam and resumes the
-same session, attempt, model and worktree with only the selected message; siblings stay in the inbox
-for later checkpoints. The request supplies no synthetic conversation message. Like Stop, Send now
-cancels attached reviews and may interrupt publication; completed effects remain completed.
-The normal handoff retains launch ownership across Stop and resume. Confirmed Stop and the due
-continuation are durable, including across daemon recovery; a later launch hold keeps the message
-waiting to resume without monopolizing the task's operation slot. Stop and Reject remain available.
-New questions and faults supersede the requested wake. Explicitly stopped owners require Continue;
-question waits require an answer; faulted tasks require recovery. Missing sessions or unavailable
-engines explain why Send now is unavailable. Pending delivery, handoff uncertainty and confirmed
-delivery use the existing receipts; no browser action infers delivery from inbox absence.
+**Send now** is available for an inbox-owned operator message without images while its owner is
+running a turn through the engine driver. Under the project lock, the request records a `send_now` claim
+on the task and writes the message to the worker's `sends` folder; it neither stops the worker nor
+launches another. The driver writes it into the running turn as the operator's next message (see
+[message delivery](ARCHITECTURE.md#message-delivery-and-voice)) and, once the engine confirms it, records
+the delivery receipt on the task and removes the row from the inbox. The claimed row says Sending into
+the current turn and cannot be removed; the inbox hook neither announces it nor ends the turn for it,
+and only one message is sent at a time. A message the turn returns at its end stays queued for the next
+turn. A Stop, a lost job, a report or the end of the task settles a remaining claim from the driver's
+outcome file before any later turn takes the inbox, so a message the engine may have read is never
+delivered again. Question waits, faults, Stop, another owner action and workers started before the driver
+explain why Send now is unavailable; the message then waits for the next turn.
 A successful stdin handoff, matching session initialization
 and bound replacement record delivery for that exact batch. A correlated native hook attachment also
 proves handoff; inbox absence or new assistant output does not. Missing evidence says Delivery
@@ -924,7 +922,8 @@ survive; continuation supplies no missing approval. L3 verifies activation and f
 requesting a live handoff, and observes the new running attempt before reporting recovery.
 
 Claude resume uses foreground `claude -p --resume` inside the task's transient unit; Codex resume
-uses `codex exec resume <thread-id> -` with the inbox on stdin from the same task worktree.
+runs `codex app-server` and resumes the thread with the inbox as its next turn, from the same task worktree.
+Both run through the job's engine driver, which keeps the engine's input open for Send now.
 Both engines have one contract: the persona may invoke the scoped Altitude
 CLI, and the backend applies the identity, clean-Git, isolation, and merge-policy checks relevant to each
 command and effect boundary. Claude hooks add telemetry, coordination delivery and the operator-message notice;
@@ -1215,7 +1214,7 @@ sends while a turn is in flight is appended to the project's durable L3 queue an
 injected into the running turn. The finishing turn drains the queue itself, one turn at a time and in
 arrival order, batching consecutive chat rows for the same conversation while keeping system turns
 and other conversations separate. Each waiting chat row remains individually removable until claim,
-including after an accepted Send now;
+except while Send now hands it to the running turn;
 messages arriving after that snapshot wait for the next turn. A message queued but not started is not
 a turn in flight, so it neither holds the quiet-point restart nor is lost by one. The queue waits
 while no L3 option is available. A system notification (block, restart, incident or upstream issue) whose
@@ -1225,18 +1224,19 @@ available. A turn with provider output is never replayed, and a refused operator
 Retry instead. An Auto-selected turn resumes only the chosen provider's session;
 choosing another configured model on that provider retains its conversation.
 
-An operator queue row's **Send now** promotes it ahead of other rows and runs it alone as the next
-turn; the remaining rows retain their relative order and normal folding. The accepted priority stays
-in the queue file until claim, and Remove remains available while the queue owns the row. Removal
-cannot undo an interruption already requested. An active chat still starting explains why Send now
-is unavailable until the engine reports its launch. The daemon sets only the
-captured chat turn's interruption signal; the engine seam stops that invocation's owned job and
-confirms its termination before the L3 lock is released. Partial output and session identity remain,
-and the turn says **Interrupted for a queued message**. That turn is never replayed. Active system
-turns finish normally to preserve their existing notification and report receipts; a promoted row
-says **Runs next after system work**. A stale or repeated request cannot interrupt a replacement
-turn or submit the message twice. Engine unavailability and launch pauses leave the row queued with
-an explanation. The priority marker adds no quiet-point restart hold.
+An operator queue row's **Send now** hands it to the running chat turn through that turn's `sends`
+folder; the turn's engine driver writes it in as the operator's next message, and the turn continues
+without stopping. Once the engine confirms it, the reply so far is recorded as the turn's answer, the
+message is recorded as the next user row under a new turn id with its queue id, and the rest of the
+reply belongs to that new turn. The row says **Sending into the current turn** and cannot be removed
+until it settles. A message the turn returns at its end, one with images, one sent during a system turn
+(**Runs next after system work**) or while no turn runs (**Runs next**) moves to the queue front and
+runs alone as the next turn; the remaining rows retain their relative order and normal folding. Active
+system turns keep their existing boundary to preserve notification and report receipts. After each turn,
+and at the next drain after a restart, a row still marked as sending settles from its outcome file: a
+message the engine may have read is recorded once and never replayed; one it never read runs next.
+Repeated requests return the same receipt. Engine unavailability and launch pauses leave the row queued
+with an explanation. The priority marker adds no quiet-point restart hold.
 
 Every fresh session, whether from first use, reset, context rotation or a confinement policy change,
 receives the project's latest 20 prior human chat messages from either provider, oldest first. A

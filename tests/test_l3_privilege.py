@@ -349,19 +349,22 @@ class TestL3CheckoutConfinement(AltitudeCase):
                     "usage": {"input_tokens": 1}, "error": None, "returncode": 0, "tools": []}
 
         with mock.patch.object(l3, "_select", return_value=self.choice("codex")), \
-             mock.patch.object(engines, "codex_exec", side_effect=fake_codex):
+             mock.patch.object(engines, "codex_exec", side_effect=AssertionError("coordinator turns use codex_turn")), \
+             mock.patch.object(engines, "codex_turn", side_effect=fake_codex):
             l3.turn(self.project, "Read the checkout, then try git fetch.")
 
         runtime = Path(seen["cwd"])
         settings = seen["sandbox_settings"]
         self.assertFalse(runtime.exists(), "the per-turn Codex runtime is disposed after the engine exits")
-        self.assertTrue(seen["ignore_user_config"], "ambient sandbox settings cannot replace the L3 profile")
+        self.assertEqual(settings, engines.codex_l3_permissions(runtime, project=self.project))
         self.assertIn('default_permissions="altitude-l3"', settings)
         self.assertFalse(any(value.startswith("sandbox_mode=") for value in settings))
         self.assertIn("permissions.altitude-l3.network.enabled=false", settings)
-        self.assertIn("mcp_servers.altitude.required=true", settings)
-        self.assertIn('mcp_servers.altitude.tools.coordinator.approval_mode="approve"', settings,
-                      "headless MCP must not require a prompt under approval_policy=never")
+        broker = tomllib.loads("\n".join(settings))["mcp_servers"]
+        self.assertEqual(set(broker), {"altitude"}, "the broker is the coordinator's only MCP server")
+        self.assertIs(broker["altitude"]["required"], True)
+        self.assertEqual(broker["altitude"]["tools"]["coordinator"]["approval_mode"], "approve",
+                         "headless MCP must not require a prompt under approval_policy=never")
         root_write = f'{json.dumps(str(config.ROOT.resolve()))}="write"'
         self.assertFalse(any(root_write in value for value in settings),
                          "Altitude state is writable only through the daemon verb socket")
@@ -394,6 +397,81 @@ class TestL3CheckoutConfinement(AltitudeCase):
         self.assertEqual(status.stdout.strip(), "altitude.service: active/running PID 123")
         self.assertEqual((gh_read.returncode, gh_read.stdout.strip()), (0, "checks are green"))
         self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", (runtime / "bin" / "systemctl").read_text())
+
+    def test_coordinator_codex_settings_win_over_the_personal_codex_configuration(self):
+        """The coordinator loads the operator's own Codex configuration (no --ignore-user-config) and keeps
+        --strict-config; Altitude's command-line settings come after the file and replace every key there that could
+        widen its authority. The real engine driver runs a fake `codex app-server` that applies the personal file,
+        then each -c in order (the precedence Codex documents for -c overrides)."""
+        home = self.tmp / "codex-home"
+        home.mkdir()
+        self.setenv("CODEX_HOME", str(home))
+        (home / "config.toml").write_text(
+            'model = "personal-model"\nmodel_provider = "personal-proxy"\napproval_policy = "on-request"\n'
+            'notify = ["/bin/sh", "-c", "personal-notify"]\n[features]\nhooks = true\n'
+            '[mcp_servers.personal]\ncommand = "personal-mcp"\n'
+            '[model_providers.personal-proxy]\nbase_url = "http://127.0.0.1:9/v1"\n')
+        loaded, read = self.tmp / "codex-loaded.json", self.tmp / "codex-read.jsonl"
+        self.setenv("FAKE_CODEX_LOADED", str(loaded))
+        self.setenv("FAKE_ENGINE_LOG", str(read))
+        fake = self.tmp / "codex"
+        fake.write_text(f"""#!{sys.executable}
+import json, os, runpy, sys, tomllib
+from pathlib import Path
+effective = tomllib.loads((Path(os.environ["CODEX_HOME"]) / "config.toml").read_text())
+for flag, setting in zip(sys.argv[1:], sys.argv[2:]):
+    if flag == "-c":
+        key, _, value = setting.partition("=")
+        *parents, leaf = key.split(".")
+        table = effective
+        for part in parents:
+            table = table.setdefault(part, {{}})
+        table[leaf] = tomllib.loads("value=" + value)["value"]
+Path(os.environ["FAKE_CODEX_LOADED"]).write_text(json.dumps({{"argv": sys.argv[1:], "effective": effective}}))
+sys.argv = [{str(Path(__file__).parent / "fake_engine.py")!r}, "app-server"]
+runpy.run_path(sys.argv[0], run_name="__main__")
+""")
+        fake.chmod(0o700)
+        real_popen, jobs = subprocess.Popen, []
+
+        def popen(command, **kwargs):
+            if command[0] != engines.platform.SYSTEMD_RUN:
+                return real_popen(command, **kwargs)
+            jobs.append(command)  # the job's own command, without the user service manager
+            return real_popen(command[command.index("--") + 1:], **kwargs)
+
+        choice = {**self.choice("codex"), "model": "gpt-fixture"}
+        with mock.patch.object(config, "CODEX_BIN", str(fake)), mock.patch.object(l3, "_select", return_value=choice), \
+             mock.patch.object(engines.subprocess, "Popen", side_effect=popen):
+            result = l3.turn(self.project, "Check the configuration.")
+
+        self.assertEqual((result["text"], result["session_id"], result["error"]), ("Done.", "fake-thread", None))
+        self.assertEqual(len(jobs), 1)
+        self.assertIn(f"CODEX_HOME={home}", jobs[0], "the operator's own Codex home and configuration load")
+        launched = json.loads(loaded.read_text())
+        argv, effective = launched["argv"], launched["effective"]
+        self.assertEqual(argv[0], "app-server")
+        self.assertIn("--strict-config", argv)
+        self.assertNotIn("--ignore-user-config", argv)
+        self.assertNotIn("-m", argv)
+        overrides = [argv[index + 1] for index, flag in enumerate(argv) if flag == "-c"]
+        for setting in ('model_provider="openai"', "features.hooks=false", "notify=[]", 'approval_policy="never"',
+                        'default_permissions="altitude-l3"', "permissions.altitude-l3.network.enabled=false"):
+            self.assertIn(setting, overrides)
+        self.assertEqual(sum(setting.startswith("mcp_servers") for setting in overrides), 1)
+        self.assertTrue(next(setting for setting in overrides if setting.startswith("mcp_servers")).startswith(
+            "mcp_servers={altitude="), "one whole-table setting replaces the personal MCP servers")
+        self.assertEqual((effective["model_provider"], effective["approval_policy"], effective["notify"]),
+                         ("openai", "never", []))
+        self.assertIs(effective["features"]["hooks"], False)
+        self.assertEqual(set(effective["mcp_servers"]), {"altitude"})
+        self.assertEqual(effective["default_permissions"], "altitude-l3")
+        self.assertIs(effective["permissions"]["altitude-l3"]["network"]["enabled"], False)
+        self.assertEqual(effective["model"], "personal-model", "the routed model is not a configuration override")
+        opened = [json.loads(line) for line in read.read_text().splitlines()]
+        thread = next(line for line in opened if line.get("method") == "thread/start")
+        self.assertEqual((thread["params"]["model"], thread["params"]["approvalPolicy"]), ("gpt-fixture", "never"),
+                         "the routed model opens the thread, above the personal default")
 
     def test_i_20260924_054556_alt_shim_reads_stdin_only_for_a_dash_body(self):
         """The harness can leave stdin open for argument text; the shim must not wait on it."""
@@ -610,27 +688,48 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
                       "the ordinary CLI parser must not recreate broker-rejected option aliases")
 
     def test_i_20260903_075410_engine_adapters_receive_the_fail_closed_cli_flags(self):
-        class ClaudeProcess:
+        class Input(io.StringIO):
+            """The job's stdin: the engine driver's launch spec, which carries the engine command."""
+            def __init__(self):
+                super().__init__()
+                self.fed = threading.Event()
+
+            def close(self):
+                self.spec = json.loads(self.getvalue())
+                self.fed.set()
+                super().close()
+
+        class Process:
             pid, returncode = 1, 0
-            stdin = io.StringIO()
-            stdout = io.StringIO(json.dumps({"type": "result", "result": "ok", "session_id": "sid",
-                                               "is_error": False}) + "\n")
-            stderr = io.StringIO()
-            def wait(self): return self.returncode
-            def kill(self): self.returncode = -9
+
+            def __init__(self, events):
+                self.stdin, self.stderr = Input(), io.StringIO()
+                self.stdout = io.StringIO("".join(json.dumps(event) + "\n" for event in events))
+
+            def wait(self):
+                return self.returncode
+
+            def kill(self):
+                self.returncode = -9
 
         runtime = l3._l3_runtime(self.project, "claude")
         self.addCleanup(l3._remove_runtime, runtime)
         seen = {}
-        def claude_popen(command, **kwargs):
-            seen["claude"] = (command, kwargs)
-            return ClaudeProcess()
+        def popen(engine, events):
+            def start(command, **_kwargs):
+                seen[engine] = (command, Process(events))
+                return seen[engine][1]
+            return start
+        claude = popen("claude", [{"type": "result", "result": "ok", "session_id": "sid", "is_error": False}])
         with mock.patch.object(engines, "usage_hold", return_value=None), \
-             mock.patch.object(engines.subprocess, "Popen", side_effect=claude_popen):
+             mock.patch.object(engines.subprocess, "Popen", side_effect=claude):
             engines.claude_print("prompt", cwd=runtime, permission_mode="dontAsk", permission_prompts="none",
                                  restricted=True, tools=l3.L3_TOOLS, allowed_tools=engines.L3_ALLOWED_TOOLS,
                                  add_dirs=(self.repo, config.ROOT), settings=self.tmp / "settings.json")
-        command = seen["claude"][0]
+        job, process = seen["claude"]
+        self.assertEqual(job[-len(engines._driver_command()):], engines._driver_command())
+        self.assertTrue(process.stdin.fed.wait(5))
+        command = process.stdin.spec["command"]
         self.assertIn("--restricted", command)
         self.assertEqual(command[command.index("--permission-mode") + 1], "dontAsk")
         self.assertEqual(command[command.index("--permission-prompts") + 1], "none")
@@ -638,19 +737,15 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
         self.assertNotIn("Edit", command[command.index("--tools") + 1])
 
         settings = engines.codex_l3_permissions(runtime, project=self.project)
-        codex_seen = {}
-        codex_events = json.dumps({"type": "thread.started", "thread_id": "sid"}) + "\n"
-        codex_process = mock.Mock(pid=2, returncode=0)
-        codex_process.communicate.return_value = (codex_events, "")
-        def codex_popen(command, **kwargs):
-            codex_seen["command"] = command
-            return codex_process
-        with mock.patch.object(engines.subprocess, "Popen", side_effect=codex_popen):
-            engines.codex_exec("prompt", cwd=runtime, sandbox_settings=settings, ignore_user_config=True)
-        command = codex_seen["command"]
-        self.assertIn("--ignore-user-config", command)
-        for setting in settings:
-            self.assertIn(setting, command)
+        codex = popen("codex", [{"type": "thread.started", "thread_id": "sid"}])
+        with mock.patch.object(engines.subprocess, "Popen", side_effect=codex):
+            engines.codex_turn("prompt", cwd=runtime, sandbox_settings=settings)
+        job, process = seen["codex"]
+        self.assertEqual(job[-len(engines._driver_command()):], engines._driver_command())
+        self.assertTrue(process.stdin.fed.wait(5))
+        command = process.stdin.spec["command"]
+        self.assertEqual(command[:3], [config.CODEX_BIN, "app-server", "--strict-config"])
+        self.assertEqual([command[index + 1] for index, flag in enumerate(command) if flag == "-c"], settings)
 
     def test_i_20260903_075410_project_add_establishes_the_broker_before_l3_starts(self):
         name = f"{self.project}-added"

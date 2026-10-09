@@ -10,7 +10,7 @@ export function SendNow({ visible, pending, disabled, reason, task = false, erro
   return <>
     {visible ? <button type="button" className="send-now" disabled={disabled || pending}
       aria-describedby={reason || task ? help : undefined} onClick={onClick}>{pending ? "Sending now…" : "Send now"}</button> : null}
-    {visible && (reason || task) ? <span id={help} className="send-now-help text-muted">{reason || "Stops work and reviews to deliver now."}</span> : null}
+    {visible && (reason || task) ? <span id={help} className="send-now-help text-muted">{reason || "Joins the current turn without stopping its work."}</span> : null}
     {error ? <span className="send-now-help" role="alert">{error instanceof ApiError && [401, 403].includes(error.status)
       ? "You do not have permission to send this message now."
       : error instanceof ApiError && error.status === 409 ? error.message

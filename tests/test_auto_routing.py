@@ -243,7 +243,7 @@ class TestAutoIntegration(AltitudeCase):
                         "rejection": REJECTION, "safe_to_retry": True, "text": "", "tools": []}
             return {"session_id": kwargs["resume"], "text": "Opus answer", "tools": [], "error": None}
         with mock.patch.object(engines, "claude_print", side_effect=answer) as execute, \
-             mock.patch.object(engines, "codex_exec") as other:
+             mock.patch.object(engines, "codex_turn") as other:
             result = l3.turn(self.project, "Continue coordinating")
         self.assertTrue(result["completed"])
         self.assertEqual([(call.kwargs["model"], call.kwargs["resume"]) for call in execute.call_args_list],
@@ -257,7 +257,7 @@ class TestAutoIntegration(AltitudeCase):
         failure = {"session_id": "session", "text": "", "error": REJECTION["why"],
                    "rejection": REJECTION, "safe_to_retry": False, "tools": [{"name": "mcp__write"}]}
         with mock.patch.object(engines, "claude_print", return_value=failure) as execute, \
-             mock.patch.object(engines, "codex_exec") as fallback:
+             mock.patch.object(engines, "codex_turn") as fallback:
             result = l3.turn(self.project, "Do the requested operation")
         self.assertEqual(execute.call_count, 1)
         fallback.assert_not_called()
@@ -271,7 +271,7 @@ class TestAutoIntegration(AltitudeCase):
                            "text": "I performed the operation", "error": REJECTION["why"], "usage": {},
                            "rejection": REJECTION, "safe_to_retry": False, "tools": [{"name": "Bash", "command": "alt task status"}]}
                 with mock.patch.object(engines, "claude_print", return_value=failure), \
-                     mock.patch.object(engines, "codex_exec", return_value=failure):
+                     mock.patch.object(engines, "codex_turn", return_value=failure):
                     result = l3.turn(self.project, f"Partial operation on {engine}")
                 self.assertFalse(result["completed"])
                 self.assertEqual(l3.info(self.project)["sessions"][engine]["session_id"], f"partial-{engine}")
@@ -283,7 +283,7 @@ class TestAutoIntegration(AltitudeCase):
         failure = {"session_id": "session", "text": "", "error": "usage window exhausted", "tools": [],
                    "limited": engines._usage_limit("2099-01-01T00:00:00+00:00"), "safe_to_retry": True}
         with mock.patch.object(engines, "claude_print", return_value=failure) as execute, \
-             mock.patch.object(engines, "codex_exec") as fallback:
+             mock.patch.object(engines, "codex_turn") as fallback:
             result = l3.turn(self.project, "Continue")
         self.assertEqual(execute.call_count, 1)
         self.assertEqual(execute.call_args.kwargs["model"], "opus")
@@ -404,7 +404,7 @@ class TestAutoIntegration(AltitudeCase):
         answer = {"session_id": "conversation", "text": "Answered", "tools": [], "error": None,
                   "usage": {}, "context_tokens": 1, "cost": 0, "turns": 1}
         with mock.patch.object(engines, "claude_print", return_value=answer) as execute, \
-             mock.patch.object(engines, "codex_exec") as other:
+             mock.patch.object(engines, "codex_turn") as other:
             self.assertTrue(l3.turn(self.project, "Signed in again")["completed"])
         execute.assert_called_once()
         other.assert_not_called()

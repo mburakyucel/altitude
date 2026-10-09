@@ -1,11 +1,31 @@
-"""Selected queued input uses real Stop/resume ownership and deterministic engine workers."""
-from contextlib import contextmanager
-from pathlib import Path
+"""Send now hands a queued operator message to the running owner's driver, which writes it into the current turn.
+
+The owner's job is never stopped for it. The driver's outcome settles the row: delivered and unconfirmed rows leave
+the inbox, a returned row waits for the next user turn, and a claim its driver never settled is recovered from the
+drop file before another worker can take the inbox, so no message is delivered twice."""
+import json
+import os
+import socket
+import subprocess
+import sys
+import threading
 from unittest import mock
 
-from tests.support import AltitudeCase, make_repo
+from tests.support import REPO, AltitudeCase, make_repo
 from tests.fakes import FakeL2
-from altitude import config, dispatch, engines, incidents, project_setup, state as S, tasks as T
+from tests.test_images import upload
+from altitude import config, dispatch, engines, platform, server, state as S, tasks as T
+
+SENDING = "Sending into the current turn."
+HOOK = REPO / "hooks" / "inbox.py"
+READ_RECORD = engines.worker_sends  # FakeL2 replaces it; the driverless case reads real ownership records
+
+
+def give_driver(job_root, worker_id: str) -> None:
+    """The ownership record `engines.start_l2` writes for a worker whose job runs the Send now driver."""
+    paths = engines._codex_paths(job_root, worker_id)
+    paths["record"].parent.mkdir(parents=True, exist_ok=True)
+    S.atomic_write(paths["record"], json.dumps({"id": worker_id, "sends": str(paths["sends"])}))
 
 
 class TestSendNowL2(AltitudeCase):
@@ -24,8 +44,8 @@ class TestSendNowL2(AltitudeCase):
         dispatch.run(self.project, task["slug"])
         return S.load_task(self.project, task["slug"])
 
-    def send(self, task, text):
-        return T.message(self.project, task["slug"], T.OPERATOR_MESSAGE_ROLE, text)
+    def send(self, task, text, **kwargs):
+        return T.message(self.project, task["slug"], T.OPERATOR_MESSAGE_ROLE, text, **kwargs)
 
     def delivery(self, task, message):
         return next(row["delivery"] for row in T.message_views(self.project, task["slug"], [])
@@ -34,325 +54,374 @@ class TestSendNowL2(AltitudeCase):
     def request(self, task, message):
         return dispatch.request_send_now(self.project, task["slug"], message["id"])
 
-    def execute(self, task):
-        return dispatch.run_task_operation(self.project, task["slug"])
+    def sends(self, task):
+        return engines.worker_sends(task["agent_id"], job_root=dispatch.l2_job_root(self.project, task["slug"]))
 
-    def test_selected_only_preserves_session_siblings_and_work_for_both_engines(self):
+    def ids(self, rows):
+        return [row["id"] for row in rows]
+
+    def claimed(self, engine):
+        """A running owner with three queued messages, the middle one handed to its driver."""
+        task = self.launch(engine)
+        first, selected, last = [self.send(task, text) for text in ("earlier", "selected", "later")]
+        self.assertEqual(self.request(task, selected), {"status": "sending", "idempotent": False})
+        return task, first, selected, last
+
+    def no_stop(self):
+        return (mock.patch.object(engines, "stop_l2_worker", side_effect=AssertionError("Send now stopped the job")),
+                mock.patch.object(platform, "job_stop", side_effect=AssertionError("Send now stopped the unit")))
+
+    # ---- the claim -----------------------------------------------------------------------------------------
+
+    def test_send_now_hands_the_message_to_the_running_turn_without_stopping_it(self):
         for engine in config.ENGINES:
             with self.subTest(engine=engine):
                 task = self.launch(engine)
-                task.update(hold_merge="Operator review required", grant={"fixture": "retained"})
-                S.save_task(self.project, task)
-                work = Path(task["worktree"]) / "README.md"
-                work.write_text("Uncommitted work stays here.\n")
                 first, selected, last = [self.send(task, text) for text in ("earlier", "selected", "later")]
                 self.assertTrue(self.delivery(task, selected)["send_now"])
-                request = self.request(task, selected)
-                self.assertEqual(self.request(task, selected)["request"]["id"], request["request"]["id"])
-                self.assertEqual(T.take_inbox(self.project, task["slug"]), [])
-                self.assertTrue(self.delivery(task, selected)["send_now_pending"])
-                with self.assertRaises(T.TransitionError):
+                stop_worker, stop_unit = self.no_stop()
+                with stop_worker, stop_unit, mock.patch.object(dispatch, "run_task_operation") as operation:
+                    self.assertEqual(self.request(task, selected), {"status": "sending", "idempotent": False})
+                    self.assertEqual(self.request(task, selected), {"status": "sending", "idempotent": True})
+                    with self.assertRaisesRegex(T.TransitionError, "Another message is being sent now"):
+                        self.request(task, last)
+                    operation.assert_not_called()
+                sends = self.sends(task)
+                self.assertEqual(sorted(path.name for path in sends.iterdir()), [f"{selected['id']}.json"])
+                self.assertEqual(json.loads((sends / f"{selected['id']}.json").read_text()),
+                                 {"id": selected["id"], "text": "selected"})
+                current = S.load_task(self.project, task["slug"])
+                claim = current["send_now"]
+                self.assertEqual(set(claim), {"id", "agent_id", "sends", "at"})
+                self.assertEqual((claim["id"], claim["agent_id"], claim["sends"]),
+                                 (selected["id"], task["agent_id"], str(sends)))
+                self.assertEqual(current["state"], "running")
+                self.assertEqual(current["agent_id"], task["agent_id"])
+                self.assertIsNone(current.get("daemon_request"))
+                self.assertNotIn("stop_id", current)
+                self.assertEqual(self.worker.workers[task["agent_id"]]["state"], "working")
+                self.assertEqual(self.ids(T.pending(self.project, task["slug"])),
+                                 self.ids([first, selected, last]))
+                self.assertEqual(self.delivery(task, selected), {
+                    "state": "sending", "at": None, "removable": False,
+                    "send_now": False, "send_now_pending": True, "send_now_reason": SENDING})
+                with self.assertRaisesRegex(T.TransitionError, "can no longer be removed"):
                     T.remove_message(self.project, task["slug"], selected["id"])
-                late = []
-                self.worker.on_resume = lambda: late.append(self.send(task, "during launch"))
-                self.execute(task)
-                self.worker.on_resume = None
+                other = self.delivery(task, last)
+                self.assertEqual((other["state"], other["removable"], other["send_now"], other["send_now_pending"]),
+                                 ("queued", True, False, False))
+                self.assertIn("Another message is being sent now", other["send_now_reason"])
+                T.remove_message(self.project, task["slug"], last["id"])  # siblings stay removable
+
+    # ---- the driver's outcome ------------------------------------------------------------------------------
+
+    def test_delivered_message_leaves_the_inbox_and_never_joins_the_next_resume(self):
+        for engine in config.ENGINES:
+            with self.subTest(engine=engine):
+                task, first, selected, last = self.claimed(engine)
+                T.settle_send_now(self.project, task["slug"], selected["id"], "delivered",
+                                  agent_id=task["agent_id"], session_id=task["session_id"])
+                current = S.load_task(self.project, task["slug"])
+                self.assertNotIn("send_now", current)
+                receipt = current["message_deliveries"][selected["id"]]
+                self.assertEqual((receipt["state"], receipt["agent_id"], receipt["session_id"]),
+                                 ("delivered", task["agent_id"], task["session_id"]))
+                self.assertTrue(receipt["at"])
+                inbox = (S.task_dir(self.project, task["slug"]) / "inbox.jsonl").read_text()
+                self.assertNotIn(selected["id"], inbox)
+                self.assertEqual(self.ids(T.pending(self.project, task["slug"])), self.ids([first, last]))
+                self.assertEqual(self.delivery(task, selected)["state"], "delivered")
+                self.assertTrue(self.delivery(task, first)["send_now"])
+                self.assertEqual(self.request(task, selected), {"status": "delivered", "idempotent": True})
+                # The turn ends; the next resume carries the siblings only.
+                T.block(self.project, task["slug"], "Turn ended", resume_pending=True)
+                dispatch.resume(self.project, task["slug"])
+                self.assertEqual(self.worker.calls[-1]["prompt"], T.render_inbox([first, last]))
+                self.assertEqual(T.pending(self.project, task["slug"]), [])
+                self.assertEqual(self.delivery(task, selected)["state"], "delivered")
+
+    def test_returned_message_stays_queued_and_wakes_the_next_turn(self):
+        for engine in config.ENGINES:
+            with self.subTest(engine=engine):
+                task = self.launch(engine)
+                selected = self.send(task, "selected")
+                self.request(task, selected)
+                T.settle_send_now(self.project, task["slug"], selected["id"], "returned", agent_id=task["agent_id"])
+                current = S.load_task(self.project, task["slug"])
+                self.assertNotIn("send_now", current)
+                self.assertNotIn(selected["id"], current.get("message_deliveries") or {})
+                self.assertEqual(T.pending(self.project, task["slug"]), [selected])
+                delivery = self.delivery(task, selected)
+                self.assertEqual((delivery["state"], delivery["removable"], delivery["send_now"]),
+                                 ("queued", True, True))
+                blocked = T.block(self.project, task["slug"], "Turn ended", resume_pending=True)
+                self.assertTrue(blocked["resume_after"])
+                self.assertEqual(blocked["resume_request"], selected["id"])
+                dispatch.resume(self.project, task["slug"])
+                self.assertEqual(self.worker.calls[-1]["prompt"], T.render_inbox([selected]))
+                self.assertEqual(T.pending(self.project, task["slug"]), [])
+
+    def test_unconfirmed_message_leaves_the_inbox_and_is_never_redelivered(self):
+        for engine in config.ENGINES:
+            with self.subTest(engine=engine):
+                task, first, selected, last = self.claimed(engine)
+                T.settle_send_now(self.project, task["slug"], selected["id"], "unconfirmed", agent_id=task["agent_id"])
+                current = S.load_task(self.project, task["slug"])
+                self.assertNotIn("send_now", current)
+                receipt = current["message_deliveries"][selected["id"]]
+                self.assertEqual((receipt["state"], receipt["at"], receipt["agent_id"]),
+                                 ("unconfirmed", None, task["agent_id"]))
+                self.assertEqual(self.ids(T.pending(self.project, task["slug"])), self.ids([first, last]))
+                delivery = self.delivery(task, selected)
+                self.assertEqual((delivery["state"], delivery["removable"]), ("unconfirmed", False))
+                T.block(self.project, task["slug"], "Turn ended", resume_pending=True)
+                dispatch.resume(self.project, task["slug"])
+                self.assertEqual(self.worker.calls[-1]["prompt"], T.render_inbox([first, last]))
+
+    def test_a_settlement_for_another_message_leaves_the_claim(self):
+        task, first, selected, _ = self.claimed(config.ENGINES[0])
+        T.settle_send_now(self.project, task["slug"], first["id"], "returned", agent_id=task["agent_id"])
+        self.assertEqual(S.load_task(self.project, task["slug"])["send_now"]["id"], selected["id"])
+
+    # ---- Stop, a lost job, and recovery ------------------------------------------------------------------
+
+    def test_stop_with_a_message_in_flight_recovers_it_once_from_the_drop(self):
+        # (drop name the driver left, receipt expected, whether the continuation carries the message)
+        cases = ((None, None, True), ("writing", "unconfirmed", False), ("delivered", "delivered", False))
+        for engine in config.ENGINES:
+            for left, receipt, carried in cases:
+                with self.subTest(engine=engine, left=left):
+                    task, first, selected, last = self.claimed(engine)
+                    sends = self.sends(task)
+                    if left:
+                        os.rename(sends / f"{selected['id']}.json", sends / f"{selected['id']}.{left}")
+                    with mock.patch.object(engines, "stop_l2_worker", wraps=self.worker.stop_l2_worker) as stop:
+                        dispatch.stop(self.project, task["slug"], reason="Operator stop")
+                    stop.assert_called_once()
+                    self.assertEqual(stop.call_args.args[1], task["agent_id"])
+                    stopped = S.load_task(self.project, task["slug"])
+                    self.assertEqual(stopped["state"], "blocked")
+                    self.assertTrue(stopped["stop_id"])
+                    self.assertEqual(stopped["send_now"]["id"], selected["id"])  # the block keeps the claim
+                    self.assertEqual(self.delivery(task, selected)["state"], "sending")
+                    claim = T.claim_resume(self.project, task["slug"])
+                    expected = [first, selected, last] if carried else [first, last]
+                    self.assertEqual(self.ids(claim["messages"]), self.ids(expected))
+                    current = S.load_task(self.project, task["slug"])
+                    self.assertNotIn("send_now", current)
+                    if receipt:
+                        state = current["message_deliveries"][selected["id"]]
+                        self.assertEqual((state["state"], state["agent_id"]), (receipt, task["agent_id"]))
+                        self.assertTrue((sends / f"{selected['id']}.{left}").exists())
+                    else:
+                        self.assertNotIn(selected["id"], current.get("message_deliveries") or {})
+                        # A driver still running can no longer take it.
+                        self.assertFalse((sends / f"{selected['id']}.json").exists())
+                        self.assertTrue((sends / f"{selected['id']}.returned").exists())
+                    T.release_resume_claim(self.project, task["slug"], claim["id"], consume_request=False)
+                    self.assertEqual(self.ids(T.pending(self.project, task["slug"])), self.ids(expected))
+                    again = T.claim_resume(self.project, task["slug"])
+                    self.assertEqual(self.ids(again["messages"]), self.ids(expected))
+                    T.release_resume_claim(self.project, task["slug"], again["id"], consume_request=False)
+
+    def test_continuation_after_stop_delivers_a_withdrawn_message_exactly_once(self):
+        for engine in config.ENGINES:
+            with self.subTest(engine=engine):
+                task, first, selected, last = self.claimed(engine)
+                stopped = dispatch.stop(self.project, task["slug"], reason="Operator stop")
+                calls = len(self.worker.calls)
+                dispatch.request_task_operation(self.project, task["slug"], "resume", "Continue",
+                                                actor=T.OPERATOR_MESSAGE_ROLE, stop_id=stopped["stop_id"],
+                                                deliver_reason=False)
+                dispatch.run_task_operation(self.project, task["slug"])
+                self.assertEqual(len(self.worker.calls), calls + 1)
+                self.assertEqual(self.worker.calls[-1]["prompt"], T.render_inbox([first, selected, last]))
                 current = S.load_task(self.project, task["slug"])
                 self.assertEqual(current["state"], "running")
-                for key in ("session_id", "attempt", "launch_model", "branch", "worktree", "hold_merge", "grant"):
-                    self.assertEqual(current[key], task[key])
-                self.assertNotEqual(current["agent_id"], task["agent_id"])
-                self.assertEqual(work.read_text(), "Uncommitted work stays here.\n")
-                self.assertEqual(self.worker.calls[-1]["prompt"], T.render_inbox([selected]))
-                self.assertEqual(T.pending(self.project, task["slug"]), [first, last, late[0]])
+                self.assertNotIn("send_now", current)
+                self.assertEqual(T.pending(self.project, task["slug"]), [])
                 self.assertEqual(self.delivery(task, selected)["state"], "delivered")
-                calls = len(self.worker.calls)
-                self.assertTrue(self.request(task, selected)["idempotent"])
-                self.execute(task)
-                self.assertEqual(len(self.worker.calls), calls)
-                self.assertEqual(T.take_inbox(self.project, task["slug"]), [first, last, late[0]])
-                self.assertEqual(T.take_inbox(self.project, task["slug"]), [])
-                self.assertEqual(len(T.task_messages(self.project, task["slug"])), 4)
+                # The new worker has its own driver, and the settled message is not offered again.
+                self.assertNotEqual(self.sends(S.load_task(self.project, task["slug"])), self.sends(task))
+                self.assertEqual(self.request(task, selected), {"status": "delivered", "idempotent": True})
 
-    def test_hook_or_removal_winning_admission_never_interrupts(self):
-        for engine in config.ENGINES:
-            with self.subTest(engine=engine):
-                task = self.launch(engine)
-                picked = self.send(task, "Already picked up")
-                self.assertEqual(T.take_inbox(self.project, task["slug"]), [picked])
-                self.assertEqual(self.request(task, picked), {"queued": False, "idempotent": True})
-                removed = self.send(task, "Remove me")
-                T.remove_message(self.project, task["slug"], removed["id"])
-                with self.assertRaisesRegex(T.TransitionError, "removed"):
-                    self.request(task, removed)
-                self.assertNotIn("stop_id", S.load_task(self.project, task["slug"]))
-                self.assertEqual(self.worker.workers[task["agent_id"]]["state"], "working")
+    def test_a_lost_job_blocked_by_the_monitor_recovers_the_claim_at_resume(self):
+        task, first, selected, last = self.claimed(config.ENGINES[0])
+        sends = self.sends(task)
+        os.rename(sends / f"{selected['id']}.json", sends / f"{selected['id']}.delivered")
+        blocked = T.block(self.project, task["slug"], "Worker exited", resume_pending=True)
+        self.assertEqual(blocked["send_now"]["id"], selected["id"])
+        self.assertTrue(blocked["resume_after"])
+        dispatch.resume(self.project, task["slug"])
+        self.assertEqual(self.worker.calls[-1]["prompt"], T.render_inbox([first, last]))
+        self.assertEqual(self.delivery(task, selected)["state"], "delivered")
 
-    def test_question_fault_stop_and_missing_session_are_denied_without_mutation(self):
+    def test_a_report_after_the_driver_died_continues_only_for_a_message_the_owner_never_read(self):
+        for left, continues in (("delivered", False), ("json", True)):
+            with self.subTest(left=left):
+                task, _, selected, _ = self.claimed(config.ENGINES[0])
+                T.take_inbox(self.project, task["slug"], {row["id"] for row in T.pending(self.project, task["slug"])
+                                                          if row["id"] != selected["id"]})
+                sends = self.sends(task)
+                if left == "delivered":
+                    os.rename(sends / f"{selected['id']}.json", sends / f"{selected['id']}.delivered")
+                if continues:
+                    with self.assertRaisesRegex(T.TransitionError, "pending messages require continuation"):
+                        T.report(self.project, task["slug"], {"verdict": "ok", "problems": []})
+                    current = S.load_task(self.project, task["slug"])
+                    self.assertEqual(current["state"], "blocked")
+                    self.assertEqual([row["id"] for row in T.pending(self.project, task["slug"])], [selected["id"]])
+                else:
+                    current = T.report(self.project, task["slug"], {"verdict": "ok", "problems": []})
+                    self.assertEqual(current["state"], "reported")
+                    self.assertEqual(current["message_deliveries"][selected["id"]]["state"], "delivered")
+                self.assertNotIn("send_now", current)
+
+    def test_ending_the_task_settles_an_unsettled_claim(self):
+        task, _, selected, _ = self.claimed(config.ENGINES[0])
+        sends = self.sends(task)
+        os.rename(sends / f"{selected['id']}.json", sends / f"{selected['id']}.delivered")
+        rejected = T.reject(self.project, task["slug"], "Operator ended this task")
+        self.assertEqual(rejected["state"], "rejected")
+        self.assertNotIn("send_now", rejected)
+        self.assertEqual(rejected["message_deliveries"][selected["id"]]["state"], "delivered")
+
+    # ---- refusals -------------------------------------------------------------------------------------------
+
+    def assert_refused(self, task, message, expected):
+        before = S.load_task(self.project, task["slug"])
+        stop_worker, stop_unit = self.no_stop()
+        with stop_worker, stop_unit, self.assertRaisesRegex(T.TransitionError, expected):
+            self.request(task, message)
+        self.assertEqual(S.load_task(self.project, task["slug"]), before)
+        sends = self.sends(before) if before.get("agent_id") else None
+        self.assertFalse(sends and sends.exists() and any(sends.iterdir()), "a refusal wrote a drop")
+
+    def test_owner_states_that_cannot_take_a_message_refuse_without_mutation(self):
         for engine in config.ENGINES:
-            for change, expected in (({"state": "blocked", "waiting_on": "operator"}, "question"),
+            for change, expected in (({"state": "blocked"}, "needs a running owner"),
+                                     ({"state": "blocked", "waiting_on": "operator"}, "waiting for an answer"),
                                      ({"state": "blocked", "fault": "fixture fault"}, "faulted"),
-                                     ({"stop_id": "explicit-stop"}, "stopped"),
-                                     ({"session_id": None}, "saved session")):
+                                     ({"stop_id": "explicit-stop"}, "stopped or stopping"),
+                                     ({"daemon_request": {"id": "r1", "operation": "stop", "status": "pending"}},
+                                      "Another owner action"),
+                                     ({"dispatching": "2026-10-09T00:00:00Z"}, "Another owner action")):
                 with self.subTest(engine=engine, change=change):
                     task = self.launch(engine)
-                    message = self.send(task, "Queued before the wait")
-                    task = S.load_task(self.project, task["slug"])
-                    task.update(change)
+                    message = self.send(task, "Queued before the change")
+                    original = S.load_task(self.project, task["slug"])
+                    task = {**original, **change}
                     S.save_task(self.project, task)
-                    with self.assertRaisesRegex(T.TransitionError, expected):
-                        self.request(task, message)
-                    self.assertEqual(S.load_task(self.project, task["slug"]), task)
-                    self.assertFalse(self.delivery(task, message)["send_now"])
-                    self.assertIn(expected, self.delivery(task, message)["send_now_reason"])
+                    self.assert_refused(task, message, expected)
+                    delivery = self.delivery(task, message)
+                    self.assertFalse(delivery["send_now"])
+                    self.assertFalse(delivery["send_now_pending"])
+                    self.assertIn(expected, delivery["send_now_reason"])
+                    # Leave no ready resume holding the next launch's machine slot.
+                    S.save_task(self.project, original)
+                    T.remove_message(self.project, task["slug"], message["id"])
 
-    def test_engine_setup_launch_and_admission_holds_do_not_stop_owner(self):
-        @contextmanager
-        def held():
-            yield "Fixture admission paused"
-
+    def test_a_worker_launched_without_a_driver_refuses(self):
         task = self.launch(config.ENGINES[0])
-        message = self.send(task, "Wait for available launch")
-        checks = [mock.patch.object(dispatch, "resume_engine_hold", return_value="Engine unavailable"),
-                  mock.patch.object(config, "provider_admission", held),
-                  project_setup.operation_lock(self.project), dispatch.launch_lock()]
-        for check in checks:
-            with self.subTest(check=type(check).__name__), check:
-                with self.assertRaises(T.TransitionError):
-                    self.request(task, message)
-                self.assertNotIn("stop_id", S.load_task(self.project, task["slug"]))
-        self.assertEqual(self.worker.workers[task["agent_id"]]["state"], "working")
+        message = self.send(task, "No driver here")
+        job_root = dispatch.l2_job_root(self.project, task["slug"])
+        record = engines._codex_paths(job_root, task["agent_id"])["record"]
+        self.patch(engines, "worker_sends", new=READ_RECORD)
+        self.assert_refused(task, message, "started before Send now")  # no ownership record
+        self.assertIn("next turn", self.delivery(task, message)["send_now_reason"])
+        record.parent.mkdir(parents=True, exist_ok=True)
+        S.atomic_write(record, json.dumps({"id": task["agent_id"]}))
+        self.assert_refused(task, message, "started before Send now")  # a record without a `sends` folder
+        give_driver(job_root, task["agent_id"])
+        self.assertEqual(self.request(task, message), {"status": "sending", "idempotent": False})
 
-    def test_delivery_projection_never_acquires_transient_admission_or_launch_locks(self):
+    def test_a_message_with_images_waits_for_the_next_turn(self):
         task = self.launch(config.ENGINES[0])
-        message = self.send(task, "Keep the row stable during unrelated launches")
-        with mock.patch.object(config, "provider_admission", side_effect=AssertionError("view acquired admission")), \
-                mock.patch.object(project_setup, "operation_lock", side_effect=AssertionError("view acquired setup")), \
-                mock.patch.object(dispatch, "launch_lock", side_effect=AssertionError("view acquired launch")):
-            self.assertTrue(self.delivery(task, message)["send_now"])
-        with project_setup.operation_lock(self.project), dispatch.launch_lock():
-            self.assertTrue(self.delivery(task, message)["send_now"])
-            with self.assertRaises(T.TransitionError):
-                self.request(task, message)
-
-    def test_post_stop_preclaim_error_preserves_completed_stop_and_selected_priority(self):
-        for engine in config.ENGINES:
-            for error in (RuntimeError("Resume preflight unavailable"), T.TransitionError("Resume preflight changed")):
-                with self.subTest(engine=engine, error=type(error).__name__):
-                    task = self.launch(engine)
-                    sibling, selected = [self.send(task, text) for text in ("earlier sibling", "selected")]
-                    self.request(task, selected)
-                    # Stop admission passes; the ordinary resume preflight then fails before claiming input.
-                    with mock.patch.object(dispatch, "resume_engine_hold", side_effect=[None, error]):
-                        with self.assertRaisesRegex(type(error), "Resume preflight"):
-                            self.execute(task)
-                    current = S.load_task(self.project, task["slug"])
-                    self.assertEqual(current["daemon_request"]["status"], "done")
-                    self.assertEqual(current["send_now"], selected["id"])
-                    self.assertEqual(current["resume_request"], selected["id"])
-                    self.assertTrue(current["resume_after"])
-                    self.assertEqual(T.pending(self.project, task["slug"]), [sibling, selected])
-                    self.assertTrue(self.delivery(task, selected)["send_now_pending"])
-                    with mock.patch.object(engines, "stop_l2_worker", wraps=self.worker.stop_l2_worker) as stop:
-                        dispatch.resume(self.project, task["slug"])
-                        stop.assert_not_called()
-                    self.assertEqual(self.worker.calls[-1]["prompt"], T.render_inbox([selected]))
-                    self.assertEqual(T.pending(self.project, task["slug"]), [sibling])
-
-    def test_engine_hold_arriving_before_execution_releases_interruption_request(self):
-        task = self.launch(config.ENGINES[0])
-        message = self.send(task, "Deliver when possible")
-        self.request(task, message)
-        with mock.patch.object(dispatch, "resume_engine_hold", return_value="Engine unavailable"):
-            self.assertEqual(self.execute(task)["request"]["status"], "refused")
-        current = S.load_task(self.project, task["slug"])
-        self.assertEqual(current["state"], "running")
-        self.assertNotIn("stop_id", current)
-        self.assertTrue(self.delivery(task, message)["removable"])
-        self.assertEqual(self.worker.workers[task["agent_id"]]["state"], "working")
-        retried = self.request(task, message)
-        self.assertTrue(retried["queued"])
-        self.assertNotEqual(retried["request"]["id"], current["daemon_request"]["id"])
-        self.execute(task)
-        self.assertEqual(self.delivery(task, message)["state"], "delivered")
-
-    def test_stop_restart_recovers_selected_message_once(self):
-        for engine in config.ENGINES:
-            with self.subTest(engine=engine):
-                task = self.launch(engine)
-                sibling, selected = [self.send(task, text) for text in ("sibling", "selected")]
-                request = self.request(task, selected)["request"]
-                current = S.load_task(self.project, task["slug"])
-                current["daemon_request"]["status"] = "executing"
-                S.save_task(self.project, current)
-                dispatch.stop(self.project, task["slug"], daemon_request_id=request["id"],
-                              expected_agent_id=task["agent_id"], expected_session_id=task["session_id"])
-                # A replacement daemon sees the committed Stop before the continuation was scheduled.
-                self.execute(task)
-                calls = len(self.worker.calls)
-                self.execute(task)
-                self.assertEqual(len(self.worker.calls), calls)
-                self.assertEqual(self.worker.calls[-1]["prompt"], T.render_inbox([selected]))
-                self.assertEqual(T.pending(self.project, task["slug"]), [sibling])
-
-    def test_restart_after_stop_receipt_keeps_durable_resume_without_replaying_stop(self):
-        task = self.launch(config.ENGINES[0])
-        sibling, selected = [self.send(task, text) for text in ("sibling", "selected")]
-        self.request(task, selected)
-        with mock.patch.object(dispatch, "_resume", side_effect=KeyboardInterrupt):
-            with self.assertRaises(KeyboardInterrupt):
-                self.execute(task)
-        current = S.load_task(self.project, task["slug"])
-        self.assertEqual(current["daemon_request"]["status"], "done")
-        self.assertIn(task["slug"], dispatch.resume_due(self.project))
-        with mock.patch.object(engines, "stop_l2_worker", wraps=self.worker.stop_l2_worker) as stop:
-            self.execute(task)
-            dispatch.resume(self.project, task["slug"])
-            stop.assert_not_called()
-        self.assertEqual(self.worker.calls[-1]["prompt"], T.render_inbox([selected]))
-        self.assertEqual(T.pending(self.project, task["slug"]), [sibling])
-
-    def test_capacity_lock_spans_stop_and_resume(self):
-        task = self.launch(config.ENGINES[0])
-        message = self.send(task, "Keep this owner's slot")
-        self.request(task, message)
-        observed = []
-        original_stop = self.worker.stop_l2_worker
-
-        def check_capacity():
-            with dispatch.launch_lock(wait=False) as ready:
-                observed.append(ready)
-
-        def stop(*args, **kwargs):
-            check_capacity()
-            return original_stop(*args, **kwargs)
-
-        self.worker.on_resume = check_capacity
-        with mock.patch.object(engines, "stop_l2_worker", side_effect=stop):
-            self.execute(task)
-        self.assertEqual(observed, [False, False])
-        with dispatch.launch_lock(wait=False) as ready:
-            self.assertTrue(ready)
-
-    def test_held_continuation_releases_operation_slot_and_stop_cancels_wake(self):
-        task = self.launch(config.ENGINES[0])
-        message = self.send(task, "Retain for resume")
-        self.request(task, message)
-        original_stop = self.worker.stop_l2_worker
-
-        def stop_then_hold(*args, **kwargs):
-            result = original_stop(*args, **kwargs)
-            self.patch(dispatch, "resume_engine_hold", return_value="Engine temporarily unavailable")
-            return result
-
-        with mock.patch.object(engines, "stop_l2_worker", side_effect=stop_then_hold):
-            self.assertIn("held", self.execute(task))
-        current = S.load_task(self.project, task["slug"])
-        self.assertEqual(current["daemon_request"]["status"], "done")
-        self.assertTrue(current["resume_after"])
+        message = self.send(task, "See the screenshot", uploads=[upload()])
+        self.assert_refused(task, message, dispatch.IMAGE_SEND_NOW)
         delivery = self.delivery(task, message)
-        self.assertTrue(delivery["send_now_pending"])
-        self.assertIn("unavailable", delivery["send_now_reason"])
-        dispatch.request_task_operation(self.project, task["slug"], "stop", "Keep this owner stopped",
-                                        actor=T.OPERATOR_MESSAGE_ROLE, generation=current["agent_id"])
-        self.execute(task)
-        current = S.load_task(self.project, task["slug"])
-        self.assertNotIn("resume_after", current)
-        self.assertNotIn("send_now", current)
-        self.assertEqual(T.pending(self.project, task["slug"]), [message])
+        self.assertEqual((delivery["send_now"], delivery["send_now_reason"], delivery["removable"]),
+                         (False, dispatch.IMAGE_SEND_NOW, True))
 
-    def test_new_question_supersedes_held_continuation(self):
+    def test_only_a_queued_operator_message_can_be_sent_now(self):
         task = self.launch(config.ENGINES[0])
-        message = self.send(task, "Earlier steering")
-        self.request(task, message)
-        original_resume = dispatch._resume
-        with mock.patch.object(dispatch, "_resume", return_value={"held": "fixture boundary"}):
-            self.execute(task)
-        current = T.escalate(self.project, task["slug"], "Which design should we use?")
-        self.assertNotIn("resume_after", current)
-        self.assertNotIn("send_now", current)
-        self.assertNotIn("stop_id", current)
-        self.assertEqual(dispatch.resume_due(self.project), [])
-        self.assertEqual(original_resume(self.project, task["slug"]), {"waiting": True})
-        self.assertFalse(self.delivery(task, message)["send_now_pending"])
+        coordinator = T.message(self.project, task["slug"], "l3", "Coordinator note")
+        self.assert_refused(task, coordinator, "Only queued operator messages")
+        self.assert_refused(task, {"id": "missing"}, "Only queued operator messages")
+        removed = self.send(task, "Remove me")
+        T.remove_message(self.project, task["slug"], removed["id"])
+        self.assert_refused(task, removed, "removed")
+        picked = self.send(task, "Already picked up")
+        self.assertEqual(T.take_inbox(self.project, task["slug"], ids={picked["id"]}), [picked])
+        self.assertEqual(self.request(task, picked), {"status": "delivered", "idempotent": True})
+        self.assertNotIn("send_now", S.load_task(self.project, task["slug"]))
 
-    def test_reject_remains_available_during_held_continuation(self):
+    # ---- the HTTP endpoint ----------------------------------------------------------------------------------
+
+    def test_endpoint_answers_synchronously_and_starts_no_task_operation(self):
+        self.patch(server, "overview", new=lambda: {"state": "ready"})
+        self.patch(server, "log", new=lambda *_: None)
+        httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        httpd.daemon_threads = True
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+
+        def post(body):
+            raw = json.dumps(body).encode()
+            head = (f"POST /api/l2/send-now HTTP/1.0\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"
+                    f"Content-Length: {len(raw)}\r\n\r\n").encode()
+            with socket.create_connection(httpd.server_address, timeout=10) as sock:
+                sock.sendall(head + raw)
+                data = b"".join(iter(lambda: sock.recv(65536), b""))
+            headers, _, payload = data.partition(b"\r\n\r\n")
+            return int(headers.split()[1]), json.loads(payload)
+
         task = self.launch(config.ENGINES[0])
-        message = self.send(task, "Keep for continuation")
-        self.request(task, message)
-        with mock.patch.object(dispatch, "_resume", return_value={"held": "fixture admission pause"}):
-            self.execute(task)
-        dispatch.request_task_operation(self.project, task["slug"], "reject", "End this task",
-                                        actor=T.OPERATOR_MESSAGE_ROLE)
-        self.execute(task)
-        self.assertEqual(S.load_task(self.project, task["slug"])["state"], "rejected")
-        self.assertEqual(dispatch.resume_due(self.project), [])
+        selected, other = self.send(task, "selected"), self.send(task, "other")
+        body = {"project": self.project, "slug": task["slug"]}
+        with mock.patch.object(server, "spawn", side_effect=AssertionError("Send now spawned work")):
+            self.assertEqual(post({**body, "id": selected["id"]}), (200, {"status": "sending", "idempotent": False}))
+            self.assertEqual(post({**body, "id": selected["id"]}), (200, {"status": "sending", "idempotent": True}))
+            status, refusal = post({**body, "id": other["id"]})
+        self.assertEqual(status, 409)
+        self.assertIn("Another message is being sent now", refusal["error"])
+        self.assertTrue((self.sends(task) / f"{selected['id']}.json").exists())
 
-    def test_fault_during_native_stop_supersedes_wake_and_coordinator_discussion_stays_quiet(self):
-        for engine in config.ENGINES:
-            with self.subTest(engine=engine):
-                task = self.launch(engine)
-                message = self.send(task, "Earlier steering")
-                self.request(task, message)
-                original_stop = self.worker.stop_l2_worker
 
-                def stop_then_fault(*args, **kwargs):
-                    result = original_stop(*args, **kwargs)
-                    incidents.system_fault("fixture-send-now", "A newer failure needs recovery",
-                                           project=self.project, task=task["slug"])
-                    return result
+class TestSendNowInboxHook(AltitudeCase):
+    """The inbox hook neither lists the message the driver is writing nor ends the turn for it."""
 
-                calls = len(self.worker.calls)
-                with mock.patch.object(engines, "stop_l2_worker", side_effect=stop_then_fault):
-                    self.assertEqual(self.execute(task)["request"]["status"], "refused")
-                current = S.load_task(self.project, task["slug"])
-                self.assertEqual(current["fault"], "fixture-send-now")
-                self.assertNotIn("resume_after", current)
-                self.assertNotIn("send_now", current)
-                self.assertNotIn("stop_id", current)
-                coordinator = T.message(self.project, task["slug"], "l3", "Recovery is still pending")
-                self.assertFalse(coordinator["wake"])
-                self.assertEqual(dispatch.resume_due(self.project), [])
-                self.assertEqual(len(self.worker.calls), calls)
-                with self.assertRaisesRegex(T.TransitionError, "faulted"):
-                    self.request(task, message)
+    def setUp(self):
+        super().setUp()
+        task = T.new(self.project, "Hooked task", "request")
+        self.slug = task["slug"]
+        task.update({"state": "running", "attempt": 1, "session_id": "sid", "agent_id": "aid"})
+        S.save_task(self.project, task)
+        give_driver(dispatch.l2_job_root(self.project, self.slug), "aid")
 
-    def test_question_during_native_stop_supersedes_delivery_and_retains_answer_path(self):
-        for engine in config.ENGINES:
-            with self.subTest(engine=engine):
-                task = self.launch(engine)
-                message = self.send(task, "Steering before new question")
-                self.request(task, message)
-                original_stop = self.worker.stop_l2_worker
+    def run_hook(self, event):
+        env = dict(os.environ, ALTITUDE_HOME=str(config.ROOT), ALTITUDE_PROJECT=self.project, ALTITUDE_TASK=self.slug)
+        payload = {"hook_event_name": event, "session_id": "sid",
+                   **({"tool_name": "Bash"} if event == "PostToolUse" else {"stop_hook_active": False})}
+        done = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload), text=True,
+                              capture_output=True, env=env, timeout=60)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout
 
-                def stop_then_question(*args, **kwargs):
-                    result = original_stop(*args, **kwargs)
-                    T.escalate(self.project, task["slug"], "Which direction should this task take?")
-                    return result
+    def test_the_claimed_message_is_not_waiting_and_does_not_end_the_turn(self):
+        selected = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Use the staging copy.")
+        self.assertEqual(dispatch.request_send_now(self.project, self.slug, selected["id"])["status"], "sending")
 
-                calls = len(self.worker.calls)
-                with mock.patch.object(engines, "stop_l2_worker", side_effect=stop_then_question):
-                    self.assertEqual(self.execute(task)["request"]["status"], "refused")
-                current = S.load_task(self.project, task["slug"])
-                self.assertNotIn("stop_id", current)
-                self.assertNotIn("send_now", current)
-                self.assertNotIn("resume_after", current)
-                self.assertEqual(len(self.worker.calls), calls)
-                self.assertEqual(current["waiting_on"], T.OPERATOR_MESSAGE_ROLE)
-                self.send(task, "Answer to the new question")
-                self.assertIn(task["slug"], dispatch.resume_due(self.project))
-                dispatch.resume(self.project, task["slug"])
+        self.assertEqual(self.run_hook("PostToolUse"), "")
+        self.assertEqual(self.run_hook("Stop"), "")
+        self.assertIsNone(S.load_task(self.project, self.slug).get("turn_released"))
+        self.assertEqual(T.pending(self.project, self.slug), [selected])
 
-    def test_unconfirmed_stop_never_launches_replacement(self):
-        task = self.launch(config.ENGINES[0])
-        message = self.send(task, "Do not duplicate")
-        self.request(task, message)
-        calls = len(self.worker.calls)
-        with mock.patch.object(engines, "stop_l2_worker", side_effect=RuntimeError("Termination unknown")):
-            with self.assertRaisesRegex(RuntimeError, "Termination unknown"):
-                self.execute(task)
-        current = S.load_task(self.project, task["slug"])
-        self.assertEqual(len(self.worker.calls), calls)
-        self.assertEqual(current["daemon_request"]["status"], "failed")
-        self.assertNotIn("resume_after", current)
-        self.assertEqual(T.pending(self.project, task["slug"]), [message])
+        other = T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Say macOS is supported.")
+        context = json.loads(self.run_hook("PostToolUse"))["hookSpecificOutput"]["additionalContext"]
+        self.assertIn(f"1 message from Operator (message id {other['id']}) waits", context)
+        self.assertNotIn(selected["id"], context)
+        self.assertEqual(self.run_hook("Stop"), "")
+        self.assertIsNotNone(S.load_task(self.project, self.slug).get("turn_released"))
+        self.assertEqual(S.load_task(self.project, self.slug)["send_now"]["id"], selected["id"])

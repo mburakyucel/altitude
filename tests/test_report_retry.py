@@ -41,7 +41,7 @@ class TestReportRetry(AltitudeCase):
                     "usage": {"input_tokens": 10}, "context_tokens": 10, "error": None, "tools": []}
 
         self.provider_fault = False
-        for seam in ("claude_print", "codex_exec"):
+        for seam in ("claude_print", "codex_turn"):
             self.patch(engines, seam, side_effect=execute)
         self.slug = "fictional-report"
         directory = S.task_dir(self.project, self.slug)

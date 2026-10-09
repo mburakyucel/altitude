@@ -9,12 +9,17 @@ from tests.support import AltitudeCase
 from altitude import engines
 
 
+class _Input(io.StringIO):
+    def close(self):  # keep the launch input readable after the adapter closes the pipe
+        pass
+
+
 class FakeProcess:
     pid = 123
     returncode = 0
 
     def __init__(self, stdout="", stderr=""):
-        self.stdin = io.StringIO()
+        self.stdin = _Input()
         self.stdout = io.StringIO(stdout)
         self.stderr = io.StringIO(stderr)
 
@@ -36,6 +41,15 @@ class TestEngineRawCapture(AltitudeCase):
         process = SimpleNamespace(pid=1, returncode=0, stdin=io.StringIO(), communicate=lambda *_a, **_k: (stdout, "codex diagnostic\n"))
         with mock.patch.object(engines.subprocess, "Popen", return_value=process):
             result = engines.codex_exec("prompt", cwd=self.tmp)
+
+        self.assertEqual(result["raw_stdout"], stdout)
+        self.assertEqual(result["raw_stderr"], "codex diagnostic\n")
+        self.assertEqual(result["usage"], {"input_tokens": 3})
+
+    def test_codex_coordinator_turn_returns_both_raw_streams(self):
+        stdout = json.dumps({"type": "turn.completed", "usage": {"input_tokens": 3}}) + "\n"
+        with mock.patch.object(engines.subprocess, "Popen", return_value=FakeProcess(stdout, "codex diagnostic\n")):
+            result = engines.codex_turn("prompt", cwd=self.tmp)
 
         self.assertEqual(result["raw_stdout"], stdout)
         self.assertEqual(result["raw_stderr"], "codex diagnostic\n")

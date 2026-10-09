@@ -54,7 +54,7 @@ class TestRepositoryInstructions(AltitudeCase):
                         real_popen = engines.subprocess.Popen
 
                         def execute(cmd, **kwargs):
-                            if cmd[0] == "git":
+                            if cmd[-len(engines._driver_command()):] != engines._driver_command():
                                 return real_popen(cmd, **kwargs)
                             event = ({"type": "thread.started", "thread_id": "session"} if engine == "codex"
                                      else {"type": "system", "subtype": "init", "session_id": "session"})
@@ -77,7 +77,9 @@ class TestRepositoryInstructions(AltitudeCase):
                                 result = engines.start_l2(engine, "fixture", "Start task.", **kwargs)
                         self.assertEqual(result["returncode"], 0, result)
                         self.assertEqual(result["agent"]["sessionId"], "session")
-                        prompt = processes[0].stdin.getvalue().decode()
+                        spec = json.loads(processes[0].stdin.getvalue())
+                        self.assertEqual((spec["engine"], spec["cwd"]), (engine, str(self.repo)))
+                        prompt = spec["input"][0]["text"]
                         self.assert_rules(prompt, rules)
                         # #441: every fresh/resumed owner learns where the browser keeps its sandbox, even without
                         # project rules.
@@ -97,7 +99,7 @@ class TestRepositoryInstructions(AltitudeCase):
             for engine in config.ENGINES:
                 project = f"{kind}-{engine}"
                 self.register(project)
-                seam = "codex_exec" if engine == "codex" else "claude_print"
+                seam = "codex_turn" if engine == "codex" else "claude_print"
                 for resume in (False, True):
                     with self.subTest(kind=kind, engine=engine, resume=resume):
                         def execute(prompt, **kwargs):

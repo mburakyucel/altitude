@@ -174,6 +174,7 @@ class ContainerAdmission(AltitudeCase):
         invocations = [
             lambda: engines.claude_print("fixture", cwd=self.tmp),
             lambda: engines.codex_exec("fixture", cwd=self.tmp),
+            lambda: engines.codex_turn("fixture", cwd=self.tmp),
             lambda: engines._start_worker("claude", "fixture", "prompt", cwd=self.tmp, job_root=self.tmp),
             lambda: engines._start_worker("codex", "fixture", "prompt", cwd=self.tmp, job_root=self.tmp),
             lambda: engines.conversation_review(self.project, "fixture", engine="claude", model="fixture"),

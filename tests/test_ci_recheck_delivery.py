@@ -5,7 +5,13 @@ import threading
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import config, engines, l3, state as S, tasks as T
+from altitude import config, engines, l3, platform, state as S, tasks as T
+
+
+def durable(engine: str, call) -> bool:
+    """Whether the coordinator turn outlives altd, bounded by its own timeout: Claude's print turn runs as a job when
+    asked; a Codex coordinator turn has no other mode (`TestCoordinatorJob`)."""
+    return call.kwargs["durable_timeout"] if engine == "claude" else "durable_timeout" not in call.kwargs
 
 
 class TestCIRecheckDelivery(AltitudeCase):
@@ -49,7 +55,7 @@ class TestCIRecheckDelivery(AltitudeCase):
                     "usage": {"input_tokens": 10}, "context_tokens": 10, "cost": 0.0,
                     "error": error, "tools": []}
 
-        seam = "claude_print" if engine == "claude" else "codex_exec"
+        seam = "claude_print" if engine == "claude" else "codex_turn"
         with mock.patch.object(l3, "_select", return_value={"engine": engine, "why": "fixture"}), \
              mock.patch.object(engines, seam, side_effect=execute) as call:
             yield call
@@ -263,7 +269,7 @@ class TestCIRecheckDelivery(AltitudeCase):
                     self.assertIsNone(l3.deliver_queued(self.project))
                 repeated.assert_not_called()
                 provider.assert_called_once()
-                self.assertTrue(provider.call_args.kwargs["durable_timeout"])
+                self.assertTrue(durable(engine, provider.call_args))
                 self.assertEqual(self.record()["status"], "failed")
                 self.assertEqual(self.record()["delivery"]["attempts"], 1)
                 self.assertIn("uncertain", self.record()["delivery"]["error"])
@@ -339,7 +345,7 @@ class TestCIRecheckDelivery(AltitudeCase):
                 with self.provider(engine) as provider:
                     l3.deliver_queued(self.project)
                 self.assertEqual(provider.call_args.kwargs["timeout"], 30)
-                self.assertTrue(provider.call_args.kwargs["durable_timeout"])
+                self.assertTrue(durable(engine, provider.call_args))
                 self.assertEqual(self.record()["status"], "done")
 
     def test_stale_identity_invalidates_queued_action_without_turn(self):
@@ -400,3 +406,18 @@ class TestCIRecheckDelivery(AltitudeCase):
         self.assertEqual(S.load_task(self.project, self.slug), task)
         self.assertEqual(l3.queued(self.project), rows)
         self.assertEqual(l3.chat_history(self.project), [])
+
+
+class TestCoordinatorJob(AltitudeCase):
+    host = "linux"  # systemd fixtures
+
+    def test_codex_coordinator_turn_is_a_job_bounded_by_its_timeout(self):
+        with mock.patch.object(engines.subprocess, "Popen",
+                               side_effect=RuntimeError("fixture: execution intercepted")) as popen:
+            with self.assertRaisesRegex(RuntimeError, "intercepted"):
+                engines.codex_turn("Probe evidence", cwd=self.repo, timeout=37)
+        cmd = popen.call_args.args[0]
+        self.assertEqual(cmd[0], platform.SYSTEMD_RUN)
+        for flag in ("--property=RuntimeMaxSec=37", "--property=KillMode=control-group"):
+            self.assertIn(flag, cmd)
+        self.assertEqual(cmd[-len(engines._driver_command()):], engines._driver_command())

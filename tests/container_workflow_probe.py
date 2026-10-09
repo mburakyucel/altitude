@@ -17,18 +17,29 @@ from unittest import mock
 ENGINE = r'''
 import json, os, sys, time, uuid
 from pathlib import Path
-prompt = sys.stdin.read()
-session = sys.argv[-2] if 'resume' in sys.argv else str(uuid.uuid4())
-if os.environ.get('ALTITUDE_TASK'):
-    with Path('fixture-input.jsonl').open('a') as output:
-        output.write(json.dumps({'session':session, 'prompt':prompt}) + '\n')
-    print(json.dumps({'type':'thread.started', 'thread_id':session}), flush=True)
-    time.sleep(90)
-else:
-    print(json.dumps({'type':'thread.started', 'thread_id':session}), flush=True)
-    print(json.dumps({'type':'item.completed', 'item':{'type':'agent_message',
-        'text':'Fictional coordinator connected.'}}), flush=True)
-    print(json.dumps({'type':'turn.completed', 'usage':{'input_tokens':1, 'output_tokens':1}}), flush=True)
+def out(message):
+    print(json.dumps(message), flush=True)
+for raw in sys.stdin:  # Codex app-server: JSON-RPC over stdio
+    message = json.loads(raw)
+    method, identity, params = message.get('method'), message.get('id'), message.get('params') or {}
+    if method == 'initialize':
+        out({'id':identity, 'result':{}})
+    elif method in ('thread/start', 'thread/resume'):
+        session = params.get('threadId') or str(uuid.uuid4())
+        out({'id':identity, 'result':{'thread':{'id':session}}})
+    elif method == 'turn/start':
+        prompt = ''.join(item.get('text', '') for item in params['input'])
+        out({'id':identity, 'result':{'turn':{'id':'turn-1', 'status':'inProgress'}}})
+        out({'method':'turn/started', 'params':{'turn':{'id':'turn-1'}}})
+        if os.environ.get('ALTITUDE_TASK'):
+            with Path('fixture-input.jsonl').open('a') as output:
+                output.write(json.dumps({'session':session, 'prompt':prompt}) + '\n')
+            time.sleep(90)
+            raise SystemExit(0)
+        out({'method':'item/completed', 'params':{'item':{'type':'agentMessage', 'id':'message',
+            'text':'Fictional coordinator connected.'}}})
+        out({'method':'thread/tokenUsage/updated', 'params':{'tokenUsage':{'total':{'inputTokens':1, 'outputTokens':1}}}})
+        out({'method':'turn/completed', 'params':{'turn':{'id':'turn-1', 'status':'completed'}}})
 '''
 
 

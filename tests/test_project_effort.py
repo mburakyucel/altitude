@@ -133,7 +133,7 @@ class TestProjectEffort(AltitudeCase):
                             "engine_model": "reported-model", "engine_reasoning_effort": "low",
                             "usage": {}, "returncode": 0}
 
-                boundary = "codex_exec" if engine == "codex" else "claude_print"
+                boundary = "codex_turn" if engine == "codex" else "claude_print"
                 with mock.patch.object(engines, boundary, side_effect=provider):
                     self.assertTrue(l3.turn(self.project, "First turn")["completed"])
                     set_default(self.project, setting, "max")
@@ -151,7 +151,7 @@ class TestProjectEffort(AltitudeCase):
         self.register(self.project, routing=config.parse_routing("codex > claude:opus"), l3_codex_effort="max")
         failure = {"text": "", "session_id": "conversation", "reported_session_id": "conversation",
                    "error": "reasoning effort max is unsupported by this model", "returncode": 1}
-        with mock.patch.object(engines, "codex_exec", return_value=failure) as provider, \
+        with mock.patch.object(engines, "codex_turn", return_value=failure) as provider, \
              mock.patch.object(engines, "claude_print") as fallback:
             result = l3.turn(self.project, "Try requested effort")
         self.assertFalse(result["completed"])

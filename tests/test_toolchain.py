@@ -93,7 +93,7 @@ class TestToolchain(AltitudeCase):
         node_bin = nvm_fixture(self)
         self.patch(config, "CODEX_BIN", "fixture-engine")
         binary = node_bin / "fixture-engine"
-        binary.write_text("#!/bin/sh\necho --image\n")
+        binary.write_text("#!/bin/sh\necho --strict-config\n")
         binary.chmod(0o755)
         self.assertIsNone(engines.installation("codex")["available"])
         self.assertTrue(engines.image_capability("codex")["available"])
@@ -126,28 +126,51 @@ class TestToolchain(AltitudeCase):
         self.patch(engines, "_codex_processes", {})
         self.patch(engines, "claude_agents", return_value=[])
         self.patch(platform, "job_active", return_value=False)
+        check_tools = (
+            "import json, os, subprocess, sys\n"
+            "assert os.environ['ALTITUDE_TASK'] == 'toolchain-task'\n"
+            "assert os.environ['ALTITUDE_ATTEMPT'] == '1'\n"
+            "assert subprocess.check_output(['node', '--version'], text=True).strip() == 'v24.21.0'\n"
+            "assert subprocess.check_output(['pnpm', '--version'], text=True).strip() == '10.34.5'\n"
+            "def out(message): print(json.dumps(message), flush=True)\n")
+        speak = {
+            # Claude's stream-json: the first input line is the prompt; input closes after the result.
+            "claude": (
+                "first = json.loads(sys.stdin.readline())\n"
+                "assert 'continue' in first['message']['content'][0]['text']\n"
+                "assert ('--resume' in sys.argv) == resume\n"
+                "out({'type': 'system', 'subtype': 'init', 'session_id': 'session'})\n"
+                "out({'type': 'result', 'is_error': True, 'result': 'fixture failure'})\n"
+                "sys.stdin.read()\n"),
+            # Codex app-server: a resume is a thread/resume request, and the turn fails.
+            "codex": (
+                "for raw in sys.stdin:\n"
+                "    message = json.loads(raw)\n"
+                "    method, params = message.get('method'), message.get('params') or {}\n"
+                "    if method == 'initialize':\n"
+                "        out({'id': message['id'], 'result': {}})\n"
+                "    elif method in ('thread/start', 'thread/resume'):\n"
+                "        assert (method == 'thread/resume') == resume and params.get('threadId') == (resume and 'session' or None)\n"
+                "        out({'id': message['id'], 'result': {'thread': {'id': 'session'}}})\n"
+                "    elif method == 'turn/start':\n"
+                "        assert 'continue' in params['input'][0]['text']\n"
+                "        out({'id': message['id'], 'result': {'turn': {'id': 'turn-1'}}})\n"
+                "        out({'method': 'turn/started', 'params': {'turn': {'id': 'turn-1'}}})\n"
+                "        out({'method': 'turn/completed', 'params': {'turn': {'id': 'turn-1', 'status': 'failed',\n"
+                "            'error': {'message': 'fixture failure'}}}})\n"),
+        }
         for engine in ("claude", "codex"):
             for resume in (False, True):
                 with self.subTest(engine=engine, resume=resume):
-                    init = ({"type": "system", "subtype": "init", "session_id": "session"}
-                            if engine == "claude" else {"type": "thread.started", "thread_id": "session"})
-                    end = ({"type": "result", "is_error": True, "result": "fixture failure"}
-                           if engine == "claude" else {"type": "turn.failed", "error": {"message": "fixture failure"}})
-                    script = (
-                        "import os, subprocess, sys\n"
-                        "assert os.environ['ALTITUDE_TASK'] == 'toolchain-task'\n"
-                        "assert os.environ['ALTITUDE_ATTEMPT'] == '1'\n"
-                        "assert subprocess.check_output(['node', '--version'], text=True).strip() == 'v24.21.0'\n"
-                        "assert subprocess.check_output(['pnpm', '--version'], text=True).strip() == '10.34.5'\n"
-                        "assert 'continue' in sys.stdin.read()\n"
-                        f"print({json.dumps(init)!r}, flush=True)\n"
-                        f"print({json.dumps(end)!r}, flush=True)\n")
+                    fake = self.tmp / f"fake-{engine}-{resume}"
+                    fake.write_text(f"#!{sys.executable}\nresume = {resume}\n" + check_tools + speak[engine])
+                    fake.chmod(0o755)
+                    self.patch(config, "CLAUDE_BIN" if engine == "claude" else "CODEX_BIN", str(fake))
 
                     def service_command(unit, command, child_env, **_):
-                        self.assertEqual("resume" in command or "--resume" in command, resume)
+                        self.assertEqual(command, engines._driver_command())
                         # Preserve the real transient unit's clean child environment without contacting systemd.
-                        return ["/usr/bin/env", "-i", *(f"{k}={v}" for k, v in child_env.items()),
-                                sys.executable, "-c", script]
+                        return ["/usr/bin/env", "-i", *(f"{k}={v}" for k, v in child_env.items()), *command]
 
                     with mock.patch.object(platform, "job_command", side_effect=service_command):
                         result = engines._start_worker(
@@ -159,6 +182,7 @@ class TestToolchain(AltitudeCase):
                     process = engines._codex_processes.get(worker_id)
                     if process:
                         process.wait(timeout=5)
+                    self.assertEqual(engines._codex_paths(self.tmp / "jobs", worker_id)["stderr"].read_text(), "")
                     row = engines.worker(engine, {"agent_id": worker_id}, job_root=self.tmp / "jobs")
                     self.assertEqual(row["sessionId"], "session")
                     self.assertEqual(row["state"], "failed")

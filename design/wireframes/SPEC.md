@@ -1059,8 +1059,8 @@ blocked tasks.
 The existing message bubble shows **Queued · waiting for a checkpoint**, **Queued · held until you
 continue**, **Delivered to session** only with handoff evidence, or **Delivery unconfirmed** when
 evidence is missing. Each eligible queued operator bubble has a bordered **Send now** beside **Remove**;
-Send now explains **Stops work and reviews to deliver now.** It requests the
-existing Stop and same-session continuation for that message. Quick-choice receipts and
+Send now explains **Joins the current turn without stopping its work.** It hands that message to
+the running turn, which reads it as the operator's next message. Quick-choice receipts and
 messages already used by recorded decisions keep their evidence. **Removing…** disables removal until
 the response; success replaces only that bubble's text with **Message removed** and **Removed · not
 sent to the session**. Original text remains in durable evidence. Claim shows **Sending to session ·
@@ -1068,9 +1068,11 @@ cannot remove**, and uncertain handoff shows **Delivery unconfirmed · cannot re
 A prelaunch failure restores the queued controls. A refused removal refreshes delivery and names the
 refusal beside that message; denied and unconfirmed requests show their own inline error. Saved or
 loading reads disable both actions. **Sending now…** disables repeated sends and removal while the
-request or server delivery is pending. The server's receipt establishes delivery; the UI does not move
-the message optimistically. Stopped, question-waiting, faulted or unavailable owners show the server's
-reason beside a disabled Send now. Denied, conflict and unconfirmed requests refresh the row and show
+request is pending; an accepted message shows **Sending now · joining the current turn** with no Remove
+until the turn takes it in (**Delivered to session**) or returns it to the queue. The server's receipt
+establishes delivery; the UI does not move the message optimistically. Stopped, question-waiting,
+faulted or unavailable owners, messages with images and a second message while one is being sent show
+the server's reason beside a disabled Send now. Denied, conflict and unconfirmed requests refresh the row and show
 their inline explanation. Claimed, delivered and removed messages have no Send now control.
 The empty queue has no queued controls; listening and transcription
 keep the existing composer behavior. Removal does not undo a lifecycle request or recorded decision.
@@ -1633,13 +1635,13 @@ Messages sent while L3 is mid-turn queue and run at the next turn boundary in or
 keeps its accent circle with the arrow. Phone names the active work in the header and the run order
 on queued rows; desktop also shows "L3 is mid-turn · runs next" under the field. Queued rows stay
 inside the message area until they run, with bordered **Send now** beside **Remove** while permitted.
-Send now puts that row first, interrupts an active chat at its engine's safe boundary, and runs the
-selected message next. System work finishes before the selected message runs. Pending rows say
-**Sending now…**, with **Waiting for current turn to stop** or **Runs next after system work** as
-appropriate; Send now is disabled. Remove is disabled while the HTTP request is pending and remains
-available after acceptance until claim, even when an engine becomes unavailable. Removal does not
-undo an interruption already requested. An unavailable engine, active chat still starting or operator
-wait disables Send now with the server's explanation. Denied, conflict and unconfirmed requests retain the row
+Send now hands that row to the running chat turn, which reads it without stopping its work. Pending
+rows say **Sending now…** with **Sending into the current turn** and no Remove. Once the turn takes it in,
+the reply so far ends, the message appears as the operator's bubble, and the rest of the reply streams
+beneath it. A message with images, one sent during system work (**Runs next after system work**) or while
+no turn runs (**Runs next**) moves first and runs as the next turn; Remove stays available until claim.
+Remove is disabled while the HTTP request is pending. An unavailable engine or operator wait disables
+Send now with the server's explanation. Denied, conflict and unconfirmed requests retain the row
 and show their own inline error after refreshing canonical state. The row becomes its turn bubble
 only when the server admits it; claimed, delivered or removed rows have no queued actions.
 Both controls have 44px phone targets and wrap with their explanations on narrow screens.

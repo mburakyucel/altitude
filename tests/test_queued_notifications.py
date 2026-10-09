@@ -31,7 +31,7 @@ class TestQueuedNotifications(AltitudeCase):
             return {"text": "Question relayed.", "session_id": sid, "reported_session_id": sid,
                     "usage": {"input_tokens": 10}, "context_tokens": 10, "error": None, "tools": []}
 
-        for seam in ("claude_print", "codex_exec"):
+        for seam in ("claude_print", "codex_turn"):
             self.patch(engines, seam, side_effect=execute)
 
     def queue(self) -> list[dict]:

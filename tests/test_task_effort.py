@@ -1,12 +1,10 @@
 """Task effort selection, native launch arguments, and conversation-preserving resume."""
-import io
 import json
 import subprocess
-from types import SimpleNamespace
 from unittest import mock
 
 from tests.support import ALT, AltitudeCase
-from tests.test_codex_door import FakeProcess
+from tests.test_codex_door import FakeProcess, launch_spec
 from tests.test_engine_raw_capture import FakeProcess as PrintProcess
 from tests.test_engines import _Process as ClaudeWorker
 from altitude import config, dispatch, engines, incidents, platform, route, state as S, status, tasks as T
@@ -163,10 +161,10 @@ class TestTaskEffort(AltitudeCase):
         native_launches = []
         real_popen = subprocess.Popen
         def popen(cmd, **kwargs):
-            if config.CODEX_BIN not in cmd:
+            if cmd[-len(engines._driver_command()):] != engines._driver_command():
                 return real_popen(cmd, **kwargs)
-            native_launches.append(cmd)
             proc = FakeProcess(cmd, stdout=kwargs["stdout"], thread="conversation")
+            native_launches.append(proc)
             kwargs["stdout"].write((json.dumps({"type": "turn.failed", "error": {"message": error}}) + "\n").encode())
             proc.alive = False
             return proc
@@ -176,6 +174,7 @@ class TestTaskEffort(AltitudeCase):
             dispatch.run(self.project, task["slug"])
             finished = dispatch.poll(self.project)
         self.assertEqual(len(native_launches), 1)
+        self.assertEqual(launch_spec(native_launches[0])["command"][:2], [config.CODEX_BIN, "app-server"])
         self.assertEqual(len(finished), 1)
         self.assertTrue(finished[0]["died"])
         self.assertIn(error, finished[0]["detail"])
@@ -207,8 +206,10 @@ class TestEffortCommand(AltitudeCase):
         for resume in (False, True):
             for effort in (None, "medium", "xhigh", "max"):
                 with self.subTest(resume=resume, effort=effort):
+                    processes = []
                     def popen(cmd, **kwargs):
-                        return ClaudeWorker(kwargs["stdout"], session="conversation")
+                        processes.append(ClaudeWorker(kwargs["stdout"], session="conversation"))
+                        return processes[-1]
                     with mock.patch.object(engines.subprocess, "Popen", side_effect=popen) as launch:
                         kwargs = dict(cwd=self.repo, persona=config.PERSONAS / "l2.md", model="opus",
                                       effort=effort, settings=self.tmp / "settings.json", extra_env={},
@@ -216,12 +217,15 @@ class TestEffortCommand(AltitudeCase):
                         result = (engines.resume_l2("claude", "task", "conversation", "message", **kwargs) if resume
                                   else engines.start_l2("claude", "task", "request", **kwargs))
                     self.assertEqual(result["returncode"], 0)
-                    command = launch.call_args.args[0]
+                    job = launch.call_args.args[0]
+                    command = launch_spec(processes[-1])["command"]
+                    self.assertEqual(command[0], config.CLAUDE_BIN)
                     self.assertEqual("--resume" in command, resume)
                     self.assertEqual("--effort" in command, effort is not None)
                     if effort is not None:
                         self.assertEqual(command[command.index("--effort") + 1], effort)
                         self.assertNotIn("CLAUDE_CODE_EFFORT_LEVEL", launch.call_args.kwargs["env"])
+                        self.assertFalse(any(arg.startswith("CLAUDE_CODE_EFFORT_LEVEL=") for arg in job))
                     record = S.read_json(self.tmp / "jobs" / (result["agent"]["id"] + ".json"))
                     self.assertEqual(record["launch_effort"], effort)
 
@@ -232,11 +236,15 @@ class TestEffortCommand(AltitudeCase):
             for effort in (None, "high", "max"):
                 with self.subTest(resume=resume, effort=effort):
                     event = {"type": "result", "session_id": "conversation", "result": "done"}
-                    with mock.patch.object(engines.subprocess, "Popen", return_value=PrintProcess(json.dumps(event) + "\n")) as launch:
+                    process = PrintProcess(json.dumps(event) + "\n")
+                    with mock.patch.object(engines.subprocess, "Popen", return_value=process) as launch:
                         result = engines.claude_print("request", cwd=self.repo, effort=effort, resume=resume,
                                                       settings=self.tmp / "settings.json")
                     self.assertIsNone(result["error"])
-                    command = launch.call_args.args[0]
+                    self.assertEqual(launch.call_args.args[0][-len(engines._driver_command()):],
+                                     engines._driver_command())
+                    command = launch_spec(process)["command"]
+                    self.assertEqual(command[0], config.CLAUDE_BIN)
                     self.assertEqual("--resume" in command, resume is not None)
                     self.assertEqual("--effort" in command, effort is not None)
                     if effort is not None:
@@ -247,10 +255,10 @@ class TestEffortCommand(AltitudeCase):
         for resume in (False, True):
             for effort in (None, "low", "medium", "high", "xhigh", "max", "ultra"):
                 with self.subTest(resume=resume, effort=effort):
-                    commands = []
+                    processes = []
                     def popen(cmd, **kwargs):
-                        commands.append(cmd)
-                        return FakeProcess(cmd, stdout=kwargs["stdout"], thread="conversation")
+                        processes.append(FakeProcess(cmd, stdout=kwargs["stdout"], thread="conversation"))
+                        return processes[-1]
                     with mock.patch.object(engines.subprocess, "Popen", side_effect=popen), \
                          mock.patch.object(engines, "_git_dirs", return_value=[]), \
                          mock.patch.object(platform, "job_active", return_value=False):
@@ -260,9 +268,10 @@ class TestEffortCommand(AltitudeCase):
                         result = (engines.resume_l2("codex", "task", "conversation", "message", **kwargs) if resume
                                   else engines.start_l2("codex", "task", "request", **kwargs))
                     self.assertEqual(result["returncode"], 0)
-                    selected = [arg for arg in commands[0] if arg.startswith("model_reasoning_effort=")]
+                    spec = launch_spec(processes[0])
+                    selected = [arg for arg in spec["command"] if arg.startswith("model_reasoning_effort=")]
                     self.assertEqual(selected, [] if effort is None else [f'model_reasoning_effort="{effort}"'])
-                    self.assertEqual("resume" in commands[0], resume)
+                    self.assertEqual(spec["resume"], "conversation" if resume else None)
                     record = S.read_json(self.tmp / "jobs" / (result["agent"]["id"] + ".json"))
                     self.assertEqual(record["launch_effort"], effort)
                     self.assertNotIn("engine_reasoning_effort", record)
@@ -272,12 +281,16 @@ class TestEffortCommand(AltitudeCase):
         for resume in (None, "conversation"):
             for effort in (None, "high", "ultra"):
                 with self.subTest(resume=resume, effort=effort):
-                    process = SimpleNamespace(pid=123, returncode=0, stdin=io.StringIO(), communicate=lambda *args, **kwargs: (output, ""))
+                    process = PrintProcess(output)
                     with mock.patch.object(engines.subprocess, "Popen", return_value=process) as launch:
-                        result = engines.codex_exec("request", cwd=self.repo, effort=effort, resume=resume)
+                        result = engines.codex_turn("request", cwd=self.repo, effort=effort, resume=resume)
                     self.assertIsNone(result["error"])
-                    command = launch.call_args.args[0]
-                    self.assertEqual("resume" in command, resume is not None)
+                    self.assertEqual(launch.call_args.args[0][-len(engines._driver_command()):],
+                                     engines._driver_command())
+                    spec = launch_spec(process)
+                    command = spec["command"]
+                    self.assertEqual(command[:2], [config.CODEX_BIN, "app-server"])
+                    self.assertEqual(spec["resume"], resume)
                     selected = [arg for arg in command if arg.startswith("model_reasoning_effort=")]
                     self.assertEqual(selected, [] if effort is None else [f'model_reasoning_effort="{effort}"'])
 

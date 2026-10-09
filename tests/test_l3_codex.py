@@ -27,7 +27,7 @@ class TestL3Sessions(AltitudeCase):
             return {"text": "answer", "reported_session_id": "cx-1", **metadata}
 
         with mock.patch.object(l3, "_select", return_value=self.choice("codex")), \
-             mock.patch.object(engines, "codex_exec", side_effect=fake_codex):
+             mock.patch.object(engines, "codex_turn", side_effect=fake_codex):
             l3.turn(self.project, "first")
             l3.turn(self.project, "second")
         self.assertEqual(l3.info(self.project)["sessions"]["codex"]["engine_model"], "second-model")
@@ -42,7 +42,7 @@ class TestL3Sessions(AltitudeCase):
                     "error": None, "usage": {"input_tokens": 1200, "cached_input_tokens": 900}, "returncode": 0}
 
         with mock.patch.object(l3, "_select", return_value=self.choice("codex")), \
-             mock.patch.object(engines, "codex_exec", side_effect=fake_codex):
+             mock.patch.object(engines, "codex_turn", side_effect=fake_codex):
             first = l3.turn(self.project, "first")
             second = l3.turn(self.project, "second")
 
@@ -63,7 +63,7 @@ class TestL3Sessions(AltitudeCase):
                     "error": None, "usage": {"input_tokens": 100}, "returncode": 0}
 
         with mock.patch.object(l3, "_select", return_value=self.choice("codex")), \
-             mock.patch.object(engines, "codex_exec", side_effect=fake_codex):
+             mock.patch.object(engines, "codex_turn", side_effect=fake_codex):
             out = l3.turn(self.project, "coordinate this")
 
         runtime = Path(seen["cwd"])
@@ -94,7 +94,7 @@ class TestL3Sessions(AltitudeCase):
 
         with mock.patch.object(l3, "_select", side_effect=choices), \
              mock.patch.object(engines, "claude_print", side_effect=fake_claude), \
-             mock.patch.object(engines, "codex_exec", side_effect=fake_codex):
+             mock.patch.object(engines, "codex_turn", side_effect=fake_codex):
             l3.turn(self.project, "one"); l3.turn(self.project, "two"); l3.turn(self.project, "three")
 
         self.assertEqual(claude_resumes, [None, "cl-1"])
@@ -116,7 +116,7 @@ class TestL3Sessions(AltitudeCase):
                     "tools": [], "limited": None}
 
         with mock.patch.object(l3, "_select", side_effect=choices), \
-             mock.patch.object(engines, "codex_exec", side_effect=fake_codex), \
+             mock.patch.object(engines, "codex_turn", side_effect=fake_codex), \
              mock.patch.object(engines, "claude_print", side_effect=fake_claude):
             l3.turn(self.project, "one"); l3.turn(self.project, "two")
 
@@ -130,7 +130,7 @@ class TestL3Sessions(AltitudeCase):
         result = {"text": "wrong thread answer", "session_id": "cx-2", "reported_session_id": "cx-2",
                   "error": None, "usage": {"input_tokens": 100}, "returncode": 0}
         with mock.patch.object(l3, "_select", return_value=self.choice("codex")), \
-             mock.patch.object(engines, "codex_exec", return_value=result):
+             mock.patch.object(engines, "codex_turn", return_value=result):
             out = l3.turn(self.project, "continue")
         self.assertFalse(out["completed"])
         self.assertIn("different thread", out["error"])
@@ -142,7 +142,7 @@ class TestL3Sessions(AltitudeCase):
         result = {"text": "coordinator connected", "session_id": "mcp-thread", "reported_session_id": "mcp-thread",
                   "error": None, "usage": {"input_tokens": 100}, "returncode": 0}
         with mock.patch.object(l3, "_select", return_value=self.choice("codex")), \
-             mock.patch.object(engines, "codex_exec", return_value=result) as execute:
+             mock.patch.object(engines, "codex_turn", return_value=result) as execute:
             first = l3.turn(self.project, "check coordinator access")
             second = l3.turn(self.project, "check again")
         self.assertTrue(first["completed"] and second["completed"])
@@ -157,7 +157,7 @@ class TestL3Sessions(AltitudeCase):
                   "error": "usage limit", "tools": ["Bash"], "limited": engines._usage_limit("2099-01-01T00:00:00+00:00")}
         with mock.patch.object(l3, "_select", return_value=self.choice("claude")), \
              mock.patch.object(engines, "claude_print", return_value=result), \
-             mock.patch.object(engines, "codex_exec") as codex:
+             mock.patch.object(engines, "codex_turn") as codex:
             out = l3.turn(self.project, "do one thing")
         codex.assert_not_called()
         self.assertEqual(out["engine"], "claude")
@@ -204,7 +204,7 @@ class TestL3Sessions(AltitudeCase):
                    "limited": engines._usage_limit("2099-01-01T00:00:00+00:00")}
         with mock.patch.object(l3, "_select", return_value=self.choice("claude")), \
              mock.patch.object(engines, "claude_print", return_value=limited), \
-             mock.patch.object(engines, "codex_exec") as codex:
+             mock.patch.object(engines, "codex_turn") as codex:
             out = l3.turn(self.project, "hello", engine="claude")
         codex.assert_not_called()
         self.assertEqual(out["engine"], "claude")

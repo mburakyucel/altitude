@@ -63,7 +63,7 @@ class TestChatIsolation(AltitudeCase):
             return {"text": answer, "session_id": sid, "reported_session_id": sid,
                     "usage": {}, "context_tokens": 0, "cost": 0, "turns": 1, "error": None, "tools": []}
 
-        self.patch(engines, "claude_print" if engine == "claude" else "codex_exec", new=provider)
+        self.patch(engines, "claude_print" if engine == "claude" else "codex_turn", new=provider)
         with ThreadPoolExecutor(max_workers=2) as pool:
             requests = {project: pool.submit(self.request, "/api/chat",
                         {"project": project, "text": f"message::{project}::first"}) for project in self.projects}

@@ -22,7 +22,6 @@ from . import config, engines, images as image_store, platform, route, state as 
 
 _locks: dict[str, threading.Lock] = {}
 _active: dict[str, dict] = {}
-_interrupts: dict[str, threading.Event] = {}
 #: Slugs of the tasks each running turn created through the daemon's `alt task new`, by turn id; the
 #: turn's assistant row carries them as `tasks` (SPEC.md §5.2 note 4) and the entry goes with the turn.
 _created: dict[str, list[str]] = {}
@@ -619,7 +618,7 @@ def active(project: str) -> dict | None:
 
 
 def _turn_identity(turn):
-    return {key: turn[key] for key in ("id", "started_at", "trigger", "slug", "provider_started", "interrupt_error")
+    return {key: turn[key] for key in ("id", "started_at", "trigger", "slug", "provider_started")
             if key in turn} if turn else None
 
 
@@ -661,9 +660,10 @@ def chat_state(project: str, limit: int = 60) -> dict:
         unavailable = send_now_unavailable(project) if waiting else None
         for row in waiting:
             if row.get("send_now"):
-                row["send_now_reason"] = (unavailable or (turn or {}).get("interrupt_error")
+                sending = turn and turn.get("sends") and row.get("sending") == turn["sends"].name
+                row["send_now_reason"] = ("Sending into the current turn" if sending else unavailable
                                           or ("Runs next after system work" if turn and turn["trigger"] != "chat"
-                                              else "Waiting for current turn to stop" if turn else "Runs next"))
+                                              else "Runs next"))
         return {"history": chat_history(project, limit), "queued": waiting,
                 "active": _turn_identity(turn), "busy": turn_lock.locked(),
                 "send_now_reason": unavailable}
@@ -689,7 +689,7 @@ def _publish_active_turn(project: str, trigger: str, claim=None, slug: str | Non
         if claimed:
             _active[project] = turn
             if trigger == "chat":
-                _interrupts[turn["id"]] = threading.Event()
+                turn["sends"] = _sends_root(project) / turn["id"]
     if not claimed:
         yield None
         return
@@ -703,7 +703,8 @@ def _publish_active_turn(project: str, trigger: str, claim=None, slug: str | Non
             if _active.get(project, {}).get("id") == turn["id"]:
                 _active.pop(project, None)
             _created.pop(turn["id"], None)
-            _interrupts.pop(turn["id"], None)
+        if turn.get("sends"):
+            _settle_sends(project, turn["sends"])
 
 
 @contextmanager
@@ -966,13 +967,14 @@ def queue_upstream_issue(project: str, url: str, *, checkout: Path) -> dict:
 
 
 def drop_queued(project: str, message_id: str) -> bool:
-    """Drop one of the operator's chat messages that has not started. Server work is not editable."""
+    """Drop one of the operator's chat messages that has not started or joined the running turn. Server work is not
+    editable."""
     path = queue_path(project)
     with S.project_lock(project):
         rows = _queue_rows(path)
         rest = [row for row in rows
                 if row.get("id") != message_id or row.get("trigger") != "chat" or row.get("role") != config.OPERATOR_ACTOR
-                or row.get("image_turn_id")]
+                or row.get("image_turn_id") or row.get("sending")]
         if len(rest) == len(rows):
             return False
         removed = next(row for row in rows if row not in rest)
@@ -993,14 +995,12 @@ def send_now_unavailable(project: str) -> str | None:
     choice = _select(project)
     if not choice.get("engine"):
         return "No engine is available. The message stays queued."
-    turn = _active.get(project)
-    if turn and turn["trigger"] == "chat" and not turn.get("provider_started"):
-        return "The current turn is starting. Retry Send now shortly."
     return None
 
 
 def send_now(project: str, message_id: str) -> dict:
-    """Promote one operator row, then interrupt only the chat turn captured at admission."""
+    """Hand one operator row to the running chat turn, which takes it in without stopping (see
+    `engines._Driver`); otherwise, and for a message with images, it runs next."""
     with config.provider_admission() as held:
         if held:
             raise ValueError(held)
@@ -1021,12 +1021,87 @@ def send_now(project: str, message_id: str) -> dict:
             if why := send_now_unavailable(project):
                 raise ValueError(why)
             row["send_now"] = True
-            _write_queue(queue_path(project), [row, *(item for item in rows if item["id"] != message_id)])
             turn = _active.get(project)
-            interrupt = _interrupts.get(turn["id"]) if turn else None
-            if interrupt is not None:
-                interrupt.set()
+            if turn and turn.get("sends") and not row.get("images"):
+                row["sending"] = turn["sends"].name
+            # The row records the hand-off before the turn can read it, so a message the turn took in is never
+            # run again as its own turn.
+            _write_queue(queue_path(project), [row, *(item for item in rows if item["id"] != message_id)])
+            if row.get("sending"):
+                engines.send_into_turn(turn["sends"], message_id, row["text"])
             return {"ok": True, "status": "sending"}
+
+
+def _sends_root(project: str) -> Path:
+    return config.project_dir(project) / "l3-sends"
+
+
+def _split_turn(project: str, active_turn: dict, message_id: str, text: str, *, engine: str) -> str | None:
+    """A message the running turn took in ends the reply so far and opens the next exchange, as if it had arrived
+    between two turns; the turn continues under the new id. Returns the message's text, or None if not this turn's."""
+    with _lifecycle_guard(project), S.project_lock(project):
+        path = queue_path(project)
+        rows = _queue_rows(path)
+        row = next((item for item in rows if item.get("id") == message_id
+                    and item.get("sending") == active_turn["sends"].name), None)
+        if row is None:
+            return None
+        previous, following = active_turn["id"], uuid.uuid4().hex[:12]
+        created = _created.pop(previous, None)
+        if text:
+            chat_log(project, "assistant", text, trigger="chat", engine=engine, turn_id=previous,
+                     **({"tasks": created} if created else {}), **_slug_meta(active_turn.get("slug")))
+        elif created:
+            _created[following] = created
+        chat_log(project, "user", row["text"], trigger="chat", engine=engine, turn_id=following,
+                 queue_ids=[message_id], **_slug_meta(row.get("slug")))
+        for item in rows:
+            if item.get("image_turn_id") == previous:
+                item["image_turn_id"] = following
+        _write_queue(path, [item for item in rows if item.get("id") != message_id])
+        active_turn["id"] = following
+        return row["text"]
+
+
+def _settle_sends(project: str, sends: Path) -> None:
+    """After the turn that owned `sends`, its outcome files settle each claimed row: one the engine may have read
+    joins the conversation, and any other runs next. A restart leaves them for the next queue drain."""
+    with S.project_lock(project):
+        path = queue_path(project)
+        rows = _queue_rows(path)
+        kept = []
+        for row in rows:
+            if row.get("sending") != sends.name:
+                kept.append(row)
+            elif engines.recover_send(sends, row["id"]) != "returned":
+                chat_log(project, "user", row["text"], trigger="chat", turn_id=uuid.uuid4().hex[:12],
+                         queue_ids=[row["id"]], **_slug_meta(row.get("slug")))
+            else:
+                kept.append({key: value for key, value in row.items() if key != "sending"})
+        if kept != rows:
+            _write_queue(path, kept)
+    shutil.rmtree(sends, ignore_errors=True)
+
+
+def _send_options(project: str, active_turn: dict, engine: str, on_split=None) -> dict:
+    sends = active_turn.get("sends")
+    if sends is None:
+        return {}
+
+    def on_send(message_id: str, outcome: str, text: str) -> None:
+        if outcome == "returned":
+            with S.project_lock(project):
+                rows = _queue_rows(queue_path(project))
+                if any(row.get("id") == message_id and row.get("sending") == sends.name for row in rows):
+                    _write_queue(queue_path(project), [{key: value for key, value in row.items()
+                                                        if not (key == "sending" and row.get("id") == message_id)}
+                                                       for row in rows])
+            return
+        delivered = _split_turn(project, active_turn, message_id, text, engine=engine)
+        if delivered is not None and on_split:
+            on_split(delivered)
+
+    return {"sends": sends, "on_send": on_send}
 
 
 def _finish_image_queue(project: str) -> None:
@@ -1049,6 +1124,17 @@ def _finish_image_queue(project: str) -> None:
         _write_queue(queue_path(project), [row for row in rows if row not in claimed])
 
 
+def _finish_sends(project: str) -> None:
+    """Called with the turn lock held, so every remaining Send now claim belongs to a turn a restart ended."""
+    root = _sends_root(project)
+    with S.project_lock(project):
+        names = {row["sending"] for row in _queue_rows(queue_path(project)) if row.get("sending")}
+    if root.is_dir():
+        names.update(path.name for path in root.iterdir())
+    for name in sorted(names):
+        _settle_sends(project, root / name)
+
+
 def deliver_queued(project: str) -> dict | None:
     """Run the oldest queued message as one L3 turn, folding the chat messages that follow it into that
     same turn so the operator's consecutive messages are read together, each on its own line and in arrival
@@ -1066,6 +1152,7 @@ def deliver_queued(project: str) -> dict | None:
         return None
     try:
         _finish_image_queue(project)
+        _finish_sends(project)
         choice = _select(project)
         if not choice.get("engine"):
             return None
@@ -1250,10 +1337,11 @@ def _select(project: str, engine: str | None = None, *, model: str | None = None
 
 def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None = None,
          on_text=None, on_start=None, model: str | None = None, slug: str | None = None,
-         image_message: dict | None = None) -> dict:
+         image_message: dict | None = None, on_split=None) -> dict:
     """Run one L3 turn. `engine` pins this turn; otherwise the project pin or the weekly quota selects
     a provider. Each provider resumes only its own transcript. `slug` keeps the owning task reference on
-    a task-linked project conversation and its queued turn."""
+    a task-linked project conversation and its queued turn. `on_split(text)` follows a Send now message the turn
+    took in; the turn then continues under its new id."""
     requested = engine
     with _turn_scope(project, trigger, slug) as active_turn:
         if active_turn is None:
@@ -1304,7 +1392,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
         def acknowledge(result=None):
             nonlocal information
             if result is not None and not (result.get("text") or result.get("tools") or
-                    (result.get("completed") and not result.get("interrupted"))):
+                    result.get("completed")):
                 return
             with receipt_lock:
                 supplied, information = information, []
@@ -1329,15 +1417,13 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                 with S.project_lock(project):
                     resolved = image_store.resolve(project, image_message["images"]) if image_message else []
                 res = _routed_turn(project, prompt, trigger, choice, active_turn, on_text, provider_started, slug,
-                                   on_result=acknowledge,
+                                   on_result=acknowledge, on_split=on_split,
                                    **({"images": resolved} if resolved else {}))
             except (image_store.ImageError, engines.ImageInputError) as exc:
                 chat_log(project, "error", str(exc), trigger=trigger, turn_id=turn_id, **_slug_meta(slug))
                 return {"completed": False, "error": str(exc), "turn_id": turn_id}
             if receipt_errors:
                 res["project_message_error"] = receipt_errors[-1]
-            if res.get("interrupted"):
-                return res
             if res.get("rejection"):
                 route.note_rejection(choice, res["rejection"])
             elif res.get("limited"):
@@ -1346,12 +1432,13 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                 if image_message and res.get("error") and not any(
                         row.get("turn_id") == turn_id and row.get("role") == "error"
                         for row in chat_history(project, None)):
-                    chat_log(project, "error", res["error"], trigger=trigger, turn_id=turn_id, **_slug_meta(slug))
+                    chat_log(project, "error", res["error"], trigger=trigger, turn_id=active_turn["id"],
+                             **_slug_meta(slug))
                 return res
             pinned = config.pinned_option("l3", config.project(project), engine=requested, model=model)
             if image_message or pinned or not res.get("safe_to_retry"):
                 chat_log(project, "error", res.get("error") or "Provider unavailable; check authentication/model access.",
-                         trigger=trigger, engine=choice["engine"], turn_id=turn_id, **_slug_meta(slug))
+                         trigger=trigger, engine=choice["engine"], turn_id=active_turn["id"], **_slug_meta(slug))
                 return {**res, "undelivered": bool(res.get("safe_to_retry"))}
             tried.append(route.option_key(choice))
             choice = _select(project, requested, model=model, excluded=tried)
@@ -1363,7 +1450,8 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                 "undelivered": True}
 
 
-def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_start, slug, images=(), on_result=None):
+def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_start, slug, images=(), on_result=None,
+                 on_split=None):
     turn_id = active_turn["id"]
     if trigger == "chat":
         from . import audit
@@ -1400,9 +1488,9 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
     inf.update(selection)
     save_info(project, inf)
     if engine == "codex":
-        res = _codex_turn(project, prompt, trigger, turn_started_at, turn_id, choice, inf, session, fresh,
+        res = _codex_turn(project, prompt, trigger, turn_started_at, active_turn, choice, inf, session, fresh,
                           handoff, model=choice.get("model"), on_start=on_start, slug=slug,
-                          on_result=on_result,
+                          on_result=on_result, on_split=on_split,
                           **({"images": images} if images else {}))
     else:
         text = _header(project, trigger, fresh, slug) + handoff + prompt
@@ -1414,7 +1502,7 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
                 permission_mode="dontAsk", permission_prompts="none", restricted=True,
                 add_dirs=(config.project_path(project), config.ROOT),
                 model=choice.get("model"), effort=choice.get("effort"), on_text=on_text, on_start=on_start,
-                **_interrupt_options(project, turn_id),
+                **_send_options(project, active_turn, choice["engine"], on_split),
                 **({"images": images} if images else {}),
                 timeout=_ci_turn_timeout(project, slug, trigger, config.L3_TURN_TIMEOUT),
                 **({"durable_timeout": True} if trigger == "ci-recheck" else {}),
@@ -1425,20 +1513,17 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
                     "routing": choice})
         if on_result:
             on_result({**res, "completed": not bool(res.get("error") or res.get("rejection") or res.get("limited"))})
-        if res.get("interrupted"):
-            res["text"] = _interrupted_text(res)
+        turn_id = active_turn["id"]
         if (res.get("rejection") or res.get("limited")) and res.get("safe_to_retry"):
             res.update(completed=False, turn_id=turn_id)
             return res
-        if res.get("error") and not res.get("session_id") and not res.get("interrupted"):
+        if res.get("error") and not res.get("session_id"):
             chat_log(project, "error", res["error"], trigger=trigger, engine="claude", turn_id=turn_id,
                      tools=_tool_log(res.get("tools") or []),
                      **_slug_meta(slug))
             res["turn_id"] = turn_id
             return res
         pct = engines.context_percent(res.get("context_tokens", 0), "claude")
-        if res.get("interrupted") and not res.get("context_tokens") and not fresh:
-            pct = session.get("context_percent") or 0.0
         session.update(engine_model=choice.get("model"),
                        engine_reasoning_effort=None)
         if res.get("session_id"):
@@ -1452,22 +1537,6 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
         S.regen_state_md(project)
         res.update({"context_percent": pct, "completed": not bool(res.get("error")), "turn_id": turn_id})
     return res
-
-
-def _interrupted_text(result: dict) -> str:
-    text = str(result.get("text") or "").strip()
-    return (text + "\n\n" if text else "") + "Interrupted for a queued message."
-
-
-def _interrupt_options(project: str, turn_id: str) -> dict:
-    def unavailable(reason: str) -> None:
-        with _lifecycle_guard(project):
-            turn = _active.get(project)
-            if turn and turn["id"] == turn_id:
-                turn["interrupt_error"] = reason
-
-    event = _interrupts.get(turn_id)
-    return {"interrupt": event, "on_interrupt_error": unavailable} if event is not None else {}
 
 
 def _save_session(inf: dict, session: dict, engine: str, sid: str | None, pct: float,
@@ -1488,9 +1557,9 @@ def _save_session(inf: dict, session: dict, engine: str, sid: str | None, pct: f
                 "rotate_reason": session["rotate_reason"]})
 
 
-def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, turn_id: str, choice: dict,
+def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, active_turn: dict, choice: dict,
                 inf: dict, session: dict, fresh: bool, handoff: str, *, model: str | None, on_start=None,
-                slug: str | None = None, images=(), on_result=None) -> dict:
+                slug: str | None = None, images=(), on_result=None, on_split=None) -> dict:
     """One Codex L3 turn from a disposable runtime directory: the same persona and daemon `alt` door as Claude,
     inside Codex's own sandbox (writes only in that one runtime; the checkout and Altitude home are readable)."""
     sid = None if fresh else session.get("session_id")
@@ -1510,23 +1579,22 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, t
     record_session({"engine_model": None, "engine_reasoning_effort": None})
     S.project_log(project, "l3-codex", reason=choice["why"], trigger=trigger, resume=bool(sid))
     try:
-        result = engines.codex_exec(
+        result = engines.codex_turn(
             body, cwd=runtime, timeout=_ci_turn_timeout(project, slug, trigger, config.L3_CODEX_TURN_TIMEOUT), model=model,
-            **({"durable_timeout": True} if trigger == "ci-recheck" else {}),
             effort=choice.get("effort"), resume=sid, on_start=on_start,
-            **_interrupt_options(project, turn_id),
+            **_send_options(project, active_turn, choice["engine"], on_split),
             **({"images": images} if images else {}),
             extra_env=_l3_env(project, runtime),
-            sandbox_settings=engines.codex_l3_permissions(runtime, project=project),
-            ignore_user_config=True, on_session=record_session)
+            sandbox_settings=engines.codex_l3_permissions(runtime, project=project), on_session=record_session)
     finally:
         _remove_runtime(runtime)
+    turn_id = active_turn["id"]
     reported_sid = result.get("reported_session_id") or result.get("session_id")
     if result.get("engine_model"):
         record_session({"session_id": reported_sid, "engine_model": result["engine_model"],
                         "engine_reasoning_effort": result.get("engine_reasoning_effort")})
     identity_error = None
-    if not reported_sid and not result.get("interrupted"):
+    if not reported_sid:
         identity_error = "Codex L3 turn did not report a thread identity"
     elif sid and reported_sid != sid:
         identity_error = f"Codex L3 resume returned a different thread than {sid}"
@@ -1539,15 +1607,10 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, t
            "safe_to_retry": result.get("safe_to_retry", False), "limited": result.get("limited"),
            "_turn_started_at": turn_started_at, "engine": "codex", "routing": choice, "turn_id": turn_id}
     if on_result:
-        on_result({**out, "interrupted": result.get("interrupted"),
-                   "completed": not bool(out.get("error") or out.get("rejection") or out.get("limited"))})
-    if result.get("interrupted"):
-        out.update(text=_interrupted_text(result), interrupted=True, safe_to_retry=False)
+        on_result({**out, "completed": not bool(out.get("error") or out.get("rejection") or out.get("limited"))})
     if (out.get("rejection") or out.get("limited")) and out.get("safe_to_retry"):
         return out
     pct = engines.context_percent(tokens, "codex") if tokens else 0.0
-    if result.get("interrupted") and not tokens and not fresh:
-        pct = session.get("context_percent") or 0.0
     if identity_error or (result.get("error") and not out["text"]):
         if reported_sid and not identity_error:
             _save_session(inf, session, "codex", reported_sid, pct, fresh, 0.0, usage, choice)

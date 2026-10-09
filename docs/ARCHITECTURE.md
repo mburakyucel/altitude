@@ -88,8 +88,8 @@ the lightest useful execution shape. Its conversation with the operator is store
 the operator messages it directly without routing through L3. Messages queue on the task and reach the
 worker at its next checkpoint; the operator's own messages reach it only as a user turn, at the next session
 turn. An explicit Stop ends a worker. **Send now** on an inbox-owned operator
-message interrupts current work through the same Stop path and resumes the saved session with that
-message as its next input. The remaining inbox rows retain their order for later checkpoints. Task message writers hold the project
+message hands it to the running turn, which reads it as the operator's next input without stopping its
+work (see [message delivery](#message-delivery-and-voice)). The remaining inbox rows retain their order for later checkpoints. Task message writers hold the project
 lock and atomically replace each conversation or inbox file, so concurrent readers see complete records.
 Appending a message to a blocked
 task also persists a due `resume_after` request, except non-waking coordinator discussion on a
@@ -579,9 +579,10 @@ and complete validation gate remain authoritative. See [toolchain setup](DEVELOP
 Current gaps are concrete: engine-specific references remain in session, dispatch, transcript and
 telemetry code outside the seam. The launch environment filters
 some engine variables and applies role/model/permission settings, so native access configurations
-are not all passed through unchanged. The Codex coordinator uses `--ignore-user-config`, retaining
-authentication while omitting user model/provider configuration; a project `l3_codex_model` can
-supply a model override. Adding an engine still needs implementation and end-to-end
+are not all passed through unchanged. The Codex coordinator loads the operator's own Codex configuration
+beneath Altitude's settings, which win: the routed model, the built-in model provider, Altitude's permission
+profile and approval policy, no hooks or notification command, and the Altitude broker as the only MCP server. `--strict-config` refuses unknown keys. A project `l3_codex_model` can supply a model
+override. Private reviewers and the conversation audit keep `--ignore-user-config`. Adding an engine still needs implementation and end-to-end
 verification; it is not a registration-only plug-in operation. The [roadmap](ROADMAP.md#early-user-onboarding-and-public-release)
 records these follow-up candidates without expanding this documentation milestone into a rewrite.
 
@@ -1167,9 +1168,9 @@ roots. The session bus and manager runtime directory (including its direct priva
 other runtime-directory paths retain their policy. The generated profile also supplies provider-free
 confinement checks. A task worker on either engine reaches GitHub with the operator's existing GitHub
 CLI sign-in without reaching the keyring that holds it: the launcher, which still reaches the session
-bus, reads the token with `gh auth token`, and the job receives it on the first line of its input,
-which a fixed shell reader exports as `GH_TOKEN` before it starts the engine. The reader starts nothing
-unless its input is a pipe, so the engine reads only what follows the token line. Altitude never puts
+bus, reads the token with `gh auth token`, and the job receives it in its launch input, which only the
+job's engine driver reads. The driver exports it as `GH_TOKEN` to the engine it starts, which reads only
+its own input pipe from the driver. Altitude never puts
 the token among the job's settings (they form its command line) or in a log, and writes it to disk only
 in the macOS launcher's private input copy until the job's supervisor starts. The engine and its tools
 hold it as `GH_TOKEN`, so an engine's own record of its environment (a Codex shell snapshot) can hold it
@@ -2012,26 +2013,35 @@ messages. Each turn drains it at its own boundary rather than at the next tick: 
 messages for the same conversation fold into one turn in arrival order, each on its own line, while
 image-bearing and server-triggered messages keep their own turn, and nothing runs while a turn holds the project's L3 lock.
 
-**Send now** promotes only the selected operator row and gives it its own next turn. Other queued
-rows keep their relative order and ordinary folding. Admission, removal and claim share the queue's
-writer lock; retries reuse the selected row or its history receipt. An accepted Send now row remains
-removable until claim, including when no engine is available after admission. Removal does not undo
-an interruption already requested. The daemon requests interruption
-of the captured active chat turn through the engine seam, retains partial output and session identity,
-and records **Interrupted for a queued message**. Its turn lock remains held until the engine job and
-its descendants have ended. A system turn finishes at its existing boundary to preserve notification,
-CI and report delivery; the promoted row says **Runs next after system work**. System queue rows
-cannot be promoted or removed. No available engine, an active chat still starting, or a launch pause
-explains why delivery cannot start. Pending priority is durable, and a queued row still neither holds nor is lost by a quiet-point
-restart. The browser requests this action by message ID; it never interrupts an engine itself.
+**Send now** hands the selected operator row to the running chat turn, which reads it as the operator's
+next message without stopping its work. Every engine job runs through `engines.engine_driver`, which
+starts the engine with its input held open: Claude reads stream-json input and receives the message as a
+user line, with running commands moved to the background; Codex runs as `codex app-server`, which takes
+it through `turn/steer`. The request writes the message into the turn's `sends` folder; the driver claims
+it by renaming and records the outcome as the file's final name. Once the engine confirms it, the reply so
+far becomes that turn's answer, the message joins the history under a new turn, and the rest of the reply
+streams beneath it. The queue row shows **Sending into the current turn** without **Remove** until then.
+Retries reuse the row or its history receipt, and only one message is sent at a time.
 
-In the task chat, the same control uses the existing durable Stop and resume operation, fences hook
-pickup before interruption, and delivers only the selected inbox row through the usual resume claim
-and handoff receipt. Like Stop, it cancels attached reviews and does not undo completed external
-effects. Confirmed termination persists a due continuation; later launch holds show waiting to resume,
-with Stop and Reject still available. A new question or fault supersedes the wake. An explicit Stop,
-question wait, fault recovery or unavailable saved-session engine explains the required continuation,
-answer or recovery instead of interrupting. Operator grants and merge holds keep their existing rules.
+A message the turn can no longer take, because it ended first, returns to the queue front and runs next
+as its own turn. A message with images, one sent during system work (**Runs next after system work**) or
+while no turn runs (**Runs next**) also gets the next turn; system turns keep their existing boundary to
+preserve notification, CI and report delivery. System queue rows cannot be promoted or removed. After a
+turn, and at the next drain after a restart, each sent row settles from its outcome file: a message the
+engine may have read is recorded once in the history and never runs again; one it never read runs next.
+No available engine, a restart in progress or a launch pause explains why it cannot be sent. Stop is the
+only control that ends a turn. The browser requests this action by message ID.
+
+In the task chat, the same control claims the selected inbox row under the project lock, records the
+claim on the task and writes the message to the worker's `sends` folder. The worker keeps running; its
+inbox hook neither announces the claimed message nor ends the turn for it. When the engine confirms the
+message, the driver records its delivery receipt on the task itself, so a restart of altd loses nothing,
+and the row leaves the inbox. A message returned at the turn's end stays queued for the next turn. After
+a Stop, a lost job or the end of the task, the claim settles from the outcome file before any later turn
+takes the inbox: a message the worker never read is delivered at the next turn, and one it may have read
+is recorded as unconfirmed and never sent again. A message with images, a question wait, a fault, a
+Stop, another owner action, another message being sent, or a worker launched before this driver keeps the
+message for the next turn instead. Operator grants and merge holds keep their existing rules.
 
 The project conversation and the task conversation use one
 composer component, `web/src/components/Composer.tsx`, with no page-specific props.

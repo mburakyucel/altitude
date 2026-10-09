@@ -703,6 +703,8 @@ export const QueuedMessageSchema = z
     position: z.number().nullish(),
     send_now: z.boolean().optional(),
     send_now_reason: z.string().nullish(),
+    /** Set while the running turn takes this message in; it can no longer be removed. */
+    sending: z.string().nullish(),
     /** A follow-up on a decision names its task (SPEC.md §5.2 note 6). */
     slug: z.string().nullish(),
   })
@@ -1568,14 +1570,15 @@ export interface ChatStreamHandlers {
   onText: (chunk: string) => void;
   /** The server accepted the message: it is a stored row now, streamed or queued. */
   onAccepted?: () => void;
-  /** The turn's server-side identity, so the page can key its bubble on it while the reply streams. */
-  onTurn?: (turn: ActiveTurn) => void;
+  /** The turn's server-side identity, so the page can key its bubble on it while the reply streams. With `user`, a
+   * Send now message joined the turn: the reply so far is complete and the rest answers `user` under this turn. */
+  onTurn?: (turn: ActiveTurn, user?: string) => void;
 }
 
 /**
  * POST /api/chat and read the reply. A free L3 streams NDJSON: a first {"turn": {...}} names the
- * turn, {"t": "..."} lines feed onText and the final {"done": {...}} comes back (the caller surfaces
- * done.error). A busy L3 answers with a single {"queued": {...}} object instead — the same line
+ * turn, {"t": "..."} lines feed onText, a {"turn": {...}, "user": "..."} line marks a Send now message
+ * the turn took in, and the final {"done": {...}} comes back (the caller surfaces done.error). A busy L3 answers with a single {"queued": {...}} object instead — the same line
  * reader takes both. Conversation polling continues independently. Non-2xx throws ApiError.
  */
 export async function streamChat(
@@ -1599,9 +1602,9 @@ export async function streamChat(
   let done: ChatSent = {};
   const handleLine = (line: string) => {
     if (!line.trim()) return;
-    let parsed: { t?: unknown; done?: ChatDone; queued?: unknown; turn?: unknown };
+    let parsed: { t?: unknown; done?: ChatDone; queued?: unknown; turn?: unknown; user?: unknown };
     try {
-      parsed = JSON.parse(line) as { t?: unknown; done?: ChatDone; queued?: unknown; turn?: unknown };
+      parsed = JSON.parse(line) as { t?: unknown; done?: ChatDone; queued?: unknown; turn?: unknown; user?: unknown };
     } catch {
       return; // tolerate a torn line
     }
@@ -1610,7 +1613,7 @@ export async function streamChat(
       if (turn.success) {
         done = { ...done, turn: turn.data };
         handlers.onAccepted?.();
-        handlers.onTurn?.(turn.data);
+        handlers.onTurn?.(turn.data, typeof parsed.user === "string" ? parsed.user : undefined);
       }
     }
     if (typeof parsed.t === "string") handlers.onText(parsed.t);

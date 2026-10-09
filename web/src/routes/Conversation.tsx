@@ -142,6 +142,8 @@ interface Local {
   images?: ImagePreview[];
   uncertain?: boolean;
   replay?: ImageSubmission;
+  /** Exchanges this turn completed before a Send now message joined it, shown until the history has them. */
+  earlier?: { turnId: string | null; text: string; reply: string }[];
 }
 
 /** A task the turn created, under the reply: the link slice 3 grows into the §3.5 card. */
@@ -259,7 +261,12 @@ export default function Conversation({
       try {
         result = images ? await sendImageChat(name, text, { request_id: images.request_id, images: images.images, image_ids: images.image_ids }) : await streamChat(name, text, {
           onAccepted: () => { onAccepted?.(); update((cur) => ({ ...cur, accepted: true })); },
-          onTurn: (turn) => update((cur) => ({ ...cur, turnId: turn.id })),
+          onTurn: (turn, user) => {
+            if (user === undefined) return update((cur) => ({ ...cur, turnId: turn.id }));
+            void queryClient.invalidateQueries({ queryKey: ["chat", name] });
+            update((cur) => ({ ...cur, turnId: turn.id, text: user, reply: "", images: undefined,
+              earlier: [...(cur.earlier ?? []), { turnId: cur.turnId, text: cur.text, reply: cur.reply }] }));
+          },
           onText: (chunk) => update((cur) => ({ ...cur, reply: cur.reply + chunk })),
         });
       } catch (error) {
@@ -302,8 +309,11 @@ export default function Conversation({
       lastDay = day;
     }
   };
+  const stored = (id: string | null) => turns.some((turn) => turn.id === id && (turn.assistant || turn.error));
+  const earlier = local?.earlier?.filter((segment) => !stored(segment.turnId)) ?? [];
   for (const item of items) {
     if (item.kind === "chat" && local?.turnId && item.turn.id === local.turnId) continue;
+    if (item.kind === "chat" && earlier.some((segment) => segment.turnId === item.turn.id)) continue;
     divide(itemAt(item));
     if (item.kind === "group") {
       rows.push(<SystemGroup key={item.turns[0]?.id ?? item.at ?? "group"} turns={item.turns} project={name} titles={titles} />);
@@ -348,6 +358,14 @@ export default function Conversation({
   }
   if (local) {
     divide(new Date().toISOString());
+    for (const segment of earlier) {
+      rows.push(
+        <div key={`local-${segment.turnId}`} className="turn" data-local>
+          <Bubble text={segment.text} at={new Date().toISOString()} />
+          {segment.reply ? <Reply text={segment.reply} role="assistant" /> : null}
+        </div>,
+      );
+    }
     rows.push(
       <div key="local" className="turn" data-local>
         <Bubble text={local.text} at={new Date().toISOString()} pending={!local.accepted} images={<PendingImages images={local.images} />} />
@@ -415,9 +433,9 @@ export default function Conversation({
                       disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending || Boolean(view?.send_now_reason)}
                       reason={view?.send_now_reason || (row.send_now ? row.send_now_reason : null)}
                       error={sendNow.variables === row.id ? sendNow.error : null} onClick={() => sendNow.mutate(row.id)} />
-                    <button type="button" className="link" disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending} onClick={() => dequeue.mutate(row.id)}>
+                    {row.sending ? null : <button type="button" className="link" disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending} onClick={() => dequeue.mutate(row.id)}>
                       {dequeue.isPending && dequeue.variables === row.id ? "Removing…" : "Remove"}
-                    </button>
+                    </button>}
                     </div>
                   ) : null}
                 </li>

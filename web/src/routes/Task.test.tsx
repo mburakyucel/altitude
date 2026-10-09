@@ -140,7 +140,7 @@ describe("queued L2 Send now", () => {
     await user.click(await screen.findByRole("button", { name: "Send now" }));
     expect(screen.getByRole("button", { name: "Sending now…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Remove" })).toBeDisabled();
-    expect(screen.getByText("Stops work and reviews to deliver now.")).toBeVisible();
+    expect(screen.getByText("Joins the current turn without stopping its work.")).toBeVisible();
     expect(screen.getByText("Queued · waiting for a checkpoint")).toBeVisible();
     record = { ...record, messages: [{ ...message, delivery: { ...message.delivery, state: "delivered", removable: false, send_now: false } }] };
     await act(async () => release(jsonResponse({ ok: true })));

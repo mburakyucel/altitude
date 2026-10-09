@@ -27,10 +27,11 @@ class TestChatStream(AltitudeCase):
         finished = threading.Event()
         seen = {"chunks": 0}
 
-        def fake_turn(project, text, *, trigger, on_text, on_start=None):
+        def fake_turn(project, text, *, trigger, on_text, on_start=None, on_split=None):
             for _ in range(400):  # far more than the socket buffers hold once the client is gone
                 on_text("x" * 20_000)
                 seen["chunks"] += 1
+            on_split("A Send now message the turn took in")  # the split event is just as harmless to a lost client
             finished.set()
             return {"session_id": "s1", "context_percent": 1.0, "turns": 1, "cost": 0.0, "engine": "claude"}
 

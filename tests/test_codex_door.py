@@ -41,6 +41,16 @@ class FakeProcess:
         self.alive = False
 
 
+def launch_spec(proc) -> dict:
+    """The one JSON line a job's driver reads: engine command, first input and launch settings. A coordinator turn
+    writes it from a thread, so it may still be on its way."""
+    deadline = time.monotonic() + 10
+    while not proc.stdin.getvalue() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    data = proc.stdin.getvalue()
+    return json.loads(data.decode() if isinstance(data, bytes) else data)
+
+
 class TestCodexAdapter(AltitudeCase):
     host = "linux"  # systemd fixtures
     github = True  # launches read the sign-in through the gh fixture
@@ -119,7 +129,8 @@ class TestCodexAdapter(AltitudeCase):
         for resume in (None, "thr-1"):
             with self.subTest(resume=resume):
                 _, procs = self._launch(actual_settings=True, resume=resume)
-                command = procs[0].cmd[procs[0].cmd.index(config.CODEX_BIN):]
+                command = launch_spec(procs[0])["command"]
+                self.assertEqual(command[:3], [config.CODEX_BIN, "app-server", "--strict-config"])
                 settings = [command[i + 1] for i, arg in enumerate(command) if arg == "-c"]
                 parsed = tomllib.loads("\n".join(settings))
                 self.assertEqual(parsed["default_permissions"], "altitude-task")
@@ -129,48 +140,69 @@ class TestCodexAdapter(AltitudeCase):
 
     def test_i_20261006_183126_a_worker_denied_the_session_bus_still_reaches_github_signed_in(self):
         # The GitHub CLI keeps its sign-in in the keyring on the session bus the worker profile denies, so the
-        # launcher reads the token and hands it over on the job's first input line, never as a job setting.
+        # launcher reads the token and hands it over in the job's launch input, never as a job setting.
         state = self.fake_gh()
         (state / "token.txt").write_text("fixture-token\n")
         self.setenv("GH_TOKEN", "ambient-fixture-token")
+        signed = self.tmp / "gh-user"
+        # The engine asks GitHub who it is before it serves the turn.
+        engine = self.tmp / "codex-engine"
+        engine.write_text(f'#!/bin/sh\ngh api user > {signed} 2>&1\n'
+                          f'exec {sys.executable} {Path(__file__).resolve().parent / "fake_engine.py"} "$@"\n')
+        engine.chmod(0o755)
+        self.patch(config, "CODEX_BIN", str(engine))
         _, procs = self._launch(actual_settings=True)
         command, sent = procs[0].cmd, procs[0].stdin.getvalue()
+        spec = json.loads(sent)
         self.assertEqual(self.gh_log(), [["auth", "token"]])
         self.assertFalse(any("fixture-token" in arg for arg in command), "job settings appear on its command line")
+        self.assertFalse(any("fixture-token" in arg for arg in spec["command"]))
         self.assertFalse({"GH_TOKEN", "GITHUB_TOKEN", "DBUS_SESSION_BUS_ADDRESS"} & set(self.job_env))
-        self.assertTrue(sent.startswith(b"fixture-token\n"))
-        settings = [command[i + 1] for i, arg in enumerate(command) if arg == "-c" and i > command.index(config.CODEX_BIN)]
+        self.assertEqual(spec["github_token"], "fixture-token")
+        settings = [spec["command"][i + 1] for i, arg in enumerate(spec["command"]) if arg == "-c"]
         rules = tomllib.loads("\n".join(settings))["permissions"]["altitude-task"]["filesystem"]
         self.assertEqual({path for path, access in rules.items() if access == "deny"},
                          {str(path) for path in platform.job_control_paths()})
-        # In the job's environment, without the bus, GitHub accepts the worker only after the reader exports the
-        # token; the engine receives the rest of its input unchanged.
-        wrapper = command[command.index("/bin/sh"):command.index(config.CODEX_BIN)]
-        engine = ["/bin/sh", "-c", "gh api user && cat"]
-        env = {**self.job_env, "PATH": os.environ["PATH"], "FAKE_GH_DIR": str(state), "GH_TOKEN": "ambient-fixture-token"}
-        signed_in = subprocess.run([*wrapper, *engine], input=sent, capture_output=True, env=env)
-        self.assertEqual(signed_in.returncode, 0, signed_in.stderr)
-        self.assertEqual(signed_in.stdout.decode().split("\n", 1)[0], '{"login": "fixture-operator"}')
-        self.assertTrue(signed_in.stdout.endswith(b"\n\nbrief"))
-        unsigned = subprocess.run([*wrapper, *engine], input=b"\nbrief", capture_output=True, env=env)
-        self.assertIn(b"HTTP 401: Requires authentication", unsigned.stderr)
+        # In the job's environment, without the bus, GitHub accepts the engine only after the driver exports the
+        # token; an ambient token never reaches it, and the engine reads its turn, not the token.
+        driver = command[2:]
+        self.assertEqual(driver, engines._driver_command())
+        log = self.tmp / "engine.log"
+        env = {**self.job_env, "PATH": os.environ["PATH"], "FAKE_GH_DIR": str(state), "GH_TOKEN": "ambient-fixture-token",
+               "FAKE_ENGINE_LOG": str(log)}
+        job = subprocess.run(driver, input=sent, capture_output=True, env=env, timeout=60)
+        self.assertEqual(job.returncode, 0, job.stderr)
+        self.assertEqual(signed.read_text().splitlines()[0], '{"login": "fixture-operator"}')
+        environment, *read = [json.loads(line) for line in log.read_text().splitlines()]
+        self.assertEqual(environment["environment"], {"GH_TOKEN": "fixture-token"})
+        self.assertNotIn("fixture-token", json.dumps(read))
+        turn = next(row for row in read if row.get("method") == "turn/start")
+        self.assertTrue(turn["params"]["input"][0]["text"].endswith("\n\nbrief"))
+        log.unlink()
+        unsigned = subprocess.run(driver, input=json.dumps({**spec, "github_token": ""}).encode() + b"\n",
+                                  capture_output=True, env=env, timeout=60)
+        self.assertEqual(unsigned.returncode, 0, unsigned.stderr)
+        self.assertIn("HTTP 401: Requires authentication", signed.read_text())
+        self.assertEqual(json.loads(log.read_text().splitlines()[0])["environment"], {"GH_TOKEN": None})
         # A launcher without a sign-in still starts the worker, without a token.
         (state / "token.txt").unlink()
         _, procs = self._launch(actual_settings=True)
-        self.assertTrue(procs[0].stdin.getvalue().startswith(b"\n"))
+        self.assertEqual(launch_spec(procs[0])["github_token"], "")
 
-    def test_fresh_turn_runs_codex_exec_in_the_worktree_with_the_persona_in_front(self):
+    def test_fresh_turn_runs_codex_app_server_in_the_worktree_with_the_persona_in_front(self):
         persona = self.tmp / "l2.md"
         persona.write_text("PERSONA")
         res, procs = self._launch(persona=persona, model="gpt-x")
         self.assertEqual(res["returncode"], 0)
         row = res["agent"]
-        self.assertEqual(procs[0].cmd, ["svc", engines._codex_unit(row["id"]), "/bin/sh", "-c", engines.GITHUB_INPUT,
-                                        "altitude-worker", config.CODEX_BIN, "exec", "--json",
-                                        "--strict-config", "--skip-git-repo-check", "-C", str(self.worktree),
-                                        "-m", "gpt-x", "-c", "s1", "-c", "s2", "-"])
-        token, sent = procs[0].stdin.getvalue().decode().split("\n", 1)
-        self.assertEqual(token, "")
+        self.assertEqual(procs[0].cmd, ["svc", engines._codex_unit(row["id"]), *engines._driver_command()])
+        spec = launch_spec(procs[0])
+        self.assertEqual(spec["command"], [config.CODEX_BIN, "app-server", "--strict-config", "-c", "s1", "-c", "s2"])
+        self.assertEqual((spec["engine"], spec["cwd"], spec["model"], spec["resume"], spec["github_token"]),
+                         ("codex", str(self.worktree), "gpt-x", None, ""))
+        self.assertEqual(spec["sends"], str(engines.worker_sends(row["id"], job_root=self.job_root)))
+        self.assertEqual([part["type"] for part in spec["input"]], ["text"])
+        sent = spec["input"][0]["text"]
         self.assertTrue(sent.startswith("PERSONA\n\n"))
         self.assertIn(engines.CODEX_PATCH_NOTE, sent)
         self.assertTrue(sent.endswith("\n\nbrief"))
@@ -180,10 +212,12 @@ class TestCodexAdapter(AltitudeCase):
 
     def test_resume_continues_the_same_thread_and_refuses_another(self):
         res, procs = self._launch(resume="thr-1")
-        self.assertEqual(procs[0].cmd[6:9], [config.CODEX_BIN, "exec", "resume"])
-        self.assertNotIn("-C", procs[0].cmd)
-        self.assertEqual(procs[0].cmd[-2:], ["thr-1", "-"])
-        prompt = procs[0].stdin.getvalue().decode()
+        spec = launch_spec(procs[0])
+        self.assertEqual(spec["command"][:2], [config.CODEX_BIN, "app-server"])
+        self.assertNotIn("resume", spec["command"])
+        self.assertNotIn("-C", spec["command"])
+        self.assertEqual(spec["resume"], "thr-1")
+        prompt = spec["input"][0]["text"]
         self.assertTrue(prompt.endswith("\n\nbrief"))
         self.assertNotIn(engines.CODEX_PATCH_NOTE, prompt, "resume retains the initial thread instructions")
         self.assertIn(str(config.PERSONAS / "l1.md"), prompt)
@@ -200,7 +234,7 @@ class TestCodexAdapter(AltitudeCase):
             with self.subTest(resume=resume), mock.patch.object(platform, 'containerized', return_value=True), \
                  mock.patch.object(platform, '_lifecycle_state', return_value={'reason': None}):
                 _, procs = self._launch(resume=resume)
-            sent = procs[0].stdin.getvalue().decode()
+            sent = launch_spec(procs[0])["input"][0]["text"]
             self.assertIn(engines.CODEX_CONTAINER_PATCH_NOTE, sent)
             self.assertNotIn(engines.CODEX_PATCH_NOTE, sent)
             self.assertIn('python3', sent)
@@ -270,29 +304,45 @@ class TestCodexAdapter(AltitudeCase):
                                      "DBUS_SESSION_BUS_ADDRESS": "unix:path=/manager/bus"})
         self.assertEqual(json.loads(result.stdout), {"project": "altitude", "task": "task", "secret": None, "bus": None})
 
-    def test_synchronous_turn_sends_the_whole_prompt_on_stdin_and_reads_the_last_message(self):
-        # The engine starts reading after the turn's first half-second poll, and the prompt exceeds every pipe
-        # buffer: a coordinator turn on a loaded Mac once waited its whole limit for the rest of its prompt (#617).
+    def test_coordinator_turn_sends_the_whole_prompt_and_reads_the_last_message(self):
+        # The job starts reading a second late, and the prompt exceeds every pipe buffer: a coordinator turn on a
+        # loaded Mac once waited its whole limit for the rest of its prompt (#617).
         engine = self.tmp / "codex"
         engine.write_text(f"#!{sys.executable}\n" + (
-            "import hashlib, json, sys, time\n"
-            "time.sleep(1)\n"
-            "received = {'argv': sys.argv[1:], 'sha256': hashlib.sha256(sys.stdin.buffer.read()).hexdigest()}\n"
-            "for event in ({'type': 'thread.started', 'thread_id': 'thr-l3'},\n"
-            "              {'type': 'item.completed', 'item': {'type': 'agent_message', 'text': 'first'}},\n"
-            "              {'type': 'item.completed', 'item': {'type': 'agent_message', 'text': json.dumps(received)}},\n"
-            "              {'type': 'turn.completed', 'usage': {'input_tokens': 7}}):\n"
-            "    print(json.dumps(event), flush=True)\n"))
+            "import hashlib, json, sys\n"
+            "received = {'argv': sys.argv[1:]}\n"
+            "def out(message):\n"
+            "    print(json.dumps(message), flush=True)\n"
+            "def note(text):\n"
+            "    out({'method': 'item/completed', 'params': {'item': {'type': 'agentMessage', 'id': text[:8], 'text': text}}})\n"
+            "for raw in sys.stdin:\n"
+            "    message = json.loads(raw)\n"
+            "    method, params = message.get('method'), message.get('params') or {}\n"
+            "    if method == 'initialize':\n"
+            "        out({'id': message['id'], 'result': {}})\n"
+            "    elif method in ('thread/start', 'thread/resume'):\n"
+            "        received['open'] = {'method': method, **params}\n"
+            "        out({'id': message['id'], 'result': {'thread': {'id': params.get('threadId') or 'new'}}})\n"
+            "    elif method == 'turn/start':\n"
+            "        received['sha256'] = hashlib.sha256(params['input'][0]['text'].encode()).hexdigest()\n"
+            "        out({'id': message['id'], 'result': {'turn': {'id': 'turn-1'}}})\n"
+            "        out({'method': 'turn/started', 'params': {'turn': {'id': 'turn-1'}}})\n"
+            "        note('first')\n"
+            "        note(json.dumps(received))\n"
+            "        out({'method': 'thread/tokenUsage/updated', 'params': {'tokenUsage': {'total': {'inputTokens': 7}}}})\n"
+            "        out({'method': 'turn/completed', 'params': {'turn': {'id': 'turn-1', 'status': 'completed'}}})\n"))
         engine.chmod(0o755)
         prompt = "Keep the public result stable. ✓\n" * 8192
         self.patch(config, "CODEX_BIN", str(engine))
-        self.patch(platform, "job_command", side_effect=lambda unit, command, env, **kw: command)
-        out = engines.codex_exec(prompt, cwd=self.worktree, effort="high", resume="thr-l3",
+        self.patch(platform, "job_command",
+                   side_effect=lambda unit, command, env, **kw: ["/bin/sh", "-c", 'sleep 1; exec "$@"', "job", *command])
+        out = engines.codex_turn(prompt, cwd=self.worktree, effort="high", resume="thr-l3", model="gpt-x",
                                  extra_env={"ALTITUDE_ACTOR": "l3"}, timeout=30)
         received = json.loads(out["text"])
-        self.assertEqual(received["argv"][:2], ["exec", "resume"])
-        self.assertEqual(received["argv"][-2:], ["thr-l3", "-"])
+        self.assertEqual(received["argv"][:2], ["app-server", "--strict-config"])
         self.assertIn('model_reasoning_effort="high"', received["argv"])
+        self.assertEqual(received["open"], {"method": "thread/resume", "threadId": "thr-l3", "model": "gpt-x",
+                                            "approvalPolicy": "never"})
         self.assertEqual(received["sha256"], hashlib.sha256(prompt.encode()).hexdigest())
         self.assertEqual((out["reported_session_id"], out["usage"], out["error"]), ("thr-l3", {"input_tokens": 7}, None))
 
