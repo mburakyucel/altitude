@@ -24,6 +24,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import re
 import socket
 import ssl
 import struct
@@ -41,6 +42,7 @@ from altitude import tls
 SAFARI = "com.apple.mobilesafari"
 OPEN, OPENED = "_rpc_altitudeOpenURL:", "_rpc_altitudeOpenedURL:"
 PHONE_WIDTH = 500   # widest viewport this walkthrough accepts as the phone layout
+CERTIFICATE_ALERT = re.compile(r"ALERT_(BAD_CERTIFICATE|CERTIFICATE|UNKNOWN_CA)")   # a TLS client refusing the chain
 
 
 class Safari:
@@ -562,8 +564,8 @@ def https(safari: Safari, results: Path) -> dict:
     """A page served over HTTPS with the identity altd made with Altitude's certificate generator and trusted in the
     phone ($SIMULATOR_HTTPS), through the serving context Altitude's server loads: Safari fetches from it and loads it
     as a secure context, with no certificate warning. As a control, a fetch from a second identity of the same
-    generator, which the phone does not trust, must be refused, so a pass shows that Safari checked the chain. Safari's
-    own words about a refusal are recorded."""
+    generator, which the phone does not trust, must be refused for its certificate, with Safari's message about it and
+    a certificate alert at the server, so a pass shows that Safari checked the chain."""
     folder, nonce = Path(os.environ["SIMULATOR_HTTPS"]), uuid.uuid4().hex
     page = (f'<!doctype html><meta name="viewport" content="width=device-width"><title>{nonce}</title>'
             "<h1>HTTPS without a warning</h1><p>Served with this run's Altitude certificate.</p>").encode()
@@ -572,18 +574,18 @@ def https(safari: Safari, results: Path) -> dict:
         untrusted = Secure(tls._load(Path(other) / "untrusted"), page)
     trusted = Secure(tls._load(folder), page)
 
-    def fetched(origin: str) -> tuple[str, list[str]]:
-        """How a fetch from `origin` by the current page ended, and what Safari's console said about `origin`."""
-        safari.evaluate(f"window.__fetched = 'pending'; fetch({json.dumps(origin + '/fetch')}, {{mode: 'no-cors'}})"
+    def fetched(url: str) -> tuple[str, list[str]]:
+        """How the current page's fetch of `url` ended, and what Safari's console said about that request."""
+        safari.evaluate(f"window.__fetched = 'pending'; fetch({json.dumps(url)}, {{mode: 'no-cors'}})"
                         ".then(() => window.__fetched = 'loaded', (e) => window.__fetched = String(e)); 0")
-        outcome = safari.wait("window.__fetched !== 'pending' && window.__fetched", f"the fetch from {origin}")
+        outcome = safari.wait("window.__fetched !== 'pending' && window.__fetched", f"the fetch of {url}")
         end = time.monotonic() + 1   # Safari's console messages about it arrive beside the answer
         while time.monotonic() < end:
             safari.pump()
-        return outcome, [m.get("text", "") for m in safari.console if origin in f"{m.get('url', '')} {m.get('text', '')}"]
+        return outcome, [m.get("text", "") for m in safari.console if m.get("url") == url]
 
     try:
-        outcome, said = fetched(trusted.origin)
+        outcome, said = fetched(trusted.origin + "/fetch")
         if outcome != "loaded":
             raise RuntimeError(f"Safari refused the run's trusted certificate: {outcome}; Safari: {said}; "
                                f"the server: {trusted.refused}")
@@ -591,15 +593,16 @@ def https(safari: Safari, results: Path) -> dict:
         safari.wait(f"location.href === {json.dumps(trusted.origin + '/')} && document.title === {json.dumps(nonce)}"
                     " && isSecureContext", "the HTTPS page, without a certificate warning")
         safari.snapshot(results / "05-https.png")
-        control, said = fetched(untrusted.origin)
-        if control == "loaded" or untrusted.requests or not untrusted.refused:
-            raise RuntimeError(f"Safari did not refuse an untrusted certificate: {control}; the server answered "
-                               f"{untrusted.requests} and refused {untrusted.refused}")
+        control, said = fetched(untrusted.origin + "/fetch")
+        if control == "loaded" or untrusted.requests or not said \
+                or not any(CERTIFICATE_ALERT.search(refusal) for refusal in untrusted.refused):
+            raise RuntimeError(f"Safari did not refuse an untrusted certificate as one: {control}; Safari: {said}; "
+                               f"the server answered {untrusted.requests} and refused {untrusted.refused}")
     finally:
         trusted.close()
         untrusted.close()
     return {"step": "05-https", "url": trusted.origin + "/", "served": tls.details(folder / "server.crt")["sha256"],
-            "control": {"origin": untrusted.origin, "fetch": control, "safari": said, "server": untrusted.refused},
+            "control": {"url": untrusted.origin + "/fetch", "fetch": control, "safari": said, "server": untrusted.refused},
             "reached": "an HTTPS page with the run's trusted Altitude certificate, without a warning; an untrusted "
                        "one refused"}
 
@@ -688,9 +691,9 @@ def main() -> int:
     if record.get("cleanup") and not record["error"]:
         record["error"] = record["cleanup"]
     console = safari.console if safari else []
-    controls = [step["control"]["origin"] for step in record["steps"] if "control" in step]
-    errors = [m for m in console if m.get("level") == "error"   # bar the control's expected refusal
-              and not any(origin in f"{m.get('url', '')} {m.get('text', '')}" for origin in controls)]
+    controls = {step["control"]["url"] for step in record["steps"] if "control" in step}
+    # Safari's refusal of the HTTPS step's control request is expected; every other error fails the walkthrough.
+    errors = [m for m in console if m.get("level") == "error" and m.get("url") not in controls]
     (args.results / "console.log").write_text("".join(
         f"{m.get('level')}: {m.get('text')} ({m.get('url', '')}:{m.get('line', '')})\n" for m in console))
     if errors and not record["error"]:

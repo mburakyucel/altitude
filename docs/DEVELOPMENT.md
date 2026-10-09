@@ -581,8 +581,9 @@ manifest's name and standalone display. It then serves a page over HTTPS on anot
 with the run's certificate, through the serving context Altitude's server loads, and requires
 Safari to fetch from it and load it as a secure context with no certificate warning (`05-https.png`).
 As a control, a fetch from a second identity of the same generator, which the phone does not
-trust, must be refused, with Safari's console message and the server's TLS alert recorded; that
-control is the one console error the walkthrough expects. A pass shows that iOS accepts the
+trust, must be refused for its certificate: Safari logs a message about that request and the server
+receives a certificate alert, and both are recorded. Safari's message about that one request is the
+only console error the walkthrough accepts. A pass shows that iOS accepts the
 generated chain once its CA is trusted. Last, it opens the [device setup page](SETUP.md#share-with-a-desktop-or-phone)
 for a fictional CA, as `alt tls-share` offers it, checks the CA's name and SHA-256 there and taps
 **Download the profile**; Safari must fetch the profile, which the page sends in full. Each address
