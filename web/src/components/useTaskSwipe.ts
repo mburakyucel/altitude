@@ -13,15 +13,19 @@ export const SETTLE_MS = 220;
 
 export interface Sample { x: number; at: number }
 
+/** Whether a drag by `dx` from view `view` of `views` heads toward a neighbouring view: left reveals the next. */
+function toward(dx: number, view: number, views: number): boolean {
+  return dx < 0 ? view < views - 1 : dx > 0 && view > 0;
+}
+
 /**
- * Track offset for a finger displacement from the gesture's start: toward the other view the
+ * Track offset for a finger displacement from the gesture's start: toward a neighbouring view the
  * outgoing view follows the finger up to one width; past either end the give shrinks with distance.
  */
-export function dragOffset(dx: number, width: number, live: boolean): number {
+export function dragOffset(dx: number, width: number, view: number, views: number): number {
   if (dx === 0 || width <= 0) return 0;
   const magnitude = Math.abs(dx);
-  const toward = live ? dx > 0 : dx < 0;
-  if (toward) return Math.sign(dx) * Math.min(magnitude, width);
+  if (toward(dx, view, views)) return Math.sign(dx) * Math.min(magnitude, width);
   return Math.sign(dx) * (1 - 1 / ((magnitude * RESISTANCE) / width + 1)) * width * RESISTANCE;
 }
 
@@ -43,8 +47,8 @@ export function releaseVelocity(samples: readonly Sample[]): number {
  * Whether a released drag completes the switch: a fling in the drag's direction, or a slow release
  * past half the width. Flings back toward the start and drags past either end spring back.
  */
-export function completes(dx: number, velocity: number, width: number, live: boolean): boolean {
-  if (!(live ? dx > 0 : dx < 0)) return false;
+export function completes(dx: number, velocity: number, width: number, view: number, views: number): boolean {
+  if (!toward(dx, view, views)) return false;
   if (Math.abs(velocity) >= FLING) return Math.sign(velocity) === Math.sign(dx);
   return Math.abs(dx) >= width * COMPLETE_AT;
 }
@@ -58,12 +62,13 @@ interface Gesture extends Sample {
 }
 
 /**
- * Task content owns deliberate horizontal swipes; native scrolling and selection keep theirs.
- * From the first horizontal movement the track follows the finger, so both views are on screen
- * until the release settles into a switch or springs back. Under reduced motion nothing moves and a
- * release past the same thresholds switches at once.
+ * Task content owns deliberate horizontal swipes between `views` views in order, `view` showing; native
+ * scrolling, selection and the terminal screen keep theirs. From the first horizontal movement the track
+ * follows the finger, so the view and its neighbour are on screen until the release settles into a
+ * switch or springs back. Under reduced motion nothing moves and a release past the same thresholds
+ * switches at once.
  */
-export function useTaskSwipe(enabled: boolean, live: boolean, switchView: (live: boolean) => void) {
+export function useTaskSwipe(enabled: boolean, view: number, views: number, switchView: (view: number) => void) {
   const track = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
   const navigate = useRef(switchView);
@@ -73,7 +78,7 @@ export function useTaskSwipe(enabled: boolean, live: boolean, switchView: (live:
   useLayoutEffect(() => {
     rest(track.current);
     setDragging(false);
-  }, [live]);
+  }, [view]);
   useEffect(() => {
     const node = track.current;
     if (!enabled || !node) return;
@@ -95,11 +100,12 @@ export function useTaskSwipe(enabled: boolean, live: boolean, switchView: (live:
     const finish = (dx: number, velocity: number) => {
       const saved = gesture!;
       gesture = null;
-      const switching = completes(dx, velocity, saved.width, live);
+      const switching = completes(dx, velocity, saved.width, view, views);
+      const next = dx < 0 ? view + 1 : view - 1;
       if (saved.reduced) {
-        if (switching) navigate.current(!live);
+        if (switching) navigate.current(next);
       } else if (switching) {
-        settle(live ? saved.width : -saved.width, () => navigate.current(!live));
+        settle(dx < 0 ? -saved.width : saved.width, () => navigate.current(next));
       } else {
         settle(0, () => { rest(node); setDragging(false); });
       }
@@ -110,8 +116,8 @@ export function useTaskSwipe(enabled: boolean, live: boolean, switchView: (live:
       const target = event.target instanceof Element ? event.target : null;
       const touch = event.touches[0];
       if (settling || event.touches.length !== 1 || !touch || selecting() ||
-          !target?.closest('.convo-scroll, .live-body') ||
-          target.closest('a, button, input, textarea, select, summary, pre, [contenteditable], [role="dialog"]') ||
+          !target?.closest('.convo-scroll, .live-body, .terminal-body') ||
+          target.closest('a, button, input, textarea, select, summary, pre, [contenteditable], [role="dialog"], .terminal-frame, .terminal-screen, .terminal-keys') ||
           touch.clientX < 24 || touch.clientX > window.innerWidth - 24) return;
       for (let element: Element | null = target; element && element !== node; element = element.parentElement) {
         if (element.scrollWidth > element.clientWidth && /auto|scroll/.test(getComputedStyle(element).overflowX)) return;
@@ -133,7 +139,7 @@ export function useTaskSwipe(enabled: boolean, live: boolean, switchView: (live:
       }
       if (event.cancelable) event.preventDefault();
       gesture.samples.push({ x: touch.clientX, at: event.timeStamp });
-      if (!gesture.reduced) node.style.transform = `translateX(${dragOffset(dx, gesture.width, live)}px)`;
+      if (!gesture.reduced) node.style.transform = `translateX(${dragOffset(dx, gesture.width, view, views)}px)`;
     };
     const end = (event: TouchEvent) => {
       const touch = event.changedTouches[0];
@@ -158,7 +164,7 @@ export function useTaskSwipe(enabled: boolean, live: boolean, switchView: (live:
       if (settling || gesture?.horizontal) { settling?.(); rest(node); setDragging(false); }
       gesture = null;
     };
-  }, [enabled, live]);
+  }, [enabled, view, views]);
   return { track, dragging };
 }
 

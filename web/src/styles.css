@@ -273,6 +273,9 @@
     font-weight: 600;
     color: var(--text-secondary);
   }
+  .session-tool[data-kind="command"] .session-tool-name {
+    min-width: 0;
+  }
   .session-call {
     min-width: 0;
     flex: 1;
@@ -1678,8 +1681,8 @@
 /* Phone views sit side by side on a track (SPEC.md §3.10): the layout rests it on the current view and a
  * drag slides it with the finger by transform, so fixed overlays keep the viewport at rest. */
 .task-views { overflow: hidden; }
+.task-tab-slot { display: contents; }
 .task-track { display: flex; flex: none; width: 100%; min-height: 0; }
-.task-track[data-live] { margin-left: -100%; }
 .task-view { display: flex; flex: 0 0 100%; min-width: 0; min-height: 0; }
 .task-page .task-actions > .btn, .task-page .task-actions > .icon-btn,
 .task-page .live-tools > .btn, .task-page .conversation-jumps > .btn,

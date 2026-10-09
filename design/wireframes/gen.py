@@ -144,6 +144,7 @@ summary.fold{cursor:pointer;min-height:44px}details[open]>summary.fold .i{transf
 .prose{padding:2px 0;color:var(--text-primary);line-height:1.55}
 .tool{display:flex;align-items:center;gap:10px;min-height:36px;padding:6px 12px;border:1px solid var(--border);border-radius:var(--radius-control);background:var(--card);font-family:var(--font-mono);font-size:12.5px;color:var(--text-primary);overflow-wrap:anywhere}
 .tool b{font-family:var(--font-ui);font-weight:600;font-size:12px;color:var(--text-secondary);width:42px}
+.tool[data-kind="command"] b{width:auto}
 .tool .n{margin-left:auto;color:var(--text-muted);font-family:var(--font-ui);font-size:12px;display:inline-flex;align-items:center;gap:4px}
 /* needs-you list */
 .list{width:100%;max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
@@ -493,14 +494,14 @@ live = (
     '<div class="sep"><span class="ln"></span>queued → running · altd · 09:00<span class="ln"></span></div>'
     '<div class="prompt"><b>Brief</b>Design wireframes for the simplified product (#166): the request, the L2 persona, and the lease. 2,300 words</div>'
     '<div class="prose">I’ll start by orienting: the issue with the comments, the docs, the live routes, the tokens, and the design skill.</div>'
-    f'<div class="tool"><b>$</b>gh issue view 166 --comments<span class="n">38 lines{I("chev-r","i sm")}</span></div>'
+    f'<div class="tool" data-kind="command"><b>$</b>gh issue view 166 --comments<span class="n">38 lines{I("chev-r","i sm")}</span></div>'
     f'<div class="tool"><b>Read</b>docs/ARCHITECTURE.md<span class="n">121 lines{I("chev-r","i sm")}</span></div>'
     f'<div class="tool"><b>Read</b>web/design/tokens.css<span class="n">72 lines{I("chev-r","i sm")}</span></div>'
     '<div class="prose">Fonts load in headless Chrome, so the boards can use the build’s IBM Plex faces. Writing the shared stylesheet next.</div>'
     f'<div class="tool"><b>Edit</b>design/wireframes/gen.py<span class="n">3 lines{I("chev-r","i sm")}</span></div>'
     '<div class="prompt"><b>You, via the task inbox</b>Not only desktop first. Both mobile and desktop need to land.</div>'
     '<div class="prose">Understood. Every board ships at both sizes in this PR; the mobile boards respect the iPhone safe areas.</div>'
-    f'<div class="tool"><b>$</b>python3 design/wireframes/gen.py<span class="n">running…</span></div>'
+    f'<div class="tool" data-kind="command"><b>$</b>python3 design/wireframes/gen.py<span class="n">running…</span></div>'
     '<div class="sep" style="color:var(--success-text)"><span class="ln"></span>Following live · new steps appear at the bottom<span class="ln"></span></div>'
     '</div><div class="worker-control"><button class="btn">Stop</button></div></aside>'
 )
@@ -943,7 +944,7 @@ state_sheet("TaskStates", "Task page states", [
     ("Held until resume", "Queued replaces the blocked label", '<span class="chip">Queued</span><p>Waits for resume · the window reopens at 10:30</p><div class="hint">Delivered when Altitude resumes the L2.</div>'),
     ("Connecting", "skeleton until the session arrives", '<div class="skel" style="height:50px"></div><div class="skel" style="width:75%"></div><p class="muted">Connecting to the session…</p>'),
     ("Boundaries arrived first", "retain the recorded boundary", '<div class="sep">queued → running · altd · 09:00</div><p class="muted">Connecting to the session…</p>'),
-    ("Streaming", "tool output folds under its row", '<div class="tool"><b>$</b>make test<span class="n">running…</span></div><div class="tool"><b>Edit</b>gen.py<span class="n">3 lines ›</span></div><div class="tool"><b>$</b>check assets<span class="n danger">error</span></div><div class="tool"><b>Read</b>SPEC.md<span class="n">no output</span></div>'),
+    ("Streaming", "tool output folds under its row", '<div class="tool" data-kind="command"><b>$</b>make test<span class="n">running…</span></div><div class="tool"><b>Edit</b>gen.py<span class="n">3 lines ›</span></div><div class="tool" data-kind="command"><b>$</b>check assets<span class="n danger">error</span></div><div class="tool"><b>Read</b>SPEC.md<span class="n">no output</span></div>'),
     ("Following or paused", "Pause changes to Follow", '<span class="btn ghost">Follow</span><p class="muted">Paused · Follow to catch up</p><p class="muted">Following live · new steps appear at the bottom</p>'),
     ("Unavailable / ended", "session footer follows task state", '<p class="muted">No session file for this attempt</p><p class="muted">Session paused until the task resumes</p><p class="muted">Session ended</p>'),
     ("Empty conversations", "active and finished", '<p class="muted">No messages yet.</p><p class="muted">No messages on this task.</p><span class="chip">Done</span> <a class="chip ok" href="#">PR #178 merged · main checks passed</a><p class="muted">attempt 1 · done 2h ago</p>'),

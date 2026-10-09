@@ -95,7 +95,8 @@ and keeps its pass/fail evidence, so the operator does not run validation by han
 acceptance that no run covered and the concrete blocker for each gap.
 
 Owners and helpers run tests relevant to their changes during development. This repository's
-required PR `check` runs the full `make check` suite on a GitHub-hosted runner. `alt land`
+required PR `check` runs the full `make check` suite as parallel shards on GitHub-hosted runners
+and passes only when every shard passes. `alt land`
 requires a successful run for the current head and tested tree, with current main included in that head. A branch missing
 current main needs reconciliation and fresh PR checks on the new head. Final validation and merges
 are serialized across Altitude owners. Missing, pending, failed or stale CI blocks delivery,

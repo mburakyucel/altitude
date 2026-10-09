@@ -15,27 +15,73 @@ class TestRequiredCheckWorkflow(AltitudeCase):
     def setUp(self):
         super().setUp()
         self.workflow = (REPO / config.PR_CHECK_WORKFLOW).read_text()
-        self.job = self.workflow.split('\njobs:\n')[1]
+        parts = re.split(r'^  ([\w-]+):\n', self.workflow.split('\njobs:\n')[1], flags=re.M)
+        self.jobs = dict(zip(parts[1::2], parts[2::2]))
 
-    def test_one_hosted_job_with_the_required_id_runs_for_every_pull_request(self):
+    def steps(self, job):
+        return self.jobs[job].split('\n      - ')[1:]
+
+    def test_hosted_shards_report_through_one_required_check_for_every_pull_request(self):
         self.assertEqual(config.PR_CHECK_NAME, 'check')
-        self.assertEqual(re.findall(r'^  ([\w-]+):$', self.job, re.M), [config.PR_CHECK_NAME])
-        self.assertIn('\n    runs-on: ubuntu-24.04\n', self.job)
-        # A job condition or `name:` would skip or rename the run `alt land` and release.yml select.
-        self.assertIsNone(re.search(r'^    (if|name):', self.job, re.M))
+        self.assertEqual(list(self.jobs), ['shard', config.PR_CHECK_NAME])
+        for job in self.jobs.values():
+            self.assertRegex(job, r'(?m)^    runs-on: ubuntu-24\.04$')
+            self.assertIsNone(re.search(r'^    name:', job, re.M))
+        # A shard condition would skip work; the required check always runs, so it cannot be skipped.
+        self.assertIsNone(re.search(r'^    if:', self.jobs['shard'], re.M))
+        self.assertTrue(self.jobs['check'].startswith('    needs: shard\n    if: always()\n'))
+        self.assertIn('    timeout-minutes: 30\n', self.jobs['shard'])
         self.assertIn('on:\n  workflow_dispatch:\n  pull_request:\n    branches: [main]\n'
                       '  push:\n    branches: [main]\n', self.workflow)
         self.assertNotIn('pull_request_target', self.workflow)
-        self.assertIn('timeout-minutes: 60', self.job)
+
+    def test_required_check_passes_only_when_every_shard_succeeded(self):
+        [gate] = self.steps('check')
+        self.assertIn('SHARDS: ${{ needs.shard.result }}\n', gate)
+        script = gate.split('run: ')[1].strip()
+        for result in ('success', 'failure', 'cancelled', 'skipped', ''):
+            with self.subTest(result=result):
+                verdict = subprocess.run(['bash', '-eo', 'pipefail', '-c', script],
+                                         env=dict(os.environ, SHARDS=result), capture_output=True)
+                self.assertEqual(verdict.returncode == 0, result == 'success')
+
+    def test_shards_cover_each_make_check_suite_exactly_once(self):
+        matrix = re.findall(r'^          - \{suite: (\w+), shard: (\d+)/(\d+)\}$', self.jobs['shard'], re.M)
+        suites = {}
+        for suite, shard, shards in matrix:
+            suites.setdefault(suite, []).append((int(shard), int(shards)))
+        # `make check` runs exactly these suites; each one lists every slice i/n once.
+        check = re.search(r'^check:.*\n\t.*-k (.+)$', (REPO / 'Makefile').read_text(), re.M).group(1)
+        self.assertEqual(sorted(f'check-{suite}' for suite in suites), sorted(check.split()))
+        for suite, slices in suites.items():
+            with self.subTest(suite=suite):
+                total = slices[0][1]
+                self.assertGreater(total, 1)
+                self.assertEqual(slices, [(index, total) for index in range(1, total + 1)])
+        self.assertIn('\n      fail-fast: false\n', self.jobs['shard'])
+        self.assertIn('SUITE: ${{ matrix.suite }}\n          SHARD: ${{ matrix.shard }}\n'
+                      '        run: make "check-$SUITE" SHARD="$SHARD" WORKERS="$(nproc)"\n', self.jobs['shard'])
+
+    def test_every_checkout_verifies_the_exact_candidate_first(self):
+        checkouts = [job for job in self.jobs if 'actions/checkout@' in self.jobs[job]]
+        self.assertEqual(checkouts, ['shard'])
+        for job in checkouts:
+            steps = self.steps(job)
+            self.assertTrue(steps[0].startswith('uses: actions/checkout@'))
+            self.assertIn('ref: ${{ github.sha }}', steps[0])
+            self.assertTrue(steps[1].startswith('name: Verify the exact candidate\n'))
+        self.assertEqual(self.workflow.count('- name: Verify the exact candidate'), len(checkouts))
 
     def test_fork_and_owner_runs_share_a_read_only_token_without_secrets(self):
         self.assertIn('\npermissions:\n  contents: read\n', self.workflow)
-        self.assertEqual(self.job.count('permissions:'), 0)
+        self.assertEqual(self.workflow.count('permissions:'), 1)
         self.assertIsNone(re.search(r'\bsecrets\.\w', self.workflow))
-        self.assertIn('persist-credentials: false', self.job)
+        self.assertIn('persist-credentials: false', self.jobs['shard'])
+        for action in re.findall(r'uses: (\S+)', self.workflow):
+            self.assertRegex(action, r'@[0-9a-f]{40}$')
 
-    def test_full_suite_runs_after_frozen_install_and_failure_keeps_the_browser_report(self):
-        steps = self.job.split('\n      - ')
+    def test_shards_run_after_frozen_install_and_each_failure_keeps_its_browser_report(self):
+        steps = self.steps('shard')
         install = next(step for step in steps if step.startswith('name: Install frozen dependencies'))
         # From the repository root Corepack starts its latest pnpm, which refuses web/'s pinned version.
         self.assertIn('working-directory: web\n', install)
@@ -44,10 +90,10 @@ class TestRequiredCheckWorkflow(AltitudeCase):
         self.assertIn('pnpm exec playwright install --with-deps chromium', install)
         converter = next(step for step in steps if step.startswith('name: Install the image converter'))
         self.assertIn('apt-get install -y --no-install-recommends ffmpeg liblcms2-2', converter)
-        self.assertIn('name: Full deterministic checks\n        run: make check\n', self.job)
         report = steps[-1]
-        self.assertIn('if: failure()', report)
+        self.assertIn("if: failure() && matrix.suite == 'web'", report)
         self.assertIn('actions/upload-artifact@', report)
+        self.assertIn('name: browser-report-${{ strategy.job-index }}-${{ github.run_attempt }}', report)
         self.assertIn('path: web/ui-artifacts/report', report)
 
     def test_no_workflow_reaches_a_self_hosted_runner(self):
