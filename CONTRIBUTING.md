@@ -5,6 +5,9 @@ Altitude is early-stage, source-available software developed in the open. Start 
 change follows, including the seven review questions, are in [AGENTS.md](AGENTS.md); it is
 the same instruction file the coding agents read.
 
+Altitude does not accept outside contributions yet: pull requests are limited to the project's
+collaborators. Issues are open to everyone; use them to report problems and propose changes.
+
 ## License and contributor agreement
 
 Altitude is licensed under the [Functional Source License, Version 1.1, ALv2 Future License](LICENSE)
@@ -15,8 +18,8 @@ Apache-2.0 two years after its release. The release archive ships the license an
 [third-party notices](THIRD_PARTY_NOTICES.md) for the bundled web packages.
 
 Contributions are accepted only under the [contributor license agreement](CLA.md), which lets
-the maintainer relicense the project later. Agree once by writing "I have read the CLA and I
-agree to it" in your first pull request.
+the maintainer relicense the project later. A collaborator agrees once by writing "I have read the
+CLA and I agree to it" in their first pull request.
 
 ## Ask, report or propose
 
@@ -37,10 +40,10 @@ persistent stage, role or state.
 
 ## Develop and verify
 
-Fork the repository, or work in a branch if you have write access, and open a pull request
-against `main`. Keep each PR to one agreed change, preserve unrelated work and ship the
-documentation that describes changed behavior in the same PR, in present tense. Altitude-owned
-tasks work the same way through `alt land`, which publishes the PR and waits for its checks.
+Collaborators work in a repository branch and open a pull request against `main`. Keep each PR
+to one agreed change, preserve unrelated work and ship the documentation that describes changed
+behavior in the same PR, in present tense. Altitude-owned tasks work the same way through
+`alt land`, which publishes the PR and waits for its checks.
 
 Every PR needs one successful run of the full suite on its exact head, with current `main`
 included: Python and web tests, typecheck/build and isolated phone/desktop browser flows.
@@ -60,10 +63,8 @@ the real tiny task, is deferred under the operator's recorded testing policy.
 
 Every pull request runs that suite as the required `check` on GitHub-hosted runners with a
 read-only token and no secrets; a failed run keeps its browser report as a seven-day artifact for
-you to inspect. A first-time contributor's run starts once the maintainer approves it. After
-review, the maintainer integrates your contribution on a repository branch, where the same check
-runs on the integrated head before the merge. Nothing merges without it, and there is no local
-bypass. See
+you to inspect. A run for any outside contributor's pull request starts only once the maintainer
+approves it. Nothing merges without the check, and there is no local bypass. See
 [CI and candidate identity](docs/DEVELOPMENT.md#ci-and-candidate-identity).
 
 In the PR, describe the problem and resulting behavior, answer the seven review questions in at
