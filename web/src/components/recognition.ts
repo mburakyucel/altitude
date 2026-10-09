@@ -62,12 +62,16 @@ export function recognitionAvailable(): boolean {
 export class RecognitionCapture {
   /** The latest capture asked to end; one recognizer per page, so the next one waits for it. */
   private static ending: Promise<void> | null = null;
+  /** Whether a recognizer started in this page before: iOS 27 Safari hears only a tab's first session (WebKit bug 326069). */
+  private static started = false;
   /** While a capture asked to stop or cancel still has its recognizer (at most SETTLE_MS), its release; else null. */
   static idle(): Promise<void> | null {
     return RecognitionCapture.ending;
   }
 
   state: RecordingState = "inactive";
+  /** An earlier capture in this page started its recognizer before this one. */
+  followsAnother = false;
   readonly stream: MediaStream;
   readonly mimeType = "";
   /** "denied" when the browser refused speech recognition; "failed" for any other recognizer error. */
@@ -261,6 +265,8 @@ export class RecognitionCapture {
 
   start() {
     traceVoice("recognizer.start", this);
+    this.followsAnother = RecognitionCapture.started;
+    RecognitionCapture.started = true;
     this.state = "recording";
     this.startedAt = Date.now();
     this.recognizer.start();
