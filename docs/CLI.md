@@ -585,9 +585,10 @@ An installed release whose last check found a newer release holds the issue inst
 already be fixed. The record holds `pending — held: reported on v0.1.0 while v0.1.1 is available;
 update first`, the project log's `incident-issue` event has status `held`, and the fault FYI and L3
 message open with "Altitude v0.1.0 is installed and v0.1.1 is available: update …, then retry."
-The fault ledger's one-incident-a-day window holds within one installed version, so a repeat after
-updating files a new incident on the new version and publishes it. `alt incident publish <id>` files a
-held issue on request, for example when the update itself fails. Source checkouts and container
+The fault ledger ties its incident to the installed version, so any repeat after updating, an
+unchanged blocker included, files a new incident on the new version and publishes it. The held
+record stays held; only `alt incident publish <id>` files it, for example when the update itself
+fails. Source checkouts and container
 images record no `update` line and never hold. `alt incident list`, project API incident rows and
 `STATE.md` show the link or the pending reason; `alt incident list` and the API rows also carry the
 record's `summary` and `system`, so the coordinator sees them before publication.

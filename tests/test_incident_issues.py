@@ -232,6 +232,29 @@ class TestInstalledVersion(IncidentIssueCase):
         self.assertIn("- altitude: v0.4.2 (884b6464abcd)", issue["body"])
         self.assertIn("- update: up to date", issue["body"])
 
+    def test_an_unchanged_blocker_or_projectless_repeat_after_updating_is_a_new_incident(self):
+        self.install()
+        self.register("altitude")   # a machine fault's incident belongs to the development project
+        task = T.new(PROJECT, "Fixture victim", "Toy request")
+        held = incidents.system_fault("checkout", "Local cause", project=PROJECT, task=task["slug"])
+        machine = incidents.system_fault("restart", "unit failed")
+        self.install(version="v0.4.2")
+        for repeat, before in ((incidents.system_fault("checkout", "Local cause", project=PROJECT, task=task["slug"]), held),
+                               (incidents.system_fault("restart", "unit failed"), machine)):
+            self.assertNotEqual(repeat["incident"], before["incident"])
+        self.assertIsNone(incidents.system_fault("restart", "unit failed"), "one incident a day on the new version")
+        self.assertEqual(len(self.issues()), 2)   # the two held ones stay on the machine
+
+    def test_a_held_issue_stays_held_after_the_update_until_published_on_request(self):
+        self.install()
+        fault = self.fault()
+        for change in (lambda: self.install(version="v0.4.2"),
+                       lambda: self.patch(config, "machine_settings", return_value={"update_check": False})):
+            change()
+            self.assertTrue(incidents.publish_issue(PROJECT, fault["incident"])["held"])
+        self.assertEqual(self.issues(), [])
+        self.assertIsNotNone(incidents.publish_issue(PROJECT, fault["incident"], anyway=True)["issue"])
+
     def test_a_disabled_check_publishes_and_says_not_checked(self):
         self.install()
         self.patch(config, "machine_settings", return_value={"update_check": False})

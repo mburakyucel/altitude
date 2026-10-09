@@ -133,10 +133,12 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
         # The 2026-09-07 project leak left unscoped records pointing to another project's evidence.
         # Preserve those records, but never reuse them for deduplication or incident references.
         rec = faults.get(key) or {}
+        if rec.get("release") != _release():
+            # A repeat after an update is news about the new release: its own incident, never the old one.
+            rec = {**rec, "first": None, "count": 0, "incident": None}
         changed = touched if project and task else rec.get("detail") != detail
-        # A repeat after an update is news about the new release, so the window holds only within one version.
         recent = (bool(rec.get("last")) and _seconds_since(rec["last"]) < FAULT_WINDOW_SECONDS
-                  and rec.get("incident") and rec.get("release") == _release())
+                  and rec.get("incident"))
         rec = {**rec, "first": rec.get("first") or S.now(), "last": S.now(),
                "count": int(rec.get("count", 0)) + 1, "incident": rec.get("incident"),
                "detail": detail, "project": project, "task": task, "release": _release()}
@@ -537,6 +539,8 @@ def publish_issue(project: str, incident: str, *, anyway: bool = False) -> dict:
         current = _field(body, spans, "issue")
         if current and not current.startswith(PENDING):
             return {"id": incident, "issue": current, "created": False}
+        if current.startswith(PENDING + "held:") and not anyway:   # updating does not file the old version's report
+            return {"id": incident, "issue": None, "pending": current[len(PENDING):], "held": True}
         behind = None if anyway else _behind()
         reason = (f"held: reported on {behind[0]} while {behind[1]} is available; update first. A repeat on the new "
                   f"version files its own issue; alt incident publish {incident} files this one now") if behind else None
