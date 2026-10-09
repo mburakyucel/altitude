@@ -994,30 +994,34 @@ on another dependency shows that wait and no card (the CLI and queue add "PR #N 
 gives the PR a new head; a new hold or a later operator message naming the PR brings the card back. A fault retains a red explanation of the interruption and its known wait. Operational
 pauses without questions retain Resume/Reject. No disclosure or reply releases a merge hold.
 
-Navigation states: Conversation and Live session are local views of the same task. On phone they
-sit side by side on one track. A deliberate horizontal swipe is interactive from its first
-horizontal movement: the outgoing view slides with the finger and the incoming view is on screen
-beside it, proportionally to the drag. Release past half the width, or a fling of at least 0.4 px/ms
-in the drag's direction, completes the switch with a short settle; otherwise, including a fling
-back toward the start, the track springs back. Left opens Live session; right returns to Conversation;
-past either end the track gives a little with rubber-band resistance and never switches. Under
+Navigation states: Conversation, Live session and, for a task with a worktree, Terminal are local
+views of the same task. On phone they sit side by side on one track in their tab order. A deliberate
+horizontal swipe is interactive from its first horizontal movement: the outgoing view slides with the
+finger and the neighbouring view is on screen beside it, proportionally to the drag, while the tab row
+stays in place. Release past half the width, or a fling of at least 0.4 px/ms in the drag's direction,
+completes the switch with a short settle; otherwise, including a fling back toward the start, the
+track springs back. Left moves one tab on (Conversation → Live session → Terminal); right moves one
+tab back; past either end the track gives a little with rubber-band resistance and never switches. Under
 reduced motion nothing moves with the finger and a release past the same thresholds switches at once.
 Accessible labeled tabs remain the direct alternative. Swipes do not start from the composer or form
-controls, and leave browser-edge Back, text selection, recording, dialogs and horizontally scrollable
-session content alone. Vertical scrolling stays native. Desktop keeps simultaneous panes.
+controls, and leave browser-edge Back, text selection, recording, dialogs, horizontally scrollable
+session content and the terminal screen and key row alone; on Terminal a swipe starts from the notes
+and cards around the screen. Vertical scrolling stays native. Desktop keeps simultaneous panes.
 Phone tab and swipe switches replace its current history entry, keep the originating shell tab, and update the URL;
 the desktop panel button adds no history. A `/live` deep link and reload select Live session on
 phone and open the desktop panel. Back in the phone header and the desktop crumb both return to
 the actual preceding in-app page, including its query string. With no in-app predecessor they
 replace the task entry with the owning project's L3 conversation. Browser/system Back remains
 native; Forward restores the task's latest URL, and other pages/tasks keep ordinary history.
-On phone both views stay mounted and laid out; the inactive view is invisible and untouchable, not
-removed, so draft text, selection, images, conversation reading position and live transcript reading
+On phone Conversation and Live session stay mounted and laid out; the inactive view is invisible and
+untouchable, not removed, so draft text, selection, images, conversation reading position and live transcript reading
 state survive switches natively and a drag reveals the view as it was. An inactive Live session does
 not poll its transcript; the drag that reveals it starts the transcript, so the incoming view shows
 its real content when it has rendered before and its Connecting skeleton during the drag and settle
 otherwise, then its content. The Conversation's initial, empty and error states read the same at any
-offset, and a drag never wakes its composer. Memory matches the desktop's simultaneous panes; only
+offset, and a drag never wakes its composer. A drag toward Terminal shows the terminal's loading view;
+the shell opens, or attaches to the running one, only once the switch completes, so a drag that
+springs back starts nothing and opens no keyboard. Memory matches the desktop's simultaneous panes; only
 the inactive phone view's transcript polling and reading bookkeeping pause. Returning does not open
 the keyboard automatically; touch fields retain their 16px sizing and ordinary use never changes
 page scale (§2.2).
@@ -1032,7 +1036,8 @@ specified here and in §3.6. `web/e2e/task-navigation.pw.ts` walks entry from L3
 toggles, reload, Back, Forward and direct-live fallback on phone and desktop. `web/e2e/task-swipe.pw.ts`
 walks the phone gesture: idle, drag started, half-way with the incoming view loading and rendered,
 release completing, springing back, resistance past either end and reduced motion, plus the
-gesture exclusions and retained reading state.
+gesture exclusions and retained reading state; `web/e2e/terminal.pw.ts` walks the three-tab swipe to
+Terminal and back, its loading view half-way, end resistance and a swipe on terminal text that stays.
 
 A message L3 sent the L2 is coordination, not conversation with the operator: it reads as one
 left-aligned muted line with a dot, **L3 ·** and the one-line summary L3 wrote when sending (for
@@ -1138,7 +1143,7 @@ Each named state has a screenshot under `web/ui-artifacts/results/l2-progress*`.
 
 The operator's own shell, for occasional commands; the conversations stay the main flow and agents
 never see it. A task with a worktree offers it as the phone's third tab, **Terminal**, after
-Conversation and Live session; swiping stays between those two. On desktop the task panel's header
+Conversation and Live session; swiping reaches it from Live session (§3.10 Navigation states). On desktop the task panel's header
 becomes a **Live session | Terminal** switch, and the panel toggle and overlay behave as for Live
 session. The project header's **Terminal** shows the project folder's terminal in the right panel
 (overlay below the inline width) and presses again to hide it; on phone it opens full screen with
@@ -1580,7 +1585,7 @@ An unpaired browser sees one centred card instead of the app, at every route: th
 **Pair this device**, "Altitude opens only on devices you pair. On the computer running Altitude, in
 a terminal or over SSH, run:", the copyable `alt pair` command, "Then type the code it shows. A device
 that is already paired can also make a code in Settings › Devices.", a large monospace **Pairing code**
-field (uppercase, one-time-code autofill), a full-width **Pair** button, disabled while the field is
+field (one-time-code autofill), a full-width **Pair** button, disabled while the field is
 empty, and under it "Did the browser warn about the certificate before showing this page? Pair only
 after it opens without a warning." The guidance points container users to the host launcher's public
 certificate export, and native users to **Set up a device** in trusted, paired Settings or `alt tls-share`
@@ -1593,6 +1598,7 @@ Pairing opens the route the browser asked for.
 | Loading | The mark alone while Altitude answers whether this browser is paired. |
 | Unreachable | "Could not reach Altitude." and Retry. |
 | Empty | The card with an empty field; Pair disabled. |
+| Typing | The field owns the dash: it keeps letters and digits, uppercased, up to eight, and shows `ABCD-` once four are typed. A typed dash or space is ignored; deleting the dash deletes the fourth character. A pasted `abcd 2345` or `ABCD-2345` shows `ABCD-2345`. An edit inside the code keeps the caret at the edit. |
 | Pairing | Pairing… and a disabled field and button. |
 | Wrong code | "That code is not right. N tries left." under the field; typing clears it. |
 | Cancelled or used code | "Too many wrong codes, so this one is cancelled. Make a new one." or "This code has expired or was already used. Make a new one." |

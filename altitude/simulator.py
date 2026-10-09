@@ -7,8 +7,11 @@ in the runner's part of the run area, never in the operator's own devices. The s
 removal after the run, or at the next start after an interruption, needs no device names.
 The run reaches the phone's Web Inspector only through a Unix socket in its own temporary folder. The relay passes
 Safari's web pages and nothing else on the phone: other inspectable processes are hidden, any other request closes the
-connection, and a page whose address is on Altitude's port is hidden and closes a connection attached to it. Its one
-request of its own opens an http(s) loopback address in Safari, the way a run puts its first page on the phone.
+connection, and a page whose address is on Altitude's port is hidden and closes a connection attached to it. Its
+own requests open an http(s) loopback address in Safari, the way a run puts its first page on the phone, and walk one
+of two fixed native walks at such an address: Add to Home Screen, or a device setup page's profile through Settings.
+altd builds the walks (`walks/`, Apple's UI testing) from its own code into the run area, outside the candidate's
+folders, and returns each walk's steps and screenshots to the run.
 The phone trusts one CA of the run's own, made by Altitude's certificate generator, so the run can serve it HTTPS.
 See docs/DEVELOPMENT.md#ios-simulator-runs.
 """
@@ -33,6 +36,7 @@ from . import platform, tls
 
 XCRUN = "/usr/bin/xcrun"
 SAFARI = "com.apple.mobilesafari"
+APPS = (SAFARI, "com.apple.webapp", "com.apple.Preferences")   # what a walk opens, closed when it ends
 BOOT_SECONDS = 300
 RECORD_STOP = 10                 # seconds for a screen recording to finish its file once asked to stop
 FRAME_LIMIT = 64 << 20            # bytes in one inspector message; a page snapshot is a few MiB
@@ -40,6 +44,15 @@ FRAME_SECONDS = 30               # for the rest of a message once its first byte
 SESSIONS = 4                     # run connections at once; a walkthrough uses one
 OPEN = "_rpc_altitudeOpenURL:"    # the relay's own request: {"url": ...}, answered by OPENED with {"error": ...}
 OPENED = "_rpc_altitudeOpenedURL:"
+WALK = "_rpc_altitudeWalk:"       # {"walk": a name in WALKS, "url": ..., "code": ...}, answered by WALKED with
+WALKED = "_rpc_altitudeWalked:"   # {"error": ..., "walk": its record as JSON, "files": {name: PNG}}
+WALKS = {"home-screen": "testHomeScreen", "profile": "testProfile"}
+WALK_SOURCE = Path(__file__).resolve().parent / "walks"
+BUILD_SECONDS = 600              # for building the walks once per run
+WALK_SECONDS = 420               # for one walk; its own waits end well within it
+XCODEBUILD_STOP = 60             # seconds for xcodebuild to end its test runner once interrupted
+FILE_LIMIT = 16 << 20            # bytes in one screenshot or icon returned to the run
+PAIRING = re.compile(r"[2-9A-HJ-NP-Z]{4}-[2-9A-HJ-NP-Z]{4}")   # a pairing code, as access.issue_code makes it
 UNAVAILABLE = "--simulator needs a Mac with Xcode and an installed iOS Simulator runtime"
 
 #: What the run may ask of the phone. `_rpc_forward*` requests name a Safari application, and a page or sender the
@@ -87,10 +100,12 @@ def plan() -> dict:
 
 
 class Phone:
-    """The run's iPhone in the private device set `devices`."""
+    """The run's iPhone in the private device set `devices`, with its walks built and run in the private folder
+    `walks`."""
 
-    def __init__(self, devices: Path, chosen: dict):
-        self.devices, self.chosen, self.udid = devices, chosen, None
+    def __init__(self, devices: Path, chosen: dict, walks: Path):
+        self.devices, self.chosen, self.walks, self.udid = devices, chosen, walks, None
+        self.walking, self.tests, self.count = threading.Lock(), None, 0
 
     def boot(self) -> str:
         """Create and boot the phone headless; return its Web Inspector socket. The steps share BOOT_SECONDS, so one
@@ -126,6 +141,63 @@ class Phone:
 
     def open(self, url: str) -> None:
         _simctl(self.devices, "openurl", self.udid, url, timeout=30)
+
+    def walk(self, name: str, url: str, code: str = "") -> tuple[dict, dict]:
+        """Walk `name` (WALKS) at `url` with Apple's UI testing, typing the pairing `code` into the Home Screen app when
+        one is given. Returns the walk's record, its steps and what it saw, with an `error` when the runner failed or
+        did not finish, and its screenshots by name; the Home Screen walk adds the web clip it made. The apps the walk
+        used are closed after it, so none keeps a connection to the run's pages."""
+        with self.walking:
+            tests = self._build()
+            self.count += 1
+            folder = self.walks / f"{self.count}-{name}"
+            (folder / "files").mkdir(parents=True)
+            clips = self.devices / self.udid / "data" / "Library" / "WebClips"
+            before = set(os.listdir(clips)) if clips.is_dir() else set()
+            env = {**os.environ, "TEST_RUNNER_WALK_URL": url, "TEST_RUNNER_WALK_CODE": code,
+                   "TEST_RUNNER_WALK_OUT": str(folder / "files")}
+            failed = _xcodebuild(["test-without-building", "-xctestrun", str(tests), "-destination",
+                                  f"platform=iOS Simulator,id={self.udid}", f"-only-testing:Walks/Walks/{WALKS[name]}",
+                                  "-parallel-testing-enabled", "NO", "-resultBundlePath", str(folder / "result.xcresult"),
+                                  f"-DVTSimulatorSetLocation={self.devices}"], folder / "xcodebuild.log", WALK_SECONDS,
+                                 env)
+            for app in APPS:
+                try:
+                    _simctl(self.devices, "terminate", self.udid, app, timeout=30)
+                except (OSError, RuntimeError, subprocess.SubprocessError):
+                    pass   # not running
+            try:
+                record = json.loads((folder / "files" / "walk.json").read_text())
+            except (OSError, ValueError):
+                record = {"steps": [], "seen": {}}
+            if failed or not (record.get("seen", {}).get("finished") or record.get("seen", {}).get("stopped")):
+                record["error"] = failed or "the walk's runner ended before its walk did"
+            files = {path.name: path.read_bytes() for path in sorted((folder / "files").glob("*.png"))
+                     if path.stat().st_size <= FILE_LIMIT}
+            made = sorted(set(os.listdir(clips)) - before) if clips.is_dir() else []
+            if made:
+                clip = clips / made[-1]
+                info = plistlib.loads((clip / "Info.plist").read_bytes()) if (clip / "Info.plist").is_file() else {}
+                record["clip"] = {key: info[key] for key in ("Title", "URL", "FullScreen")
+                                  if isinstance(info.get(key), (str, bool))}
+                if (clip / "icon.png").is_file() and (clip / "icon.png").stat().st_size <= FILE_LIMIT:
+                    files["web-clip-icon.png"] = (clip / "icon.png").read_bytes()
+            return record, files
+
+    def _build(self) -> Path:
+        """The walks' test run file, built at the first walk from altd's own copy of `walks/` in the private folder,
+        since xcodebuild writes beside the project it builds."""
+        if not self.tests:
+            source = self.walks / "source"
+            shutil.copytree(WALK_SOURCE, source)
+            failed = _xcodebuild(["build-for-testing", "-project", str(source / "Walks.xcodeproj"), "-scheme", "Walks",
+                                  "-destination", "generic/platform=iOS Simulator", "-derivedDataPath",
+                                  str(self.walks / "build")], self.walks / "build.log", BUILD_SECONDS)
+            found = sorted((self.walks / "build" / "Build" / "Products").glob("*.xctestrun"))
+            if failed or not found:
+                raise RuntimeError(f"the walks did not build: {failed or 'xcodebuild made no test run file'}")
+            self.tests = found[0]
+        return self.tests
 
     def record(self, path: Path) -> Recording:
         """Start recording the whole screen as the video `path`."""
@@ -169,6 +241,29 @@ class Recording:
         return None
 
 
+def _xcodebuild(args: list[str], log: Path, seconds: float, env: dict | None = None) -> str | None:
+    """xcodebuild with its output in `log`; returns why it failed, or None. Past `seconds` it is interrupted as Ctrl-C
+    does, so it ends its test runner itself, and is killed only when it does not."""
+    with open(log, "wb") as out:
+        process = subprocess.Popen([XCRUN, "xcodebuild", *args], stdin=subprocess.DEVNULL, stdout=out,
+                                   stderr=subprocess.STDOUT, env=env)
+    try:
+        code = process.wait(seconds)
+    except subprocess.TimeoutExpired:
+        process.send_signal(signal.SIGINT)
+        try:
+            process.wait(XCODEBUILD_STOP)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        return f"xcodebuild did not finish within {seconds} s"
+    if code:
+        said = [line.strip() for line in log.read_text(errors="replace").splitlines()
+                if re.search(r"error|crash|fail", line, re.I)]
+        return f"xcodebuild exit {code}: {' | '.join(said[-4:])[-600:] or 'no error lines'}"
+    return None
+
+
 def remove(devices: Path) -> str | None:
     """Shut down and delete every device in the set `devices`, then the set. Returns why it stays, or None."""
     if not os.path.lexists(devices):
@@ -202,6 +297,17 @@ def _altitudes(url: object, port: int) -> bool:
         return not isinstance(url, str) or _port(url) == port
     except ValueError:
         return True
+
+
+def walkable(argument: dict, port: int) -> str | None:
+    """Why the relay will not walk `argument`, or None: one of WALKS at an address it would open, with a pairing code
+    only for the Home Screen app."""
+    name, code = argument.get("walk"), argument.get("code", "")
+    if not isinstance(name, str) or name not in WALKS:
+        return f"the relay walks only {' and '.join(WALKS)}"
+    if not isinstance(code, str) or code and (name != "home-screen" or not PAIRING.fullmatch(code)):
+        return "a walk takes only a pairing code, for the Home Screen app"
+    return openable(argument.get("url"), port)
 
 
 def openable(url: object, port: int) -> str | None:
@@ -262,8 +368,8 @@ def _write(sock: socket.socket, selector: str, argument: dict) -> None:
 class _Session:
     """One run connection and its own connection to the phone: what the phone has shown it, and its senders."""
 
-    def __init__(self, run: socket.socket, phone: socket.socket, port: int, open_url):
-        self.run, self.phone, self.port, self.open_url = run, phone, port, open_url
+    def __init__(self, run: socket.socket, phone: socket.socket, port: int, open_url, walk):
+        self.run, self.phone, self.port, self.open_url, self.walk = run, phone, port, open_url, walk
         self.lock = threading.Lock()
         self.sending = threading.Lock()  # both directions' threads write to the run
         self.apps: set = set()          # Safari's application identifiers
@@ -310,6 +416,16 @@ class _Session:
                 except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
                     error = str(exc)
             self._to_run(OPENED, {"error": error or ""})
+            return True
+        if selector == WALK:
+            error, answer = walkable(argument, self.port), {}
+            if not error:
+                try:
+                    record, files = self.walk(argument["walk"], argument["url"], argument.get("code", ""))
+                    answer = {"walk": json.dumps(record), "files": files}
+                except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+                    error = str(exc)
+            self._to_run(WALKED, {"error": error or "", **answer})
             return True
         if selector not in FROM_RUN:
             return False
@@ -369,10 +485,10 @@ class _Session:
 
 class Relay:
     """Serves the run's socket at `path` while the run lasts; each connection gets its own connection to the phone's
-    Web Inspector at `inspector`."""
+    Web Inspector at `inspector`. `open_url(url)` and `walk(name, url, code)` answer the run's own requests."""
 
-    def __init__(self, path: Path, inspector: str, port: int, open_url):
-        self.path, self.inspector, self.port, self.open_url = path, inspector, port, open_url
+    def __init__(self, path: Path, inspector: str, port: int, open_url, walk):
+        self.path, self.inspector, self.port, self.open_url, self.walk = path, inspector, port, open_url, walk
         self.sessions: list[_Session] = []
         self.lock = threading.Lock()
         self.listener = socket.socket(socket.AF_UNIX)
@@ -403,7 +519,7 @@ class Relay:
             except OSError:
                 run.close()
                 continue
-            session = _Session(run, phone, self.port, self.open_url)
+            session = _Session(run, phone, self.port, self.open_url, self.walk)
             with self.lock:
                 if self.stopped.is_set():
                     run.close()
