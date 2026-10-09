@@ -761,6 +761,8 @@ export const QueuedMessageSchema = z
     slug: z.string().nullish(),
     /** A Create task press: the turn whose reply it answers (SPEC.md §3.3). */
     offer_turn: z.string().nullish(),
+    /** A kept message: already in the conversation under this turn, waiting for an available engine (SPEC.md §4.2). */
+    turn_id: z.string().nullish(),
   })
   .passthrough();
 

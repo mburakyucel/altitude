@@ -1626,6 +1626,32 @@ class TestChatQueue(AltitudeCase):
         self.assertNotIn("offer_turn", follow_up)
         self.assertNotIn("check the phone badge", created["prompts"][0])
 
+    def test_a_create_task_press_kept_without_an_engine_still_creates_that_replys_one_task(self):
+        offer = self.offer_turn()
+        self.assertEqual(self.press(offer)[0], 200)
+        refused = {"text": "", "session_id": "", "error": "fixture allowance exhausted", "usage": {}, "tools": [],
+                   "limited": {"scope": "engine", "why": "fixture allowance exhausted", "until": "2999-01-01T00:00:00+00:00"},
+                   "safe_to_retry": True}
+        with mock.patch.object(engines, "claude_print", return_value=refused), \
+             mock.patch.object(engines, "codex_exec", return_value=refused):
+            result = l3.deliver_queued(self.project)  # every engine refuses before output: the press is kept
+        self.assertTrue(result["undelivered"])
+        [kept] = l3._queue_rows(l3.queue_path(self.project))
+        self.assertEqual((kept["turn_id"], kept["offer_turn"]), (result["turn_id"], offer))
+        l3._write_queue(l3.queue_path(self.project), [{**kept, "retry_at": "2000-01-01T00:00:00+00:00"}])
+
+        created = {}
+        with self.deliverable(), mock.patch.object(engines, "claude_print", side_effect=self.creating_provider(created)):
+            l3.deliver_queued(self.project)
+        first_new, second_new = created["results"]
+        self.assertEqual(first_new["returncode"], 0, first_new["stderr"])
+        self.assertNotEqual(second_new["returncode"], 0, "the kept press still makes one task")
+        slug = json.loads(first_new["stdout"])["slug"]
+        self.assertEqual(S.load_task(self.project, slug)["offer_turn"], offer)
+        press, answer = [row for row in self.chat_view()["history"] if row.get("turn_id") == result["turn_id"]]
+        self.assertEqual((press["offer_turn"], answer["tasks"]), (offer, [slug]))
+        self.assertEqual(self.queue_rows(), [])
+
     def test_retrying_a_failed_create_task_turn_never_makes_a_second_task(self):
         offer = self.offer_turn()
         self.assertEqual(self.press(offer)[0], 200)

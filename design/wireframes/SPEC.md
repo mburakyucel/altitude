@@ -382,7 +382,7 @@ form, dialog or second copy of the reply.
 | Reply without an offer | Absent: ordinary answers, reports, system lines and replies that created a task show nothing. |
 | Offered | Plus, Create task, and the title, under the latest reply only. |
 | Working | Accent fill and a spinner, from the press until L3 answers; it ignores presses and keeps focus. "Create task sent" is announced once Altitude saves the press. L3's typing indicator follows. |
-| Waiting for L3 | A clock while the press waits behind L3's current work, with × (Remove, 44px target) inside the pill. Remove brings the offer back. The press is not listed among queued messages. |
+| Waiting for L3 | A clock while the press waits behind L3's current work, with × (Remove, 44px target) inside the pill. Remove brings the offer back. A press kept while no engine can run (§4.2) shows the clock without ×, as a kept message cannot be removed. The press is not listed among queued messages. |
 | Task created | Green fill, check, "Task created"; L3's answer below carries the task card. It stays in the history. |
 | Answered without a task | Muted check: L3 answered the press without creating a task. |
 | Not sent | Altitude refused the press or did not save it: the offer stays with a short danger note (`role=alert`): Altitude's reason, "Not sent" or, when the conversation cannot be read, "Not confirmed". Pressing again is safe. |
@@ -1707,7 +1707,12 @@ available after acceptance until claim, even when an engine becomes unavailable.
 undo an interruption already requested. An unavailable engine, active chat still starting or operator
 wait disables Send now with the server's explanation. Denied, conflict and unconfirmed requests retain the row
 and show their own inline error after refreshing canonical state. The row becomes its turn bubble
-only when the server admits it; claimed, delivered or removed rows have no queued actions.
+only when the server admits it; claimed, delivered or removed rows have no queued actions. A message
+admitted while no L3 engine can run keeps its bubble with the muted queued status (**Queued · runs
+next**) and Send now beneath it, disabled with the server's explanation; there is no error line and no
+Remove, because it was already sent. It runs before system work once an engine is available, and its
+reply appears beneath the same bubble. A kept message older than the loaded conversation appears in the
+queued rows with the same status and Send now, still without Remove.
 Both controls have 44px phone targets and wrap with their explanations on narrow screens.
 A running turn shows
 either a system line in progress (§3.4) or, for a `chat` turn, a typing indicator under the

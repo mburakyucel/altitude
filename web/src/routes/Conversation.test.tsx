@@ -214,6 +214,55 @@ describe("queued L3 Send now", () => {
     expect(posted(fetchMock, "/api/chat/send-now")).toEqual({ project: "altitude", id: "q-now" });
   });
 
+  it.each([390, 1440])("keeps a message sent during an engine hold under its bubble, then attaches the reply at %i", async (width) => {
+    setViewport(width);
+    const kept = { id: "held", turn_id: "held", at: ago(0), text: "Are you there?", trigger: "chat", role: "user" };
+    const sent = { at: ago(0), role: "user", text: "Are you there?", trigger: "chat", turn_id: "held" };
+    let view: ChatView = chatView;
+    mockFetch({
+      chatFn: () => jsonResponse(view),
+      post: () => {
+        view = { ...chatView, send_now_reason: "No engine is available. The message stays queued.", history: [...history, sent],
+          queued: [kept, { id: "later", at: ago(0), text: "System work", trigger: "restart" }] };
+        return streamResponse([JSON.stringify({ queued: kept })]);
+      },
+    });
+    const { user, queryClient } = renderApp({ route: "/projects/altitude" });
+    await user.type(await screen.findByRole("textbox", { name: "Message L3 about altitude" }), "Are you there?{Enter}");
+
+    const turn = await waitFor(() => {
+      const node = document.querySelector('[data-turn="held"]');
+      expect(node).not.toBeNull();
+      return node as HTMLElement;
+    });
+    await waitFor(() => expect(screen.getAllByText("Are you there?")).toHaveLength(1));
+    expect(within(turn).getByText("Queued · runs next")).toBeVisible();
+    expect(within(turn).getByRole("button", { name: "Send now" })).toBeDisabled();
+    expect(within(turn).getByText("No engine is available. The message stays queued.")).toBeVisible();
+    expect(within(turn).queryByRole("button", { name: "Remove" })).toBeNull();
+    expect(screen.queryByText(/could not answer/)).toBeNull();
+    expect(screen.queryByText(/engine hold|unavailable:/)).toBeNull();
+    expect(within(screen.getByRole("list", { name: "Queued messages" })).queryByText("Are you there?")).toBeNull();
+
+    view = { ...chatView, history: [...history, sent, { at: ago(0), role: "assistant", text: "Here now.", trigger: "chat", engine: "alpha", turn_id: "held" }] };
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["chat", "altitude"] }); });
+    await waitFor(() => expect(within(document.querySelector('[data-turn="held"]') as HTMLElement).getByText("Here now.")).toBeVisible());
+    expect(screen.queryByText("Queued · runs next")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Send now" })).toBeNull();
+  });
+
+  it("lists a kept message whose bubble is older than the loaded history, without Remove", async () => {
+    mockFetch({ chat: { ...chatView, send_now_reason: "No engine is available. The message stays queued.", queued: [
+      { id: "old-held", turn_id: "old-held", at: ago(90), text: "Earlier kept question", trigger: "chat", role: "user" },
+    ] } });
+    renderApp({ route: "/projects/altitude" });
+    const list = await screen.findByRole("list", { name: "Queued messages" });
+    expect(within(list).getByText("Earlier kept question")).toBeVisible();
+    expect(within(list).getByText("Queued · runs next")).toBeVisible();
+    expect(within(list).getByRole("button", { name: "Send now" })).toBeDisabled();
+    expect(within(list).queryByRole("button", { name: "Remove" })).toBeNull();
+  });
+
   it("explains unavailable delivery without offering system rows an action", async () => {
     mockFetch({ chat: { ...chatView, send_now_reason: "No engine is available", queued: [
       { id: "chat", text: "Wait for capacity", trigger: "chat" }, { id: "system", text: "System work", trigger: "restart" },
@@ -1161,6 +1210,20 @@ describe.each([390, 1440])("Create task under a reply at %ipx (SPEC.md §3.3)", 
     else expect(button).not.toHaveAttribute("aria-disabled");
     expect(within(region).queryByText(`Create task: ${title}`)).toBeNull();
     expect(within(region).queryByText(/L3 could not answer this turn/)).toBeNull();
+  });
+
+  it("shows a press kept for an engine as waiting, without Remove or a second queued line", async () => {
+    const pressTurn = { at: ago(1), role: "user", text: `Create task: ${title}`, trigger: "chat", turn_id: "c9", offer_turn: offered.turn_id };
+    const kept = { ...pressRow, id: "c9", turn_id: "c9" };
+    serve(() => jsonResponse({}), () => ({ ...chatView, history: [...history, asked, offered, pressTurn], queued: [kept] }) as ChatView);
+    renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    const button = await within(region).findByRole("button", { name: "Create task, waiting for L3" });
+    expect(button.closest(".reply")).toHaveTextContent("Yes, a small one.");
+    expect(within(region).queryByRole("button", { name: "Remove" })).toBeNull();
+    expect(within(region).queryByText(`Create task: ${title}`)).toBeNull();
+    expect(within(region).queryByText(/Queued ·/)).toBeNull();
+    expect(within(region).queryByRole("list", { name: "Queued messages" })).toBeNull();
   });
 
   it("shows the reason when Altitude refuses a stale press, and the action leaves", async () => {
