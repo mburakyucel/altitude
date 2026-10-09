@@ -2577,7 +2577,7 @@ the exact captured question revision; **Open current question** likewise replace
 then opens the owning project conversation. Pages keep what the operator leaves behind in
 `visitMemory.ts`: unsent answers (keyed by project, task, question and revision), the task's unsent
 message, and the question whose preview was opened. It lives in tab memory only, under the router's
-history entry key, and returns only on Back/Forward to that same entry; the task conversation then jumps to
+history entry key, and returns on each Back/Forward to that same entry; the task conversation then jumps to
 that question and Needs you scrolls its card into view. Answers whose revision is no longer open and
 operator-facing are dropped, and sends keep the server's revision fence. Reloading, closing the tab or
 pairing again clears it.

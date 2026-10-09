@@ -212,6 +212,10 @@ test("Needs you preview returns to the list with the card in view and its draft 
   });
   await expect(decision).toBeInViewport();
   await expect(decision.getByRole("textbox")).toHaveValue("Looks right; ship it after the hold.");
+  await page.goForward();
+  await page.goBack();
+  await expect(decision).toBeInViewport();
+  await expect(decision.getByRole("textbox")).toHaveValue("Looks right; ship it after the hold.");
   // An answer sent from another device while the preview is open drops the draft on return.
   await page.goForward();
   expect((await request.post("/fixture/resolve-question", { data: { id: q.id } })).ok()).toBe(true);
@@ -421,6 +425,13 @@ test("the current implementation preview is discoverable from Needs you, Work an
   await previewBack(page, info).click();
   await expect(page).toHaveURL(taskPath);
   await walk.state("review-08-back-to-earlier-question", { visible: [earlier.getByText("Decision recorded", { exact: true })], hidden: [] });
+  await expect(earlier).toBeInViewport();
+  await expect(card(page, review)).not.toBeInViewport();
+  // Every later return to this entry comes back to the same question.
+  await page.goForward();
+  await expect(page).toHaveURL(new RegExp(`${proposal.design_url}$`));
+  await page.goBack();
+  await expect(page).toHaveURL(taskPath);
   await expect(earlier).toBeInViewport();
   await expect(card(page, review)).not.toBeInViewport();
   const unchanged = await task(request);
