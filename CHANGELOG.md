@@ -18,6 +18,9 @@ Updating from `v0.1.0`: the installation offers this release in the app, in `alt
 
 Conversations and tasks:
 
+- The coordinator creates a task in the same turn when a message makes clear that work should
+  happen, and asks first only when it is unclear whether any work is wanted. Open product choices go
+  to the owner's proposal checkpoint.
 - Messages you send in a task's chat while its Claude owner is working reach it as your own next
   turn, so it acts on them as your instructions.
 - Decision alerts wait while L3 or the task's owner is still handling a decision, and alert once the
