@@ -49,7 +49,7 @@ import zlib
 REPO = Path(__file__).resolve().parent.parent
 FAILURES = (OSError, RuntimeError, TimeoutError, ValueError, KeyError)
 sys.path.insert(0, str(REPO))
-from altitude import tls
+from altitude import access, tls
 SAFARI = "com.apple.mobilesafari"
 OPEN, OPENED = "_rpc_altitudeOpenURL:", "_rpc_altitudeOpenedURL:"
 WALK, WALKED = "_rpc_altitudeWalk:", "_rpc_altitudeWalked:"
@@ -290,7 +290,8 @@ def setup(run: Run) -> None:
             if attempt == 3:  # a Safari launched by the first open can drop that address and show a blank page
                 raise
     safari.wait("document.readyState === 'complete'", "the first page")
-    safari.evaluate(f"document.cookie = 'altitude_device={run.device}; path=/'; 0")
+    # Kept as long as Altitude keeps a paired device's, so Safari stays paired after altd's walks close it.
+    safari.evaluate(f"document.cookie = '{access.COOKIE}={run.device}; path=/; max-age={access.COOKIE_SECONDS}'; 0")
     project = safari.wait("window.__project || (window.__overview ||= fetch('/api/overview').then(r => r.json())"
                           ".then(o => window.__project = o.projects.find(p => p.managed).name), '')",
                           "the fixture's project")
@@ -560,7 +561,7 @@ def check(step: str, failures: list[str], detail: str) -> dict:
 def api(run: Run, method: str, path: str) -> dict:
     """The fixture service's answer, as the paired device."""
     request = urllib.request.Request(run.url + path, method=method, data=b"{}" if method == "POST" else None,
-                                     headers={"Cookie": f"altitude_device={run.device}",
+                                     headers={"Cookie": f"{access.COOKIE}={run.device}",
                                               "Content-Type": "application/json"})
     with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=10) as answer:
         return json.load(answer)
