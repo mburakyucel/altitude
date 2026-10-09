@@ -50,6 +50,8 @@ TOOLS = ("qemu-system-x86_64", "qemu-img", "cloud-localds", "gpgv", "ssh", "ssh-
 HARNESS = ("test_installation_lifecycle.sh", "installation_lifecycle.py")
 # Fixed guest addresses let the network configuration name each card.
 OFFLINE_MAC, ONLINE_MAC = "52:54:00:a1:70:01", "52:54:00:a1:70:02"
+# What a public guest must still not reach besides this host's own addresses: private, shared and link-local networks.
+LOCAL_NETWORKS = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16")
 
 
 STARTED = time.monotonic()
@@ -201,7 +203,7 @@ class Machine:
             "-qmp", f"unix:{self.qmp},server=on,wait=off", "-pidfile", str(self.pidfile),
             "-drive", f"file={self.disk},if=virtio,format=qcow2",
             "-drive", f"file={work / 'seed.img'},if=virtio,format=raw",
-            "-netdev", f"user,id=offline,restrict=on,hostfwd=tcp:127.0.0.1:{self.port}-:22",
+            "-netdev", f"user,id=offline,net=10.0.4.0/24,restrict=on,hostfwd=tcp:127.0.0.1:{self.port}-:22",
             "-device", f"virtio-net-pci,netdev=offline,mac={OFFLINE_MAC}",
             # A separate subnet, so replies to the forwarded SSH connection leave through the offline card.
             "-netdev", "user,id=online,net=10.0.3.0/24,ipv6=off",
@@ -286,16 +288,27 @@ class Machine:
             self.log.close()
 
 
+def outbound_address() -> str:
+    """This host's address on its network, the one its default route leaves from; no packet is sent."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.connect(("192.0.2.1", 9))
+        return sock.getsockname()[0]
+
+
 def reachable(machine: Machine) -> dict:
     """Which of the internet and this host the guest reaches, each probe proven able to run."""
-    with socket.socket() as listener:
-        # A listener on this host's loopback: the host probes need a service that is there to reach.
-        listener.bind(("127.0.0.1", 0))
-        listener.listen()
-        port = listener.getsockname()[1]
+    address = outbound_address()
+    with socket.socket() as loopback, socket.socket() as network:
+        # Listeners on this host's loopback and network address: the host probes need a service there to reach.
+        loopback.bind(("127.0.0.1", 0))
+        network.bind((address, 0))
+        for listener in (loopback, network):
+            listener.listen()
+        port, served = loopback.getsockname()[1], network.getsockname()[1]
         probes = {"internet": "curl -sS --max-time 10 -o /dev/null https://cloud-images.ubuntu.com/",
                   "host-through-online-card": f"timeout 10 bash -c '</dev/tcp/10.0.3.2/{port}'",
-                  "host-through-offline-card": f"timeout 10 bash -c '</dev/tcp/10.0.2.2/{port}'"}
+                  "host-through-network": f"timeout 10 bash -c '</dev/tcp/{address}/{served}'",
+                  "host-through-offline-card": f"timeout 10 bash -c '</dev/tcp/10.0.4.2/{port}'"}
         return {name: reached(machine.ssh(command, check=False).returncode) for name, command in probes.items()}
 
 
@@ -448,17 +461,20 @@ def run(results: Path, commit: str, cache: Path, baseline_release: str | None = 
         note("guest provisioned; checking its network, then " + ("blocking this host" if public else "unplugging its online card"))
         record["guest"] = machine.ssh(". /etc/os-release; echo $PRETTY_NAME $(uname -r)").stdout.strip()
         # The online card reaches both the internet and this host, which proves the probes work; the
-        # restricted card reaches neither. Afterwards nothing is reachable.
+        # restricted card reaches neither. Afterwards nothing is reachable, or with --public only the internet.
         record["reachable"] = {"online": reachable(machine)}
         if record["reachable"]["online"] != {"internet": True, "host-through-online-card": True,
-                                             "host-through-offline-card": False}:
+                                             "host-through-network": True, "host-through-offline-card": False}:
             raise SystemExit(f"Unexpected guest network before isolation: {record['reachable']}")
         if public:
-            # The public phases reach GitHub through the online card, whose gateway address is this host.
-            machine.ssh("sudo ip route add prohibit 10.0.3.2/32")
+            # The public phases reach GitHub through the online card, whose gateway address is this host's loopback.
+            # The card's own network stays connected, so the guest keeps its gateway and name server.
+            blocked = ("10.0.3.2/32", f"{outbound_address()}/32", *LOCAL_NETWORKS)
+            machine.ssh("sudo sh -ec '" + "; ".join(f"ip route add prohibit {network}" for network in blocked) + "'")
+            record["blocked"] = blocked
             record["reachable"]["public"] = reachable(machine)
             if record["reachable"]["public"] != {"internet": True, "host-through-online-card": False,
-                                                 "host-through-offline-card": False}:
+                                                 "host-through-network": False, "host-through-offline-card": False}:
                 raise SystemExit(f"The guest does not reach only the internet: {record['reachable']}")
         else:
             machine.unplug_online_card()

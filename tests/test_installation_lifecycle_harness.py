@@ -381,8 +381,10 @@ class TestInstallationVm(AltitudeCase):
         def harness(machine, commits, phase, log):
             phases.append((commits, phase))
             return 0
-        reachable = iter([{"internet": True, "host-through-online-card": True, "host-through-offline-card": False},
-                          {"internet": True, "host-through-online-card": False, "host-through-offline-card": False}])
+        reachable = iter([{"internet": True, "host-through-online-card": True, "host-through-network": True,
+                           "host-through-offline-card": False},
+                          {"internet": True, "host-through-online-card": False, "host-through-network": False,
+                           "host-through-offline-card": False}])
         results = self.tmp / "results"
         with mock.patch.object(vm.subprocess, "run", side_effect=lambda command, **kw: subprocess.CompletedProcess(
                     command, 0, "QEMU emulator version 9.0 fixture\n", "") if command[0] == "qemu-system-x86_64"
@@ -391,13 +393,18 @@ class TestInstallationVm(AltitudeCase):
                 mock.patch.object(vm, "repository", return_value="https://github.com/example/altitude"), \
                 mock.patch.object(vm, "latest", return_value="v0.1.0"), mock.patch.object(vm, "published", side_effect=published), \
                 mock.patch.object(vm, "base_image", return_value={"image": "fixture"}), mock.patch.object(vm, "Machine", Machine), \
-                mock.patch.object(vm, "harness", side_effect=harness), \
+                mock.patch.object(vm, "harness", side_effect=harness), mock.patch.object(vm, "outbound_address", return_value="203.0.113.7"), \
                 mock.patch.object(vm, "reachable", side_effect=lambda machine: next(reachable)), mock.patch("sys.stdout"):
             code = vm.run(results, "a" * 40, self.tmp / "cache", "v0.1.0-rc.2", public=True)
         record = json.loads((results / "vm.json").read_text())
         self.assertEqual((code, record["passed"], record["public"], record["latest"]), (0, True, True, "v0.1.0"))
         self.assertEqual((record["baseline"]["release"], record["candidate"]["release"]), ("v0.1.0-rc.2", "v0.1.0"))
-        self.assertIn("sudo ip route add prohibit 10.0.3.2/32", commands)
+        [blocking] = [command for command in commands if "ip route add prohibit" in command]
+        self.assertEqual(record["blocked"][:2], ["10.0.3.2/32", "203.0.113.7/32"])
+        for network in ("10.0.3.2/32", "203.0.113.7/32", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+                        "100.64.0.0/10", "169.254.0.0/16"):
+            self.assertIn(f"ip route add prohibit {network};" if network != "169.254.0.0/16"
+                          else f"ip route add prohibit {network}'", blocking)
         self.assertEqual(phases, [(f"{'b' * 40}..{'c' * 40}", "public-install"), (f"{'b' * 40}..{'c' * 40}", "public-update")])
 
     def test_a_public_guest_that_still_reaches_this_host_stops_before_any_phase(self):
@@ -412,9 +419,12 @@ class TestInstallationVm(AltitudeCase):
                 mock.patch.object(vm, "latest", return_value="v0.1.0"), \
                 mock.patch.object(vm, "published", side_effect=lambda repository, tag, folder: {"commit": "b" * 40}), \
                 mock.patch.object(vm, "base_image", return_value={}), mock.patch.object(vm, "Machine", return_value=machine), \
+                mock.patch.object(vm, "outbound_address", return_value="203.0.113.7"), \
                 mock.patch.object(vm, "harness") as harness, mock.patch.object(vm, "reachable", side_effect=[
-                    {"internet": True, "host-through-online-card": True, "host-through-offline-card": False},
-                    {"internet": True, "host-through-online-card": True, "host-through-offline-card": False}]), \
+                    {"internet": True, "host-through-online-card": True, "host-through-network": True,
+                           "host-through-offline-card": False},
+                    {"internet": True, "host-through-online-card": True, "host-through-network": True,
+                           "host-through-offline-card": False}]), \
                 mock.patch("sys.stdout"):
             with self.assertRaisesRegex(SystemExit, "does not reach only the internet"):
                 vm.run(self.tmp / "results", "a" * 40, self.tmp / "cache", "v0.1.0-rc.2", public=True)
@@ -582,7 +592,8 @@ class TestInstallationVmCapture(AltitudeCase):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(b"GIF89a fixture")
             return {}
-        reachable = iter([{"internet": True, "host-through-online-card": True, "host-through-offline-card": False}]
+        reachable = iter([{"internet": True, "host-through-online-card": True, "host-through-network": True,
+                           "host-through-offline-card": False}]
                          + [{"internet": False}] * 2)
         results = self.tmp / f"results-{capture}-{failure}"
         if unreadable:  # a harness log the replay cannot read

@@ -1011,9 +1011,11 @@ make installation-vm RESULTS=/tmp/altitude-vm SOURCE=origin/main BASELINE=v0.1.0
 `PUBLIC=1` with a published `BASELINE` builds nothing and runs only the `public-install` and
 `public-update` phases: the candidate is the stable release GitHub's `releases/latest` redirects to
 (a release candidate there stops the run), downloaded and checked like the baseline. The guest keeps
-its online card, and a route that refuses this host's address on that card replaces the unplugging;
-before the phases the internet must answer and this host must not. Each phase's own downloads and
-the installed daemon's release lookup then go to GitHub:
+its online card. Instead of unplugging it, the runner adds guest routes that refuse the card's
+gateway (this host's loopback), this host's own network address, and private, shared and link-local
+networks; the card's own subnet stays reachable for its gateway and name server. Before the phases
+the internet must answer and neither of the host's listeners may. Each phase's own downloads and the
+installed daemon's release lookup then go to GitHub:
 
 ```sh
 make installation-vm RESULTS=/tmp/altitude-vm BASELINE=v0.1.0-rc.2 PUBLIC=1
@@ -1025,13 +1027,14 @@ run boots a copy-on-write overlay with 2 CPUs, 4 GiB of memory and a 12 GiB disk
 per-run SSH key over a loopback-only port, and deletes the overlay, key and seed afterwards, also
 when the run is stopped. The guest has two network cards on separate QEMU user networks. One is
 online only while cloud-init installs Git, GitHub CLI and OpenSSL, and is then unplugged. The other
-is restricted to the SSH forward. The online card has no IPv6. Before the harness starts, the runner probes the internet and a
-listener it opens on the host's loopback. Through the online card both must answer and through the
+is restricted to the SSH forward. The online card has no IPv6. Before the harness starts, the runner
+probes the internet and listeners it opens on the host's loopback and on its network address (the one
+its default route leaves from). Through the online card all three must answer and through the
 restricted card the host must not; after unplugging, nothing may answer. Any other outcome, or a
 probe that cannot run, stops the run. After the lifecycle passes, the runner runs `bootstrap`, `update`
 (not with `BASELINE`, whose published code makes its own lookup) and `reboot-install`, restarts the VM, checks that it is still isolated and runs `reboot-verify`. Results hold the harness evidence and build logs plus `vm.json` (source
 commit, published baseline release with its commit and checksums when used, whether it was a recovery or public run, with
-`PUBLIC` the release `latest` named and its commit and checksums, harness commit and whether its scripts were modified, image and signature, QEMU version, guest OS and kernel, probe outcomes, each phase's exit) and the VM console
+`PUBLIC` the release `latest` named with its commit and checksums and the networks the guest refuses, harness commit and whether its scripts were modified, image and signature, QEMU version, guest OS and kernel, probe outcomes, each phase's exit) and the VM console
 and QEMU logs; `harness.log` and the `harness-*.log` files are written as the phases run. The runner prints each stage with its
 elapsed time; after the first image download, a run takes about three and a half minutes, two of them
 while the restarted guest waits for its unplugged card. Inside a task, `make installation-vm` runs this
