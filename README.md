@@ -84,7 +84,7 @@ is under validation.
    [release notes](CHANGELOG.md) for known limitations. The script checks the machine, runs
    nothing it downloads unless it matches the release's checksums and prints the next steps. The
    [installation steps](docs/SETUP.md#install-the-application) explain what it trusts and how to
-   verify attested releases.
+   verify a release's script before running it.
 2. Put `~/.local/bin` on your PATH and run `alt doctor`. The release includes the CLI, daemon and
    web app; installation enables a per-user service and saves its tool PATH.
 3. Follow the [certificate trust guide for Linux, macOS and phones](docs/SETUP.md#trust-https-on-each-device).
