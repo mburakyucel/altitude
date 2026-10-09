@@ -73,7 +73,10 @@ class TestAccess(AltitudeCase):
             with self.subTest(path=path):
                 status, reply, _ = self.request(method, path, {} if method == "POST" else None)
                 self.assertEqual((status, reply), (401, {"error": "Pair this device to use Altitude.", "pair": True}))
-        self.assertEqual(self.request("GET", "/api/access")[:2], (200, {"paired": False, "device": None}))
+        # On the computer itself, over plain HTTP, pairing needs no certificate check.
+        trust = {"local": True, "https": False, "check": False,
+                 "certificate": None}
+        self.assertEqual(self.request("GET", "/api/access")[:2], (200, {"paired": False, "device": None, "trust": trust}))
         self.assertEqual(self.request("GET", "/api/health")[0], 200)
         self.assertNotEqual(self.request("GET", "/api/overview", device="made-up")[0], 200)
 
@@ -90,7 +93,9 @@ class TestAccess(AltitudeCase):
         self.assertNotIn(key, (access.DIR / "devices.json").read_text())  # only its hash is stored
         self.assertEqual(self.request("GET", "/api/overview", device=key)[:2], (200, {"state": "ready"}))
         self.assertEqual(self.request("GET", "/api/access", device=key)[:2],
-                         (200, {"paired": True, "device": "Home Screen app on iPhone"}))
+                         (200, {"paired": True, "device": "Home Screen app on iPhone", "trust": {
+                             "local": True, "https": False,
+                             "check": False, "certificate": None}}))
         status, reply, _ = self.pair(code)
         self.assertEqual((status, reply["error"]), (410, "This code has expired or was already used. Make a new one."))
 
@@ -269,6 +274,29 @@ class TestAccess(AltitudeCase):
         self.assertEqual((status, reply["minutes"]), (200, access.CODE_MINUTES))
         self.assertEqual(self.pair(reply["code"], headers={"User-Agent": DESKTOP})[0], 200)
 
+    def test_a_new_code_comes_with_the_address_a_qr_code_and_the_certificate_check_never_a_link(self):
+        from unittest import mock
+        from altitude import qr, tls
+        self.patch(config, "TLS", True)
+        self.patch(config, "TLS_DIR", self.tmp / "private-tls")
+        self.patch(config, "HOST", "127.0.0.1")
+        server.tls_init()
+        phone, _ = self.paired()
+        address = f"https://127.0.0.1:{config.PORT}"
+        authority = tls.identity(config.TLS_DIR / "ca.crt")
+        certificate = {"name": authority["name"], "check": " ".join(authority["sha256"].split(":")[-8:])}
+        status, reply, _ = self.request("POST", "/api/devices/code", {}, device=phone)
+        # Only this computer can open a loopback address, so no phone gets a QR code for it.
+        self.assertEqual((status, reply["address"], reply["qr"], reply["certificate"]), (200, address, None, certificate))
+        self.assertNotIn(reply["code"], json.dumps({k: v for k, v in reply.items() if k != "code"}))
+        with mock.patch.object(config, "TLS", False):
+            status, reply, _ = self.request("POST", "/api/devices/code", {}, device=phone)
+        self.assertEqual((reply["address"], reply["qr"], reply["certificate"]), (None, None, None))
+        # The suite may bind only loopback, so loopback stands in for the phone's network address here.
+        self.patch(tls, "phone_address", new=lambda _found: None)
+        status, reply, _ = self.request("POST", "/api/devices/code", {}, device=phone)
+        self.assertEqual(reply["qr"], ["".join("1" if dark else "0" for dark in row) for row in qr.matrix(address)])
+
     def test_add_a_phone_opens_one_bounded_share_window_for_the_operator_only(self):
         import urllib.error
         import urllib.request
@@ -293,7 +321,7 @@ class TestAccess(AltitudeCase):
         status, first, _ = self.request("POST", "/api/devices/share", {}, device=phone)
         self.assertEqual(status, 200, first)
         authority = tls.identity(config.TLS_DIR / "ca.crt")
-        self.assertEqual((first["name"], first["sha256"]), ("Altitude local CA", authority["sha256"]))
+        self.assertEqual((first["name"], first["sha256"]), (authority["name"], authority["sha256"]))
         self.assertRegex(first["link"], r"^http://127\.0\.0\.1:\d+/$")
         self.assertEqual(first["qr"], ["".join("1" if dark else "0" for dark in row) for row in qr.matrix(first["link"])])
         self.assertTrue(590 <= first["seconds"] <= 600, first["seconds"])

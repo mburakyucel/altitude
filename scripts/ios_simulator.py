@@ -10,7 +10,8 @@ Then these steps, in this order, each selectable with --steps (`make ui-simulato
   and an untrusted control refused;
 - profile: the device setup page of a CA from the same generator, then altd's native profile walk (Download the
   profile, Allow, Settings' Profile Downloaded, Install, full trust), checking the profile's name and SHA-256 against
-  the CA served, and a page with that CA's server certificate loading without a warning;
+  the CA served; then Altitude served with that CA's certificate loads without a warning, its pairing screen's trust
+  check finds the CA trusted, and the phone pairs;
 - home-screen: altd's native Add to Home Screen walk at the app's root and at a task's address: the sheet's title,
   the Home Screen icon against the approved one pixel for pixel, the web app opening on its own and pairing.
 
@@ -749,23 +750,71 @@ def https(run: Run) -> None:
                                  "untrusted one refused"})
 
 
+def trusting_service(identity: Path, log) -> tuple[subprocess.Popen, dict]:
+    """Altitude over HTTPS with `identity` and its pairing screen's trust check (web/e2e/trust-service.py), which
+    treats the phone's loopback connection as another device's."""
+    service = subprocess.Popen([sys.executable, "e2e/trust-service.py", str(identity)], cwd=REPO / "web",
+                               stdout=subprocess.PIPE, stderr=log, text=True)
+    ready = json.loads(service.stdout.readline() or "{}")
+    if not ready.get("disposable"):
+        service.kill()
+        service.wait()
+        raise RuntimeError("the trust check's service did not start; see trust-service.log")
+    return service, ready
+
+
+def paired_code(ready: dict, ca: Path) -> str:
+    """A pairing code from the trust check's service, as its paired device."""
+    request = urllib.request.Request(ready["url"] + "/api/devices/code", method="POST", data=b"{}",
+                                     headers={"Cookie": f"altitude_device={ready['device']}",
+                                              "Content-Type": "application/json"})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(
+        context=ssl.create_default_context(cafile=str(ca))))
+    with opener.open(request, timeout=10) as answer:
+        return json.load(answer)["code"]
+
+
+def trusted_pairing(checking: Safari, ready: dict, ca: Path, results: Path) -> None:
+    """Altitude's pairing screen in Safari once the phone trusts its CA: the page loads as a secure context without a
+    warning, the trust check answers Trusted and offers the code field, and the code pairs the phone."""
+    checking.open(ready["url"] + "/")
+    checking.attach(ready["url"])
+    field = "document.querySelector('input[autocomplete=\"one-time-code\"]')"
+    checking.wait(f"isSecureContext && !!document.getElementById('pair-title') && !!{field}",
+                  "the pairing screen over HTTPS with the trust check passed", seconds=40)
+    checking.snapshot(results / "profile-trusted.png")
+    code = paired_code(ready, ca)
+    checking.evaluate(f"var field = {field}; Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')"
+                      f".set.call(field, {json.dumps(code)}); field.dispatchEvent(new Event('input', {{bubbles: true}}));"
+                      " [...document.querySelectorAll('button')].find((b) => b.textContent === 'Pair').click(); 0")
+    checking.wait("!document.getElementById('pair-title') && (window.__access ||= fetch('/api/access')"
+                  ".then((r) => r.json()).then((a) => window.__paired = a.paired), window.__paired)",
+                  "the phone paired")
+    checking.snapshot(results / "profile-paired.png")
+    leave(checking, "about:blank")
+    checking.wait("location.href === 'about:blank'", "a blank page")
+
+
 def profile(run: Run) -> None:
     """The device setup page, as `alt tls-share` offers it, for a new CA from Altitude's certificate generator whose key
-    is gone: it names the CA and its SHA-256. Then altd's native walk takes the profile through Safari and Settings:
-    Download the profile, Allow, Settings' Profile Downloaded, the profile's details, Install and full trust under
-    Certificate Trust Settings. The name and SHA-256 Settings shows must be the CA's, the CA Settings trusts must be
-    it, and a page served with that CA's server certificate then loads in Safari without a warning. The phone never
-    trusted this CA before, as the https step's control shows for another of the generator's CAs."""
-    safari, nonce, checking = run.safari, uuid.uuid4().hex, None
-    with tempfile.TemporaryDirectory() as folder:
-        identity = Path(folder) / "profile"
-        tls.fixture(identity)
-        ca, authority, context = (identity / "ca.crt").read_bytes(), tls.identity(identity / "ca.crt"), tls._load(identity)
+    is gone once it has issued the server's certificate and the trust check's second one: it names the CA and its
+    SHA-256. Then altd's native walk takes the profile through Safari and Settings: Download the profile, Allow,
+    Settings' Profile Downloaded, the profile's details, Install and full trust under Certificate Trust Settings. The
+    name and SHA-256 Settings shows must be the CA's and the CA Settings trusts must be it. Altitude served with that
+    CA's certificate then loads in Safari without a warning, its pairing screen's trust check answers Trusted, and the
+    phone pairs. The phone never trusted this CA before, as the https step's control shows for another of the
+    generator's CAs."""
+    safari, checking, service = run.safari, None, None
+    folder = tempfile.TemporaryDirectory()
+    identity = Path(folder.name) / "profile"
+    tls.fixture(identity, probe=True)
+    ca, authority = (identity / "ca.crt").read_bytes(), tls.identity(identity / "ca.crt")
     sent = threading.Event()
     share = tls.Share({"name": "127.0.0.1", "kind": "IP", "url": run.url}, ca, authority, SHARE_MINUTES,
                       sent=lambda message: message.startswith("Sent the profile") and sent.set())
-    secure = Secure(context, secure_page(nonce))
+    log = (run.results / "trust-service.log").open("w")
     try:
+        service, ready = trusting_service(identity, log)
         safari.evaluate(f"location.href = {json.dumps(share.link + '#ios')}; 0")
         rows = tls.fingerprint_rows(authority["sha256"])
         safari.wait(f"document.body && [{json.dumps(authority['name'])}, ...{json.dumps(rows)}]"
@@ -796,23 +845,34 @@ def profile(run: Run) -> None:
                 # The walk closed Safari; a new connection inspects the page it opens.
                 checking = Safari(run.inspector)
                 try:
-                    checking.open(secure.origin + "/")
-                    checking.attach(secure.origin)
-                    load_secure(checking, secure, nonce, "the page signed by the profile's CA, without a certificate "
-                                                         "warning")
-                    checking.snapshot(run.results / "profile-https.png")
+                    trusted_pairing(checking, ready, identity / "ca.crt", run.results)
                 except FAILURES as exc:
                     failures.append(str(exc))
-            rows.append(check("https", failures, f"{secure.origin}/ loads as a secure context"))
+                # A trusting phone never refuses the trust check's certificate, so no request of its fails.
+                failures += [f"Safari logged: {m.get('text')}" for m in checking.console if m.get("level") == "error"]
+            rows.append(check("pairing", failures, f"{ready['url']}/ loads as a secure context, its trust check "
+                                                   "answers Trusted and the phone pairs"))
         else:
-            rows.append(unreached("https"))
-        finish(run, "profile", rows, "the profile downloaded, installed and trusted in Settings, then HTTPS without a "
-                                     "warning", ca=authority["name"], sha256=authority["sha256"])
+            rows.append(unreached("pairing"))
+        finish(run, "profile", rows, "the profile downloaded, installed and trusted in Settings, then Altitude's "
+                                     "pairing screen trusted and paired", ca=authority["name"],
+               sha256=authority["sha256"])
     finally:
         share.close()
-        secure.close()
+        if service:
+            service.terminate()
+            try:
+                service.wait(10)
+            except subprocess.TimeoutExpired:
+                service.kill()
+                service.wait()
+        log.close()
+        folder.cleanup()
         if checking:
             checking.sock.close()
+    if service.returncode or (run.results / "trust-service.log").stat().st_size:
+        raise RuntimeError(f"the trust check's service exited with {service.returncode} or logged errors; "
+                           "see trust-service.log")
 
 
 def selection(text: str) -> list[str]:

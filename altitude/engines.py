@@ -619,7 +619,7 @@ def _feed(stream, data: str) -> None:
 def _chat_interrupted(resume: str | None) -> dict:
     return {"text": "", "session_id": resume or "", "usage": {}, "context_tokens": 0,
             "cost": 0.0, "turns": 0, "structured": None, "tools": [],
-            "interrupted": True, "error": "Interrupted for a queued message", "safe_to_retry": False,
+            "interrupted": True, "error": None, "safe_to_retry": False,
             "rejection": None, "raw_stdout": "", "raw_stderr": "",
             "raw_stdout_truncated": False, "raw_stderr_truncated": False}
 
@@ -647,7 +647,7 @@ def _watch_chat_interrupt(proc, unit: str, interrupt: threading.Event, finished:
             if active and attempted:
                 result.setdefault("interrupt_error", "Immediate stop unconfirmed; waiting for job termination")
             if not active and proc.poll() is not None and not platform.job_active(unit, env):
-                result.update(interrupted=True, error="Interrupted for a queued message", safe_to_retry=False)
+                result.update(interrupted=True, error=None, safe_to_retry=False)
                 return
         except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
             result["interrupt_error"] = f"Immediate stop unconfirmed; waiting for job termination: {exc}"

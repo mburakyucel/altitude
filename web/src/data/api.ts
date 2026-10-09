@@ -65,7 +65,14 @@ function post<T = unknown>(path: string, body: unknown): Promise<T> {
 
 // ---- pairing ---------------------------------------------------------------------------
 
-export const AccessSchema = z.object({ paired: z.boolean(), device: z.string().nullish() }).passthrough();
+/** How this browser reaches Altitude (SPEC.md §3.16): `local` is the computer running it, and `check` whether
+ * Altitude can check this browser's trust in its certificate. */
+const TrustSchema = z.object({
+  local: z.boolean(), https: z.boolean(), check: z.boolean(),
+  certificate: z.object({ name: z.string() }).nullish(),
+});
+export type Trust = z.infer<typeof TrustSchema>;
+export const AccessSchema = z.object({ paired: z.boolean(), device: z.string().nullish(), trust: TrustSchema }).passthrough();
 export type Access = z.infer<typeof AccessSchema>;
 export const DeviceSchema = z.object({ id: z.string(), name: z.string(), paired: z.string(), used: z.string() }).passthrough();
 export type Device = z.infer<typeof DeviceSchema>;
@@ -76,7 +83,10 @@ const CertificateSchema = z.union([
 export type Certificate = z.infer<typeof CertificateSchema>;
 const DevicesSchema = z.object({ devices: z.array(DeviceSchema), current: z.string().nullish(), certificate: CertificateSchema.nullish() }).passthrough();
 export type Devices = z.infer<typeof DevicesSchema>;
-export const PairingCodeSchema = z.object({ code: z.string(), expires: z.string(), minutes: z.number() }).passthrough();
+export const PairingCodeSchema = z.object({
+  code: z.string(), minutes: z.number(), address: z.string().nullish(), qr: z.array(z.string()).nullish(),
+  certificate: z.object({ name: z.string(), check: z.string() }).nullish(),
+}).passthrough();
 export type PairingCode = z.infer<typeof PairingCodeSchema>;
 
 export async function readAccess(): Promise<Access> {
@@ -89,6 +99,37 @@ export async function pairDevice(code: string): Promise<void> {
   const standalone = window.matchMedia?.("(display-mode: standalone)").matches
     || (navigator as Navigator & { standalone?: boolean }).standalone === true;
   await post("/api/pair", { code, standalone });
+}
+
+export type TrustCheck = "trusted" | "untrusted" | "unknown";
+
+/** Ask whether this browser trusts Altitude's certificate. After the challenge, Altitude presents a second
+ * certificate on new connections, which a browser that does not trust the CA refuses: the fetch rejects and Altitude
+ * records the refusal, which the next attempt reads. A connection opened before the challenge (`retry`) tries again,
+ * and an expired challenge (404) starts over. Three attempts without an answer, including a refusal Altitude never
+ * heard about, mean Altitude could not check: a failed request alone never says the browser is untrusted. */
+export async function checkTrust(): Promise<TrustCheck> {
+  let challenge = "";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let reply: Response;
+    try {
+      if (!challenge) challenge = (await post<{ challenge: string }>("/api/trust", {})).challenge;
+    } catch {
+      return "unknown";
+    }
+    try {
+      reply = await fetch(`/api/trust/${encodeURIComponent(challenge)}`, { cache: "no-store", headers: { Accept: "application/json" } });
+    } catch {
+      continue;
+    }
+    if (reply.status === 404) challenge = "";
+    else if (!reply.ok) return "unknown";
+    else {
+      const answer = await reply.json() as { trusted?: unknown; retry?: unknown };
+      if (answer.retry !== true) return answer.trusted === true ? "trusted" : "untrusted";
+    }
+  }
+  return "unknown";
 }
 
 export function useDevices() {
@@ -688,6 +729,8 @@ export const ChatMessageSchema = z
     slug: z.string().nullish(),
     /** On the assistant row of a turn that created tasks: their slugs (SPEC.md §5.2 note 4). */
     tasks: z.array(z.string()).nullish(),
+    /** On the assistant row of a chat turn that Send now stopped: its text is the partial reply, possibly empty. */
+    interrupted: z.boolean().nullish(),
   })
   .passthrough();
 
