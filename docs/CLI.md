@@ -1186,6 +1186,7 @@ A message to a blocked task uses its durable inbox and `resume_after` handoff in
 worker in the caller. Coordinator messages to faulted tasks stay non-waking; verified recovery uses
 the explicit reason-bearing resume. L3 cannot call `task block` directly: an L2 blocks itself with its attempt fence,
 while L3 uses reason-bearing `task stop` so altd blocks the task and stops the same observed worker.
+That block waits on L3 and publishes no question; its reason is L3's note in the task conversation.
 
 ### Image handoffs
 

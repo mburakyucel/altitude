@@ -71,7 +71,6 @@ for (const scene of scenes) test(`task status: ${scene.key}, row and page`, asyn
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   if (audience === "operator") await expect(page.locator('[data-question-id="status-question"]').first()).toBeVisible();
   if (stopped) await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeVisible();
-  if (stopped) await expect(page.locator(".task-state-line")).toContainText(coordinatorStop ? "Stopped by coordinator" : "Stopped by you");
   if (coordinatorStop) {
     await walk.state("02b-coordinator-note", { visible: [page.getByText("L3 · Stopped the task", { exact: true })], hidden: [page.locator('[data-question-id]')] });
   }
@@ -80,7 +79,8 @@ for (const scene of scenes) test(`task status: ${scene.key}, row and page`, asyn
   const details = page.getByRole("dialog", { name: "Task details", exact: true });
   if (scene.reason) {
     await details.getByText(scene.reason, { exact: true }).scrollIntoViewIfNeeded();
-    await walk.state("03-original-evidence", { visible: [details.getByText(scene.reason, { exact: true })], hidden: [] });
+    const label = stopped ? [details.getByRole("heading", { name: coordinatorStop ? "Stopped by coordinator" : "Stopped by you", exact: true })] : [];
+    await walk.state("03-original-evidence", { visible: [details.getByText(scene.reason, { exact: true }), ...label], hidden: [] });
   }
   await page.getByRole("button", { name: "Close task details", exact: true }).click();
   await walk.state("04-return-to-conversation", { visible: [explanation], hidden: [details] });
