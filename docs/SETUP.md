@@ -123,13 +123,12 @@ login, logging to `~/Library/Logs/altitude/altd.log`; the application lives in
 restores the previous version by itself. If an installation or update is interrupted (the Mac
 sleeps, the terminal closes), `~/.local/bin/alt recover` finishes restoring the previous version; when
 `alt` itself is missing, the release's `install.py` does the same with
-`python3.12 install.py --recover`. Configuration, TLS identity and data are kept either way. A Mac can
-also run Altitude from a source checkout: build the web app, run `bin/alt tls-init`, then
-`make install-service`, which installs the same LaunchAgent from the checkout ([operations](OPERATIONS.md)).
+`python3.12 install.py --recover`. Configuration, TLS identity and data are kept either way.
+Linux and a Mac can also [run Altitude from a source checkout](#run-from-a-source-checkout).
 
 Installation starts and enables an owned per-user service and prints its HTTPS URL and public
 CA fingerprint. It refuses an existing customized service or conflicting `alt` launcher;
-migrating a source deployment is explicit. Keep `~/.local/bin` on your shell's PATH.
+[switching from a source deployment](#one-service-per-account) is explicit. Keep `~/.local/bin` on your shell's PATH.
 An initial custom `--prefix` must be empty and must not end in whitespace or a backslash; updates
 retain customized hook launchers and refuse to overwrite them. Resolve the named ownership conflict before retrying.
 `alt doctor` distinguishes configured executable paths, tested local checks and unknown access.
@@ -180,6 +179,139 @@ Finish with `alt doctor`, then register your chosen project yourself. Installati
 authorize discovering repositories or starting work in them.
 
 The [README prompt](../README.md#get-started) provides a short starting point for this assistance.
+
+### Run from a source checkout
+
+A clone of this repository can run Altitude instead of a release: the service runs the checkout's
+committed code and follows a branch of its `origin`, `main` by default, rather than published
+releases. Point `origin` at your fork and check out your own branch to run your own changes. The
+[platform table](ARCHITECTURE.md#linux-and-macos) lists what differs between Linux and a Mac.
+
+#### Prerequisites from source
+
+You need the [prerequisites](#prerequisites) above, and `python3` on PATH must be Python 3.12 or
+newer, since `bin/alt` runs with it. Building the web app also needs a Node version that
+`web/package.json` accepts and the pnpm it pins, through Corepack (`corepack enable pnpm`); the
+service rebuilds the web app itself when it activates a new commit, so its PATH needs them too.
+Playwright and its Chromium are needed only to run the [checks](DEVELOPMENT.md#local-checks).
+
+#### Clone and build
+
+On Linux the service unit runs the checkout at `~/Projects/altitude`, so clone it there; on a Mac
+any location works.
+
+```sh
+git clone https://github.com/mburakyucel/altitude.git ~/Projects/altitude
+cd ~/Projects/altitude
+make web
+export PATH="$PWD/bin:$PATH"
+alt tls-init
+```
+
+`make web` installs the locked web dependencies and builds `web/dist`. Add the checkout's `bin` to
+PATH in your shell profile as well, so `alt` is this checkout's CLI; do not link it into
+`~/.local/bin`, which belongs to an installed release. `alt tls-init` creates Altitude's
+certificate authority and server certificate in `ALTITUDE_TLS_DIR` (default
+`~/.config/altitude/tls`), or keeps the identity already there, so devices that trust it keep that
+trust. The service refuses to start without it. `alt doctor` then checks the prerequisites and
+shows the certificate to [trust on each device](#trust-https-on-each-device).
+
+#### Install the service
+
+From the checkout, clean and on the branch the service will run:
+
+```sh
+make install-service
+```
+
+It installs Altitude's [Git guards](#project-setup-and-repair) in the checkout and starts the
+service at `https://127.0.0.1:8890`:
+
+- **Linux:** it copies `systemd/altitude.service` to `~/.config/systemd/user/`, then enables and
+  starts it. The unit runs `main` with PATH `~/.local/bin:/usr/local/bin:/usr/bin:/bin`; nvm's
+  default Node is found when Node is missing from that PATH ([noninteractive toolchain](DEVELOPMENT.md#noninteractive-toolchain)).
+  Change the address, PATH or branch with a drop-in from `systemctl --user edit altitude`, for
+  example `Environment=ALTITUDE_HOST=<private address>`, then `systemctl --user restart altitude`.
+- **Mac:** it writes the LaunchAgent `~/Library/LaunchAgents/dev.altitude.altd.plist`, which
+  logs to `~/Library/Logs/altitude/altd.log`. The agent listens on `ALTITUDE_HOST` from the
+  command's environment (default `127.0.0.1`), keeps the PATH the command runs with, which must
+  find OpenSSL 3, `gh`, the coding CLIs and pnpm, and runs the checked-out branch. Run it again to
+  change any of them, for example `ALTITUDE_HOST=<private address> make install-service`.
+
+The service starts only while the checkout is clean, on its branch and not ahead of
+`origin/<branch>` ([`ALTITUDE_SOURCE_BRANCH`](#configuration-and-limits)). Each start runs the
+committed code, exported under the ignored `.altitude-source/`. `alt service status` and
+`alt service logs` read it. A phone or another computer needs a [private address](#configuration-and-limits);
+the target prints the firewall command for `ufw`. Continue with [device trust](#trust-https-on-each-device),
+[pairing](#pair-each-device) and [First run](#first-run-in-the-browser).
+
+Both service definitions start with Altitude's sanitized incident reports going to its public
+issue tracker (`ALTITUDE_UPSTREAM_ISSUE_REPOSITORY`). First run's **Report Altitude's own faults?**
+step or **Settings → Incident reports** saves your own choice, including keeping them on this
+computer ([incident publication](OPERATIONS.md#incident-publication)).
+
+#### Updates from the branch
+
+Register the checkout as the project named `altitude` (**Add project** on it in First run, or
+`alt project add altitude --path "$PWD"` from the checkout) and the service follows its branch: every
+thirty seconds it fast-forwards the checkout to `origin/<branch>`, then builds, restarts and verifies
+itself at the next quiet point ([service lifecycle](OPERATIONS.md#service-lifecycle)). That project
+also gets a coordinator conversation like any other; its tasks need push access to `origin`.
+Without that registration, update by hand from the checkout:
+
+```sh
+git pull --ff-only
+make restart
+```
+
+`make restart` rebuilds the web app, restarts the service and waits for its API and page to answer;
+it refuses unless the checkout is exactly `origin/<branch>` and Altitude is idle. A bad commit is
+fixed by a revert or fix on the branch, never by resetting the checkout
+([source recovery](RELEASING.md#recovery)).
+
+#### Differences from an installed release
+
+- `alt update`, `alt recover`, `alt uninstall`, `alt service start` and `alt service stop` refuse a
+  source deployment, and it neither checks for nor offers new releases.
+- `~/.config/altitude/install.json` (`ALTITUDE_CONFIG`) does not apply: the service takes its
+  settings from its unit or LaunchAgent and the environment.
+- The checkout is a deployment, not a workspace. Its Git guards refuse commits and pushes to `main`,
+  and the service refuses to start or update a dirty, diverged or ahead checkout; develop in another
+  clone or a worktree, push there and let the service fast-forward.
+- The service needs Node and pnpm to rebuild the web app, which a release does not.
+
+#### One service per account
+
+A source service and an installed release use the same service name, port 8890, `ALTITUDE_HOME`
+(`~/.altitude`) and TLS directory, so an account runs one of them. `make install-service` replaces
+an existing service definition without asking: run `alt uninstall` first to retire a release,
+which keeps configuration, TLS identity and data for the source service to reuse. The installer
+refuses an existing source service and an `alt` it did not write; remove the source service as
+below and take its `bin` off PATH before installing a release. An older release may not read data
+that newer source code wrote ([recovery](RELEASING.md#recovery)).
+
+#### Remove a source service
+
+Finish or stop running tasks first; their workers run in their own jobs and outlive the service.
+On Linux:
+
+```sh
+systemctl --user disable --now altitude
+rm ~/.config/systemd/user/altitude.service
+systemctl --user daemon-reload
+```
+
+On a Mac:
+
+```sh
+launchctl bootout gui/$(id -u)/dev.altitude.altd
+rm ~/Library/LaunchAgents/dev.altitude.altd.plist
+```
+
+The checkout, `ALTITUDE_HOME`, the TLS identity and device trust stay. `git config --unset
+core.hooksPath` in the checkout removes its Git guards, [removing the project](OPERATIONS.md#remove-a-project)
+unregisters it, and the [trust steps](#verify-https-before-pairing) end with removing the CA from
+each device.
 
 ### Trust HTTPS on each device
 

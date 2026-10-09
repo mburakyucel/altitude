@@ -12,7 +12,7 @@ With repository access, clone it, then use the commands below from its root.
 Owners and helpers run tests relevant to their changes during development. The required PR
 check runs the full suite; a local full run is available for investigation but is not a landing prerequisite.
 
-Use Python 3.12+, Node 22.22.2+ (22.x) or 24.15+ (24.x), and the pnpm version pinned in
+Use Python 3.12+, Node 22.22.2+ (22.x), 24.15+ (24.x) or 26+, and the pnpm version pinned in
 `web/package.json`. From the repository root:
 
 ```sh
@@ -27,6 +27,7 @@ port with `ALTITUDE_PORT`. Run `alt tls-init`, follow the [certificate trust gui
 then `alt serve` with the same environment. It still needs the systemd user manager, or on macOS the
 logged-in launchd domain, for workers.
 Do not bind an existing service's reserved port or use its runtime state for a preview.
+To run a checkout as the operator's service instead, follow [run from a source checkout](SETUP.md#run-from-a-source-checkout).
 
 `make check` runs the full Python suite alongside the ordered web unit, TypeScript/build,
 full Chromium browser suite and headless-shell recovery lane. Each phase retains
