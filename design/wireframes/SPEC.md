@@ -1581,7 +1581,7 @@ An unpaired browser sees one centred card instead of the app, at every route: th
 **Pair this device**, "Altitude opens only on devices you pair. On the computer running Altitude, in
 a terminal or over SSH, run:", the copyable `alt pair` command, "Then type the code it shows. A device
 that is already paired can also make a code in Settings › Devices.", a large monospace **Pairing code**
-field (uppercase, one-time-code autofill), a full-width **Pair** button, disabled while the field is
+field (one-time-code autofill), a full-width **Pair** button, disabled while the field is
 empty, and under it "Did the browser warn about the certificate before showing this page? Pair only
 after it opens without a warning." The guidance points container users to the host launcher's public
 certificate export, and native users to **Set up a device** in trusted, paired Settings or `alt tls-share`
@@ -1594,6 +1594,7 @@ Pairing opens the route the browser asked for.
 | Loading | The mark alone while Altitude answers whether this browser is paired. |
 | Unreachable | "Could not reach Altitude." and Retry. |
 | Empty | The card with an empty field; Pair disabled. |
+| Typing | The field owns the dash: it keeps letters and digits, uppercased, up to eight, and shows `ABCD-` once four are typed. A typed dash or space is ignored; deleting the dash deletes the fourth character. A pasted `abcd 2345` or `ABCD-2345` shows `ABCD-2345`. An edit inside the code keeps the caret at the edit. |
 | Pairing | Pairing… and a disabled field and button. |
 | Wrong code | "That code is not right. N tries left." under the field; typing clears it. |
 | Cancelled or used code | "Too many wrong codes, so this one is cancelled. Make a new one." or "This code has expired or was already used. Make a new one." |
