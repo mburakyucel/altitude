@@ -430,45 +430,50 @@ FYI, Follow-ups, Deviations, Spend, Report notes, and Digest. Report notes and t
 Digest links land at its section. States: loading (a title-shaped skeleton); empty ("No report
 yet."); error ("Could not load the report." and Retry).
 
-#### Cross-engine review in the task conversation
+#### Adversarial review
 
-The existing task menu offers **Review proposal** and **Review changes**, one bordered button per subject.
-An existing request changes its entry to **View proposal review** or **View changes review**, with
-Requested, In progress, Complete, Earlier version, Failed or Cancelled underneath. Opening any existing
-review shows saved status, findings and L2 dispositions in the conversation and never invokes a reviewer,
-including L2-initiated reviews. **Review again**, **Review latest** and **Retry** are explicit actions
-inside details. A new revision requires the previous request to be addressed. A proposal review remains available when changes
-review is requested. No permanent review button, card, tab or separate reviewer conversation appears.
+Task details shows two bordered boxes, **Proposal review** and **Implementation review**, with no
+wrapper around them. Each box shows its latest review: a state icon, "<name> · <state>" (requested by
+you or L2, in progress, stopping, done, didn't finish, skipped), the reviewer's one-sentence verdict,
+counts and **View**. With no review yet it says "Not reviewed yet", or why review is unavailable. One
+button starts the next review when one can start: **Request**, **Review again** after an assessed
+review with nothing open, or **Try again** after one that didn't finish. There is no button while that
+kind is queued, running or has open findings, including an earlier review's. Finished tasks show the boxes without buttons, and hide a
+kind that was never reviewed. The reviewer is a separate invocation; same-engine review is the
+ordinary path, and an alternate engine is used when one is configured.
 
-Before requesting, show the selected engine/model, configured allowance (including unknown), focused
-read-only scope and merge wait. Prefer an eligible alternate engine; otherwise label the separate
-same-engine invocation with its fallback reason, also retained in saved evidence. No duration selector,
-programmatic deadline, automatic retry or engine switch follows launch. Capacity or unavailable
-observation/cancellation cannot be bypassed by fallback.
+Requests queue on any open task whatever L2 is doing. A waiting or blocked L2 is woken; a stopped or
+faulted task is not resumed, and its request waits for the next resume. Requesting closes task
+details and preserves the draft, reading position and listening state.
 
-L2 proactively seeks adversarial review for complex proposals before code and complex implementations;
-simple work stays light by judgment. For proposal review L2 selects the exact original proposal message;
-the operator sees its link and version, with no message-ID form. Missing proposal input is explained
-before invoking a reviewer. Review can continue L2 while an approval question is open solely to prepare,
-run and assess the proposal review; the original question stays open. Captured text and committed source
-define coverage; images require a textual account and remain explicitly outside text review coverage.
-Proposal findings never imply implementation acceptance. Later proposal/source/context changes show their
-coverage and need L2 assessment or a deliberate new review; pending changes requests remain visible.
+The conversation shows one card per kind, at the latest request's anchor; earlier iterations fold
+inside it. The card's sentence reads:
 
-A compact attributed system row tracks requested/running/completed/failed/cancelled/withdrawn state.
-L2 explains useful findings and fixes in ordinary prose. **Review details** reveals original findings,
-L2 dispositions, subject, selected proposal/context IDs and exact checkpoint evidence. It starts folded;
-collapsing removes details. Current coverage, earlier work and later L2 assessment are distinguished even when
-folded. An assessment that leaves findings open adds **N unresolved** to the row and labels each such
-finding **L2 — unresolved**; it never clears the review. No findings never means permission to merge. Failure keeps the request unresolved and exposes
-explicit retry or authorized skip; uncertain termination retains capacity and explains recovery.
+| State | Sentence |
+| --- | --- |
+| Requested by you | Queued. L2 starts it after its current step. / Queued. L2 starts it when it resumes. |
+| Requested by L2 | L2 asked for a review of its proposal (implementation) and starts it shortly. |
+| Waiting for the reviewer slot | Waiting for the reviewer: another review is running on this machine. |
+| In progress | Reviewing the proposal (implementation)…, with **Stop** and "Requested by L2/you". |
+| Didn't finish | The failure, or "Stopped before it finished.", with **Try again**. |
+| Done | The verdict, then counts: "2 findings, both resolved", "3 findings · 2 open, blocks merge", "L2 is responding", "Review 2", "earlier version", "1 open in an earlier review, blocks merge". |
+| Skipped | "Skipped by you" or "Skipped by L2". |
 
-Empty history adds no conversation row. Loading/saving disables repeats. Unavailable explains why in
-the menu; denied/uncertain delivery uses inline feedback and saved-status refresh. Menu dismissal,
-details expansion and request delivery preserve the draft and reading position. Listening and voice
-submission retain the composer journey. `cross-engine-review.pw.ts` walks these states at phone and
-desktop widths; `cross-engine-review-integration.pw.ts` walks real persisted request, alternate-engine
-fixtures, immutable snapshot/result, L2 initiation, failure/retry, unavailable, staleness and dispositions.
+The chevron opens the card: each finding with **Open**, **Fixed**, **Dismissed** or **New**, its
+severity, body, location and L2's answer; what the reviewer did not cover; earlier reviews as one line
+each, which opens to that review's own findings, footer and Skip review, since a review an additional
+review left in the merge gate still blocks merge; and a footer naming the reviewer ("<engine> · same engine as the task" or "alternate engine"),
+**Technical details** and **Skip review**. Technical details shows the model, any fallback reason,
+focus, the captured proposal and the reviewed and assessed checkpoints. Skip review asks for
+confirmation without a reason; the review stops blocking merge and its findings stay visible. **View**
+in task details opens and focuses the card. Open findings block merge; no findings never means
+permission to merge.
+
+Loading and saving disable the buttons. Unavailable explains why in the box; denied and uncertain
+delivery use inline feedback with a saved-status refresh. `adversarial-review.pw.ts` walks these states
+at phone and desktop widths; `adversarial-review-integration.pw.ts` walks real persisted requests,
+same-engine and alternate-engine fixtures, L2 requests, failure and try again, unavailable,
+earlier-version coverage and dispositions.
 
 ### 3.5 Task card (inline and in the work panel)
 
