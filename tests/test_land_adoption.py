@@ -410,6 +410,48 @@ print('3 passed')
         self.assertTrue(result["merged"])
         self.assertTrue(result["local_tests"]["passed"])
 
+    def test_base_only_retry_preserves_the_adopted_branch_and_original_ancestry(self):
+        S.write_json(self.ghdir / "checks.json", [])
+        (self.ghdir / "merge_git.txt").touch()
+        commands = self.record_commands()
+        self.fake_runner("adoption-moving-base", script=f"""
+import subprocess
+from pathlib import Path
+d = Path(os.environ['FAKE_GH_DIR'])
+tested = subprocess.check_output(['git', 'rev-parse', 'HEAD^{{tree}}'], text=True).strip()
+with (d / 'tested-trees').open('a') as stream:
+    stream.write(tested + '\\n')
+if not (d / 'outside-merge').exists():
+    root = Path({str(self.project_repo)!r})
+    (root / 'external.txt').write_text('Another installation landed\\n')
+    for args in [('add', 'external.txt'), ('commit', '-qm', 'Independent delivery'),
+                 ('push', '-q', 'origin', 'main')]:
+        subprocess.run(['git', *args], cwd=root, check=True)
+    (d / 'outside-merge').touch()
+print('3 passed')
+""")
+        result = land.land("docs: reconcile proposal", cwd=self.repo, wait=20, merge=True,
+                           adopt_pr=101, expected_head=self.original,
+                           reason="Assigned reconciliation of existing proposal", test_cmd="adoption-moving-base")
+        self.assertTrue(result["merged"])
+        self.assertEqual(result["pr"], 101)
+        self.assertEqual(self.receipt()["head"], self.original)
+        self.assertEqual(self.git("branch", "--show-current").strip(), "worktree-fix-x")
+        self.git("merge-base", "--is-ancestor", self.original, "origin/proposal/external")
+        self.assertEqual(self.git("rev-parse", "origin/proposal/external").strip(), result["head"])
+        self.assertEqual(self.git("show", "origin/main:external.txt"), "Another installation landed\n")
+        tested = (self.ghdir / "tested-trees").read_text().splitlines()
+        self.assertEqual(len(tested), 2)
+        self.assertNotEqual(tested[0], tested[1])
+        self.assertEqual(tested[-1], self.git("rev-parse", "origin/main^{tree}").strip())
+        pushes = [args for args in commands if args[:2] == ["git", "push"]]
+        self.assertEqual(len(pushes), 2)
+        self.assertTrue(all("refs/heads/worktree-fix-x:refs/heads/proposal/external" in args for args in pushes))
+        self.assertFalse(any("force" in arg or arg == "--delete" for args in pushes for arg in args))
+        merges = [args for args in self.gh_log() if args[:2] == ["pr", "merge"]]
+        self.assertEqual(len(merges), 1)
+        self.assertNotIn("--delete-branch", merges[0])
+
     def test_hold_set_during_checks_is_reloaded_before_merge(self):
         original = land._checks_state
         def hold(*args):

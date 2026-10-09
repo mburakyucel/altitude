@@ -332,7 +332,9 @@ def main(argv=None) -> None:
     resolution.add_argument("--revision", type=int, help="default: the current revision"); resolution.add_argument("--message")
     resolution.add_argument("--source", choices=("task", "project"), default="task")
     resolution.add_argument("--disposition", choices=("answered", "superseded", "withdrawn"), required=True)
-    resolution.add_argument("--reason", required=True); resolution.add_argument("--remaining")
+    resolution.add_argument("--reason", required=True)
+    resolution.add_argument("--remaining", help="the still-unanswered part, published as this question's next revision for L3")
+    resolution.add_argument("--for-operator", action="store_true", help="the remaining part is plainly the operator's: ask them, not L3")
     resolution.add_argument("--l3-authority", help="evidence and rationale that L3's answer settles an unnecessary escalation")
     resolution.add_argument("--recommendation"); resolution.add_argument("--label"); resolution.add_argument("--why")
     ts.add_parser("show", help="compatibility alias for task status --json").add_argument("slug")
@@ -781,7 +783,8 @@ def main(argv=None) -> None:
                 sys.exit("alt task resolve: only the current L2 may resolve its own task question")
             out(T.resolve_question(p, args.slug, args.question, args.revision, args.message,
                                    expected_attempt=int(attempt), source=args.source, disposition=args.disposition,
-                                   reason=args.reason, remaining=args.remaining, recommendation=args.recommendation,
+                                   reason=args.reason, remaining=args.remaining, for_operator=args.for_operator,
+                                   recommendation=args.recommendation,
                                    recommendation_label=args.label, recommendation_why=args.why,
                                    l3_authority=args.l3_authority))
         elif tc == "message":
@@ -934,7 +937,7 @@ def main(argv=None) -> None:
                 sys.exit(f"alt: {e}")
         elif args.icmd == "publish":
             try:
-                out(incidents.publish_issue(p, args.id))
+                out(incidents.publish_issue(p, args.id, anyway=True))
             except ValueError as e:
                 sys.exit(f"alt: {e}")
         else:
@@ -980,15 +983,30 @@ def main(argv=None) -> None:
     if c == "pair":
         if ACTOR != config.OPERATOR_ACTOR:
             sys.exit("alt pair: only the operator pairs devices")
-        from altitude import access, tls
+        from altitude import access, qr, tls
         code = access.issue_code()
-        # The code works without the service, so a missing link never blocks recovering access.
+        print(f"Pairing code: {code['code']} (one device, the next {code['minutes']} minutes). "
+              "A new code cancels this one.")
+        # The code works without the service, so a missing address never blocks recovering access. The code
+        # never rides in a link: the device opens the address before it trusts Altitude's certificate.
         try:
-            link = f"On the device, open {tls.service()['url']}/pair?code={code['code']}\nor type the code"
+            found = tls.service()
         except tls.TLSFailure as exc:
-            link = f"No link: {exc}\nType the code"
-        print(f"Pairing code: {code['code']} (one device, the next {code['minutes']} minutes)\n"
-              f"{link} on its Pair this device screen. A new code cancels this one.")
+            print(f"Type the code on the device's Pair this device screen. No address: {exc}")
+            return
+        print(f"On the device, open {found['url']} and type the code on its Pair this device screen.")
+        try:
+            tls.phone_address(found)
+            print("Or scan this with a phone to open it:\n" + qr.terminal(found["url"]))
+        except tls.TLSFailure:
+            pass  # loopback or plain HTTP: no phone can open this address
+        if found["tls"] and (found["tls_dir"] / "ca.crt").exists():  # an external certificate has no CA here
+            try:
+                authority = tls.identity(found["tls_dir"] / "ca.crt")
+                print(f"Before installing Altitude's certificate there, check it is named {authority['name']} and "
+                      f"its SHA-256 ends with:\n  {tls.check_value(authority['sha256'])}")
+            except (tls.TLSFailure, OSError) as exc:
+                print(f"Altitude's certificate cannot be read to check it: {exc}")
         return
 
 

@@ -71,7 +71,8 @@ curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/re
 
 The command downloads anonymously and needs no GitHub sign-in. `latest` names the
 newest stable release and skips release candidates; to install one exact release,
-replace `latest/download` with `download/<tag>`, for example `download/v0.1.0`. On the Mac, installation,
+replace `latest/download` with `download/<tag>`, using a tag from the
+[releases](https://github.com/mburakyucel/altitude/releases). On the Mac, installation,
 updates, rollback, uninstall and starting again at login pass in fresh macOS virtual machines; the
 [roadmap](ROADMAP.md#native-macos-runtime) lists the native checks still open.
 
@@ -108,17 +109,18 @@ The command trusts GitHub's HTTPS and the published, immutable release for `inst
 Every release carries GitHub's release attestation for its files. Releases the release workflow
 publishes from the public repository also attest each file's build provenance; `v0.1.0` and its
 release candidates were published while the repository was private and have no build provenance.
-To verify a release's script before running it, set `VERSION` to its tag:
+To verify the latest release's script before running it:
 
 ```sh
-VERSION=v0.1.0   # replace with the release's tag
+VERSION=$(gh release view --repo mburakyucel/altitude --json tagName --jq .tagName) &&
 curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/mburakyucel/altitude/releases/download/$VERSION/install.sh" &&
   gh release verify-asset "$VERSION" install.sh --repo mburakyucel/altitude &&
   sh install.sh
 ```
 
-For a release with build provenance, `gh attestation verify install.sh --repo mburakyucel/altitude`
-also checks that the release workflow built the file.
+For one exact release, set `VERSION` to its tag instead. For a release with build provenance,
+`gh attestation verify install.sh --repo mburakyucel/altitude` also checks that the release
+workflow built the file.
 
 On a Mac the service is the LaunchAgent `~/Library/LaunchAgents/dev.altitude.altd.plist` of your
 login, logging to `~/Library/Logs/altitude/altd.log`; the application lives in
@@ -154,7 +156,7 @@ access: download `install.py`, the versioned `.tar.gz` archive and its `.sha256`
 checksum from the same untrusted download does not establish authenticity.
 
 ```sh
-python3.12 install.py --archive altitude-v0.1.0.tar.gz --sha256 '<release SHA-256>'
+python3.12 install.py --archive altitude-<tag>.tar.gz --sha256 '<release SHA-256>'
 export PATH="$HOME/.local/bin:$PATH"
 alt doctor
 ```
@@ -450,8 +452,18 @@ is enabled in Privacy & Security; do not assume a login-keychain import reaches 
 
 #### Set up a phone
 
-Open the [sharing window](#share-with-a-desktop-or-phone), then follow the device steps. The link
-is unauthenticated, so compare with the trusted terminal or Settings screen before installing.
+The quickest way is the pairing screen. Run `alt pair` on the computer running Altitude, or tap
+**Make a pairing code** under **Settings → Devices** on a paired device, and scan its QR code. Safari
+warns that the connection is not private until the phone trusts Altitude; tap **Show Details** →
+**visit this website**. The **Pair this device** screen offers **Download the profile** with the
+steps below. Check the profile's certificate name and SHA-256 ending against what the computer
+shows, since the page cannot vouch for itself. Turn the certificate on in **Certificate Trust
+Settings** and return to the screen: it ticks **Trusted** once the phone trusts the certificate, not
+just the warning, and then takes the code.
+
+To install the certificate without pairing, open the [sharing window](#share-with-a-desktop-or-phone),
+then follow the device steps. The link is unauthenticated, so compare with the trusted terminal or
+Settings screen before installing.
 
 **iPhone or iPad:**
 
@@ -522,9 +534,13 @@ run:
 alt pair
 ```
 
-It prints an eight-character code and a `/pair?code=…` link to the running service's address.
-Type the code on the device, or open the link there; when the service cannot be found it prints the
-code with the reason instead of a link. A code works once, for ten minutes; a new code cancels the previous one and five
+It prints an eight-character code, the running service's address with a QR code a phone can scan,
+and the end of the certificate's SHA-256. Open the address on the device. Its **Pair this device**
+screen walks three steps: the HTTPS address, trusting Altitude's certificate, and the code. The
+certificate step offers the download for that kind of device and its install steps, and ticks
+**Trusted** by itself once the device trusts the certificate; the code field appears only then.
+On the computer running Altitude, the screen goes straight to the code. When the service cannot be
+found, `alt pair` prints the code with the reason instead of an address. A code works once, for ten minutes; a new code cancels the previous one and five
 wrong codes cancel it. A paired device stays paired for 400 days of disuse and renews while you use
 it. A paired device can also make a code in **Settings → Devices** for another one. On an iPhone,
 a Home Screen app added after Safari is paired may start already paired: iOS can copy Safari's

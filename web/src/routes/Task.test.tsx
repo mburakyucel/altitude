@@ -1252,6 +1252,11 @@ describe("L2 activity and steering", () => {
   const steering = { state: "running", stop_id: null as string | null, generation: "worker-1", error: null };
   const active = { ...running, steering, activity };
 
+  beforeEach(() => {
+    activity.commentary.at = new Date(Date.now() - 20_000).toISOString();
+    activity.observation.at = new Date(Date.now() - 5000).toISOString();
+  });
+
   it.each([390, 1440])("keeps header actions disabled after a denied send across views at %i", async (width) => {
     setViewport(width);
     const fetchMock = stub(active, { message: () => jsonResponse({ error: "Access denied" }, 403) });
