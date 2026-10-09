@@ -105,17 +105,20 @@ confirm. A copy installed from a release candidate is offered newer candidates a
 a copy installed from a stable release is offered stable releases only.
 
 The command trusts GitHub's HTTPS and the published, immutable release for `install.sh` itself.
-Releases that the release workflow publishes from the public repository attest every release file.
-A release published while the repository was private, including `v0.1.0` and its release candidates,
-has no attestation, so this check applies to releases published once it is public. To verify an
-attested release's script before running it, set `VERSION` to its tag:
+Every release carries GitHub's release attestation for its files. Releases the release workflow
+publishes from the public repository also attest each file's build provenance; `v0.1.0` and its
+release candidates were published while the repository was private and have no build provenance.
+To verify a release's script before running it, set `VERSION` to its tag:
 
 ```sh
-VERSION=v0.1.1   # replace with an attested release's tag
+VERSION=v0.1.0   # replace with the release's tag
 curl --proto '=https' --tlsv1.2 -fsSLO "https://github.com/mburakyucel/altitude/releases/download/$VERSION/install.sh" &&
-  gh attestation verify install.sh --repo mburakyucel/altitude &&
+  gh release verify-asset "$VERSION" install.sh --repo mburakyucel/altitude &&
   sh install.sh
 ```
+
+For a release with build provenance, `gh attestation verify install.sh --repo mburakyucel/altitude`
+also checks that the release workflow built the file.
 
 On a Mac the service is the LaunchAgent `~/Library/LaunchAgents/dev.altitude.altd.plist` of your
 login, logging to `~/Library/Logs/altitude/altd.log`; the application lives in

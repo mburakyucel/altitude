@@ -3,6 +3,7 @@
 The bare Git remote and task lifecycle are real; only hosted GitHub and worker execution
 use deterministic fixtures. In particular, hosted squash merges do not retain PR ancestry.
 """
+import subprocess
 from pathlib import Path
 
 from tests.support import AltitudeCase, git, make_repo
@@ -116,6 +117,30 @@ class TestContinuationJourney(AltitudeCase):
         self.assertTrue(any(q["status"] == "open" for q in current["questions"]))
         self.assertEqual(current["prs"], [delivery["pr"]])
         self.assertEqual(len(self.engine.calls), 2)
+
+    def test_pr_merged_on_github_at_a_later_head_reconciles_and_completes(self):
+        recorded = self.commit("README.md", "Delivered change\n", "Delivered change")
+        published = land.land("Checked delivery", cwd=self.worktree, wait=0)
+        self.assertEqual((published["pr"], published["merged"]), (101, False))
+        later = self.commit("README.md", "Delivered change, revised\n", "Revise the delivery")
+        git("push", "-q", "origin", f"HEAD:{self.initial['branch']}", cwd=self.worktree)
+        subprocess.run(["gh", "pr", "merge", "101", "--squash"], cwd=self.worktree, check=True)  # outside Altitude
+        merge_sha = git("rev-parse", "main", cwd=self.remote).strip()
+        self.write_report([(101, merge_sha)])
+        self.assertIn("PR #101: GitHub head differs from the current delivery; run alt land again",
+                      verify.verify(self.project, self.slug)["problems"])
+
+        retry = land.land("Checked delivery", cwd=self.worktree, wait=0)
+        self.assertEqual((retry["pr"], retry["checks"], retry["merged"]), (101, "merged", True))
+        delivery = S.load_task(self.project, self.slug)["delivery"]
+        self.assertEqual((delivery["number"], delivery["head"]), (101, later))
+        reconciled = [e for e in S.read_events(self.project, self.slug) if e["kind"] == "delivery"][-1]["reconciled"]
+        self.assertEqual((reconciled["head"], reconciled["merge"]), (recorded, merge_sha))
+        self.write_report([(101, merge_sha)])
+        self.engine.workers[self.initial["agent_id"]].update(state="done", status="exited")
+        server.on_l2_finished(self.project, dispatch.poll(self.project)[0])
+        archived = S.load_task(self.project, self.slug)
+        self.assertEqual((archived["state"], archived["verified"]["verdict"]), ("done", "ok"))
 
     def test_dirty_deployment_survives_checked_delivery_and_same_owner_followup(self):
         deployment_head = git("rev-parse", "HEAD", cwd=self.repo)

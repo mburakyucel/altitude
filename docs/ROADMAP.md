@@ -126,36 +126,20 @@ authorized. Native probes make no provider calls or model downloads.
 
 ## Early-user onboarding and public release
 
-The next milestone is making the repository public. The
-README-first milestone of issue #219 provides positioning, a fictional [walkthrough](WALKTHROUGH.md),
-[setup](SETUP.md), [contributor guidance](../CONTRIBUTING.md) and a feedback entry point, and the
-issue is linked from the [README](../README.md#documentation). The repository-hygiene milestone
-adds the [security policy](../SECURITY.md) with private vulnerability reporting and scope, a
-contribution process for fork contributors, bug and idea templates, and wording that stays true
-once the repository is public.
+The repository is public. The README-first milestone of issue #219 provides positioning, a fictional
+[walkthrough](WALKTHROUGH.md), [setup](SETUP.md), [contributor guidance](../CONTRIBUTING.md) and a
+feedback entry point, and the issue is linked from the [README](../README.md#documentation). The
+[security policy](../SECURITY.md) covers private vulnerability reporting and scope, issues offer bug
+and idea templates, and outside contributions are not accepted yet. Altitude is licensed
+`FSL-1.1-ALv2` ([LICENSE](../LICENSE)), the [third-party notices](../THIRD_PARTY_NOTICES.md) ship in
+the archive, and contributors accept the [CLA](../CLA.md). The maintainer applies repository settings;
+each is described where it applies: workflow approval and the required `check` in
+[development](DEVELOPMENT.md#ci-and-candidate-identity), the tag ruleset and immutable releases in
+[publishing](RELEASING.md#publish-a-release).
 
-Remaining before public release:
+Remaining:
 
-- The license is decided and in place: `FSL-1.1-ALv2` in [LICENSE](../LICENSE), the
-  [third-party notices](../THIRD_PARTY_NOTICES.md) ship in the archive, and contributors accept
-  the [CLA](../CLA.md). A CLA-checking bot is an optional repository setting the maintainer may add.
-- Maintainer actions on release day, in this order: review the
-  [history audit](https://github.com/mburakyucel/altitude/issues/233) result and its latest delta,
-  apply the repository description and topics below and flip visibility, which lets the
-  GitHub-hosted required `check` run without billing. Once that check is green on the head of the
-  pull request moving it to hosted runners, merge that pull request on GitHub (the deployed gate
-  still selects the workflow it deletes), then stop the machine's former CI runner and remove it
-  under Settings → Actions → Runners. Then enable private vulnerability reporting, review branch
-  protection, add a tag ruleset reserving `v*` tags to the maintainer and confirm fork-workflow
-  approval; the free plan offers rulesets and these settings only for public repositories. Immutable
-  releases are on ([publish a release](RELEASING.md#publish-a-release)).
-- Recommended description: **“Persistent project orchestration for coding agents: project direction,
-  directly reachable task owners, isolated worktrees and checked PRs.”** Recommended topics:
-  `ai-development`, `coding-agents`, `developer-tools`, `developer-workspace`, `git-worktrees`.
-  These are recommendations, not applied settings.
-- Required PR checks for a public repository, including fork PRs:
-  [#469](https://github.com/mburakyucel/altitude/issues/469). Installation-neutral defaults:
-  [#470](https://github.com/mburakyucel/altitude/issues/470).
+- Installation-neutral defaults: [#470](https://github.com/mburakyucel/altitude/issues/470).
 - Validate the documented path on a second clean machine, including engine authentication,
   sandbox/user-service support, Git guards, first conversation and one checked task delivery.
 
