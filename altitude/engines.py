@@ -1792,6 +1792,9 @@ def _worker_events(path: Path, engine: str) -> list[dict]:
             if e.get("type") == "result" else e for e in events]
 
 
+TURN_BOUNDARIES = ("thread.started", "turn.started", "turn.completed", "turn.failed")
+
+
 def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
     """Read an owned CLI turn; the persisted engine selects its output format."""
     if not worker_id:
@@ -1810,11 +1813,15 @@ def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
             S.write_json(paths["record"], record)
     proc = _codex_processes.get(worker_id)
     process_alive = proc is not None and proc.poll() is None
-    alive = process_alive or platform.job_active(str(record.get("unit") or ""), codex_env(retain_user_bus=True))
+    job_active = process_alive or platform.job_active(str(record.get("unit") or ""), codex_env(retain_user_bus=True))
     if proc is not None and not process_alive:
         _codex_processes.pop(worker_id, None)
     completed = any(event.get("type") == "turn.completed" for event in events)
     failed = next((event for event in reversed(events) if event.get("type") in ("turn.failed", "error")), None)
+    # A failed latest turn ends the worker. The engine can outlive it: Claude waits for a background command it
+    # started, whose completion would only start another turn that fails the same way under a usage limit.
+    latest = next((event["type"] for event in reversed(events) if event.get("type") in TURN_BOUNDARIES), None)
+    alive = job_active and latest != "turn.failed"
     if alive:
         state, status = "working", "busy"
     elif record.get("stopped"):
@@ -1837,7 +1844,7 @@ def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
             "state": state, "status": status, "detail": detail, "usage": _codex_usage(events),
             "detail_at": max((paths[k].stat().st_mtime for k in ("stdout", "stderr") if paths[k].exists()),
                              default=paths["record"].stat().st_mtime),
-            "startedAt": record.get("started_at"), "engine": engine,
+            "startedAt": record.get("started_at"), "engine": engine, "job_active": job_active,
             "resumed": bool(record.get("resume")),
             "input_delivered": record.get("input_delivered") is True,
             "engine_model": next((e["model"] for e in events if e.get("model")), record.get("engine_model")),
@@ -2110,8 +2117,9 @@ def worker_detail(engine: str, row: dict | None) -> tuple[str, datetime | None]:
 
 
 def worker_live(engine: str, task: dict, *, job_root: Path) -> bool:
+    """Whether anything of the worker still runs, including commands its ended engine left in the job."""
     row = worker(engine, task, job_root=job_root)
-    return bool(row and row.get("state") == "working")
+    return bool(row and (row.get("state") == "working" or row.get("job_active")))
 
 
 @config.admitted_provider
