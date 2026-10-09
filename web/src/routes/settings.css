@@ -57,8 +57,9 @@
 .device-actions { display: flex; gap: 8px; flex: none; }
 .device-row .btn { flex: none; min-height: 44px; }
 .device-pair { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
-.device-pair .onboarding-command { align-self: stretch; }
 .device-code { font-family: var(--font-mono); font-size: 1.75rem; font-weight: 500; letter-spacing: .12em; }
+.device-address { font-family: var(--font-mono); overflow-wrap: anywhere; color: var(--text-primary); }
+.device-check { font-family: var(--font-mono); white-space: nowrap; color: var(--text-primary); }
 .shell[data-phone] .device-row { flex-wrap: wrap; }
 .settings-version { flex-wrap: wrap; }
 .settings-version .onboarding-command { margin-top: 0; }

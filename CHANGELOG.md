@@ -5,6 +5,17 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 ## Unreleased
 
+- Adversarial review is one request and one result. Task details shows a Proposal review and an
+  Implementation review box with the latest verdict and a single Request, Review again or Try again
+  button; the conversation shows one card per kind with earlier iterations inside it. Requests queue
+  on any open task and wake a waiting L2, the operator skips a review without giving a reason, and
+  same-engine review is presented as the ordinary path. The `retry` and `rerun` review actions are
+  removed: a repeat is a `request` naming the review it replaces.
+
+- Incidents on an installed copy record whether a newer followed release is known. When one is,
+  the incident stays local with an update-first notice; a repeat after updating gets its own
+  incident. `alt incident publish` still publishes a held record on request.
+
 ## v0.1.1 — 2026-10-09
 
 Patch release of the early preview: alpha quality, with rough edges and the known limitations below.

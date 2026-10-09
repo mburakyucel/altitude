@@ -1237,6 +1237,11 @@ def morning_digest() -> None:
         digest.text()
 
 
+# The TLS alerts (as OpenSSL names them) a client sends when it does not accept the certificate it was served.
+CERTIFICATE_ALERTS = ("ALERT_UNKNOWN_CA", "ALERT_BAD_CERTIFICATE", "ALERT_CERTIFICATE_UNKNOWN",
+                      "ALERT_CERTIFICATE_EXPIRED", "ALERT_UNSUPPORTED_CERTIFICATE")
+
+
 def timer_loop(tls_context: ssl.SSLContext | None = None, tls_host: str | None = None) -> None:
     next_tls_check = time.monotonic() + 86400
     while True:
@@ -1245,6 +1250,11 @@ def timer_loop(tls_context: ssl.SSLContext | None = None, tls_host: str | None =
                 tls.check(tls_host, context=tls_context)
             except (tls.TLSFailure, OSError) as exc:
                 log(f"HTTPS renewal failed; the active certificate is retained: {exc}")
+            try:
+                if TRUST is not None:  # the trust check's certificate ages with the served one
+                    TRUST.context = tls.probe_context(tls_host) or TRUST.context
+            except (tls.TLSFailure, OSError) as exc:
+                log(f"The pairing trust check's certificate was not renewed; the current one is retained: {exc}")
             next_tls_check = time.monotonic() + 86400
         try:
             tick()
@@ -1302,13 +1312,24 @@ class Handler(BaseHTTPRequestHandler):
     def handle(self) -> None:
         # I-20260924-205802: a handshake on the accept thread let one stalled client time out every request,
         # including activation's quiet check. Each connection completes its own handshake, bounded, here.
+        self._probed = False
         if isinstance(self.connection, ssl.SSLSocket):
+            armed = TRUST and TRUST.probe(self.client_address[0])
+            if armed:
+                self.connection.context = TRUST.context
             try:
                 self.connection.settimeout(TLS_HANDSHAKE_SECONDS)
                 self.connection.do_handshake()
                 self.connection.settimeout(None)
-            except OSError:
+            except OSError as exc:
+                # A browser that does not trust the CA ends the trust check's handshake with a certificate alert;
+                # an abandoned spare connection just closes and a cancelled one sends another alert, which say
+                # nothing about trust.
+                if armed and any(alert in (getattr(exc, "reason", None) or "") for alert in CERTIFICATE_ALERTS):
+                    TRUST.refused(armed)
                 return  # a failed or abandoned handshake drops only this connection, as accept did
+            # Only a full TLS 1.3 handshake on the second certificate shows the browser checked it.
+            self._probed = bool(armed) and self.connection.version() == "TLSv1.3" and not self.connection.session_reused
         super().handle()
 
     def handle_one_request(self) -> None:
@@ -1399,7 +1420,9 @@ class Handler(BaseHTTPRequestHandler):
             if len(parts) != 7:
                 return self._plain("Design unavailable", 404)
             return self._task_design([parts[1], *parts[3:6]], asset=unquote(parts[6]))
-        project = unquote(parts[1]) if len(parts) > 1 else ""
+        requested = unquote(parts[1]) if len(parts) > 1 else ""
+        # The registered name, never the request's own text, names the project from here on: it reaches a redirect header.
+        project = next((name for name in config.load_projects() if name == requested), "")
         if design_viewer_url(project) is None:
             return self._plain("not found", 404)
         if len(parts) == 2:  # the stable per-project link; the boards' relative imports need the depth
@@ -1702,7 +1725,9 @@ class Handler(BaseHTTPRequestHandler):
         if not parts or parts[0] not in ("api", DESIGN_ROUTE):
             return True
         if len(parts) == 2 and (self.command, parts[1]) in (("GET", "health"), ("HEAD", "health"), ("GET", "access"),
-                                                             ("HEAD", "access"), ("POST", "pair")):
+                                                             ("HEAD", "access"), ("POST", "pair"), ("POST", "trust")):
+            return True
+        if parts[0] == "api" and len(parts) == 3 and self.command in ("GET", "HEAD") and parts[1] in ("trust", "certificate"):
             return True
         if parts[0] == DESIGN_ROUTE and len(parts) > 3 and access.design_pass_valid(unquote(parts[1]), parts[2]):
             return True
@@ -1721,6 +1746,40 @@ class Handler(BaseHTTPRequestHandler):
         secure = "; Secure" if isinstance(self.connection, ssl.SSLSocket) else ""
         return f"{access.COOKIE}={key}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Strict{secure}"
 
+    def _local(self) -> bool:
+        """Whether the request comes from the computer running Altitude itself."""
+        try:
+            address = ipaddress.ip_address(self.client_address[0])
+        except ValueError:
+            return False
+        return (getattr(address, "ipv4_mapped", None) or address).is_loopback
+
+    def _trust_view(self) -> dict:
+        """What the pairing screen needs to walk a device through trusting this installation's certificate."""
+        return {"local": self._local(), "https": isinstance(self.connection, ssl.SSLSocket),
+                "check": TRUST is not None and isinstance(self.connection, ssl.SSLSocket),
+                "certificate": {"name": TRUST.name} if TRUST else None}
+
+    def _certificate_download(self, name: str) -> None:
+        """The public CA certificate a device installs to trust Altitude: the iPhone/iPad profile or the file."""
+        kinds = {"altitude.mobileconfig": "application/x-apple-aspen-config", "altitude.crt": "application/x-x509-ca-cert"}
+        ca = config.TLS_DIR / "ca.crt"
+        if name not in kinds or not config.TLS or not ca.exists():
+            return self._json({"error": "not found"}, 404)
+        try:
+            body = ca.read_bytes()
+            data = tls.profile(body, tls.identity(ca)) if name.endswith(".mobileconfig") else body
+        except (tls.TLSFailure, OSError, ValueError) as exc:
+            return self._json({"error": f"Could not read the certificate: {self._detail(exc)}"}, 409)
+        self.send_response(200)
+        self.send_header("Content-Type", kinds[name])
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(data)
+
     def _pair(self, body: dict) -> None:
         name = access.device_name(self.headers.get("User-Agent") or "", body.get("standalone") is True)
         try:
@@ -1733,7 +1792,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _devices_post(self, action: str, body: dict) -> None:
         if action == "code":
-            return self._json(access.issue_code())
+            return self._json({**access.issue_code(), **pairing_directions()})
         if action in ("share", "share-close"):
             denied = self._terminal_denied(json_body=True, subject="Set up a device")
             if denied:
@@ -2045,7 +2104,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._images(parts, q)
             if api == "access":
                 return self._json({"paired": self._machine or self._device is not None,
-                                   "device": self._device and self._device["name"]})
+                                   "device": self._device and self._device["name"], "trust": self._trust_view()})
+            if api == "trust" and len(parts) == 3:
+                if TRUST is None:
+                    return self._json({"error": "Altitude cannot check certificate trust here."}, 409)
+                outcome = TRUST.confirm(parts[2], self.client_address[0], self._probed)
+                if outcome == "unknown":
+                    return self._json({"error": "That check has expired. Check again."}, 404)
+                # A retry is an ordinary answer, so browsers log no failed request for it.
+                return self._json({"retry": True} if outcome == "retry" else {"trusted": outcome == "trusted"})
+            if api == "certificate" and len(parts) == 3:
+                return self._certificate_download(parts[2])
             if api == "devices" and len(parts) == 2:
                 return self._json({"devices": access.devices(), "current": self._device and self._device["id"],
                                    "certificate": certificate_view()})
@@ -2179,6 +2248,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._terminal_post(parts, o)
             if parts == ["api", "pair"]:
                 return self._pair(o)
+            if parts == ["api", "trust"]:
+                if TRUST is None or not isinstance(self.connection, ssl.SSLSocket):
+                    return self._json({"error": "Altitude cannot check certificate trust here."}, 409)
+                return self._json({"challenge": TRUST.arm(self.client_address[0])})
             if api == "devices" and len(parts) == 3:
                 return self._devices_post(parts[2], o)
             if api in ("update", "update-check"):
@@ -2199,12 +2272,12 @@ class Handler(BaseHTTPRequestHandler):
                     if o.keys() - {"project", "slug", "action", "request_id", "review_id", "reason", "focus", "subject"}:
                         raise ValueError("Unsupported review fields.")
                     project, slug, action = o["project"], o["slug"], o["action"]
-                    if action in ("request", "retry", "rerun"):
+                    if action == "request":
                         if not isinstance(o.get("request_id"), str) or not o["request_id"].strip():
                             raise ValueError("A review request identity is required.")
-                        previous = o["review_id"] if action != "request" else None
+                        # A repeat names the review it replaces, so a stale target is refused rather than duplicated.
                         review = reviews.request(project, slug, actor=T.OPERATOR_MESSAGE_ROLE,
-                                                 request_id=o["request_id"], focus=o.get("focus", ""), previous=previous,
+                                                 request_id=o["request_id"], focus=o.get("focus", ""), previous=o.get("review_id"),
                                                  subject=o.get("subject"))
                     elif action in ("cancel", "withdraw"):
                         operation = reviews.cancel if action == "cancel" else reviews.withdraw
@@ -2779,7 +2852,12 @@ def save_projects_folder(body: dict) -> dict:
     if body.keys() - {"path"}:
         raise ValueError("Unsupported projects folder fields.")
     path = body.get("path")
-    value = str(Path(path).expanduser()) if isinstance(path, str) and path.strip() else None
+    value = None
+    if isinstance(path, str) and path.strip():
+        expanded = os.path.expanduser(Path(path))
+        if expanded.startswith("~"):
+            raise RuntimeError("Could not determine home directory.")
+        value = str(Path(expanded))
     _save_machine("projects_folder", value, "Projects folder")
     return {"roots": [home_relative(r) for r in config.project_roots()]}
 
@@ -3302,6 +3380,7 @@ def task_view(project: str, slug: str) -> dict:
 
 
 def main(host: str | None = None, port: int | None = None) -> None:
+    global TRUST
     config.ensure_root()
     dispatch.forget_speech_service()
     if os.environ.get("ALTITUDE_SERVICE"):  # only the service instance clears the restart-pending flag
@@ -3320,6 +3399,8 @@ def main(host: str | None = None, port: int | None = None) -> None:
     try:
         certificate_host = config.PUBLIC_HOST if platform.containerized() else host
         context = tls.check(certificate_host) if config.TLS else None
+        probe = tls.probe_context(certificate_host) if context is not None else None
+        TRUST = tls.TrustCheck(probe, tls.identity(config.TLS_DIR / "ca.crt")["name"]) if probe is not None else None
     except (tls.TLSFailure, OSError) as exc:
         log(f"HTTPS startup refused: {exc}")
         raise SystemExit(1) from exc
@@ -3368,6 +3449,36 @@ def main(host: str | None = None, port: int | None = None) -> None:
         except terminal.TerminalError as exc:
             log(f"terminal: {exc}")  # each terminal's job is PartOf the service, which stops it too
         SPEECH.shutdown()
+
+
+TRUST: tls.TrustCheck | None = None  # the pairing screen's certificate trust check; None without a CA key
+
+
+def _located() -> dict:
+    """This service's network settings with the name devices open: its certified name, not the address it binds."""
+    return tls.located({"host": config.HOST, "port": config.PORT, "tls": config.TLS, "tls_dir": config.TLS_DIR})
+
+
+def service_address() -> str | None:
+    try:
+        return _located()["url"]
+    except tls.TLSFailure:
+        return None
+
+
+def pairing_directions() -> dict:
+    """What a new device needs beside its pairing code: the HTTPS address to open, as a QR code when a phone can
+    reach it, and the certificate whose SHA-256 ending it checks before installing."""
+    address, rows = service_address(), None
+    try:
+        tls.phone_address(_located())
+        rows = ["".join("1" if dark else "0" for dark in row) for row in qr.matrix(address)]
+    except tls.TLSFailure:
+        pass  # plain HTTP or an address only this computer can open: no QR code a phone could use
+    view = certificate_view()
+    return {"address": address if config.TLS else None, "qr": rows,
+            "certificate": {"name": view["name"], "check": tls.check_value(view["sha256"])}
+            if view and "sha256" in view else None}
 
 
 def certificate_view() -> dict | None:

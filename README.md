@@ -84,15 +84,17 @@ is under validation.
    [release notes](CHANGELOG.md) for known limitations. The script checks the machine, runs
    nothing it downloads unless it matches the release's checksums and prints the next steps. The
    [installation steps](docs/SETUP.md#install-the-application) explain what it trusts and how to
-   verify attested releases.
+   verify a release's script before running it.
 2. Put `~/.local/bin` on your PATH and run `alt doctor`. The release includes the CLI, daemon and
    web app; installation enables a per-user service and saves its tool PATH.
 3. Follow the [certificate trust guide for Linux, macOS and phones](docs/SETUP.md#trust-https-on-each-device).
-   On the hosting computer, use the public CA file reported by `alt doctor`; on another device,
-   use **Set up a device** or `alt tls-share` with your configured network address. Compare its
-   fingerprint, trust it deliberately, then verify the exact HTTPS URL without a warning.
-   [Pair the browser](docs/SETUP.md#pair-each-device) with the code `alt pair` prints and
-   use [First run](docs/SETUP.md#first-run-in-the-browser) to add your project.
+   On the hosting computer, use the public CA file reported by `alt doctor`. To
+   [pair another device](docs/SETUP.md#pair-each-device), run `alt pair` on the hosting computer
+   and open its printed address or scan its QR code. **Pair this device** guides certificate
+   trust before you enter the code: compare the certificate with the computer, trust it
+   deliberately and verify the exact HTTPS URL without a warning. **Set up a device** and
+   `alt tls-share` also offer certificate setup. Use
+   [First run](docs/SETUP.md#first-run-in-the-browser) to add your project.
 
 <details>
 <summary>Ask your coding agent to help install</summary>
