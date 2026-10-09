@@ -85,6 +85,38 @@ class TestParallelChecks(AltitudeCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("test_exits (test_0.Cases.test_exits)", result.stderr)
 
+    def test_shards_partition_every_test_including_import_errors(self):
+        directory = self.tmp / "modules"
+        directory.mkdir()
+        for index in range(3):
+            (directory / f"test_{index}.py").write_text("import unittest\nclass Cases(unittest.TestCase):\n" + "".join(
+                f"    def test_{case}(self): pass\n" for case in range(5)))
+        (directory / "test_broken.py").write_text('raise RuntimeError("visible import error")')
+        ran = []
+        for shard in (1, 2, 3):
+            result = subprocess.run(
+                [sys.executable, str(REPO / "tests/run_parallel.py"), "--workers", "2", "--shard", f"{shard}/3",
+                 "--directory", str(directory)], capture_output=True, text=True, timeout=20)
+            ran += re.findall(r"^\[python \d\] (\w+ \([\w.]+\))", result.stderr, re.M)
+            self.assertEqual(result.returncode, int("visible import error" in result.stderr), result.stderr)
+        self.assertEqual(len(ran), len(set(ran)))
+        self.assertEqual(sorted(ran), sorted(
+            [f"test_{case} (test_{index}.Cases.test_{case})" for index in range(3) for case in range(5)]
+            + ["test_broken (unittest.loader._FailedTest.test_broken)"]))
+        for invalid in ("0/3", "4/3", "3", "a/b"):
+            with self.subTest(invalid=invalid):
+                result = subprocess.run([sys.executable, str(REPO / "tests/run_parallel.py"), "--shard", invalid,
+                                         "--directory", str(directory)], capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, 2, result.stderr)
+
+    def test_make_passes_one_shard_to_every_phase(self):
+        result = subprocess.run(["make", "-n", "check-python", "check-web", "SHARD=2/5", "WORKERS=3"],
+                                cwd=REPO, capture_output=True, text=True, timeout=20, check=True)
+        commands = [line.split("time_command.py\" ", 1)[1] for line in result.stdout.splitlines()]
+        self.assertEqual(commands, ['python3 tests/run_parallel.py --shard=2/5 --workers "3"',
+                                    "pnpm test --shard=2/5", "pnpm build", "pnpm ui --shard=2/5",
+                                    "pnpm ui:shell --shard=2/5"])
+
     def test_browser_service_shutdown_finishes_request_thread_startup(self):
         script = textwrap.dedent('''
             import os, signal, sys, threading
