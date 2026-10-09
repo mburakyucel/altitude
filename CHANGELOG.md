@@ -27,6 +27,7 @@ Conversations and tasks:
   turn, so it acts on them as your instructions.
 - On a phone, swiping sideways on a task page moves one tab at a time through Conversation, Live
   session and Terminal (when the task offers one).
+- Command rows in the live session start right after the `$`, so phones show more of each command.
 - Decision alerts wait while L3 or the task's owner is still handling a decision, and alert once the
   task rests with the decision still open, or 15 minutes after it was asked. Needs you shows the
   decision at once. A banner for a decision that was answered, withdrawn or superseded closes on
