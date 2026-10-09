@@ -142,9 +142,9 @@ class Safari:
         if error:
             raise RuntimeError(f"Safari did not open {url}: {error}")
 
-    def walk(self, name: str, url: str, code: str = "") -> tuple[dict, dict]:
+    def walk(self, name: str, url: str) -> tuple[dict, dict]:
         """altd's native walk `name` at `url`: its record and its screenshots by name."""
-        self.send(WALK, {"walk": name, "url": url, **({"code": code} if code else {})})
+        self.send(WALK, {"walk": name, "url": url})
         answer = self.until(lambda: self.walked and [self.walked.pop()], WALK_WAIT, f"the {name} walk got no answer")[0]
         if answer.get("error"):
             raise RuntimeError(f"the {name} walk: {answer['error']}")
@@ -518,11 +518,11 @@ HOME_WALK = ("safari", "share", "add", "home-screen", "standalone", "paired")
 PROFILE_WALK = ("download", "allow", "profile-downloaded", "certificate", "install", "trust")
 
 
-def walked(run: Run, name: str, url: str, prefix: str, expected: tuple, code: str = "") -> tuple[dict, list, dict]:
+def walked(run: Run, name: str, url: str, prefix: str, expected: tuple) -> tuple[dict, list, dict]:
     """altd's walk `name` at `url`, with its screenshots kept as `<prefix>-<name>.png`: what it saw, a row for each
     expected step, completed or not reachable with the reason, a failed `runner` row for a runner that crashed, hung or
     did not build even after its last step, and its files."""
-    record, files = run.safari.walk(name, url, code)
+    record, files = run.safari.walk(name, url)
     for file, data in files.items():
         (run.results / f"{prefix}-{file}").write_bytes(data)
     found = {row.get("step"): row for row in record.get("steps", [])}
@@ -558,11 +558,9 @@ def check(step: str, failures: list[str], detail: str) -> dict:
         {"step": step, "status": "completed", "detail": detail}
 
 
-def api(run: Run, method: str, path: str) -> dict:
+def api(run: Run, path: str) -> dict:
     """The fixture service's answer, as the paired device."""
-    request = urllib.request.Request(run.url + path, method=method, data=b"{}" if method == "POST" else None,
-                                     headers={"Cookie": f"{access.COOKIE}={run.device}",
-                                              "Content-Type": "application/json"})
+    request = urllib.request.Request(run.url + path, headers={"Cookie": f"{access.COOKIE}={run.device}"})
     with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=10) as answer:
         return json.load(answer)
 
@@ -616,14 +614,13 @@ def pixels(data: bytes) -> tuple[int, int, bytes]:
 def home_screen(run: Run) -> None:
     """Add to Home Screen at the app's root and at a task's address, through altd's native walk. The sheet offers the
     title Altitude as a web app; the Home Screen icon iOS stored shows the approved Climb icon pixel for pixel; the clip
-    opens the manifest's start address full screen; and the icon opens Altitude on its own, without Safari, where it
-    pairs with a code from the fixture service as a Home Screen app."""
+    opens the manifest's start address full screen; and the icon opens Altitude on its own, without Safari, already
+    paired: iOS copies Safari's cookies to the app it adds, so no device pairs anew."""
     approved = (REPO / "web" / "public" / "apple-touch-icon.png").read_bytes()
     for label, path in (("root", "/"), ("task", run.task)):
         prefix = f"home-{label}"
-        apps = [d for d in api(run, "GET", "/api/devices")["devices"] if d["name"] == "Home Screen app on iPhone"]
-        code = api(run, "POST", "/api/devices/code")["code"]
-        record, rows, files = walked(run, "home-screen", run.url + path, prefix, HOME_WALK, code)
+        devices = len(api(run, "/api/devices")["devices"])
+        record, rows, files = walked(run, "home-screen", run.url + path, prefix, HOME_WALK)
         seen, clip, icon = record.get("seen", {}), record.get("clip", {}), files.get("web-clip-icon.png")
         reached = {row["step"] for row in rows if row.get("status") == "completed"}
         if "home-screen" in reached:
@@ -643,13 +640,12 @@ def home_screen(run: Run) -> None:
         else:
             rows.append(unreached("web-clip"))
         if "paired" in reached:
-            added = len([d for d in api(run, "GET", "/api/devices")["devices"]
-                         if d["name"] == "Home Screen app on iPhone"]) - len(apps)
-            rows.append(check("standalone-pairing", [] if seen.get("safari") == "not in front" and added == 1 else
-                              [f"Safari {seen.get('safari')}; {added} new Home Screen app device(s)"],
-                              "the app paired as a Home Screen app on iPhone, with Safari not in front"))
+            added = len(api(run, "/api/devices")["devices"]) - devices
+            rows.append(check("standalone-app", [] if seen.get("safari") == "not in front" and added == 0 else
+                              [f"Safari {seen.get('safari')}; {added} new device(s)"],
+                              "the app opened paired with Safari's device, with Safari not in front"))
         else:
-            rows.append(unreached("standalone-pairing"))
+            rows.append(unreached("standalone-app"))
         finish(run, prefix, rows, f"Add to Home Screen at {path}: the icon, title and standalone app",
                clip=clip, icon={"approved sha256": hashlib.sha256(approved).hexdigest(),
                                 "stored sha256": icon and hashlib.sha256(icon).hexdigest()})
