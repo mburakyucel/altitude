@@ -171,4 +171,33 @@ test.describe("L3 Send now", () => {
     expect((await status()).calls.map((call: { text: string }) => call.text)).toEqual(["Keep working", "Deliver this next", "Earlier queued message"]);
     await expect(convo.getByText("Deliver this next", { exact: true })).toHaveCount(1);
   });
+
+  test("shows an interrupted reply quietly, with and without partial output", async ({ page, request }, info) => {
+    const walk = walkthrough(page, info);
+    const convo = page.getByRole("region", { name: "Conversation", exact: true });
+    const field = page.getByRole("textbox", { name: "Message L3 about atlas" });
+    const queued = (text: string) => convo.locator(".queued-row").filter({ hasText: text });
+    const status = async () => (await (await request.get("/fixture/status")).json());
+    const interrupt = async (first: string, next: string, calls: number) => {
+      await field.fill(first);
+      await convo.getByRole("button", { name: "Send", exact: true }).click();
+      await expect.poll(async () => (await status()).calls.length).toBe(calls);
+      await field.fill(next);
+      await convo.getByRole("button", { name: /^(Send|Queue)$/ }).click();
+      await queued(next).getByRole("button", { name: "Send now", exact: true }).click();
+      expect((await request.post("/fixture/release")).ok()).toBe(true);
+      await expect(convo.getByText(`${next} answered.`, { exact: true })).toBeVisible();
+    };
+    await walk.open("/projects/atlas");
+    await interrupt("Keep working", "Deliver this next", 1);
+    await walk.state("l3-05-interrupted-partial", {
+      visible: [convo.getByText("Two checks failed on the review branch, and the first log", { exact: false })],
+      hidden: [convo.locator(".queued-row")],
+    });
+    await interrupt("Hold on", "Use the other branch", 3);
+    await walk.state("l3-06-interrupted-empty", {
+      visible: [convo.getByText("Use the other branch answered.", { exact: true })],
+      hidden: [convo.locator(".queued-row")],
+    });
+  });
 });
