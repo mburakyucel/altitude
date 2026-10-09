@@ -2709,13 +2709,16 @@ Both are labeled 44px controls above the composer and disappear when their desti
 Preview access stays in the question; tabs and the panel toggle provide live navigation without an
 extra composer row. There is no generic Resume while an operator question is open; viewing
 details never resolves a question or releases a merge hold. A done or rejected task is
-read-only with the composer and activity preview gone. Phone swipes left to Live session and right to
-Conversation, without wrapping: both views sit on one track that follows the finger, settles into the
-switch past half the width or a fling, springs back otherwise and resists past either end; reduced
-motion switches instantly. Both phone views stay mounted and laid out, the inactive one invisible with
-its transcript polling paused. Deliberate horizontal gestures exclude browser edges, selection,
-controls, the composer, recording, dialogs and horizontally scrollable content; vertical scrolling
-stays native. Tabs remain the accessible direct navigation. View switches preserve draft text,
+read-only with the composer and activity preview gone. Phone swipes move one tab at a time through
+the tabs in their order, Conversation, Live session and Terminal when the task offers one, left to the
+next and right to the previous, without wrapping: the views sit on one track that follows the finger,
+settles into the switch past half the width or a fling, springs back otherwise and resists past either
+end; reduced motion switches instantly. Conversation and Live session stay mounted and laid out, the
+inactive one invisible with its transcript polling paused; a drag toward Terminal shows its loading
+view, and the shell opens or reattaches only once the switch completes. The tab row stays in place
+during the drag. Deliberate horizontal gestures exclude browser edges, selection, controls, the
+composer, recording, dialogs, horizontally scrollable content and the terminal screen and key row;
+vertical scrolling stays native. Tabs remain the accessible direct navigation. View switches preserve draft text,
 selection, images, conversation position and live reading state without reopening the keyboard;
 local history and deep links retain their navigation contract.
 Scrolling up in Live session pauses following while updates keep arriving below; Follow catches up

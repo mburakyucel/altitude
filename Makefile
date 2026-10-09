@@ -7,13 +7,16 @@ check:          ## all deterministic checks, timed (install frozen dependencies 
 	+$(MAKE) --no-print-directory -j2 -k check-python check-web
 # One timing write keeps parallel summaries together on both supported hosts.
 TIME = python3 "$(CURDIR)/scripts/time_command.py"
+# SHARD=i/n runs the i-th of n disjoint slices, as the hosted check's parallel jobs do; WORKERS
+# replaces the half of the CPUs Python leaves to the web branch of `check`.
+SHARDED = $(if $(SHARD),--shard=$(SHARD))
 check-python:
-	env -u ALTITUDE_ACTOR $(TIME) python3 tests/run_parallel.py --workers "$$(node -p 'Math.max(1, Math.floor(require("node:os").availableParallelism() / 2))')"
+	env -u ALTITUDE_ACTOR $(TIME) python3 tests/run_parallel.py $(SHARDED) --workers "$(or $(WORKERS),$$(node -p 'Math.max(1, Math.floor(require("node:os").availableParallelism() / 2))'))"
 check-web:
-	cd web && $(TIME) pnpm test
+	cd web && $(TIME) pnpm test $(SHARDED)
 	cd web && $(TIME) pnpm build
-	cd web && $(TIME) pnpm ui
-	cd web && $(TIME) pnpm ui:shell
+	cd web && $(TIME) pnpm ui $(SHARDED)
+	cd web && $(TIME) pnpm ui:shell $(SHARDED)
 web:            ## build the SPA into web/dist (supported Node and pnpm on PATH)
 	cd web && pnpm install --frozen-lockfile && pnpm build
 ui:             ## isolated headless browser walkthroughs at phone and desktop widths (build first; CAPTURE=1 with UI_ARGS=spec keeps GIFs in web/ui-artifacts/captures)

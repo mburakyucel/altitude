@@ -33,14 +33,18 @@ full Chromium browser suite and headless-shell recovery lane. Each phase retains
 wall/user/system timing through the standard-library `scripts/time_command.py`,
 without GNU-specific `time` options. Each summary is written as one block so parallel
 branches do not interleave it; the command waits for both branches and fails if either fails. A failed web prerequisite stops its
-dependent phases. Python's stdlib `tests/run_parallel.py` distributes whole test modules across
-fresh interpreters, using half the available CPUs (at least one). The full gate obtains that
-budget from Node's `availableParallelism()` for both languages: container CPU quotas may be
-smaller than Python's affinity mask. The runner itself remains stdlib-only; standalone invocations
-default to half the affinity mask, or one worker where affinity is unavailable. Each shard streams prefixed
-verbose unittest output, including skip reasons; the final summary totals all shards for landing.
-Test names flush before execution so incomplete runs identify each shard's last started test.
+dependent phases. Python's stdlib `tests/run_parallel.py` deals the sorted individual tests across
+fresh interpreters, so a long module spreads over all of them, using half the available CPUs (at
+least one). The full gate obtains that budget from Node's `availableParallelism()` for both
+languages: container CPU quotas may be smaller than Python's affinity mask. The runner itself
+remains stdlib-only; standalone invocations default to half the affinity mask, or one worker where
+affinity is unavailable. Each process streams prefixed verbose unittest output, including skip
+reasons; the final summary totals all processes for landing. Test names flush before execution so
+incomplete runs identify each process's last started test.
 `python3 tests/run_parallel.py --workers N` selects a worker count for focused measurement.
+`make check-python` and `make check-web` each run one branch of the gate; `SHARD=i/n` runs only
+the i-th of n disjoint slices of every phase that has tests (Python, Vitest and both Playwright
+lanes), and `WORKERS=N` sets the Python process count. The hosted check runs its slices this way.
 Serial `python3 -m unittest discover -v tests` and `make test` remain available.
 Dependency and browser installation are explicit prerequisites, so a warm run need not
 fetch packages. L2 workers on either host export writable npm, pnpm, pip and XDG tool-cache
@@ -1203,10 +1207,18 @@ service, LaunchAgents, keychains, trust stores or network configuration.
 
 ## CI and candidate identity
 
-`.github/workflows/hosted-checks.yml` runs `make check` as its job `check` on a GitHub-hosted
-`ubuntu-24.04` runner for every pull request to main, every push to main and manual dispatches.
-It first installs `ffmpeg` and `liblcms2-2` for the image fixtures, then the frozen web
-dependencies and Chromium from `web/`, where Corepack selects the pinned pnpm.
+`.github/workflows/hosted-checks.yml` runs `make check` for every pull request to main, every push
+to main and manual dispatches as parallel `shard` jobs, each on its own GitHub-hosted
+`ubuntu-24.04` runner: `make check-python SHARD=i/4` and `make check-web SHARD=i/6`, with
+Python using all of its runner's CPUs. Each shard verifies the exact candidate, then installs
+`ffmpeg` and `liblcms2-2` for the image fixtures and the frozen web dependencies and Chromium from
+`web/`, where Corepack selects the pinned pnpm. The workflow lists each suite's slices `1/n`
+through `n/n` and the runners split their own sorted test lists, so every test runs exactly once;
+`tests/test_ci_workflow.py` checks that the matrix covers every `make check` branch and
+`tests/test_parallel_checks.py` that Python slices partition the suite. Every shard finishes even
+when another fails. The required job `check` waits for all of them, always runs, and passes only
+when every shard succeeded: a failed, cancelled or skipped shard fails it. Typecheck/build runs
+in every web shard because each one's browser walkthroughs need the build.
 Every run, whether from a fork or a repository branch, has a read-only token and no secrets, and no
 workflow runs on the maintainer's machine. Standard hosted runners are free for public
 repositories. GitHub's fork-workflow approval setting (require approval for first-time
@@ -1259,8 +1271,8 @@ must be established. Projects without CI retain the full local candidate suite a
 (one argv command, see [dry run and gate selection](CLI.md#dry-run-and-gate-selection));
 neither provides an outage bypass for this repository.
 
-A failed run uploads the self-contained browser HTML report, with its screenshots and failure
-traces, as the seven-day artifact `browser-report-<attempt>`; passing runs upload nothing. A passing
+A failed web shard uploads its self-contained browser HTML report, with its screenshots and failure
+traces, as the seven-day artifact `browser-report-<job index>-<attempt>`; passing shards upload nothing. A passing
 required check on the current head, with its GitHub console log, is sufficient delivery evidence;
 `alt land` verifies the head, tree and base ancestry. Owners download a failed report into their
 task folder only to diagnose a failed run or when a reviewer asks, match its run URL and attempt to
@@ -1287,7 +1299,7 @@ CI allocations vary with available capacity. Worker counts follow the process's 
 not a fixed container size or host-wide count. This reference uses head `998da21`; it is not
 acceptance evidence for a later revision. PR evidence records the current source, allocation,
 timings and complete results. A hosted `ubuntu-24.04` runner has four CPUs for a public
-repository, so its gate uses four browser workers and two Python processes. Run local timing
+repository, so each shard uses four browser workers or four Python processes. Run local timing
 measurements one at a time and retain scoped memory and termination observations alongside timings.
 
 A warm local implementation run on 2026-09-08, Linux, Python 3.12.3, Node 22.22.2 and pnpm
