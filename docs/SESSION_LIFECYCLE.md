@@ -1010,7 +1010,10 @@ of a merge. Resume still uses the existing claim and Git isolation gates. A new 
 previous completion verification before launching the owner; a new delivery also invalidates it.
 The current `delivery` timestamp joins worker launch/resume time when deciding report freshness.
 Final reports cover every recorded PR and the current published work; historical success cannot
-complete unpublished follow-up. A raced verification is refused if the delivery changed before
+complete unpublished follow-up. Verification compares GitHub's head for the current PR with the recorded
+delivery. When the recorded PR merged at a later head of its own branch, the next `alt land` records that
+merged head once its history contains the recorded head and its merge is on current main; another PR,
+branch or unrelated history is refused ([reconciliation](CLI.md#continue-after-a-pr-merges)). A raced verification is refused if the delivery changed before
 report handoff. Existing restart adoption and merge activation observe the continuing task normally.
 
 ## Engine containment
