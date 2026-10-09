@@ -74,6 +74,10 @@ svg.i.sm{width:14px;height:14px}
 .offer .ot{font-size:13px;color:var(--text-muted);min-width:0}
 .offer .err{flex-basis:100%;font-size:13px;color:var(--danger)}
 .qrow{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;color:var(--text-muted);font-size:14px}.qrow .qacts{display:flex;gap:16px;margin-left:auto}
+.choice{align-self:flex-end;margin-left:auto;width:fit-content;display:flex;align-items:flex-start;gap:8px;max-width:76%;font-size:13px;line-height:1.4;color:var(--text-muted);text-align:right}
+.choice .ci{flex:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid var(--border);border-radius:50%;color:var(--accent-text)}
+.choice b{font-weight:600;color:var(--text-secondary)}.choice .ct{display:block}
+.qrow .choice{align-self:auto;margin-left:0;flex-direction:row-reverse;text-align:left;max-width:none}
 .m .offer .ob{position:relative}.m .offer .ob::after{content:"";position:absolute;inset:-5px 0}
 .dots{display:inline-flex;gap:4px;padding:6px 0}.dots i{width:6px;height:6px;border-radius:50%;background:var(--text-muted);opacity:.6}
 .composer{border:1px solid var(--border);border-radius:var(--radius-composer);background:var(--card);box-shadow:var(--shadow);padding:14px 12px 10px 18px;width:100%;max-width:720px;margin:0 auto}

@@ -88,6 +88,10 @@ svg.i.sm{width:14px;height:14px}
 .offer .ot{font-size:13px;color:var(--text-muted);min-width:0}
 .offer .err{flex-basis:100%;font-size:13px;color:var(--danger)}
 .qrow{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;color:var(--text-muted);font-size:14px}.qrow .qacts{display:flex;gap:16px;margin-left:auto}
+.choice{align-self:flex-end;margin-left:auto;width:fit-content;display:flex;align-items:flex-start;gap:8px;max-width:76%;font-size:13px;line-height:1.4;color:var(--text-muted);text-align:right}
+.choice .ci{flex:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid var(--border);border-radius:50%;color:var(--accent-text)}
+.choice b{font-weight:600;color:var(--text-secondary)}.choice .ct{display:block}
+.qrow .choice{align-self:auto;margin-left:0;flex-direction:row-reverse;text-align:left;max-width:none}
 .m .offer .ob{position:relative}.m .offer .ob::after{content:"";position:absolute;inset:-5px 0}
 .dots{display:inline-flex;gap:4px;padding:6px 0}.dots i{width:6px;height:6px;border-radius:50%;background:var(--text-muted);opacity:.6}
 .composer{border:1px solid var(--border);border-radius:var(--radius-composer);background:var(--card);box-shadow:var(--shadow);padding:14px 12px 10px 18px;width:100%;max-width:720px;margin:0 auto}
@@ -1015,7 +1019,7 @@ OFFER_TITLE = "Refresh Needs you as soon as an answer is sent"
 
 def offer(state="ready"):
     label = {"ready": "Create task", "sending": "Sending…", "failed": "Create task", "checking": "Checking…"}[state]
-    icon = I("spin", "i sm") if state in ("sending", "checking") else I("work", "i sm")
+    icon = I("spin", "i sm") if state in ("sending", "checking") else I("plus", "i sm")
     note = {"failed": '<span class="err" role="alert">Not sent: L3 is not attached to this project. Press it again to retry.</span>',
             "checking": '<span class="ot" role="status" style="flex-basis:100%">Couldn’t confirm it was sent. Checking the conversation…</span>'}.get(state, "")
     busy = ' aria-disabled="true"' if state in ("sending", "checking") else ""
@@ -1026,11 +1030,14 @@ offer_question = '<div class="me">The Needs you badge on my phone still said 2 a
 offer_reply = ('<div class="l3"><p>Yes, a small one. The badge reads the queue on its next refresh, so after an answer it '
                'can lag up to 20 seconds. Nothing is lost; it only looks wrong. Refetching the queue right after an '
                'answer is sent fixes it.</p>')
-offer_pressed = f'<div class="me">Create task: {OFFER_TITLE}</div>'
+# A press reads as the operator's choice, not as a message they typed; L3 still receives "Create task: <title>".
+choice = (f'<div class="choice"><span><span class="ct">You chose <b>Create task</b></span>{OFFER_TITLE}</span>'
+          f'<span class="ci">{I("plus", "i sm")}</span></div>')
+offer_pressed = choice
 offer_done = ('<div class="l3"><p>Created it. It starts as soon as a slot is free; nothing needs you meanwhile.</p>'
               + tcard(OFFER_TITLE, "Queued · starts when a slot is free", "dot q") + '</div>')
 typing = '<span class="dots" role="status" aria-label="L3 is answering"><i></i><i></i><i></i></span>'
-offer_queued = ('<div class="qrow"><span>Create task: ' + OFFER_TITLE + '</span><span class="muted">Queued · runs next</span>'
+offer_queued = ('<div class="qrow">' + choice + '<span class="muted">Queued · runs next</span>'
                 '<span class="qacts"><a href="#">Send now</a><a href="#">Remove</a></span></div>')
 
 board("ReplyTask", 1440, 900, desktop_project(True, '<div class="day">Today</div>' + offer_question + offer_reply + offer() + '</div>'))
@@ -1040,8 +1047,8 @@ OFFER_STATES = [
     ("Reply without the action", "an answer, a report, or a reply that created a task", offer_question + '<div class="l3"><p>Merged an hour ago as PR #175. It shows after the next restart; nothing waits on you.</p></div>'),
     ("Reply with the action", "the latest reply recommends work you have not asked for", offer_question + offer_reply + offer() + '</div>'),
     ("Pressed", "dims while the message saves; the draft and voice input stay untouched", offer_reply + offer("sending") + '</div>'),
-    ("Waiting", "the action leaves; focus moves to your sent message and “Create task sent” is announced", offer_reply + '</div>' + offer_pressed + typing),
-    ("Waiting while L3 is busy", "the ordinary queued row; Remove brings the action back", offer_reply + '</div>' + offer_queued),
+    ("Waiting", "the action leaves; your choice shows on your side, not as a typed message, takes focus, and “Create task sent” is announced", offer_reply + '</div>' + offer_pressed + typing),
+    ("Waiting while L3 is busy", "your choice waits in the queue; Remove brings the action back", offer_reply + '</div>' + offer_queued),
     ("Task created", "L3’s answer carries the ordinary task card", offer_reply + '</div>' + offer_pressed + offer_done),
     ("Not sent", "Altitude refused it: the reason, and pressing again retries", offer_reply + offer("failed") + '</div>'),
     ("Unconfirmed", "the connection dropped after pressing: the page reads the conversation before saying anything", offer_reply + offer("checking") + '</div>'),
