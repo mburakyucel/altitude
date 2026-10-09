@@ -2271,12 +2271,12 @@ class Handler(BaseHTTPRequestHandler):
                     if o.keys() - {"project", "slug", "action", "request_id", "review_id", "reason", "focus", "subject"}:
                         raise ValueError("Unsupported review fields.")
                     project, slug, action = o["project"], o["slug"], o["action"]
-                    if action in ("request", "retry", "rerun"):
+                    if action == "request":
                         if not isinstance(o.get("request_id"), str) or not o["request_id"].strip():
                             raise ValueError("A review request identity is required.")
-                        previous = o["review_id"] if action != "request" else None
+                        # A repeat names the review it replaces, so a stale target is refused rather than duplicated.
                         review = reviews.request(project, slug, actor=T.OPERATOR_MESSAGE_ROLE,
-                                                 request_id=o["request_id"], focus=o.get("focus", ""), previous=previous,
+                                                 request_id=o["request_id"], focus=o.get("focus", ""), previous=o.get("review_id"),
                                                  subject=o.get("subject"))
                     elif action in ("cancel", "withdraw"):
                         operation = reviews.cancel if action == "cancel" else reviews.withdraw
