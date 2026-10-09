@@ -1386,8 +1386,7 @@ def stop(project: str, slug: str, *, by: str = config.OPERATOR_ACTOR, reason: st
             T._supersede_resume(task)
             task.update(stop_id=daemon_request_id or uuid.uuid4().hex, blocked_reason=reason, block_actor=by)
             S.save_task(project, task)
-    if by == "l3":
-        T.note_stop(project, slug, task["stop_id"], reason)
+    T.record_stop(project, slug, task["stop_id"], by, reason)
     from . import reviews
     reviews.cancel_attached(project, slug, "Owner stopped")
     if task.get("agent_id"):

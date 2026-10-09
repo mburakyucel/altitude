@@ -711,15 +711,21 @@ def stopped_by(task: dict) -> str | None:
     return request.get("actor") if request.get("id") == task["stop_id"] else task.get("block_actor")
 
 
-def note_stop(project: str, slug: str, stop_id: str, reason: str) -> None:
-    """L3's Stop waits on L3 and leaves its reason as one L3 note in the conversation; it asks nobody anything."""
+def record_stop(project: str, slug: str, stop_id: str, actor: str, reason: str) -> None:
+    """An executed Stop names its requester as the block's actor, also when the task had blocked meanwhile.
+    L3's Stop waits on L3, unless an open operator question keeps the operator's turn, and leaves its reason as one
+    L3 note in the conversation; it asks nobody anything."""
     with S.project_lock(project):
         task = S.load_task(project, slug)
         if task.get("stop_id") != stop_id:
             return
-        task["waiting_on"] = "l3"
+        task["block_actor"] = actor
+        if actor == "l3":
+            task.setdefault("waiting_on", "l3")
         S.save_task(project, task)
         S.regen_state_md(project)
+        if actor != "l3":
+            return
         path = S.task_dir(project, slug) / "conversation.jsonl"
         if not any(row["id"] == stop_id for row in _rows(path, "task conversation")):
             _append_jsonl(path, {"id": stop_id, "at": _conversation_time(), "role": "l3", "by": "l3",
@@ -1933,7 +1939,7 @@ def _publish_block_members(task: dict, reason: str, actor: str, payload: dict | 
 def _legacy_question_origin(project: str, task: dict) -> dict | None:
     """Read whether a legacy block has authoritative human-question evidence, without adopting it."""
     if (task.get("questions") or task.get("state") != "blocked" or not task.get("blocked_reason")
-            or task.get("fault") or task.get("stop_id")):
+            or task.get("fault")):
         return None
     events = S.read_events(project, task["slug"])
     block_index = next((i for i in range(len(events) - 1, -1, -1)
@@ -1943,8 +1949,8 @@ def _legacy_question_origin(project: str, task: dict) -> dict | None:
                         if event.get("kind") == "escalated"), {}) if task.get("escalated") else {})
     origin = escalation or block
     actor = origin.get("by") or task.get("block_actor")
-    # A missing actor does not turn legacy capacity/quota holds or operator stops into an L2 question.
-    if actor not in ("l2", "l3"):
+    # Only an owner's block or L3's escalation asked; a Stop, hold or park by anyone else is state.
+    if actor != ("l3" if escalation else "l2"):
         return None
     return {"text": origin.get("question") or origin.get("reason") or task["blocked_reason"],
             "actor": actor, "at": origin.get("at")}
