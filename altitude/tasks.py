@@ -729,6 +729,23 @@ def steering_view(task: dict, events: list[dict], *, job_root=None) -> dict:
             "error": "The worker may still be running." if state == "stop_unconfirmed" else None}
 
 
+def from_operator(row: dict) -> bool:
+    """The operator's own words, which an owner receives only as a user turn, never as hook context."""
+    return row.get("role") == row.get("by") == OPERATOR_MESSAGE_ROLE
+
+
+def release_turn(project: str, slug: str) -> bool:
+    """Record that the running worker's turn ends so its waiting operator messages arrive as the next user turn.
+    The clean exit that follows resumes the same session, even when the operator removes those messages first."""
+    with S.project_lock(project):
+        task = S.load_task(project, slug)
+        if task.get("state") != "running" or task.get("stop_id"):
+            return False
+        task["turn_released"] = task.get("agent_id")
+        S.save_task(project, task)
+        return True
+
+
 def removable_messages(project: str, slug: str, task: dict) -> set[str]:
     """Only unclaimed operator text can be withdrawn; recorded decisions keep their evidence."""
     if task.get("state") not in ("running", "blocked", "queued"):
@@ -751,7 +768,7 @@ def removable_messages(project: str, slug: str, task: dict) -> set[str]:
         else:
             protected.add(receipt.get("latest_other_operator"))
     return {row["id"] for row in pending(project, slug)
-            if row.get("role") == row.get("by") == OPERATOR_MESSAGE_ROLE and row["id"] not in protected}
+            if from_operator(row) and row["id"] not in protected}
 
 
 def remove_message(project: str, slug: str, message_id: str) -> None:
@@ -790,7 +807,7 @@ def _message_views(project: str, slug: str, task: dict, delivered: list[dict]) -
                  else receipt.get("state", "delivered") if receipt else "queued" if row["id"] in queued else "unconfirmed")
         row["delivery"] = {"state": state, "at": receipt.get("at") if receipt else None,
                            "removable": row["id"] in removable}
-        if row.get("role") == row.get("by") == OPERATOR_MESSAGE_ROLE and state in ("queued", "sending"):
+        if from_operator(row) and state in ("queued", "sending"):
             sending_now = row["id"] == selected
             reason = (task.get("blocked_reason") if sending_now and task.get("resume_after")
                       else unavailable if row["id"] in removable else "This message is already being delivered.")
@@ -1018,7 +1035,7 @@ def render_inbox(rows: list[dict]) -> str:
 def _clear_block(project: str, task: dict) -> None:
     _ensure_question(project, task)
     task["blocked_reason"] = None
-    for key in ("resume_after", "resume_request", "resume_claim", "resume_failed", "waiting_on", "fault", "escalated", "block_actor", "usage_limit", "stop_id", "send_now"):
+    for key in ("resume_after", "resume_request", "resume_claim", "resume_failed", "waiting_on", "fault", "escalated", "block_actor", "usage_limit", "stop_id", "send_now", "turn_released"):
         task.pop(key, None)
 
 
@@ -1310,6 +1327,10 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
             if messages:
                 reason = "Message queued for the next session turn."
                 task.update(resume_after=S.now(), resume_request=messages[-1]["id"])
+            elif task.get("turn_released") and task["turn_released"] == task.get("agent_id"):
+                reason = "The turn ended for a message that was then removed; the session continues."
+                task["resume_after"] = S.now()
+        task.pop("turn_released", None)
         task["blocked_reason"] = reason
         task["block_actor"] = actor
         if questions is not None and (actor not in ("l2", "l3") or task.get("fault")):

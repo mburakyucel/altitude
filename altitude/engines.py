@@ -281,8 +281,10 @@ def _image_input(engine: str, prompt: str, images: list[dict] | tuple) -> tuple[
             raise ImageInputError(f"Image {item['id']} is unavailable; the message is retained.") from exc
         content.append({"type": "image", "source": {
             "type": "base64", "media_type": item["mime_type"], "data": data}})
+    # A text prompt is the human's turn; a streamed message without an origin is unattributed and lacks user standing.
     return ["--input-format", "stream-json"], json.dumps({
-        "type": "user", "message": {"role": "user", "content": content}, "parent_tool_use_id": None}) + "\n"
+        "type": "user", "message": {"role": "user", "content": content}, "parent_tool_use_id": None,
+        "origin": {"kind": "human"}}) + "\n"
 
 
 def _event_error(engine: str, event: dict):

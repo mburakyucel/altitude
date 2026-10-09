@@ -2,9 +2,12 @@
 """Deliver queued messages and keep an active owner with native background work in its session.
 
 After a tool call the messages arrive as extra context; when the worker is about to stop they keep it going, with
-the messages as the reason. Only a running task's inbox is delivered: a task the worker just blocked keeps its
-messages for the resume that answers them. Native Stop evidence prevents premature clean completion
-while registered background work is still in flight; explicit blocks retain their normal exit."""
+the messages as the reason. The operator's own messages are never hook context: the engine's action classifier
+reads only user turns as the user's intent (#612). They wait for the session's next user turn, the owner reads a
+notice naming them, and a stop with nothing else to deliver lets the turn end so altd resumes the same session with
+them. Only a running task's inbox is delivered: a task the worker just blocked keeps its messages for the resume
+that answers them. Native Stop evidence prevents premature clean completion while registered background work is
+still in flight; explicit blocks retain their normal exit."""
 import json
 import os
 import sys
@@ -25,12 +28,19 @@ try:
         if task.get("state") != "running":
             sys.exit(0)
         rows = T.pending(project, slug)
+        waiting = [row["id"] for row in rows if T.from_operator(row)]
+        rows = [row for row in rows if not T.from_operator(row)]
         attached = images.resolve(project, [image for row in rows for image in row.get("images") or []], task=slug)
     resolved = {image["id"]: image for image in attached}
     prepared = {row["id"]: T.render_inbox([row]) + engines.image_read_instructions(
         dispatch.l2_engine(task), [resolved[image["id"]] for image in row.get("images") or []]) for row in rows}
-    taken = T.take_inbox(project, slug, ids=set(prepared), running_only=True)
+    taken = T.take_inbox(project, slug, ids=set(prepared), running_only=True) if prepared else []
     text = "\n\n".join(prepared[row["id"]] for row in taken)
+    if waiting:
+        text += (("\n\n" if text else "") + f"{len(waiting)} message{'s' if len(waiting) > 1 else ''} from "
+                 f"{config.operator_label()} (message id {', '.join(waiting)}) wait{'' if len(waiting) > 1 else 's'} for "
+                 "this session's next user turn. Altitude resumes this same session with them once this turn ends; "
+                 "ending the turn at a safe checkpoint, without a report or block, delivers them.")
     # #369 recurrence: a final promise of a watcher lets session cleanup kill required work.
     if inp.get("hook_event_name") == "Stop":
         pending = [row["id"] for row in inp.get("background_tasks", [])
@@ -40,6 +50,10 @@ try:
                      "Use native wait/result tools to consume required output and exit status before "
                      "ending this turn. Cancel only work no longer needed. If required results cannot "
                      "be obtained, checkpoint unfinished work and record an explicit supported task block.")
+        elif waiting and not taken:
+            # The turn ends; altd resumes this session with the operator's messages as its prompt.
+            T.release_turn(project, slug)
+            text = ""
 except Exception as exc:  # noqa: BLE001 — leave a line the server raises as a system fault
     config.MONITOR_DIR.mkdir(parents=True, exist_ok=True)
     with open(config.MONITOR_DIR / "hook-faults.log", "a") as f:

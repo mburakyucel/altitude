@@ -90,7 +90,7 @@ class TestDecision11WorkerContinuity(AltitudeCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(T.task_messages(self.project, task["slug"])[-1]["text"],
                          "Still working during activation.")
-        T.message(self.project, task["slug"], "burak", "Keep the same session.")
+        T.message(self.project, task["slug"], "l3", "Keep the same session.")
         hook = subprocess.run([sys.executable, str(REPO / "hooks" / "inbox.py")],
                               input=json.dumps({"hook_event_name": "PostToolUse"}),
                               text=True, capture_output=True, env={**os.environ, **env}, timeout=30)
