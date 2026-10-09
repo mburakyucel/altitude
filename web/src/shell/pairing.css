@@ -6,7 +6,7 @@
 .pair-lead { color: var(--text-secondary); line-height: 1.55; }
 .pair-removed { padding: 10px 12px; border-radius: var(--radius-card); background: var(--bubble); color: var(--text-primary); font-size: var(--text-meta); }
 .pair-field { display: flex; flex-direction: column; gap: 6px; font-size: var(--text-meta); font-weight: 500; color: var(--text-secondary); }
-.pair-field input { min-height: 52px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--surface); color: var(--text-primary); font-family: var(--font-mono, monospace); font-size: 1.375rem; letter-spacing: .12em; text-transform: uppercase; }
+.pair-field input { min-height: 52px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--surface); color: var(--text-primary); font-family: var(--font-mono, monospace); font-size: 1.375rem; letter-spacing: .12em; }
 .pair-field input::placeholder { color: var(--text-muted); opacity: .6; }
 .pair-field input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .pair-card .btn { min-height: 48px; }
