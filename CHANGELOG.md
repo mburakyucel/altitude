@@ -24,6 +24,8 @@ and known limitations as `v0.1.1`.
   release, and projects-folder handling and redirects include security corrections.
 - Device pairing guides certificate trust before accepting a code and offers a QR code for
   opening Altitude on another device.
+- Interrupted coordinator replies remain visible, and removing a queued task message removes
+  its bubble without adding narration to the conversation.
 
 If an update fails to activate, Altitude restores the previous version. Use `alt recover` from a
 desktop or SSH terminal for interrupted activation, or retry an offered update explicitly after
