@@ -209,6 +209,32 @@ class TestTLS(unittest.TestCase):
         self.assertEqual((info["ca_name"], info["ca_scope"]), ("Altitude local CA", described))
         self.assertIn("SHA-256", " ".join(info["trust_steps"]))
 
+    def test_a_test_devices_identity_is_the_installation_profile_with_the_cas_key_gone(self):
+        folder = self.root / "fixture"
+        tested = tls.fixture(folder)
+        self.assertEqual(sorted(path.name for path in folder.iterdir()), ["ca.crt", "server.crt", "server.key"],
+                         "nothing else can be signed with the CA")
+        self.assertEqual(folder.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(handshake(tls._load(folder), folder / "ca.crt", "127.0.0.1"), b"typed conversation")
+        server = tested["server"]
+        self.assertEqual((server["subject"], server["issuer"], server["key"], server["signature"]),
+                         ("CN=Altitude", "CN=Altitude local CA", "id-ecPublicKey (256 bit) P-256", "ecdsa-with-SHA256"))
+        self.assertEqual(server["extensions"]["Extended Key Usage"], "TLS Web Server Authentication")
+        self.assertEqual(server["extensions"]["Subject Alternative Name"],
+                         "DNS:localhost, IP Address:127.0.0.1, IP Address:0:0:0:0:0:0:0:1")
+        self.assertEqual(tested["ca"]["extensions"]["Basic Constraints"], "critical; CA:TRUE, pathlen:0")
+        self.assertRegex(server["sha256"], r"^[0-9A-F]{2}(:[0-9A-F]{2}){31}$")
+        self.assertRegex(server["not_after"], r" GMT$")
+        tls.initialize()   # an installation on localhost certifies the same names
+        for name in ("ca", "server"):
+            installed = tls.details(self.directory / f"{name}.crt")
+            for found in (installed, tested[name]):
+                for varying in ("not_before", "not_after", "sha256"):
+                    found.pop(varying)
+                for identifier in ("Subject Key Identifier", "Authority Key Identifier"):
+                    found["extensions"].pop(identifier, None)
+            self.assertEqual(tested[name], installed, f"the fixture's {name} certificate is the installation's profile")
+
     def test_identity_of_an_external_ca_keeps_its_own_name_and_limits(self):
         def external(subject, *extensions):
             certificate = self.root / f"external-{len(extensions)}.crt"

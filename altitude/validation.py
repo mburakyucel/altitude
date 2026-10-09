@@ -135,16 +135,23 @@ def inspector(run: Path) -> Path:
     return platform.validation_temp(run.name) / "simulator.sock"
 
 
+def https(run: Path) -> Path:
+    """The HTTPS identity a macOS run's Simulator iPhone trusts, in the run's own temporary folder: the CA's
+    certificate and the server's certificate and key."""
+    return platform.validation_temp(run.name) / "https"
+
+
 def native_script(run: Path, argv: list[str], output: Path, *, simulator: bool = False) -> str:
     """macOS: the owner's command in the run's clone under the validation profile, which admits only the run's
     candidate folders. Its environment is only this: a home and temporary folder of its own, altd's PATH without
-    folders the profile hides, with the developer tools ahead of /usr/bin, and its Simulator relay's socket."""
+    folders the profile hides, with the developer tools ahead of /usr/bin, and its Simulator relay's socket and
+    HTTPS identity."""
     hidden = os.path.realpath(Path.home())
     path = platform.validation_path([entry for entry in os.environ.get("PATH", "/usr/bin:/bin").split(":")
                                      if entry and not Path(os.path.realpath(entry)).is_relative_to(hidden)])
     env = {"HOME": str(run / "home"), "TMPDIR": str(platform.validation_temp(run.name)), "PATH": ":".join(path), "LANG": "en_US.UTF-8",
            "ALTITUDE_VALIDATION": "1", "VALIDATION_RESULTS": str(run / "results"),
-           **({"SIMULATOR_INSPECTOR": str(inspector(run))} if simulator else {})}
+           **({"SIMULATOR_INSPECTOR": str(inspector(run)), "SIMULATOR_HTTPS": str(https(run))} if simulator else {})}
     return "\n".join(["set -u", f"[ ! -e {shlex.quote(str(run / 'stopped'))} ] || exit 125",
                       f"cd {shlex.quote(str(run / 'work'))} || exit 125",
                       "exec " + shlex.join(platform.validation_command(
@@ -599,10 +606,13 @@ def _run(project: str, slug: str, task: dict, argv: list[str], *, kvm: bool, pub
         if phone:
             device = sim.Phone(area / "simulator", phone)
             try:
-                relay = sim.Relay(inspector(area), device.boot(), config.PORT, device.open)
-            except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+                socket_path = device.boot()
+                certificates = device.trust(https(area))
+                relay = sim.Relay(inspector(area), socket_path, config.PORT, device.open)
+            except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
                 raise ValueError(f"alt task validate: the iOS Simulator iPhone did not start: {exc}") from exc
-            phone = {**{key: phone[key] for key in ("xcode", "runtime", "device")}, "safari": device.safari()}
+            phone = {**{key: phone[key] for key in ("xcode", "runtime", "device")}, "safari": device.safari(),
+                     "certificates": certificates}
         ports = (publish, host_port()) if publish else None
         (area / "run.json").write_text(json.dumps({"project": project, "slug": slug, "unit": unit}))
         row = T.start_machine_run(project, slug, lambda n: {

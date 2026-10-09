@@ -484,7 +484,8 @@ than a worker's:
   `--simulator`, altd gives the run one iPhone's Safari through a relay instead
   ([iOS Simulator runs](#ios-simulator-runs)).
 - **Environment** is exactly `HOME`, `TMPDIR`, `PATH`, `LANG`, `ALTITUDE_VALIDATION` and
-  `VALIDATION_RESULTS`, plus `SIMULATOR_INSPECTOR` with `--simulator`; nothing of altd's environment crosses.
+  `VALIDATION_RESULTS`, plus `SIMULATOR_INSPECTOR` and `SIMULATOR_HTTPS` with `--simulator`; nothing of altd's
+  environment crosses.
 
 The run time limit, one-run-at-a-time, free disk check, switch, restart fence, record and cleanup
 are shared with Linux; there is no memory, process or CPU limit. altd removes the run's folders as the
@@ -535,6 +536,12 @@ make ui-simulator   # inside a task: alt task validate --simulator -- sh -c 'mak
   phone's data about 3 GB, inside the runner's 20 GiB free-disk check. Creating the phone, booting it
   and reading its inspector socket share one five-minute limit, so a step that a busy host slows can
   use the time the others left.
+- **HTTPS identity.** Once the phone is up, altd makes the run its own CA and server certificate with
+  the generator `alt tls-init` uses (`tls.fixture`), for `127.0.0.1` and `localhost`. It trusts that CA
+  as a root in the run's phone only, with `simctl keychain add-root-cert`, and deletes the CA's key, so
+  nothing else is ever signed with it. The run finds the CA's certificate and the server's certificate
+  and key in the folder named by `SIMULATOR_HTTPS`, in its own `TMPDIR`. The operator's CA, the Mac's
+  keychains and other Simulator devices are never touched; the CA goes with the phone.
 - **Relay.** The run still cannot reach the Simulator service. It reaches the phone's Safari through a
   Unix socket in its own `TMPDIR`, named by `SIMULATOR_INSPECTOR`. altd relays Safari's Web Inspector
   protocol (the binary-plist protocol Safari's Develop menu uses) and filters it: only Safari's web pages
@@ -561,7 +568,8 @@ make ui-simulator   # inside a task: alt task validate --simulator -- sh -c 'mak
   before the command starts and keeps it as `validation/<n>.simulator.gif`; the recording stops when the
   command ends, forcefully after 10 seconds (see [validation captures](#validation-captures)).
 - **Record.** The run's record and status line name the Xcode version, the iOS runtime and build,
-  the iPhone model, Safari's version, the screenshot and any capture. On Linux, or on a Mac without Xcode or an iOS
+  the iPhone model, Safari's version, the screenshot and any capture. The record also keeps both
+  certificates' subject, issuer, validity, key, signature, extensions and SHA-256 (`certificates`). On Linux, or on a Mac without Xcode or an iOS
   Simulator runtime, `--simulator` is refused with the reason.
 
 `scripts/ios_simulator.py` is the walkthrough: it serves the built app with the fixture engines and
@@ -569,11 +577,18 @@ fictional data of `web/e2e/acceptance-service.py` on loopback, pairs Safari as t
 opens a project's work in the phone layout, taps into a task and goes Back, then walks voice input's
 restart after the X (below). It then checks what Add to Home Screen takes from the app: at the root, project and task addresses Safari finds the title
 Altitude, the approved Climb `apple-touch-icon.png` (byte for byte, decoded at 180×180) and the
-manifest's name and standalone display. Last, it opens the [device setup page](SETUP.md#share-with-a-desktop-or-phone)
+manifest's name and standalone display. It then serves a page over HTTPS on another loopback port
+with the run's certificate, through the serving context Altitude's server loads, and requires
+Safari to fetch from it and load it as a secure context with no certificate warning (`05-https.png`).
+As a control, a fetch from a second identity of the same generator, which the phone does not
+trust, must be refused for its certificate: Safari logs a message about that request and the server
+receives a certificate alert, and both are recorded. Safari's message about that one request is the
+only console error the walkthrough accepts. A pass shows that iOS accepts the
+generated chain once its CA is trusted. Last, it opens the [device setup page](SETUP.md#share-with-a-desktop-or-phone)
 for a fictional CA, as `alt tls-share` offers it, checks the CA's name and SHA-256 there and taps
 **Download the profile**; Safari must fetch the profile, which the page sends in full. Each address
 and file must answer without an error or a redirect. It keeps a page snapshot per step
-(`01-work.png`, `02-task.png`, `03-back.png`, `04-icon.png`, `05-setup.png`), Safari's console
+(`01-work.png`, `02-task.png`, `03-back.png`, `04-icon.png`, `05-https.png`, `06-setup.png`), Safari's console
 (`console.log`), the fixture service's log, the steps and the browser's user agent, viewport and
 speech-recognition support (`walkthrough.json`) in `$VALIDATION_RESULTS/simulator`. A step that does
 not reach its state, horizontal overflow, a console error or a fixture service that does not end
@@ -605,7 +620,9 @@ Taps are page events marked as user gestures, not touches on the screen. The lan
 Safari's rendering, layout and WebKit APIs in a phone-layout journey on the Simulator's iOS version; it
 is not physical-iPhone acceptance (see [device evidence](#device-evidence)). Safari's own controls
 and other apps stay out of its reach: it cannot allow, install or trust a profile, open Settings,
-add the app to the Home Screen or open it from there. The relay depends on
+add the app to the Home Screen or open it from there. altd trusts the run's CA directly, so the
+profile's Allow and Install, Certificate Trust Settings and a phone reaching Altitude by its private
+address stay physical-iPhone observations. The relay depends on
 Safari's unpublished inspector protocol, so an Xcode update can break it; the run then fails with the
 versions recorded. `tests/test_simulator.py` covers the relay's filtering, the device lifecycle and
 its recovery with a fixture `xcrun` and inspector; a real phone is recorded evidence from a Mac.
@@ -764,7 +781,7 @@ Device results name their evidence class; a result in one class never stands in 
 | --- | --- | --- | --- |
 | Chromium phone/desktop | `make check` (required) | Application behavior, layouts and interaction states on both viewports | Any Safari or iOS behavior |
 | Emulated iPhone WebKit | `make ui-ios` (opt-in) | The same walkthroughs in Playwright's WebKit engine with iPhone metrics, touch and user agent | iOS Safari, Home Screen mode, real microphone/speech, icon selection or certificate trust |
-| iOS Simulator on a Mac | `make ui-simulator` (opt-in, [iOS Simulator runs](#ios-simulator-runs)) | iOS Safari's rendering, layout, viewport and WebKit APIs (such as `webkitSpeechRecognition`) in a scripted phone-layout journey with fixture engines, on the recorded Xcode, iOS runtime and iPhone model | Touches and swipes, Home Screen mode and icon, Safari/Home Screen storage separation, real audio capture or dictation, certificate trust, other iOS versions; physical-iPhone acceptance |
+| iOS Simulator on a Mac | `make ui-simulator` (opt-in, [iOS Simulator runs](#ios-simulator-runs)) | iOS Safari's rendering, layout, viewport and WebKit APIs (such as `webkitSpeechRecognition`) in a scripted phone-layout journey with fixture engines; iOS accepting a CA and server certificate from Altitude's generator over HTTPS without a warning once the CA is trusted, for a loopback address; on the recorded Xcode, iOS runtime and iPhone model | Touches and swipes, Home Screen mode and icon, Safari/Home Screen storage separation, real audio capture or dictation, the profile's Allow and Install, Certificate Trust Settings, a private-network address, other iOS versions; physical-iPhone acceptance |
 | Physical iPhone | Operator observation; [voice troubleshooting](OPERATIONS.md#on-iphone) reports | Native capture, trust, installed icon, Home Screen lifecycle | Other devices or OS versions |
 
 Run the emulated iPhone lane for changes to phone-facing behavior such as voice, pairing, Home

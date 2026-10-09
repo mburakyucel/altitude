@@ -51,6 +51,9 @@ elif args[0] == "bootstatus":
     (devices / args[1] / "booted").touch()
 elif args[0] == "getenv":
     print(os.environ["FAKE_INSPECTOR"])
+elif args[0] == "keychain":   # add-root-cert: the phone trusts the certificate, kept beside the log
+    with open(os.environ["FAKE_SIMCTL_LOG"] + ".roots", "a") as roots:
+        roots.write(Path(args[3]).read_text())
 elif args[0] == "appinfo":
     print('{\n    CFBundleIdentifier = "com.apple.mobilesafari";\n    Path = "%s";\n}' % os.environ["FAKE_SAFARI"])
 elif step == "recordVideo":   # records until interrupted, then finishes its file, unless it hangs on request
@@ -437,7 +440,9 @@ sim._write(sock, "_rpc_getConnectedApplications:", {})
 apps = sim._read(sock)["__argument"]["WIRApplicationDictionaryKey"]
 sim._write(sock, sim.OPEN, {"url": "http://127.0.0.1:5555/"})
 opened = sim._read(sock)["__argument"]
-json.dump({"apps": sorted(apps), "opened": opened, "socket": os.environ["SIMULATOR_INSPECTOR"]},
+https = os.environ["SIMULATOR_HTTPS"]
+json.dump({"apps": sorted(apps), "opened": opened, "socket": os.environ["SIMULATOR_INSPECTOR"], "https": https,
+           "files": sorted(os.listdir(https)), "ca": open(os.path.join(https, "ca.crt")).read()},
           open(os.path.join(os.environ["VALIDATION_RESULTS"], "relay.json"), "w"))
 ''')
 
@@ -460,20 +465,29 @@ json.dump({"apps": sorted(apps), "opened": opened, "socket": os.environ["SIMULAT
         self.assertEqual(relay["socket"], str(self.tmp / f"av-{area_name}" / "simulator.sock"),
                          "the relay's socket is in the run's own temporary folder")
         self.assertEqual((relay["apps"], relay["opened"]), ([SAFARI_APP], {"error": ""}))
+        self.assertEqual(relay["https"], str(self.tmp / f"av-{area_name}" / "https"),
+                         "the HTTPS identity is in the run's own temporary folder")
+        self.assertEqual(relay["files"], ["ca.crt", "server.crt", "server.key"], "the CA's key is gone before the run")
+        self.assertEqual(Path(f"{self.log}.roots").read_text(), relay["ca"], "the phone trusts the run's CA")
+        certificates = result["simulator"].pop("certificates")
+        self.assertEqual((certificates["ca"]["subject"], certificates["server"]["issuer"]),
+                         ("CN=Altitude local CA", "CN=Altitude local CA"))
+        self.assertIn("IP Address:127.0.0.1", certificates["server"]["extensions"]["Subject Alternative Name"])
         devices = str(validation.home() / "runs" / area_name / "simulator")
         simctl = [call[1:] for call in self.calls() if call[0] == "simctl"]
         self.assertEqual(simctl[0], ["list", "--json", "runtimes", "devicetypes"])
         self.assertTrue(all(call[:2] == ["--set", devices] for call in simctl[1:]), "only the run's own device set")
         steps = [call[2] for call in simctl[1:]]
-        self.assertEqual(steps, ["create", "bootstatus", "getenv", "appinfo", "openurl", "io", "shutdown", "delete",
-                                 "list"])
+        self.assertEqual(steps, ["create", "bootstatus", "getenv", "keychain", "appinfo", "openurl", "io", "shutdown",
+                                 "delete", "list"])
+        self.assertEqual(simctl[4][4:6], ["add-root-cert", str(Path(relay["https"]) / "ca.crt")])
         self.assertEqual(simctl[1][3:], ["altitude-validation", "type.iPhone-17", "runtime.iOS-27-0"])
-        self.assertEqual(simctl[5][-1], "http://127.0.0.1:5555/")
+        self.assertEqual(simctl[6][-1], "http://127.0.0.1:5555/")
         expected = {"xcode": "Xcode 27.0 Build version 27A266a", "runtime": "iOS 27.0 (24A434)", "device": "iPhone 17",
                     "safari": "27.0 (8624.1.17)",
                     "screenshot": str(S.task_dir(self.project, self.slug) / "validation" / "1.simulator.png")}
         self.assertEqual(result["simulator"], expected)
-        self.assertEqual(self.rows()[0]["simulator"], expected)
+        self.assertEqual(self.rows()[0]["simulator"], {**expected, "certificates": certificates})
         self.assertEqual(Path(expected["screenshot"]).read_bytes(), b"\x89PNG fixture screen")
         self.assertEqual(self.runs(), [], "the device set and run area are gone")
         self.assertTrue(validation._ready.is_set())
@@ -499,7 +513,7 @@ json.dump({"apps": sorted(apps), "opened": opened, "socket": os.environ["SIMULAT
         result = self.drive(capture=True)
         self.assertEqual((result["exit"], result["ended"], result["cleanup"]), (0, "exit", None), result["output"])
         steps = [call[3] if call[3] != "io" else call[5] for call in self.calls()[1:] if call[0] == "simctl"]
-        self.assertEqual(steps[:7], ["create", "bootstatus", "getenv", "appinfo", "recordVideo", "openurl",
+        self.assertEqual(steps[:8], ["create", "bootstatus", "getenv", "keychain", "appinfo", "recordVideo", "openurl",
                                      "screenshot"], "recording starts before the command and ends before the screenshot")
         [record] = [call for call in self.calls() if call[5:6] == ["recordVideo"]]
         self.assertEqual(record[6:8], ["--codec=h264", "--force"])
@@ -564,8 +578,8 @@ json.dump({"apps": sorted(apps), "opened": opened, "socket": os.environ["SIMULAT
         self.assertFalse((S.task_dir(self.project, self.slug) / "machine.jsonl").exists())
         self.assertEqual(self.runs(), [])
 
-    def test_a_phone_that_fails_to_be_created_or_boot_is_removed_and_no_run_starts(self):
-        for step in ("create", "bootstatus"):
+    def test_a_phone_that_fails_to_be_created_boot_or_trust_its_ca_is_removed_and_no_run_starts(self):
+        for step in ("create", "bootstatus", "keychain"):
             with self.subTest(step):
                 self.setenv("FAKE_SIMCTL_FAIL", step)
                 error = self.drive(status=400)["error"]
