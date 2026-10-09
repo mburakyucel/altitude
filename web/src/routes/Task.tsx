@@ -25,7 +25,7 @@ import { MessageImages, PendingImages } from "../components/MessageImages";
 import type { ImagePreview } from "../components/MessageImages";
 import { Question, QuestionSet, ReviewDecision } from "../components/DecisionCard";
 import { TaskContext, TokenUsage } from "../components/TokenUsage";
-import { ReviewFeedback, ReviewMenu, ReviewRow, useTaskReview } from "../components/TaskReview";
+import { latestReviews, ReviewBoxes, ReviewCard, ReviewFeedback, useTaskReview } from "../components/TaskReview";
 import type { ReviewControls } from "../components/TaskReview";
 import { useTaskBack } from "../components/useTaskBack";
 import { useViewport } from "../shell/breakpoints";
@@ -322,8 +322,6 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     const container = scroller.current;
     if (!node || !container) return;
     following.current = false;
-    const details = node.querySelector("details");
-    if (details) details.open = true;
     container.scrollTop += node.getBoundingClientRect().top - container.getBoundingClientRect().top - 32;
     reading.current = container.scrollTop;
     node.focus({ preventScroll: true });
@@ -391,6 +389,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     };
   };
   const rows: ReactNode[] = [];
+  const shownReviews = latestReviews(task);
   const restoreAccess = () => { setDenied(false); setAccessRefresh((value) => value + 1); refresh(); };
   let lastDay = "";
   messages.forEach((message, index) => {
@@ -435,9 +434,10 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
       </div>);
     } else if (!question && message.review_id) {
       const review = task.review?.history.find((entry) => entry.id === message.review_id);
-      // A review owns one durable conversation anchor; status updates reuse that row.
-      if (!messages.slice(0, messages.indexOf(message)).some((entry) => entry.review_id === message.review_id)) {
-        rows.push(review ? <ReviewRow key={key} review={review} controls={reviewControls} availability={task.review} onRead={() => { following.current = false; }} /> : <p key={key} className="text-meta text-muted">{message.text}</p>);
+      // Each kind shows one card at its latest request's anchor; earlier iterations fold inside it.
+      if (!review) rows.push(<p key={key} className="text-meta text-muted">{message.text}</p>);
+      else if (shownReviews.has(review.id) && !messages.slice(0, messages.indexOf(message)).some((entry) => entry.review_id === message.review_id)) {
+        rows.push(<ReviewCard key={key} review={review} task={task} controls={reviewControls} target={reviewId === review.id} onRead={() => { following.current = false; }} />);
       }
     } else if (!question && message.role === "system") {
       rows.push(<p key={key} className="text-meta text-muted"><InlineProse text={message.text} /></p>);
@@ -488,7 +488,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         <div className="convo-col">
           {messages.length === 0 && !pending ? <p className="convo-empty text-muted">{facts.finished ? "No messages on this task." : "No messages yet."}</p> : null}
           {rows}
-          {task.review?.history.filter((review) => !messages.some((message) => message.review_id === review.id)).map((review) => <ReviewRow key={review.id} review={review} controls={reviewControls} availability={task.review} onRead={() => { following.current = false; }} />)}
+          {task.review?.history.filter((review) => shownReviews.has(review.id) && !messages.some((message) => message.review_id === review.id)).map((review) => <ReviewCard key={review.id} review={review} task={task} controls={reviewControls} target={reviewId === review.id} onRead={() => { following.current = false; }} />)}
           <ReviewFeedback controls={reviewControls} />
           {live && group ? <div className="conversation-question" data-turn={turn.length ? "operator" : "l2"} tabIndex={-1} ref={(node) => {
             group.questions.forEach((q) => {
@@ -704,7 +704,7 @@ function TaskPage({
       <p className="task-details-title">{title}</p>
       {facts.sub ? <p className="task-sub">{facts.sub}</p> : null}
       <Chips chips={facts.chips} />
-      <ReviewMenu task={task} controls={reviewControls} view={(id) => {
+      <ReviewBoxes task={task} controls={reviewControls} view={(id) => {
         closeDetails();
         const search = new URLSearchParams(location.search);
         search.delete("question"); search.delete("revision"); search.set("review", id);

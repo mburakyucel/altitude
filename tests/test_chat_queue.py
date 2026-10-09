@@ -1187,6 +1187,38 @@ class TestChatQueue(AltitudeCase):
                 claimed.rename(drop.with_suffix(f".{outcome}"))
                 options["on_send"](message["id"], outcome, text)
 
+    def test_native_group_excludes_kept_chat_already_in_history(self):
+        kept = l3.queue_message(self.project, "Kept instruction", trigger="chat", role=config.OPERATOR_ACTOR)
+        kept.update(turn_id="kept-turn", retry_at="2099-01-01T00:00:00+00:00")
+        l3._write_queue(l3.queue_path(self.project), [kept])
+        l3.chat_log(self.project, "user", kept["text"], trigger="chat", turn_id=kept["turn_id"])
+        selected = l3.queue_message(self.project, "New instruction", trigger="chat", role=config.OPERATOR_ACTOR)
+        with self.deliverable(), self.native_chat_turn() as turn:
+            l3.send_now(self.project, selected["id"])
+            rows = self.queue_rows()
+            self.assertEqual([row["id"] for row in rows], [selected["id"], kept["id"]])
+            self.assertNotIn("sending", rows[1])
+            self.assertEqual(json.loads((turn["sends"] / f"{selected['id']}.json").read_text())["text"],
+                             selected["text"])
+            self.assertFalse(l3.drop_queued(self.project, kept["id"]))
+
+    def test_kept_chat_send_now_clears_delay_without_native_relogging(self):
+        kept = l3.queue_message(self.project, "Kept instruction", trigger="chat", role=config.OPERATOR_ACTOR)
+        kept.update(turn_id="kept-turn", retry_at="2099-01-01T00:00:00+00:00")
+        l3._write_queue(l3.queue_path(self.project), [kept])
+        l3.chat_log(self.project, "user", kept["text"], trigger="chat", turn_id=kept["turn_id"])
+        later = l3.queue_message(self.project, "Later instruction", trigger="chat", role=config.OPERATOR_ACTOR)
+        with self.deliverable(), self.native_chat_turn() as turn:
+            l3.send_now(self.project, kept["id"])
+            rows = self.queue_rows()
+            self.assertEqual([row["id"] for row in rows], [kept["id"], later["id"]])
+            self.assertTrue(rows[0]["send_now"])
+            self.assertNotIn("retry_at", rows[0])
+            self.assertNotIn("sending", rows[0])
+            self.assertNotIn("send_now", rows[1])
+            self.assertFalse(list(turn["sends"].glob("*.json")))
+            self.assertEqual(sum(row.get("turn_id") == "kept-turn" for row in l3.chat_history(self.project, None)), 1)
+
     @contextlib.contextmanager
     def chat_turn_with_send_now(self, engine, outcome):
         """The operator starts a chat turn from the page, queues three messages and sends the middle one now while the

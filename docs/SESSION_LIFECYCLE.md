@@ -212,33 +212,37 @@ duplicating the persona. They do not prove live helper consumption, model compli
 Existing helpers retain their native context; changed instructions reach a new assignment after
 source activation. Live-provider testing remains deferred.
 
-## Cross-engine review
+## Adversarial review
 
 L2 proactively seeks independent adversarial review of complex proposals before code and complex
-implementations, keeping simple work light by judgment. The operator's **Review proposal** and
-**Review changes** task-menu actions create attributed requests and pending owner inbox entries.
-Running owners receive them at the next message checkpoint; a reported owner with an open delivery
-uses the existing continuation path.
-Stopped, faulted, undispatched and finished owners explain why review is unavailable. A proposal
-request can continue an owner with an approval question solely to prepare, run and assess review;
-the question remains open and implementation still needs its approval. Changes review remains
-unavailable while question-blocked. Each subject's existing review opens saved status, findings and
-L2 dispositions without invocation. Review again, Review latest and Retry are explicit detail actions.
+implementations, keeping simple work light by judgment. The operator's **Request**, **Review again**
+and **Try again** buttons in the Proposal review and Implementation review boxes create attributed
+requests and pending owner inbox entries on any open task. Running owners receive them at the next
+message checkpoint. A waiting or blocked owner is woken through the ordinary resume request; a
+reported owner with an open delivery uses the existing continuation path. A stopped or faulted owner is
+not resumed: the request waits, shown as such, and reaches L2 when the task resumes. Undispatched and
+finished tasks explain why review is unavailable. A request can continue an owner with an approval
+question solely to prepare, run and assess review; the question remains open and implementation still
+needs its approval. Viewing a review opens saved status, findings and L2 dispositions without
+invocation.
 
 The owner commits the chosen checkpoint, supplies original context and, for proposals, names the
 exact original L2 proposal message in `alt task review run --proposal-message`. Missing proposal input
 prevents invocation. The service captures immutable inputs and reserves one additional machine
-slot atomically, with one reviewer machine-wide. Capacity contention keeps the accepted request
-pending for a later explicit run. It prefers an eligible alternate engine and otherwise
-uses a separate same-engine invocation under the same read-only contract, unless the request selects
+slot atomically, with one reviewer machine-wide. Capacity contention refuses the run and keeps the
+accepted request waiting for the reviewer until a later explicit run. It prefers an eligible alternate
+engine and otherwise uses a separate same-engine invocation, the ordinary path, under the same
+read-only contract, unless the request selects
 one engine/model, which is rechecked at run and fails rather than being substituted. Engine/model, fallback reason
 and account-allowance uncertainty stay in the request and saved evidence. Fallback never bypasses
 capacity or unavailable observation/cancellation. The synchronous command returns the complete
 result or explicit failure without a review-duration deadline. L2 supplies focused scope and key risks;
-the reviewer returns material findings and coverage gaps without unrelated exploration. L2 observes
+the reviewer returns a one-sentence verdict, material findings and coverage gaps without unrelated
+exploration. L2 observes
 the run and can cancel if it gets stuck or goes off scope. Authorized owner work can continue in
 parallel, but every accepted request prevents merge until L2 records finding dispositions and assesses
-its subject, or the requester is authorized to withdraw. L2 can record a finding as `open` to assess
+its subject, or the requester withdraws it: the operator's Skip review needs no reason, and L2 names
+one for its own request. L2 can record a finding as `open` to assess
 honestly without clearing it; an open finding keeps the review uncleared, merge refused and the
 review unreplaceable until a later assessment fixes or dismisses it with evidence. A proposal request never supersedes a pending
 changes request. L2 replies in normal prose; original results remain in review details. Proposal review
@@ -286,7 +290,7 @@ Evidence survives cancellation, uncertain termination
 and explicit retries in its original review record. Successful review results retain their existing
 contract. Diagnostics neither reconstruct missing historical evidence nor prove reviewer recovery;
 the coordinator still requires verified recovery before an explicit retry.
-See [commands and evidence](CLI.md#cross-engine-review).
+See [commands and evidence](CLI.md#adversarial-review).
 
 ## Fresh dispatch
 
@@ -1232,11 +1236,17 @@ and other conversations separate. Each waiting chat row remains individually rem
 except while Send now hands it to the running turn;
 messages arriving after that snapshot wait for the next turn. A message queued but not started is not
 a turn in flight, so it neither holds the quiet-point restart nor is lost by one. The queue waits
-while no L3 option is available. A system notification (block, restart, incident or upstream issue) whose
-turn every option refuses before any provider output returns to the front of the queue with its id and
-waits 1, 5, 15, then 60 minutes (`retry_at`) while later messages proceed; it is delivered once L3 is
-available. A turn with provider output is never replayed, and a refused operator message keeps its
-Retry instead. An Auto-selected turn resumes only the chosen provider's session;
+while no L3 option is available. A turn that every option refuses before any provider output keeps its rows.
+A system notification (block, restart, incident or upstream issue) returns to the front of the queue with
+its id. An operator message, sent directly or from the queue, stays in the conversation as its own bubble
+with no error row; the queue keeps it with its `turn_id`, text and images. Kept messages lead the queue in
+send order, behind only an accepted Send now row, and run unfolded under their original turn id, so each
+reply appears beneath its message with trigger `chat`. A kept message offers Send now but not Remove,
+since it was already sent; Send now runs it without waiting for a retry delay. When routing still offers an engine right after the refusal, the kept rows wait
+1, 5, 15, then 60 minutes (`retry_at`) so the drain cannot loop; a waiting notification lets later messages
+proceed, while a waiting operator message lets only a Send now row overtake it. An engine hold already
+stops the drain, so kept rows run as soon as an engine is eligible; a pinned L3 waits for its own engine
+and model. A turn with provider output is never replayed and keeps its Retry. An Auto-selected turn resumes only the chosen provider's session;
 choosing another configured model on that provider retains its conversation.
 
 An operator queue row's **Send now** promotes the whole queued operator group for that conversation in
@@ -1260,6 +1270,9 @@ Repeated requests return the same receipt. Engine unavailability and launch paus
 with an explanation. The priority marker adds no quiet-point restart hold.
 No timer stops a running command or escalates Send now into a hard interruption. Task-chat Stop
 remains the explicit hard stop.
+A kept message already in history keeps its original turn on Send now and waits for boundary delivery.
+Refused groups preserve their member identities through retries, excluding their own bubbles from
+the historical context supplied with the retry.
 
 Historical interrupted turns retain their partial reply, possibly empty, and `interrupted: true`.
 The conversation shows only that partial text, or no assistant row when it is empty; these turns

@@ -636,13 +636,15 @@ retain their exit paths. It creates no job registry, automatic retry or alternat
 Report freshness and delivery verification remain authoritative; native coverage limits are explicit
 in [polling and cleanup](SESSION_LIFECYCLE.md#polling-and-cleanup).
 
-### Cross-engine review
+### Adversarial review
 
 `reviews.py` owns task-bound proposal and changes review records; the task remains owned by L2.
 L2 proactively seeks adversarial review of complex proposals before code and complex implementations,
-using judgment to keep simple work light. L2 requests through the CLI or the operator uses the two
-subject entries in the task menu. Each existing entry opens saved evidence without invoking review;
-reruns are explicit actions in details. A repeated request or source message reuses its receipt.
+using judgment to keep simple work light. L2 requests through the CLI or the operator uses the
+Proposal review and Implementation review boxes in task details. `view` gives each subject's latest
+review and whether a new one can start; viewing never invokes review. Requests queue on any open
+task: a waiting or blocked owner is woken, and a stopped or faulted task keeps the request for its next
+resume. A repeated request or source message reuses its receipt.
 The owner prepares a committed checkpoint, identifies the exact original L2 proposal message for a
 proposal review, and invokes the fixed daemon endpoint. Open questions do not gate either subject: a
 request may continue a question-blocked owner solely for review while preserving every open question and
@@ -651,8 +653,8 @@ owner session or general command transport.
 
 The engine and routing seams prefer an eligible configured option different from the owner, respecting
 project choices and known quota exhaustion. Otherwise they select a separate same-engine invocation
-under the same captured-input/read-only contract, with its fallback reason recorded and shown alongside
-engine/model and account-allowance uncertainty before requesting and in saved evidence. An explicit
+under the same captured-input/read-only contract, the ordinary path, with its fallback reason, engine/model
+and account-allowance uncertainty saved with the review. An explicit
 per-request engine/model selection replaces that preference with a single candidate under the same
 eligibility, quota, rejection and capability checks; it is saved with the request, rechecked at run and
 never substituted, and project defaults are unchanged. No engine switch occurs after launch. Fallback cannot bypass unavailable observation, cancellation or capacity. Admission
@@ -661,8 +663,8 @@ no reservation while waiting for preparation and no automatic retry. L2 and revi
 set expectations for a relatively quick, focused review without a programmatic duration cutoff.
 The command waits without a review deadline; streamed JSON whitespace detects disconnected callers.
 Owner changes, cancellation and caller disconnect stop the run. Planned activation waits for in-flight
-reviews to return their results; review admission shares the restart fence. Capacity contention leaves
-an accepted request pending for a later explicit run. Unexpected restart reconciliation cancels an
+reviews to return their results; review admission shares the restart fence. Capacity contention refuses
+`run` and leaves the accepted request waiting for the reviewer, shown as such, until a later explicit run. Unexpected restart reconciliation cancels an
 orphaned invocation rather than leaving it running without a result consumer.
 The engine checks service inspection before launch. Its cleanup stops the independent reviewer unit
 on interruption, including keyboard interruption and process exit, before reaping the launcher.
@@ -696,7 +698,8 @@ code-mode host, the one native feature left enabled besides skipping host skill 
 JavaScript tool bridge without filesystem, process or network globals, whose patch tool the read-only
 sandbox rejects. Claude loads it from the command-line MCP configuration in restricted mode with no
 built-in tools, no skills and no safe mode, which disables every MCP server. Both are provider
-properties established by recorded reviewer runs, not by the suite. The adapter records the first
+properties established by recorded reviewer runs, not by the suite. The result's `text` is a
+one-sentence verdict the UI shows as the review's summary. The adapter records the first
 content-bearing read in the review runtime; a reviewer that read no content fails with that reason
 instead of completing with no coverage. CLI-internal authentication uses
 the configured account. The reviewer environment keeps only home, login name, path, locale and engine
@@ -709,7 +712,7 @@ diagnostic categories, and a Claude result's allowlisted failure facts (subtype,
 error kind and status) locate failures no category recognizes; stdout transcripts and arbitrary error
 prose are not copied into diagnostics.
 Unknown, malformed, incomplete and truncated stdout remain explicit evidence states.
-The [failure-evidence contract](SESSION_LIFECYCLE.md#cross-engine-review) describes bounds and privacy.
+The [failure-evidence contract](SESSION_LIFECYCLE.md#adversarial-review) describes bounds and privacy.
 Review records retain original findings and separate owner dispositions for each subject. Exact
 source/authority freshness and selected-input hashes are distinct. Changes assessment records the final
 candidate and evidence for every finding; code, base or conversation changes require reassessment.
@@ -2054,6 +2057,16 @@ file in the project directory, so a reload, another device and a restart all see
 messages. Each turn drains it at its own boundary rather than at the next tick: consecutive text chat
 messages for the same conversation fold into one turn in arrival order, each on its own line, while
 image-bearing and server-triggered messages keep their own turn, and nothing runs while a turn holds the project's L3 lock.
+
+An operator message whose turn finds no eligible engine, or whose every option refuses before provider
+output, is kept rather than failed. Its user row stays in history under the turn id and no error row is
+written; the queue keeps one chat row carrying that `turn_id`, its text and any images. `l3._keep` orders the
+queue as an accepted Send now group, then kept messages in send order, then the rest, and the claim of a kept
+row publishes the same turn id without logging the message again, so the reply lands beneath it. The
+page shows a kept message's queued status under its own bubble rather than in the queued list.
+A kept message's Send now promotes its original turn for boundary delivery; it is not part of the
+removable native group. A refused group retains all original queue identities through subsequent
+retries, so its own bubbles are excluded from historical context and its instructions arrive once.
 
 **Send now** promotes the whole queued operator group for that conversation in arrival order, without
 stopping its work. The selected row identifies the group, not a message to move ahead of its neighbours.

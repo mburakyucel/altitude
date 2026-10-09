@@ -391,7 +391,7 @@ def main(argv=None) -> None:
     rp = ts.add_parser("reply", help="current L2: append a human-readable reply to this task's conversation")
     rp.add_argument("text", nargs="*", metavar="[slug] text|-", help="optionally led by this task's slug, as in the sibling verbs; - or nothing reads stdin"); rp.add_argument("--file")
     rp.add_argument("--capture", type=int, metavar="RUN", help="attach this validation run's captures; the reply links to them")
-    review = ts.add_parser("review", help="request, run and assess a cross-engine review of the owned task")
+    review = ts.add_parser("review", help="request, run and assess an adversarial review of the owned task")
     review_actions = review.add_subparsers(dest="review_action", required=True)
     for action in ("status", "request", "run", "assess", "cancel", "withdraw"):
         rv = review_actions.add_parser(action)
@@ -401,7 +401,7 @@ def main(argv=None) -> None:
             rv.add_argument("--request-id", help="stable identity for retries of this request")
             rv.add_argument("--focus", default="")
             rv.add_argument("--source-message", help="original chat message requesting this review")
-            rv.add_argument("--previous", help="review to retry, rerun, or replace while it waits to run")
+            rv.add_argument("--previous", help="review this request replaces: a finished one to repeat, or a waiting one to reselect")
             rv.add_argument("--additional", action="store_true",
                             help="another review of the subject that replaces none; current reviews and their open findings keep gating merge")
             rv.add_argument("--engine", choices=config.ENGINES, help="reviewer engine for this request only; never substituted")
@@ -920,7 +920,7 @@ def main(argv=None) -> None:
         return
     if c == "chat":
         res = l3.turn(_project(args), _stdin_or_file(args), trigger=args.trigger, engine=args.engine, on_text=lambda t: (sys.stdout.write(t), sys.stdout.flush()))
-        print(); out({k: res.get(k) for k in ("session_id", "context_percent", "turns", "cost", "error", "engine")}); return
+        print(); out({k: res.get(k) for k in ("session_id", "context_percent", "turns", "cost", "error", "engine", "queued")}); return
     if c == "l3-reset":
         l3.reset(_project(args)); out("L3 will start fresh on the next turn"); return
     if c == "incident":

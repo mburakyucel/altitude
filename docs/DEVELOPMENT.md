@@ -269,7 +269,7 @@ the command's JSON output.
 Chromium supplies a synthetic microphone and its permission for browser walkthroughs;
 no test requests a physical microphone. Fixture services choose host voice. Composer voice journeys
 (conversation, project isolation, task lifecycle, L2 progress, image input, file references,
-cross-engine review, reported continuation) overlay `/api/voice` and `/api/voice/live` with the
+adversarial review, reported continuation) overlay `/api/voice` and `/api/voice/live` with the
 fixture host in `web/e2e/hostVoice.ts`: the page's real audio worklet hears Chromium's fake
 microphone, and the fixture can hold, replace or fail the final words, drop the connection or forget
 the recording, so no speech model runs. Image-input voice journeys also hold `AudioContext.resume()`
@@ -1305,8 +1305,9 @@ required check on the current head, with its GitHub console log, is sufficient d
 task folder only to diagnose a failed run or when a reviewer asks, match its run URL and attempt to
 the candidate, and open it with `pnpm --dir web exec playwright show-report /path/to/report`.
 
-An owner keeps a bounded CI wait in its active session. If it cannot obtain the required result,
-it records the run and missing evidence, explicitly blocks and asks L3 for the existing finite
+An owner reruns a failed flaky shard itself on the same head (`gh run rerun --failed <run>`); a
+recheck only observes. An owner keeps a bounded CI wait in its active session. If it cannot obtain
+the required result, it records the run and missing evidence, explicitly blocks and asks L3 for the existing finite
 [`recheck-ci`](CLI.md#durable-ci-recheck). No run means trigger recovery, not an invented run ID.
 GitHub Actions outages pause delivery until verified recovery and fresh CI. A probe
 does not resume the owner, settle a question or release a hold; L3 owns that reconciliation.

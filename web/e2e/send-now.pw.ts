@@ -94,6 +94,40 @@ test.describe("L3 Send now", () => {
     expect((await status()).calls.map((call: { text: string }) => call.text)).toEqual(["Fixture system work"]);
   });
 
+  test("keeps a message sent while no engine can run and answers it first beneath its bubble", async ({ page, request }, info) => {
+    const walk = walkthrough(page, info);
+    const status = async () => (await (await request.get("/fixture/status")).json());
+    const convo = page.getByRole("region", { name: "Conversation", exact: true });
+    const field = page.getByRole("textbox", { name: "Message L3 about atlas" });
+    const turn = convo.locator(".turn").filter({ hasText: "Are you there?" });
+    expect((await request.post("/fixture/exhausted")).ok()).toBe(true);
+    await walk.open("/projects/atlas");
+    await field.fill("Are you there?");
+    await convo.getByRole("button", { name: "Send", exact: true }).click();
+    await walk.state("l3-12-kept-during-engine-hold", {
+      visible: [turn.getByText("Queued · runs next", { exact: true }), turn.getByRole("button", { name: "Send now", exact: true }),
+        turn.getByText("No engine is available. The message stays queued.", { exact: true })],
+      hidden: [convo.getByText(/could not answer/), convo.getByText(/usage window/), turn.getByRole("button", { name: "Remove", exact: true }),
+        convo.getByRole("list", { name: "Queued messages" })],
+    });
+    await expect(turn.getByRole("button", { name: "Send now", exact: true })).toBeDisabled();
+    expect((await request.post("/fixture/system")).ok()).toBe(true);
+    await page.reload();
+    await walk.state("l3-13-kept-after-reload-ahead-of-system-work", {
+      visible: [turn.getByText("Queued · runs next", { exact: true }), convo.locator(".queued-row").filter({ hasText: "Fixture system work" })],
+      hidden: [convo.getByText(/could not answer/)],
+    });
+    await expect(convo.getByText("Are you there?", { exact: true })).toHaveCount(1);
+    expect((await status()).calls).toEqual([]);
+    expect((await request.post("/fixture/recovered")).ok()).toBe(true);
+    await walk.state("l3-14-reply-beneath-kept-message", {
+      visible: [turn.getByText("Are you there? answered.", { exact: true })],
+      hidden: [turn.getByText("Queued · runs next", { exact: true }), turn.getByRole("button", { name: "Send now", exact: true })],
+    });
+    await expect.poll(async () => (await status()).calls.map((call: { text: string }) => call.text)).toEqual(["Are you there?", "Fixture system work"]);
+    expect((await request.post("/fixture/release")).ok()).toBe(true);
+  });
+
   test("shows Runs next after system work without interrupting the system turn", async ({ page, request }, info) => {
     const walk = walkthrough(page, info);
     const status = async () => (await (await request.get("/fixture/status")).json());

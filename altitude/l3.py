@@ -683,19 +683,20 @@ def chat_state(project: str, limit: int = 60) -> dict:
 
 
 @contextmanager
-def _active_turn(project: str, trigger: str, claim=None, slug: str | None = None):
+def _active_turn(project: str, trigger: str, claim=None, slug: str | None = None, turn_id: str | None = None):
     with config.provider_admission() as held, config.project_activity(project) as attached, config.restart_lock() as ready:
         if held or not attached or not config.is_managed(project) or not ready or config.restart_in_progress():
             yield None
             return
-        with _publish_active_turn(project, trigger, claim, slug) as turn:
+        with _publish_active_turn(project, trigger, claim, slug, turn_id) as turn:
             yield turn
 
 
 @contextmanager
-def _publish_active_turn(project: str, trigger: str, claim=None, slug: str | None = None):
-    # A task-linked project turn retains its task reference through queueing and history.
-    turn = {"id": uuid.uuid4().hex[:12], "started_at": S.now(), "trigger": trigger, **_slug_meta(slug)}
+def _publish_active_turn(project: str, trigger: str, claim=None, slug: str | None = None, turn_id: str | None = None):
+    # A task-linked project turn retains its task reference through queueing and history. A kept chat runs under
+    # the turn id its message was logged with, so the reply lands beneath it.
+    turn = {"id": turn_id or uuid.uuid4().hex[:12], "started_at": S.now(), "trigger": trigger, **_slug_meta(slug)}
     lifecycle_guard = _lifecycle_guard(project)
     with lifecycle_guard:
         claimed = claim is None or claim(turn)
@@ -925,7 +926,38 @@ def queue_ci_recheck(project: str, slug: str) -> dict | None:
         return record
 
 
-NOTIFICATION_RETRY_DELAYS = (60, 300, 900, 3600)
+REFUSAL_RETRY_DELAYS = (60, 300, 900, 3600)
+
+
+def _keep(project: str, kept: list[dict], *, claimed: bool = True) -> None:
+    """Every option refused a turn before provider output: its rows keep their ids in the queue. An accepted Send now
+    row stays first, then the operator's kept chats in the order they were sent, then the rest. Claimed rows return
+    to the front they were taken from; a direct turn's message follows the messages already waiting. A claimed refusal
+    that leaves routing available waits a growing delay so it cannot loop the drain; an engine hold already stops the
+    drain until an engine is eligible, so the rows run as soon as one is."""
+    looping = claimed and bool(_select(project).get("engine"))
+    refused = kept[0].get("refusals", 0) + 1
+    delay = REFUSAL_RETRY_DELAYS[min(refused, len(REFUSAL_RETRY_DELAYS)) - 1]
+    retry_at = (datetime.fromisoformat(S.now()) + timedelta(seconds=delay)).isoformat(timespec="seconds")
+    kept = [{**row, "refusals": refused, "retry_at": retry_at} if looping
+            else {key: value for key, value in row.items() if key != "retry_at"} for row in kept]
+    ids = {row["id"] for row in kept}
+    path = queue_path(project)
+    with S.project_lock(project):
+        rest = [row for row in _queue_rows(path) if row["id"] not in ids]
+        rows = kept + rest if claimed else rest + kept
+        _write_queue(path, sorted(rows, key=lambda row: (not row.get("send_now"), not row.get("turn_id"),
+                                                         row["at"] if row.get("turn_id") else "")))
+
+
+def _eligible(project: str, rows: list[dict]) -> list[dict]:
+    """The rows that may run now, in queue order. While the oldest kept chat waits for its retry time, only an
+    accepted Send now row may run, so system work never overtakes the operator's message."""
+    ready = [row for row in rows if _queue_ready(project, row)]
+    kept = next((row for row in rows if row.get("turn_id")), None)
+    if kept is not None and kept not in ready:
+        return [row for row in ready if row.get("send_now")]
+    return ready
 
 
 def _queue_ready(project: str, row: dict) -> bool:
@@ -985,7 +1017,7 @@ def drop_queued(project: str, message_id: str) -> bool:
         rows = _queue_rows(path)
         rest = [row for row in rows
                 if row.get("id") != message_id or row.get("trigger") != "chat" or row.get("role") != config.OPERATOR_ACTOR
-                or row.get("image_turn_id") or row.get("sending")]
+                or row.get("image_turn_id") or row.get("turn_id") or row.get("sending")]
         if len(rest) == len(rows):
             return False
         removed = next(row for row in rows if row not in rest)
@@ -1019,7 +1051,7 @@ def send_now(project: str, message_id: str) -> dict:
             rows = _queue_rows(queue_path(project))
             row = next((row for row in rows if row.get("id") == message_id), None)
             if row is None or row.get("image_turn_id"):
-                if any(message_id in message.get("queue_ids", []) or message.get("request_id") == message_id
+                if any(message_id in message.get("queue_ids", []) or message_id in (message.get("request_id"), message.get("turn_id"))
                        for message in chat_history(project, None)):
                     return {"ok": True, "status": "delivered"}
                 raise ValueError("This message is no longer queued. Refresh its delivery status.")
@@ -1031,14 +1063,15 @@ def send_now(project: str, message_id: str) -> dict:
                 raise ValueError("Another message is being sent now. Wait for its delivery.")
             if why := send_now_unavailable(project):
                 raise ValueError(why)
-            group = [item for item in rows if item.get("trigger") == "chat"
+            group = [row] if row.get("turn_id") else [item for item in rows if item.get("trigger") == "chat"
                      and item.get("role") == config.OPERATOR_ACTOR and item.get("slug") == row.get("slug")
-                     and not item.get("image_turn_id")]
+                     and not item.get("image_turn_id") and not item.get("turn_id")]
             turn = _active.get(project)
             native = (turn and turn.get("sends") and turn.get("slug") == row.get("slug")
-                      and not any(item.get("images") for item in group))
+                      and not any(item.get("images") or item.get("turn_id") for item in group))
             for item in group:
                 item["send_now"] = True
+                item.pop("retry_at", None)
                 if native:
                     item.update(sending=turn["sends"].name, send_group=group[0]["id"])
             # Persist every member before publishing the single native drop. One outcome owns the whole group.
@@ -1185,26 +1218,28 @@ def deliver_queued(project: str) -> dict | None:
             return None
         while True:
             with S.project_lock(project):
-                rows = [row for row in _queue_rows(path) if _queue_ready(project, row)]
+                rows = _eligible(project, _queue_rows(path))
             if not rows:
                 return None
             take = 1
-            if rows[0].get("trigger") == "chat" and not rows[0].get("images"):
+            if rows[0].get("trigger") == "chat" and not rows[0].get("images") and not rows[0].get("turn_id"):
                 while (take < len(rows) and rows[take].get("trigger") == "chat"
                        and rows[take].get("slug") == rows[0].get("slug") and not rows[take].get("images")
+                       and not rows[take].get("turn_id")
                        and bool(rows[take].get("send_now")) == bool(rows[0].get("send_now"))):
                     take += 1
             selected = rows[:take]
             selected_ids = [row.get("id") for row in selected]
+            message_ids = [identity for row in selected for identity in row.get("queue_ids", [row["id"]])]
             prompt = "\n\n".join(row["text"] for row in selected)
 
             def claim(active_turn) -> bool:
                 with S.project_lock(project):
                     current = _queue_rows(path)
-                    eligible = [row for row in current if _queue_ready(project, row)]
+                    eligible = _eligible(project, current)
                     if [row.get("id") for row in eligible[:take]] != selected_ids:
                         return False
-                    active_turn["queue_ids"] = selected_ids
+                    active_turn["queue_ids"] = message_ids
                     if selected[0].get("images"):
                         next(row for row in current if row["id"] == selected[0]["id"])["image_turn_id"] = active_turn["id"]
                         _write_queue(path, current)
@@ -1226,6 +1261,8 @@ def deliver_queued(project: str) -> dict | None:
                                           message_id=row["id"])
                     if not selected[0].get("images"):
                         _write_queue(path, [row for row in current if row.get("id") not in selected_ids])
+                    if selected[0].get("turn_id"):
+                        return True  # A kept chat's message is already in the conversation under this turn.
                     try:
                         if selected[0].get("send_now") and not selected[0].get("images"):
                             bubbles = [{"role": "user", "text": row["text"], "trigger": trigger,
@@ -1251,7 +1288,7 @@ def deliver_queued(project: str) -> dict | None:
             trigger = selected[0].get("trigger") or "queued"
             slug = selected[0].get("slug") or None
             try:
-                with _active_turn(project, trigger, claim=claim, slug=slug) as active_turn:
+                with _active_turn(project, trigger, claim=claim, slug=slug, turn_id=selected[0].get("turn_id")) as active_turn:
                     if active_turn is None:  # activation or a removed row leaves the durable queue for the next tick
                         return None
                     _turn_local.claimed = {"project": project, "trigger": trigger, "turn": active_turn,
@@ -1270,15 +1307,11 @@ def deliver_queued(project: str) -> dict | None:
                 result = {"completed": False, "error": str(exc)}
             if trigger == "ci-recheck":
                 queue_ci_recheck(project, slug)
-            elif trigger != "chat" and not selected[0].get("images") and (result or {}).get("undelivered"):
-                # Every option refused before any provider output: the notification keeps its place and id and
-                # waits a growing delay, so a refusal that leaves routing available cannot loop the drain.
-                refused = selected[0].get("refusals", 0) + 1
-                delay = NOTIFICATION_RETRY_DELAYS[min(refused, len(NOTIFICATION_RETRY_DELAYS)) - 1]
-                retry_at = (datetime.fromisoformat(S.now()) + timedelta(seconds=delay)).isoformat(timespec="seconds")
-                with S.project_lock(project):
-                    _write_queue(path, [{**row, "refusals": refused, "retry_at": retry_at} for row in selected]
-                                 + [row for row in _queue_rows(path) if row.get("id") not in selected_ids])
+            elif (result or {}).get("undelivered"):
+                # The operator's message is already logged under the turn: it waits as one kept chat for that turn.
+                _keep(project, [{**{key: value for key, value in selected[0].items() if key not in ("image_turn_id", "send_now")},
+                                 "text": prompt, "turn_id": result["turn_id"], "queue_ids": message_ids}]
+                      if trigger == "chat" else selected)
             if selected[0].get("images"):
                 _finish_image_queue(project)
             return result
@@ -1409,6 +1442,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
             # A pending report waits for an available L3; its retry owns delivery, so the chat stays quiet.
             return {"completed": False, "held": True, "error": f"engine hold: {choice['why']}", "turn_id": turn_id}
         turn_started_at = active_turn["started_at"]
+        message = prompt
         if not claimed or not claimed["logged"]:
             chat_log(project, "user", prompt, trigger=trigger, engine=choice.get("engine"), at=turn_started_at,
                      turn_id=turn_id, **_slug_meta(slug), **({key: image_message[key]
@@ -1446,6 +1480,18 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
             active_turn.update(project_message_receipt=acknowledge,
                                project_message_ids={row["id"] for row in information})
         tried = []
+        # A turn-only engine or model stays strict: the queue runs under project routing, so such a turn fails visibly.
+        keeps = trigger == "chat" and not requested and not model
+        def kept(res):
+            # The operator's message stays in the conversation and waits for an engine instead of failing. A queued
+            # turn's drain keeps its rows; a direct turn keeps one row for this turn.
+            res = {**res, "completed": False, "undelivered": True, "turn_id": turn_id}
+            if claimed:
+                return res
+            row = {"at": turn_started_at, "id": turn_id, "turn_id": turn_id, "trigger": "chat",
+                   "role": config.OPERATOR_ACTOR, "text": message, **_slug_meta(slug)}
+            _keep(project, [row], claimed=False)
+            return {**res, "queued": row}
         def provider_started(pid):
             with _lifecycle_guard(project):
                 active_turn["provider_started"] = True
@@ -1476,6 +1522,8 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                              **_slug_meta(slug))
                 return res
             pinned = config.pinned_option("l3", config.project(project), engine=requested, model=model)
+            if keeps and res.get("safe_to_retry") and (image_message or pinned):
+                return kept(res)
             if image_message or pinned or not res.get("safe_to_retry"):
                 chat_log(project, "error", res.get("error") or "Provider unavailable; check authentication/model access.",
                          trigger=trigger, engine=choice["engine"], turn_id=active_turn["id"], **_slug_meta(slug))
@@ -1483,11 +1531,14 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
             tried.append(route.option_key(choice))
             choice = _select(project, requested, model=model, excluded=tried)
         why = f"engine hold: {choice['why']}"
-        chat_log(project, "error", why, trigger=trigger, turn_id=turn_id, **_slug_meta(slug))
-        return {"text": "", "session_id": "", "usage": {}, "context_tokens": 0, "cost": 0.0,
+        held = {"text": "", "session_id": "", "usage": {}, "context_tokens": 0, "cost": 0.0,
                 "turns": 0, "structured": None, "error": why, "tools": [], "skipped": False,
                 "completed": False, "_turn_started_at": None, "routing": choice, "turn_id": turn_id,
                 "undelivered": True}
+        if keeps:
+            return kept(held)
+        chat_log(project, "error", why, trigger=trigger, turn_id=turn_id, **_slug_meta(slug))
+        return held
 
 
 def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_start, slug, images=(), on_result=None,

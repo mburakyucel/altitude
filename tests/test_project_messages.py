@@ -34,6 +34,9 @@ class TestProjectMessages(AltitudeCase):
     def rows(self, project):
         return [row for row in l3.chat_history(project, None) if row.get("trigger") == "project-message"]
 
+    def waiting(self, project):
+        return [row for row in l3.queued(project) if row["trigger"] == "project-message"]
+
     def supply(self, project):
         selected = l3._pending_project_messages(project)
         l3._record_project_messages(project, selected)
@@ -220,13 +223,14 @@ class TestProjectMessages(AltitudeCase):
         self.send()
         with mock.patch.object(l3, "_select", return_value={"engine": None, "why": "fixture hold"}):
             self.assertFalse(l3.turn(self.peer, "Ordinary request")["completed"])
-        self.assertEqual(len(l3.queued(self.peer)), 1)
+        self.assertEqual(len(self.waiting(self.peer)), 1)
         self.assertEqual(self.rows(self.peer), [])
         with mock.patch.object(l3, "_write_queue", side_effect=OSError("fictional queue rewrite failure")):
             with self.assertRaises(OSError):
                 self.supply(self.peer)
         self.assertEqual(len(self.rows(self.peer)), 1)
-        self.assertEqual(l3.chat_state(self.peer)["queued"], [], "an interrupted queue removal has no duplicate visible row")
+        self.assertEqual([row for row in l3.chat_state(self.peer)["queued"] if row["trigger"] == "project-message"], [],
+                         "an interrupted queue removal has no duplicate visible row")
         self.send()  # Same acceptance is recoverable from queue and receipt.
         self.assertEqual(self.supply(self.peer), "", "proven supply is not replayed after queue-removal recovery")
         self.assertEqual(len(self.rows(self.peer)), 1)
@@ -255,7 +259,7 @@ class TestProjectMessages(AltitudeCase):
     def test_refused_provider_fallback_hold_launch_and_input_failure_keep_the_inbox(self):
         for engine in config.ENGINES:
             self.send(request_id="held-" + engine)
-            pending = l3.queued(self.peer)
+            pending = self.waiting(self.peer)
             previous = self.rows(self.peer)
             responses = [({"limited": {"reason": "fixture limit"}, "safe_to_retry": True, "text": "", "usage": {}},
                           [{"engine": engine, "why": "fixture"}, {"engine": None, "why": "fallback held"}]),
@@ -270,12 +274,12 @@ class TestProjectMessages(AltitudeCase):
                      mock.patch.object(engines, "claude_print", side_effect=refuse), \
                      mock.patch.object(engines, "codex_exec", side_effect=refuse):
                     self.assertFalse(l3.turn(self.peer, "Ordinary fixture request").get("completed"))
-                self.assertEqual(l3.queued(self.peer), pending)
+                self.assertEqual(self.waiting(self.peer), pending)
                 self.assertEqual(self.rows(self.peer), previous)
             with mock.patch.object(l3, "_select", return_value={"engine": engine, "why": "fixture"}), \
                  mock.patch.object(l3.image_store, "resolve", side_effect=l3.image_store.ImageError("fixture missing image")):
                 self.assertFalse(l3.turn(self.peer, "Image input", image_message={"images": []})["completed"])
-            self.assertEqual(l3.queued(self.peer), pending)
+            self.assertEqual(self.waiting(self.peer), pending)
             self.assertEqual(self.rows(self.peer), previous)
 
     def test_eligible_fallback_and_partial_output_acknowledge_the_same_pending_input(self):
