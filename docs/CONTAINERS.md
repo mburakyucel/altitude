@@ -71,6 +71,8 @@ roots' ownership and never recursively rewrites user data.
 
 Browser terminal, task-terminal transcript reads, host speech, the optional validation runner and in-app update/restart actions are
 unavailable for every peer: published-port forwarding cannot reliably identify agent connections.
+For the same reason the pairing screen's certificate check sees every device at one address
+([architecture](ARCHITECTURE.md#responsibilities)).
 Browser recognition remains available where the browser supports it. Host voice is unavailable in
 the container; the image does not pass through host audio devices or a GPU.
 No application command bridges to the host runtime.

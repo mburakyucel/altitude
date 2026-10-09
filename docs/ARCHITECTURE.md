@@ -107,7 +107,7 @@ platform termination checks remain the authority for recovery.
 An inbox-owned operator message offers Remove until the exact batch is claimed. Cancellation uses
 the same project lock as resume and hook pickup, records removal in the existing message delivery
 metadata, and excludes only that ID from pending input. Original text stays in conversation evidence;
-the UI shows Message removed, and CLI history/search retain an explicit removal marker. Removed text
+the message leaves the task conversation, and CLI history/search retain an explicit removal marker. Removed text
 cannot serve as a new decision source. Quick choices and messages
 already cited by recorded decisions remain intact. Removal changes no Stop, question, fault or resume
 request. Claimed messages say Sending to session and cannot be removed; a launch attempt retains
@@ -330,7 +330,8 @@ Reload verification compares the configured executable/arguments and live PID, i
 main-start timestamp; resettable command-history metadata is not process identity. Failure messages
 name changed fields and preserve both apply and recovery errors without exposing environment values.
 
-Fresh defaults are HTTPS on `127.0.0.1:8890`. `tls.py` generates one installation-local CA and
+Fresh defaults are HTTPS on `127.0.0.1:8890`. `tls.py` generates one installation-local CA, named
+"Altitude CA" with a random four-character label so devices can tell installations apart, and a
 server certificate in `~/.config/altitude/tls`, outside runtime/source/project writable roots,
 with private directories and keys. A generated CA carries critical name constraints permitting only
 loopback, private-network ranges, private names and the subtree of a DNS name configured at creation,
@@ -364,12 +365,36 @@ the page sends on Close (confirming only once it succeeds) or when it is left, i
 window is still opening. The page keeps the window only in component state, never in a
 query cache. **Open setup page** opens that same share URL in a new tab without opener access,
 retaining the original Settings page, certificate facts and sharing timer. The link is available
-only while sharing is open and disappears during closing or after expiry. `alt pair` takes its link
+only while sharing is open and disappears during closing or after expiry. `alt pair` takes its address
 from the same discovery. Sharing refuses loopback-only addresses; a browser on the hosting computer
 imports the public `ca.crt` reported by `alt doctor` directly. Trust installation stays a deliberate
 operator action in the browser or OS. Remote binding and trust remain explicit;
 HTTPS identifies Altitude, and pairing (below) decides who may use it. See
 [setup](SETUP.md#trust-https-on-each-device).
+
+The pairing screen checks that a device on the network trusts the installation's CA, not just the one
+certificate a warning bypass let through (`tls.TrustCheck`). At startup and after each daily
+certificate check, altd issues a second server certificate from the same CA and key with its own
+serial, kept in memory. The screen posts `/api/trust` for a challenge; for the next five seconds,
+every new connection from that client address completes its handshake with the second certificate,
+since a browser may open several and use any. `GET /api/trust/<challenge>` answers trusted when it
+arrives on such a connection after a full TLS 1.3 handshake. A browser that trusts the CA accepts
+any certificate it issued. A browser that clicked past the first certificate's warning, or ignores
+certificate errors, refuses the second with a certificate alert; altd then settles the challenge
+that armed that connection as untrusted, disarms the address and answers on the next connection.
+Three attempts without an answer read Couldn't check: a failed request alone never means
+untrusted. A request on a connection opened before the
+challenge, including a TLS 1.2 or resumed one, gets a retry. altd issues no TLS session tickets,
+so every TLS 1.3 connection presents a certificate. The screen offers the code only once the check
+passes; the server does not yet refuse a pairing on it. With an external certificate, altd holds no
+CA key for a second certificate, so the screen asks the person to confirm a warning-free Private tab.
+In the container deployment, published-port forwarding gives every peer one address, so a check
+arms and settles that shared address: while one device checks, a device that only clicked past the
+warning fails its new connections for those seconds, and a device checking at the same moment can
+read Not trusted yet until Check again.
+The computer running Altitude (a loopback peer) needs no check. The screen downloads the public CA
+from `/api/certificate/altitude.mobileconfig` (the iPhone/iPad profile) or
+`/api/certificate/altitude.crt`.
 
 Every request passes the same checks before routing. Without TLS the `Host` must be an address or
 `localhost`: a DNS-rebinding page names its own host in both `Origin` and `Host`, which HTTPS refuses
@@ -384,7 +409,7 @@ devices; any other client gets a fixed message, and altd's log keeps the details
 (`frame-ancestors 'none'`).
 
 Then `access.py` decides who is asking. The page and its files, `GET /api/health`,
-`GET /api/access` and `POST /api/pair` answer anyone; every other request, including design boards,
+`GET /api/access`, `POST /api/pair`, the trust check and the public CA downloads answer anyone; every other request, including design boards,
 needs a paired browser or this machine's key, and otherwise gets 401 with `"pair": true`. Everything
 lives in `~/.config/altitude/access/` (mode 0700, beside the TLS material, outside every runtime,
 source and project root). altd creates `machine.key` there when it starts; the `alt` CLI and the
@@ -1943,7 +1968,9 @@ the record as the typing indicator for a chat turn, or as the line "L3 is handli
 server-triggered one; the tab that started the turn keeps its streamed reply instead. The stream's
 first line names the turn (`{"turn": {id, started_at, trigger}}`) before any text, and the
 history rows carry the same id, so the local rows stay until history owns the turn and a stored
-assistant or error row wins over a raced active snapshot.
+assistant or error row wins over a raced active snapshot. An assistant row marked `interrupted`
+renders only its partial reply, with no notice; with no partial text it renders nothing, and the
+operator's next message follows directly under the stopped one.
 
 The conversation reads `/api/chat/<project>?limit=60`. The limit counts human chat rows and system
 rows (server-triggered turns and FYIs) separately, so a burst of system events never pushes the latest
@@ -2033,7 +2060,11 @@ writer lock; retries reuse the selected row or its history receipt. An accepted 
 removable until claim, including when no engine is available after admission. Removal does not undo
 an interruption already requested. The daemon requests interruption
 of the captured active chat turn through the engine seam, retains partial output and session identity,
-and records **Interrupted for a queued message**. Its turn lock remains held until the engine job and
+and saves the partial reply, possibly empty, as an assistant row marked `interrupted`. Confirmed
+interruption is not an engine error: the turn is incomplete and never replayed. A fresh session's
+recent-conversation context labels that row interrupted, and `alt l3 search` results and the chat
+audit packet keep the marker.
+Its turn lock remains held until the engine job and
 its descendants have ended. A system turn finishes at its existing boundary to preserve notification,
 CI and report delivery; the promoted row says **Runs next after system work**. System queue rows
 cannot be promoted or removed. No available engine, an active chat still starting, or a launch pause

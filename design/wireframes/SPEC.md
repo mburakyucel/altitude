@@ -1066,8 +1066,8 @@ evidence is missing. Each eligible queued operator bubble has a bordered **Send 
 Send now explains **Stops work and reviews to deliver now.** It requests the
 existing Stop and same-session continuation for that message. Quick-choice receipts and
 messages already used by recorded decisions keep their evidence. **Removing…** disables removal until
-the response; success replaces only that bubble's text with **Message removed** and **Removed · not
-sent to the session**. Original text remains in durable evidence. Claim shows **Sending to session ·
+the response; success removes only that bubble from the conversation. Original text remains in
+durable evidence. Claim shows **Sending to session ·
 cannot remove**, and uncertain handoff shows **Delivery unconfirmed · cannot remove**, with no Remove.
 A prelaunch failure restores the queued controls. A refused removal refreshes delivery and names the
 refusal beside that message; denied and unconfirmed requests show their own inline error. Saved or
@@ -1453,7 +1453,9 @@ once in the row ("It will need a new code to open Altitude again.", or "This bro
 the current one) with **Cancel**, focused, and a red **Remove device**; Escape cancels. Removing the
 current device shows §3.16. Below,
 **Pair another device** makes a code: the code large in monospace, "Works once, for the next 10
-minutes", the copyable `/pair?code=` link and **Make a new code**.
+minutes. On the other device, open <HTTPS address> and type it." (without HTTPS: "type it on the Pair this
+device screen."), the address's QR code with "Scan with a phone to open Altitude.", "Certificate "<name>" —
+SHA-256 ends with <last 8 pairs>" (monospace) and **Make a new code**. The code never appears in a link.
 With HTTPS, a **Certificate** card follows: "Set up HTTPS trust on Linux, macOS, iPhone, iPad or Android.
 Open a setup link and QR code here, or run `alt tls-share` on the computer running
 Altitude.", the primary **Set up a device** button, "Before trusting the downloaded certificate, check that its
@@ -1586,32 +1588,54 @@ Composer listening, denied, unavailable, cancellation and transcript states rema
 
 ### 3.16 Pair this device
 
-An unpaired browser sees one centred card instead of the app, at every route: the Altitude mark,
-**Pair this device**, "Altitude opens only on devices you pair. On the computer running Altitude, in
-a terminal or over SSH, run:", the copyable `alt pair` command, "Then type the code it shows. A device
-that is already paired can also make a code in Settings › Devices.", a large monospace **Pairing code**
-field (one-time-code autofill), a full-width **Pair** button, disabled while the field is
-empty, and under it "Did the browser warn about the certificate before showing this page? Pair only
-after it opens without a warning." The guidance points container users to the host launcher's public
-certificate export, and native users to **Set up a device** in trusted, paired Settings or `alt tls-share`
-on the hosting computer. For localhost it directs the operator to `alt doctor` and the public `ca_cert`
-file. A `/pair?code=` link fills the field, submits once and removes the code from the address bar.
-Pairing opens the route the browser asked for.
+An unpaired browser sees one centred card instead of the app, at every route: the Altitude mark and
+**Pair this device** with three items, each with a mark (✓ done, ○ to do, a spinner while checking, ! needs
+attention). The code never rides in a URL. Pairing opens the route the browser asked for.
+
+1. **HTTPS address**: "You opened Altitude's HTTPS address.", or on the computer running Altitude over plain
+   HTTP "This is the computer running Altitude." Plain HTTP elsewhere fails with "This Altitude serves plain
+   HTTP. Pair on the computer running it."; the other items are absent.
+2. **Trust Altitude's certificate** with a pill: Not trusted yet, Checking…, Trusted or Couldn't check. The
+   computer running Altitude is Trusted at once. Elsewhere the item shows instructions for the device:
+   iPhone and iPad (including iPadOS reporting a Mac with touch) get **Download the profile**, the Profile
+   Downloaded check (one Certificate named "<CA name>", SHA-256 ending with the 8 pairs `alt pair` shows,
+   otherwise Remove and stop), the Certificate Trust Settings switch and "Come back here; this checks
+   itself."; Android gets **Download the certificate** and the CA certificate install; other browsers get
+   **Download the certificate**, the name and SHA-256 check, importing it as a trusted authority and
+   restarting the browser, and a **Setup guide** link. The page never shows the SHA-256 itself: the
+   reference is the computer. The check runs as the page opens, whenever it becomes visible again and on
+   **Check again**; Trusted collapses the instructions. With an externally supplied certificate Altitude
+   cannot check: "Altitude can't check this automatically. Open this address in a new Private tab; if it
+   loads without a warning, tap Continue." and **Continue** marks it done.
+3. **Pair**, once the certificate is trusted: "Enter the code from `alt pair`, or from Settings › Devices on
+   a paired device.", a large monospace **Pairing code** field (one-time-code autofill), a
+   full-width **Pair** button, disabled while the field is empty, and "Each code works once, for 10
+   minutes. This device stays paired until you remove it in Settings."
 
 | State | What appears and what actions do |
 | --- | --- |
 | Loading | The mark alone while Altitude answers whether this browser is paired. |
 | Unreachable | "Could not reach Altitude." and Retry. |
-| Empty | The card with an empty field; Pair disabled. |
+| Local | ✓ This is the computer running Altitude, ✓ Trusted, and the Pair item. |
+| Plain HTTP | ! with the plain-HTTP sentence; no other items. |
+| Not trusted yet | ○ with the device's instructions, its reason ("Not trusted yet. The usual missing step is the switch in Certificate Trust Settings." on iPhone/iPad, "…Install the certificate as a CA certificate." on Android, "…Import the certificate as a trusted authority, then restart the browser." elsewhere) and **Check again**; no Pair item. |
+| Checking | A spinner, the Checking… pill and a disabled **Check again**. |
+| Couldn't check | ! and "Couldn't check." with **Check again**, never phrased as untrusted. |
+| External certificate | ○ with the Private tab sentence and **Continue**. |
+| Trusted | ✓ Trusted, instructions collapsed, the Pair item with an empty field; Pair disabled. |
 | Typing | The field owns the dash: it keeps letters and digits, uppercased, up to eight, and shows `ABCD-` once four are typed. A typed dash or space is ignored; deleting the dash deletes the fourth character. A pasted `abcd 2345` or `ABCD-2345` shows `ABCD-2345`. An edit inside the code keeps the caret at the edit. |
 | Pairing | Pairing… and a disabled field and button. |
 | Wrong code | "That code is not right. N tries left." under the field; typing clears it. |
 | Cancelled or used code | "Too many wrong codes, so this one is cancelled. Make a new one." or "This code has expired or was already used. Make a new one." |
-| Removed | Any 401 returns here with "This device is no longer paired. Pair it again to continue." above the instructions. |
+| Removed | Any 401 returns here with "This device is no longer paired. Pair it again to continue." above the items. |
 
-Application walkthroughs: `web/e2e/pairing.pw.ts` at 390×844 and 1440×900 walks every state above,
-pairing by link, Settings › Devices with a new code, Remove with Cancel, removing the current device,
-and at phone width an iPhone's Safari and Home Screen app pairing as separate devices.
+Application walkthroughs: `web/e2e/pairing.pw.ts` at 390×844 and 1440×900 walks every state above: the
+local states and pairing with a real code, Settings › Devices with a new code, Remove with Cancel, removing
+the current device, and with answered access and trust replies a device on the network not trusted,
+checking, trusted and paired, Couldn't check, plain HTTP with and without an address and an external
+certificate; at phone width an iPhone's profile instructions, and its Safari and Home Screen app pairing as
+separate devices. `web/e2e/trust.pw.ts` walks Chromium over real HTTPS past the certificate warning, and
+ignoring certificate errors, to Not trusted yet with no Pair item.
 
 ## 4. Behaviour rules
 
@@ -1638,7 +1662,10 @@ keeps its accent circle with the arrow. Phone names the active work in the heade
 on queued rows; desktop also shows "L3 is mid-turn · runs next" under the field. Queued rows stay
 inside the message area until they run, with bordered **Send now** beside **Remove** while permitted.
 Send now puts that row first, interrupts an active chat at its engine's safe boundary, and runs the
-selected message next. System work finishes before the selected message runs. Pending rows say
+selected message next. The interrupted reply keeps any partial text as an ordinary reply, with no
+notice: the operator knows they interrupted it. A reply stopped before any text leaves no row, so the
+two operator bubbles sit back to back (8px apart, the first bubble's time beside it).
+System work finishes before the selected message runs. Pending rows say
 **Sending now…**, with **Waiting for current turn to stop** or **Runs next after system work** as
 appropriate; Send now is disabled. Remove is disabled while the HTTP request is pending and remains
 available after acceptance until claim, even when an engine becomes unavailable. Removal does not

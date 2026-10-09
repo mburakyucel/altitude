@@ -564,7 +564,7 @@ test("task: removing a queued image preserves later text checkpoint delivery", a
   await expect(textRow.getByRole("button", { name: "Remove", exact: true })).toBeVisible();
   await walk.state("02-task-image-removed", {
     action: () => imageRow.getByRole("button", { name: "Remove", exact: true }).click(),
-    visible: [page.getByText("Message removed", { exact: true }), textRow],
+    visible: [textRow],
     hidden: [v.preview, page.locator(".bubble").filter({ hasText: caption })],
   });
   const delivered = await request.post("/fixture/task-deliver");
@@ -573,7 +573,7 @@ test("task: removing a queued image preserves later text checkpoint delivery", a
   await page.reload();
   // This fixture consumes the real inbox without a native session receipt; the UI stays candid.
   await walk.state("03-only-later-text-consumed", {
-    visible: [page.getByText("Message removed", { exact: true }), textRow.getByText("Delivery unconfirmed · cannot remove", { exact: true })],
+    visible: [textRow.getByText("Delivery unconfirmed · cannot remove", { exact: true })],
     hidden: [v.preview, textRow.getByRole("button", { name: "Remove", exact: true })],
   });
 });
