@@ -94,17 +94,24 @@ class TestInstallationCiSeparation(AltitudeCase):
         self.assertFalse(any(call[:2] == ["pr", "merge"] for call in self.gh_log()))
         self.assertEqual(self.runner_log(), [])
 
-    def test_dispatching_on_task_head_is_not_an_optional_check_exemption(self):
+    def test_dispatch_on_task_head_is_observed_but_never_landing_evidence(self):
         check = copy.deepcopy(self.required_check)
         check.update(name="installation-lifecycle", isRequired=False)
         check["checkSuite"]["workflowRun"] = {
             "event": "workflow_dispatch",
             "file": {"path": ".github/workflows/installation-lifecycle.yml"},
         }
-        self.contexts().update(self.connection([self.required_check, check]))
         for status, conclusion in (("COMPLETED", "FAILURE"), ("IN_PROGRESS", None),
                                    ("COMPLETED", "SKIPPED"), ("COMPLETED", "SUCCESS")):
             with self.subTest(status=status, conclusion=conclusion):
                 check.update(status=status, conclusion=conclusion)
-                with self.assertRaisesRegex(land.LandError, "workflow run does not belong"):
-                    self.classify()
+                self.contexts().update(self.connection([self.required_check, check]))
+                self.assertEqual(self.classify(), "pass")
+                self.contexts().update(self.connection([check]))
+                self.assertEqual(self.classify(), "missing")
+                self.assertIn("installation-lifecycle", self.pair["unregistered"])
+                self.assertIn("(not required)", self.pair["unregistered"])
+        check["isRequired"] = True
+        self.contexts().update(self.connection([self.required_check, check]))
+        with self.assertRaisesRegex(land.LandError, "workflow run does not belong"):
+            self.classify()

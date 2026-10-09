@@ -1,7 +1,7 @@
 name: Installation lifecycle
 
-# Dispatch on main; select the source under test with source_ref. Attaching a
-# manual run to a task branch can interfere with that branch's landing checks.
+# Dispatch on main; select the source under test with source_ref. A manual run
+# attached to a task branch is no landing evidence for it.
 on:
   workflow_dispatch:
     inputs:

@@ -889,11 +889,10 @@ gh run download <run-id> --dir /tmp/altitude-installation-evidence
 ```
 
 `source_ref` defaults to `main` and resolves to an exact commit before building. The dispatch ref
-owns GitHub's check association; checking out `source_ref` does not move that association. Never
-dispatch directly on an open task branch: `alt land` rejects a `workflow_dispatch` check on its
-candidate even if that job is optional, skipped or successful. Dispatching on main keeps the run
-outside the task candidate. The early main-ref check reports misuse but cannot detach that check;
-after an accidental task-ref dispatch, push a new reviewed commit before landing.
+owns GitHub's check association; checking out `source_ref` does not move that association. The job
+fails early on any ref but main. A run dispatched on an open task branch still attaches its check to
+that candidate, where `alt land` lists it as not required and ignores it: it neither blocks nor
+substitutes for the required PR check.
 `tests/test_installation_ci.py` exercises real Git and landing with
 separate fixture GitHub run inventory and PR checks: failed, running and queued installation runs
 on main leave a successful required PR check mergeable; an absent or unsuccessful required check
@@ -1201,7 +1200,8 @@ Landing verifies the merged tree against the tested tree; commit metadata can di
 Missing, pending, failed, skipped, cancelled, stale or unrelated required runs block. A required run
 that has not registered on the head yet keeps the bounded wait going; one still absent at the bound
 reports `missing`. A workflow run belongs to the candidate when its event is `push`, `pull_request` or
-`pull_request_target` and GitHub associates it with this PR's number, base and head branch. A required
+`pull_request_target`, GitHub associates it with this PR's number, base and head branch and, for a
+`push`, it ran on the head branch. A required
 or `check` result from a run that does not belong refuses landing. Any other such result, such as
 CodeQL default setup's `dynamic` analysis, is listed as not required and neither passes nor blocks.
 Review and task/UX holds remain enforced. The operator chooses Altitude-only enforcement without

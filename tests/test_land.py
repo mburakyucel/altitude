@@ -2133,6 +2133,11 @@ class TestRequiredPrCheck(AltitudeCase):
         self.assertEqual(self.classify(), "missing")
         self.assertEqual(self.pair["unregistered"], f"required check check has not registered on head {self.head}; "
                                                     "registered: Analyze (python) success (not required)")
+        for status, conclusion, verdict in (("COMPLETED", "FAILURE", "fail"), ("IN_PROGRESS", None, "pending")):
+            with self.subTest(gate=verdict):
+                gate = {**self.required_check, "status": status, "conclusion": conclusion}
+                self.contexts().update(self.connection([self.codeql_run(), gate]))
+                self.assertEqual(self.classify(), verdict, "an unrelated success cannot hide the gate's result")
         self.contexts().update(self.connection([self.codeql_run("FAILURE"), self.required_check]))
         self.assertEqual(self.classify(), "pass")
         result = land.land("green gate beside CodeQL", cwd=self.repo, wait=0, merge=True)
