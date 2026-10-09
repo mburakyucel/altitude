@@ -12,13 +12,10 @@ admitted work available. Stop the controller for a consistent backup; status alo
 
 This is the runtime guide for an already configured installation. New users should start with
 [setup](SETUP.md); contributors should use [development and checks](DEVELOPMENT.md).
-The shipped [service unit](../systemd/altitude.service) is a maintainer deployment template:
-its checkout path, PATH and tunnel binding need deliberate configuration for another machine.
-On a Mac, `make install-service` writes the same settings as a LaunchAgent for the checkout
-(`scripts/source_launch_agent.py`), with `ALTITUDE_HOST` and the PATH it runs with (the address defaults to
-`127.0.0.1`) and, when the checkout is not on `main`, that branch as `ALTITUDE_SOURCE_BRANCH`. Its PATH needs `pnpm` (`corepack enable pnpm`), since a self-restart
-rebuilds the web app.
-Private archives generate their own user service; they do not install that source template.
+A source deployment runs as the user service `make install-service` installs from the checkout: the
+shipped [service unit](../systemd/altitude.service) on Linux, or a LaunchAgent written by
+`scripts/source_launch_agent.py` on a Mac. [Run from a source checkout](SETUP.md#run-from-a-source-checkout)
+describes its setup, settings and removal. Releases generate their own user service instead.
 
 ## Runtime and inspection
 
@@ -312,7 +309,7 @@ own coalitions. The prior bundle is restored if verification fails, then recover
 and verifies API and UI health from another new process. The failure retains the activation error
 and states whether recovery is verified or fails; restored files alone do not establish healthy
 recovery. Without a prior bundle, it reports that recovery is unavailable. There is
-no separate web service and no `sudo` is required. Node 22.22.2+ (22.x) or 24.15+ (24.x) and `pnpm` are required; dependency
+no separate web service and no `sudo` is required. Node 22.22.2+ (22.x), 24.15+ (24.x) or 26+ and `pnpm` are required; dependency
 retrieval may be needed when the local pnpm store is cold. Refresh the browser after it succeeds.
 
 Deterministic restart fixtures establish removal ordering, worker isolation and activation/rollback
@@ -487,6 +484,19 @@ Safari's Share menu. On Android, remove the old shortcut, or uninstall the insta
 add/install it again from Chrome. If a bookmark retains the old icon after revisiting the page,
 recreate that bookmark. Reopen the added app and check decision-alert permission/subscription on
 that device; reinstalling may reset it. Do not clear unrelated browser data or certificate trust.
+
+A gray tile showing a letter instead of the Climb mark means iOS could not fetch the icon, most often
+because the phone does not trust that installation's certificate authority. Safari still opens
+the page after "visit this website", but iOS fetches the Home Screen icon in a separate request that
+refuses the untrusted certificate silently. Every Altitude installation creates its own CA, so
+trusting one installation, for example a Linux host, does not trust another, such as a Mac. Open the
+address in a new Private tab: if Safari reports the connection as not private,
+[set up the phone](SETUP.md#set-up-a-phone) for this installation, confirm the Private tab loads
+without a warning, then remove the shortcut and add it again. Every generated CA is named "Altitude
+local CA", so Certificate Trust Settings can list several same-named entries. Turn on only the one
+from this installation's verified profile. When the entries cannot be told apart, remove the
+Altitude profiles under General → VPN & Device Management, then install and verify each
+installation's profile again through its own setup.
 
 The delivered browser checks verify served files and icon geometry at phone and desktop sizes.
 Native iOS/Safari and Android/Chrome installation and refresh behavior require device observation;
