@@ -106,6 +106,7 @@ describe("LiveSession", () => {
     const command = within(view).getByText("git status", { selector: "code" }).closest("details");
     expect(command).not.toHaveAttribute("open");
     expect(command?.querySelector(".session-tool-name")).toHaveTextContent("$");
+    expect(command).toHaveAttribute("data-kind", "command");
     expect(command).toHaveTextContent("2 lines");
     expect(command?.querySelector("[data-output]")).toHaveTextContent("nothing to commit");
 
