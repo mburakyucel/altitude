@@ -15,6 +15,12 @@ from tests.support import AltitudeCase, REPO
 from altitude.land import _test_counts
 
 
+def make_env(**variables):
+    """A nested make's environment without the flags and command-line variables of a make running this suite."""
+    outer = {"MAKEFLAGS", "MFLAGS", "MAKELEVEL", "MAKEOVERRIDES", "SHARD", "WORKERS"}
+    return {**{key: value for key, value in os.environ.items() if key not in outer}, **variables}
+
+
 class TestParallelChecks(AltitudeCase):
     def make_fixture(self):
         (self.tmp / "Makefile").write_text((REPO / "Makefile").read_text())
@@ -111,7 +117,7 @@ class TestParallelChecks(AltitudeCase):
 
     def test_make_passes_one_shard_to_every_phase(self):
         result = subprocess.run(["make", "-n", "check-python", "check-web", "SHARD=2/5", "WORKERS=3"],
-                                cwd=REPO, capture_output=True, text=True, timeout=20, check=True)
+                                cwd=REPO, env=make_env(), capture_output=True, text=True, timeout=20, check=True)
         commands = [line.split("time_command.py\" ", 1)[1] for line in result.stdout.splitlines()]
         self.assertEqual(commands, ['python3 tests/run_parallel.py --shard=2/5 --workers "3"',
                                     "pnpm test --shard=2/5", "pnpm build", "pnpm ui --shard=2/5",
@@ -191,8 +197,8 @@ class TestParallelChecks(AltitudeCase):
                     (self.tmp / phase).unlink(missing_ok=True)
                 result = subprocess.run(
                     ["make", "check"], cwd=self.tmp,
-                    env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
-                         "CHECK_FIXTURE": str(self.tmp), "FAIL_PHASE": failed},
+                    env=make_env(PATH=f"{bindir}:{os.environ['PATH']}", CHECK_FIXTURE=str(self.tmp),
+                                 FAIL_PHASE=failed),
                     capture_output=True, text=True, timeout=15)
                 self.assertEqual(result.returncode == 0, not failed, result.stderr)
                 self.assertTrue((self.tmp / "python").exists())
@@ -228,7 +234,7 @@ class TestParallelChecks(AltitudeCase):
             path.chmod(0o755)
         process = subprocess.Popen(
             ["make", "check"], cwd=self.tmp, start_new_session=True,
-            env={**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"},
+            env=make_env(PATH=f"{bindir}:{os.environ['PATH']}"),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             deadline = time.monotonic() + 5
