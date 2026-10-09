@@ -1650,6 +1650,26 @@ class TestChatQueue(AltitudeCase):
         self.assertEqual(self.press("0123456789ab")[0], 409, "an unknown reply")
         self.assertEqual(self.press("../x")[0], 409)
 
+        # A typed turn that has started but not yet saved its message retires the action too, and admission holds
+        # the lifecycle guard throughout, so no turn can start between its reads.
+        offer = self.offer_turn()
+        with l3._lifecycle_guard(self.project):
+            l3._active[self.project] = {"id": "fedcba987654", "trigger": "chat", "started_at": S.now()}
+        try:
+            status, stale = self.press(offer)
+            self.assertEqual((status, stale["error"]), (409, l3.OFFER_MOVED_ON))
+        finally:
+            with l3._lifecycle_guard(self.project):
+                l3._active.pop(self.project, None)
+        history = l3.chat_history
+
+        def admission_reads(*args, **kwargs):
+            self.assertFalse(l3._lifecycle_guard(self.project).acquire(blocking=False), "admission holds the guard")
+            return history(*args, **kwargs)
+        with mock.patch.object(l3, "chat_history", side_effect=admission_reads) as reads:
+            self.assertEqual(self.press(offer)[0], 200)
+        self.assertTrue(reads.called)
+
     def test_create_task_offers_belong_to_chat_replies_that_created_no_task(self):
         with self.assertRaisesRegex(ValueError, "during a chat turn"):
             l3.note_offer(self.project, "No turn runs")
@@ -1671,7 +1691,10 @@ class TestChatQueue(AltitudeCase):
             for args in (["task", "offer", "Fold the lines"], ["task", "new", "--title", "Fold the lines", "-"]):
                 self.assertEqual(server.l3_verb_request(self.project, {"kind": "alt", "args": args, "stdin": "" if args[1] == "offer" else "Fold."})["returncode"], 0)
             return self.claude_result("Created it.")
+        # Only a turn answering a press binds a creation; a variable inherited by the daemon binds nothing.
+        clean_env = engines.clean_env
         with self.deliverable(), mock.patch.object(engines, "claude_print", side_effect=provider), \
+             mock.patch.object(engines, "clean_env", side_effect=lambda: {**clean_env(), "ALTITUDE_OFFER_TURN": offer}), \
              mock.patch.object(server, "request_l3_drain"):
             server.server_l3_turn(self.project, "fold the lines", trigger="chat")
         reply = self.chat_view()["history"][-1]

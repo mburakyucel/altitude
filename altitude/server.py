@@ -329,6 +329,7 @@ def _l3_verb_request(project: str, request: dict) -> dict:
             return {"returncode": 0, "stdout": url + "\n", "stderr": ""}
         env = engines.clean_env()
         env.update({"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": project, "ALTITUDE_HOME": str(config.ROOT)})
+        env.pop("ALTITUDE_OFFER_TURN", None)  # only the running turn below binds a creation to a reply
         if args[:2] == ["task", "new"] and (offer := l3.active_offer(project)):
             env["ALTITUDE_OFFER_TURN"] = offer  # a turn answering a Create task press creates that reply's one task
         try:

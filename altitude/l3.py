@@ -282,9 +282,9 @@ def queue_offer(project: str, offer_turn: str) -> dict:
     if not re.fullmatch(r"[0-9a-f]{12}", offer_turn or ""):
         raise ValueError("invalid reply reference")
     path = queue_path(project)
-    with _lifecycle_guard(project):  # read first: a queue claim takes this guard before the project lock
+    # The guard, then the project lock, as a queue claim takes them: no turn starts while the press is admitted.
+    with _lifecycle_guard(project), S.project_lock(project):
         running = _turn_identity(_active.get(project))
-    with S.project_lock(project):
         if not config.is_managed(project):
             raise ValueError("This project is not managed. Add its folder again to attach L3.")
         waiting = [row for row in _queue_rows(path) if row.get("trigger") == "chat"]
