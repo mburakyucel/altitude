@@ -1685,8 +1685,8 @@ class TestCheckEvidence(AltitudeCase):
         status["commit"]["oid"] = self.head
         self.assertEqual(self.classify(), "pass")
 
-    def test_workflow_event_branch_and_related_pr_must_match(self):
-        self.optional_deploy()
+    def test_required_run_from_another_workflow_run_refuses(self):
+        self.optional_deploy(required=True)
         original = copy.deepcopy(self.evidence)
         for field in ("event", "number", "baseRefName", "headRefName", "push_branch"):
             with self.subTest(field=field):
@@ -1702,6 +1702,16 @@ class TestCheckEvidence(AltitudeCase):
                     suite["matchingPullRequests"]["nodes"][0][field] = "unrelated"
                 with self.assertRaisesRegex(land.LandError, "workflow run does not belong"):
                     self.classify()
+
+    def test_unrelated_nonrequired_run_is_no_evidence_either_way(self):
+        check = self.optional_deploy(event="dynamic")
+        check["checkSuite"]["matchingPullRequests"] = self.connection([])
+        for status, conclusion in (("COMPLETED", "FAILURE"), ("IN_PROGRESS", None), ("COMPLETED", "SUCCESS")):
+            with self.subTest(conclusion=conclusion):
+                check.update(status=status, conclusion=conclusion)
+                self.assertEqual(self.classify(), "pass")
+        self.contexts().update(self.connection([check]))
+        self.assertEqual(self.classify(), "skipped", "an unrelated success is not a passing hosted check")
 
     def test_existing_pull_request_target_success_is_still_accepted(self):
         check = self.optional_deploy(event="pull_request_target")
@@ -2108,6 +2118,34 @@ class TestRequiredPrCheck(AltitudeCase):
                                         "required check check has not registered on head .*; "
                                         r"registered: lint skipped \(not required\); candidate remains"):
                 land.land("assessment and registration both time out", cwd=self.repo, wait=30, merge=True)
+        self.assert_not_merged()
+
+    def codeql_run(self, conclusion="SUCCESS"):
+        """CodeQL default setup: a GitHub Actions run with event `dynamic` and no associated PR."""
+        run = copy.deepcopy(self.required_check)
+        run.update(name="Analyze (python)", status="COMPLETED", conclusion=conclusion, isRequired=False)
+        run["checkSuite"].update(workflowRun={"event": "dynamic", "file": None},
+                                 matchingPullRequests=self.connection([]))
+        return run
+
+    def test_unrequired_codeql_run_neither_blocks_nor_stands_in_for_the_gate(self):
+        self.contexts().update(self.connection([self.codeql_run()]))
+        self.assertEqual(self.classify(), "missing")
+        self.assertEqual(self.pair["unregistered"], f"required check check has not registered on head {self.head}; "
+                                                    "registered: Analyze (python) success (not required)")
+        self.contexts().update(self.connection([self.codeql_run("FAILURE"), self.required_check]))
+        self.assertEqual(self.classify(), "pass")
+        result = land.land("green gate beside CodeQL", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual((result["checks"], result["merged"]), ("pass", True))
+
+    def test_gate_or_required_check_from_an_unrelated_run_refuses(self):
+        for required, name in ((False, "check"), (True, "Analyze (python)")):
+            with self.subTest(name=name):
+                run = self.codeql_run()
+                run.update(name=name, isRequired=required)
+                self.contexts().update(self.connection([run, self.required_check]))
+                with self.assertRaisesRegex(land.LandError, "workflow run does not belong to this PR candidate"):
+                    self.classify()
         self.assert_not_merged()
 
     def test_name_app_workflow_and_event_must_identify_the_required_pr_run(self):

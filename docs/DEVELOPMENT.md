@@ -1200,7 +1200,10 @@ commits outside the head and require reconciliation, a push and fresh checks on 
 Landing verifies the merged tree against the tested tree; commit metadata can differ.
 Missing, pending, failed, skipped, cancelled, stale or unrelated required runs block. A required run
 that has not registered on the head yet keeps the bounded wait going; one still absent at the bound
-reports `missing`.
+reports `missing`. A workflow run belongs to the candidate when its event is `push`, `pull_request` or
+`pull_request_target` and GitHub associates it with this PR's number, base and head branch. A required
+or `check` result from a run that does not belong refuses landing. Any other such result, such as
+CodeQL default setup's `dynamic` analysis, is listed as not required and neither passes nor blocks.
 Review and task/UX holds remain enforced. The operator chooses Altitude-only enforcement without
 a GitHub plan upgrade: GitHub web/API merges and other updates outside Altitude remain unprotected.
 All main updates must use `alt land` for its guarantee.

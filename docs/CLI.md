@@ -1400,7 +1400,9 @@ Landing publishes the PR and waits for its required `check` on the current head;
 run the full suite locally. The task branch includes current main. A branch missing current main
 needs reconciliation, a push and fresh PR checks on the new head. Final validation and merge are
 serialized across Altitude owners; the merged tree must equal the tested tree. Failed, pending, missing, skipped,
-cancelled, stale or unrelated required runs block. `--test-cmd` supplies no bypass for this gate.
+cancelled, stale or unrelated required runs block. A nonrequired run from another workflow run, such
+as CodeQL default setup's analysis, is listed as not required and ignored. `--test-cmd` supplies no
+bypass for this gate.
 
 After a bounded CI wait, retain the run and missing evidence, explicitly block and ask L3 for a
 [durable CI recheck](#durable-ci-recheck). A missing run needs trigger recovery, not an
@@ -1749,7 +1751,7 @@ active PR only when that decision covers its work; restoration does not invent a
 
 Complete the repository's applicable review before `--merge`. Drafts, requested changes and
 outstanding required reviews block adopted merges. Checks must belong to the pinned base/head
-candidate. Required checks, including those specified by active branch rules, must pass; missing,
+candidate; a nonrequired check from a workflow run outside the PR is observed but ignored. Required checks, including those specified by active branch rules, must pass; missing,
 ambiguous, unrelated or required skipped checks are not green. Completed skipped checks identified
 as nonrequired by GitHub are ignored, regardless of workflow condition or check provider. Altitude
 does not prove why they skipped; a job that must execute needs to be required. Failed, cancelled

@@ -587,20 +587,23 @@ def _checks_evidence(root: Path, pair: dict) -> str:
             if suite["commit"]["oid"] != candidate["oid"] or not isinstance(check["isRequired"], bool):
                 raise LandError("check result is unrelated to the pinned candidate or lacks requiredness")
             run = suite.get("workflowRun")
-            if run:
-                related = _complete_check_nodes(suite["matchingPullRequests"])
-                if (run["event"] not in {"push", "pull_request", "pull_request_target"}
-                        or not any((p["number"], p["baseRefName"], p["headRefName"]) ==
-                                   (pair["number"], pair["base"], pair["branch"]) for p in related)
-                        or (run["event"] == "push" and (suite.get("branch") or {}).get("name") != pair["branch"])):
-                    raise LandError("workflow run does not belong to this PR candidate")
             status = check["conclusion"] if is_run and check["status"] == "COMPLETED" else (
                 "PENDING" if is_run else check["state"])
-            is_gate = (named_gate and is_run and check["name"] == config.PR_CHECK_NAME
-                       and (suite.get("app") or {}).get("databaseId") == 15368
+            name, app = (check["name"] if is_run else check["context"]), (suite.get("app") or {}).get("databaseId")
+            if run and (run["event"] not in {"push", "pull_request", "pull_request_target"}
+                        or not any((p["number"], p["baseRefName"], p["headRefName"]) ==
+                                   (pair["number"], pair["base"], pair["branch"])
+                                   for p in _complete_check_nodes(suite["matchingPullRequests"]))
+                        or (run["event"] == "push" and (suite.get("branch") or {}).get("name") != pair["branch"])):
+                # A required or gate result from another run would spoof the candidate's evidence; an
+                # unrequired one (CodeQL default setup's `dynamic` runs) is no evidence either way.
+                if check["isRequired"] or (named_gate and name == config.PR_CHECK_NAME):
+                    raise LandError("workflow run does not belong to this PR candidate")
+                observed.append(f"{name} {(status or 'without conclusion').lower()} (not required)")
+                continue
+            is_gate = (named_gate and is_run and name == config.PR_CHECK_NAME and app == 15368
                        and run and run["event"] == "pull_request"
                        and (run.get("file") or {}).get("path") == config.PR_CHECK_WORKFLOW)
-            name, app = (check["name"] if is_run else check["context"]), (suite.get("app") or {}).get("databaseId")
             seen.add((name, app))
             gate_seen |= is_gate
             observed.append(f"{name} {(status or 'without conclusion').lower()}" + ("" if is_gate or check["isRequired"] else " (not required)"))
