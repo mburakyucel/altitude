@@ -25,7 +25,7 @@ final class Walks: XCTestCase {
     // MARK: Add to Home Screen
 
     /// Safari's Add to Home Screen for the page at WALK_URL, the icon it puts on the Home Screen and the app it opens,
-    /// paired with WALK_CODE when one is given.
+    /// paired with the cookies iOS copies from Safari when it adds the app.
     func homeScreen() throws {
         let url = try address()
         try step("safari") {
@@ -76,20 +76,11 @@ final class Walks: XCTestCase {
             sleep(3)
             return "the icon opens Altitude as a web app, without Safari"
         }
-        guard let code = env["WALK_CODE"], !code.isEmpty else { return }
         try step("paired") {
-            let field = webApp.textFields["Pairing code"].firstMatch
-            guard field.waitForExistence(timeout: 20) else { throw NotReachable(reason: "the web app shows no pairing code") }
-            field.tap()
-            if let tip = find(webApp, "Continue", 2) {  // the keyboard's one-time tip
-                tip.tap()
-                field.tap()
+            guard find(webApp, "Work", 20) != nil, !webApp.textFields["Pairing code"].exists else {
+                throw NotReachable(reason: "the web app asks to be paired")
             }
-            field.typeText(code)
-            try tap(webApp, "Pair", "the pairing page has no Pair")
-            guard gone(field, 20) else { throw NotReachable(reason: "the pairing page stayed after Pair") }
-            sleep(3)
-            return "the web app paired with the run's code"
+            return "the web app shows Altitude's tabs, paired as Safari is"
         }
     }
 
@@ -277,11 +268,6 @@ final class Walks: XCTestCase {
             app.swipeUp()
         }
         return app.staticTexts[label].exists
-    }
-
-    func gone(_ element: XCUIElement, _ seconds: Double) -> Bool {
-        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
-        return XCTWaiter().wait(for: [expectation], timeout: seconds) == .completed
     }
 
     func holds(_ element: XCUIElement, value: String, seconds: Double) -> Bool {

@@ -42,7 +42,7 @@ if args[:2] == ["xcodebuild", "test-without-building"]:   # one walk: its record
     out, mode = Path(os.environ["TEST_RUNNER_WALK_OUT"]), os.environ.get("FAKE_WALK", "")
     (out / "first.png").write_bytes(b"\x89PNG fixture step")
     steps = [{"step": "first", "status": "completed", "screenshot": "first.png",
-              "detail": f"{os.environ['TEST_RUNNER_WALK_URL']} {os.environ['TEST_RUNNER_WALK_CODE']}".strip()}]
+              "detail": os.environ["TEST_RUNNER_WALK_URL"]}]
     (out / "walk.json").write_text(json.dumps({"steps": steps, "seen": {} if mode else {"finished": "yes"}}))
     if option("-only-testing:Walks/Walks/") == "testHomeScreen":   # the web clip iOS keeps in the phone's data
         clip = Path(option("-DVTSimulatorSetLocation=")) / option("platform=iOS Simulator,id=") / "data/Library/WebClips"
@@ -267,8 +267,8 @@ class RelayCase(TestCase):
         self.addCleanup(self.phone.close)
         self.opened, self.walked = [], []
 
-        def walk(name, url, code):
-            self.walked.append((name, url, code))
+        def walk(name, url):
+            self.walked.append((name, url))
             if url.endswith("/fails"):
                 raise RuntimeError("the walks did not build: fixture")
             return {"steps": [{"step": "first", "status": "completed"}]}, {"first.png": b"\x89PNG step"}
@@ -355,17 +355,13 @@ class TestRelay(RelayCase):
     def test_a_run_asks_only_for_the_two_walks_at_loopback_addresses_off_altitudes_port(self):
         client = self.client()
         for argument, error in (
-                ({"walk": "home-screen", "url": "http://127.0.0.1:5555/", "code": "ABCD-2345"}, ""),
+                ({"walk": "home-screen", "url": "http://127.0.0.1:5555/"}, ""),
                 ({"walk": "profile", "url": "http://127.0.0.1:5555/#ios"}, ""),
                 ({"walk": "settings", "url": "http://127.0.0.1:5555/"}, "walks only home-screen and profile"),
                 ({"url": "http://127.0.0.1:5555/"}, "walks only home-screen and profile"),
                 ({"walk": ["profile"], "url": "http://127.0.0.1:5555/"}, "walks only home-screen and profile"),
                 ({"walk": "home-screen", "url": f"http://127.0.0.1:{self.port}/"}, "never opens Altitude's own port"),
                 ({"walk": "profile", "url": "https://192.0.2.1:5555/"}, "only http(s)"),
-                ({"walk": "profile", "url": "http://127.0.0.1:5555/", "code": "ABCD-2345"}, "only a pairing code"),
-                ({"walk": "home-screen", "url": "http://127.0.0.1:5555/", "code": "abcd-2345"}, "only a pairing code"),
-                ({"walk": "home-screen", "url": "http://127.0.0.1:5555/", "code": "ABCD-2345\n"}, "only a pairing code"),
-                ({"walk": "home-screen", "url": "http://127.0.0.1:5555/", "code": 7}, "only a pairing code"),
                 ({"walk": "profile", "url": "http://127.0.0.1:5555/fails"}, "the walks did not build: fixture")):
             with self.subTest(argument):
                 client.send(sim.WALK, argument)
@@ -376,9 +372,8 @@ class TestRelay(RelayCase):
                     self.assertEqual(answer["files"], {"first.png": b"\x89PNG step"})
                 else:
                     self.assertNotIn("walk", answer)
-        self.assertEqual(self.walked, [("home-screen", "http://127.0.0.1:5555/", "ABCD-2345"),
-                                       ("profile", "http://127.0.0.1:5555/#ios", ""),
-                                       ("profile", "http://127.0.0.1:5555/fails", "")])
+        self.assertEqual(self.walked, [("home-screen", "http://127.0.0.1:5555/"), ("profile", "http://127.0.0.1:5555/#ios"),
+                                       ("profile", "http://127.0.0.1:5555/fails")])
         self.assertNotIn("_rpc_altitudeWalk:", self.received(), "the phone never sees the request")
 
     def test_replies_to_the_run_stay_whole_while_the_phone_sends_large_messages(self):
@@ -593,12 +588,12 @@ json.dump(answers, open(os.path.join(os.environ["VALIDATION_RESULTS"], "walks.js
             "the run's profile is the one every macOS run has")
 
     def test_a_run_walks_its_own_phone_with_the_walks_altd_builds_from_its_own_code(self):
-        home = {"walk": "home-screen", "url": "http://127.0.0.1:5555/projects/atlas", "code": "ABCD-2345"}
+        home = {"walk": "home-screen", "url": "http://127.0.0.1:5555/projects/atlas"}
         result, answers = self.walk(home, {"walk": "profile", "url": "http://127.0.0.1:5555/#ios"}, home)
         self.assertEqual([answer["error"] for answer in answers], ["", "", ""])
         first, profile, again = (answer["walk"] for answer in answers)
         self.assertEqual(first["steps"], [{"step": "first", "status": "completed", "screenshot": "first.png",
-                                           "detail": "http://127.0.0.1:5555/projects/atlas ABCD-2345"}])
+                                           "detail": "http://127.0.0.1:5555/projects/atlas"}])
         self.assertEqual(profile["steps"][0]["detail"], "http://127.0.0.1:5555/#ios")
         self.assertEqual(first["clip"], {"Title": "Altitude", "URL": "http://127.0.0.1:5555/", "FullScreen": True})
         self.assertEqual(again["clip"], first["clip"], "each Home Screen walk reads the clip it made")
