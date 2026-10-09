@@ -608,15 +608,17 @@ export const ReviewSchema = z.object({
   snapshot: ReviewSnapshotSchema.nullish(),
   reconciled: ReviewSnapshotSchema.extend({ reason: z.string() }).nullish(),
   coverage: z.enum(["current", "earlier", "unknown", "assessed"]),
-  can_withdraw: z.boolean(), can_cancel: z.boolean(), can_retry: z.boolean(), can_review_latest: z.boolean(), can_review_again: z.boolean().default(false),
+  earlier: z.boolean().default(false), waiting: z.enum(["reviewer", "owner", "resume"]).nullish(),
+  cancel_requested: z.boolean().nullish(), withdrawn_by: z.string().nullish(), withdrawal_reason: z.string().nullish(),
+  can_withdraw: z.boolean(), can_cancel: z.boolean(), can_again: z.boolean(),
 }).passthrough();
 export type Review = z.infer<typeof ReviewSchema>;
-const ReviewSubjectSchema = z.object({ available: z.boolean(), why: z.string(), latest: ReviewSchema.nullable() });
+/** `open` counts the open findings of every review of the kind still in the merge gate, earlier ones included. */
+const ReviewSubjectSchema = z.object({ available: z.boolean(), why: z.string(), latest: ReviewSchema.nullable(), open: z.number().default(0) });
+/** A kind appears while a request could start or once it has a review; finished tasks keep only what was reviewed. */
 export const TaskReviewSchema = z.object({
-  available: z.boolean(), why: z.string(), engine_label: z.string().nullable(), model: z.string().nullable(),
-  allowance_known: z.boolean(), latest: ReviewSchema.nullable(), history: z.array(ReviewSchema),
-  same_engine: z.boolean().default(false), fallback_reason: z.string().default(""),
-  subjects: z.object({ proposal: ReviewSubjectSchema, changes: ReviewSubjectSchema }),
+  history: z.array(ReviewSchema),
+  subjects: z.object({ proposal: ReviewSubjectSchema.optional(), changes: ReviewSubjectSchema.optional() }),
 });
 
 export const TaskViewSchema = z
@@ -1468,8 +1470,8 @@ export function taskAction(input: TaskActionInput): Promise<unknown> {
   return post("/api/task/action", input);
 }
 
-export type ReviewAction = "request" | "retry" | "rerun" | "cancel" | "withdraw";
-export async function taskReview(input: { project: string; slug: string; action: ReviewAction; subject?: ReviewSubject; request_id?: string; review_id?: string; reason?: string }): Promise<Review> {
+export type ReviewAction = "request" | "cancel" | "withdraw";
+export async function taskReview(input: { project: string; slug: string; action: ReviewAction; subject?: ReviewSubject; request_id?: string; review_id?: string }): Promise<Review> {
   const result = await post<{ review: unknown }>("/api/task/review", input);
   return ReviewSchema.parse(result.review);
 }
