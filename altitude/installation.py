@@ -169,8 +169,10 @@ def _changing_update_record():
     with (path.parent / "update.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         record = S.read_json(path, {})
+        before = json.dumps(record, sort_keys=True)
         yield record
-        S.write_json(path, record)
+        if json.dumps(record, sort_keys=True) != before:
+            S.write_json(path, record)
 
 
 def check_for_update(now: float | None = None) -> None:
@@ -247,6 +249,8 @@ def _reconcile_update_locked(prefix: Path) -> None:
 def reconcile_update() -> None:
     from . import config, platform
     if platform.containerized() or config.RELEASE is None:
+        return
+    if not update_running():
         return
     try:
         with _lock(_prefix()):

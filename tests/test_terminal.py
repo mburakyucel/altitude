@@ -119,6 +119,22 @@ class TestTerminalLifecycle(TerminalCase):
         self.open()
         self.assertTrue(terminal.any_open())
 
+    def test_existing_terminal_reattaches_during_update_admission(self):
+        self.turn(True)
+        first = self.open()
+        self.patch(config, "RELEASE", {"version": "v0.1.0"})
+        self.patch(config, "restart_in_progress", return_value=True)
+        with config.restart_lock(exclusive=True):
+            self.assertEqual(self.open(), first)
+
+    def test_source_terminal_keeps_its_existing_restart_behavior(self):
+        self.turn(True)
+        self.patch(config, "RELEASE", None)
+        self.patch(config, "restart_in_progress", return_value=True)
+        with config.restart_lock(exclusive=True):
+            self.open()
+        self.assertTrue(terminal.any_open())
+
     def test_off_until_turned_on(self):
         with self.assertRaises(terminal.TerminalError) as caught:
             terminal.open_terminal(self.project, None)

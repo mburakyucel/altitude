@@ -1035,6 +1035,30 @@ class AutomaticUpdates(NoticeCase):
         self.assertEqual(len(self.detached), 2)
         self.assertFalse(installation.update_status()["attempt"]["automatic"])
 
+    def test_idle_reconciliation_neither_takes_install_lock_nor_rewrites_record(self):
+        path = config.ROOT / "update.json"
+        before = path.stat().st_mtime_ns
+        with mock.patch.object(installation, "_lock", side_effect=AssertionError("idle reconciliation took install lock")):
+            installation.reconcile_update()
+        with installation._changing_update_record():
+            pass
+        self.assertEqual(path.stat().st_mtime_ns, before)
+
+    def test_legacy_manual_update_receipts_clear_admission_without_automatic_notice(self):
+        # v0.1.0/v0.1.1 leave no id or automatic field. The current link, not a new receipt shape,
+        # proves the required manual upgrade finished; an interrupted older attempt still expires.
+        for version, state, expected in (("v0.1.0", "running", "succeeded"),
+                                         ("v0.2.0", "running", "failed"),
+                                         ("v0.2.0", "failed", "failed")):
+            with self.subTest(version=version, state=state):
+                with installation._changing_update_record() as record:
+                    record["attempt"] = {"version": version, "state": state, "started": time.time() - 1801}
+                self.assertEqual(config.restart_in_progress(), state == "running")
+                installation.reconcile_update()
+                self.assertFalse(config.restart_in_progress())
+                self.assertEqual(installation._update_record()[1]["attempt"]["state"], expected)
+                self.assertIsNone(installation.update_status()["installed"])
+
     def test_work_an_open_terminal_the_switch_or_a_container_defers_it(self):
         self.busy.return_value = ["atlas L3"]
         self.server.auto_update()

@@ -158,14 +158,6 @@ def stop(unit: str) -> None:
 
 def open_terminal(project: str, slug: str | None) -> dict:
     """Start the terminal, or return the one already running for this task or project."""
-    with config.restart_lock() as admitted:
-        if not admitted or config.restart_in_progress():
-            raise TerminalError("Altitude is updating. Open the terminal again when it finishes.", 409)
-        return _open_terminal(project, slug)
-
-
-def _open_terminal(project: str, slug: str | None) -> dict:
-    """Register the terminal before the shared restart gate lets automatic admission inspect it."""
     path = folder(project, slug)
     with _lock:  # held while registering, so turning the terminal off either sees this one or refuses it
         if not enabled():
@@ -173,18 +165,21 @@ def _open_terminal(project: str, slug: str | None) -> dict:
         term = _terminals.get((project, slug))
         if term is not None and not term.ended:
             return view(term)
-        master, child, ident = *os.openpty(), uuid.uuid4().hex
-        try:
-            _winsize(master, 24, 80)
-            os.set_blocking(master, False)
-            proc = launch(f"altitude-terminal-{ident}.service", os.ttyname(child), path)
-        except OSError as exc:
-            os.close(master)
-            os.close(child)
-            raise TerminalError(f"Could not start the shell: {exc}") from exc
-        term = Terminal(project, slug, path, proc, master, child, ident)
-        _terminals[(project, slug)] = term
-        _ended.pop((project, slug), None)
+        with config.restart_lock() as admitted:
+            if config.RELEASE is not None and (not admitted or config.restart_in_progress()):
+                raise TerminalError("Altitude is updating. Open the terminal again when it finishes.", 409)
+            master, child, ident = *os.openpty(), uuid.uuid4().hex
+            try:
+                _winsize(master, 24, 80)
+                os.set_blocking(master, False)
+                proc = launch(f"altitude-terminal-{ident}.service", os.ttyname(child), path)
+            except OSError as exc:
+                os.close(master)
+                os.close(child)
+                raise TerminalError(f"Could not start the shell: {exc}") from exc
+            term = Terminal(project, slug, path, proc, master, child, ident)
+            _terminals[(project, slug)] = term
+            _ended.pop((project, slug), None)
     _record(term, "opened")
     threading.Thread(target=_read, args=(term,), name=f"terminal:{project}:{slug or ''}", daemon=True).start()
     return view(term)

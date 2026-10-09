@@ -3,23 +3,30 @@
 Release notes describe user-visible behavior, compatibility and recovery. The project is an early
 preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is not a published release.
 
-## Unreleased
-
-- Incidents on an installed copy record whether a newer followed release is known. When one is,
-  the incident stays local with an update-first notice; a repeat after updating gets its own
-  incident. `alt incident publish` still publishes a held record on request.
-
 ## v0.1.2 — 2026-10-09
 
 Patch release of the early preview, with the same Linux x86_64 and Apple silicon macOS targets
 and known limitations as `v0.1.1`.
 
+- Incidents on an installed copy record whether a newer followed release is known. When one is,
+  the incident stays local with an update-first notice; a repeat after updating gets its own
+  incident. `alt incident publish` still publishes a held record on request.
 - Installed copies update automatically by default at a quiet point with no browser terminal
   open. Running workers continue; new work waits during installation. Settings can switch back
   to asking before an update. Each version gets one automatic attempt, with activation recovery
   and explicit retry after failure. The app shows the installed version and release notes.
 - Copies on `v0.1.0` or `v0.1.1` need one manual update to reach automatic updates. Source
   deployments and containers retain their source/image lifecycle.
+- Landing reconciles changes to main automatically while preserving review and merge holds;
+  a delivery merged at a later head is recognized. Unanswered parts of resolved questions return
+  to the coordinator, and task waits reflect the remaining open questions.
+- Browser dictation explains when no speech was captured. Setup examples resolve the latest
+  release, and projects-folder handling and redirects include security corrections.
+
+If an update fails to activate, Altitude restores the previous version. Use `alt recover` from a
+desktop or SSH terminal for interrupted activation, or retry an offered update explicitly after
+checking its error. Automatic updates try each version once, including failed downloads. Native
+macOS confirmation and real-provider compatibility remain limited as described for `v0.1.1`.
 
 ## v0.1.1 — 2026-10-09
 
