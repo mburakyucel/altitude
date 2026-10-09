@@ -380,10 +380,10 @@ every new connection from that client address completes its handshake with the s
 since a browser may open several and use any. `GET /api/trust/<challenge>` answers trusted when it
 arrives on such a connection after a full TLS 1.3 handshake. A browser that trusts the CA accepts
 any certificate it issued. A browser that clicked past the first certificate's warning, or ignores
-certificate errors, refuses the second with a certificate alert; altd then disarms the address and
-answers the challenge as untrusted on the next connection. When every attempt fails without an
-answer, the screen asks `/api/health` once the arming window has passed: Altitude answering there
-means the browser refused the certificate. A request on a connection opened before the
+certificate errors, refuses the second with a certificate alert; altd then settles the challenge
+that armed that connection as untrusted, disarms the address and answers on the next connection.
+Three attempts without an answer read Couldn't check: a failed request alone never means
+untrusted. A request on a connection opened before the
 challenge, including a TLS 1.2 or resumed one, gets a retry. altd issues no TLS session tickets,
 so every TLS 1.3 connection presents a certificate. The screen offers the code only once the check
 passes; the server does not yet refuse a pairing on it. With an external certificate, altd holds no

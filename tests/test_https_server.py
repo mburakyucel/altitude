@@ -327,7 +327,7 @@ class TestTrustCheck(AltitudeCase):
         # reads the recorded refusal.
         path = f"/api/trust/{armed['challenge']}"
         self.assertEqual(self.eventually(lambda: self.call(self.bypassed, "GET", path)), (200, {"trusted": False}))
-        self.assertEqual(self.call(self.bypassed, "GET", "/api/health")[0], 200, "the page tells refusal from an outage")
+        self.assertIsNone(server.TRUST.probe("127.0.0.1"), "the refusal disarms the address")
         self.assertEqual(server.TRUST.confirm(challenge, "192.0.2.7", True), "unknown", "a challenge belongs to its address")
 
     def test_a_check_answered_on_a_connection_opened_before_it_is_retried_never_trusted(self):
@@ -346,6 +346,15 @@ class TestTrustCheck(AltitudeCase):
         self.assertEqual(self.call(self.trusting, "GET", "/api/health")[0], 200, "a pass disarms the address")
         self.assertIsNone(server.TRUST.probe("127.0.0.1"))
         self.assertEqual(self.call(self.trusting, "GET", "/api/trust/unknown")[0], 404)
+
+    def test_a_late_refusal_settles_only_the_check_that_armed_its_connection(self):
+        first = server.TRUST.arm("192.0.2.7")
+        armed = server.TRUST.probe("192.0.2.7")  # a connection opens under the first check
+        second = server.TRUST.arm("192.0.2.7")  # Check again, before that connection's alert arrives
+        server.TRUST.refused(armed)
+        self.assertEqual(server.TRUST.probe("192.0.2.7"), second, "the later check still arms new connections")
+        self.assertEqual(server.TRUST.confirm(first, "192.0.2.7", False), "untrusted")
+        self.assertEqual(server.TRUST.confirm(second, "192.0.2.7", True), "trusted")
 
     def test_an_abandoned_connection_says_nothing_about_trust(self):
         challenge = self.call(self.trusting, "POST", "/api/trust", {})[1]["challenge"]

@@ -103,19 +103,13 @@ export async function pairDevice(code: string): Promise<void> {
 
 export type TrustCheck = "trusted" | "untrusted" | "unknown";
 
-/** How long a challenge gives this address's new connections the second certificate (tls.TrustCheck.ARM_SECONDS),
- * with a margin. */
-export const ARMED_MS = 5_500;
-
 /** Ask whether this browser trusts Altitude's certificate. After the challenge, Altitude presents a second
  * certificate on new connections, which a browser that does not trust the CA refuses: the fetch rejects and Altitude
  * records the refusal, which the next attempt reads. A connection opened before the challenge (`retry`) tries again,
- * and an expired challenge (404) starts over. When every attempt is rejected, `/api/health` tells a refusal from an
- * unreachable Altitude, once the challenge no longer arms new connections (a browser may refuse without telling
- * Altitude); otherwise three attempts without an answer mean Altitude could not check. */
+ * and an expired challenge (404) starts over. Three attempts without an answer, including a refusal Altitude never
+ * heard about, mean Altitude could not check: a failed request alone never says the browser is untrusted. */
 export async function checkTrust(): Promise<TrustCheck> {
   let challenge = "";
-  let rejected = false;
   for (let attempt = 0; attempt < 3; attempt++) {
     let reply: Response;
     try {
@@ -126,7 +120,6 @@ export async function checkTrust(): Promise<TrustCheck> {
     try {
       reply = await fetch(`/api/trust/${encodeURIComponent(challenge)}`, { cache: "no-store", headers: { Accept: "application/json" } });
     } catch {
-      rejected = true;
       continue;
     }
     if (reply.status === 404) challenge = "";
@@ -136,13 +129,7 @@ export async function checkTrust(): Promise<TrustCheck> {
       if (answer.retry !== true) return answer.trusted === true ? "trusted" : "untrusted";
     }
   }
-  if (!rejected) return "unknown";
-  await new Promise((resolve) => setTimeout(resolve, ARMED_MS));
-  try {
-    return (await fetch("/api/health", { cache: "no-store" })).ok ? "untrusted" : "unknown";
-  } catch {
-    return "unknown";
-  }
+  return "unknown";
 }
 
 export function useDevices() {

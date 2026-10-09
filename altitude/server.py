@@ -1314,9 +1314,9 @@ class Handler(BaseHTTPRequestHandler):
         # including activation's quiet check. Each connection completes its own handshake, bounded, here.
         self._probed = False
         if isinstance(self.connection, ssl.SSLSocket):
-            probe = TRUST and TRUST.probe(self.client_address[0])
-            if probe:
-                self.connection.context = probe
+            armed = TRUST and TRUST.probe(self.client_address[0])
+            if armed:
+                self.connection.context = TRUST.context
             try:
                 self.connection.settimeout(TLS_HANDSHAKE_SECONDS)
                 self.connection.do_handshake()
@@ -1325,11 +1325,11 @@ class Handler(BaseHTTPRequestHandler):
                 # A browser that does not trust the CA ends the trust check's handshake with a certificate alert;
                 # an abandoned spare connection just closes and a cancelled one sends another alert, which say
                 # nothing about trust.
-                if probe and any(alert in (getattr(exc, "reason", None) or "") for alert in CERTIFICATE_ALERTS):
-                    TRUST.refused(self.client_address[0])
+                if armed and any(alert in (getattr(exc, "reason", None) or "") for alert in CERTIFICATE_ALERTS):
+                    TRUST.refused(armed)
                 return  # a failed or abandoned handshake drops only this connection, as accept did
             # Only a full TLS 1.3 handshake on the second certificate shows the browser checked it.
-            self._probed = bool(probe) and self.connection.version() == "TLSv1.3" and not self.connection.session_reused
+            self._probed = bool(armed) and self.connection.version() == "TLSv1.3" and not self.connection.session_reused
         super().handle()
 
     def handle_one_request(self) -> None:

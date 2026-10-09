@@ -8,7 +8,7 @@ const json = (data: unknown, status = 200) => new Response(JSON.stringify(data),
 const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
 const remote = { local: false, https: true, check: true, certificate: { name: "Altitude CA 4F7K" } };
 
-type Answer = "trusted" | "untrusted" | "refused" | "retry" | "expired" | "down";
+type Answer = "trusted" | "untrusted" | "refused" | "retry" | "expired";
 
 /** The pairing API as a remote browser sees it: each trust check takes the next answer, by default a refused
  * connection and then, as Altitude records a refusal, "untrusted"; /api/pair records its body. */
@@ -29,10 +29,6 @@ function service(trust: Record<string, unknown>, answers: Answer[] = []) {
       if (answer === "retry") return json({ retry: true });
       if (answer === "expired") return json({ error: "unknown" }, 404);
       throw new TypeError("Failed to fetch");
-    }
-    if (path === "/api/health") {
-      if (answers[0] === "down") throw new TypeError("Failed to fetch");
-      return json({ ok: true });
     }
     if (path === "/api/pair") {
       const body = JSON.parse(String(init?.body));
@@ -131,32 +127,18 @@ describe("Pair this device", () => {
     expect(calls.checks).toEqual(["c1", "c1", "c2"]);
   });
 
-  it("says it couldn't check, never that the device is untrusted, when the answers run out or Altitude is down", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    onTestFinished(() => { vi.useRealTimers(); });
-    const calls = service(remote, ["retry", "retry", "retry", "refused", "refused", "refused", "down"]);
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    renderGate();
+  it("says it couldn't check, never that the device is untrusted, when the answers run out or every request fails", async () => {
+    const calls = service(remote, ["retry", "retry", "retry", "refused", "refused", "refused"]);
+    const user = renderGate();
     expect(await screen.findByText("Couldn’t check.")).toBeVisible();
     expect(screen.queryByText(/Not trusted yet\./)).toBeNull();
     expect(calls.checks).toHaveLength(3);
-    // Checks that are all refused mean untrusted only when Altitude still answers.
+    // Failed requests alone, a network interruption or a refusal Altitude never heard about, never mean untrusted.
     await user.click(screen.getByRole("button", { name: "Check again" }));
     await waitFor(() => expect(calls.checks).toHaveLength(6));
-    await act(() => vi.advanceTimersByTimeAsync(5_500));
     expect(await screen.findByText("Couldn’t check.")).toBeVisible();
-    expect(screen.queryByLabelText("Pairing code")).toBeNull();
-  });
-
-  it("reads a refusal Altitude never heard about as not trusted, once the challenge stops arming connections", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    onTestFinished(() => { vi.useRealTimers(); });
-    const calls = service(remote, ["refused", "refused", "refused"]);
-    renderGate();
-    await waitFor(() => expect(calls.checks).toHaveLength(3));
     expect(screen.queryByText(/Not trusted yet\./)).toBeNull();
-    await act(() => vi.advanceTimersByTimeAsync(5_500));
-    expect(await screen.findByText("Not trusted yet. Import the certificate as a trusted authority, then restart the browser.")).toBeVisible();
+    expect(screen.queryByLabelText("Pairing code")).toBeNull();
   });
 
   it("on a desktop browser, explains importing the certificate and links the setup guide", async () => {

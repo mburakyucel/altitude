@@ -217,7 +217,7 @@ class TrustCheck:
     `arm` gives every new connection from that address the second certificate (`probe_context`) for
     `ARM_SECONDS`, since a browser may open several and use any of them. The browser's request for its challenge
     passes only on such a connection after a full TLS 1.3 handshake; a browser that refuses the certificate ends
-    the handshake with an alert, which disarms the address and settles the challenge as untrusted. A challenge
+    the handshake with an alert, which settles the challenge that armed that connection as untrusted. A challenge
     lasts `CHALLENGE_SECONDS`. `name` is the CA's, which stays fixed while Altitude runs."""
     ARM_SECONDS = 5
     CHALLENGE_SECONDS = 60
@@ -227,11 +227,11 @@ class TrustCheck:
         import threading
         self.context, self.name = context, name
         self._lock = threading.Lock()
-        self._armed: dict[str, float] = {}
+        self._armed: dict[str, tuple[float, str]] = {}  # address: (until, the challenge that armed it)
         self._challenges: dict[str, dict] = {}
 
     def _prune(self, now: float) -> None:
-        self._armed = {address: until for address, until in self._armed.items() if until > now}
+        self._armed = {address: armed for address, armed in self._armed.items() if armed[0] > now}
         live = sorted(((entry["until"], challenge) for challenge, entry in self._challenges.items()
                        if entry["until"] > now), reverse=True)[:self.LIMIT]
         self._challenges = {challenge: self._challenges[challenge] for _, challenge in live}
@@ -241,23 +241,29 @@ class TrustCheck:
         now, challenge = time.monotonic(), secrets.token_urlsafe(18)
         with self._lock:
             self._prune(now)
-            self._armed[address] = now + self.ARM_SECONDS
+            self._armed[address] = (now + self.ARM_SECONDS, challenge)
             self._challenges[challenge] = {"address": address, "until": now + self.CHALLENGE_SECONDS, "outcome": None}
         return challenge
 
-    def probe(self, address: str) -> ssl.SSLContext | None:
-        """The context for a new connection from `address`: the second certificate while it is armed."""
+    def probe(self, address: str) -> str | None:
+        """The challenge arming a new connection from `address`, which then gets the second certificate
+        (`context`), or None."""
         import time
         with self._lock:
-            return self.context if self._armed.get(address, 0) > time.monotonic() else None
+            until, challenge = self._armed.get(address, (0, None))
+            return challenge if until > time.monotonic() else None
 
-    def refused(self, address: str) -> None:
-        """A browser at `address` refused the second certificate: its open challenges are untrusted."""
+    def refused(self, challenge: str) -> None:
+        """A connection armed by `challenge` refused the second certificate: that challenge is untrusted. A later
+        challenge from the same address is not, even when this alert arrives after it armed."""
         with self._lock:
-            self._armed.pop(address, None)
-            for entry in self._challenges.values():
-                if entry["address"] == address and entry["outcome"] is None:
-                    entry["outcome"] = "untrusted"
+            entry = self._challenges.get(challenge)
+            if entry is None:
+                return
+            if self._armed.get(entry["address"], (0, None))[1] == challenge:
+                del self._armed[entry["address"]]
+            if entry["outcome"] is None:
+                entry["outcome"] = "untrusted"
 
     def confirm(self, challenge: str, address: str, probed: bool) -> str:
         """"trusted", "untrusted", "retry" (the request came on a connection opened before arming; the address is
@@ -272,7 +278,7 @@ class TrustCheck:
                 self._armed.pop(address, None)
                 entry["outcome"] = "trusted"
             if entry["outcome"] is None:
-                self._armed[address] = now + self.ARM_SECONDS
+                self._armed[address] = (now + self.ARM_SECONDS, challenge)
                 return "retry"
             return entry["outcome"]
 
