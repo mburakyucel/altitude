@@ -488,6 +488,17 @@ add/install it again from Chrome. If a bookmark retains the old icon after revis
 recreate that bookmark. Reopen the added app and check decision-alert permission/subscription on
 that device; reinstalling may reset it. Do not clear unrelated browser data or certificate trust.
 
+A gray tile showing a letter instead of the Climb mark means iOS could not fetch the icon, most often
+because the phone does not trust that installation's certificate authority. Safari still opens
+the page after "visit this website", but iOS fetches the Home Screen icon in a separate request that
+refuses the untrusted certificate silently. Every Altitude installation creates its own CA, so
+trusting one installation, for example a Linux host, does not trust another, such as a Mac. Open the
+address in a new Private tab: if Safari reports the connection as not private,
+[set up the phone](SETUP.md#set-up-a-phone) for this installation, confirm the Private tab loads
+without a warning, then remove the shortcut and add it again. Every generated CA is named "Altitude
+local CA", so Certificate Trust Settings lists one same-named entry per installed profile; check
+that every entry is on.
+
 The delivered browser checks verify served files and icon geometry at phone and desktop sizes.
 Native iOS/Safari and Android/Chrome installation and refresh behavior require device observation;
 browser fixtures do not establish it.
