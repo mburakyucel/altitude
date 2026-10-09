@@ -26,11 +26,11 @@ ui-validate:    ## disposable candidate fictional browser checks; invoke with al
 ui-ios:         ## opt-in emulated iPhone walkthroughs in desktop WebKit, outside make check (build first; CAPTURE=1 with UI_ARGS=spec keeps GIFs in web/ui-artifacts/ios/captures)
 	$(if $(CAPTURE),$(if $(UI_ARGS),,$(error CAPTURE=1 records only the journeys UI_ARGS selects)))
 	cd web && $(if $(CAPTURE),ALTITUDE_UI_CAPTURE=ui-artifacts/ios/captures) pnpm ui:ios $(UI_ARGS)
-ui-simulator:   ## opt-in phone walkthrough in iOS Safari on a disposable Simulator iPhone (macOS, [RESULTS=dir] [CAPTURE=1]); inside a task, through the validation runner
+ui-simulator:   ## opt-in phone walkthrough in iOS Safari on a disposable Simulator iPhone (macOS, [STEPS="profile home-screen"] [RESULTS=dir] [CAPTURE=1]); inside a task, through the validation runner
 ifdef ALTITUDE_TASK
-	alt task validate --simulator $(if $(CAPTURE),--capture) -- sh -c 'make web && make ui-simulator'
+	alt task validate --simulator $(if $(CAPTURE),--capture) -- sh -c 'make web && make ui-simulator$(if $(STEPS), STEPS="$(STEPS)")'
 else
-	python3 scripts/ios_simulator.py $(RESULTS)
+	python3 scripts/ios_simulator.py $(if $(STEPS),--steps "$(STEPS)") $(RESULTS)
 endif
 installation-vm: ## installation lifecycle, install.sh bootstrap and reboot in a throwaway KVM VM (RESULTS=dir [SOURCE=ref] [BASELINE=published tag [RECOVERY=1 | PUBLIC=1]] [CAPTURE=1]); inside a task, through the validation runner
 ifdef ALTITUDE_TASK
