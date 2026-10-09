@@ -1339,7 +1339,7 @@ same 3600-second bound, so a merging candidate keeps the turn while its fresh re
 queued or running and one green check leads to one merge; `--wait` only shortens it. GitHub registers
 a head's checks one at a time, so a required check absent from the head is waited for within the same
 bound rather than read as skipped; landing names it and the checks that have registered, such as a
-nonrequired skipped hosted job. Landing prints the remaining bound when it first sees pending or
+skipped nonrequired job. Landing prints the remaining bound when it first sees pending or
 unregistered required checks. A required check that never registers within the bound ends the wait as
 `missing` with that observation and does not merge. An admission timeout refuses without selecting
 a candidate or publishing changes; retry explicitly when ready.
