@@ -537,7 +537,8 @@ The Apple touch icon, browser/bookmark icons and manifest app icons use the appr
 The manifest opens the app at `/` in a standalone window where supported. Altitude still needs a
 connection to its server; installation adds no offline mode.
 
-For an existing shortcut or installed app showing an older icon, follow the
+For an existing shortcut or installed app showing an older icon, or an iPhone tile showing a gray
+letter instead of the Climb mark, follow the
 [icon refresh steps](OPERATIONS.md#refreshing-home-screen-and-bookmark-icons).
 
 ### Alerts for new decisions

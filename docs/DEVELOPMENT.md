@@ -567,9 +567,9 @@ make ui-simulator STEPS="profile home-screen"   # only these steps, from navigat
   first.
 - **Native walks.** Safari's own menus, the Home Screen and Settings are out of the inspector's reach.
   The relay's other request, `_rpc_altitudeWalk:`, asks for one of two fixed walks at an address the
-  relay would open: `home-screen`, Add to Home Screen with an optional pairing code for the app it opens,
-  or `profile`, a device setup page's profile through Settings. altd runs them with Apple's UI testing
-  (XCUITest). At the first walk it copies the walks' source, one Swift file and a minimal Xcode project in
+  relay would open: `home-screen`, Add to Home Screen and the app it opens, or `profile`, a device
+  setup page's profile through Settings. altd runs them with Apple's UI testing (XCUITest). At the
+  first walk it copies the walks' source, one Swift file and a minimal Xcode project in
   `altitude/walks/`, from its own deployed code into the run's area, outside the run's folders, and builds
   it there; it never builds the candidate's copy. It then runs one walk at a time with `xcodebuild`
   pointed at the run's private device set, so the walk can reach no other phone. A walk writes each step
@@ -622,13 +622,14 @@ unless `STEPS` (its `--steps`) names some, separated by spaces or commas:
   another CA of the generator.
 - `home-screen`: the Home Screen walk at the app's root and at the task's address. It opens the address
   in Safari, taps **Share** in the page menu, **Add to Home Screen** and **Add**, finds the icon on the
-  Home Screen, opens it, and pairs the app it opens with a code the run gets from the fixture service.
+  Home Screen and opens it.
   The sheet must offer the title Altitude with **Open as Web App** on. The web clip must have the title
   Altitude, the manifest's start address (`/`, from either address) and full screen. Its icon, which iOS
   stores re-encoded, must show the approved Climb `apple-touch-icon.png` pixel for pixel; both files'
-  SHA-256 are recorded. The icon must open the app with Safari not in front, and the app must ask to be
-  paired although Safari is, then pair as a "Home Screen app on iPhone", the name Altitude gives a
-  standalone app.
+  SHA-256 are recorded. The icon must open the app with Safari not in front, already paired with no
+  new device: iOS copies Safari's cookies to a web app when it adds it, so the app keeps Safari's
+  pairing. Safari's pairing cookie lasts as long as a paired device's, as the server sets it, so it
+  survives the walks closing Safari.
 
 The profile and Home Screen steps record a row per walk step and per check of what it showed:
 completed, not reachable with the reason, or failed with what differed, and a failed `runner` row when
@@ -829,7 +830,7 @@ Device results name their evidence class; a result in one class never stands in 
 | --- | --- | --- | --- |
 | Chromium phone/desktop | `make check` (required) | Application behavior, layouts and interaction states on both viewports | Any Safari or iOS behavior |
 | Emulated iPhone WebKit | `make ui-ios` (opt-in) | The same walkthroughs in Playwright's WebKit engine with iPhone metrics, touch and user agent | iOS Safari, Home Screen mode, real microphone/speech, icon selection or certificate trust |
-| iOS Simulator on a Mac | `make ui-simulator` (opt-in, [iOS Simulator runs](#ios-simulator-runs)) | iOS Safari's rendering, layout, viewport and WebKit APIs (such as `webkitSpeechRecognition`) in a scripted phone-layout journey with fixture engines; iOS accepting a CA and server certificate from Altitude's generator over HTTPS without a warning once the CA is trusted, for a loopback address; Add to Home Screen at the root and a nested address: the sheet's title, the stored icon against the approved one pixel for pixel, the start address, the app opening on its own with its own storage and pairing as a Home Screen app; the setup page's profile through Download, Allow, Profile Downloaded, its name and SHA-256, Install and Certificate Trust Settings, then HTTPS without a warning; on the recorded Xcode, iOS runtime and iPhone model | A finger's touch, real audio capture or dictation, a passcode during Install, a private-network address, the operator's own CA and network, other iOS versions; physical-iPhone acceptance |
+| iOS Simulator on a Mac | `make ui-simulator` (opt-in, [iOS Simulator runs](#ios-simulator-runs)) | iOS Safari's rendering, layout, viewport and WebKit APIs (such as `webkitSpeechRecognition`) in a scripted phone-layout journey with fixture engines; iOS accepting a CA and server certificate from Altitude's generator over HTTPS without a warning once the CA is trusted, for a loopback address; Add to Home Screen at the root and a nested address: the sheet's title, the stored icon against the approved one pixel for pixel, the start address, the app opening on its own, paired with the cookies iOS copies from Safari; the setup page's profile through Download, Allow, Profile Downloaded, its name and SHA-256, Install and Certificate Trust Settings, then HTTPS without a warning; on the recorded Xcode, iOS runtime and iPhone model | A finger's touch, pairing a Home Screen app added before Safari was paired, real audio capture or dictation, a passcode during Install, a private-network address, the operator's own CA and network, other iOS versions; physical-iPhone acceptance |
 | Physical iPhone | Operator observation; [voice troubleshooting](OPERATIONS.md#on-iphone) reports | Native capture, trust, installed icon, Home Screen lifecycle | Other devices or OS versions |
 
 Run the emulated iPhone lane for changes to phone-facing behavior such as voice, pairing, Home
