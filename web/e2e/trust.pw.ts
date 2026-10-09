@@ -20,7 +20,7 @@ function screen(page: Page) {
   };
 }
 
-test("a browser that proceeded past the certificate warning is not trusted and is not offered the code", async ({ page }, info) => {
+test("a browser that proceeded past the certificate warning is not trusted and is not offered the code @chromium", async ({ page }, info) => {
   const walk = walkthrough(page, info);
   const view = screen(page);
   await page.goto("/").catch(() => undefined);  // Chromium refuses the unknown CA with its warning page
@@ -46,7 +46,7 @@ test("a browser that proceeded past the certificate warning is not trusted and i
 test.describe("told to ignore certificate errors", () => {
   test.use({ ignoreHTTPSErrors: true });
 
-  test("the browser is still not trusted, because it refuses the second certificate before ignoring that", async ({ page }, info) => {
+  test("the browser is still not trusted, because it refuses the second certificate before ignoring that @chromium", async ({ page }, info) => {
     const walk = walkthrough(page, info);
     const view = screen(page);
     await walk.open("/");

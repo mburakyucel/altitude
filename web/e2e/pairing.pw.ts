@@ -241,16 +241,19 @@ test("a device on the network checks that it trusts Altitude's certificate befor
   const walk = walkthrough(page, info);
   const { heading, trust, field, check, app } = screen(page);
   const device = await asDevice(page);
-  const phone = info.project.name === "phone";  // the phone project is an Android browser
+  const agent = await page.evaluate(() => navigator.userAgent);
+  const apple = /iPhone|iPad|iPod/.test(agent);
+  const android = /Android/.test(agent);
   await walk.open("/");
   await walk.state("01-not-trusted", {
     visible: [heading, page.getByText("You opened Altitude’s HTTPS address."), trust.getByText("Not trusted yet", { exact: true }),
-      trust.getByRole("link", { name: "Download the certificate" }), check,
-      page.getByText(phone ? "Not trusted yet. Install the certificate as a CA certificate."
+      trust.getByRole("link", { name: apple ? "Download the profile" : "Download the certificate" }), check,
+      page.getByText(apple ? "Not trusted yet. The usual missing step is the switch in Certificate Trust Settings."
+        : android ? "Not trusted yet. Install the certificate as a CA certificate."
         : "Not trusted yet. Import the certificate as a trusted authority, then restart the browser.")],
-    hidden: [field, trust.getByRole("link", { name: "Download the profile" }), trust.getByText(/^[0-9A-F]{2}( [0-9A-F]{2}){7}$/)],
+    hidden: [field, trust.getByRole("link", { name: apple ? "Download the certificate" : "Download the profile" }), trust.getByText(/^[0-9A-F]{2}( [0-9A-F]{2}){7}$/)],
   });
-  if (!phone) await expect(trust.getByRole("link", { name: "Setup guide" })).toBeVisible();
+  if (!apple && !android) await expect(trust.getByRole("link", { name: "Setup guide" })).toBeVisible();
   const release = device.hold();
   await walk.state("02-checking", { action: () => check.click(), visible: [trust.getByText("Checking…")], hidden: [field] });
   await expect(check).toBeDisabled();
@@ -258,7 +261,7 @@ test("a device on the network checks that it trusts Altitude's certificate befor
   await walk.state("03-trusted", {
     action: async () => release(),
     visible: [trust.getByText("Trusted", { exact: true }), field],
-    hidden: [trust.getByRole("link", { name: "Download the certificate" }), check],
+    hidden: [trust.getByRole("link", { name: /^Download/ }), check],
   });
   await page.unroute("**/api/access");
   const value = await code(request);
