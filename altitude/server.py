@@ -2741,14 +2741,19 @@ class FolderError(ValueError):
         self.status = status
 
 
+def typed_folder(raw: str) -> Path:
+    """A folder path as the operator typed it, `~` expanded as text: nothing reads the folder until it is validated."""
+    return Path(os.path.expanduser(Path(raw)))
+
+
 def folders(raw: str | None) -> dict:
     """One folder the operator opened in the folder browser: its visible subfolders, never files or contents.
 
     Browsing starts at the home folder and stays inside it after following links; hidden folders stay out.
     """
     home = (platform.CONTAINER_PROJECTS if platform.containerized() else config.HOME).resolve()
-    typed = os.path.expanduser(raw) if raw else str(home)
-    if not os.path.isabs(typed):
+    typed = typed_folder(raw) if raw else home
+    if not typed.is_absolute():
         raise FolderError("Choose an absolute folder path.", 400)
     # Links are followed and the result is bounded by the home folder's prefix (with its separator, so home itself
     # passes and a sibling such as `/home/user2` does not) before anything reads the folder.
@@ -2785,8 +2790,7 @@ def save_projects_folder(body: dict) -> dict:
     if body.keys() - {"path"}:
         raise ValueError("Unsupported projects folder fields.")
     path = body.get("path")
-    # `~` expands as text: the folder itself is read only by the machine request's validation.
-    value = str(Path(os.path.expanduser(path))) if isinstance(path, str) and path.strip() else None
+    value = str(typed_folder(path)) if isinstance(path, str) and path.strip() else None
     _save_machine("projects_folder", value, "Projects folder")
     return {"roots": [home_relative(r) for r in config.project_roots()]}
 

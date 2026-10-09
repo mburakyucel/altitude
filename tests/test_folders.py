@@ -63,7 +63,8 @@ class TestFolders(FolderCase):
     def test_a_typed_path_is_normalised_before_the_home_bound_applies(self):
         self.setenv("HOME", str(self.home))
         (self.tmp / "home2").mkdir()  # shares the home folder's name as a prefix, not as a folder
-        for path in (str(self.home / "code" / ".." / "Projects"), "~/Projects", str(self.home) + "//Projects/"):
+        for path in (str(self.home / "code" / ".." / "Projects"), "~/Projects", "./~/Projects",
+                     str(self.home) + "//Projects/"):
             with self.subTest(path=path):
                 view = server.folders(path)
                 self.assertEqual((view["path"], view["parts"]), (str((self.home / "Projects").resolve()), ["Projects"]))
@@ -121,8 +122,8 @@ class TestProjectsFolder(FolderCase):
     def test_any_existing_absolute_folder_is_stored_as_typed_with_home_expanded(self):
         """Browsing stays inside home, but a typed projects folder may be anywhere the operator can read."""
         self.setenv("HOME", str(self.home))
-        for typed, stored in (("~/code", self.home / "code"), (str(self.tmp / "outside") + "/", self.tmp / "outside"),
-                              (str(self.home / ".secrets"), self.home / ".secrets"),
+        for typed, stored in (("~/code", self.home / "code"), ("./~/code", self.home / "code"),
+                              (str(self.tmp / "outside") + "/", self.tmp / "outside"), (str(self.home / ".secrets"), self.home / ".secrets"),
                               (str(self.home / "code" / ".." / "Projects"), self.home / "code" / ".." / "Projects")):
             with self.subTest(typed=typed):
                 server.save_projects_folder({"path": typed})
