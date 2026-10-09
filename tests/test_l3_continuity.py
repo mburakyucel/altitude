@@ -207,31 +207,19 @@ class TestL3Continuity(AltitudeCase):
                     self.assertIn("alt task resume <slug> --reason", text)
                     self.assertIn("Coordinator messages to faulted tasks are non-waking", text)
 
-    def test_interrupted_turn_records_partial_reply_and_reaches_the_next_session_marked(self):
+    def test_historical_interrupted_reply_reaches_the_next_session_marked(self):
         for first, second in (("claude", "codex"), ("codex", "claude")):
             for partial in ("Checking the first log", ""):
                 with self.subTest(first=first, partial=partial):
                     project = f"interrupted-{first}-{bool(partial)}"
                     self.register(project)
-                    sid = f"session-{first}"
-
-                    def stopped(_text, **_kwargs):
-                        return {"text": partial, "session_id": sid, "reported_session_id": sid, "usage": {},
-                                "context_tokens": 0, "error": None, "tools": [], "interrupted": True,
-                                "safe_to_retry": False}
-
-                    seam = "claude_print" if first == "claude" else "codex_exec"
-                    with mock.patch.object(l3, "_select", return_value={"engine": first, "why": "fixture"}), \
-                         mock.patch.object(engines, seam, side_effect=stopped):
-                        result = l3.turn(project, "Keep working", trigger="chat")
-                    self.assertTrue(result["interrupted"])
-                    self.assertFalse(result["completed"])
-                    self.assertFalse(result.get("error"), "an interruption is not a failure")
+                    # Retained history predates native delivery; Send now no longer creates hard-interrupted turns.
+                    l3.chat_log(project, "user", "Keep working", trigger="chat", turn_id="historical-turn")
+                    l3.chat_log(project, "assistant", partial, trigger="chat", turn_id="historical-turn",
+                                engine=first, interrupted=True)
                     rows = [row for row in l3.chat_history(project, None) if row["role"] != "user"]
                     self.assertEqual([(row["role"], row["text"], row.get("interrupted")) for row in rows],
                                      [("assistant", partial, True)])
-                    self.assertEqual(l3.info(project)["sessions"][first]["session_id"], sid)
-
                     text, _ = self.turn("Use the other branch", second, project=project)
                     self.assertIn(f"- assistant (interrupted by the operator's next message): {partial}\n", text)
                     self.assertNotIn("Interrupted for a queued message", text)

@@ -166,6 +166,23 @@ class TestQueuedNotifications(AltitudeCase):
         self.assertEqual(self.rows_of(turn_id), [("user", "chat"), ("assistant", "chat")])
         self.assertEqual(l3.send_now(self.project, kept["id"])["status"], "delivered")
 
+    def test_refused_send_now_group_keeps_every_member_out_of_retry_handoff(self):
+        texts = ["First unique instruction", "Middle unique instruction", "Last unique instruction"]
+        group = [l3.queue_message(self.project, text, trigger="chat", role=config.OPERATOR_ACTOR)
+                 for text in texts]
+        l3.send_now(self.project, group[-1]["id"])
+        self.mode = "limited"
+        self.assertTrue(l3.deliver_queued(self.project)["undelivered"])
+        self.recover()
+        self.assertTrue(l3.deliver_queued(self.project)["undelivered"])
+        self.assertEqual(self.queue()[0]["queue_ids"], [row["id"] for row in group])
+        self.recover()
+        self.mode = "ok"
+        l3.deliver_queued(self.project)
+        self.assertEqual([self.prompts[-1].count(text) for text in texts], [1, 1, 1])
+        self.assertEqual(self.queue(), [])
+        self.assertEqual([row["text"] for row in self.history() if row["role"] == "user"], texts)
+
     def test_kept_chat_waiting_for_its_retry_time_is_overtaken_only_by_send_now(self):
         self.mode = "expired-limit"
         l3.queue_message(self.project, "Fictional refused chat", trigger="chat", role=config.OPERATOR_ACTOR)

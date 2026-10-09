@@ -938,6 +938,45 @@ describe("Conversation", () => {
     expect(within(region).queryByRole("status", { name: "L3 is answering" })).toBeNull();
   });
 
+  it("a Send now message the streamed turn takes in ends the reply so far and the reply continues under it", async () => {
+    const reply = liveReply();
+    const stored = [...history];
+    mockFetch({ chatFn: () => jsonResponse({ ...chatView, history: stored }), post: () => reply.response });
+    const { user, queryClient } = renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    await user.type(screen.getByLabelText("Message L3 about altitude"), "Keep working");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    try {
+      await act(async () => {
+        reply.frame({ turn: { id: "first", started_at: ago(0), trigger: "chat" } });
+        reply.frame({ t: "Checking the current work." });
+        reply.frame({ turn: { id: "second", started_at: ago(0), trigger: "chat" }, user: "Deliver this next" });
+      });
+      // Until the history has the first exchange, the page keeps it in place above the message that joined.
+      const earlier = await within(region).findByText("Checking the current work.");
+      const joined = within(region).getByText("Deliver this next");
+      expect(earlier.compareDocumentPosition(joined) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(within(region).getByText("Keep working")).toBeInTheDocument();
+      await act(async () => reply.frame({ t: "Read: Deliver this next." }));
+      expect(await within(region).findByText("Read: Deliver this next.")).toBeInTheDocument();
+      stored.push(
+        { at: ago(0), role: "user", text: "Keep working", trigger: "chat", turn_id: "first" },
+        { at: ago(0), role: "assistant", text: "Checking the current work.", trigger: "chat", turn_id: "first" },
+        { at: ago(0), role: "user", text: "Deliver this next", trigger: "chat", turn_id: "second" },
+        { at: ago(0), role: "assistant", text: "Read: Deliver this next.", trigger: "chat", turn_id: "second" },
+      );
+      await act(async () => {
+        reply.frame({ done: { turn_id: "second" } });
+        reply.close();
+        await queryClient.invalidateQueries({ queryKey: ["chat", "altitude"] });
+      });
+      await waitFor(() => expect(within(region).getAllByText("Checking the current work.")).toHaveLength(1));
+      for (const text of ["Keep working", "Deliver this next", "Read: Deliver this next."]) {
+        expect(within(region).getAllByText(text)).toHaveLength(1);
+      }
+    } finally { await act(async () => reply.close()); }
+  });
+
   it("appends the bubble at once with a sending cue and settles the same bubble in place when the stream accepts it", async () => {
     const reply = liveReply();
     const stored = [...history];
@@ -1083,6 +1122,17 @@ describe("Conversation", () => {
     await user.click(within(list).getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(posted(fetchMock, "/api/chat/remove")).toEqual({ project: "altitude", id: "q1" }));
     await waitFor(() => expect(within(region).queryByRole("list", { name: "Queued messages" })).toBeNull());
+  });
+
+  it("preserves an uncertain delivery receipt in stored project history", async () => {
+    mockFetch({ chat: { ...chatView, history: [
+      { at: ago(5), role: "user", text: "Possibly read", trigger: "chat", turn_id: "uncertain", delivery: { state: "unconfirmed", at: ago(5) } },
+    ] } });
+    renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    expect(within(region).getByText("Delivery unconfirmed", { exact: true })).toBeInTheDocument();
+    expect(within(region).getAllByText("Possibly read")).toHaveLength(1);
+    expect(within(region).queryByRole("button", { name: "Retry" })).toBeNull();
   });
 
   it("offers Retry under a failed reply and resends the same prompt", async () => {

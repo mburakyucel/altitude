@@ -435,6 +435,17 @@ class AltitudeCase(unittest.TestCase):
         self.addCleanup(patcher.stop)
         return patcher.start()
 
+    def fake_engines(self) -> Path:
+        """Both engine executables become `tests/fake_engine.py`, which the real engine driver runs for the case."""
+        fake = Path(__file__).resolve().parent / "fake_engine.py"
+        engine = self.tmp / "engine"
+        engine.write_text(f"#!{sys.executable}\nimport runpy, sys\nsys.argv[0] = {str(fake)!r}\n"
+                          f"runpy.run_path({str(fake)!r}, run_name='__main__')\n")
+        engine.chmod(0o755)
+        self.patch(config, "CLAUDE_BIN", str(engine))
+        self.patch(config, "CODEX_BIN", str(engine))
+        return engine
+
     def quiet_engines(self, agents: list[dict] | None = None) -> None:
         """No usage hold, known quota, and only the given Claude agents: the dispatcher sees a free machine."""
         self.patch(engines, "claude_agents", return_value=list(agents or []))

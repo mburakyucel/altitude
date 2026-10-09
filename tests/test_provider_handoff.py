@@ -136,8 +136,9 @@ class TestProviderHandoff(AltitudeCase):
         self.assertEqual(T.task_messages(self.project, slug), rows)
         self.assertEqual(T.pending(self.project, slug), [], "Historical context must not requeue delivered messages")
         self.assertEqual(len(launch["images"]), len(rows))
-        args, prompt = engines._image_input(launch["engine"], launch["prompt"], launch["images"])
-        self.assertEqual(args, [], "A larger history uses native visual reads")
+        content = engines._engine_input(launch["engine"], launch["prompt"], launch["images"])
+        self.assertEqual([item["type"] for item in content], ["text"], "A larger history uses native visual reads")
+        prompt = content[0]["text"]
         self.assertIn("native view_image tool", prompt)
         for row, image in zip(rows, launch["images"]):
             self.assertIn(row["text"], prompt)
