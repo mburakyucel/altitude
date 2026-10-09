@@ -794,7 +794,8 @@ function TaskPage({
         <SteeringNotice steering={steering} />
         {!detailsOpen ? resumeError : null}
         {!detailsOpen && actions.error && actions.confirm ? <p className="task-line text-danger" role="alert">Could not {actions.confirm} the task. <button type="button" className="link" onClick={() => setDetailsOpen(true)}>Retry</button></p> : null}
-        <div className="task-tab-slot" ref={setTabSlot}>{terminalRoute ? null : tabs(null)}</div>
+        {terminalRoute ? null : tabs(null)}
+        <div className="task-tab-slot" ref={setTabSlot} />
         <div className="task-views">
           {/* Every view stays laid out; the idle ones are invisible until a drag reveals one (SPEC.md §3.10). */}
           <div className="task-track" ref={swipe.track} style={{ marginLeft: `${-100 * view}%` }}>

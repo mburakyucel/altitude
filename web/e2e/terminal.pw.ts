@@ -37,7 +37,8 @@ test("a task terminal opens in its worktree, closes when its shell exits and fol
   const keys = page.getByRole("toolbar", { name: "Terminal keys" });
   const toast = page.getByRole("status").filter({ hasText: /Terminal closed|terminal closed/ });
   const views = phone ? page.getByRole("navigation", { name: "Task views" }) : page.getByRole("navigation", { name: "Panel view" });
-  const close = panel.getByRole("button", { name: phone ? "Close terminal" : "Close" });
+  // The phone's × sits on the Terminal tab, in the tab row above the views.
+  const close = phone ? views.getByRole("button", { name: "Close terminal" }) : panel.getByRole("button", { name: "Close" });
 
   await walk.open(TASK);
   await views.getByRole("link", { name: "Terminal" }).click();
@@ -428,6 +429,8 @@ test("@phone-only swipes move through Conversation, Live session and Terminal; a
   const output = page.locator(".terminal-screen .xterm-rows");
   const track = page.locator(".task-track");
   const offset = () => track.evaluate((node) => parseFloat(node.style.transform.replace(/[^\d.-]/g, "")) || 0);
+  // A swipe that starts while the track still settles is left alone: wait for it to rest.
+  const rested = () => expect.poll(() => track.evaluate((node) => node.style.transform)).toBe("");
   const center = async (locator: typeof panel) => { const box = (await locator.boundingBox())!; return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; };
   expect((await request.post("/api/terminal-access", { data: { enabled: true } })).ok()).toBe(true);
 
@@ -471,7 +474,7 @@ test("@phone-only swipes move through Conversation, Live session and Terminal; a
     expect(await offset()).toBeGreaterThan(-60);
     await walk.state("06-end-resistance-after-terminal", { visible: [panel], hidden: [] });
   });
-  await expect.poll(offset).toBe(0);
+  await rested();
   await expect(page).toHaveURL(`${TASK}/terminal`);
 
   // Right returns the same way, one view per swipe, and the shell keeps running.
