@@ -1853,7 +1853,7 @@ def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
     # Auto may retry only a settled rejection with the entire turn proving no assistant/tool activity.
     try:
         stdout = paths["stdout"].read_text(errors="replace")
-        row.update(safe_to_retry=not alive and _safe_output(engine, stdout),
+        row.update(safe_to_retry=not job_active and _safe_output(engine, stdout),
                    rejection=rejection(engine, {"detail": detail, "raw_stdout": stdout}, record.get("launch_model")))
     except OSError:
         row.update(safe_to_retry=False, rejection=None)
