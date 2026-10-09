@@ -1401,7 +1401,9 @@ Landing publishes the PR and waits for its required `check` on the current head;
 run the full suite locally. The task branch includes current main. A branch missing current main
 needs reconciliation, a push and fresh PR checks on the new head. Final validation and merge are
 serialized across Altitude owners; the merged tree must equal the tested tree. Failed, pending, missing, skipped,
-cancelled, stale or unrelated required runs block. `--test-cmd` supplies no bypass for this gate.
+cancelled, stale or unrelated required runs block. GitHub-managed scans on the head, such as CodeQL
+default setup, need no PR identity but must pass like any other check: a failing scan blocks and a
+pending one is waited for. `--test-cmd` supplies no bypass for this gate.
 
 After a bounded CI wait, retain the run and missing evidence, explicitly block and ask L3 for a
 [durable CI recheck](#durable-ci-recheck). A missing run needs trigger/runner recovery, not an

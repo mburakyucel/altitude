@@ -2105,6 +2105,46 @@ class TestRequiredPrCheck(AltitudeCase):
                 land.land("assessment and registration both time out", cwd=self.repo, wait=30, merge=True)
         self.assert_not_merged()
 
+    def github_managed_scans(self, *, commit=None):
+        """CodeQL default setup: `dynamic` runs tied to no PR, plus its code-scanning summary."""
+        scans = []
+        for name in ("Analyze (actions)", "Analyze (python)", "CodeQL"):
+            scan = copy.deepcopy(self.required_check)
+            scan.update(name=name, status="COMPLETED", conclusion="SUCCESS", isRequired=False)
+            scan["checkSuite"].update(
+                commit={"oid": commit or self.head}, branch=None, matchingPullRequests=self.connection([]),
+                app={"databaseId": 15368 if name != "CodeQL" else 57789},
+                workflowRun={"event": "dynamic", "file": None} if name != "CodeQL" else None)
+            scans.append(scan)
+        self.contexts().update(self.connection([self.required_check, *scans]))
+        S.write_json(self.ghdir / "checks.json", [{"bucket": "pass"}] * 4)
+        return scans
+
+    def test_green_github_managed_scans_land_with_the_required_check(self):
+        self.github_managed_scans()
+        self.assertEqual(self.classify(), "pass")
+        result = land.land("green check and CodeQL", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual((result["checks"], result["merged"]), ("pass", True))
+
+    def test_failing_or_pending_github_managed_scan_blocks(self):
+        scan = self.github_managed_scans()[1]
+        for bucket, status, conclusion in (("fail", "COMPLETED", "FAILURE"), ("pending", "IN_PROGRESS", None)):
+            with self.subTest(bucket=bucket):
+                scan.update(status=status, conclusion=conclusion)
+                self.assertEqual(self.classify(), bucket)
+                self.assertFalse(land.land("CodeQL not green", cwd=self.repo, wait=0, merge=True)["merged"])
+        self.assert_not_merged()
+
+    def test_github_managed_scans_never_stand_in_for_the_required_check(self):
+        scans = self.github_managed_scans()
+        scans[1]["name"] = "check"
+        self.contexts().update(self.connection(scans))
+        self.assertEqual(self.classify(), "missing")
+        scans[1]["checkSuite"]["commit"]["oid"] = "0" * 40
+        with self.assertRaisesRegex(land.LandError, "unrelated"):
+            self.classify()
+        self.assert_not_merged()
+
     def test_name_app_workflow_and_event_must_identify_the_required_pr_run(self):
         original = copy.deepcopy(self.required_check)
         for change in ("name", "app", "workflow", "push", "pull_request_target"):

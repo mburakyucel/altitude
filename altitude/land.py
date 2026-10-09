@@ -589,7 +589,10 @@ def _checks_evidence(root: Path, pair: dict) -> str:
             if suite["commit"]["oid"] != candidate["oid"] or not isinstance(check["isRequired"], bool):
                 raise LandError("check result is unrelated to the pinned candidate or lacks requiredness")
             run = suite.get("workflowRun")
-            if run:
+            # GitHub-managed workflows (CodeQL default setup) run on the commit with event `dynamic` and no
+            # PR: the commit binding above identifies them, they never qualify as the gate, and their
+            # results count like any other check's.
+            if run and run["event"] != "dynamic":
                 related = _complete_check_nodes(suite["matchingPullRequests"])
                 if (run["event"] not in {"push", "pull_request", "pull_request_target"}
                         or not any((p["number"], p["baseRefName"], p["headRefName"]) ==
