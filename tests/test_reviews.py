@@ -86,7 +86,7 @@ class TestReviews(AltitudeCase):
         self.assertIn("[REDACTED]", evidence["stderr"])
         saved = S.load_task(self.project, self.slug)
         self.assertEqual(saved["reviews"][0]["diagnostics"], evidence)
-        self.assertEqual(reviews.view(self.project, self.slug)["latest"]["diagnostics"], evidence)
+        self.assertEqual(reviews.view(self.project, self.slug)["history"][-1]["diagnostics"], evidence)
         for private in ("PRIVATE TRANSCRIPT", "fictional-secret-value"):
             self.assertNotIn(private, json.dumps(saved))
         self.assertNotIn("diagnostics", json.dumps(S.load_task(self.project, other["slug"])))
@@ -120,7 +120,7 @@ class TestReviews(AltitudeCase):
                 self.assertEqual(evidence["stderr"], "")
                 self.assertEqual(evidence["stdout_state"], "recognized_error")
                 self.assertEqual(evidence["stdout_errors"], ["connection", "captured_input"])
-                self.assertEqual(reviews.view(self.project, self.slug)["latest"]["diagnostics"], evidence)
+                self.assertEqual(reviews.view(self.project, self.slug)["history"][-1]["diagnostics"], evidence)
                 self.assertNotIn("PRIVATE SOURCE", json.dumps(S.load_task(self.project, self.slug)))
                 self.engine.side_effect = self.success
                 completed = self.run_review(self.request(previous=failed["id"]))
@@ -142,7 +142,7 @@ class TestReviews(AltitudeCase):
             f"import sys; sys.stdin.read(); print({json.dumps(record)!r}); sys.exit(1)"])
         failed = self.run_review(self.request())
         self.assertEqual(failed["state"], "failed")
-        evidence = reviews.view(self.project, self.slug)["latest"]["diagnostics"]
+        evidence = reviews.view(self.project, self.slug)["history"][-1]["diagnostics"]
         self.assertEqual((evidence["stdout_state"], evidence["stdout_errors"]), ("unrecognized_error", []))
         self.assertEqual(evidence["stdout_facts"], {"subtype": "success", "terminal_reason": "api_error",
                                                     "api_error_status": 401, "num_turns": 1, "api_contacted": True})
@@ -183,11 +183,11 @@ class TestReviews(AltitudeCase):
             projects.pop(self.project)
         self.pick.reset_mock()
         saved = reviews.view(self.project, self.slug)
-        self.assertEqual(saved["latest"]["id"], completed["id"])
-        self.assertEqual(saved["latest"]["result"], completed["result"])
-        self.assertEqual(saved["latest"]["coverage"], "unknown")
-        self.assertFalse(saved["available"])
-        self.assertFalse(saved["subjects"]["proposal"]["available"])
+        self.assertEqual(saved["history"][-1]["id"], completed["id"])
+        self.assertEqual(saved["history"][-1]["result"], completed["result"])
+        self.assertEqual(saved["history"][-1]["coverage"], "unknown")
+        self.assertFalse(saved["subjects"]["changes"]["available"])
+        self.assertNotIn("proposal", saved["subjects"])  # a finished task shows only the kinds it reviewed
         self.pick.assert_not_called()
 
     def test_request_dedup_and_source_keep_operator_authority(self):
@@ -301,7 +301,13 @@ class TestReviews(AltitudeCase):
         task = S.load_task(self.project, self.slug)
         self.assertEqual(task["state"], "blocked")
         self.assertTrue(task["stop_id"])
-        self.assertFalse(reviews.view(self.project, self.slug)["available"])
+        # Trying again queues for the next resume; a request never undoes Stop.
+        self.assertTrue(reviews.view(self.project, self.slug)["subjects"]["changes"]["available"])
+        again = self.request(T.OPERATOR_MESSAGE_ROLE, request_id="after-stop", previous=result["id"])
+        self.assertEqual(reviews.view(self.project, self.slug)["history"][-1]["waiting"], "resume")
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual((task["state"], task.get("resume_request")), ("blocked", None))
+        self.assertEqual(again["state"], "requested")
         stop_review.assert_called_once()
         stopped.assert_called_once()
 
@@ -602,7 +608,7 @@ class TestReviews(AltitudeCase):
         self.engine.side_effect = lambda *args, **kwargs: {"error": "Launch interrupted", "termination_confirmed": False}
         result = self.run_review()
         reviews.poll(self.project)
-        current = reviews.view(self.project, self.slug)["latest"]
+        current = reviews.view(self.project, self.slug)["history"][-1]
         self.assertEqual(current["id"], result["id"])
         self.assertEqual(current["state"], "running")
         self.assertEqual(reviews.active_count(), 1)
@@ -680,7 +686,7 @@ class TestReviews(AltitudeCase):
         # server_close below joins the request handler, including the durable final receipt.
         httpd.shutdown()
         httpd.server_close()
-        result = reviews.view(self.project, self.slug)["latest"]
+        result = reviews.view(self.project, self.slug)["history"][-1]
         self.assertEqual(result["state"], "cancelled")
         self.assertEqual(reviews.active_count(), 0)
 
@@ -713,7 +719,7 @@ class TestReviews(AltitudeCase):
 
     def test_running_and_historical_reviews_offer_only_valid_actions(self):
         def inspect_running(prompt, **kwargs):
-            latest = reviews.view(self.project, self.slug)["latest"]
+            latest = reviews.view(self.project, self.slug)["history"][-1]
             self.assertTrue(latest["can_cancel"])
             self.assertFalse(latest["can_withdraw"])
             return {"error": "Engine exited", "termination_confirmed": True}
@@ -722,7 +728,7 @@ class TestReviews(AltitudeCase):
         self.request(previous=failed["id"])
         history = reviews.view(self.project, self.slug)["history"]
         self.assertEqual(len(history), 2)
-        for key in ("can_withdraw", "can_cancel", "can_retry", "can_review_latest"):
+        for key in ("can_withdraw", "can_cancel", "can_again"):
             self.assertFalse(history[0][key], key)
 
     def test_request_and_merge_share_actual_nonblocking_lock(self):
@@ -749,7 +755,7 @@ class TestReviews(AltitudeCase):
         reviews.require_merge(self.project, self.slug, self.pair())
         saved = reviews.view(self.project, self.slug)["subjects"]["changes"]["latest"]
         self.assertEqual(saved["id"], completed["id"])
-        self.assertTrue(saved["can_review_latest"])
+        self.assertTrue(saved["can_again"])
         self.assertFalse(saved["can_withdraw"])
         later = self.request(actor=T.OPERATOR_MESSAGE_ROLE, previous=completed["id"])
         self.assertNotEqual(later["id"], completed["id"])
@@ -804,8 +810,8 @@ class TestReviews(AltitudeCase):
         with self.assertRaises(T.TransitionError) as refused:
             reviews.require_merge(self.project, self.slug, self.pair())
         self.assertIn("unresolved findings", str(refused.exception))
-        latest = reviews.view(self.project, self.slug)["latest"]
-        self.assertFalse(latest["can_review_latest"] or latest["can_review_again"])
+        latest = reviews.view(self.project, self.slug)["history"][-1]
+        self.assertFalse(latest["can_again"])
         resolved = assess("fixed", "Added the fallback and its regression test.")
         self.assertEqual(resolved["unresolved"], [])
         reviews.require_merge(self.project, self.slug, self.pair())
@@ -877,6 +883,9 @@ class TestReviews(AltitudeCase):
             self.request(subject="proposal", additional=True)
         reviews.assess(self.project, self.slug, clean["id"], actor="l2", expected_attempt=1, dispositions=[],
                        reason="Checked the addendum review")
+        # The kind reports the earlier review's open finding and offers no Review again over it.
+        proposal_view = reviews.view(self.project, self.slug)["subjects"]["proposal"]
+        self.assertEqual((proposal_view["latest"]["id"], proposal_view["open"], proposal_view["available"]), (clean["id"], 1, False))
 
         # The clean additional review does not clear the original's open finding, operator authority or hold.
         with self.assertRaisesRegex(T.TransitionError, f"{original['id']} \\(proposal\\) has unresolved findings: f1"):
@@ -895,6 +904,7 @@ class TestReviews(AltitudeCase):
         reviews.assess(self.project, self.slug, original["id"], actor="l2", expected_attempt=1, reason="Checked the proposal",
                        dispositions=[{"finding_id": "f1", "disposition": "fixed", "reason": "Recorded Linux evidence."}])
         reviews.require_merge(self.project, self.slug, self.pair())
+        self.assertEqual(reviews.view(self.project, self.slug)["subjects"]["proposal"]["open"], 0)
 
     def test_complete_proposal_and_retained_authority_capture_once_within_the_bound(self):
         # Container proposal capture (I-20260927-193716): 57 KB of mandatory authority plus a 13 KB proposal
@@ -1053,7 +1063,7 @@ class TestReviews(AltitudeCase):
         self.assertIn(result['id'] + ' (changes)', str(stale.exception))
         assessed = self.assess(result)
         T.message(self.project, self.slug, T.OPERATOR_MESSAGE_ROLE, "Correction: retain the empty result too.")
-        self.assertEqual(reviews.view(self.project, self.slug)["latest"]["coverage"], "earlier")
+        self.assertEqual(reviews.view(self.project, self.slug)["history"][-1]["coverage"], "earlier")
         with self.assertRaises(reviews.AssessmentRequired) as stale:
             reviews.require_merge(self.project, self.slug, self.pair())
         self.assertEqual(set(stale.exception.stale_reviews[0]['changes']), {'context_hash'})
@@ -1096,6 +1106,13 @@ class TestReviews(AltitudeCase):
         self.assess(result)
         self.assertEqual(git('rev-parse', 'FETCH_HEAD', cwd=self.worktree), fetched_head)
 
+    def test_owner_withdrawal_needs_a_reason(self):
+        review = self.request()
+        with self.assertRaisesRegex(T.TransitionError, "Record why"):
+            reviews.withdraw(self.project, self.slug, review["id"], actor="l2", expected_attempt=1, reason=" ")
+        withdrawn = reviews.withdraw(self.project, self.slug, review["id"], actor="l2", expected_attempt=1, reason="Superseded by the revised plan.")
+        self.assertEqual(withdrawn["withdrawal_reason"], "Superseded by the revised plan.")
+
     def test_failure_retry_preserves_operator_requirement(self):
         review = self.request(actor=T.OPERATOR_MESSAGE_ROLE)
         self.engine.side_effect = lambda *args, **kwargs: {"error": "Review engine exited", "termination_confirmed": True}
@@ -1106,7 +1123,9 @@ class TestReviews(AltitudeCase):
         self.assertEqual(retry["previous"], review["id"])
         with self.assertRaises(T.TransitionError):
             reviews.withdraw(self.project, self.slug, retry["id"], actor="l2", expected_attempt=1, reason="Skip")
-        reviews.withdraw(self.project, self.slug, retry["id"], actor=T.OPERATOR_MESSAGE_ROLE, reason="Operator skips review")
+        # The operator's Skip needs no typed reason; the record names who skipped it.
+        skipped = reviews.withdraw(self.project, self.slug, retry["id"], actor=T.OPERATOR_MESSAGE_ROLE)
+        self.assertEqual((skipped["withdrawn_by"], skipped["withdrawal_reason"]), (T.OPERATOR_MESSAGE_ROLE, "Skipped by the operator."))
         reviews.require_merge(self.project, self.slug, self.pair())
         self.assertEqual(self.engine.call_count, 1)
 
@@ -1115,7 +1134,8 @@ class TestReviews(AltitudeCase):
         with self.assertRaisesRegex(T.TransitionError, "Only one engine"):
             self.request()
         view = reviews.view(self.project, self.slug)
-        self.assertFalse(view["available"])
+        self.assertFalse(view["subjects"]["changes"]["available"])
+        self.assertIn("Only one engine", view["subjects"]["changes"]["why"])
         self.assertEqual(view["history"], [])
         self.pick.return_value = self.choice
         review = self.request()
@@ -1161,8 +1181,11 @@ class TestReviews(AltitudeCase):
             self.assertEqual(self.run_review(review)["state"], "running")
             duplicate = self.request(actor=T.OPERATOR_MESSAGE_ROLE)
             self.assertEqual(duplicate["id"], review["id"])
-            with self.assertRaisesRegex(T.TransitionError, "Another cross-engine review"):
-                reviews.request(self.project, other["slug"], actor=T.OPERATOR_MESSAGE_ROLE, request_id=uuid.uuid4().hex)
+            # The other task's request queues, waits for the reviewer and cannot launch a second one.
+            queued = reviews.request(self.project, other["slug"], actor=T.OPERATOR_MESSAGE_ROLE, request_id=uuid.uuid4().hex)
+            self.assertEqual(reviews.view(self.project, other["slug"])["history"][-1]["waiting"], "reviewer")
+            with self.assertRaisesRegex(T.TransitionError, "Another adversarial review"):
+                reviews.run(self.project, other["slug"], queued["id"], actor="l2", expected_attempt=1)
             return self.success(prompt, **kwargs)
         self.engine.side_effect = during_run
         self.assertEqual(self.run_review(review)["state"], "completed")
@@ -1173,7 +1196,7 @@ class TestReviews(AltitudeCase):
         result = self.run_review()
         folder = S.task_dir(self.project, self.slug)
         before = {p.relative_to(folder): hashlib.sha256(p.read_bytes()).hexdigest() for p in folder.rglob("*") if p.is_file()}
-        self.assertEqual(reviews.view(self.project, self.slug)["latest"]["state"], "completed")
+        self.assertEqual(reviews.view(self.project, self.slug)["history"][-1]["state"], "completed")
         after = {p.relative_to(folder): hashlib.sha256(p.read_bytes()).hexdigest() for p in folder.rglob("*") if p.is_file()}
         self.assertEqual(before, after)
         self.assertEqual(self.run_review(result)["id"], result["id"])
@@ -1301,17 +1324,22 @@ class TestReviews(AltitudeCase):
             reviews.require_merge(self.project, self.slug, self.pair())
         self.assertEqual(self.engine.call_count, 2)
 
-    def test_stop_fault_and_planned_wait_still_refuse_review(self):
+    def test_stop_fault_and_planned_wait_queue_review_without_resuming(self):
         for key, value in (("stop_id", "stop-1"), ("fault", "sandbox"), ("planned_wait", {"until": S.now()})):
             with self.subTest(key):
                 task = S.load_task(self.project, self.slug)
-                task.update({"stop_id": None, "fault": None, "planned_wait": None, key: value})
+                task.update({"state": "blocked", "stop_id": None, "fault": None, "planned_wait": None,
+                             "resume_request": None, "reviews": [], key: value})
                 S.save_task(self.project, task)
                 for subject in ("proposal", "changes"):
-                    self.assertEqual(reviews.view(self.project, self.slug)["subjects"][subject]["why"],
-                                     "Continue or settle the task before requesting review.")
-                    with self.assertRaisesRegex(T.TransitionError, "Continue or settle the task"):
-                        self.request(subject=subject)
+                    self.assertTrue(reviews.view(self.project, self.slug)["subjects"][subject]["available"])
+                    queued = self.request(T.OPERATOR_MESSAGE_ROLE, subject=subject)
+                    self.assertEqual(queued["state"], "requested")
+                task = S.load_task(self.project, self.slug)
+                woken = key == "planned_wait"  # a planned wait is not Stop or a fault: the request wakes the owner
+                self.assertEqual(bool(task.get("resume_request")), woken)
+                self.assertEqual({r["waiting"] for r in reviews.view(self.project, self.slug)["history"]},
+                                 {"owner" if woken else "resume"})
         self.engine.assert_not_called()
 
     def test_proposal_source_and_merge_approval_require_owner_reassessment(self):
@@ -1363,13 +1391,14 @@ class TestReviews(AltitudeCase):
 
     def test_subject_requests_do_not_hide_unresolved_other_subject_or_its_freshness(self):
         changes = self.request(actor=T.OPERATOR_MESSAGE_ROLE)
-        with self.assertRaisesRegex(T.TransitionError, "existing review"):
-            self.request(subject="proposal")
-        self.assertEqual(len(S.load_task(self.project, self.slug)["reviews"]), 1)
+        # Each kind queues on its own; a second request of the same kind returns the open one.
+        queued = self.request(subject="proposal")
+        self.assertEqual(self.request(subject="proposal")["id"], queued["id"])
+        self.assertEqual(len(S.load_task(self.project, self.slug)["reviews"]), 2)
         changes = self.run_review(changes)
         self.assess(changes)
         proposal = T.message(self.project, self.slug, "l2", "Proposal for follow-up behavior")
-        proposed = self.run_review(self.request(subject="proposal"), proposal_id=proposal["id"])
+        proposed = self.run_review(queued, proposal_id=proposal["id"])
         self.assess(proposed)
         view = reviews.view(self.project, self.slug)
         self.assertEqual(view["subjects"]["changes"]["latest"]["id"], changes["id"])
@@ -1389,9 +1418,7 @@ class TestReviews(AltitudeCase):
         self.assertTrue(result["allowance_known"])
         self.assertEqual(result["fallback_reason"], "Alternate account unavailable")
         self.choice.update(engine=config.ENGINES[1], same_engine=False, fallback_reason="")
-        view = reviews.view(self.project, self.slug)
-        self.assertFalse(view["same_engine"])
-        self.assertTrue(view["latest"]["same_engine"])
+        self.assertTrue(reviews.view(self.project, self.slug)["history"][-1]["same_engine"])
         self.assertEqual(self.engine.call_count, 1)
 
     def test_explicit_selection_routes_one_review_and_is_never_substituted(self):
@@ -1402,7 +1429,6 @@ class TestReviews(AltitudeCase):
         self.assertEqual(review["selection"], {"engine": None, "model": "chosen-model"})
         self.assertEqual((review["engine"], review["model"]), (config.ENGINES[0], "chosen-model"))
         self.assertEqual(self.pick.call_args.kwargs, {"engine": None, "model": "chosen-model"})
-        self.assertEqual(reviews.view(self.project, self.slug)["model"], "fixture-model")
         with self.assertRaisesRegex(T.TransitionError, "different focus or selection"):
             self.request(request_id=review["id"])
         # The selected model becomes unavailable: the run fails instead of launching the automatic choice.
