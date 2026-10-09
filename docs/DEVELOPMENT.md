@@ -1259,7 +1259,10 @@ reports `missing`.
 GitHub-managed scans, such as CodeQL default setup, run on the candidate commit with the `dynamic`
 event and no pull request. They are bound by that commit alone, never qualify as the PR `check`, and
 count like every other check on the candidate: a failing scan blocks and a pending one keeps the wait
-going. Every other workflow run must come from a push or pull request event of this PR's branch.
+going. CodeQL counts an alert as new in a PR when a step of its data flow lies in the changed code, so
+an alert already open on main can fail a PR that never touches its line: a browser-walkthrough fixture
+server subclassing `server.Handler` adds a request source. Such an alert is fixed at its sink.
+Every other workflow run must come from a push or pull request event of this PR's branch.
 Review and task/UX holds remain enforced. The operator chooses Altitude-only enforcement without
 a GitHub plan upgrade: GitHub web/API merges and other updates outside Altitude remain unprotected.
 All main updates must use `alt land` for its guarantee.

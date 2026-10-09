@@ -60,6 +60,19 @@ class TestFolders(FolderCase):
             server.folders(str(self.home / "gone"))
         self.assertEqual(caught.exception.status, 404)
 
+    def test_a_typed_path_is_normalised_before_the_home_bound_applies(self):
+        self.setenv("HOME", str(self.home))
+        (self.tmp / "home2").mkdir()  # shares the home folder's name as a prefix, not as a folder
+        for path in (str(self.home / "code" / ".." / "Projects"), "~/Projects", str(self.home) + "//Projects/"):
+            with self.subTest(path=path):
+                view = server.folders(path)
+                self.assertEqual((view["path"], view["parts"]), (str((self.home / "Projects").resolve()), ["Projects"]))
+        for path, status in ((str(self.home / "code" / ".." / ".secrets"), 403), (str(self.tmp / "home2"), 403),
+                             (str(self.home / ".." / "home2"), 403), ("~/../outside", 403), ("../home/code", 400)):
+            with self.subTest(path=path), self.assertRaises(server.FolderError) as caught:
+                server.folders(path)
+            self.assertEqual(caught.exception.status, status)
+
     def test_links_are_judged_by_where_they_lead(self):
         (self.home / "code" / "escape").symlink_to(self.tmp / "outside")
         (self.home / "code" / "shortcut").symlink_to(self.home / "Projects")
@@ -104,6 +117,19 @@ class TestProjectsFolder(FolderCase):
                 dispatch.request_setting(None, "projects_folder", value, "test", actor=config.OPERATOR_ACTOR)
         with self.assertRaises(ValueError):
             server.save_projects_folder({"path": str(self.home / "code"), "extra": 1})
+
+    def test_any_existing_absolute_folder_is_stored_as_typed_with_home_expanded(self):
+        """Browsing stays inside home, but a typed projects folder may be anywhere the operator can read."""
+        self.setenv("HOME", str(self.home))
+        for typed, stored in (("~/code", self.home / "code"), (str(self.tmp / "outside") + "/", self.tmp / "outside"),
+                              (str(self.home / ".secrets"), self.home / ".secrets"),
+                              (str(self.home / "code" / ".." / "Projects"), self.home / "code" / ".." / "Projects")):
+            with self.subTest(typed=typed):
+                server.save_projects_folder({"path": typed})
+                self.assertEqual(config.machine_settings()["projects_folder"], str(stored))
+        for typed in ("code", "../code", str(self.home / "missing")):
+            with self.subTest(typed=typed), self.assertRaises(dispatch.T.TransitionError):
+                server.save_projects_folder({"path": typed})
 
     @unittest.skipIf(os.geteuid() == 0, "root reads every folder")
     def test_an_unreadable_projects_folder_is_refused_and_never_breaks_discovery(self):

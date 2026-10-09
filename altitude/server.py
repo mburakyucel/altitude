@@ -1399,7 +1399,9 @@ class Handler(BaseHTTPRequestHandler):
             if len(parts) != 7:
                 return self._plain("Design unavailable", 404)
             return self._task_design([parts[1], *parts[3:6]], asset=unquote(parts[6]))
-        project = unquote(parts[1]) if len(parts) > 1 else ""
+        requested = unquote(parts[1]) if len(parts) > 1 else ""
+        # The registered name, never the request's own text, names the project from here on: it reaches a redirect header.
+        project = next((name for name in config.load_projects() if name == requested), "")
         if design_viewer_url(project) is None:
             return self._plain("not found", 404)
         if len(parts) == 2:  # the stable per-project link; the boards' relative imports need the depth
@@ -2745,13 +2747,17 @@ def folders(raw: str | None) -> dict:
     Browsing starts at the home folder and stays inside it after following links; hidden folders stay out.
     """
     home = (platform.CONTAINER_PROJECTS if platform.containerized() else config.HOME).resolve()
-    target = Path(raw).expanduser() if raw else home
-    if not target.is_absolute():
+    typed = os.path.expanduser(raw) if raw else str(home)
+    if not os.path.isabs(typed):
         raise FolderError("Choose an absolute folder path.", 400)
-    target = target.resolve()
-    if not target.is_relative_to(home) or any(part.startswith(".") for part in target.relative_to(home).parts):
+    # Links are followed and the result is bounded by the home folder's prefix (with its separator, so home itself
+    # passes and a sibling such as `/home/user2` does not) before anything reads the folder.
+    resolved = os.path.join(os.path.realpath(typed), "")
+    if (not resolved.startswith(os.path.join(home, ""))
+            or any(part.startswith(".") for part in Path(resolved).relative_to(home).parts)):
         raise FolderError("Choose a folder inside the container projects volume." if platform.containerized()
                           else "Browsing stays inside your home folder. Type the path to add a folder elsewhere.", 403)
+    target = Path(resolved)
     if not target.is_dir():
         raise FolderError("This folder no longer exists.", 404)
     view = {"path": str(target), "parts": list(target.relative_to(home).parts), "readable": True, "folders": [],
@@ -2779,7 +2785,8 @@ def save_projects_folder(body: dict) -> dict:
     if body.keys() - {"path"}:
         raise ValueError("Unsupported projects folder fields.")
     path = body.get("path")
-    value = str(Path(path).expanduser()) if isinstance(path, str) and path.strip() else None
+    # `~` expands as text: the folder itself is read only by the machine request's validation.
+    value = str(Path(os.path.expanduser(path))) if isinstance(path, str) and path.strip() else None
     _save_machine("projects_folder", value, "Projects folder")
     return {"roots": [home_relative(r) for r in config.project_roots()]}
 
