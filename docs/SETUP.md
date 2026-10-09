@@ -72,8 +72,8 @@ The command downloads anonymously, so it needs the repository to be public; unti
 [install by hand](#install-by-hand) from files downloaded while signed in. `latest` names the
 newest stable release and skips release candidates; to install one exact release,
 replace `latest/download` with `download/<tag>`, for example `download/v0.1.0`. On the Mac, installation,
-updates, rollback, uninstall and starting again at login pass in fresh macOS virtual machines, while
-native runtime acceptance is pending, so macOS is experimental.
+updates, rollback, uninstall and starting again at login pass in fresh macOS virtual machines; the
+[roadmap](ROADMAP.md#native-macos-runtime) lists the native checks still open.
 
 `v0.1.0-rc.1` cannot start its service: systemd refuses the working directory its unit names, so
 installation fails at service start and leaves that unit and an interrupted activation behind.

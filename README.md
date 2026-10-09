@@ -14,7 +14,7 @@ any task. The work keeps going on your machine after you put the phone away.
 [Set up phone access and voice](docs/OPERATIONS.md#on-iphone) with private HTTPS and a supported
 browser.
 
-**Early preview · Linux x86_64 · macOS on Apple silicon (experimental) · [Get started](#get-started)**
+**Early preview · Linux x86_64 · macOS on Apple silicon · [Get started](#get-started)**
 
 <img src="docs/images/project-desktop.png" alt="Desktop: the project conversation with L3 beside the Work panel, where three task owners deliver in parallel." width="1440">
 
@@ -69,18 +69,10 @@ One engine is enough, and each integration is
 ## Get started
 
 Altitude runs for one person on a Linux x86_64 machine with a systemd user manager or a Mac with
-Apple silicon on macOS 15 or newer; both install with the same command. On Linux, Ubuntu 24.04 is
-the initial target; clean-machine and provider acceptance remain pending. On a Mac, installation,
-updates, rollback, uninstall and starting again at login pass in fresh macOS virtual machines; the
-[native runtime's acceptance](docs/ROADMAP.md#native-macos-runtime) is pending, so macOS is
-experimental. You need Python 3.12+, Git, OpenSSL (on a Mac, Homebrew's `openssl@3`), an
-authenticated GitHub CLI and one authenticated coding CLI. Agent work uses your coding account's
-allowance and normal charges.
-
-A [Linux container deployment](docs/CONTAINERS.md) is a candidate under validation: rootless
-Podman with dedicated project volumes and an explicit security exception.
-[Recorded evidence](docs/CONTAINERS.md#live-linux-run) names what one live Linux run verifies and the
-remaining gaps; on a Mac it is unverified.
+Apple silicon on macOS 15 or newer. You need Python 3.12+, Git, OpenSSL (on a Mac, Homebrew's
+`openssl@3`), an authenticated GitHub CLI and one authenticated coding CLI. Agent work uses your
+coding account's allowance and normal charges. A [Linux container deployment](docs/CONTAINERS.md)
+is under validation.
 
 1. Install the latest release as the account that will use Altitude:
 

@@ -67,16 +67,16 @@ the Mac under a throwaway home. Minimal OS installation,
 login/logout, browser/device CA trust, download from GitHub's published release, native confinement and
 live-provider compatibility remain outside this harness's evidence.
 
-From `v0.1.0` a release also installs on a Mac, which stays experimental until the native evidence
-below is recorded. The following remaining acceptance stays under #225/#226/#219/#350; those issues
+From `v0.1.0` a release also installs on a Mac, and the early preview supports Apple silicon Macs
+by the operator's decision of October 8, 2026. The following remaining acceptance stays under #225/#226/#219/#350; those issues
 stay open:
 
 - **Native macOS runtime and installation:** the common engine/authority contract runs on a per-user
   LaunchAgent, with each job its own launchd job (coalition Stop, a supervisor-held time limit),
   Altitude's Seatbelt profile around Claude, Codex's own sandbox, and the installer's macOS branch.
   It is on `main` (#570), Altitude runs from source on the operator's Mac, and `v0.1.0` installs there
-  with one command (#551). macOS 15 and 26 on Apple silicon remain experimental targets, not
-  supported platforms, until the evidence below is recorded.
+  with one command (#551). macOS 15 and 26 on Apple silicon are supported while the evidence
+  below is recorded.
   Running before any login (boot mode) is a separate, later increment.
 - **Native evidence:** on a disposable Mac account, record exact OS/chip, application, Python and
   engine versions. Verify allowed writes and denied writes outside the task, ordinary and detached
@@ -121,7 +121,7 @@ September 28, 2026 shape it: operator-grant commands run unsandboxed, as on Linu
 refuses service control to every sandboxed process, and each terminal shell runs as its own launchd
 job, because macOS hides the environment of its own binaries from the mark that finds what a terminal
 started. Native validation runs on the operator's Apple silicon Mac, as tasks on its Altitude
-instance; that evidence is recorded before README, setup or this roadmap call macOS supported. No paid runner is
+instance. No paid runner is
 authorized. Native probes make no provider calls or model downloads.
 
 ## Early-user onboarding and public release
@@ -168,8 +168,8 @@ remaining validation limits explicit; this does not establish clean-machine or p
 
 The direction is the same project and task workflow across CLI engines and supported machines.
 The current [setup](SETUP.md) supplies one release archive for Linux x86_64, with Ubuntu 24.04 as its
-initial target, and experimentally for Apple silicon Macs. The native macOS 15/26 Apple-silicon runtime is implemented; its validation remains as described
-above. The common confinement contract still needs proof before any support claim.
+initial target, and for Apple silicon Macs. The native macOS 15/26 Apple-silicon runtime is implemented; its validation remains as described
+above. The common confinement contract still needs proof before support for further machines.
 
 | Work | Intended outcome | Current boundary |
 | --- | --- | --- |
