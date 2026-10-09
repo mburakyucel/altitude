@@ -165,6 +165,95 @@ class TestPublication(IncidentIssueCase):
         self.assertIn("ALTITUDE_UPSTREAM_ISSUE_REPOSITORY", listed.stdout)
 
 
+class TestInstalledVersion(IncidentIssueCase):
+    """An incident on an installed copy says whether a newer release was known, from the daemon's last check, and
+    one behind a newer release keeps its issue on the machine until the update; the issue would report a fault that
+    may already be fixed."""
+
+    def install(self, version="v0.4.0", latest="v0.4.2"):
+        self.patch(config, "RELEASE", {"version": version, "commit": "884b6464abcdef0123456789abcdef0123456789",
+                                       "repository": "https://github.com/product-fixture/altitude"})
+        self.patch(config, "INSTALL_PREFIX", self.tmp / "install")
+        self.addCleanup((config.ROOT / "update.json").unlink, missing_ok=True)   # the runtime home outlives a case
+        S.write_json(config.ROOT / "update.json", {"latest": {"version": latest, "notes": f"{TARGET}/releases/tag/{latest}"},
+                                                   "checked": 1760000000, "next": 1760043200})
+
+    def fault(self, kind="checkout", title="Fixture victim"):
+        task = T.new(PROJECT, title, "Toy request")
+        return incidents.system_fault(kind, "Local cause", project=PROJECT, task=task["slug"])
+
+    def test_an_up_to_date_installation_publishes_and_says_so(self):
+        self.install(latest="v0.4.0")
+        fault = self.fault()
+        [issue] = self.issues()
+        self.assertEqual(fault["issue"], issue["url"])
+        self.assertIn("- altitude: v0.4.0 (884b6464abcd)\n- deployment: installed release\n- update: up to date\n",
+                      issue["body"])
+        self.assertNotIn("is available", fyi_rows(PROJECT)[-1]["text"])
+
+    def test_an_outdated_installation_holds_the_issue_and_says_update_first(self):
+        self.install()
+        fault = self.fault()
+        self.assertIsNone(fault["issue"])
+        self.assertEqual(self.calls(), [])
+        record = self.record(fault["incident"])
+        self.assertIn("update: v0.4.2 available", record)
+        self.assertIn(f"- issue: {incidents.PENDING}held: reported on v0.4.0 while v0.4.2 is available; update first",
+                      record)
+        first = "Altitude v0.4.0 is installed and v0.4.2 is available: update (the app's Update button or `alt update`), then retry."
+        self.assertTrue(fyi_rows(PROJECT)[-1]["text"].startswith(first))
+        message = l3.queued(PROJECT)[-1]["text"]
+        self.assertTrue(message.startswith(first))
+        self.assertIn("its issue is held until Altitude is updated", message)
+        row = self.row(fault["incident"])
+        self.assertIn("update: v0.4.2 available", row["system"])
+        self.assertIn("held: reported on v0.4.0", row["issue"])
+        self.assertEqual([e["status"] for e in S.read_project_log(PROJECT, limit=0) if e["kind"] == "incident-issue"],
+                         ["held"])
+
+        # `alt incident publish` files it on demand, with both versions and nothing more to strip.
+        published = incidents.publish_issue(PROJECT, fault["incident"], anyway=True)
+        [issue] = self.issues()
+        self.assertEqual(published["issue"], issue["url"])
+        system = issue["body"].split("## System\n", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("- altitude: v0.4.0 (884b6464abcd)\n- deployment: installed release\n- update: v0.4.2 available",
+                      system)
+        self.assertEqual(incidents.sanitize("update: v0.4.2 available"), "update: v0.4.2 available")
+
+    def test_a_repeat_after_updating_files_on_the_new_version(self):
+        self.install()
+        held = self.fault()
+        self.assertEqual(self.fault(title="Second victim")["incident"], held["incident"], "one incident a day per version")
+        self.install(version="v0.4.2")
+        repeat = self.fault(title="Third victim")
+        self.assertNotEqual(repeat["incident"], held["incident"])
+        [issue] = self.issues()
+        self.assertEqual(repeat["issue"], issue["url"])
+        self.assertIn("- altitude: v0.4.2 (884b6464abcd)", issue["body"])
+        self.assertIn("- update: up to date", issue["body"])
+
+    def test_a_disabled_check_publishes_and_says_not_checked(self):
+        self.install()
+        self.patch(config, "machine_settings", return_value={"update_check": False})
+        fault = self.fault()
+        [issue] = self.issues()
+        self.assertEqual(fault["issue"], issue["url"])
+        self.assertIn("- update: not checked\n", issue["body"])
+
+    def test_a_source_checkout_and_a_container_keep_their_behavior(self):
+        self.install()
+        self.patch(config, "RELEASE", None)
+        first = self.fault()
+        self.assertIsNotNone(first["issue"])
+        self.assertEqual(self.fault(title="Second victim")["incident"], first["incident"])
+        self.install()
+        self.patch(platform, "containerized", return_value=True)
+        self.assertIsNotNone(self.fault(kind="worktree")["issue"])
+        for issue in self.issues():
+            self.assertNotIn("- update:", issue["body"])
+        self.assertNotIn("is available", "".join(row["text"] for row in fyi_rows(PROJECT)))
+
+
 class TestAttachAndClose(IncidentIssueCase):
     def kept(self, number=42, state="OPEN"):
         issues = self.issues()
@@ -455,7 +544,7 @@ class TestSystemAndSummary(IncidentIssueCase):
         self.assertEqual(asked, [["/usr/sbin/sysctl", "-n", "hw.model"]])   # never the serial or the platform UUID
         self.assertEqual(self.section(body, "System").splitlines(), [
             "- platform: macOS", "- os: macOS 15.4.1", "- kernel: Darwin 24.4.0", "- architecture: arm64",
-            "- model: Mac15,3", "- altitude: v0.4.0 (884b6464abcd)", "- deployment: installed release",
+            "- model: Mac15,3", "- altitude: v0.4.0 (884b6464abcd)", "- deployment: installed release", "- update: not checked",
             "- engine: claude 2.1.300", "- confinement: launchd job with Altitude's Seatbelt profile, Claude permission rules"])
         self.assertEqual(self.section(body, "Actual"), "Fault l2-died during the L2 worker run (attempt 2). "
                                                        "Last error: workspace routing discovery unauthorized (401)")

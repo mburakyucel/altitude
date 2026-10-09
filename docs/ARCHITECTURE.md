@@ -1503,7 +1503,14 @@ altd's environment, and nothing else; off keeps every incident on the machine as
 with that reason. The issue carries the label `incident`, the sanitized title, expected and actual behavior,
 the sanitized cause, a reproduction line that reads pending triage until L3 comments one, the
 Altitude version and the incident marker (incident id plus an opaque project digest). Evidence,
-task, project, logs and conversations never supply public content.
+task, project, logs and conversations never supply public content. On an installed release the
+system facts also carry the `update` line from `update.json` (a newer followed release, up to date,
+or not checked), read without a network request. When that record shows a newer release, automatic
+publication holds the issue as `pending — held: …` because the fault may already be fixed, and the
+fault FYI and L3 message tell the operator to update and retry. The fault ledger records the
+installed version and its 24-hour window holds only within that version, so a repeat after the
+update files and publishes a new incident. `alt incident publish` files a held issue on request.
+Source checkouts and container images neither check for releases nor hold.
 
 `incidents.sanitize` decodes the text and rewrites home paths, `.altitude` and incident file
 references, long hex ids and UUIDs, email addresses, credentials and private key blocks, task

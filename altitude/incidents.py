@@ -134,11 +134,12 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
         # Preserve those records, but never reuse them for deduplication or incident references.
         rec = faults.get(key) or {}
         changed = touched if project and task else rec.get("detail") != detail
+        # A repeat after an update is news about the new release, so the window holds only within one version.
         recent = (bool(rec.get("last")) and _seconds_since(rec["last"]) < FAULT_WINDOW_SECONDS
-                  and rec.get("incident"))
+                  and rec.get("incident") and rec.get("release") == _release())
         rec = {**rec, "first": rec.get("first") or S.now(), "last": S.now(),
                "count": int(rec.get("count", 0)) + 1, "incident": rec.get("incident"),
-               "detail": detail, "project": project, "task": task}
+               "detail": detail, "project": project, "task": task, "release": _release()}
         faults[key] = rec
         S.write_json(FAULTS, faults)
         if recent or (rec.get("incident") and changed is False) or not target:
@@ -147,9 +148,9 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
             # 2026-09-03 08:10Z: a second task blocked by the day's main-unpushed fault sat waiting on L3, which
             # was never told. One incident per project/kind still holds; a newly blocked task is one more line.
             where = f"{project}/{task}" if project and task else project or target
-            T.fyi(target, task, f"SYSTEM FAULT [{kind}] changed — {detail[:300]} — in {where}; incident "
+            T.fyi(target, task, f"{_update_first()}SYSTEM FAULT [{kind}] changed — {detail[:300]} — in {where}; incident "
                   f"{target}/{rec['incident']} holds the evidence.", actor="altd")
-            l3.queue_message(target, f"System fault [{kind}] changed in {where}: {detail[:600]}\n\n"
+            l3.queue_message(target, f"{_update_first()}System fault [{kind}] changed in {where}: {detail[:600]}\n\n"
                              f"Incident {target}/{rec['incident']} holds the evidence. Inspect current task status for the full "
                              "blocker and amend the incident only if this "
                              "adds something, fix the cause if it is back, and resume the task with `alt task resume` once "
@@ -166,12 +167,14 @@ def system_fault(kind: str, detail: str, *, project: str | None = None, task: st
         S.write_json(FAULTS, faults)
     issue = publish_issue(target, inc["id"])   # GitHub waits outside the fault lock
     tracked = (f"issue {issue['issue']}" if issue.get("issue")
+               else f"its issue is held until Altitude is updated; `alt incident publish {inc['id']}` files it only if the "
+                    "operator asks or the update itself fails" if issue.get("held")
                else f"issue publication pending ({issue['pending']}); retry with `alt incident publish {inc['id']}`")
     where = f"{project}/{task}" if project and task else project or target
-    T.fyi(target, task, f"SYSTEM FAULT [{kind}] — {detail[:300]} — incident {target}/{inc['id']}; {tracked}."
+    T.fyi(target, task, f"{_update_first()}SYSTEM FAULT [{kind}] — {detail[:300]} — incident {target}/{inc['id']}; {tracked}."
           + (" Raised by a repair task, so L3 is not woken again." if repair else ""), actor="altd")
     if not repair:
-        l3.queue_message(target, f"System fault [{kind}] in {where}: {detail[:800]}\n\n"
+        l3.queue_message(target, f"{_update_first()}System fault [{kind}] in {where}: {detail[:800]}\n\n"
                          f"{'Its task is blocked. ' if task and touched is not None else ''}"
                          f"Incident {target}/{inc['id']} holds the evidence and {tracked}. Read the evidence, record "
                          "verified recovery and prevention follow-through with `alt incident amend`. Inspect current "
@@ -274,11 +277,40 @@ def _altitude_build() -> str:
     return f"{version()} ({commit[:12]})" if commit else version()
 
 
+def _release() -> str | None:
+    """The installed release's version; a source checkout or container image has none here, since neither checks."""
+    return None if platform.containerized() or config.RELEASE is None else config.RELEASE.get("version")
+
+
+def _behind() -> tuple[str, str] | None:
+    """(installed, newer) when the daemon's last release check found a newer followed release; no network."""
+    from . import installation
+    status = installation.update_status() if _release() else None
+    return (status["current"], status["available"]["version"]) if status and status["available"] else None
+
+
+def _update_fact() -> str:
+    from . import installation
+    if behind := _behind():
+        return f"{behind[1]} available"
+    status = installation.update_status()
+    return "up to date" if status["check"] and status["checked"] else "not checked"
+
+
+def _update_first() -> str:
+    """The operator's first step when the installation is behind: the fault may already be fixed."""
+    behind = _behind()
+    return (f"Altitude {behind[0]} is installed and {behind[1]} is available: update (the app's Update button or "
+            "`alt update`), then retry. " if behind else "")
+
+
 def system_context(project: str, task: str | None) -> str:
     """This machine, Altitude's build and the task's engine as `key: value` pairs. Only these facts are collected:
     never host or user names, home paths, addresses, serial numbers or hardware UUIDs."""
     from .dispatch import l2_engine
     facts = {**platform.host_facts(), "altitude": _altitude_build(), "deployment": _deployment()}
+    if _release():
+        facts["update"] = _update_fact()
     if task:
         try:
             engine = l2_engine(S.load_task(project, task))
@@ -495,21 +527,29 @@ def _find_or_create(project: str, incident: str, body: str, spans: dict) -> tupl
     return _issue_url(url, repository), True
 
 
-def publish_issue(project: str, incident: str) -> dict:
-    """Create the incident's issue, or keep the failure on the record with the way back: `alt incident publish`."""
+def publish_issue(project: str, incident: str, *, anyway: bool = False) -> dict:
+    """Create the incident's issue, or keep the failure on the record with the way back: `alt incident publish`.
+
+    Filing on an installation behind a newer release holds the issue: the fault may already be fixed there, and a
+    repeat after updating files on the new version. `anyway` (`alt incident publish`) files it now."""
     with _incident_lock(project):
         path, body, spans = _read(project, incident)
         current = _field(body, spans, "issue")
         if current and not current.startswith(PENDING):
             return {"id": incident, "issue": current, "created": False}
-        try:
-            url, created = _find_or_create(project, incident, body, spans)
-        except (ValueError, OSError) as exc:
-            reason = " ".join(str(exc).split())[:300]
+        behind = None if anyway else _behind()
+        reason = (f"held: reported on {behind[0]} while {behind[1]} is available; update first. A repeat on the new "
+                  f"version files its own issue; alt incident publish {incident} files this one now") if behind else None
+        if not reason:
+            try:
+                url, created = _find_or_create(project, incident, body, spans)
+            except (ValueError, OSError) as exc:
+                reason = " ".join(str(exc).split())[:300]
+        if reason:
             _set_issue(path, body, spans, PENDING + reason)
-            S.project_log(project, "incident-issue", id=incident, status="pending", reason=reason)
+            S.project_log(project, "incident-issue", id=incident, status="held" if behind else "pending", reason=reason)
             S.regen_state_md(project)
-            return {"id": incident, "issue": None, "pending": reason}
+            return {"id": incident, "issue": None, "pending": reason, **({"held": True} if behind else {})}
         _set_issue(path, body, spans, url)
     S.project_log(project, "incident-issue", id=incident, url=url, created=created)
     S.regen_state_md(project)
