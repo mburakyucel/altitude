@@ -1929,8 +1929,8 @@ server-triggered one; the tab that started the turn keeps its streamed reply ins
 first line names the turn (`{"turn": {id, started_at, trigger}}`) before any text, and the
 history rows carry the same id, so the local rows stay until history owns the turn and a stored
 assistant or error row wins over a raced active snapshot. An assistant row marked `interrupted`
-renders its partial reply, if any, ending in a small still square where the typing indicator stopped;
-it carries no sentence, and its accessible name is "Stopped early".
+renders only its partial reply, with no notice; with no partial text it renders nothing, and the
+operator's next message follows directly under the stopped one.
 
 The conversation reads `/api/chat/<project>?limit=60`. The limit counts human chat rows and system
 rows (server-triggered turns and FYIs) separately, so a burst of system events never pushes the latest

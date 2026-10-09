@@ -1758,6 +1758,16 @@
 .msg-row[data-pending] {
   opacity: 0.6;
 }
+/* A reply Send now stopped before it said anything leaves no row: the operator's two messages sit
+ * back to back, the first one's time beside its bubble (SPEC.md §4.2). */
+.turn[data-joined] > .msg-row[data-mine] {
+  flex-direction: row-reverse;
+  align-items: flex-end;
+  gap: 8px;
+}
+.turn[data-joined] + .turn {
+  margin-top: -14px;
+}
 .bubble {
   position: relative;
   max-width: 76%;
@@ -1802,15 +1812,6 @@
 .shell[data-phone] .reply {
   font-size: 16px;
   line-height: 1.6;
-}
-/* Where the typing dots stopped: an interrupted reply's quiet end (SPEC.md §4.2). */
-.reply-stopped {
-  width: 8px;
-  height: 8px;
-  margin: 4px 0;
-  border-radius: 2px;
-  background: var(--text-muted);
-  opacity: 0.6;
 }
 .reply .session-prose {
   gap: 12px;

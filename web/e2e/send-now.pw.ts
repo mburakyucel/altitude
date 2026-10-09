@@ -189,20 +189,21 @@ test.describe("L3 Send now", () => {
       await expect(convo.getByText(`${next} answered.`, { exact: true })).toBeVisible();
     };
     const turn = (text: string) => convo.locator(".turn").filter({ has: page.locator(".bubble", { hasText: text }) });
-    const stopped = convo.getByRole("img", { name: "Stopped early", exact: true });
     await walk.open("/projects/atlas");
     await interrupt("Keep working", "Deliver this next", 1);
     await walk.state("l3-07-interrupted-partial", {
-      visible: [turn("Keep working").getByText("Two checks failed on the review branch, and the first log", { exact: false }),
-        turn("Keep working").getByRole("img", { name: "Stopped early", exact: true })],
-      hidden: [convo.getByText(/Interrupted/), convo.locator(".queued-row"), turn("Deliver this next").getByRole("img", { name: "Stopped early" })],
+      visible: [turn("Keep working").getByText("Two checks failed on the review branch, and the first log", { exact: false })],
+      hidden: [convo.getByText(/Interrupted/), convo.locator(".queued-row")],
     });
     await interrupt("Hold on", "Use the other branch", 3);
     await walk.state("l3-08-interrupted-empty", {
-      visible: [turn("Hold on").getByRole("img", { name: "Stopped early", exact: true }), turn("Use the other branch").getByText("Use the other branch answered.", { exact: true })],
-      hidden: [convo.getByText(/Interrupted|could not answer/), convo.locator(".queued-row")],
+      visible: [turn("Hold on").locator(".bubble"), turn("Use the other branch").getByText("Use the other branch answered.", { exact: true })],
+      hidden: [convo.getByText(/Interrupted|could not answer/), convo.locator(".queued-row"), turn("Hold on").locator(".reply")],
     });
-    await expect(stopped).toHaveCount(2);
-    await expect(turn("Hold on").locator(".reply p")).toHaveCount(0);
+    // The two operator messages sit back to back, as consecutive messages do.
+    const first = (await turn("Hold on").locator(".bubble").boundingBox())!;
+    const next = (await turn("Use the other branch").locator(".bubble").boundingBox())!;
+    expect(next.y - (first.y + first.height)).toBeLessThanOrEqual(12);
+    expect(next.y - (first.y + first.height)).toBeGreaterThanOrEqual(4);
   });
 });

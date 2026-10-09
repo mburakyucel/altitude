@@ -1233,7 +1233,7 @@ is unavailable until the engine reports its launch. The daemon sets only the
 captured chat turn's interruption signal; the engine seam stops that invocation's owned job and
 confirms its termination before the L3 lock is released. Partial output and session identity remain:
 the turn's assistant row holds the partial reply, possibly empty, and `interrupted: true`, and the
-conversation shows it ending in a small still square without a sentence. That turn is never replayed. Active system
+conversation shows only that partial text, or nothing when it is empty. That turn is never replayed. Active system
 turns finish normally to preserve their existing notification and report receipts; a promoted row
 says **Runs next after system work**. A stale or repeated request cannot interrupt a replacement
 turn or submit the message twice. Engine unavailability and launch pauses leave the row queued with

@@ -1634,10 +1634,10 @@ keeps its accent circle with the arrow. Phone names the active work in the heade
 on queued rows; desktop also shows "L3 is mid-turn · runs next" under the field. Queued rows stay
 inside the message area until they run, with bordered **Send now** beside **Remove** while permitted.
 Send now puts that row first, interrupts an active chat at its engine's safe boundary, and runs the
-selected message next; the interrupted reply keeps any partial text and ends in a small muted
-square (8px, `--text-muted` at 60%) where the typing dots stopped, alone when nothing was written,
-with no sentence. Its hover title is "Stopped for your next message" and its accessible name
-"Stopped early". System work finishes before the selected message runs. Pending rows say
+selected message next. The interrupted reply keeps any partial text as an ordinary reply, with no
+notice: the operator knows they interrupted it. A reply stopped before any text leaves no row, so the
+two operator bubbles sit back to back (8px apart, the first bubble's time beside it).
+System work finishes before the selected message runs. Pending rows say
 **Sending now…**, with **Waiting for current turn to stop** or **Runs next after system work** as
 appropriate; Send now is disabled. Remove is disabled while the HTTP request is pending and remains
 available after acceptance until claim, even when an engine becomes unavailable. Removal does not
