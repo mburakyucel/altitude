@@ -471,6 +471,11 @@ export async function sendImageChat(project: string, text: string, input: ImageS
   return { accepted: true, queued: out.queued ? QueuedMessageSchema.parse(out.queued) : undefined };
 }
 
+/** Create task under the reply of `offerTurn`: Altitude writes the message, and a repeat returns the saved one. */
+export async function sendCreateTask(project: string, offerTurn: string) {
+  return api<{ queued?: unknown; sent?: boolean }>("/api/chat", { method: "POST", body: JSON.stringify({ project, offer_turn: offerTurn }) });
+}
+
 export const TaskMessageSchema = z
   .object({
     id: z.string(),
@@ -686,6 +691,10 @@ export const ChatMessageSchema = z
     slug: z.string().nullish(),
     /** On the assistant row of a turn that created tasks: their slugs (SPEC.md §5.2 note 4). */
     tasks: z.array(z.string()).nullish(),
+    /** On an assistant row: the task title its reply offers under Create task (SPEC.md §3.3). */
+    offer: z.string().nullish(),
+    /** On a user row: the turn whose Create task this message pressed. */
+    offer_turn: z.string().nullish(),
   })
   .passthrough();
 
@@ -705,6 +714,8 @@ export const QueuedMessageSchema = z
     send_now_reason: z.string().nullish(),
     /** A follow-up on a decision names its task (SPEC.md §5.2 note 6). */
     slug: z.string().nullish(),
+    /** A Create task press: the turn whose reply it answers (SPEC.md §3.3). */
+    offer_turn: z.string().nullish(),
   })
   .passthrough();
 

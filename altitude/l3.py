@@ -26,6 +26,9 @@ _interrupts: dict[str, threading.Event] = {}
 #: Slugs of the tasks each running turn created through the daemon's `alt task new`, by turn id; the
 #: turn's assistant row carries them as `tasks` (SPEC.md §5.2 note 4) and the entry goes with the turn.
 _created: dict[str, list[str]] = {}
+#: The task title each running chat turn offered through `alt task offer`, by turn id; the assistant row
+#: carries it as `offer` and the page shows Create task under that reply (SPEC.md §3.3).
+_offers: dict[str, str] = {}
 _lifecycle_guards: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 _turn_local = threading.local()
@@ -238,6 +241,79 @@ def human_chat(row: dict) -> bool:
 class _MessageParser(argparse.ArgumentParser):
     def error(self, message):
         raise ValueError(message)
+
+
+def offer_parser():
+    """`alt task offer <title>`: the CLI and the coordinator socket accept the same arguments."""
+    parser = _MessageParser(add_help=False, allow_abbrev=False)
+    parser.add_argument("title")
+    return parser
+
+
+OFFER_TITLE_LIMIT = 100
+OFFER_PREFIX = "Create task: "
+OFFER_MOVED_ON = "The conversation has moved on, so this was not sent."
+
+
+def note_offer(project: str, title: str) -> dict:
+    """Record that the running chat turn's reply could become a task titled `title`; the latest call wins."""
+    title = title.strip()
+    if not title or len(title) > OFFER_TITLE_LIMIT or any(ord(c) < 32 or c in "\x7f\x85\u2028\u2029" for c in title):
+        raise ValueError(f"an offer title is one plain line of 1–{OFFER_TITLE_LIMIT} characters")
+    with _lifecycle_guard(project):
+        turn = _active.get(project)
+        if not turn or turn["trigger"] != "chat":
+            raise ValueError("alt task offer applies to a reply to the operator, during a chat turn")
+        _offers[turn["id"]] = title
+        return {"turn_id": turn["id"], "offer": title}
+
+
+def active_offer(project: str) -> str | None:
+    """The reply whose Create task press the running turn answers, if any."""
+    with _lifecycle_guard(project):
+        return (_active.get(project) or {}).get("offer_turn")
+
+
+def queue_offer(project: str, offer_turn: str) -> dict:
+    """Queue the operator's Create task press for the reply of turn `offer_turn`. The press is the operator's next
+    message, so it is accepted only while that reply is the latest in the conversation and nothing of theirs
+    waits in the queue; a repeated press returns the message already saved, and a reply whose task exists is
+    refused, so one reply never produces two instructions or two tasks."""
+    if not re.fullmatch(r"[0-9a-f]{12}", offer_turn or ""):
+        raise ValueError("invalid reply reference")
+    path = queue_path(project)
+    with _lifecycle_guard(project):  # read first: a queue claim takes this guard before the project lock
+        running = _turn_identity(_active.get(project))
+    with S.project_lock(project):
+        if not config.is_managed(project):
+            raise ValueError("This project is not managed. Add its folder again to attach L3.")
+        waiting = [row for row in _queue_rows(path) if row.get("trigger") == "chat"]
+        pressed = next((row for row in waiting if row.get("offer_turn") == offer_turn), None)
+        if pressed:
+            return {"queued": {**pressed, "position": waiting.index(pressed) + 1}}
+        from . import tasks as T
+        slug = T.offered_task(project, offer_turn)
+        if slug:
+            raise ValueError(f"This reply's task already exists: {slug}.")
+        if waiting:
+            raise ValueError(OFFER_MOVED_ON)
+        history = [row for row in chat_history(project) if human_chat(row)]
+        latest = history[-1] if history else {}
+        turn_rows = [row for row in history if row.get("turn_id") == latest.get("turn_id")]
+        reply = next((row for row in history if row.get("role") == "assistant" and row.get("turn_id") == offer_turn), None)
+        user = next((row for row in turn_rows if row.get("role") == "user"), {})
+        if user.get("offer_turn") == offer_turn and latest.get("role") == "user":
+            return {"sent": True}  # the press already runs
+        retry = user.get("offer_turn") == offer_turn and latest.get("role") == "error"
+        if not reply or not reply.get("offer") or reply.get("tasks") or not (latest is reply or retry):
+            raise ValueError(OFFER_MOVED_ON)
+        if running and running["trigger"] == "chat" and running["id"] not in (offer_turn, latest.get("turn_id")):
+            raise ValueError(OFFER_MOVED_ON)
+        row = {"at": S.now(), "id": uuid.uuid4().hex[:12], "trigger": "chat", "role": config.OPERATOR_ACTOR,
+               "text": OFFER_PREFIX + reply["offer"], "offer_turn": offer_turn}
+        rows = _queue_rows(path)
+        _write_queue(path, [*rows, row])
+    return {"queued": {**row, "position": sum(r.get("trigger") != "project-message" for r in rows) + 1}}
 
 
 def project_message_parser():
@@ -646,10 +722,11 @@ def note_task(project: str, slug: str) -> bool:
 
 
 def _created_meta(project: str, turn_id: str) -> dict:
-    """The `tasks` field for the assistant row of `turn_id`, taken once; empty when it created none."""
+    """The `tasks` field for the assistant row of `turn_id`, taken once, or its `offer` when it created none."""
     with _lifecycle_guard(project):
         slugs = _created.pop(turn_id, None)
-    return {"tasks": slugs} if slugs else {}
+        offer = _offers.pop(turn_id, None)
+    return {"tasks": slugs} if slugs else {"offer": offer} if offer else {}
 
 
 def chat_state(project: str, limit: int = 60) -> dict:
@@ -703,6 +780,7 @@ def _publish_active_turn(project: str, trigger: str, claim=None, slug: str | Non
             if _active.get(project, {}).get("id") == turn["id"]:
                 _active.pop(project, None)
             _created.pop(turn["id"], None)
+            _offers.pop(turn["id"], None)
             _interrupts.pop(turn["id"], None)
 
 
@@ -1111,10 +1189,13 @@ def deliver_queued(project: str) -> dict | None:
                                           message_id=row["id"])
                     if not selected[0].get("images"):
                         _write_queue(path, [row for row in current if row.get("id") not in selected_ids])
+                    offer_turn = next((row["offer_turn"] for row in selected if row.get("offer_turn")), None)
+                    if offer_turn:
+                        active_turn["offer_turn"] = offer_turn  # task creation in this turn is bound to that reply
                     try:
                         chat_log(project, "user", prompt, trigger=trigger, engine=choice["engine"],
                                  at=active_turn["started_at"], turn_id=active_turn["id"], queue_ids=selected_ids,
-                                 **_slug_meta(slug),
+                                 **_slug_meta(slug), **({"offer_turn": offer_turn} if offer_turn else {}),
                                  **({key: selected[0][key] for key in ("images", "request_id", "request_digest")}
                                     if selected[0].get("images") else {}))
                     except Exception:

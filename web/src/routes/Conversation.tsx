@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { imageSendRefused, sendImageChat, streamChat, useChatDequeue, useSendNow } from "../data/api";
+import { ApiError, imageSendRefused, sendCreateTask, sendImageChat, streamChat, useChatDequeue, useSendNow } from "../data/api";
 import { SendNow } from "../components/SendNow";
 import type { ChatMessage, ChatSent, ChatView, ProjectView, TaskRow } from "../data/api";
 import { ProseScope } from "../components/Prose";
@@ -18,6 +18,8 @@ import { MessageImages, PendingImages } from "../components/MessageImages";
 import type { ImagePreview } from "../components/MessageImages";
 import { SystemGroup, SystemLine, subjectOf } from "../components/SystemLine";
 import { TaskCard } from "../components/TaskCard";
+import { CreateTask, CreateTaskError } from "../components/CreateTask";
+import type { CreateTaskPhase } from "../components/CreateTask";
 import type { SystemTurn } from "../components/SystemLine";
 
 /*
@@ -186,6 +188,11 @@ export default function Conversation({
     updateDraft(text);
   }, [name, queryClient]);
   const [local, setLocal] = useState<Local | null>(null);
+  // A Create task press (SPEC.md §3.3): its phase while saving, a reason it was not sent, the spoken receipt.
+  const [press, setPress] = useState<{ turnId: string; phase: CreateTaskPhase } | null>(null);
+  const [pressError, setPressError] = useState<{ turnId: string; message: string } | null>(null);
+  const [announcement, setAnnouncement] = useState("");
+  const focusSent = useRef<string | null>(null);
   const dequeue = useChatDequeue(name);
   const sendNow = useSendNow(name);
   const navigate = useNavigate();
@@ -252,6 +259,7 @@ export default function Conversation({
   const send = useCallback(
     async (text: string, onAccepted?: () => void, images?: ImageSubmission) => {
       following.current = true;
+      setPressError(null);
       const request = Symbol();
       const update = (change: (current: Local) => Local | null) => setLocal((current) => current?.request === request ? change(current) : current);
       setLocal({ request, text, reply: "", accepted: false, turnId: null, error: null, done: false, images: images?.previews, replay: images?.image_ids ? images : undefined });
@@ -286,11 +294,63 @@ export default function Conversation({
     [name, queryClient],
   );
 
+  // Create task is the operator's next message, so the press is the whole interaction: Altitude writes
+  // the instruction, the queue or a new turn shows it, and only a refusal stays beside the reply.
+  const pressCreateTask = useCallback(async (turnId: string) => {
+    following.current = true;
+    setPressError(null);
+    setPress({ turnId, phase: "sending" });
+    const pressed = (data?: ChatView) => [...(data?.queued ?? []), ...(data?.history ?? [])].filter((row) => row.offer_turn === turnId).length;
+    const before = pressed(queryClient.getQueryData<ChatView>(["chat", name]));
+    const sent = () => {
+      focusSent.current = turnId;
+      setAnnouncement("Create task sent");
+    };
+    try {
+      await sendCreateTask(name, turnId);
+      sent();
+    } catch (error) {
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+        setPressError({ turnId, message: error.status === 409 ? error.message : `Not sent: ${error.message}` });
+      } else {
+        // The response was lost: the conversation itself says whether the message was saved.
+        setPress({ turnId, phase: "checking" });
+        const read = queryClient.getQueryState(["chat", name])?.dataUpdatedAt ?? 0;
+        await queryClient.refetchQueries({ queryKey: ["chat", name] }).catch(() => undefined);
+        const state = queryClient.getQueryState<ChatView>(["chat", name]);
+        if (state && state.dataUpdatedAt > read && pressed(state.data) > before) sent();
+        else setPressError({ turnId, message: state && state.dataUpdatedAt > read
+          ? "Not sent. Press it again."
+          : "Couldn’t confirm it was sent. Press it again; it is never sent twice." });
+      }
+    } finally {
+      setPress(null);
+      void queryClient.invalidateQueries({ queryKey: ["chat", name], refetchType: "all" });
+      void queryClient.invalidateQueries({ queryKey: ["project", name] });
+    }
+  }, [name, queryClient]);
+
+  // Focus follows the press to the message it became, once the conversation shows it.
+  useEffect(() => {
+    const turnId = focusSent.current;
+    const nodes = turnId ? scroller.current?.querySelectorAll<HTMLElement>(`[data-offer-turn="${turnId}"]`) : undefined;
+    const node = nodes?.[nodes.length - 1];
+    if (node) {
+      focusSent.current = null;
+      node.focus({ preventScroll: true });
+    }
+  });
+
   const neverStarted = project.isSuccess && !project.data.l3?.session_id && view && view.history.length === 0 && !view.active;
   const queued = view?.queued ?? [];
   const queuePositions = new Map(queued.filter(row => row.trigger !== "project-message").map((row, index) => [row.id, index]));
   const busy = Boolean(view?.busy || view?.active || (local && !local.done));
   const empty = Boolean(view && view.history.length === 0 && !view.active && !local && queued.length === 0);
+  // Only the latest reply offers Create task, while nothing of the operator's waits or runs after it.
+  const lastChat = [...turns].reverse().find((turn) => turn.trigger === "chat");
+  const offerTurn = lastChat?.assistant?.offer && !lastChat.assistant.tasks?.length && !local
+    && !queued.some((row) => !row.project_message && (!row.trigger || row.trigger === "chat"))
+    && !(view?.active?.trigger === "chat" && view.active.id !== lastChat.id) ? lastChat : null;
 
   const rows: ReactNode[] = [];
   let lastDay = "";
@@ -311,21 +371,32 @@ export default function Conversation({
       rows.push(<SystemLine key={item.turn.id} turn={item.turn} project={name} titles={titles} />);
     } else {
       const { turn } = item;
+      const offered = turn.user?.offer_turn;
+      const refused = pressError && (pressError.turnId === turn.id || (turn.error && pressError.turnId === offered)) ? pressError.message : null;
       rows.push(
-        <div key={turn.id} className="turn" data-turn={turn.id}>
+        <div key={turn.id} className="turn" data-turn={turn.id} data-offer-turn={offered || undefined} tabIndex={offered ? -1 : undefined}>
           {turn.user ? <Bubble text={turn.user.text} at={turn.user.at} images={<MessageImages project={name} images={turn.user.images} />} /> : null}
           {turn.assistant ? (
             <Reply text={turn.assistant.text} at={turn.assistant.at} role="assistant">
               {turn.assistant.tasks?.length ? <TurnTasks project={name} slugs={turn.assistant.tasks} titles={tasks} /> : null}
+              {offerTurn === turn && turn.assistant.offer ? (
+                <CreateTask title={turn.assistant.offer} phase={press?.turnId === turn.id ? press.phase : "ready"} error={refused}
+                  onPress={() => void pressCreateTask(turn.id)} />
+              ) : refused ? <CreateTaskError message={refused} /> : null}
             </Reply>
           ) : turn.error ? (
             <p className="turn-failed text-muted">
               L3 could not answer this turn.{" "}
-              {turn.user ? (
+              {offered ? (
+                <button type="button" className="link" disabled={Boolean(press)} onClick={() => void pressCreateTask(offered)}>
+                  {press?.turnId === offered ? "Sending…" : "Retry"}
+                </button>
+              ) : turn.user ? (
                 <button type="button" className="link" disabled={Boolean(local && !local.done)} onClick={() => void send(turn.user!.text, undefined, turn.user!.images?.length ? { request_id: crypto.randomUUID(), image_ids: turn.user!.images.map((image) => image.id), previews: [] } : undefined).catch(() => undefined)}>
                   Retry
                 </button>
               ) : null}
+              {refused ? <> <CreateTaskError message={refused} /></> : null}
             </p>
           ) : item.inProgress ? (
             <Typing />
@@ -400,10 +471,11 @@ export default function Conversation({
             </p>
           ) : null}
           {rows}
+          <p className="visually-hidden" role="status">{announcement}</p>
           {queued.length > 0 ? (
             <ul className="queued" aria-label="Queued messages">
               {queued.map((row) => (
-                <li key={row.id} className="queued-row">
+                <li key={row.id} className="queued-row" data-offer-turn={row.offer_turn || undefined} tabIndex={row.offer_turn ? -1 : undefined}>
                   {row.project_message ? (
                     <SystemLine project={name} titles={titles} turn={{ id: row.id, at: row.at ?? null,
                       trigger: "project-message", prompt: row.text, reply: null, error: null,

@@ -6,7 +6,7 @@ import { attentionCount } from "../data/decisions";
 
 type Tab = "chat" | "work" | "needs" | "monitor";
 
-const ICONS: Record<Tab, string> = {
+export const ICONS: Record<Tab, string> = {
   chat: "M3 4.5h14v9H8l-4 3v-3H3z",
   work: "M4 5h12M4 10h12M4 15h8",
   needs: "M3.5 8.5 10 3l6.5 5.5V17h-4.5v-5h-4v5H3.5z",

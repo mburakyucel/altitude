@@ -1541,6 +1541,148 @@ class TestChatQueue(AltitudeCase):
             server.server_l3_turn(self.project, "anything new?", trigger="chat")
         self.assertNotIn("tasks", self.chat_view()["history"][-1])
 
+    # ---- Create task under a reply (SPEC.md §3.3) ----------------------------
+
+    def offer_turn(self, title="Refresh Needs you after an answer", text="Small bug; a refetch fixes it."):
+        """One chat turn whose reply runs `alt task offer`; returns the reply's turn id."""
+        def provider(_prompt, **_kwargs):
+            reply = server.l3_verb_request(self.project, {"kind": "alt", "args": ["task", "offer", title]})
+            self.assertEqual(reply["returncode"], 0, reply)
+            return self.claude_result(text)
+
+        with self.deliverable(), mock.patch.object(engines, "claude_print", side_effect=provider), \
+             mock.patch.object(server, "request_l3_drain"):
+            server.server_l3_turn(self.project, "the badge lags. bug?", trigger="chat")
+        reply = self.chat_view()["history"][-1]
+        self.assertEqual((reply["role"], reply["offer"]), ("assistant", title))
+        return reply["turn_id"]
+
+    def press(self, offer):
+        with mock.patch.object(server, "request_l3_drain") as drain:
+            status, body = self.post_json("/api/chat", {"project": self.project, "offer_turn": offer})
+        if status == 200:
+            drain.assert_called_once_with(self.project)
+        return status, body
+
+    def creating_provider(self, created, fail=False):
+        def provider(prompt, **_kwargs):
+            created.setdefault("prompts", []).append(prompt)
+            for title in ("Refresh Needs you after an answer", "A second task from the same press"):
+                reply = server.l3_verb_request(self.project, {
+                    "kind": "alt", "args": ["task", "new", "--title", title, "-"], "stdin": "Refetch the queue."})
+                created.setdefault("results", []).append(reply)
+            if fail:
+                raise RuntimeError("Provider unavailable")
+            return self.claude_result("Created it.")
+        return provider
+
+    def test_create_task_press_queues_one_instruction_and_its_turn_creates_one_task(self):
+        offer = self.offer_turn()
+        status, first = self.press(offer)
+        self.assertEqual(status, 200, first)
+        self.assertEqual((first["queued"]["text"], first["queued"]["offer_turn"]),
+                         ("Create task: Refresh Needs you after an answer", offer))
+        status, again = self.press(offer)
+        self.assertEqual((status, again["queued"]["id"]), (200, first["queued"]["id"]), "a double press reuses its message")
+        self.assertEqual(len(self.queue_rows()), 1)
+
+        created = {}
+        with self.deliverable(), mock.patch.object(engines, "claude_print", side_effect=self.creating_provider(created)):
+            l3.deliver_queued(self.project)
+        first_new, second_new = created["results"]
+        self.assertEqual(first_new["returncode"], 0, first_new["stderr"])
+        self.assertNotEqual(second_new["returncode"], 0, "one press makes one task")
+        self.assertIn("already created task", second_new["stderr"])
+        slug = json.loads(first_new["stdout"])["slug"]
+        self.assertEqual(S.load_task(self.project, slug)["offer_turn"], offer)
+        self.assertIn("Create task: Refresh Needs you after an answer", created["prompts"][0])
+
+        user, assistant = self.chat_view()["history"][-2:]
+        self.assertEqual((user["offer_turn"], assistant["tasks"]), (offer, [slug]))
+        self.assertNotIn("offer", assistant)
+        status, late = self.press(offer)
+        self.assertEqual(status, 409)
+        self.assertIn(slug, late["error"])
+        self.assertEqual(self.queue_rows(), [])
+
+    def test_retrying_a_failed_create_task_turn_never_makes_a_second_task(self):
+        offer = self.offer_turn()
+        self.assertEqual(self.press(offer)[0], 200)
+        created = {}
+        with self.deliverable(), mock.patch.object(
+                engines, "claude_print", side_effect=self.creating_provider(created, fail=True)):
+            with self.assertRaisesRegex(RuntimeError, "Provider unavailable"):
+                l3.deliver_queued(self.project)
+        slug = json.loads(created["results"][0]["stdout"])["slug"]
+        self.assertEqual(self.chat_view()["history"][-1]["role"], "error")
+        status, retry = self.press(offer)
+        self.assertEqual(status, 409, "the task exists, so Retry is refused")
+        self.assertIn(slug, retry["error"])
+        self.assertEqual([task["slug"] for task in S.list_tasks(self.project)], [slug])
+
+    def test_a_failed_create_task_turn_that_made_no_task_can_be_retried(self):
+        offer = self.offer_turn()
+        self.assertEqual(self.press(offer)[0], 200)
+        with self.deliverable(), mock.patch.object(engines, "claude_print", side_effect=RuntimeError("down")):
+            with self.assertRaises(RuntimeError):
+                l3.deliver_queued(self.project)
+        status, retry = self.press(offer)
+        self.assertEqual(status, 200, retry)
+        self.assertEqual(retry["queued"]["offer_turn"], offer)
+
+    def test_any_later_operator_message_retires_create_task_until_it_is_removed(self):
+        offer = self.offer_turn()
+        release = self.hold_l3()
+        status, typed = self.post_json("/api/chat", {"project": self.project, "text": "not now"})
+        self.assertEqual(status, 200)
+        status, stale = self.press(offer)
+        self.assertEqual((status, stale["error"]), (409, l3.OFFER_MOVED_ON))
+        self.assertTrue(l3.drop_queued(self.project, typed["queued"]["id"]))
+        self.assertEqual(self.press(offer)[0], 200, "Remove brings the action back")
+        release()
+
+        l3.drop_queued(self.project, self.queue_rows()[0]["id"])
+        with self.deliverable(), mock.patch.object(engines, "claude_print", return_value=self.claude_result("Noted.")), \
+             mock.patch.object(server, "request_l3_drain"):
+            server.server_l3_turn(self.project, "after the release", trigger="chat")
+        status, stale = self.press(offer)
+        self.assertEqual((status, stale["error"]), (409, l3.OFFER_MOVED_ON), "a reply that is no longer latest")
+        self.assertEqual(self.press("0123456789ab")[0], 409, "an unknown reply")
+        self.assertEqual(self.press("../x")[0], 409)
+
+    def test_create_task_offers_belong_to_chat_replies_that_created_no_task(self):
+        with self.assertRaisesRegex(ValueError, "during a chat turn"):
+            l3.note_offer(self.project, "No turn runs")
+        offer = self.offer_turn()
+        for title in ("", "x" * 101, "two\nlines"):
+            with self.subTest(title=title), self.assertRaises(ValueError):
+                with l3._lifecycle_guard(self.project):
+                    l3._active[self.project] = {"id": offer, "trigger": "chat", "started_at": S.now()}
+                try:
+                    l3.note_offer(self.project, title)
+                finally:
+                    l3._active.pop(self.project, None)
+
+        def provider(_prompt, **_kwargs):
+            for args in (["task", "offer", "Fold the lines"], ["task", "new", "--title", "Fold the lines", "-"]):
+                self.assertEqual(server.l3_verb_request(self.project, {"kind": "alt", "args": args, "stdin": "" if args[1] == "offer" else "Fold."})["returncode"], 0)
+            return self.claude_result("Created it.")
+        with self.deliverable(), mock.patch.object(engines, "claude_print", side_effect=provider), \
+             mock.patch.object(server, "request_l3_drain"):
+            server.server_l3_turn(self.project, "fold the lines", trigger="chat")
+        reply = self.chat_view()["history"][-1]
+        self.assertIn("tasks", reply)
+        self.assertNotIn("offer", reply, "a reply that created its task offers none")
+        self.assertIsNone(S.load_task(self.project, reply["tasks"][0]).get("offer_turn"))
+
+        def system_turn(_prompt, **_kwargs):
+            with self.assertRaisesRegex(ValueError, "during a chat turn"):
+                server.l3_verb_request(self.project, {"kind": "alt", "args": ["task", "offer", "Follow up"]})
+            return self.claude_result("Handled.")
+        with self.deliverable(), mock.patch.object(engines, "claude_print", side_effect=system_turn), \
+             mock.patch.object(server, "request_l3_drain"):
+            server.server_l3_turn(self.project, "report landed", trigger="report-landed")
+
     def test_the_report_prompt_is_label_value_rows_and_keeps_the_report_behind_the_task(self):
         # SPEC.md §5.2 note 1: the excerpt made the stored row unreadable in the expanded system card.
         task = T.new(self.project, "Persist paths", "Keep them.")
