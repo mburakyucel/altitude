@@ -177,6 +177,15 @@ def capture_origin_sha(repo: str | Path, base: str = DEFAULT_BASE) -> str:
     return (result.stdout or "").strip()
 
 
+def fetch_ref_collision(result: subprocess.CompletedProcess, base: str) -> bool:
+    """#404: only the fetched remote ref lost its compare-and-swap to another worktree."""
+    diagnostics = [line for line in (result.stderr or "").splitlines()
+                   if re.search(r"\b(?:error|fatal):", line)]
+    oid = r"[0-9a-f]{40}(?:[0-9a-f]{24})?"
+    collision = rf"error: cannot lock ref '{re.escape(f'refs/remotes/origin/{base}')}': is at {oid} but expected {oid}"
+    return bool(result.returncode and len(diagnostics) == 1 and re.fullmatch(collision, diagnostics[0]))
+
+
 def fetch_origin(repo: str | Path, base: str = DEFAULT_BASE) -> str:
     """Fetch one remote base and return its new immutable commit id."""
     root = Path(repo).resolve()
@@ -185,11 +194,7 @@ def fetch_origin(repo: str | Path, base: str = DEFAULT_BASE) -> str:
         result = _run(root, "fetch", "--no-tags", "origin", base, timeout=300, env=env)
         # #404: another worktree's fetch can win the remote ref's compare-and-swap.
         # Require a fresh successful fetch, never infer success from the cached ref.
-        diagnostics = [line for line in (result.stderr or "").splitlines()
-                       if re.search(r"\b(?:error|fatal):", line)]
-        oid = r"[0-9a-f]{40}(?:[0-9a-f]{24})?"
-        collision = rf"error: cannot lock ref '{re.escape(f'refs/remotes/origin/{base}')}': is at {oid} but expected {oid}"
-        if result.returncode and len(diagnostics) == 1 and re.fullmatch(collision, diagnostics[0]):
+        if fetch_ref_collision(result, base):
             result = _run(root, "fetch", "--no-tags", "origin", base, timeout=300, env=env)
         _output(result, f"git fetch origin {base}")
     except GitPolicyError as exc:
