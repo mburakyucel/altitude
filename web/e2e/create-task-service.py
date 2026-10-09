@@ -9,7 +9,7 @@ TITLE = "Refresh Needs you as soon as an answer is sent"
 
 
 def main():
-    configure(expected_error=lambda message: "Fixture provider unavailable" in message)
+    configure()
     project = "atlas"
     repo = config.PROJECT_ROOTS[0] / project
     repo.mkdir(parents=True)
@@ -41,7 +41,7 @@ def main():
             if mode["hold"]:
                 assert release.wait(30), "The Create task turn was not released"
             if mode["fail"]:
-                raise RuntimeError("Fixture provider unavailable")
+                return {"error": "The fixture engine could not answer."}
             # One press makes one task: the second creation in the same turn is refused.
             for _ in range(2):
                 alt("task", "new", "--title", TITLE, "-", stdin="Refetch the Needs you count once an answer is sent.")
