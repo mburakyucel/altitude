@@ -1609,7 +1609,8 @@ class TestChatQueue(AltitudeCase):
         offer = self.offer_turn()
         release = self.hold_l3()
         self.assertEqual(self.press(offer)[0], 200)
-        status, typed = self.post_json("/api/chat", {"project": self.project, "text": "and check the phone badge too"})
+        with mock.patch.object(server, "request_l3_drain"):
+            status, typed = self.post_json("/api/chat", {"project": self.project, "text": "and check the phone badge too"})
         self.assertEqual(status, 200, typed)
         release()
         created = {}
