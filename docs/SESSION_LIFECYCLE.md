@@ -775,6 +775,8 @@ seconds), before acquiring audio. An unanswered close does not prevent later att
 The acquired stream's waveform graph connects synchronously before capture starts; graph activation
 adds no wait. Capture exit closes the composer-owned graph, including failed startup and navigation.
 Cancel during either wait restores editing and prevents that attempt from acquiring audio later.
+A later browser-recognition capture whose live microphone stays exactly silent for three seconds before
+any words (iOS 27 Safari's once-per-tab recognizer) is cancelled with a hint to reopen Altitude.
 Cancelled model loads and late recognition or punctuation callbacks cannot change the draft.
 Optional voice troubleshooting retains bounded event metadata in page memory across conversation
 and Settings navigation. It stops on View report or after ten minutes, resets on Start diagnostics,
@@ -1010,7 +1012,10 @@ of a merge. Resume still uses the existing claim and Git isolation gates. A new 
 previous completion verification before launching the owner; a new delivery also invalidates it.
 The current `delivery` timestamp joins worker launch/resume time when deciding report freshness.
 Final reports cover every recorded PR and the current published work; historical success cannot
-complete unpublished follow-up. A raced verification is refused if the delivery changed before
+complete unpublished follow-up. Verification compares GitHub's head for the current PR with the recorded
+delivery. When the recorded PR merged at a later head of its own branch, the next `alt land` records that
+merged head once its history contains the recorded head and its merge is on current main; another PR,
+branch or unrelated history is refused ([reconciliation](CLI.md#continue-after-a-pr-merges)). A raced verification is refused if the delivery changed before
 report handoff. Existing restart adoption and merge activation observe the continuing task normally.
 
 ## Engine containment

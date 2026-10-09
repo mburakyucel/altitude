@@ -1488,6 +1488,14 @@ remote branch. Previously published changes are not duplicated. An unchanged ret
 `checks: merged` as historical delivery, never a new check pass, and creates nothing. If main
 already contains the follow-up, no extra PR is needed and the current receipt is reconciled.
 
+A PR merged on GitHub after later pushes to its branch carries a newer head than the recorded
+delivery, which verification refuses until `alt land` runs again. That retry records the merged head
+as the current delivery when it is the recorded PR from the recorded branch, the recorded head is an
+ancestor of the merged head, and the merge commit is on current main. The delivery event names the
+replaced head, merge commit and PR URL. A different PR or branch, or a recorded head outside the
+merged history, is refused and the record stays unchanged; a record that already matches is left as
+it is. The owner then refreshes `report.json` for the reconciled delivery.
+
 Every PR requires its own current checks and appropriate review. A recorded approval releasing
 one PR's hold restores the original requirement for the next PR. L3 applies a separate release
 after judging whether the original decision covers that PR; an actual renewed hold needs its own
