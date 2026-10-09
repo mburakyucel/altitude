@@ -68,7 +68,7 @@ login/logout, browser/device CA trust, download from GitHub's published release,
 live-provider compatibility remain outside this harness's evidence.
 
 From `v0.1.0` a release also installs on a Mac, and the early preview supports Apple silicon Macs
-by the operator's decision of October 8, 2026. The following remaining acceptance stays under #225/#226/#219/#350; those issues
+by the operator's decision of October 9, 2026. The following remaining acceptance stays under #225/#226/#219/#350; those issues
 stay open:
 
 - **Native macOS runtime and installation:** the common engine/authority contract runs on a per-user

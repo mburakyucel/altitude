@@ -39,7 +39,7 @@ confirmation. Owners run their candidate's checks on the Mac with `alt task vali
 [macOS validation run](docs/DEVELOPMENT.md#macos-validation-runs) does not establish, owners name missing
 macOS confirmation in their PR and report and send L3 a tracking row for the relevant issue: #643
 for containers, #225 for native runtime, or #551 for installation. L3 maintains those rows.
-Linux merge checks and holds are unchanged. By the operator's decision of 2026-10-08, the early
+Linux merge checks and holds are unchanged. By the operator's decision of 2026-10-09, the early
 preview supports Linux x86_64 and Apple silicon macOS; the [roadmap](docs/ROADMAP.md#native-macos-runtime)
 lists the native confirmation still open.
 
