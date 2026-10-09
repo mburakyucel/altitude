@@ -5,7 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { imageSendRefused, sendImageChat, streamChat, useChatDequeue, useSendNow } from "../data/api";
 import { SendNow } from "../components/SendNow";
-import type { ChatMessage, ChatSent, ChatView, ProjectView, TaskRow } from "../data/api";
+import type { ChatMessage, ChatSent, ChatView, ProjectView, QueuedMessage, TaskRow } from "../data/api";
 import { ProseScope } from "../components/Prose";
 import { ProseTerminal } from "../components/CodeBlock";
 import { requestCommand } from "../data/terminalCommand";
@@ -289,6 +289,18 @@ export default function Conversation({
   const neverStarted = project.isSuccess && !project.data.l3?.session_id && view && view.history.length === 0 && !view.active;
   const queued = view?.queued ?? [];
   const queuePositions = new Map(queued.filter(row => row.trigger !== "project-message").map((row, index) => [row.id, index]));
+  // A kept message is already in the conversation: its queued state shows under its own bubble, or in the list
+  // when that bubble is older than the loaded history.
+  const shown = new Set(turns.map((turn) => turn.id));
+  const kept = new Map(queued.flatMap((row) => row.turn_id && shown.has(row.turn_id) ? [[row.turn_id, row] as const] : []));
+  const waiting = queued.filter((row) => !row.turn_id || !shown.has(row.turn_id));
+  const queuedStatus = (row: QueuedMessage) => <span className="queued-status text-muted">{row.send_now ? "Sending now" : queuePositions.get(row.id) === 0 ? "Queued · runs next" : `Queued · ${(queuePositions.get(row.id) ?? 0) + 1} in line`}</span>;
+  const sendNowFor = (row: QueuedMessage) => (
+    <SendNow visible pending={Boolean(row.send_now || (sendNow.isPending && sendNow.variables === row.id))}
+      disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending || Boolean(view?.send_now_reason)}
+      reason={view?.send_now_reason || (row.send_now ? row.send_now_reason : null)}
+      error={sendNow.variables === row.id ? sendNow.error : null} onClick={() => sendNow.mutate(row.id)} />
+  );
   const busy = Boolean(view?.busy || view?.active || (local && !local.done));
   const empty = Boolean(view && view.history.length === 0 && !view.active && !local && queued.length === 0);
 
@@ -313,6 +325,7 @@ export default function Conversation({
       const { turn } = item;
       // Send now stopped this reply before it said anything: the operator's next message follows directly (SPEC.md §4.2).
       const silent = turn.assistant?.interrupted === true && !turn.assistant.text.trim() && !turn.assistant.tasks?.length;
+      const keptRow = kept.get(turn.id);
       rows.push(
         <div key={turn.id} className="turn" data-turn={turn.id} data-joined={silent || undefined}>
           {turn.user ? <Bubble text={turn.user.text} at={turn.user.at} images={<MessageImages project={name} images={turn.user.images} />} /> : null}
@@ -329,6 +342,11 @@ export default function Conversation({
                 </button>
               ) : null}
             </p>
+          ) : keptRow ? (
+            <div className="queued-row" data-kept>
+              {queuedStatus(keptRow)}
+              <div className="queued-actions">{sendNowFor(keptRow)}</div>
+            </div>
           ) : item.inProgress ? (
             <Typing />
           ) : null}
@@ -402,24 +420,21 @@ export default function Conversation({
             </p>
           ) : null}
           {rows}
-          {queued.length > 0 ? (
+          {waiting.length > 0 ? (
             <ul className="queued" aria-label="Queued messages">
-              {queued.map((row) => (
+              {waiting.map((row) => (
                 <li key={row.id} className="queued-row">
                   {row.project_message ? (
                     <SystemLine project={name} titles={titles} turn={{ id: row.id, at: row.at ?? null,
                       trigger: "project-message", prompt: row.text, reply: null, error: null,
                       inProgress: false, slug: null, fyi: true, headsUp: false, projectMessage: row.project_message }} />
-                  ) : <div className="queued-text"><span>{row.text}</span><MessageImages project={name} images={row.images} /><span className="queued-status text-muted">{row.send_now ? "Sending now" : queuePositions.get(row.id) === 0 ? "Queued · runs next" : `Queued · ${(queuePositions.get(row.id) ?? 0) + 1} in line`}</span></div>}
+                  ) : <div className="queued-text"><span>{row.text}</span><MessageImages project={name} images={row.images} />{queuedStatus(row)}</div>}
                   {!row.trigger || row.trigger === "chat" ? (
                     <div className="queued-actions">
-                    <SendNow visible pending={Boolean(row.send_now || (sendNow.isPending && sendNow.variables === row.id))}
-                      disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending || Boolean(view?.send_now_reason)}
-                      reason={view?.send_now_reason || (row.send_now ? row.send_now_reason : null)}
-                      error={sendNow.variables === row.id ? sendNow.error : null} onClick={() => sendNow.mutate(row.id)} />
-                    <button type="button" className="link" disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending} onClick={() => dequeue.mutate(row.id)}>
+                    {sendNowFor(row)}
+                    {row.turn_id ? null : <button type="button" className="link" disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending} onClick={() => dequeue.mutate(row.id)}>
                       {dequeue.isPending && dequeue.variables === row.id ? "Removing…" : "Remove"}
-                    </button>
+                    </button>}
                     </div>
                   ) : null}
                 </li>
