@@ -1212,6 +1212,18 @@ describe.each([390, 1440])("Create task under a reply at %ipx (SPEC.md §3.3)", 
     }
   });
 
+  it("shows a press as its message, with a Retry of the same press, once its reply has left the loaded history", async () => {
+    const fetchMock = serve(() => jsonResponse({ queued: pressRow }), () => ({ ...chatView, history: [...history,
+      { at: ago(1), role: "user", text: `Create task: ${title}`, trigger: "chat", turn_id: "c9", offer_turn: offered.turn_id },
+      { at: ago(0), role: "error", text: "L3 turn failed", trigger: "chat", turn_id: "c9" },
+    ] }) as ChatView);
+    const { user } = renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    expect(await within(region).findByText(`Create task: ${title}`)).toBeInTheDocument();
+    await user.click(within(within(region).getByText(/^L3 could not answer this turn\./)).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(posted(fetchMock, "/api/chat")).toEqual({ project: "altitude", offer_turn: offered.turn_id }));
+  });
+
   it("retries a failed Create task turn from the button with the same reply reference, not as typed text", async () => {
     const fetchMock = serve(() => jsonResponse({ queued: pressRow }), () => ({ ...chatView, history: [
       ...history, asked, offered,

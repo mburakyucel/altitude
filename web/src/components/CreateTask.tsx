@@ -47,11 +47,10 @@ export function CreateTask({ title, state, error, onPress, onRemove, removing }:
   return (
     <div className="create-task" data-state={state}>
       <span className="create-task-pill">
-        <button type="button" className="create-task-button" aria-describedby={titleId} aria-disabled={!pressable || undefined}
-          onClick={() => { if (pressable) onPress(); }}>
+        <button type="button" className="create-task-button" aria-label={look.spoken ? `${look.label}, ${look.spoken}` : undefined}
+          aria-describedby={titleId} aria-disabled={!pressable || undefined} onClick={() => { if (pressable) onPress(); }}>
           {look.icon ? <Icon name={look.icon} /> : <span className="spinner" aria-hidden />}
           {look.label}
-          {look.spoken ? <span className="visually-hidden">, {look.spoken}</span> : null}
         </button>
         {state === "wait" && onRemove ? (
           <button type="button" className="create-task-remove" aria-label="Remove" disabled={removing} onClick={onRemove}>

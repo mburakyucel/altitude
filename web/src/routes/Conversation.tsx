@@ -364,7 +364,8 @@ export default function Conversation({
       rows.push(<SystemLine key={item.turn.id} turn={item.turn} project={name} titles={titles} />);
     } else {
       const { turn } = item;
-      const pressed = Boolean(turn.user?.offer_turn);
+      // A press shows on its reply's button; once that reply has left the loaded history, it reads as its message.
+      const pressed = Boolean(turn.user?.offer_turn && turns.some((other) => other.id === turn.user!.offer_turn && other.assistant?.offer));
       const refused = pressError?.turnId === turn.id ? pressError.message : null;
       const offer = turn.assistant?.offer ? createTaskState(turn) : null;
       const waiting = queuedPresses.get(turn.id);
@@ -382,11 +383,14 @@ export default function Conversation({
           ) : turn.error && !pressed ? (
             <p className="turn-failed text-muted">
               L3 could not answer this turn.{" "}
-              {turn.user ? (
+              {turn.user?.offer_turn ? (
+                <button type="button" className="link" disabled={Boolean(press)} onClick={() => void pressCreateTask(turn.user!.offer_turn!)}>Retry</button>
+              ) : turn.user ? (
                 <button type="button" className="link" disabled={Boolean(local && !local.done)} onClick={() => void send(turn.user!.text, undefined, turn.user!.images?.length ? { request_id: crypto.randomUUID(), image_ids: turn.user!.images.map((image) => image.id), previews: [] } : undefined).catch(() => undefined)}>
                   Retry
                 </button>
               ) : null}
+              {pressError && pressError.turnId === turn.user?.offer_turn ? <> <CreateTaskError message={pressError.message} /></> : null}
             </p>
           ) : item.inProgress ? (
             <Typing />
