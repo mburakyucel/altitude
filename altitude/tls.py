@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shutil
 import ssl
 import subprocess
 import tempfile
@@ -13,6 +14,7 @@ import tempfile
 from . import config
 
 RENEW_SECONDS = 30 * 24 * 60 * 60
+LABEL_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"  # no 0/O or 1/I/L to misread
 _MARKER = ".altitude-managed"
 # A new CA vouches only for loopback, private-network addresses and private names, so trusting it on a
 # device can never let its key impersonate a public website.
@@ -153,6 +155,9 @@ def _load(directory: Path, context: ssl.SSLContext | None = None) -> ssl.SSLCont
     _private(directory / "server.key")
     context = context or ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
+    # A resumed TLS 1.3 session skips the certificate, so the trust check (TrustCheck) could pass on a session a
+    # warning bypass began; issuing no tickets keeps every TLS 1.3 handshake a full one.
+    context.num_tickets = 0
     try:
         context.load_cert_chain(directory / "server.crt", directory / "server.key")
     except (OSError, ssl.SSLError) as exc:
@@ -191,6 +196,93 @@ def _renew(directory: Path, host: str | None) -> ssl.SSLContext:
         raise TLSFailure(f"Cannot renew HTTPS in {directory}: {exc}. Existing certificate and key are retained.") from exc
 
 
+def probe_context(host: str | None) -> ssl.SSLContext | None:
+    """The trust check's own certificate: a second leaf from this installation's CA for `host`, issued afresh and
+    kept only in memory. None when the identity was supplied from outside and Altitude holds no CA key."""
+    directory = config.TLS_DIR
+    if not _managed(directory):
+        return None
+    try:
+        with tempfile.TemporaryDirectory(prefix=".probe-", dir=directory) as temporary:
+            staging = Path(temporary)
+            _issue(directory, staging, host)
+            os.symlink(directory.resolve() / "server.key", staging / "server.key")
+            return _load(staging)
+    except OSError as exc:
+        raise TLSFailure(f"Cannot issue the trust check's certificate in {directory}: {exc}.") from exc
+
+
+class TrustCheck:
+    """Whether a browser trusts this installation's CA, not just the one certificate a warning bypass let through.
+    `arm` gives every new connection from that address the second certificate (`probe_context`) for
+    `ARM_SECONDS`, since a browser may open several and use any of them. The browser's request for its challenge
+    passes only on such a connection after a full TLS 1.3 handshake; a browser that refuses the certificate ends
+    the handshake with an alert, which settles the challenge that armed that connection as untrusted. A challenge
+    lasts `CHALLENGE_SECONDS`. `name` is the CA's, which stays fixed while Altitude runs."""
+    ARM_SECONDS = 5
+    CHALLENGE_SECONDS = 60
+    LIMIT = 256
+
+    def __init__(self, context: ssl.SSLContext, name: str):
+        import threading
+        self.context, self.name = context, name
+        self._lock = threading.Lock()
+        self._armed: dict[str, tuple[float, str]] = {}  # address: (until, the challenge that armed it)
+        self._challenges: dict[str, dict] = {}
+
+    def _prune(self, now: float) -> None:
+        self._armed = {address: armed for address, armed in self._armed.items() if armed[0] > now}
+        live = sorted(((entry["until"], challenge) for challenge, entry in self._challenges.items()
+                       if entry["until"] > now), reverse=True)[:self.LIMIT]
+        self._challenges = {challenge: self._challenges[challenge] for _, challenge in live}
+
+    def arm(self, address: str) -> str:
+        import time
+        now, challenge = time.monotonic(), secrets.token_urlsafe(18)
+        with self._lock:
+            self._prune(now)
+            self._armed[address] = (now + self.ARM_SECONDS, challenge)
+            self._challenges[challenge] = {"address": address, "until": now + self.CHALLENGE_SECONDS, "outcome": None}
+        return challenge
+
+    def probe(self, address: str) -> str | None:
+        """The challenge arming a new connection from `address`, which then gets the second certificate
+        (`context`), or None."""
+        import time
+        with self._lock:
+            until, challenge = self._armed.get(address, (0, None))
+            return challenge if until > time.monotonic() else None
+
+    def refused(self, challenge: str) -> None:
+        """A connection armed by `challenge` refused the second certificate: that challenge is untrusted. A later
+        challenge from the same address is not, even when this alert arrives after it armed."""
+        with self._lock:
+            entry = self._challenges.get(challenge)
+            if entry is None:
+                return
+            if self._armed.get(entry["address"], (0, None))[1] == challenge:
+                del self._armed[entry["address"]]
+            if entry["outcome"] is None:
+                entry["outcome"] = "untrusted"
+
+    def confirm(self, challenge: str, address: str, probed: bool) -> str:
+        """"trusted", "untrusted", "retry" (the request came on a connection opened before arming; the address is
+        armed again) or "unknown"."""
+        import time
+        now = time.monotonic()
+        with self._lock:
+            entry = self._challenges.get(challenge)
+            if entry is None or entry["address"] != address or entry["until"] <= now:
+                return "unknown"
+            if probed:
+                self._armed.pop(address, None)
+                entry["outcome"] = "trusted"
+            if entry["outcome"] is None:
+                self._armed[address] = (now + self.ARM_SECONDS, challenge)
+                return "retry"
+            return entry["outcome"]
+
+
 def _create(directory: Path, host: str | None) -> None:
     """A new CA and a leaf it issues for `host` in the empty private folder `directory`, loaded and verified."""
     for name in ("ca", "server"):
@@ -198,8 +290,10 @@ def _create(directory: Path, host: str | None) -> None:
         (directory / f"{name}.key").chmod(0o600)
     kind, name = _host(host)
     permitted = [*_PRIVATE, *([f"DNS:{name}"] if kind == "DNS" else [])]
+    # A random label tells installations apart where a device lists trusted authorities by name alone.
+    label = "".join(secrets.choice(LABEL_ALPHABET) for _ in range(4))
     _openssl("req", "-x509", "-new", "-key", directory / "ca.key", "-sha256", "-days", "3650",
-             "-out", directory / "ca.crt", "-subj", "/CN=Altitude local CA",
+             "-out", directory / "ca.crt", "-subj", f"/CN=Altitude CA {label}",
              "-addext", "basicConstraints=critical,CA:TRUE,pathlen:0",
              "-addext", "keyUsage=critical,keyCertSign,cRLSign",
              "-addext", "nameConstraints=critical," + ",".join(f"permitted;{n}" for n in dict.fromkeys(permitted)))
@@ -208,15 +302,23 @@ def _create(directory: Path, host: str | None) -> None:
     _verify(directory, host)
 
 
-def fixture(directory: Path) -> dict:
+def fixture(directory: Path, *, probe: bool = False) -> dict:
     """A disposable identity for a test device, from the generator `initialize` uses, for this machine's loopback
-    address: `directory` gets the CA certificate and the server's certificate and key. The CA's key is deleted once the
-    server certificate is issued, so nothing else is ever signed with it. Returns both certificates' details."""
+    address: `directory` gets the CA certificate and the server's certificate and key, and with `probe` the trust
+    check's second certificate as `probe/server.crt` beside a copy of that key. The CA's key is deleted once they are
+    issued, so nothing else is ever signed with it. Returns the certificates' details."""
     directory.mkdir(mode=0o700)
     _create(directory, "127.0.0.1")
+    if probe:
+        (directory / "probe").mkdir(mode=0o700)
+        _issue(directory, directory / "probe", "127.0.0.1")
+        shutil.copy2(directory / "server.key", directory / "probe" / "server.key")
+        for name in ("server.csr", "server.ext"):
+            (directory / "probe" / name).unlink()
     for name in ("ca.key", "server.csr", "server.ext"):
         (directory / name).unlink()
-    return {name: details(directory / f"{name}.crt") for name in ("ca", "server")}
+    return {name: details(directory / f"{name}.crt") for name in ("ca", "server")} | (
+        {"probe": details(directory / "probe" / "server.crt")} if probe else {})
 
 
 def details(certificate: Path) -> dict:
@@ -488,6 +590,11 @@ def profile(body: bytes, authority: dict) -> bytes:
                            "PayloadOrganization": "Altitude", "PayloadContent": [certificate],
                            "PayloadDescription": "Lets this device check that it is talking to your Altitude on "
                                                  "your own network. It holds only Altitude's public certificate."})
+
+
+def check_value(sha256: str) -> str:
+    """The last eight byte pairs of a SHA-256 fingerprint, which a device's certificate details must end with."""
+    return " ".join(sha256.split(":")[-8:])
 
 
 def fingerprint_rows(sha256: str) -> list[str]:

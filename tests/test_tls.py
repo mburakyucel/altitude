@@ -194,7 +194,8 @@ class TestTLS(unittest.TestCase):
     def test_identity_reads_name_fingerprint_and_scope_from_the_certificate(self):
         tls.initialize("trial.example")
         authority = tls.identity(self.directory / "ca.crt")
-        self.assertEqual(authority["name"], "Altitude local CA")
+        # Each installation's CA carries its own random label, so a device can tell installations apart.
+        self.assertRegex(authority["name"], r"^Altitude CA [2-9A-HJ-NP-Z]{4}$")
         self.assertEqual(f"sha256 Fingerprint={authority['sha256']}", tls.info("trial.example")["ca_sha256"])
         self.assertRegex(authority["sha256"], r"^[0-9A-F]{2}(:[0-9A-F]{2}){31}$")
         self.assertEqual(authority["scope"]["excluded"], [])
@@ -206,8 +207,17 @@ class TestTLS(unittest.TestCase):
                                              "their subdomains; addresses in 127.0.0.0/8, 10.0.0.0/8"), described)
         self.assertIn("trial.example", described, "a configured, possibly public, name is part of the scope")
         info = tls.info("trial.example")
-        self.assertEqual((info["ca_name"], info["ca_scope"]), ("Altitude local CA", described))
+        self.assertEqual((info["ca_name"], info["ca_scope"]), (authority["name"], described))
         self.assertIn("SHA-256", " ".join(info["trust_steps"]))
+
+    def test_a_test_devices_identity_can_carry_the_trust_checks_second_certificate(self):
+        folder = self.root / "fixture"
+        tested = tls.fixture(folder, probe=True)
+        self.assertEqual(sorted(str(path.relative_to(folder)) for path in folder.rglob("*")),
+                         ["ca.crt", "probe", "probe/server.crt", "probe/server.key", "server.crt", "server.key"])
+        self.assertEqual(tested["probe"]["issuer"], tested["ca"]["subject"])
+        self.assertNotEqual(tested["probe"]["sha256"], tested["server"]["sha256"])
+        self.assertEqual(handshake(tls._load(folder / "probe"), folder / "ca.crt", "127.0.0.1"), b"typed conversation")
 
     def test_a_test_devices_identity_is_the_installation_profile_with_the_cas_key_gone(self):
         folder = self.root / "fixture"
@@ -218,7 +228,8 @@ class TestTLS(unittest.TestCase):
         self.assertEqual(handshake(tls._load(folder), folder / "ca.crt", "127.0.0.1"), b"typed conversation")
         server = tested["server"]
         self.assertEqual((server["subject"], server["issuer"], server["key"], server["signature"]),
-                         ("CN=Altitude", "CN=Altitude local CA", "id-ecPublicKey (256 bit) P-256", "ecdsa-with-SHA256"))
+                         ("CN=Altitude", tested["ca"]["subject"], "id-ecPublicKey (256 bit) P-256", "ecdsa-with-SHA256"))
+        self.assertRegex(tested["ca"]["subject"], r"^CN=Altitude CA [2-9A-HJ-NP-Z]{4}$")
         self.assertEqual(server["extensions"]["Extended Key Usage"], "TLS Web Server Authentication")
         self.assertEqual(server["extensions"]["Subject Alternative Name"],
                          "DNS:localhost, IP Address:127.0.0.1, IP Address:0:0:0:0:0:0:0:1")
@@ -229,8 +240,8 @@ class TestTLS(unittest.TestCase):
         for name in ("ca", "server"):
             installed = tls.details(self.directory / f"{name}.crt")
             for found in (installed, tested[name]):
-                for varying in ("not_before", "not_after", "sha256"):
-                    found.pop(varying)
+                for varying in ("not_before", "not_after", "sha256", "issuer") + (("subject",) if name == "ca" else ()):
+                    found.pop(varying)  # the CA's name carries each installation's own random label
                 for identifier in ("Subject Key Identifier", "Authority Key Identifier"):
                     found["extensions"].pop(identifier, None)
             self.assertEqual(tested[name], installed, f"the fixture's {name} certificate is the installation's profile")
@@ -647,7 +658,7 @@ class TestShare(ServiceCase):
             self.assertEqual(response.headers["Content-Type"], "application/x-apple-aspen-config")
             self.assertEqual(int(response.headers["Content-Length"]), len(profile_bytes))
             self.assertEqual(response.read(), b"")
-        self.assertEqual(settings["PayloadDisplayName"], "Altitude local CA")
+        self.assertEqual(settings["PayloadDisplayName"], authority["name"])
         [payload] = settings["PayloadContent"]
         self.assertEqual(payload["PayloadType"], "com.apple.security.root")
         self.assertEqual(payload["PayloadContent"], ssl.PEM_cert_to_DER_cert(certificate.decode()))
@@ -662,12 +673,12 @@ class TestShare(ServiceCase):
         self.assertFalse(sharing.is_alive(), "the link closes by itself")
         for row in tls.fingerprint_rows(authority["sha256"]):
             self.assertIn(row, steps)
-        self.assertIn("contains only a Certificate, named Altitude local CA", steps)
+        self.assertIn(f"contains only a Certificate, named {authority['name']}", steps)
         self.assertIn("Before installing", steps)
         self.assertIn("open this link on your desktop", steps)
         self.assertIn("Linux, macOS, iPhone/iPad and Android steps", steps)
         self.assertIn(tls.describe_scope(authority["scope"]), steps)
-        self.assertIn("Certificate Trust Settings > turn on Altitude local CA", steps)
+        self.assertIn(f"Certificate Trust Settings > turn on {authority['name']}", steps)
         self.assertIn(f"open https://127.0.0.1:{health.port} in a new Private tab", steps)
         self.assertEqual(lines[1:], ["Sent the profile to 127.0.0.1.", "Sent the certificate to 127.0.0.1.",
                                      "The link is closed."])
@@ -762,7 +773,10 @@ class TestShareCommand(unittest.TestCase):
                       result.stderr)
         paired = self.alt("pair")
         self.assertEqual(paired.returncode, 0, paired.stderr)
-        self.assertRegex(paired.stdout, r"On the device, open https://10\.20\.30\.40:9443/pair\?code=[\w-]+\n")
+        self.assertIn("On the device, open https://10.20.30.40:9443 and type the code", paired.stdout)
+        self.assertNotIn("code=", paired.stdout)  # the code never rides in a link
+        self.assertIn("Or scan this with a phone to open it:", paired.stdout)
+        self.assertNotIn("certificate", paired.stdout)  # no CA file of its own here: nothing to check against
 
     def test_true_loopback_missing_service_and_other_actors_are_refused(self):
         self.service({"port": 9443})
@@ -777,5 +791,5 @@ class TestShareCommand(unittest.TestCase):
                       self.alt("tls-share").stderr)
         paired = self.alt("pair")
         self.assertEqual(paired.returncode, 0, paired.stderr)
-        self.assertIn("No link: The Altitude service has not recorded where it listens", paired.stdout)
-        self.assertIn("Type the code on its Pair this device screen.", paired.stdout)
+        self.assertIn("Type the code on the device's Pair this device screen. No address: The Altitude service has "
+                      "not recorded where it listens", paired.stdout)

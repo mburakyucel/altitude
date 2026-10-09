@@ -301,7 +301,6 @@ function DevicesPage() {
       setCode({ status: "failed", error: error as Error });
     }
   };
-  const link = code.status === "made" ? `${window.location.origin}/pair?code=${code.code.code}` : "";
   return <>
     <p className="text-meta text-muted">Browsers that can open Altitude. Each pairs once with a one-time code and stays paired until you remove it here. Removing a device signs it out at once.</p>
     {devices.isPending ? <p role="status">Loading devices…</p>
@@ -315,8 +314,14 @@ function DevicesPage() {
       <h2>Pair another device</h2>
       {code.status === "made" ? <>
         <p className="device-code" aria-label="Pairing code">{code.code.code}</p>
-        <p className="text-meta text-muted">Works once, for the next {code.code.minutes} minutes. On the other device, type it on the Pair this device screen, or open:</p>
-        <Command text={link} />
+        <p className="text-meta text-muted">Works once, for the next {code.code.minutes} minutes. On the other device,{" "}
+          {code.code.address ? <>open <span className="device-address">{code.code.address}</span> and type it.</> : "type it on the Pair this device screen."}</p>
+        {code.code.address && code.code.qr ? <>
+          <QRCode rows={code.code.qr} label={`QR code for ${code.code.address}`} />
+          <p className="text-meta text-muted">Scan with a phone to open Altitude.</p>
+        </> : null}
+        {code.code.certificate ? <p className="text-meta text-muted">Certificate “{code.code.certificate.name}” — SHA-256 ends with{" "}
+          <span className="device-check">{code.code.certificate.check}</span></p> : null}
         <button type="button" className="btn" onClick={() => void make()}>Make a new code</button>
       </> : <>
         <p className="text-meta text-muted">Make a one-time code here, or run <code>alt pair</code> on the computer running Altitude. A new code cancels the previous one.</p>

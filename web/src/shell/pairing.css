@@ -1,10 +1,26 @@
 /* Pair this device (SPEC.md §3.16): the one screen an unpaired browser gets. */
 .pair-screen { min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: safe center; gap: 20px; padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); background: var(--page); }
 .pair-brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 1.125rem; color: var(--text-primary); }
-.pair-card { width: 100%; max-width: 26rem; display: flex; flex-direction: column; gap: 14px; padding: 24px; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); }
+.pair-card { width: 100%; max-width: 28rem; display: flex; flex-direction: column; gap: 14px; padding: 24px; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card); }
 .pair-card h1 { font-size: 1.375rem; font-weight: 600; }
 .pair-lead { color: var(--text-secondary); line-height: 1.55; }
 .pair-removed { padding: 10px 12px; border-radius: var(--radius-card); background: var(--bubble); color: var(--text-primary); font-size: var(--text-meta); }
+/* Three items, each with its mark: ✓ done, ○ to do, a spinner while checking, ! needs attention. */
+.pair-steps { display: flex; flex-direction: column; }
+.pair-step { display: flex; gap: 12px; align-items: flex-start; padding: 14px 0; }
+.pair-step + .pair-step { border-top: 1px solid var(--hairline); }
+.pair-mark { width: 22px; height: 22px; flex: none; display: inline-flex; align-items: center; justify-content: center; margin-top: 1px; border-radius: 50%; font-size: 12px; font-weight: 700; }
+.pair-mark[data-mark="done"] { background: var(--success-bg); color: var(--success-text); }
+.pair-mark[data-mark="pending"] { border: 1.5px solid var(--border); }
+.pair-mark[data-mark="checking"] { color: var(--accent); }
+.pair-mark[data-mark="problem"] { background: var(--danger); color: var(--on-accent); }
+.pair-step-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.pair-step-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-height: 24px; }
+.pair-step-head h2 { font-size: 1rem; font-weight: 600; }
+.pair-pill { flex: none; }
+.pair-instructions { display: flex; flex-direction: column; gap: 8px; color: var(--text-secondary); line-height: 1.55; }
+.pair-instructions code, .pair-lead code { font-family: var(--font-mono, monospace); color: var(--text-primary); }
+.pair-form { align-self: stretch; display: flex; flex-direction: column; gap: 12px; }
 .pair-field { display: flex; flex-direction: column; gap: 6px; font-size: var(--text-meta); font-weight: 500; color: var(--text-secondary); }
 .pair-field input { min-height: 52px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--surface); color: var(--text-primary); font-family: var(--font-mono, monospace); font-size: 1.375rem; letter-spacing: .12em; }
 .pair-field input::placeholder { color: var(--text-muted); opacity: .6; }
