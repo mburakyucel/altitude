@@ -58,7 +58,7 @@ evidence for the affected user flows and failure modes. Application logic, API/s
 stay real; external engine and GitHub effects use fixtures. Live-provider validation, including
 the real tiny task, is deferred under the operator's recorded testing policy.
 
-Every pull request runs that suite as the required `check` on a GitHub-hosted runner with a
+Every pull request runs that suite as the required `check` on GitHub-hosted runners with a
 read-only token and no secrets; a failed run keeps its browser report as a seven-day artifact for
 you to inspect. A first-time contributor's run starts once the maintainer approves it. After
 review, the maintainer integrates your contribution on a repository branch, where the same check
