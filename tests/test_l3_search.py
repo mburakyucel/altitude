@@ -29,6 +29,17 @@ class TestL3Search(AltitudeCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout) if "--json" in args else result.stdout
 
+    def test_interrupted_replies_keep_their_marker_as_matches_and_context(self):
+        self.chat("Check the rollout flags")
+        self.chat("Rollout flags look", role="assistant", interrupted=True, at="2030-01-01T00:01:00+00:00")
+        self.chat("Rollout instead: use the other branch", at="2030-01-01T00:02:00+00:00")
+        self.chat("", role="assistant", interrupted=True, at="2030-01-01T00:03:00+00:00")
+        self.chat("Rollout branch confirmed", role="assistant", at="2030-01-01T00:04:00+00:00")
+        record = self.lookup("rollout", "--json")
+        rows = {row["source"]: row for result in record["results"] for row in result["context"]}
+        marked = {row["text"]: row.get("interrupted") for row in rows.values() if row["role"] == "assistant"}
+        self.assertEqual(marked, {"Rollout flags look": True, "": True, "Rollout branch confirmed": None})
+
     def test_archived_and_active_conversations_questions_reports_and_digest_are_original_and_read_only(self):
         slug = self.task()
         original = T.message(self.project, slug, T.OPERATOR_MESSAGE_ROLE,
