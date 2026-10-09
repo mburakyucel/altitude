@@ -87,6 +87,8 @@ svg.i.sm{width:14px;height:14px}
 .offer .ob[aria-disabled]{color:var(--text-muted)}
 .offer .ot{font-size:13px;color:var(--text-muted);min-width:0}
 .offer .err{flex-basis:100%;font-size:13px;color:var(--danger)}
+.qrow{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;color:var(--text-muted);font-size:14px}.qrow .qacts{display:flex;gap:16px;margin-left:auto}
+.m .offer .ob{position:relative}.m .offer .ob::after{content:"";position:absolute;inset:-5px 0}
 .dots{display:inline-flex;gap:4px;padding:6px 0}.dots i{width:6px;height:6px;border-radius:50%;background:var(--text-muted);opacity:.6}
 .composer{border:1px solid var(--border);border-radius:var(--radius-composer);background:var(--card);box-shadow:var(--shadow);padding:14px 12px 10px 18px;width:100%;max-width:720px;margin:0 auto}
 .composer .ph2{color:var(--text-muted);font-size:15px;min-height:24px;line-height:24px}
@@ -1012,11 +1014,13 @@ state_sheet("ConversationStates", "Conversation and report states", [
 OFFER_TITLE = "Refresh Needs you as soon as an answer is sent"
 
 def offer(state="ready"):
-    label = {"ready": "Create task", "sending": "Sending…", "failed": "Create task"}[state]
-    icon = I("spin", "i sm") if state == "sending" else I("work", "i sm")
-    err = '<span class="err" role="alert">Not sent. Check the connection and press it again.</span>' if state == "failed" else ""
-    return (f'<div class="offer"><span class="ob"{" aria-disabled=\"true\"" if state == "sending" else ""}>{icon}{label}</span>'
-            f'<span class="ot">{OFFER_TITLE}</span>{err}</div>')
+    label = {"ready": "Create task", "sending": "Sending…", "failed": "Create task", "checking": "Checking…"}[state]
+    icon = I("spin", "i sm") if state in ("sending", "checking") else I("work", "i sm")
+    note = {"failed": '<span class="err" role="alert">Not sent: L3 is not attached to this project. Press it again to retry.</span>',
+            "checking": '<span class="ot" role="status" style="flex-basis:100%">Couldn’t confirm it was sent. Checking the conversation…</span>'}.get(state, "")
+    busy = ' aria-disabled="true"' if state in ("sending", "checking") else ""
+    return (f'<div class="offer"><button class="ob" type="button" aria-describedby="offer-title"{busy}>{icon}{label}</button>'
+            f'<span class="ot" id="offer-title">{OFFER_TITLE}</span>{note}</div>')
 
 offer_question = '<div class="me">The Needs you badge on my phone still said 2 after I answered both questions. Bug?</div>'
 offer_reply = ('<div class="l3"><p>Yes, a small one. The badge reads the queue on its next refresh, so after an answer it '
@@ -1026,21 +1030,28 @@ offer_pressed = f'<div class="me">Create task: {OFFER_TITLE}</div>'
 offer_done = ('<div class="l3"><p>Created it. It starts as soon as a slot is free; nothing needs you meanwhile.</p>'
               + tcard(OFFER_TITLE, "Queued · starts when a slot is free", "dot q") + '</div>')
 typing = '<span class="dots" role="status" aria-label="L3 is answering"><i></i><i></i><i></i></span>'
+offer_queued = ('<div class="qrow"><span>Create task: ' + OFFER_TITLE + '</span><span class="muted">Queued · runs next</span>'
+                '<span class="qacts"><a href="#">Send now</a><a href="#">Remove</a></span></div>')
 
 board("ReplyTask", 1440, 900, desktop_project(True, '<div class="day">Today</div>' + offer_question + offer_reply + offer() + '</div>'))
 board("MobileReplyTask", 390, 844, mobile_chat(False, offer_question + offer_reply + offer() + '</div>'))
 
-state_sheet("ReplyTaskStates", "Create task: states", [
-    ("Reply without the action", "an answer, a report, or a task already created", offer_question + '<div class="l3"><p>Merged an hour ago as PR #175. It shows after the next restart; nothing waits on you.</p></div>'),
-    ("Reply with the action", "L3 recommends work but has not been asked to start it", offer_question + offer_reply + offer() + '</div>'),
-    ("Pressed", "the action dims for the moment the message takes to save", offer_reply + offer("sending") + '</div>'),
-    ("Waiting", "the action leaves; the instruction is your next message", offer_reply + '</div>' + offer_pressed + typing),
-    ("Waiting while L3 is busy", "the ordinary queued row, with Send now and Remove", offer_reply + '</div><p class="muted" style="margin:0">Create task: ' + OFFER_TITLE + ' · Queued · runs next</p>'),
-    ("Task queued", "L3's answer carries the ordinary task card", offer_reply + '</div>' + offer_pressed + offer_done),
-    ("Not sent", "the action stays and says why; pressing it again retries", offer_reply + offer("failed") + '</div>'),
-    ("L3 could not answer", "the ordinary failed turn with Retry", offer_reply + '</div>' + offer_pressed + '<p class="muted">L3 could not answer this turn. <a href="#">Retry</a></p>'),
-    ("Answered by typing", "any message you send instead retires the action", offer_reply + '</div><div class="me">Not now, after the release.</div><div class="l3"><p>Noted. I will bring it up after the release.</p></div>'),
-], 1720)
+OFFER_STATES = [
+    ("Reply without the action", "an answer, a report, or a reply that created a task", offer_question + '<div class="l3"><p>Merged an hour ago as PR #175. It shows after the next restart; nothing waits on you.</p></div>'),
+    ("Reply with the action", "the latest reply recommends work you have not asked for", offer_question + offer_reply + offer() + '</div>'),
+    ("Pressed", "dims while the message saves; the draft and voice input stay untouched", offer_reply + offer("sending") + '</div>'),
+    ("Waiting", "the action leaves; focus moves to your sent message and “Create task sent” is announced", offer_reply + '</div>' + offer_pressed + typing),
+    ("Waiting while L3 is busy", "the ordinary queued row; Remove brings the action back", offer_reply + '</div>' + offer_queued),
+    ("Task created", "L3’s answer carries the ordinary task card", offer_reply + '</div>' + offer_pressed + offer_done),
+    ("Not sent", "Altitude refused it: the reason, and pressing again retries", offer_reply + offer("failed") + '</div>'),
+    ("Unconfirmed", "the connection dropped after pressing: the page reads the conversation before saying anything", offer_reply + offer("checking") + '</div>'),
+    ("L3 could not answer", "Retry sends the same instruction; a task already created is never made twice", offer_reply + '</div>' + offer_pressed + '<p class="muted">L3 could not answer this turn. <a href="#">Retry</a></p>'),
+    ("Answered by typing", "any message you send or queue retires the action", offer_reply + '</div><div class="me">Not now, after the release.</div><div class="l3"><p>Noted. I will bring it up after the release.</p></div>'),
+    ("Moved on in another window", "a press from an older page is refused and the action leaves", offer_reply + '<div class="offer"><span class="err" role="alert">The conversation has moved on, so this was not sent.</span></div></div><div class="me">Not now, after the release.</div>'),
+]
+state_sheet("ReplyTaskStates", "Create task: states", OFFER_STATES, 2000)
+board("MobileReplyTaskStates", 390, 3660, '<div style="padding:20px 16px"><h1 style="font-size:18px;margin:0 0 16px">Create task: phone states</h1>'
+      + ''.join(state(label, note, '<div class="statebox" style="padding:12px">' + body + '</div>') for label, note, body in OFFER_STATES) + '</div>')
 
 report_content = (
     '<p class="muted"><a href="Task.html">← Persist paths when L3 resumes a task</a></p><h1>Report</h1>'
@@ -1137,7 +1148,7 @@ ROUTES = [
     ("System turns in chat: reports, faults, FYIs", "SystemTurnStates", None),
     ("Conversation and report states", "ConversationStates", None),
     ("Create task: a reply that could become a task", "ReplyTask", "MobileReplyTask"),
-    ("Create task states", "ReplyTaskStates", None),
+    ("Create task states", "ReplyTaskStates", "MobileReplyTaskStates"),
     ("Project lifecycle states", "ProjectLifecycleStates", None),
 ]
 ROUTES = conversation_first_boards(OUT, board, I) + ROUTES

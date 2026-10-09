@@ -73,6 +73,8 @@ svg.i.sm{width:14px;height:14px}
 .offer .ob[aria-disabled]{color:var(--text-muted)}
 .offer .ot{font-size:13px;color:var(--text-muted);min-width:0}
 .offer .err{flex-basis:100%;font-size:13px;color:var(--danger)}
+.qrow{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;color:var(--text-muted);font-size:14px}.qrow .qacts{display:flex;gap:16px;margin-left:auto}
+.m .offer .ob{position:relative}.m .offer .ob::after{content:"";position:absolute;inset:-5px 0}
 .dots{display:inline-flex;gap:4px;padding:6px 0}.dots i{width:6px;height:6px;border-radius:50%;background:var(--text-muted);opacity:.6}
 .composer{border:1px solid var(--border);border-radius:var(--radius-composer);background:var(--card);box-shadow:var(--shadow);padding:14px 12px 10px 18px;width:100%;max-width:720px;margin:0 auto}
 .composer .ph2{color:var(--text-muted);font-size:15px;min-height:24px;line-height:24px}
