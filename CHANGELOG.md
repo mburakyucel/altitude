@@ -44,6 +44,8 @@ Phones and devices:
 - The pairing field formats the code as it is typed: letters are uppercased, other characters are
   ignored and the dash appears after four characters. A pasted or autofilled code with or without
   its dash pairs the same way.
+- Setup explains a Home Screen tile showing a gray letter instead of Altitude's icon: the iPhone does
+  not trust that installation's certificate authority.
 
 Landing:
 
