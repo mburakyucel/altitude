@@ -1399,7 +1399,9 @@ class Handler(BaseHTTPRequestHandler):
             if len(parts) != 7:
                 return self._plain("Design unavailable", 404)
             return self._task_design([parts[1], *parts[3:6]], asset=unquote(parts[6]))
-        project = unquote(parts[1]) if len(parts) > 1 else ""
+        requested = unquote(parts[1]) if len(parts) > 1 else ""
+        # The registered name, never the request's own text, names the project from here on: it reaches a redirect header.
+        project = next((name for name in config.load_projects() if name == requested), "")
         if design_viewer_url(project) is None:
             return self._plain("not found", 404)
         if len(parts) == 2:  # the stable per-project link; the boards' relative imports need the depth
@@ -2778,7 +2780,12 @@ def save_projects_folder(body: dict) -> dict:
     if body.keys() - {"path"}:
         raise ValueError("Unsupported projects folder fields.")
     path = body.get("path")
-    value = str(Path(path).expanduser()) if isinstance(path, str) and path.strip() else None
+    value = None
+    if isinstance(path, str) and path.strip():
+        expanded = os.path.expanduser(Path(path))
+        if expanded.startswith("~"):
+            raise RuntimeError("Could not determine home directory.")
+        value = str(Path(expanded))
     _save_machine("projects_folder", value, "Projects folder")
     return {"roots": [home_relative(r) for r in config.project_roots()]}
 

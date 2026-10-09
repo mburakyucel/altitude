@@ -1224,6 +1224,9 @@ through `n/n` and the runners split their own sorted test lists, so every test r
 when another fails. The required job `check` waits for all of them, always runs, and passes only
 when every shard succeeded: a failed, cancelled or skipped shard fails it. Typecheck/build runs
 in every web shard because each one's browser walkthroughs need the build.
+A newer push cancels the superseded run for that PR. Main and manual runs are never cancelled.
+Each check uses 11 jobs against the plan's 20 concurrent-job limit, so concurrent PR publication
+does not imply many full checks can execute at once.
 Every run, whether from a fork or a repository branch, has a read-only token and no secrets, and no
 workflow runs on the maintainer's machine. Standard hosted runners are free for public
 repositories. GitHub's fork-workflow approval setting requires approval for all outside
@@ -1241,7 +1244,8 @@ CI verifies that it tests the exact commit and, for a pull request, that GitHub'
 the event's base and head as parents, that the head includes that base and that the tested merge
 tree equals the head tree. Landing requires the specific successful PR
 job on the current head, verifies that current main is an ancestor of that head, and serializes
-publication, CI waiting and merge across Altitude owners, including nonmerging invocations.
+publication, CI waiting and merge for `--merge` invocations sharing the repository's common Git
+directory. Nonmerging publication never takes that turn.
 For reviewed merging candidates, CI and explicit owner reassessment share one bounded wait while
 the same process retains the repository turn. `tests/test_land_contention.py` drives real competing
 landing processes, Git and fixture reviewers through main integration, in-turn assessment, fresh
@@ -1253,10 +1257,14 @@ leave the candidate unmerged and its operator hold intact, and final validation 
 assessment deadline. `tests/test_reviews.py` checks the review identity and changed evidence in refusals.
 Original review receipts remain unchanged. Fixtures establish the application protocol, not live engine support for
 background tool sessions or provider compatibility.
-CI runs outside the command do not share its turn. Any base or head movement after candidate pinning
-refuses the merge. A later invocation can reuse the successful head when main is already an
+CI runs outside the command and other installations do not share its turn. If only main moves after
+candidate pinning, a merging invocation integrates it, pushes and waits for fresh checks within
+the original publication deadline. Ownership, reviews, holds, recorded approval and issue-closure
+gates repeat for each candidate. Adopted PR pushes remain fast-forward only. Head or PR identity
+movement refuses; no stale check or review assessment transfers. A later invocation can reuse the
+successful head when main is already an
 ancestor of it: the merge still has the identical tested tree. Ordinary competing merges introduce
-commits outside the head and require reconciliation, a push and fresh checks on the new head.
+commits outside the head and require integration, a push and fresh checks on the new head.
 Landing verifies the merged tree against the tested tree; commit metadata can differ.
 Missing, pending, failed, skipped, cancelled, stale or unrelated required runs block. A required run
 that has not registered on the head yet keeps the bounded wait going; one still absent at the bound
@@ -1264,15 +1272,23 @@ reports `missing`.
 GitHub-managed scans, such as CodeQL default setup, run on the candidate commit with the `dynamic`
 event and no pull request. They are bound by that commit alone, never qualify as the PR `check`, and
 count like every other check on the candidate: a failing scan blocks and a pending one keeps the wait
-going. Every other workflow run must come from a push or pull request event of this PR's branch.
-Review and task/UX holds remain enforced. The operator chooses Altitude-only enforcement without
-a GitHub plan upgrade: GitHub web/API merges and other updates outside Altitude remain unprotected.
-All main updates must use `alt land` for its guarantee.
+going. CodeQL counts an alert as new in a PR when a step of its data flow lies in the changed code, so
+an alert already open on main can fail a PR that never touches its line: a browser-walkthrough fixture
+server subclassing `server.Handler` adds a request source. Fix real defects at their sinks and
+document genuine false positives for operator dismissal without changing accepted behavior.
+Every other workflow run must come from a push or pull request event of this PR's branch.
+Review and task/UX holds remain enforced by Altitude. This repository's strict GitHub up-to-date
+required-check rule rejects a merge if another installation moves main between final validation and
+merge; the process-owned turn cannot provide that protection. A base-only merge refusal repeats
+integration and checks under the same deadline. No repository move, plan upgrade or settings change
+is needed. GitHub web/API merges do not enforce Altitude's task holds or review protocol.
 
 Other projects retain their configured hosted/no-CI gates. Shared hosted-check handling ignores
 completed nonrequired skips without parsing workflow conditions; failed or pending checks still
 block, and at least one hosted check must actually pass. Requiredness and candidate association
-must be established. Projects without CI retain the full local candidate suite and `--test-cmd`
+must be established. Their local turn covers only cooperating landings sharing the common Git
+directory; protection against outside writers requires a strict GitHub up-to-date rule.
+Projects without CI retain the full local candidate suite and `--test-cmd`
 (one argv command, see [dry run and gate selection](CLI.md#dry-run-and-gate-selection));
 neither provides an outage bypass for this repository.
 
