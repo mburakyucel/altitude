@@ -2148,7 +2148,7 @@ scripted recognizer tests establish ordering and text isolation only. On iOS 27,
 hears only a tab's first session; later sessions get a live, unmuted microphone that delivers silence
 until the tab or Home Screen app is reopened ([WebKit bug 326069](https://bugs.webkit.org/show_bug.cgi?id=326069)). A later recognition capture in the page
 whose live, enabled, unmuted microphone gives exact digital silence to a running waveform graph for
-three seconds, before any words, therefore ends as a cancel with "The microphone went silent. Close and reopen Altitude to dictate again. Typing works."
+three continuously observed seconds, before any words, therefore ends as a cancel with "The microphone went silent. Close and reopen Altitude to dictate again. Typing works."
 A working microphone's noise floor is never exactly zero; any sound disarms the check. The microphone
 diagnostic in **Settings → Voice input → Voice troubleshooting** is opt-in and page-local:
 `voiceTrace.ts` retains up to 256 metadata-only events for ten minutes, including track

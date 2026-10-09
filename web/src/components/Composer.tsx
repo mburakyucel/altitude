@@ -34,6 +34,8 @@ const WAVEFORM_CLOSE_MS = 3000;
  * microphone (WebKit bug 326069). A working microphone's noise floor is never exactly zero.
  */
 const DEAD_MICROPHONE_MS = 3000;
+/** A longer pause between frames (a hidden page) leaves the microphone unobserved: silence counts again from zero. */
+const FRAME_GAP_MS = 500;
 const DEAD_MICROPHONE = "The microphone went silent. Close and reopen Altitude to dictate again. Typing works.";
 
 /** Give asynchronous audio graph shutdown a chance to finish before another microphone opens. */
@@ -269,6 +271,7 @@ function useWaveform(graph: Waveform | null, running: boolean, onSilent: RefObje
     const data = new Float32Array(analyser.fftSize);
     let lastSample = -Infinity;
     let silentSince: number | null = null;
+    let lastFrame = -Infinity;
     let heard = false;
     const node = canvas.current;
     const draw = () => {
@@ -285,14 +288,20 @@ function useWaveform(graph: Waveform | null, running: boolean, onSilent: RefObje
       let sum = 0;
       for (const sample of data) sum += sample * sample;
       const level = Math.min(1, Math.sqrt(sum / data.length) * 4);
+      const now = performance.now();
       if (sum > 0) heard = true;
-      else if (!heard && context.state === "running" && stream.getAudioTracks().every((track) => track.readyState === "live" && track.enabled && !track.muted)) {
-        silentSince ??= performance.now();
-        if (performance.now() - silentSince >= DEAD_MICROPHONE_MS) {
+      else if (!heard) {
+        // Only continuously observed silence from a live microphone into a running graph counts.
+        const live = context.state === "running" &&
+          stream.getAudioTracks().every((track) => track.readyState === "live" && track.enabled && !track.muted);
+        if (!live) silentSince = null;
+        else if (silentSince === null || now - lastFrame > FRAME_GAP_MS) silentSince = now;
+        else if (now - silentSince >= DEAD_MICROPHONE_MS) {
           heard = true;
           onSilent.current?.();
         }
       }
+      lastFrame = now;
       if (performance.now() - lastSample >= 1000 && context) {
         lastSample = performance.now();
         traceVoice("waveform.sample", context, { state: context.state, time: context.currentTime,
