@@ -419,7 +419,8 @@ def _merged_retry(root: Path, project: str, slug: str, task: dict, authority: di
     _require_closing_issues(root, pr["number"], issues)
     delivered = task.get("delivery") or {}
     reconciled = None
-    if delivered.get("number") and delivered.get("head") != pr["headRefOid"]:
+    if delivered.get("number") and ((delivered["number"], delivered.get("branch"), delivered.get("head"))
+                                    != (pr["number"], pr.get("headRefName"), pr["headRefOid"])):
         reconciled = _merged_head_evidence(root, delivered, pr, base)
     if not delivered.get("number") or reconciled:
         task = _record_delivery(project, slug, task, authority, branch=pr["headRefName"],

@@ -1335,11 +1335,13 @@ class TestLand(AltitudeCase):
                          [["pr", "create"]])
 
     def test_merged_pr_reconciliation_refuses_another_pr_branch_or_history(self):
-        recorded, _ = self.merged_after_later_push()
+        recorded, merged_head = self.merged_after_later_push()
         unrelated = self.git("commit-tree", "HEAD^{tree}", "-p", recorded, "-m", "unrelated").strip()
         task = S.load_task("demo", "fix-x")
         for change, refusal in (({"number": 99}, "records PR #99"),
+                                ({"number": 99, "head": merged_head}, "records PR #99"),
                                 ({"branch": "worktree-other"}, "from 'worktree-other'"),
+                                ({"branch": "worktree-other", "head": merged_head}, "from 'worktree-other'"),
                                 ({"head": unrelated}, "is not an ancestor of its merged head")):
             stale = {**task["delivery"], **change}
             S.save_task("demo", {**task, "delivery": stale})
