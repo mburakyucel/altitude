@@ -117,7 +117,7 @@ export function useTaskSwipe(enabled: boolean, view: number, views: number, swit
       const touch = event.touches[0];
       if (settling || event.touches.length !== 1 || !touch || selecting() ||
           !target?.closest('.convo-scroll, .live-body, .terminal-body') ||
-          target.closest('a, button, input, textarea, select, summary, pre, [contenteditable], [role="dialog"], .terminal-frame') ||
+          target.closest('a, button, input, textarea, select, summary, pre, [contenteditable], [role="dialog"], .terminal-frame, .terminal-screen, .terminal-keys') ||
           touch.clientX < 24 || touch.clientX > window.innerWidth - 24) return;
       for (let element: Element | null = target; element && element !== node; element = element.parentElement) {
         if (element.scrollWidth > element.clientWidth && /auto|scroll/.test(getComputedStyle(element).overflowX)) return;

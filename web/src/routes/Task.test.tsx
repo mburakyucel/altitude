@@ -6,7 +6,10 @@ import type { TaskView } from "../data/api";
 
 // The xterm screen needs a real canvas; here it stands in with the real screen's frame.
 vi.mock("../components/TerminalScreen", () => ({
-  default: ({ id }: { id: string }) => <div className="terminal-frame"><div className="terminal-screen" data-testid="terminal-screen">{id}</div></div>,
+  default: ({ id }: { id: string }) => <>
+    <div className="terminal-frame"><div className="terminal-screen" data-testid="terminal-screen">{id}</div></div>
+    <div className="terminal-keys" role="toolbar" aria-label="Terminal keys" />
+  </>,
 }));
 
 function jsonResponse(obj: unknown, status = 200): Response {
@@ -1053,11 +1056,13 @@ describe("Phone swipe lifecycle", () => {
       expect(within(screen.getByRole("navigation", { name: "Task views" })).queryByRole("button", { name: "Close terminal" })).toBeNull();
     });
 
-    it("leaves a swipe on the terminal screen to the terminal and resists past the last view", async () => {
+    it("leaves a swipe on the terminal screen or its key row to the terminal and resists past the last view", async () => {
       stub(withTerminal);
       const { router } = renderApp({ route: `${route}/terminal` });
       await screen.findByTestId("terminal-screen");
       await swipeOn("[data-testid=terminal-screen]", 100, 300);
+      expect(track().style.transform).toBe("");
+      await swipeOn(".terminal-keys", 100, 300);
       expect(track().style.transform).toBe("");
       touch("touchStart", 300, ".terminal-note");
       touch("touchMove", 100, ".terminal-note");
