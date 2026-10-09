@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import os
+from pathlib import Path
 import shutil
 import subprocess
 import sys
@@ -94,7 +95,7 @@ class TestLifecycleHarness(AltitudeCase):
         self.assertFalse((self.tmp / "results").exists())
 
     def test_shell_entry_accepts_each_phase_and_still_requires_root(self):
-        for phase in ("bootstrap", "reboot-install", "reboot-verify", "recovery"):
+        for phase in ("bootstrap", "reboot-install", "reboot-verify", "recovery", "public-install", "public-update"):
             with self.subTest(phase=phase):
                 result = subprocess.run(["bash", str(REPO / "scripts/test_installation_lifecycle.sh"), "--disposable-vm",
                                          "b", "c", str(self.tmp / "results"), "a" * 40, phase],
@@ -161,6 +162,67 @@ class TestLifecycleHarness(AltitudeCase):
         self.assertTrue((harness.prefix / "pending.json").exists())
 
 
+    def public(self, update: bool, script: bytes = b"latest script\n"):
+        """Lifecycle.public with GitHub's command, the service and doctor as fixtures; returns the run steps."""
+        results = self.tmp / "results"
+        results.mkdir()
+        for name in ("baseline", "candidate"):
+            (self.tmp / name).mkdir()
+            (self.tmp / name / "install.sh").write_bytes(f"{'rc.2' if name == 'baseline' else 'latest'} script\n".encode())
+        harness = Lifecycle(self.tmp / "baseline", self.tmp / "candidate", results, f"{'b' * 40}..{'c' * 40}")
+        harness.home = self.tmp / "home"
+        harness.alt = harness.home / ".local/bin/alt"
+        harness.home.mkdir()
+        before = {"version": "v0.1.0-rc.2", "repository": "https://github.com/example/altitude"}
+        after = {"version": "v0.1.0", "repository": "https://github.com/example/altitude"}
+        steps = []
+
+        def run(label, *command, **kwargs):
+            steps.append((label, command))
+            if label == "public-script":
+                Path(command[command.index("-o") + 1]).write_bytes(script)
+            if label == "public-install":
+                (harness.home / ".altitude").mkdir()
+                (harness.home / ".altitude/update.json").write_text('{"latest": {"version": "v0.1.0"}}')
+                return f"Altitude {(before if update else after)['version']} is installed and its service is active."
+            return "Altitude v0.1.0 is available: run alt update (notes: …)" if label == "notice" else ""
+        doctors = iter([{"update": {"available": None}}, {"update": {"available": {"version": "v0.1.0"}}},
+                        {"update": {"available": None}}])
+        with mock.patch.object(harness, "prepare", return_value=("old", "1", None, before, "new", "2", "package", after)), \
+                mock.patch.object(harness, "run", side_effect=run), \
+                mock.patch.object(harness, "healthy", side_effect=[{"pid": 1}, {"pid": 2}]), \
+                mock.patch.object(harness, "doctor", side_effect=lambda label, release: next(doctors)), \
+                mock.patch.object(harness, "retain", return_value={}), mock.patch.object(harness, "roll_back") as roll_back, \
+                mock.patch.object(harness, "uninstall"):
+            try:
+                harness.execute("public-update" if update else "public-install")
+            finally:
+                self.result = json.loads((results / f"{'public-update' if update else 'public-install'}-result.json").read_text())
+        if update:
+            roll_back.assert_called_once_with("package", "2", after)
+        return steps
+
+    def test_public_install_runs_the_documented_command_for_releases_latest(self):
+        steps = self.public(update=False)
+        self.assertEqual([label for label, _ in steps], ["public-script", "public-install"])
+        self.assertEqual(steps[1][1], ("sh", "-c", "curl --proto '=https' --tlsv1.2 -fsSL "
+                                       "https://github.com/example/altitude/releases/latest/download/install.sh | sh"))
+        self.assertTrue(self.result["passed"])
+        self.assertIn("GitHub's own downloads", self.result["limits"][0])
+
+    def test_public_install_stops_when_releases_latest_is_not_the_checked_release(self):
+        with self.assertRaisesRegex(AssertionError, "is not v0.1.0's install.sh"):
+            self.public(update=False, script=b"rc.2 script\n")
+        self.assertFalse(self.result["passed"])
+
+    def test_public_update_installs_the_baseline_by_tag_then_takes_the_offered_release_with_alt_update(self):
+        steps = self.public(update=True, script=b"rc.2 script\n")
+        self.assertEqual([label for label, _ in steps], ["public-script", "public-install", "notice", "update"])
+        self.assertIn("releases/download/v0.1.0-rc.2/install.sh | sh", steps[1][1][2])
+        self.assertEqual(steps[3][1][1:], ("update",))
+        self.assertTrue(self.result["passed"])
+
+
 class TestInstallationVm(AltitudeCase):
     """The VM runner's guest configuration and refusal; no VM, image download or KVM access."""
 
@@ -198,12 +260,33 @@ class TestInstallationVm(AltitudeCase):
         self.assertIn("sudo apt install qemu-system-x86 qemu-utils cloud-image-utils", result.stderr)
         self.assertFalse((self.tmp / "results").exists())
 
-    def test_recovery_needs_a_published_baseline(self):
-        result = subprocess.run([sys.executable, "-B", str(REPO / "scripts/installation_vm.py"), str(self.tmp / "results"),
-                                 "--recovery"], capture_output=True, text=True, timeout=30)
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("--recovery needs --baseline-release", result.stderr)
-        self.assertFalse((self.tmp / "results").exists())
+    def test_recovery_and_public_runs_need_a_published_baseline_and_are_separate(self):
+        for flags, refusal in ((["--recovery"], "need --baseline-release"), (["--public"], "need --baseline-release"),
+                               (["--baseline-release", "v0.1.0-rc.2", "--recovery", "--public"], "separate runs")):
+            with self.subTest(flags=flags):
+                result = subprocess.run([sys.executable, "-B", str(REPO / "scripts/installation_vm.py"),
+                                         str(self.tmp / "results"), *flags], capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(refusal, result.stderr)
+                self.assertFalse((self.tmp / "results").exists())
+
+    def test_latest_is_the_stable_release_githubs_redirect_names(self):
+        from scripts import installation_vm as vm
+
+        def redirected(url):
+            response = mock.MagicMock()
+            response.__enter__.return_value.url = url
+            return response
+        for target, expected in (("v0.1.0", "v0.1.0"), ("v0.1.0-rc.2", "names the release candidate"),
+                                 ("main", "not a release version")):
+            with self.subTest(target=target), mock.patch.object(
+                    vm, "urlopen", return_value=redirected(f"https://github.com/example/altitude/releases/tag/{target}")) as opened:
+                if target == expected:
+                    self.assertEqual(vm.latest("https://github.com/example/altitude"), expected)
+                else:
+                    with self.assertRaisesRegex(SystemExit, expected):
+                        vm.latest("https://github.com/example/altitude")
+                self.assertEqual(opened.call_args.args[0], "https://github.com/example/altitude/releases/latest")
 
     def test_published_baseline_accepts_only_the_checked_release_its_tag_names(self):
         from scripts import installation_vm as vm
@@ -222,21 +305,27 @@ class TestInstallationVm(AltitudeCase):
         write_sums()
         native = subprocess.run
         tags = {"refs": f"{'a' * 40}\trefs/tags/v0.1.0-rc.2\n{commit}\trefs/tags/v0.1.0-rc.2^{{}}\n"}
+        github = "https://github.com/example/altitude"
 
         def run(command, **kwargs):
-            if command[0] == "gh":
-                self.assertEqual(command[command.index("--repo") + 1], "example/altitude")
-                shutil.copytree(assets, command[command.index("--dir") + 1], dirs_exist_ok=True)
-                return subprocess.CompletedProcess(command, 0, "", "")
-            if command[:3] == ["git", "remote", "get-url"]:
-                return subprocess.CompletedProcess(command, 0, "git@github.com:example/altitude.git\n", "")
             if command[:2] == ["git", "ls-remote"]:
+                self.assertEqual(command[3], github)  # anonymous, whatever the checkout's origin
                 return subprocess.CompletedProcess(command, 0, tags["refs"], "")
             return native(command, **kwargs)
 
+        def listing(url, timeout):
+            # GitHub's anonymous release record, with every published asset.
+            self.assertEqual(url, "https://api.github.com/repos/example/altitude/releases/tags/v0.1.0-rc.2")
+            return io.BytesIO(json.dumps({"assets": [{"name": path.name} for path in assets.iterdir()]}).encode())
+
+        def download(url, path):
+            self.assertEqual(url, f"{github}/releases/download/v0.1.0-rc.2/{path.name}")
+            shutil.copyfile(assets / path.name, path)
+
         def attempt(name):
-            with mock.patch.object(vm.subprocess, "run", side_effect=run):
-                return vm.published("v0.1.0-rc.2", self.tmp / name)
+            with mock.patch.object(vm.subprocess, "run", side_effect=run), mock.patch.object(vm, "urlopen", side_effect=listing), \
+                    mock.patch.object(vm, "download", side_effect=download):
+                return vm.published(github, "v0.1.0-rc.2", self.tmp / name)
 
         # An annotated tag's peeled commit is the one the archive must declare.
         self.assertEqual(attempt("good"), {"release": "v0.1.0-rc.2", "commit": commit,
@@ -263,6 +352,96 @@ class TestInstallationVm(AltitudeCase):
         (assets / (name + ".sha256")).write_text("0" * 64 + "\n")
         with self.assertRaisesRegex(SystemExit, ".sha256 differs"):
             attempt("checksum-file")
+        (assets / (name + ".sha256")).write_text(checksum + "\n")
+        (assets / "SHA256SUMS").unlink()
+        with self.assertRaisesRegex(SystemExit, "no SHA256SUMS"):
+            attempt("unlisted")
+
+    def test_public_run_downloads_both_releases_keeps_only_the_internet_and_runs_both_public_phases(self):
+        from scripts import installation_vm as vm
+        commands, phases = [], []
+        native = subprocess.run
+
+        class Machine:
+            def __init__(self, work, image):
+                pass
+            start = wait_ready = stop = copy = lambda self, *args, **kwargs: None
+
+            def ssh(self, command, **kwargs):
+                commands.append(command)
+                return subprocess.CompletedProcess(command, 0, "Ubuntu 24.04 fixture\n", "")
+
+            def unplug_online_card(self):
+                raise AssertionError("A public run keeps the online card")
+
+        def published(repository, tag, folder):
+            folder.mkdir(parents=True)
+            return {"release": tag, "commit": ("b" if "-rc." in tag else "c") * 40, "sha256": {}}
+
+        def harness(machine, commits, phase, log):
+            phases.append((commits, phase))
+            return 0
+        reachable = iter([{"internet": True, "host-through-online-card": True, "host-through-network": True,
+                           "host-through-offline-card": False},
+                          {"internet": True, "host-through-online-card": False, "host-through-network": False,
+                           "host-through-offline-card": False}])
+        results = self.tmp / "results"
+        with mock.patch.object(vm.subprocess, "run", side_effect=lambda command, **kw: subprocess.CompletedProcess(
+                    command, 0, "QEMU emulator version 9.0 fixture\n", "") if command[0] == "qemu-system-x86_64"
+                    else native(command, **kw)), \
+                mock.patch.object(vm, "build", side_effect=AssertionError("A public run builds nothing")), \
+                mock.patch.object(vm, "repository", return_value="https://github.com/example/altitude"), \
+                mock.patch.object(vm, "latest", return_value="v0.1.0"), mock.patch.object(vm, "published", side_effect=published), \
+                mock.patch.object(vm, "base_image", return_value={"image": "fixture"}), mock.patch.object(vm, "Machine", Machine), \
+                mock.patch.object(vm, "harness", side_effect=harness), mock.patch.object(vm, "outbound_address", return_value="203.0.113.7"), \
+                mock.patch.object(vm, "reachable", side_effect=lambda machine: next(reachable)), mock.patch("sys.stdout"):
+            code = vm.run(results, "a" * 40, self.tmp / "cache", "v0.1.0-rc.2", public=True)
+        record = json.loads((results / "vm.json").read_text())
+        self.assertEqual((code, record["passed"], record["public"], record["latest"]), (0, True, True, "v0.1.0"))
+        self.assertEqual((record["baseline"]["release"], record["candidate"]["release"]), ("v0.1.0-rc.2", "v0.1.0"))
+        [blocking] = [command for command in commands if "ip route add prohibit" in command]
+        self.assertEqual(record["blocked"][:2], ["10.0.3.2/32", "203.0.113.7/32"])
+        for network in ("10.0.3.2/32", "203.0.113.7/32", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+                        "100.64.0.0/10", "169.254.0.0/16"):
+            self.assertIn(f"ip route add prohibit {network};" if network != "169.254.0.0/16"
+                          else f"ip route add prohibit {network}'", blocking)
+        self.assertEqual(phases, [(f"{'b' * 40}..{'c' * 40}", "public-install"), (f"{'b' * 40}..{'c' * 40}", "public-update")])
+
+    def test_a_public_guest_that_still_reaches_this_host_stops_before_any_phase(self):
+        from scripts import installation_vm as vm
+        machine = mock.MagicMock()
+        machine.ssh.return_value = subprocess.CompletedProcess([], 0, "Ubuntu 24.04 fixture\n", "")
+        native = subprocess.run
+        with mock.patch.object(vm.subprocess, "run", side_effect=lambda command, **kw: subprocess.CompletedProcess(
+                    command, 0, "QEMU emulator version 9.0 fixture\n", "") if command[0] == "qemu-system-x86_64"
+                    else native(command, **kw)), \
+                mock.patch.object(vm, "repository", return_value="https://github.com/example/altitude"), \
+                mock.patch.object(vm, "latest", return_value="v0.1.0"), \
+                mock.patch.object(vm, "published", side_effect=lambda repository, tag, folder: {"commit": "b" * 40}), \
+                mock.patch.object(vm, "base_image", return_value={}), mock.patch.object(vm, "Machine", return_value=machine), \
+                mock.patch.object(vm, "outbound_address", return_value="203.0.113.7"), \
+                mock.patch.object(vm, "harness") as harness, mock.patch.object(vm, "reachable", side_effect=[
+                    {"internet": True, "host-through-online-card": True, "host-through-network": True,
+                           "host-through-offline-card": False},
+                    {"internet": True, "host-through-online-card": True, "host-through-network": True,
+                           "host-through-offline-card": False}]), \
+                mock.patch("sys.stdout"):
+            with self.assertRaisesRegex(SystemExit, "does not reach only the internet"):
+                vm.run(self.tmp / "results", "a" * 40, self.tmp / "cache", "v0.1.0-rc.2", public=True)
+        harness.assert_not_called()
+        machine.unplug_online_card.assert_not_called()
+        self.assertFalse(json.loads((self.tmp / "results/vm.json").read_text())["passed"])
+
+    def test_repository_is_the_checkouts_github_origin(self):
+        from scripts import installation_vm as vm
+        for origin, expected in (("git@github.com:example/altitude.git", "https://github.com/example/altitude"),
+                                 ("https://github.com/example/altitude", "https://github.com/example/altitude")):
+            with self.subTest(origin=origin), mock.patch.object(
+                    vm.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, origin + "\n", "")):
+                self.assertEqual(vm.repository(), expected)
+        with mock.patch.object(vm.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "/srv/altitude\n", "")):
+            with self.assertRaisesRegex(SystemExit, "not a GitHub repository"):
+                vm.repository()
 
 
 class TestMacLifecycle(AltitudeCase):
@@ -413,7 +592,8 @@ class TestInstallationVmCapture(AltitudeCase):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(b"GIF89a fixture")
             return {}
-        reachable = iter([{"internet": True, "host-through-online-card": True, "host-through-offline-card": False}]
+        reachable = iter([{"internet": True, "host-through-online-card": True, "host-through-network": True,
+                           "host-through-offline-card": False}]
                          + [{"internet": False}] * 2)
         results = self.tmp / f"results-{capture}-{failure}"
         if unreadable:  # a harness log the replay cannot read

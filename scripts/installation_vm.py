@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Run the installation lifecycle harness in a throwaway local Ubuntu 24.04 KVM VM.
 
-    python3 scripts/installation_vm.py RESULTS_DIR [--source REF] [--baseline-release TAG [--recovery]] [--capture]
+    python3 scripts/installation_vm.py RESULTS_DIR [--source REF] [--baseline-release TAG [--recovery | --public]] [--capture]
 
 Builds two synthetic release versions from one committed revision (default HEAD) and runs the
 harness from this checkout against them; RESULTS_DIR/vm.json records the outcome. With
---baseline-release, the baseline is instead the published GitHub release TAG, downloaded on this
-host with gh and checked against its SHA256SUMS and tagged commit, and only the candidate is built. The
+--baseline-release, the baseline is instead the published GitHub release TAG, downloaded anonymously on this
+host and checked against its SHA256SUMS and tagged commit, and only the candidate is built. The
 signature-checked Ubuntu cloud image is cached; each run boots a copy-on-write overlay that is
 deleted afterwards. The guest has two network cards: one is online only while cloud-init installs
 the harness prerequisites and is then unplugged; the other is restricted to the loopback SSH
@@ -18,6 +18,8 @@ offers. Then another installs the baseline, the VM restarts and the harness chec
 on its own before removing it. --recovery instead runs only the
 recovery phase: the published baseline's installation must fail, and after the documented cleanup the
 candidate installed over it must start and keep its settings, TLS identity and data.
+--public instead builds nothing: the candidate is the release GitHub's releases/latest names, the guest keeps
+the internet with this host blocked, and the public-install and public-update phases install from GitHub itself.
 --capture also keeps an accelerated replay of the lane's progress and harness output as
 RESULTS_DIR/captures/installation-vm.gif (docs/DEVELOPMENT.md#validation-captures).
 Requires qemu-system-x86, qemu-utils and cloud-image-utils, and read/write access to /dev/kvm.
@@ -48,6 +50,8 @@ TOOLS = ("qemu-system-x86_64", "qemu-img", "cloud-localds", "gpgv", "ssh", "ssh-
 HARNESS = ("test_installation_lifecycle.sh", "installation_lifecycle.py")
 # Fixed guest addresses let the network configuration name each card.
 OFFLINE_MAC, ONLINE_MAC = "52:54:00:a1:70:01", "52:54:00:a1:70:02"
+# What a public guest must still not reach besides this host's own addresses: private, shared and link-local networks.
+LOCAL_NETWORKS = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16")
 
 
 STARTED = time.monotonic()
@@ -199,10 +203,10 @@ class Machine:
             "-qmp", f"unix:{self.qmp},server=on,wait=off", "-pidfile", str(self.pidfile),
             "-drive", f"file={self.disk},if=virtio,format=qcow2",
             "-drive", f"file={work / 'seed.img'},if=virtio,format=raw",
-            "-netdev", f"user,id=offline,restrict=on,hostfwd=tcp:127.0.0.1:{self.port}-:22",
+            "-netdev", f"user,id=offline,net=10.0.4.0/24,restrict=on,hostfwd=tcp:127.0.0.1:{self.port}-:22",
             "-device", f"virtio-net-pci,netdev=offline,mac={OFFLINE_MAC}",
             # A separate subnet, so replies to the forwarded SSH connection leave through the offline card.
-            "-netdev", "user,id=online,net=10.0.3.0/24",
+            "-netdev", "user,id=online,net=10.0.3.0/24,ipv6=off",
             "-device", f"virtio-net-pci,netdev=online,id=online-card,mac={ONLINE_MAC}",
         ], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=self.log)
 
@@ -284,16 +288,27 @@ class Machine:
             self.log.close()
 
 
+def outbound_address() -> str:
+    """This host's address on its network, the one its default route leaves from; no packet is sent."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.connect(("192.0.2.1", 9))
+        return sock.getsockname()[0]
+
+
 def reachable(machine: Machine) -> dict:
     """Which of the internet and this host the guest reaches, each probe proven able to run."""
-    with socket.socket() as listener:
-        # A listener on this host's loopback: the host probes need a service that is there to reach.
-        listener.bind(("127.0.0.1", 0))
-        listener.listen()
-        port = listener.getsockname()[1]
+    address = outbound_address()
+    with socket.socket() as loopback, socket.socket() as network:
+        # Listeners on this host's loopback and network address: the host probes need a service there to reach.
+        loopback.bind(("127.0.0.1", 0))
+        network.bind((address, 0))
+        for listener in (loopback, network):
+            listener.listen()
+        port, served = loopback.getsockname()[1], network.getsockname()[1]
         probes = {"internet": "curl -sS --max-time 10 -o /dev/null https://cloud-images.ubuntu.com/",
                   "host-through-online-card": f"timeout 10 bash -c '</dev/tcp/10.0.3.2/{port}'",
-                  "host-through-offline-card": f"timeout 10 bash -c '</dev/tcp/10.0.2.2/{port}'"}
+                  "host-through-network": f"timeout 10 bash -c '</dev/tcp/{address}/{served}'",
+                  "host-through-offline-card": f"timeout 10 bash -c '</dev/tcp/10.0.4.2/{port}'"}
         return {name: reached(machine.ssh(command, check=False).returncode) for name, command in probes.items()}
 
 
@@ -327,23 +342,47 @@ def lifecycle(machine: Machine, commits: str, results: Path, record: dict, publi
     exits["reboot-verify"] = harness(machine, commits, "reboot-verify", results / "harness-reboot-verify.log")
 
 
-def published(tag: str, folder: Path) -> dict:
-    """The published release's files, each matching its SHA256SUMS line, and the commit its tag names.
-
-    gh downloads the assets with the operator's GitHub login, so a private repository's release works too."""
+def repository() -> str:
+    """The checkout's GitHub repository, as https://github.com/OWNER/NAME."""
     checkout = Path(__file__).resolve().parent.parent
     sys.path.insert(0, str(checkout))
-    from altitude.installation import VERSION
     from altitude.server import repository_url
+    origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=checkout, capture_output=True, text=True,
+                            check=True).stdout
+    return repository_url(origin) or sys.exit(f"origin is not a GitHub repository: {origin.strip()}")
+
+
+def release_version(tag: str) -> str:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from altitude.installation import VERSION
     if not VERSION.fullmatch(tag):
         raise SystemExit(f"{tag} is not a release version")
-    git = lambda *args: subprocess.run(["git", *args], cwd=checkout, capture_output=True, text=True, check=True).stdout
-    repository = repository_url(git("remote", "get-url", "origin").strip()).removeprefix("https://github.com/")
+    return tag
+
+
+def latest(repository: str) -> str:
+    """The stable release GitHub's releases/latest page redirects to."""
+    with urlopen(f"{repository}/releases/latest", timeout=60) as response:
+        tag = release_version(response.url.rpartition("/releases/tag/")[2])
+    if "-" in tag:
+        raise SystemExit(f"{repository}/releases/latest names the release candidate {tag}")
+    return tag
+
+
+def published(repository: str, tag: str, folder: Path) -> dict:
+    """The published release's files, downloaded anonymously as a user would, each matching its SHA256SUMS line,
+    and the commit its tag names."""
+    release_version(tag)
+    owner_name = repository.removeprefix("https://github.com/")
+    with urlopen(f"https://api.github.com/repos/{owner_name}/releases/tags/{tag}", timeout=60) as response:
+        names = [asset["name"] for asset in json.load(response)["assets"]]
     folder.mkdir(parents=True)
-    fetched = subprocess.run(["gh", "release", "download", tag, "--repo", repository, "--dir", str(folder)],
-                             capture_output=True, text=True, timeout=600)
-    if fetched.returncode or not (folder / "SHA256SUMS").is_file():
-        raise SystemExit(f"Cannot download {repository} release {tag}: {fetched.stderr.strip() or 'no SHA256SUMS'}")
+    for name in names:
+        if Path(name).name != name or name.startswith("."):
+            raise SystemExit(f"{tag} has an asset named {name!r}")
+        download(f"{repository}/releases/download/{tag}/{name}", folder / name)
+    if not (folder / "SHA256SUMS").is_file():
+        raise SystemExit(f"{repository} release {tag} has no SHA256SUMS")
     sums = dict(reversed(line.split()) for line in (folder / "SHA256SUMS").read_text().splitlines())
     archive = f"altitude-{tag}.tar.gz"
     if archive not in sums or {path.name for path in folder.iterdir()} != {*sums, "SHA256SUMS", archive + ".sha256"}:
@@ -353,11 +392,12 @@ def published(tag: str, folder: Path) -> dict:
             raise SystemExit(f"{tag}/{name} differs from the release's SHA256SUMS")
     if (folder / (archive + ".sha256")).read_text().strip() != sums[archive]:
         raise SystemExit(f"{tag}/{archive}.sha256 differs from the release's SHA256SUMS")
-    refs = git("ls-remote", "--tags", "origin", tag, f"{tag}^{{}}").splitlines()
+    refs = subprocess.run(["git", "ls-remote", "--tags", repository, tag, f"{tag}^{{}}"], capture_output=True,
+                          text=True, check=True, timeout=60).stdout.splitlines()
     # An annotated tag's peeled line names the commit; a lightweight tag names it directly.
     commits = [line.split()[0] for line in refs if line.endswith("^{}")] or [line.split()[0] for line in refs]
     if not commits:
-        raise SystemExit(f"origin has no tag {tag}")
+        raise SystemExit(f"{repository} has no tag {tag}")
     with tarfile.open(folder / archive) as bundle:
         release = json.load(bundle.extractfile("release.json"))
     if (release["version"], release["commit"]) != (tag, commits[0]):
@@ -380,23 +420,31 @@ def build(commit: str, work: Path, results: Path, versions: tuple = (("baseline"
 
 
 def run(results: Path, commit: str, cache: Path, baseline_release: str | None = None, recovery: bool = False,
-        capture: bool = False) -> int:
+        capture: bool = False, public: bool = False) -> int:
     global REPLAY
     results.mkdir(parents=True, exist_ok=True)
     checkout = Path(__file__).resolve().parent.parent
     git = lambda *args: subprocess.run(["git", *args], cwd=checkout, capture_output=True, text=True, check=True).stdout.strip()
     record = {"source_commit": commit, "harness": {"commit": git("rev-parse", "HEAD"),
               "modified": bool(git("status", "--porcelain", "--", "scripts"))}, "host": {"kernel": platform.release(), "machine": platform.machine()},
-              "vm": {"cpus": 2, "memory_mib": 4096, "disk_gib": 12}, "recovery": recovery, "passed": False}
+              "vm": {"cpus": 2, "memory_mib": 4096, "disk_gib": 12}, "recovery": recovery, "public": public,
+              "passed": False}
     record["qemu"] = subprocess.run(["qemu-system-x86_64", "--version"], capture_output=True,
                                     text=True).stdout.splitlines()[0]
     work = Path(tempfile.mkdtemp(prefix="altitude-installation-vm."))
     machine = None
     REPLAY = Replay(results) if capture else None
     try:
-        if baseline_release:
+        if public:
+            github = repository()
+            record["latest"] = latest(github)
+            note(f"downloading the published {baseline_release} and {record['latest']}, which releases/latest names")
+            record["baseline"] = published(github, baseline_release, work / "baseline")
+            record["candidate"] = published(github, record["latest"], work / "candidate")
+            commits = f"{record['baseline']['commit']}..{record['candidate']['commit']}"
+        elif baseline_release:
             note(f"downloading the published {baseline_release} and building the candidate from {commit[:12]}")
-            record["baseline"] = published(baseline_release, work / "baseline")
+            record["baseline"] = published(repository(), baseline_release, work / "baseline")
             build(commit, work, results, (("candidate", next_minor(baseline_release)),))
             commits = f"{record['baseline']['commit']}..{commit}"
         else:
@@ -410,19 +458,30 @@ def run(results: Path, commit: str, cache: Path, baseline_release: str | None = 
         machine = Machine(work, cache / IMAGE)
         machine.start()
         machine.wait_ready(time.monotonic() + 900)
-        note("guest provisioned; checking its network, then unplugging its online card")
+        note("guest provisioned; checking its network, then " + ("blocking this host" if public else "unplugging its online card"))
         record["guest"] = machine.ssh(". /etc/os-release; echo $PRETTY_NAME $(uname -r)").stdout.strip()
         # The online card reaches both the internet and this host, which proves the probes work; the
-        # restricted card reaches neither. Afterwards nothing is reachable.
+        # restricted card reaches neither. Afterwards nothing is reachable, or with --public only the internet.
         record["reachable"] = {"online": reachable(machine)}
         if record["reachable"]["online"] != {"internet": True, "host-through-online-card": True,
-                                             "host-through-offline-card": False}:
+                                             "host-through-network": True, "host-through-offline-card": False}:
             raise SystemExit(f"Unexpected guest network before isolation: {record['reachable']}")
-        machine.unplug_online_card()
-        record["reachable"]["isolated"] = reachable(machine)
-        if any(record["reachable"]["isolated"].values()):
-            raise SystemExit(f"The guest is not isolated: {record['reachable']}")
-        note("guest isolated; copying the harness and archives")
+        if public:
+            # The public phases reach GitHub through the online card, whose gateway address is this host's loopback.
+            # The card's own network stays connected, so the guest keeps its gateway and name server.
+            blocked = ("10.0.3.2/32", f"{outbound_address()}/32", *LOCAL_NETWORKS)
+            machine.ssh("sudo sh -ec '" + "; ".join(f"ip route add prohibit {network}" for network in blocked) + "'")
+            record["blocked"] = blocked
+            record["reachable"]["public"] = reachable(machine)
+            if record["reachable"]["public"] != {"internet": True, "host-through-online-card": False,
+                                                 "host-through-network": False, "host-through-offline-card": False}:
+                raise SystemExit(f"The guest does not reach only the internet: {record['reachable']}")
+        else:
+            machine.unplug_online_card()
+            record["reachable"]["isolated"] = reachable(machine)
+            if any(record["reachable"]["isolated"].values()):
+                raise SystemExit(f"The guest is not isolated: {record['reachable']}")
+        note("guest " + ("online without this host" if public else "isolated") + "; copying the harness and archives")
         machine.ssh("mkdir -p input")
         scripts = Path(__file__).resolve().parent
         machine.copy(*(str(scripts / name) for name in HARNESS), "ubuntu@127.0.0.1:input/")
@@ -431,9 +490,12 @@ def run(results: Path, commit: str, cache: Path, baseline_release: str | None = 
         # Each phase creates, uses and deletes its own disposable account inside the guest.
         exits = record["harness_exit"] = {}
         try:
-            if recovery:
-                note("running the recovery phase")
-                exits["recovery"] = harness(machine, commits, "recovery", results / "harness-recovery.log")
+            if recovery or public:
+                for phase in ("recovery",) if recovery else ("public-install", "public-update"):
+                    note(f"running the {phase} phase")
+                    exits[phase] = harness(machine, commits, phase, results / f"harness-{phase}.log")
+                    if exits[phase]:
+                        break
             else:
                 lifecycle(machine, commits, results, record, bool(baseline_release))
         finally:
@@ -442,7 +504,7 @@ def run(results: Path, commit: str, cache: Path, baseline_release: str | None = 
                 machine.copy("ubuntu@127.0.0.1:results/.", str(results))
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
                 record["uncopied_results"] = str(error)
-        phases = 1 if recovery else 4 if baseline_release else 5
+        phases = 1 if recovery else 2 if public else 4 if baseline_release else 5
         record["passed"] = list(exits.values()) == [0] * phases and "uncopied_results" not in record
     finally:
         try:
@@ -472,13 +534,17 @@ def main() -> int:
     parser.add_argument("--baseline-release", metavar="TAG", help="published release to install first and update from")
     parser.add_argument("--recovery", action="store_true",
                         help="install the candidate over the published baseline's failed installation instead")
+    parser.add_argument("--public", action="store_true",
+                        help="install releases/latest and update from the baseline with the guest's own GitHub downloads")
     parser.add_argument("--capture", action="store_true",
                         help="keep an accelerated replay of the run as RESULTS/captures/installation-vm.gif")
     parser.add_argument("--cache", type=Path, default=Path.home() / ".cache/altitude-installation-vm",
                         help="where the verified base image is kept between runs")
     args = parser.parse_args()
-    if args.recovery and not args.baseline_release:
-        parser.error("--recovery needs --baseline-release")
+    if (args.recovery or args.public) and not args.baseline_release:
+        parser.error("--recovery and --public need --baseline-release")
+    if args.recovery and args.public:
+        parser.error("--recovery and --public are separate runs")
     # A stop request still deletes the VM and writes the record.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     missing = missing_prerequisites()
@@ -492,7 +558,7 @@ def main() -> int:
         print(f"{args.source} is not a commit in this repository.", file=sys.stderr)
         return 2
     return run(args.results.resolve(), resolved.stdout.strip(), args.cache, args.baseline_release, args.recovery,
-               args.capture)
+               args.capture, args.public)
 
 
 if __name__ == "__main__":
