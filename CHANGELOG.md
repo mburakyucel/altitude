@@ -22,6 +22,8 @@ and known limitations as `v0.1.1`.
   to the coordinator, and task waits reflect the remaining open questions.
 - Browser dictation explains when no speech was captured. Setup examples resolve the latest
   release, and projects-folder handling and redirects include security corrections.
+- Device pairing guides certificate trust before accepting a code and offers a QR code for
+  opening Altitude on another device.
 
 If an update fails to activate, Altitude restores the previous version. Use `alt recover` from a
 desktop or SSH terminal for interrupted activation, or retry an offered update explicitly after
