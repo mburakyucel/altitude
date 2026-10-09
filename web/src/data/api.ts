@@ -65,7 +65,14 @@ function post<T = unknown>(path: string, body: unknown): Promise<T> {
 
 // ---- pairing ---------------------------------------------------------------------------
 
-export const AccessSchema = z.object({ paired: z.boolean(), device: z.string().nullish() }).passthrough();
+/** How this browser reaches Altitude (SPEC.md §3.16): `local` is the computer running it, and `check` whether
+ * Altitude can check this browser's trust in its certificate. */
+const TrustSchema = z.object({
+  local: z.boolean(), https: z.boolean(), check: z.boolean(),
+  certificate: z.object({ name: z.string() }).nullish(),
+});
+export type Trust = z.infer<typeof TrustSchema>;
+export const AccessSchema = z.object({ paired: z.boolean(), device: z.string().nullish(), trust: TrustSchema }).passthrough();
 export type Access = z.infer<typeof AccessSchema>;
 export const DeviceSchema = z.object({ id: z.string(), name: z.string(), paired: z.string(), used: z.string() }).passthrough();
 export type Device = z.infer<typeof DeviceSchema>;
@@ -76,7 +83,10 @@ const CertificateSchema = z.union([
 export type Certificate = z.infer<typeof CertificateSchema>;
 const DevicesSchema = z.object({ devices: z.array(DeviceSchema), current: z.string().nullish(), certificate: CertificateSchema.nullish() }).passthrough();
 export type Devices = z.infer<typeof DevicesSchema>;
-export const PairingCodeSchema = z.object({ code: z.string(), expires: z.string(), minutes: z.number() }).passthrough();
+export const PairingCodeSchema = z.object({
+  code: z.string(), minutes: z.number(), address: z.string().nullish(), qr: z.array(z.string()).nullish(),
+  certificate: z.object({ name: z.string(), check: z.string() }).nullish(),
+}).passthrough();
 export type PairingCode = z.infer<typeof PairingCodeSchema>;
 
 export async function readAccess(): Promise<Access> {
@@ -89,6 +99,50 @@ export async function pairDevice(code: string): Promise<void> {
   const standalone = window.matchMedia?.("(display-mode: standalone)").matches
     || (navigator as Navigator & { standalone?: boolean }).standalone === true;
   await post("/api/pair", { code, standalone });
+}
+
+export type TrustCheck = "trusted" | "untrusted" | "unknown";
+
+/** How long a challenge gives this address's new connections the second certificate (tls.TrustCheck.ARM_SECONDS),
+ * with a margin. */
+export const ARMED_MS = 5_500;
+
+/** Ask whether this browser trusts Altitude's certificate. After the challenge, Altitude presents a second
+ * certificate on new connections, which a browser that does not trust the CA refuses: the fetch rejects and Altitude
+ * records the refusal, which the next attempt reads. A connection opened before the challenge (`retry`) tries again,
+ * and an expired challenge (404) starts over. When every attempt is rejected, `/api/health` tells a refusal from an
+ * unreachable Altitude, once the challenge no longer arms new connections (a browser may refuse without telling
+ * Altitude); otherwise three attempts without an answer mean Altitude could not check. */
+export async function checkTrust(): Promise<TrustCheck> {
+  let challenge = "";
+  let rejected = false;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let reply: Response;
+    try {
+      if (!challenge) challenge = (await post<{ challenge: string }>("/api/trust", {})).challenge;
+    } catch {
+      return "unknown";
+    }
+    try {
+      reply = await fetch(`/api/trust/${encodeURIComponent(challenge)}`, { cache: "no-store", headers: { Accept: "application/json" } });
+    } catch {
+      rejected = true;
+      continue;
+    }
+    if (reply.status === 404) challenge = "";
+    else if (!reply.ok) return "unknown";
+    else {
+      const answer = await reply.json() as { trusted?: unknown; retry?: unknown };
+      if (answer.retry !== true) return answer.trusted === true ? "trusted" : "untrusted";
+    }
+  }
+  if (!rejected) return "unknown";
+  await new Promise((resolve) => setTimeout(resolve, ARMED_MS));
+  try {
+    return (await fetch("/api/health", { cache: "no-store" })).ok ? "untrusted" : "unknown";
+  } catch {
+    return "unknown";
+  }
 }
 
 export function useDevices() {

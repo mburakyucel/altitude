@@ -17,21 +17,64 @@ async function code(request: APIRequestContext): Promise<string> {
 function screen(page: Page) {
   return {
     heading: page.getByRole("heading", { name: "Pair this device" }),
+    trust: page.getByRole("listitem").filter({ has: page.getByRole("heading", { name: /^Trust Altitude’s certificate/ }) }),
     field: page.getByLabel("Pairing code"),
     pair: page.getByRole("button", { name: "Pair", exact: true }),
+    check: page.getByRole("button", { name: "Check again" }),
     alert: page.getByRole("alert"),
     removed: page.getByText("This device is no longer paired. Pair it again to continue."),
     app: page.getByRole("heading", { name: "Needs you" }),
   };
 }
 
-test("an unpaired browser sees only the pairing screen, and wrong and cancelled codes say why", async ({ page, request }, info) => {
+/** Pair on the screen with a code, as a person types it. */
+async function pairWith(page: Page, value: string) {
+  const { field, pair, app } = screen(page);
+  await field.fill(value);
+  await pair.click();
+  await expect(app).toBeVisible();
+}
+
+type Trust = { local: boolean; https: boolean; check: boolean; certificate: { name: string } | null };
+const DEVICE: Trust = { local: false, https: true, check: true, certificate: { name: "Altitude CA 4F7K" } };
+
+/** This browser as another device on the network sees Altitude. The disposable service is plain-HTTP loopback, so
+ * its access reply and trust check are answered here: each check takes the next answer, by default a refused
+ * connection and then, as Altitude records a refusal, "not trusted"; `hold` keeps one checking. */
+async function asDevice(page: Page, trust: Partial<Trust> = {}) {
+  const view = { ...DEVICE, ...trust };
+  const answers: ("trusted" | "retry")[] = [];
+  let held: Promise<void> | null = null;
+  let challenges = 0;
+  const refused = new Set<string>();
+  await page.route("**/api/access", (route) => route.fulfill({ json: { paired: false, device: null, trust: view } }));
+  await page.route("**/api/trust", (route) => route.fulfill({ json: { challenge: `fixture-${++challenges}` } }));
+  await page.route("**/api/trust/*", async (route) => {
+    if (held) await held;
+    const answer = answers.shift();
+    if (answer) return route.fulfill({ json: answer === "trusted" ? { trusted: true } : { retry: true } });
+    if (refused.has(route.request().url())) return route.fulfill({ json: { trusted: false } });
+    refused.add(route.request().url());
+    return route.abort("connectionrefused");
+  });
+  return {
+    answers,
+    hold: () => {
+      let release = () => {};
+      held = new Promise<void>((resolve) => { release = resolve; });
+      return () => { held = null; release(); };
+    },
+  };
+}
+
+test("on the computer running Altitude, pairing needs only a code, and wrong and cancelled codes say why", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
-  const { heading, field, pair, alert, app } = screen(page);
+  const { heading, trust, field, pair, alert, app } = screen(page);
   await walk.open("/projects");
-  await walk.state("01-unpaired", {
-    visible: [heading, field, page.getByText("alt pair", { exact: true }), page.getByText("Pair only after it opens without a warning.", { exact: false })],
-    hidden: [alert, app],
+  await walk.state("01-local", {
+    visible: [heading, page.getByText("This is the computer running Altitude."), trust.getByText("Trusted", { exact: true }),
+      field, page.getByText("Enter the code from alt pair, or from Settings › Devices on a paired device.")],
+    hidden: [alert, app, page.getByRole("link", { name: /^Download/ }), page.getByText(/without a warning/)],
   });
   await expect(pair).toBeDisabled();
   const cancelled = await code(request);
@@ -73,9 +116,7 @@ test("the pairing code field places the dash itself as the code is typed, pasted
   await field.press("6");  // eight characters at most
   await expect(field).toHaveValue("ABCD-2345");
   // An edit inside the code reformats around it, and the caret stays at the edit.
-  await field.press("Home");
-  await field.press("ArrowRight");
-  await field.press("ArrowRight");
+  for (let step = 0; step < 7; step += 1) await field.press("ArrowLeft");  // to the B; Home is a scroll on macOS
   await field.press("Backspace");
   await expect(field).toHaveValue("ACD2-345");
   await field.press("B");
@@ -103,12 +144,12 @@ test("the pairing code field places the dash itself as the code is typed, pasted
   await walk.state("05-paired", { visible: [app], hidden: [field] });
 });
 
-test("a pairing link pairs the browser, and removing it in Settings returns it to the pairing screen", async ({ page, request }, info) => {
+test("a code pairs the browser, and removing it in Settings returns it to the pairing screen", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
-  const { heading, removed, app } = screen(page);
-  await walk.open(`/pair?code=${await code(request)}`);
-  await walk.state("01-paired-by-link", { visible: [app], hidden: [heading] });
-  await expect(page).toHaveURL(/\/$/);  // the code left the address bar
+  const { heading, field, pair, removed, app } = screen(page);
+  await walk.open("/");
+  const value = await code(request);
+  await walk.state("01-paired-by-code", { action: async () => { await field.fill(value); await pair.click(); }, visible: [app], hidden: [heading] });
   await page.goto("/settings/devices");
   const list = page.getByRole("list", { name: "Paired devices" });
   const mine = list.getByRole("listitem").filter({ hasText: "This device" });
@@ -116,7 +157,8 @@ test("a pairing link pairs the browser, and removing it in Settings returns it t
   const pairAnother = page.getByRole("region", { name: "Pair another device" });
   await walk.state("03-code-for-another-device", {
     action: () => page.getByRole("button", { name: "Make a pairing code" }).click(),
-    visible: [pairAnother.getByLabel("Pairing code"), pairAnother.getByText(/\/pair\?code=/)], hidden: [],
+    visible: [pairAnother.getByLabel("Pairing code"), pairAnother.getByText(/^Works once, for the next 10 minutes\./), pairAnother.getByRole("button", { name: "Make a new code" })],
+    hidden: [pairAnother.getByText(/pair\?code=/)],
   });
   const remove = mine.getByRole("button", { name: "Remove", exact: true });
   const confirm = mine.getByRole("group", { name: /^Remove .+\?$/ });
@@ -165,19 +207,98 @@ test.describe("on an iPhone", () => {
 
   test("Safari and the Home Screen app pair as separate devices @phone-only", async ({ page, request }, info) => {
     const walk = walkthrough(page, info);
-    const { app } = screen(page);
-    await walk.open(`/pair?code=${await code(request)}`);
-    await expect(app).toBeVisible();
+    await walk.open("/");
+    await pairWith(page, await code(request));
     // The Home Screen app keeps its own cookies apart from Safari's, so it pairs on its own and says so.
     // A fresh cookie jar and the standalone flag stand in for it.
     await page.context().clearCookies();
     await page.addInitScript(() => Object.defineProperty(navigator, "standalone", { value: true }));
-    await page.goto(`/pair?code=${await code(request)}`);
-    await expect(app).toBeVisible();
+    await page.goto("/");
+    await pairWith(page, await code(request));
     await page.goto("/settings/devices");
     const list = page.getByRole("list", { name: "Paired devices" });
     await walk.state("01-iphone-devices", {
       visible: [list.getByText("Safari on iPhone"), list.getByText("Home Screen app on iPhone")], hidden: [],
     });
   });
+
+  test("an iPhone on the network is shown the profile and the Certificate Trust Settings switch @phone-only", async ({ page }, info) => {
+    const walk = walkthrough(page, info);
+    const { trust, field } = screen(page);
+    await asDevice(page);
+    await walk.open("/");
+    await walk.state("01-iphone-not-trusted", {
+      visible: [trust.getByRole("link", { name: "Download the profile" }), trust.getByText(/^Open Settings › Profile Downloaded\./),
+        trust.getByText("Turn it on: Settings › General › About › Certificate Trust Settings › “Altitude CA 4F7K”."),
+        page.getByText("Not trusted yet. The usual missing step is the switch in Certificate Trust Settings.")],
+      hidden: [trust.getByRole("link", { name: "Download the certificate" }), field],
+    });
+    await expect(trust.getByRole("link", { name: "Download the profile" })).toHaveAttribute("href", "/api/certificate/altitude.mobileconfig");
+  });
+});
+
+test("a device on the network checks that it trusts Altitude's certificate before it pairs", async ({ page, request }, info) => {
+  const walk = walkthrough(page, info);
+  const { heading, trust, field, check, app } = screen(page);
+  const device = await asDevice(page);
+  const phone = info.project.name === "phone";  // the phone project is an Android browser
+  await walk.open("/");
+  await walk.state("01-not-trusted", {
+    visible: [heading, page.getByText("You opened Altitude’s HTTPS address."), trust.getByText("Not trusted yet", { exact: true }),
+      trust.getByRole("link", { name: "Download the certificate" }), check,
+      page.getByText(phone ? "Not trusted yet. Install the certificate as a CA certificate."
+        : "Not trusted yet. Import the certificate as a trusted authority, then restart the browser.")],
+    hidden: [field, trust.getByRole("link", { name: "Download the profile" }), trust.getByText(/^[0-9A-F]{2}( [0-9A-F]{2}){7}$/)],
+  });
+  if (!phone) await expect(trust.getByRole("link", { name: "Setup guide" })).toBeVisible();
+  const release = device.hold();
+  await walk.state("02-checking", { action: () => check.click(), visible: [trust.getByText("Checking…")], hidden: [field] });
+  await expect(check).toBeDisabled();
+  device.answers.push("trusted");
+  await walk.state("03-trusted", {
+    action: async () => release(),
+    visible: [trust.getByText("Trusted", { exact: true }), field],
+    hidden: [trust.getByRole("link", { name: "Download the certificate" }), check],
+  });
+  await page.unroute("**/api/access");
+  const value = await code(request);
+  await walk.state("04-paired", {
+    action: async () => { await field.fill(value); await page.getByRole("button", { name: "Pair", exact: true }).click(); },
+    visible: [app], hidden: [heading],
+  });
+});
+
+test("a trust check that cannot finish says so, never that the device is untrusted", async ({ page }, info) => {
+  const walk = walkthrough(page, info);
+  const { trust, field, check } = screen(page);
+  const device = await asDevice(page);
+  device.answers.push("retry", "retry", "retry");
+  await walk.open("/");
+  await walk.state("01-could-not-check", {
+    visible: [trust.getByText("Couldn’t check", { exact: true }), page.getByText("Couldn’t check.", { exact: true }), check],
+    hidden: [page.getByText(/^Not trusted yet\./), field],
+  });
+});
+
+test("over plain HTTP elsewhere, the screen says to pair on the computer running Altitude", async ({ page }, info) => {
+  const walk = walkthrough(page, info);
+  const { heading, trust, field } = screen(page);
+  await asDevice(page, { https: false, check: false, certificate: null });
+  await walk.open("/");
+  await walk.state("01-plain-http", {
+    visible: [heading, page.getByText("This Altitude serves plain HTTP. Pair on the computer running it.")], hidden: [trust, field],
+  });
+});
+
+test("with an externally supplied certificate, the device confirms it by hand before pairing", async ({ page }, info) => {
+  const walk = walkthrough(page, info);
+  const { trust, field } = screen(page);
+  await asDevice(page, { check: false, certificate: null });
+  await walk.open("/");
+  const proceed = page.getByRole("button", { name: "Continue" });
+  await walk.state("01-external-certificate", {
+    visible: [page.getByText("Altitude can’t check this automatically. Open this address in a new Private tab; if it loads without a warning, tap Continue."), proceed],
+    hidden: [field, trust.getByRole("link", { name: /^Download/ })],
+  });
+  await walk.state("02-confirmed", { action: () => proceed.click(), visible: [trust.getByText("Trusted", { exact: true }), field], hidden: [proceed] });
 });

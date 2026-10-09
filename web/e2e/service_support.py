@@ -39,16 +39,19 @@ def configure(*, expected_error=lambda _message: False):
     terminal.agent_connection = lambda _peer, _local: False
 
 
-def serve(handler=server.Handler, *, release=lambda: None):
+def serve(handler=server.Handler, *, release=lambda: None, context=None):
     httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     httpd.daemon_threads = False
+    if context is not None:  # HTTPS as altd serves it: each request thread completes its own handshake
+        httpd.socket = context.wrap_socket(httpd.socket, server_side=True, do_handshake_on_connect=False)
     stopping = threading.Event()
     httpd.timeout = 0.5
     signal.signal(signal.SIGTERM, lambda *_: stopping.set())
     # The browser is paired like any other: a code from the real store, redeemed for this run's device key.
     access.prepare()
     device, _ = access.redeem(access.issue_code()["code"], "Playwright browser")
-    print(json.dumps({"url": f"http://127.0.0.1:{httpd.server_port}", "disposable": True, "device": device}), flush=True)
+    scheme = "https" if context is not None else "http"
+    print(json.dumps({"url": f"{scheme}://127.0.0.1:{httpd.server_port}", "disposable": True, "device": device}), flush=True)
     try:
         # Finish registering an accepted request before cleanup joins its thread.
         while not stopping.is_set():
