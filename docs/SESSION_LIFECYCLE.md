@@ -1311,11 +1311,10 @@ consumption, steering, resume and explicit exits; they do not establish live-pro
 
 Claude jobs and Codex processes normalize to the same worker row: worker id, provider session id,
 PID, state, status, detail, latest usage and whether its job is active. Polling follows the persisted `l2_engine`.
-A worker ends when its engine exits or when the engine's latest turn ends in an error result (Claude's `result`
-with `is_error`, Codex's `turn.failed`), even while its job stays active. Claude does not exit after a failed
-turn while a background command it started runs: it waits for that command and then starts another turn,
-which fails the same way under a usage limit. Polling therefore stops the job of a worker whose latest turn
-failed before handling its end, so that worker's usage limit, capacity, rejection or fault path runs as it does
+A worker ends when its engine exits or when its output's latest activity is a failed turn, even while its job
+stays active. An engine can stay alive after a failed turn while a background command it started runs: it waits
+for that command and then starts another turn, which fails the same way under a usage limit. Polling therefore
+stops the job of a worker whose latest turn failed, with no activity since, before handling its end, so that worker's usage limit, capacity, rejection or fault path runs as it does
 after a clean exit, and its commands end with it. A successful turn waiting on its own background work keeps
 running. Resume, handoff and cleanup treat a worker as live while anything still runs in its job.
 An `alt land` waiting on checks or owner assessment ends with that job: on SIGTERM it leaves the

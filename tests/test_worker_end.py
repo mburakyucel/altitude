@@ -22,7 +22,10 @@ open(os.environ["FIXTURE_COMMAND"], "w").write(str(command.pid))
 result = os.environ["FIXTURE_RESULT"]
 print(json.dumps({"type": "result", "subtype": "success", "is_error": result != "success",
                   "result": result, "api_error": "usage_limit_reached"}), flush=True)
-if os.environ["FIXTURE_ENGINE"] == "waits":
+if os.environ["FIXTURE_ENGINE"] == "recovers":  # The command's notice starts another turn, which works.
+    print(json.dumps({"type": "system", "subtype": "task_notification", "status": "completed"}), flush=True)
+    print(json.dumps({"type": "assistant", "message": {"content": []}}), flush=True)
+if os.environ["FIXTURE_ENGINE"] != "exits":
     command.wait()  # As Claude does: a running background command would start the next turn.
 '''
 
@@ -94,9 +97,9 @@ class TestWorkerEnd(AltitudeCase):
         for engine in engines._codex_processes.values():
             engine.wait(timeout=10)
 
-    def launch(self, slug, *, engine_ends: bool, result: str):
-        env = {"FIXTURE_COMMAND": str(self.command), "FIXTURE_RESULT": result,
-               "FIXTURE_ENGINE": "exits" if engine_ends else "waits", "ALTITUDE_TASK": slug}
+    def launch(self, slug, *, engine_ends: bool, result: str, recovers: bool = False):
+        env = {"FIXTURE_COMMAND": str(self.command), "FIXTURE_RESULT": result, "ALTITUDE_TASK": slug,
+               "FIXTURE_ENGINE": "exits" if engine_ends else "recovers" if recovers else "waits"}
         job_root = dispatch.l2_job_root(self.project, slug)
         launched = engines.start_l2("claude", f"{self.project}/{slug}-1", "brief", cwd=self.repo,
                                     persona=self.tmp / "persona.md", model=None, settings=self.tmp / "settings.json",
@@ -107,7 +110,7 @@ class TestWorkerEnd(AltitudeCase):
                                    "session_id": "session", "worker_started_at": datetime.now(timezone.utc).isoformat()})
         deadline = time.monotonic() + 30
         stdout = job_root / f"{launched['agent']['id']}.stdout.jsonl"
-        while '"result"' not in stdout.read_text() or not self.command.exists():
+        while ('"assistant"' if recovers else '"result"') not in stdout.read_text() or not self.command.exists():
             self.assertLess(time.monotonic(), deadline, "fixture engine never reported its turn")
             time.sleep(.05)
         if engine_ends and (engine := engines._codex_processes.get(launched["agent"]["id"])):
@@ -139,11 +142,15 @@ class TestWorkerEnd(AltitudeCase):
                 self.assertFalse(engines.worker_live("claude", saved, job_root=job_root))
                 self.command.unlink()
 
-    def test_successful_turn_waiting_on_its_command_keeps_running(self):
-        task, job_root = self.launch("waiting", engine_ends=False, result="success")
-        self.assertEqual(engines.worker("claude", task, job_root=job_root)["state"], "working")
-        self.reconcile()
-        self.assertEqual(S.load_task(self.project, "waiting")["state"], "running")
-        self.assertTrue(_running(int(self.command.read_text())))
-        live = S.read_json(config.MONITOR_DIR / f"live-{self.project}--waiting.json")
-        self.assertEqual(live["agent"]["state"], "working")
+    def test_successful_or_resumed_turn_waiting_on_its_command_keeps_running(self):
+        for slug, result, recovers in (("waiting", "success", False), ("recovered", LIMIT, True)):
+            with self.subTest(slug):
+                task, job_root = self.launch(slug, engine_ends=False, result=result, recovers=recovers)
+                self.assertEqual(engines.worker("claude", task, job_root=job_root)["state"], "working")
+                self.reconcile()
+                self.assertEqual(S.load_task(self.project, slug)["state"], "running")
+                self.assertTrue(_running(int(self.command.read_text())))
+                live = S.read_json(config.MONITOR_DIR / f"live-{self.project}--{slug}.json")
+                self.assertEqual(live["agent"]["state"], "working")
+                os.kill(int(self.command.read_text()), signal.SIGKILL)
+                self.command.unlink()

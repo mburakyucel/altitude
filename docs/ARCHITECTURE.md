@@ -1563,9 +1563,9 @@ retain their recovery and answer controls. Both engines launch L2 workers in ind
 running and blocked workers survive activation and are adopted afterwards. Each worker unit and the
 service retain `KillMode=control-group` on Linux, and on macOS Stop takes every member of the job's
 coalition, so stopping a worker takes all its descendants. A worker ends when its engine exits or
-its latest turn ends in an error result; an active job alone is not a live worker. Claude stays alive after
-a failed turn while a background command it started runs, so polling stops the job of a worker whose latest
-turn failed: whatever it left running ends with it, and the ordinary limit, capacity or fault path follows.
+its latest turn fails with no activity since; an active job alone is not a live worker. An engine can stay
+alive after a failed turn while a background command it started runs, so polling stops the job of a worker
+whose latest turn failed: whatever it left running ends with it, and the ordinary limit, capacity or fault path follows.
 A successful turn that waits on its own background work keeps running. An exited or
 missing worker on a running task requires a report written since its latest launch or resume
 or an explicit completion; without one it blocks with a system fault and incident. An explicit

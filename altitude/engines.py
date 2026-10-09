@@ -1792,7 +1792,8 @@ def _worker_events(path: Path, engine: str) -> list[dict]:
             if e.get("type") == "result" else e for e in events]
 
 
-TURN_BOUNDARIES = ("thread.started", "turn.started", "turn.completed", "turn.failed")
+#: Output that reports on the session without being turn activity: Claude's background-task and status notices.
+PASSIVE_EVENTS = ("system", "rate_limit_event")
 
 
 def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
@@ -1818,9 +1819,9 @@ def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
         _codex_processes.pop(worker_id, None)
     completed = any(event.get("type") == "turn.completed" for event in events)
     failed = next((event for event in reversed(events) if event.get("type") in ("turn.failed", "error")), None)
-    # A failed latest turn ends the worker. The engine can outlive it: Claude waits for a background command it
-    # started, whose completion would only start another turn that fails the same way under a usage limit.
-    latest = next((event["type"] for event in reversed(events) if event.get("type") in TURN_BOUNDARIES), None)
+    # A failed turn with no activity since ends the worker. The engine can outlive it: Claude waits for a background
+    # command it started, whose completion would only start another turn that fails the same way under a usage limit.
+    latest = next((event.get("type") for event in reversed(events) if event.get("type") not in PASSIVE_EVENTS), None)
     alive = job_active and latest != "turn.failed"
     if alive:
         state, status = "working", "busy"
