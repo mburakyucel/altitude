@@ -19,7 +19,7 @@ test("fresh previews expire and scroll with chat without moving an older-message
   const scroller = convo.locator(".convo-scroll");
   const field = convo.getByRole("textbox", { name: "Message the L2" });
   await expect(preview).toBeInViewport();
-  await field.fill("Keep this draft while I read.");
+  await field.fill("Keep this draft while I");
   await walk.state("01-fresh-preview-at-latest", { visible: [preview, field], hidden: [] });
   await page.clock.fastForward(65_000);
   await walk.state("02-no-update-expires-without-new-record", { visible: [field], hidden: [preview] });
@@ -27,7 +27,13 @@ test("fresh previews expire and scroll with chat without moving an older-message
   await control("output", "A fresh pagination update.");
   await page.clock.runFor(5000);
   await expect(preview.getByText("A fresh pagination update.")).toBeInViewport();
-  await scroller.evaluate((node) => { node.scrollTop = 200; });
+  await scroller.evaluate((node) => {
+    node.scrollTop = 200;
+    // Finishing the draft re-renders the conversation before the scroll event arrives.
+    const draft = node.closest(".convo")!.querySelector("textarea")!;
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(draft, "Keep this draft while I read.");
+    draft.dispatchEvent(new Event("input", { bubbles: true }));
+  });
   await expect(convo.getByRole("button", { name: "Latest messages" })).toBeVisible();
   await expect(preview).not.toBeInViewport();
   const position = await scroller.evaluate((node) => node.scrollTop);

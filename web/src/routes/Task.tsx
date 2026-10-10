@@ -275,6 +275,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   const [questionOffscreen, setQuestionOffscreen] = useState(false);
   const [questionAtLatest, setQuestionAtLatest] = useState(false);
   const reading = useRef(0);
+  const pinned = useRef<number | null>(null);
   const [accessRefresh, setAccessRefresh] = useState(0);
   const submission = useRef<L2MessageInput | null>(null);
   const mounted = useRef(true);
@@ -338,13 +339,23 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     node.focus({ preventScroll: true });
     followedAnchor.current = key;
   }, [active, location.key, reviewId, task.review]);
+  const follow = useCallback((node: HTMLDivElement) => {
+    // A scroll up whose event is still queued releases following before a commit or resize can undo it.
+    if (following.current && pinned.current !== null && node.clientHeight === viewportHeight.current
+      && node.scrollTop < Math.min(pinned.current, node.scrollHeight - node.clientHeight) - 1) {
+      following.current = false;
+      reading.current = node.scrollTop;
+    }
+    node.scrollTop = following.current ? node.scrollHeight : reading.current;
+    pinned.current = following.current ? node.scrollTop : null;
+  }, []);
   useEffect(() => {
     const node = scroller.current;
     const column = node?.firstElementChild;
     if (!active || !node || !column || typeof ResizeObserver === "undefined") return;
-    node.scrollTop = following.current ? node.scrollHeight : reading.current;
+    follow(node);
     const observer = new ResizeObserver(() => {
-      node.scrollTop = following.current ? node.scrollHeight : reading.current;
+      follow(node);
       viewportHeight.current = node.clientHeight;
       setLatest(!following.current && node.scrollHeight - node.scrollTop - node.clientHeight > 48);
       updateQuestionVisibility(node);
@@ -352,12 +363,12 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     observer.observe(column);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [active, updateQuestionVisibility]);
+  }, [active, follow, updateQuestionVisibility]);
   useLayoutEffect(() => {
     // A removed preview can clamp scrollTop before a queued scroll event sees its
     // replacement. Restore following during the commit, before that event can pause it.
     const node = scroller.current;
-    if (active && following.current && node) node.scrollTop = node.scrollHeight;
+    if (active && following.current && node) follow(node);
   });
   const prepareSend = () => {
     const currentNode = current && anchors.current.get(`${current.id}:${current.revision}`);
@@ -494,6 +505,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         if (!active || node.clientHeight !== viewportHeight.current) return;
         reading.current = node.scrollTop;
         following.current = node.scrollHeight - node.scrollTop - node.clientHeight <= 48;
+        pinned.current = following.current ? node.scrollTop : null;
         setLatest(!following.current);
         updateQuestionVisibility(node);
       }}>
