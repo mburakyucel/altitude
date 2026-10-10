@@ -12,7 +12,7 @@ import { ProseTerminal } from "../components/CodeBlock";
 import { requestCommand } from "../data/terminalCommand";
 import { agoText, modelName, when } from "../data/observed";
 import { questionPath, turnLabel } from "../data/decisions";
-import { taskExplanation } from "../data/taskStatus";
+import { stoppedByCoordinator, taskExplanation } from "../data/taskStatus";
 import { holdText } from "../components/TaskCard";
 import { Bubble, Coordination, DayDivider, Reply, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
@@ -24,10 +24,12 @@ import type { ImageSubmission } from "../components/ImageDraft";
 import { MessageImages, PendingImages } from "../components/MessageImages";
 import type { ImagePreview } from "../components/MessageImages";
 import { Question, QuestionSet, ReviewDecision } from "../components/DecisionCard";
+import type { PreviewOrigin } from "../components/DecisionCard";
 import { TaskContext, TokenUsage } from "../components/TokenUsage";
 import { latestReviews, ReviewBoxes, ReviewCard, ReviewFeedback, useTaskReview } from "../components/TaskReview";
 import type { ReviewControls } from "../components/TaskReview";
 import { useTaskBack } from "../components/useTaskBack";
+import { useVisitMemory, useVisitReturn } from "../components/visitMemory";
 import { useViewport } from "../shell/breakpoints";
 import { Overlay } from "../shell/Overlay";
 import { PhoneHeader } from "../shell/PhoneHeader";
@@ -169,7 +171,7 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
       : null;
   const hold = str(task["hold_merge"]);
 
-  const label = task.steering?.state === "stopped" ? "Stopped by you" : task.steering?.state === "stopping" ? "Stopping…"
+  const label = task.steering?.state === "stopped" ? stoppedByCoordinator(task) ? "Stopped by coordinator" : "Stopped by you" : task.steering?.state === "stopping" ? "Stopping…"
     : faultKind && state === "blocked" ? "Work interrupted" : turn ?? (replying ? "L2 replying to you"
     : task.steering?.state === "resuming" ? "Waiting to resume" : planned ? "Planned" : held ? "Queued" : state === "blocked"
     ? waitsOnL3 ? "Waiting for coordinator" : "Paused" : state === "running" ? "L2 working" : sentence(state || "unknown"));
@@ -251,6 +253,11 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   const group = task.question_group;
   const inGroup = (question: Decision) => group?.questions.some((q) => q.id === question.id && q.revision === question.revision);
   const target = questionId ? [...questions].reverse().find((q) => q.id === questionId && (revision == null || String(q.revision) === revision)) : undefined;
+  // Back from a preview opened on this entry returns to its question; only the URL's question retargets replies.
+  const origin = useVisitReturn<PreviewOrigin>("preview");
+  const returned = !questionId && origin?.project === project && origin.slug === task.slug
+    ? questions.find((q) => q.id === origin.id && q.revision === origin.revision) : undefined;
+  const anchor = target ?? returned;
   const open = (group?.questions ?? (task.question ? [task.question] : [])).filter((question) => question.status === "open" && !question.response);
   const current = open.find((question) => question.design_url) ?? open[0];
   // The open group is the last thing in the chat; a reply hands the questions asked before it back to the L2.
@@ -263,7 +270,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   const viewportHeight = useRef(0);
   const anchors = useRef(new Map<string, HTMLDivElement>());
   const followedAnchor = useRef("");
-  const following = useRef(!questionId && !reviewId);
+  const following = useRef(!questionId && !reviewId && !returned);
   const [latest, setLatest] = useState(false);
   const [questionOffscreen, setQuestionOffscreen] = useState(false);
   const [questionAtLatest, setQuestionAtLatest] = useState(false);
@@ -291,7 +298,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["task", project, task.slug] }),
   });
   const sendNow = useSendNow(project, task.slug);
-  const anchorKey = `${questionVisit}:${questionId ?? ""}:${revision ?? ""}`;
+  const anchorKey = `${questionVisit}:${questionId ?? returned?.id ?? ""}:${revision ?? returned?.revision ?? ""}`;
   const updateQuestionVisibility = useCallback((node: HTMLDivElement) => {
     const anchor = current && anchors.current.get(`${current.id}:${current.revision}`);
     setQuestionAtLatest(Boolean(anchor && anchor.getBoundingClientRect().top - node.getBoundingClientRect().top + node.scrollTop >= node.scrollHeight - node.clientHeight));
@@ -312,9 +319,9 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     return true;
   }, []);
   useEffect(() => {
-    if (!active || !target || followedAnchor.current === anchorKey) return;
-    if (jumpTo(target)) followedAnchor.current = anchorKey;
-  }, [active, anchorKey, target, messages, jumpTo]);
+    if (!active || !anchor || followedAnchor.current === anchorKey) return;
+    if (jumpTo(anchor)) followedAnchor.current = anchorKey;
+  }, [active, anchorKey, anchor, messages, jumpTo]);
   useLayoutEffect(() => {
     const key = `${location.key}:review:${reviewId}`;
     if (!active || !reviewId || followedAnchor.current === key) return;
@@ -674,7 +681,10 @@ function TaskPage({
   const facts = taskFacts(task, overview.data, project, task.repository);
   const decision = (task.question_group?.questions ?? (task.question ? [task.question] : []))
     .find((question) => question.status === "open" && !question.response);
-  const [draft, setDraft] = useState("");
+  // The unsent message returns with Back/Forward to this history entry, like unsent answers.
+  const message = `message:${project}/${task.slug}`;
+  const kept: Record<string, string> = useVisitMemory<string>([message], (): string | undefined => draft || undefined);
+  const [draft, setDraft] = useState<string>(kept[message] ?? "");
   const [denied, setDenied] = useState(false);
   const [questionVisit, setQuestionVisit] = useState(0);
   const [pending, setPending] = useState<PendingMessage | null>(null);

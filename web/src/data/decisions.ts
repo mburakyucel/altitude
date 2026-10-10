@@ -45,6 +45,11 @@ export function questionPath(decision: Pick<Decision, "project" | "slug" | "id" 
   return `/projects/${decision.project}/tasks/${decision.slug}${query.size ? `?${query}` : ""}`;
 }
 
+/** A design preview's owning question, where Back goes with no app history behind the preview. */
+export function previewQuestion(project: string, slug: string, questionId: string, revision: string): string {
+  return `/projects/${project}/tasks/${slug}?${new URLSearchParams({ question: questionId, revision })}`;
+}
+
 export function decisionKind(decision: Pick<Decision, "kind" | "asked_by">): { label: string; tone: "accent" | "claimed" | "danger" } {
   if (decision.kind === "fault") return { label: "Fault", tone: "danger" };
   if (decision.kind === "stopped") return { label: "Stopped mid-task", tone: "danger" };

@@ -85,8 +85,8 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       await expect(main.getByRole("img", { name: "Desktop conversation", exact: true })).toBeVisible();
       await expect(main.getByRole("region", { name: "Preview text", exact: true }))
         .toContainText("Keep the conversation easy to read.");
-      await expect(main.getByRole("link", { name: "← Back to question", exact: true }))
-        .toHaveAttribute("href", `/projects/${project.name}/tasks/${task.slug}?question=${task.question!.id}&revision=${task.question!.revision}`);
+      // One Back control: the phone header's, or the page's own on desktop.
+      await expect(page.getByRole("button", { name: info.project.name === "phone" ? "Back" : "← Back", exact: true })).toBeVisible();
       await expect(main.getByText("Loading preview…", { exact: true })).toHaveCount(0);
       await expect(main.getByText("Loading screenshot…", { exact: true })).toHaveCount(0);
     } else if (task && captures) {

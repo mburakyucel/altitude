@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError, sendL2Message, useDecide, useProject } from "../data/api";
 import type { DecideInput, Decision, QuestionAnswer, QuestionGroup } from "../data/api";
@@ -8,10 +8,13 @@ import { decisionKind, questionPath } from "../data/decisions";
 import { ageText, exactTime } from "../data/observed";
 import { setSelectedProject } from "../shell/scope";
 import { InlineProse, Prose, ProseScope, QuestionProse } from "./Prose";
+import { keepForVisit, useVisitMemory } from "./visitMemory";
 
 type Option = { key: string; label: string; text: string };
 type Draft = { option?: string; text?: string };
 const draftKey = (q: Decision) => `${q.project}:${q.slug}:${q.id}:${q.revision}`;
+/** The question whose preview was opened from a history entry, so returning there brings it into view. */
+export type PreviewOrigin = Pick<Decision, "project" | "slug" | "id" | "revision">;
 function optionsFor(question: Decision): Option[] {
   if (question.options) return question.options;
   const recommended = question.recommendation;
@@ -47,7 +50,13 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
   const queryClient = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
-  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const location = useLocation();
+  // Unsent answers return with Back/Forward to this history entry; the signature below drops any whose revision closed.
+  const kept: Record<string, Draft> = useVisitMemory<Draft>(decisions.map((q) => `answer:${draftKey(q)}`), (item): Draft | undefined => {
+    const draft: Draft | undefined = drafts[item.slice("answer:".length)];
+    return draft?.option || draft?.text ? draft : undefined;
+  });
+  const [drafts, setDrafts] = useState<Record<string, Draft>>(() => Object.fromEntries(Object.entries(kept).map(([item, draft]) => [item.slice("answer:".length), draft])));
   const open = decisions.filter((q) => q.id && q.revision != null && q.status !== "resolved" && q.audience !== "l3" && !q.response);
   const signature = open.map(draftKey).join("|");
   useEffect(() => {
@@ -128,7 +137,11 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
         <b>Sent to L2</b><p><InlineProse text={question.response.text} /></p>
         <span className="text-meta text-muted" title={exactTime(question.response.at)}>{ageText(question.response.at)}</span>
       </div> : null}
-      {question.design_url ? <a className="text-meta question-preview" href={question.design_url} target="_blank" rel="noopener noreferrer">View preview · {question.design_title}</a> : null}
+      {question.design_url ? <Link className="text-meta question-preview" to={question.design_url} onClick={(event) => {
+        if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+          keepForVisit(location.key, "preview", { project: question.project, slug: question.slug, id: question.id, revision: question.revision } satisfies PreviewOrigin);
+        }
+      }}>View preview · {question.design_title}</Link> : null}
       {(resolved && !withdrawn || question.response) && question.recommendation?.text ? <details className="question-context"><summary>Earlier recommendation</summary>{recommendation}</details> : recommendation}
       {chat && question.detail && question.detail !== question.question ? <details className="question-context">
         <summary>More context</summary>

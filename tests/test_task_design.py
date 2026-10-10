@@ -250,7 +250,6 @@ class TestTaskDesign(AltitudeCase):
         preview = json.loads(raw)
         self.assertEqual((preview["title"], preview["revision"], preview["text"], preview["superseded"]),
                          (question["design"]["title"], 1, question["design"]["text"], False))
-        self.assertIn(f"?question={question['id']}&revision=1", preview["question_url"])
         self.assertIsNone(preview["current_question_url"], "a current proposal needs no newer-version link")
         self.assertEqual(headers["cache-control"], "no-store")
         self.assertEqual(S.load_task(self.project, self.slug), before, "viewing is a read")

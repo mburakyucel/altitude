@@ -3,6 +3,7 @@ import type { ChangeEvent, FormEvent, ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { checkTrust, pairDevice, readAccess, UNPAIRED_EVENT } from "../data/api";
 import type { Access, Trust } from "../data/api";
+import { forgetVisits } from "../components/visitMemory";
 import { BrandMark } from "./BrandMark";
 import "./pairing.css";
 
@@ -218,8 +219,9 @@ export default function PairGate({ children }: { children: ReactNode }) {
   }
   if (!access.data.paired) {
     return <PairScreen trust={access.data.trust} removed={removed} onPaired={() => {
-      // Replies cached while unpaired were refusals; the app starts fresh as the paired device.
+      // Replies cached while unpaired were refusals; the app starts fresh as the paired device, without kept drafts.
       client.removeQueries({ predicate: (query) => query.queryKey[0] !== "access" });
+      forgetVisits();
       setRemoved(false);
       void access.refetch();
     }} />;

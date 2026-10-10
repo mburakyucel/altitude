@@ -76,7 +76,7 @@ that same record. Its `main_run` is the push-triggered main run of the newest me
 with a recorded error while that run does not exist yet; a hand-dispatched run on the same commit
 never qualifies. Status and `alt task list` carry one `waiting` label, which `alt queue` shows as a blocked task's reason: the operator's
 turn (open questions or a held review-ready PR), `L2 replying to <operator>` after they wrote,
-`paused · fault …`, `stopped by <operator>`, `waiting on L3` or `paused`. `alt monitor` reports each
+`paused · fault …`, `stopped by <operator>` or `stopped by L3`, `waiting on L3` or `paused`. `alt monitor` reports each
 seat's quota and model allowances, the routing each role would get now and live provider sessions; `alt decisions` reports what waits for the operator, including held
 reviews.
 
@@ -1190,6 +1190,7 @@ A message to a blocked task uses its durable inbox and `resume_after` handoff in
 worker in the caller. Coordinator messages to faulted tasks stay non-waking; verified recovery uses
 the explicit reason-bearing resume. L3 cannot call `task block` directly: an L2 blocks itself with its attempt fence,
 while L3 uses reason-bearing `task stop` so altd blocks the task and stops the same observed worker.
+That block waits on L3 and publishes no question; its reason is L3's note in the task conversation.
 
 ### Image handoffs
 
@@ -1680,10 +1681,10 @@ acceptance, transfers ownership or access, or releases an approval question or m
 
 Before requesting visual approval, the current L2 publishes the proposal's selected screenshots and
 explanation with its ordinary question. The resulting **View preview · saved title** link in Needs you and the task
-conversation opens a browser tab over Altitude's normal connection. Use a title that identifies
+conversation opens the preview in the same tab over Altitude's normal connection. Use a title that identifies
 whether the captures show a proposal or an implementation review. Phone and desktop readers can
-inspect the screenshots at full size and use **Back to question** for feedback or the existing quick
-answer. A local filesystem link is not a review entry.
+inspect the screenshots at full size and use Back to return to the question, with any unsent answer
+still in place, for feedback or the existing quick answer. A local filesystem link is not a review entry.
 
 Create a selection JSON file, for example `design/wireframes/review.json`:
 
@@ -1738,7 +1739,7 @@ existing question and retains its saved preview.
 
 Old links retain their captured title and content, say **Earlier preview** when superseded, and
 identify a newer question when one exists. Missing or
-altered saved content shows **Design unavailable**, with Retry and Back to question; it never serves
+altered saved content shows **Design unavailable**, with Retry and Back; it never serves
 different content at that version. First acceptance refuses unavailable evidence. Feedback remains a
 normal message, and explicit acceptance uses the existing question/revision checks. Neither viewing,
 publication nor design acceptance releases a merge hold. A held implementation PR becomes available

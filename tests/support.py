@@ -17,6 +17,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -445,6 +446,13 @@ class AltitudeCase(unittest.TestCase):
         self.patch(config, "CLAUDE_BIN", str(engine))
         self.patch(config, "CODEX_BIN", str(engine))
         return engine
+
+    def hold_a_second_ago(self, project: str, slug: str, why: str) -> dict:
+        """Place a merge hold one second ago: events keep whole seconds and an approval must come in a later one."""
+        from altitude import state, tasks
+        earlier = (datetime.now(timezone.utc) - timedelta(seconds=1)).replace(microsecond=0).isoformat()
+        with mock.patch.object(state, "now", return_value=earlier):
+            return tasks.set_hold_merge(project, slug, why)
 
     def quiet_engines(self, agents: list[dict] | None = None) -> None:
         """No usage hold, known quota, and only the given Claude agents: the dispatcher sees a free machine."""
