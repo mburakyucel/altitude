@@ -2054,11 +2054,22 @@ def open_questions(task: dict) -> str:
                       if q.get("response") else "") for q in rows)
 
 
+def _question_review(task: dict, question: dict) -> dict | None:
+    """An open design question rests on the proposal review and one naming the held PR on the implementation review."""
+    from . import reviews
+    if question["status"] != "open":
+        return None
+    if question.get("design"):
+        return reviews.status(task, "proposal", question["design"]["id"])
+    return reviews.status(task, "changes") if _references_held_pr(task, question) else None
+
+
 def question_view(project: str, task: dict, question: dict) -> dict:
     group = _group_for(task, question)
     return {**{k: v for k, v in question.items() if k not in ("message", "acceptance_message", "acceptance_delivered", "design")},
             **({"design_url": design_url(project, task["slug"], question),
                 "design_title": question["design"]["title"]} if question.get("design") else {}),
+            "review": _question_review(task, question),
             "options": question_choices(question), "recommended_key": _recommended_key(question),
             "response": question.get("response"),
             "group_id": group["id"], "group_revision": group["revision"], "group_anchor_id": group["anchor_id"],
@@ -2511,6 +2522,7 @@ def decision_row(project: str, task: dict) -> dict:
 
 
 def review_row(project: str, task: dict) -> dict | None:
+    from . import reviews
     number = review_pr(project, task)
     if not number:
         return None
@@ -2518,7 +2530,7 @@ def review_row(project: str, task: dict) -> dict | None:
     at = delivery.get("at") or task.get("updated")
     return {"project": project, "slug": task["slug"], "title": task.get("title"), "kind": "review", "pr": number,
             "question": f"Review PR #{number} before merge", "detail": task["hold_merge"],
-            "recommendation": None, "asked": at, "since": at}
+            "review": reviews.status(task, "changes"), "recommendation": None, "asked": at, "since": at}
 
 
 def decisions(project: str) -> list[dict]:

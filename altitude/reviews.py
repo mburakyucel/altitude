@@ -257,6 +257,26 @@ def view(project, slug):
     return {"subjects": subjects, "history": history}
 
 
+def status(task, subject, design=None):
+    """A proposal or merge question's one-line review status, from the record alone (SPEC.md §3.8.3): its kind's
+    latest review and the kind's open findings. A review read another design than the question's, or a head other
+    than the published PR's, covers an earlier version, as the task's review card says."""
+    latest = next((r for r in reversed(task.get("reviews", [])) if r.get("subject", "changes") == subject), None)
+    if not latest:
+        return {"subject": subject, "id": None, "state": "none"}
+    snapshot = latest.get("snapshot") or {}
+    saved = latest.get("reconciled") or snapshot
+    reviewed = (snapshot.get("design") or {}).get("id")
+    head = (task.get("delivery") or {}).get("head")
+    earlier = (bool(design and reviewed and reviewed != design) if subject == "proposal"
+               else bool(head and saved.get("head") and saved["head"] != head))
+    return {"subject": subject, "id": latest["id"], "state": latest["state"],
+            "findings": len((latest.get("result") or {}).get("findings", [])), "reconciled": bool(latest.get("reconciled")),
+            "open": sum(len(_unresolved(r)) for r in _current_reviews(task)
+                        if r.get("subject", "changes") == subject and r["state"] != "withdrawn"),
+            "earlier": earlier}
+
+
 def request(project, slug, *, actor, request_id, focus="", source_id=None, previous=None, expected_attempt=None, subject=None,
             engine=None, model=None, additional=False):
     from . import dispatch, route

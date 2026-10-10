@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError, taskReview } from "../data/api";
-import type { Review, ReviewAction, ReviewSubject, TaskView } from "../data/api";
+import type { Decision, Review, ReviewAction, ReviewSubject, TaskView } from "../data/api";
 import { InlineProse } from "./Prose";
 import "./task-review.css";
 
@@ -250,6 +250,33 @@ export function ReviewCard({ review, task, controls, target, onRead }: { review:
       </ReviewBody>
     </div> : null}
   </div>;
+}
+
+export type ReviewLine = NonNullable<Decision["review"]>;
+
+/** A proposal or merge question's review in a few words (SPEC.md §3.8.3); it warns only when the review is missing, unresolved or of an earlier version. */
+export function reviewLine(review: ReviewLine): { tone: Tone; text: string } {
+  const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const [tone, state]: [Tone, string] = review.state === "none" ? ["warn", "not done"]
+    : review.state === "requested" ? ["wait", "requested"]
+    : review.state === "running" ? ["run", "in progress"]
+    : review.state === "withdrawn" ? ["warn", "skipped"]
+    : review.state !== "completed" ? ["warn", "didn’t finish"]
+    : !review.reconciled && review.findings ? ["warn", `done, ${count(review.findings, "finding")} pending`]
+    : review.open ? ["warn", `done, ${count(review.open, "open finding")}`]
+    : review.findings ? ["ok", `done, ${count(review.findings, "finding")} resolved`]
+    : ["ok", "done, no findings"];
+  return review.earlier && review.state !== "none" ? { tone: tone === "ok" ? "warn" : tone, text: `${NAME[review.subject]} · ${state} · earlier version` }
+    : { tone, text: `${NAME[review.subject]} · ${state}` };
+}
+
+/** The line's icon and words; the question card makes it a link when there is a review to open. */
+export function ReviewStatus({ review }: { review: ReviewLine }) {
+  const { tone, text } = reviewLine(review);
+  return <>
+    <span className={`review-icon review-icon-${tone}`} aria-hidden><svg viewBox="0 0 24 24">{ICON[tone]}</svg></span>
+    <span>{text}</span>
+  </>;
 }
 
 /** The latest review of each kind, the only ones the conversation shows. */

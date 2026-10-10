@@ -1309,6 +1309,7 @@ class TestReviews(AltitudeCase):
         [original] = json.loads(json.dumps([q for q in task["questions"] if q["status"] == "open"]))
         cards = T.decisions(self.project)
         self.assertEqual([row["kind"] for row in cards], ["asks"])
+        self.assertEqual(cards[0]["review"], {"subject": "changes", "id": None, "state": "none"})
         self.assertTrue(reviews.view(self.project, self.slug)["subjects"]["changes"]["available"])
         requested = self.request()
         self.assertEqual(S.load_task(self.project, self.slug)["resume_request"], requested["id"])
@@ -1319,7 +1320,11 @@ class TestReviews(AltitudeCase):
         self.assess(result)
         task = T.block(self.project, self.slug, "Merge PR #42?", actor="l2", expected_attempt=1)
         self.assertEqual([q for q in task["questions"] if q["status"] == "open"], [original])
-        self.assertEqual(T.decisions(self.project), cards)
+        # Only the question's review status follows the review.
+        after = T.decisions(self.project)
+        self.assertEqual([{**row, "review": None} for row in after], [{**row, "review": None} for row in cards])
+        self.assertEqual({k: after[0]["review"][k] for k in ("id", "state", "reconciled", "open")},
+                         {"id": result["id"], "state": "completed", "reconciled": True, "open": 0})
         self.assertEqual(task["hold_merge"], "Operator review before merge")
         self.assertIsNone(task.get("merge_approval"))
         self.assertIsNone(T.approved_pr(self.project, task))

@@ -54,3 +54,7 @@
   .review-finding-title { flex-direction: column; gap: 2px; }
   .review-finding-body { margin-left: 0; }
 }
+/* A proposal or merge question's review status: the icon leads, the words follow (SPEC.md §3.8.3). */
+.question-review { display: flex; align-items: flex-start; gap: 6px; width: fit-content; max-width: 100%; overflow-wrap: anywhere; }
+.question-review .review-icon, .question-review .review-icon svg { width: 16px; height: 16px; margin-top: 1px; }
+p.question-review { margin: 0; color: var(--text-muted); }

@@ -26,7 +26,7 @@ import type { ImageSubmission } from "../components/ImageDraft";
 import { MessageImages, PendingImages } from "../components/MessageImages";
 import type { ImagePreview } from "../components/MessageImages";
 import { Question, QuestionSet, ReviewDecision } from "../components/DecisionCard";
-import type { PreviewOrigin } from "../components/DecisionCard";
+import type { QuestionOrigin } from "../components/DecisionCard";
 import { TaskContext, TokenUsage } from "../components/TokenUsage";
 import { latestReviews, ReviewBoxes, ReviewCard, ReviewFeedback, useTaskReview } from "../components/TaskReview";
 import type { ReviewControls } from "../components/TaskReview";
@@ -245,10 +245,11 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   const group = task.question_group;
   const inGroup = (question: Decision) => group?.questions.some((q) => q.id === question.id && q.revision === question.revision);
   const target = questionId ? [...questions].reverse().find((q) => q.id === questionId && (revision == null || String(q.revision) === revision)) : undefined;
-  // Back from a preview opened on this entry returns to its question; only the URL's question retargets replies.
-  const origin = useVisitReturn<PreviewOrigin>("preview");
+  // Back from a preview or review opened on this entry returns to its question or merge review card; only the
+  // URL's question retargets replies.
+  const origin = useVisitReturn<QuestionOrigin>("origin");
   const returned = !questionId && origin?.project === project && origin.slug === task.slug
-    ? questions.find((q) => q.id === origin.id && q.revision === origin.revision) : undefined;
+    ? origin.id ? questions.find((q) => q.id === origin.id && q.revision === origin.revision) : facts.review ?? undefined : undefined;
   const anchor = target ?? returned;
   const open = (group?.questions ?? (task.question ? [task.question] : [])).filter((question) => question.status === "open" && !question.response);
   const current = open.find((question) => question.design_url) ?? open[0];
@@ -296,14 +297,14 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   const waiting = messages.filter((row) => row.delivery?.state === "queued" && (row.delivery.removable || row.delivery.send_now_pending));
   const lastWaiting = waiting.at(-1);
   const sendingNow = sendNow.isPending || waiting.some((row) => row.delivery?.send_now_pending);
-  const anchorKey = `${questionVisit}:${questionId ?? returned?.id ?? ""}:${revision ?? returned?.revision ?? ""}`;
+  const anchorKey = `${location.key}:${questionVisit}:${questionId ?? returned?.id ?? ""}:${revision ?? returned?.revision ?? ""}`;
   const updateQuestionVisibility = useCallback((node: HTMLDivElement) => {
     const anchor = current && anchors.current.get(`${current.id}:${current.revision}`);
     setQuestionAtLatest(Boolean(anchor && anchor.getBoundingClientRect().top - node.getBoundingClientRect().top + node.scrollTop >= node.scrollHeight - node.clientHeight));
     setQuestionOffscreen(Boolean(anchor && (anchor.getBoundingClientRect().bottom < node.getBoundingClientRect().top || anchor.getBoundingClientRect().top > node.getBoundingClientRect().bottom)));
   }, [current?.id, current?.revision]);
   const jumpTo = useCallback((question: Decision) => {
-    const node = anchors.current.get(`${question.id}:${question.revision}`);
+    const node = anchors.current.get(question.id ? `${question.id}:${question.revision}` : "review");
     const container = scroller.current;
     if (!node || !container) return false;
     const history = node.querySelector<HTMLDetailsElement>(":scope > details.question-history");
@@ -543,7 +544,9 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
             </> : <p className="sr-only" role="status">{task.state === "queued" ? "Sent · waiting for the L2 to start." : "Sent · the L2 has your reply."}</p>}
           </div> : (task.question?.status === "resolved" || task.question?.response) && !facts.finished ? <p className="sr-only" role="status">{task.state === "running" ? "Work resumed" : task.state === "queued" ? "Waiting for the L2 to start" : "Waiting to resume"}</p>
           : handedBack && !facts.finished && !facts.review ? <p className="sr-only" role="status">{task.state === "queued" ? "Sent · waiting for the L2 to start." : "Sent · the L2 has your reply."}</p> : null}
-          {facts.review ? <div className="conversation-question" data-turn="operator">
+          {facts.review ? <div className="conversation-question" data-turn="operator" tabIndex={-1} ref={(node) => {
+            if (node) anchors.current.set("review", node); else anchors.current.delete("review");
+          }}>
             <p className="conversation-turn">Your turn · review before merge</p>
             <ReviewDecision decision={facts.review} repository={facts.repository} chat disabled={readOnly || checking || denied} />
           </div> : null}
