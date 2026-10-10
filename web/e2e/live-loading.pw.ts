@@ -129,6 +129,8 @@ for (const count of [100, 5000, 20000]) {
       if (info.project.name === "phone") await page.getByRole("link", { name: "Chat", exact: true }).click();
       await expect(page.getByRole("textbox", { name: "Message L3 about atlas" })).toBeVisible();
       await capture("project-navigation", started, { concurrentTranscriptUpdate: true });
+      // Leaving the task abandons the update's read, which the service finishes before the next phase measures.
+      expect((await request.post("/fixture/control", { data: { slug: task.slug, mode: "settle" } })).ok()).toBe(true);
       started = reset();
       if (info.project.name === "phone") await page.getByRole("link", { name: "Work", exact: true }).click();
       await page.locator(`a[href="/projects/atlas/tasks/${other.slug}"]`).first().click();
