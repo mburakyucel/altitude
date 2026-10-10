@@ -74,6 +74,39 @@ class TestIssueVerbs(AltitudeCase):
         self.assertEqual([(e["kind"], e["actor"], e["number"], e["reason"], e["url"]) for e in events],
                          [("issue-close", "l3", 42, reason, self.url) for reason in ("completed", "not-planned")])
 
+    def test_l3_label_adds_and_removes_labels_on_origin_and_records_the_receipt(self):
+        self.setenv("GH_REPO", "other/private")
+        result = self.request("label", "42", "--add", "verify:macos", "--remove", "verify:linux", body="")
+        self.assertEqual(result, {"returncode": 0, "stdout": self.url + "\n", "stderr": ""})
+        call = self.run.call_args
+        self.assertEqual(call.args[0], ["gh", "issue", "edit", "42", "--repo", "https://github.com/team/project",
+                                       "--add-label=verify:macos", "--remove-label=verify:linux"])
+        self.assertNotIn("GH_REPO", call.kwargs["env"])
+        self.request("label", "42", "--remove", "verify:macos", body="")
+        self.assertEqual(self.run.call_args.args[0][-1], "--remove-label=verify:macos")
+        events = S.read_project_log(self.project)
+        self.assertEqual([(e["kind"], e["actor"], e["number"], e["add"], e["remove"], e["url"]) for e in events],
+                         [("issue-label", "l3", 42, ["verify:macos"], ["verify:linux"], self.url),
+                          ("issue-label", "l3", 42, [], ["verify:macos"], self.url)])
+
+    def test_label_refuses_missing_changes_bodies_and_other_fields(self):
+        for args, body in ((["label", "42"], ""), (["label", "42", "--add", "verify:macos"], "A comment"),
+                           (["label", "0", "--add", "verify:macos"], ""),
+                           (["label", "42", "--add", "verify:macos", "--repo", "other/repo"], ""),
+                           (["label", "42", "--add", "verify:macos", "--title", "X"], ""),
+                           (["label", "42", "--add", "verify:macos", "-"], ""),
+                           (["comment", "42", "--add", "verify:macos", "-"], "Text")):
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                self.request(*args, body=body)
+        with self.assertRaisesRegex(ValueError, "fields do not match"):
+            server.issue_write(self.project, "comment", "Text", actor="l3", number=42, add=["verify:macos"])
+        with self.assertRaisesRegex(ValueError, "fields do not match"):
+            server.issue_write(self.project, "label", "", actor="l3", number=42, labels=["bug"], add=["verify:macos"])
+        with self.assertRaisesRegex(ValueError, "must be text"):
+            server.issue_write(self.project, "label", "", actor="l3", number=42, add="verify:macos")
+        self.run.assert_not_called()
+        self.assertEqual(S.read_project_log(self.project), [])
+
     def test_close_refuses_extra_authority_and_published_text(self):
         invalid = [[], ["--reason", "duplicate"], ["--reason", "not planned"], ["--rea", "completed"],
                    ["--reason", "completed", "-"], ["--reason", "completed", "--comment", "Text"],
@@ -122,7 +155,7 @@ class TestIssueVerbs(AltitudeCase):
                 self.request(*args)
         self.run.assert_not_called()
         for args in (["new", "--title", "X", "-"], ["comment", "42", "-"],
-                     ["close", "42", "--reason", "completed"]):
+                     ["label", "42", "--add", "verify:macos"], ["close", "42", "--reason", "completed"]):
             result = self.alt("issue", *args, env={"ALTITUDE_ACTOR": "l2"})
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("not available to an L2", result.stderr)
@@ -130,6 +163,8 @@ class TestIssueVerbs(AltitudeCase):
             server.issue_write(self.project, "new", "body", actor="l2", title="X")
         with self.assertRaisesRegex(ValueError, "L2"):
             server.issue_write(self.project, "close", "", actor="l2", number=42, reason="completed")
+        with self.assertRaisesRegex(ValueError, "L2"):
+            server.issue_write(self.project, "label", "", actor="l2", number=42, add=["verify:macos"])
 
     def test_failed_gh_and_non_github_origin_do_not_record_success(self):
         with mock.patch.object(server.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "no origin")):
@@ -158,6 +193,10 @@ class TestIssueVerbs(AltitudeCase):
                               env={"ALTITUDE_ACTOR": "burak", "ALTITUDE_PROJECT": self.project})
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), self.url)
+        result = self.alt("issue", "label", "42", "--add", "verify:linux",
+                          env={"ALTITUDE_ACTOR": "burak", "ALTITUDE_PROJECT": self.project})
+        self.assertEqual((result.returncode, result.stdout.strip()), (0, self.url), result.stderr)
+        self.assertEqual(self.run.call_args.args[0][-1], "--add-label=verify:linux")
         payload = {"project": self.project, "operation": "close", "number": 42, "reason": "completed",
                    "actor": "l3"}
 
@@ -170,14 +209,15 @@ class TestIssueVerbs(AltitudeCase):
         with post(payload) as response:
             self.assertEqual(json.load(response), {"url": self.url})
         events = S.read_project_log(self.project)
-        self.assertEqual([e["actor"] for e in events], ["operator"] * 3)
+        self.assertEqual([e["actor"] for e in events], ["operator"] * 4)
         self.run.reset_mock()
         for change in ({"reason": None}, {"reason": ""}, {"reason": "duplicate"}, {"reason": []},
                        {"number": True}, {"number": 0}, {"number": -1}, {"number": "42"},
                        {"number": "https://github.com/other/repo/issues/42"},
                        {"body": "Closing comment"}, {"body": None}, {"title": "X"}, {"labels": ["X"]},
                        {"repo": "other/repo"}, {"operation": "reopen"}, {"operation": "delete"},
-                       {"operation": "comment", "body": "Text"}, {"operation": "new", "title": "X"}):
+                       {"operation": "comment", "body": "Text"}, {"operation": "new", "title": "X"},
+                       {"add": ["verify:macos"]}, {"operation": "label", "reason": None}):
             with self.subTest(change=change), self.assertRaises(urllib.error.HTTPError) as error:
                 post(payload | change)
             self.assertEqual(error.exception.code, 400)
