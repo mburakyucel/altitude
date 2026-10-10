@@ -62,8 +62,9 @@ def install_command(tool: str) -> str | None:
     """What First run and `alt doctor` show for a missing or outdated `gh` or `git`, run in the operator's own terminal,
     or None on a Linux system whose package manager this does not know; INSTALL_PAGES names the tool's own page then.
     Homebrew's and Arch's gh are current; other distributions package one too old for alt land, so apt, dnf and zypper
-    add GitHub's own repository and install or upgrade gh from it. A repository file or signing key replaces the
-    installed one only once its download succeeds."""
+    add GitHub's own repository and install or upgrade gh from it; zypper names that repository, since it otherwise keeps
+    an installed gh's vendor. A repository file or signing key replaces the installed one only once its download
+    succeeds."""
     if _darwin():
         return {"gh": "brew install gh", "git": "xcode-select --install"}[tool]
     manager = package_manager()
@@ -77,7 +78,7 @@ def install_command(tool: str) -> str | None:
                 "sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null && sudo apt update && sudo apt install gh")
     if manager in ("dnf", "zypper"):
         folder, install = (("/etc/yum.repos.d", "sudo dnf install gh && sudo dnf upgrade gh") if manager == "dnf"
-                           else ("/etc/zypp/repos.d", "sudo zypper install gh"))
+                           else ("/etc/zypp/repos.d", "sudo zypper install --from gh-cli gh"))
         return (f'repo=$(mktemp) && curl -fsSL {_GH_PACKAGES}/rpm/gh-cli.repo -o "$repo" && sudo install -D -m 644 '
                 f'"$repo" {folder}/gh-cli.repo && rm "$repo" && {install}')
     return "sudo pacman -S github-cli" if manager == "pacman" else None

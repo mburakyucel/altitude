@@ -183,7 +183,7 @@ class TestPrerequisites(OnboardingCase):
                 f"sudo install -D -m 644 {download} /etc/yum.repos.d/gh-cli.repo", "sudo dnf install gh",
                 "sudo dnf upgrade gh"]),
             "zypper": ("rpm/gh-cli.repo", lambda download: [
-                f"sudo install -D -m 644 {download} /etc/zypp/repos.d/gh-cli.repo", "sudo zypper install gh"])}
+                f"sudo install -D -m 644 {download} /etc/zypp/repos.d/gh-cli.repo", "sudo zypper install --from gh-cli gh"])}
         for manager, (source, steps) in expected.items():
             with mock.patch.object(platform.sys, "platform", "linux"), \
                     mock.patch.object(platform, "package_manager", return_value=manager):
