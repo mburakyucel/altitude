@@ -207,6 +207,10 @@ The saved `ci_recheck` names its status, next action/time, evidence and delivery
 registration retries return the same receipt; another active probe refuses replacement. L2 asks L3
 to register the probe. Registration starts no worker and needs no free worker slot.
 
+An owner's ordinary block gets a wait, so the recheck observes and never makes a failed run green.
+For a failed flaky shard, the owner first reruns the failed jobs on the same head
+(`gh run rerun --failed <run>`), and asks for a recheck only while that rerun is queued or running.
+
 At the due time, altd prefers relevant live or fresh completed CI among twenty recent executions
 of that workflow, branch, event and PR. Otherwise a recovery probe reruns the selected run once, and a
 wait reports the selected run as it is. Freshness uses
@@ -1436,8 +1440,9 @@ cancelled, stale or unrelated required runs block. GitHub-managed scans on the h
 default setup, need no PR identity but must pass like any other check: a failing scan blocks and a
 pending one is waited for. `--test-cmd` supplies no bypass for this gate.
 
-After a bounded CI wait, retain the run and missing evidence, explicitly block and ask L3 for a
-[durable CI recheck](#durable-ci-recheck). A missing run needs trigger recovery, not an
+A failed flaky shard is the owner's own same-head `gh run rerun --failed <run>`. After a bounded
+wait on a run still queued or running, retain the run and missing evidence, explicitly block and ask
+L3 for a [durable CI recheck](#durable-ci-recheck). A missing run needs trigger recovery, not an
 invented run ID. GitHub Actions outages pause merges until verified recovery and fresh checks.
 Reviews and live merge holds remain mandatory. Opening a held PR does not authorize its merge.
 GitHub's strict required-check rule protects this repository's base race; Altitude's task holds and

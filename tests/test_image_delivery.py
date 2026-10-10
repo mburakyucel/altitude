@@ -8,6 +8,7 @@ import runpy
 import subprocess
 import sys
 import threading
+from types import SimpleNamespace
 from unittest import mock
 
 from tests.support import AltitudeCase
@@ -77,27 +78,33 @@ class ImageDeliveryCase(AltitudeCase):
                       "source_task": None, "path": str(path)}
         self.patch(engines, "image_capability", return_value={"available": True, "why": "fixture transport"})
 
-    def assert_input(self, engine, command, payload, *, resume):
-        if isinstance(payload, bytes):
-            payload = payload.decode()
+    def assert_input(self, engine, payload, *, resume):
+        """`payload` is the job driver's launch input; the engine command and first turn travel inside it."""
+        spec = json.loads(payload.decode() if isinstance(payload, bytes) else payload)
+        command, content = spec["command"], spec["input"]
+        self.assertEqual(spec["engine"], engine)
         if engine == "claude":
+            self.assertEqual(command[0], config.CLAUDE_BIN)
             self.assertEqual(command[command.index("--input-format") + 1], "stream-json")
             self.assertEqual("--resume" in command, resume)
-            body = json.loads(payload)
+            self.assertEqual(command[command.index("--model") + 1], "original-model")
+            # The driver writes the first turn as one user line, as it writes every later one.
+            lines = []
+            engines._ClaudeDriver.line(SimpleNamespace(write=lines.append, waiting={}), content, None)
+            body, = lines
             self.assertEqual((body["type"], body["message"]["role"]), ("user", "user"))
             self.assertIsNone(body["parent_tool_use_id"])
             self.assertEqual(body["origin"], {"kind": "human"}, "a streamed prompt keeps the text prompt's user standing")
-            content = body["message"]["content"]
+            self.assertEqual(body["message"]["content"], content)
             self.assertEqual(base64.b64decode(content[1]["source"]["data"]), PNG)
             self.assertEqual(content[1]["source"]["media_type"], "image/png")
-            text = content[0]["text"]
         else:
-            self.assertEqual(command[command.index("--image") + 1], self.image["path"])
-            self.assertEqual(command[command.index("--image") + 2], "--json",
-                             "a following flag terminates the variadic image argument before the prompt")
-            self.assertEqual("resume" in command, resume)
-            self.assertEqual(command[-2:] if resume else command[-1:], ["session", "-"] if resume else ["-"])
-            text = payload
+            self.assertEqual(command[:2], [config.CODEX_BIN, "app-server"])
+            self.assertEqual(spec["model"], "original-model")
+            self.assertEqual(spec["resume"], "session" if resume else None)
+            self.assertEqual(content[1:], [{"type": "localImage", "path": self.image["path"]}])
+        self.assertEqual(content[0]["type"], "text")
+        text = content[0]["text"]
         self.assertIn("inspect the screenshot", text)
         self.assertIn("message-one", text)
         self.assertIn(self.image["id"], text)
@@ -119,8 +126,20 @@ class TestNativeImages(ImageDeliveryCase):
                               if engine == "claude" else
                               engines.codex_exec("inspect the screenshot", sandbox_settings=[], **common))
                 self.assertEqual(result["session_id"], "session")
-                self.assertIn("original-model", popen.call_args.args[0])
-                self.assert_input(engine, popen.call_args.args[0], process.received.getvalue(), resume=resume)
+                command = popen.call_args.args[0]
+                process.received.ended.wait(10)
+                if engine == "claude":
+                    self.assertEqual(command[-len(engines._driver_command()):], engines._driver_command())
+                    self.assert_input(engine, process.received.getvalue(), resume=resume)
+                else:
+                    self.assertEqual(command[command.index("--image") + 1], self.image["path"])
+                    self.assertEqual("resume" in command, resume)
+                    self.assertIn("original-model", command)
+                    self.assertIn("--ignore-user-config", command)
+                    text = process.received.getvalue()
+                    for expected in ("inspect the screenshot", "message-one", self.image["id"],
+                                     "attached visually in the listed order"):
+                        self.assertIn(expected, text)
 
     def test_task_fresh_and_resumed_workers_keep_engine_model_session_and_images(self):
         for engine in ("claude", "codex"):
@@ -145,20 +164,21 @@ class TestNativeImages(ImageDeliveryCase):
                 self.assertEqual(result["returncode"], 0)
                 self.assertEqual(result["agent"]["sessionId"], "session")
                 command = launch.call_args.args[0]
-                self.assertIn("original-model", command)
-                if engine == "codex":
-                    self.assertIn('model_reasoning_effort="xhigh"', command)
+                self.assertEqual(command[-len(engines._driver_command()):], engines._driver_command())
                 self.assertIn("ALTITUDE_TASK=owner", command)
-                token, payload = processes[-1].stdin.getvalue().decode().split("\n", 1)
-                self.assertEqual(token, "", "the job's first input line carries the GitHub token")
-                self.assert_input(engine, command, payload, resume=resume)
+                spec = json.loads(processes[-1].stdin.getvalue())
+                if engine == "codex":
+                    self.assertIn('model_reasoning_effort="xhigh"', spec["command"])
+                self.assertEqual(spec["github_token"], "", "the job's launch input carries the GitHub token")
+                self.assert_input(engine, processes[-1].stdin.getvalue(), resume=resume)
 
     def test_larger_inbox_batch_keeps_every_image_visually_inspectable(self):
         batch = [{**self.image, "id": str(index) * 32, "source_message_id": f"message-{index}"} for index in range(5)]
         for engine, reader in (("claude", "Read"), ("codex", "view_image")):
             with self.subTest(engine=engine):
-                args, prompt = engines._image_input(engine, "Each caption belongs to its message.", batch)
-                self.assertEqual(args, [])
+                content = engines._engine_input(engine, "Each caption belongs to its message.", batch)
+                self.assertEqual([part["type"] for part in content], ["text"], "no image is attached natively")
+                prompt = content[0]["text"]
                 self.assertIn(f"native {reader} tool", prompt)
                 for item in batch:
                     self.assertIn(item["id"], prompt)
@@ -170,7 +190,8 @@ class TestNativeImages(ImageDeliveryCase):
             with self.subTest(unavailable=unavailable), \
                  mock.patch.object(engines, "image_capability", return_value={"available": not unavailable, "why": "Image input unavailable"}), \
                  mock.patch.object(engines.subprocess, "Popen") as launch, \
-                 mock.patch.object(engines, "claude_agents") as old_workers:
+                 mock.patch.object(engines, "_git_dirs", return_value=[]), \
+                 mock.patch.object(engines, "claude_agents", return_value=[]) as old_workers:
                 image = {**self.image, "path": str(self.tmp / "missing.png")}
                 for engine in ("claude", "codex"):
                     with self.assertRaises(engines.ImageInputError):
@@ -181,21 +202,21 @@ class TestNativeImages(ImageDeliveryCase):
 
 
 class TestImageCapability(AltitudeCase):
-    def test_local_help_checks_both_start_and_resume_and_refreshes_after_binary_change(self):
+    def test_local_help_checks_the_turn_transport_and_refreshes_after_binary_change(self):
         binary = self.tmp / "engine"
         binary.write_text("fixture executable")
         self.addCleanup(engines._image_cli_support.cache_clear)
         with mock.patch.object(engines.shutil, "which", return_value=str(binary)), \
-             mock.patch.object(engines.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "--image", "")) as run:
+             mock.patch.object(engines.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "--strict-config", "")) as run:
+            # Fresh and resumed Codex turns both run `codex app-server`, so its help is the one transport check.
             self.assertTrue(engines.image_capability("codex")["available"])
-            self.assertEqual([call.args[0][1:] for call in run.call_args_list],
-                             [["exec", "--help"], ["exec", "resume", "--help"]])
+            self.assertEqual([call.args[0][1:] for call in run.call_args_list], [["app-server", "--help"]])
             self.assertTrue(engines.image_capability("codex")["available"])
-            self.assertEqual(run.call_count, 2)
+            self.assertEqual(run.call_count, 1)
             binary.write_text("replacement without image support")
             run.return_value = subprocess.CompletedProcess([], 0, "--json", "")
             self.assertFalse(engines.image_capability("codex")["available"])
-            self.assertEqual(run.call_count, 3)
+            self.assertEqual(run.call_count, 2)
 
     def test_absent_and_unsupported_transport_are_explicit(self):
         with mock.patch.object(engines.shutil, "which", return_value=None), \
