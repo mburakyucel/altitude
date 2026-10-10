@@ -27,7 +27,8 @@ See [architecture](ARCHITECTURE.md) for authorization and engine containment.
 
 Runtime state lives under `ALTITUDE_HOME` (default `~/.altitude`): project configuration, active
 and archived tasks, conversations, monitor snapshots, and private incident evidence. Keep it
-out of source control. Provider session files have their engine's own retention policy.
+out of source control and [back it up](#back-up-runtime-state) privately. Provider session files have
+their engine's own retention policy.
 
 ```sh
 bin/alt --project example task report example-task
@@ -93,6 +94,48 @@ L3 does not select or clean up unrelated backlog autonomously. L2 routes direct 
 through its task reply and report follow-ups and cannot mutate issues directly. See
 [GitHub issues](CLI.md#github-issues) for arguments and the rule excluding home paths and private
 incident evidence from published text.
+
+## Back up runtime state
+
+Code and lasting decisions live in Git and GitHub. `ALTITUDE_HOME` holds the work in flight:
+project registration and settings, coordinator chats, active and archived tasks with their
+conversations, questions, reports and evidence, and incident notes. A copy of it lets you carry on
+after a lost disk or on a new computer. Altitude takes no backups itself; copy the folder with ordinary
+tools into a private place your existing backup already covers, such as a Time Machine or iCloud Drive
+folder on a Mac or an external drive on Linux. Never commit it to a repository: it holds private chats
+and evidence. Encrypt the file before it leaves storage you trust.
+
+```sh
+(umask 077 && tar -czf ~/Backups/altitude-2026-10-10.tar.gz -C ~ --exclude=.altitude/speech .altitude)
+tar -tzf ~/Backups/altitude-2026-10-10.tar.gz > /dev/null && echo complete
+```
+
+The first command writes an archive only you can read; the second reads the whole archive and fails
+on a truncated or damaged file. Both assume the default `ALTITUDE_HOME`. The exclusion skips the
+voice runtime, which downloads again when needed. Records are replaced whole, so a copy taken while
+Altitude runs holds intact files, but activity during the copy can leave one record without its
+counterpart, such as an incident index line without its incident. For an exact copy, take it while
+no task runs and the coordinator is idle. Task folders keep their check evidence, so
+`du -sh ~/.altitude` shows how large the archive can be.
+
+To inspect a backup without touching live state, unpack it into a new scratch folder and read it
+there; nothing runs from that folder:
+
+```sh
+mkdir /tmp/altitude-check && tar -xzf ~/Backups/altitude-2026-10-10.tar.gz -C /tmp/altitude-check
+cat /tmp/altitude-check/.altitude/projects.json
+ls /tmp/altitude-check/.altitude/example/tasks /tmp/altitude-check/.altitude/example/archive
+```
+
+Putting a copy in place is a separate, deliberate step: with the [service](#service-lifecycle)
+stopped, move any current `~/.altitude` aside and unpack the copy into the home folder. Clone each
+project's repository to the same path, because the copy records each project's folder. The copy does
+not hold provider sign-ins or the engines' own session files, GitHub sign-in, the certificates and
+paired devices under `~/.config/altitude`, or repositories, worktrees and uncommitted work. Sign in
+again, pair devices again and push any task branch you want to keep before moving. A restored task
+keeps its conversation and records, but its provider session returns only if that engine's own
+folder was copied too. Tasks that were running come back without their workers; nothing is restarted
+or replayed by the copy itself.
 
 ## Devices and lockout recovery
 
