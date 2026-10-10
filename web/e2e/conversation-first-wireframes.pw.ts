@@ -31,7 +31,6 @@ test("conversation-first design: custom answers, staged presets and conversation
   const walk = walkthrough(page, info);
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
-  await page.route("https://fonts.**/*", route => route.abort());
   const group = page.getByRole("article", { name: "Index rollout questions", exact: true });
   const field = page.getByRole("textbox", { name: "Message the L2", exact: true });
   await walk.open(route("NeedsYou") + "?reset");
@@ -113,7 +112,6 @@ test("conversation-first proposal: phone and desktop state inventory", async ({ 
   test.setTimeout(90_000);
   const prefix = info.project.name === "phone" ? "Mobile" : "";
   const walk = walkthrough(page, info);
-  await page.route("https://fonts.**/*", route => route.abort());
   const states: [string, string][] = [
     ["list-loading", "Loading decisions…"], ["list-error", "Could not load Needs you."],
     ["list-offline", "Offline · showing saved decisions."], ["discussion", "Your follow-up is in the L2 chat. Still awaiting your decision."],
@@ -169,7 +167,6 @@ test("conversation-first proposal: recovery and voice actions", async ({ page },
   const prefix = info.project.name === "phone" ? "Mobile" : "";
   const route = (state: string) => origin + prefix + "ConversationFirstStates.html?state=" + state + "&reset";
   const walk = walkthrough(page, info);
-  await page.route("https://fonts.**/*", route => route.abort());
   await walk.open(route("waiting"));
   await page.getByRole("button", { name: "7 days", exact: true }).click();
   await page.getByRole("button", { name: "Send 1 answer", exact: true }).click();

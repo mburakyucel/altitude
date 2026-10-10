@@ -1100,7 +1100,9 @@ finger and the neighbouring view is on screen beside it, proportionally to the d
 stays in place. Release past half the width, or a fling of at least 0.4 px/ms in the drag's direction,
 completes the switch with a short settle; otherwise, including a fling back toward the start, the
 track springs back. Left moves one tab on (Conversation → Live session → Terminal); right moves one
-tab back; past either end the track gives a little with rubber-band resistance and never switches. Under
+tab back; past either end the track gives a little with rubber-band resistance and never switches. A
+swipe that lands while the track still settles moves nothing until it lifts, and the browser's own
+horizontal swipe never takes it Back. Under
 reduced motion nothing moves with the finger and a release past the same thresholds switches at once.
 Accessible labeled tabs remain the direct alternative. Swipes do not start from the composer or form
 controls, and leave browser-edge Back, text selection, recording, dialogs, horizontally scrollable

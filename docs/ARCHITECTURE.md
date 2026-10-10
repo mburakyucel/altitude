@@ -1887,8 +1887,9 @@ text in it from reply sizes; the operator accepted that for these four views on 
 ### Conversations and navigation
 
 The HTML links the approved Climb SVG favicon, a multi-size ICO fallback, the 180px Apple touch
-icon and a web app manifest. The manifest defines the root identity/start URL/scope, standalone
-display and ordinary 192/512px plus maskable 512px icons. Public metadata and icons are served
+icon and a web app manifest. The bundle includes its IBM Plex fonts, so pages make no third-party
+requests and never wait on one to render. The manifest defines the root identity/start URL/scope,
+standalone display and ordinary 192/512px plus maskable 512px icons. Public metadata and icons are served
 uncached by the existing static handler; the alert worker has no fetch handler or offline app
 cache. Native icon copies can outlive a page reload; [operations](OPERATIONS.md#refreshing-home-screen-and-bookmark-icons)
 describes refreshing shortcuts and installed apps.
@@ -2807,7 +2808,8 @@ scrolling column and expands on request. It appears only while both its public w
 activity are less than 60 seconds old; missing, untimed and unavailable output leaves no preview.
 Tool output alone does not keep stale prose visible. Updates and removal preserve an older-message
 reader's position. Following stays at latest through preview expiration and replacement; React
-commits restore the bottom before queued layout-induced scroll events can change following.
+commits restore the bottom before queued layout-induced scroll events can change following, while a
+scroll up at an unchanged viewport height releases following before its own event arrives.
 Stop is one click in the task header at both viewports, serving Conversation and
 Live session with one action. Stop, Continue and Check status share its button treatment and position.
 It remains Stopping until termination is evidenced; failed or unknown
@@ -2840,8 +2842,9 @@ preserves a paused reader's visible row while reconnecting. Source writes during
 fingerprint stale so the next poll includes them without failing the current bounded read.
 Project/task/engine/session/attempt/mode define viewer isolation. Same-attempt worker resumes
 refresh the projection without resetting reading position. Before a render changes the transcript,
-a paused viewer captures native scrolling whose event has not arrived yet; that position and its
-upward-history intent survive the refresh. Access and generation are checked
+the viewer captures native scrolling whose event has not arrived yet: a paused reader's scroll, or a
+following reader's upward scroll, which stops following. That position and its upward-history
+intent survive the refresh. Access and generation are checked
 before and after reads. Transcript state never authorizes task actions.
 
 Only the mounted viewer retains loaded rows and reading state; navigation, generation changes and
@@ -2870,7 +2873,7 @@ read-only with the composer and activity preview gone. Phone swipes move one tab
 the tabs in their order, Conversation, Live session and Terminal when the task offers one, left to the
 next and right to the previous, without wrapping: the views sit on one track that follows the finger,
 settles into the switch past half the width or a fling, springs back otherwise and resists past either
-end; reduced motion switches instantly. Conversation and Live session stay mounted and laid out, the
+end; a swipe landing during a settle is held until it lifts; reduced motion switches instantly. Conversation and Live session stay mounted and laid out, the
 inactive one invisible with its transcript polling paused; a drag toward Terminal shows its loading
 view, and the shell opens or reattaches only once the switch completes. The tab row stays in place
 during the drag. Deliberate horizontal gestures exclude browser edges, selection, controls, the
