@@ -421,6 +421,53 @@ test("send: the pending bubble with its cue, the settled bubble and streamed rep
   await expect.poll(() => retried).toEqual([text]);
 });
 
+test("a sent message stays in the conversation through the Work tab and back, and settles once @phone-only", async ({ page, request }, info) => {
+  const project = await fixtureProject(request);
+  const walk = walkthrough(page, info);
+  const v = views(page, info);
+  const text = "UI walkthrough: kept through the Work tab";
+  const stored: Row[] = [];
+  let releaseStream: () => void = () => {};
+  const streamGate = new Promise<void>((resolve) => (releaseStream = resolve));
+  await page.route((url) => url.pathname === "/api/chat", async (route: Route) => {
+    await streamGate;
+    stored.push(
+      { at: now(), role: "user", text, trigger: "chat", turn_id: "ui-w1", request_id: (route.request().postDataJSON() as { request_id: string }).request_id },
+      { at: now(), role: "assistant", text: "Kept and answered.", trigger: "chat", turn_id: "ui-w1" },
+    );
+    const lines = [
+      JSON.stringify({ turn: { id: "ui-w1", started_at: now(), trigger: "chat" } }),
+      JSON.stringify({ t: "Kept and answered." }),
+      JSON.stringify({ done: { turn_id: "ui-w1" } }),
+    ];
+    return route.fulfill({ status: 200, contentType: "application/x-ndjson", body: `${lines.join("\n")}\n` });
+  });
+  await overlayChat(page, project.name, (live) => ({ ...live, history: [...live.history, ...stored], active: null, busy: false, queued: [] }));
+
+  await walk.open(project.path);
+  await v.field.fill(text);
+  await v.send.click();
+  const pending = v.convo.locator(".msg-row[data-pending]").filter({ hasText: text });
+  await expect(pending).toBeVisible();
+  const nav = page.getByRole("navigation", { name: "Primary", exact: true });
+  await nav.getByRole("link", { name: "Work", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Work", exact: true })).toBeVisible();
+  // Back on Chat while the send is still on its way: the same pending bubble, not an empty gap.
+  await walk.state("01-back-from-work-pending-bubble-kept", {
+    action: () => nav.getByRole("link", { name: "Chat", exact: true }).click(),
+    visible: [pending, pending.getByRole("status", { name: "Sending", exact: true })],
+    hidden: [],
+  });
+  releaseStream();
+  await walk.state("02-settled-once-after-the-poll", {
+    visible: [v.bubble(text), v.convo.locator(".reply", { hasText: "Kept and answered." })],
+    hidden: [pending],
+  });
+  await expect(v.convo.locator(".turn[data-local]")).toHaveCount(0, { timeout: 10_000 });
+  await expect(v.bubble(text)).toHaveCount(1);
+  await expect(v.convo.locator(".reply", { hasText: "Kept and answered." })).toHaveCount(1);
+});
+
 test("an interrupted request without a receipt preserves both drafts without an unsent Retry", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
