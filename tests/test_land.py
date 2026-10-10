@@ -316,13 +316,6 @@ class TestLand(AltitudeCase):
         self.git("merge-base", "--is-ancestor", moved[0], result["head"])
 
     def test_a_hold_placed_during_a_refused_merge_blocks_the_retry(self):
-        from altitude import tasks as T
-        from itertools import count
-        ticks = count(1)
-        # All decisions occur within one second: a renewed hold must still follow the answer.
-        self.patch(S, "now", return_value="2026-01-01T00:00:00+00:00")
-        self.patch(T, "_conversation_time", side_effect=lambda:
-                   f"2026-01-01T00:00:00.{next(ticks):06d}+00:00")
         refused, approval = self.refused_merge("new hold")
         with self.assertRaisesRegex(land.LandError, "predates the current merge hold"):
             land.land("approved delivery", cwd=self.repo, wait=60, merge=True, approval=approval["id"])

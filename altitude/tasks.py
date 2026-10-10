@@ -2553,7 +2553,7 @@ def set_hold_merge(project: str, slug: str, why: str | None, actor: str = "l3") 
         t["hold_merge_id"] = uuid.uuid4().hex
         S.save_task(project, t)
         S.append_event(project, slug, "hold-merge" if why else "release-merge", why=why, actor=actor,
-                       hold_id=t["hold_merge_id"], at=_conversation_time())
+                       hold_id=t["hold_merge_id"])
     return t
 
 
