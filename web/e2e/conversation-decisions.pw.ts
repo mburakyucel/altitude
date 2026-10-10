@@ -1100,6 +1100,7 @@ test("closed members fold behind the open question, and questions reworded into 
   const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
   const live = conversation.locator(".conversation-question[data-turn]");
   const earlier = live.getByText("2 earlier questions", { exact: true });
+  const withdrawn = live.getByText("Question withdrawn", { exact: true });
   expect((await queue(request)).filter((row) => row.slug === slug)).toHaveLength(1);
   await walk.open("/");
   await walk.state("waits-01-needs-you-shows-only-the-operator-question", {
@@ -1110,11 +1111,13 @@ test("closed members fold behind the open question, and questions reworded into 
   await walk.state("waits-02-chat-leads-with-the-open-question", {
     visible: [turnLabel(page).filter({ hasText: "Your turn · 1 question" }), earlier, live.getByRole("button", { name: /^7 days/ }),
       live.getByText("One week covers the rollout.", { exact: true }), live.getByText("L3 is handling this", { exact: true })],
-    hidden: [live.getByText(region, { exact: true }), live.getByText("Decision recorded", { exact: true }), live.getByText("Question withdrawn", { exact: true })],
+    hidden: [live.getByText(region, { exact: true }), live.getByText("Decision recorded", { exact: true })],
   });
+  // Playwright's WebKit toBeHidden skips checkVisibility() and treats a <summary> inside another closed <details> as shown.
+  expect(await withdrawn.evaluate((summary) => summary.checkVisibility())).toBe(false);
   await earlier.click();
   await walk.state("waits-03-earlier-questions-stay-reachable", {
-    visible: [live.getByText(region, { exact: true }), live.getByText("Decision recorded", { exact: true }), live.getByText("Question withdrawn", { exact: true })],
+    visible: [live.getByText(region, { exact: true }), live.getByText("Decision recorded", { exact: true }), withdrawn],
     hidden: [],
   });
   const reworded = await request.post("/fixture/waits-reworded", { data: { slug } });
