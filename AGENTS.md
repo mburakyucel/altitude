@@ -35,11 +35,15 @@ ratchets the counts so mentions outside a seam can only fall.
 Linux and macOS are both target platforms, and the platform seam is `altitude/platform.py`. Every
 change ships for macOS too, with host differences behind that seam. A change is confirmed on a
 platform only by recorded evidence from a run there; Linux delivery does not finish macOS
-confirmation. Owners run their candidate's checks on the Mac with `alt task validate`. For what a
-[macOS validation run](docs/DEVELOPMENT.md#macos-validation-runs) does not establish, owners name missing
-macOS confirmation in their PR and report and send L3 a tracking row for the relevant issue: #643
-for containers, #225 for native runtime, or #551 for installation. L3 maintains those rows.
-Linux merge checks and holds are unchanged. By the operator's decision of 2026-10-09, the early
+confirmation. Owners run their candidate's checks on the Mac with `alt task validate`. Native
+behavior only the other installation can confirm (services, confinement, installation and updates,
+the container deployment, a real iPhone) stays as a checklist on the change's own issue, labeled
+`verify:macos` or `verify:linux` for the installation that owes it; browser and UI behavior relies
+on the required CI. The PR merges with `Addresses #N`, and the issue closes once that installation
+records the evidence. By the operator's decision of 2026-10-10, L3 comments, labels and closes these
+issues, filing one when the change has none, as [pending device
+verification](docs/DEVELOPMENT.md#pending-device-verification) describes. Linux merge checks and holds
+are unchanged. By the operator's decision of 2026-10-09, the early
 preview supports Linux x86_64 and Apple silicon macOS; the [roadmap](docs/ROADMAP.md#native-macos-runtime)
 lists the native confirmation still open.
 

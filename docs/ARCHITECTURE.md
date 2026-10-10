@@ -1290,6 +1290,7 @@ helpers and reject output-file options. Git and journal shims retain their check
 is not enabled because this deployment host cannot create its required unprivileged bwrap namespace;
 the permission boundary fails closed instead, while Codex retains its native filesystem sandbox.
 `alt issue new --title '…' [--label …] -` and `alt issue comment <number> -` publish stdin through altd's login to the checkout-origin repository for L3 or the operator, refuse L2 and private evidence references under the AGENTS.md boundary, and record one project event with actor, title, and URL.
+`alt issue label <number> [--add <label>] [--remove <label>]` changes an issue's existing labels under the same boundary, publishes no text, and records the issue number and labels; L3 uses it for [pending device verification](DEVELOPMENT.md#pending-device-verification).
 `alt issue close <number> --reason completed|not-planned` uses the same boundary for requested closure
 or verified completion of an authorized delivery missing its closing link. L2 supplies the issue,
 merged PR and complete-scope evidence through its reply and report follow-ups; L3 verifies and closes

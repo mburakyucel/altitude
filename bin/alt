@@ -22,7 +22,7 @@ L3_COMMANDS = READ_COMMANDS | {
     ("project", "set"), ("project", "setup"),
     ("pr", "close"),
     ("state", None), ("fyi", None), ("decisions", None), ("monitor", None), ("queue", None),
-    ("issue", "new"), ("issue", "comment"), ("issue", "close"),
+    ("issue", "new"), ("issue", "comment"), ("issue", "label"), ("issue", "close"),
     *(("task", name) for name in ("new", "reject", "escalate", "resume", "message", "stop", "paths", "hold-merge",
                                     "done", "preserve-checkout", "recheck-ci", "handoff", "grant", "release")),
     *(("incident", name) for name in ("new", "amend", "publish")),
@@ -530,11 +530,11 @@ def main(argv=None) -> None:
         import ssl
         import urllib.error
         import urllib.request
-        body = "" if setup_command or machine_run or validation_run or review_run or terminal_read or sys.stdin.isatty() and (closing_pr or args.operation == "close") else sys.stdin.read()
+        body = "" if setup_command or machine_run or validation_run or review_run or terminal_read or sys.stdin.isatty() and (closing_pr or args.operation in ("close", "label")) else sys.stdin.read()
         payload = {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"],
                    "review_id": args.review_id, "context_ids": args.context_message, "proposal_id": args.proposal_message} if review_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"]} if terminal_read else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "request": uuid.uuid4().hex} if machine_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "kvm": args.kvm, "publish": args.publish, "simulator": args.simulator, "capture": args.capture} if validation_run else {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
                    "project": _project(args), "operation": args.operation, "body": body,
-                   **{key: getattr(args, key) for key in ("title", "labels", "number", "reason") if hasattr(args, key)}}
+                   **{key: getattr(args, key) for key in ("title", "labels", "number", "reason", "add", "remove") if hasattr(args, key)}}
         # An option left unset sends nothing, so a checkout awaiting activation keeps working against the older
         # running service, whose handlers refuse fields they do not know; each handler reads absence as that default.
         payload = {key: value for key, value in payload.items() if value is not None and value is not False}

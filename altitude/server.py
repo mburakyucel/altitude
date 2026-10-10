@@ -2347,11 +2347,11 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, 400)
             if api == "issue":
                 try:
-                    if o.keys() - {"project", "operation", "body", "title", "labels", "number", "reason", "actor"}:
+                    if o.keys() - {"project", "operation", "body", "title", "labels", "number", "reason", "add", "remove", "actor"}:
                         raise ValueError("alt issue: unsupported fields")
                     url = issue_write(o["project"], o.get("operation"), o.get("body", ""), actor="operator",
                                       title=o.get("title", ""), labels=o.get("labels"), number=o.get("number"),
-                                      reason=o.get("reason"))
+                                      reason=o.get("reason"), add=o.get("add"), remove=o.get("remove"))
                     return self._json({"url": url})
                 except (ValueError, OSError, subprocess.SubprocessError) as exc:
                     return self._json({"error": str(exc)}, 400)
@@ -3256,7 +3256,8 @@ def issue_parser() -> argparse.ArgumentParser:
             raise ValueError(f"alt issue: {message}")
 
         def exit(self, status=0, message=None):
-            raise ValueError(message or "use alt issue new --title TITLE -, comment NUMBER -, or close NUMBER --reason completed|not-planned")
+            raise ValueError(message or "use alt issue new --title TITLE -, comment NUMBER -, "
+                                        "label NUMBER --add|--remove LABEL, or close NUMBER --reason completed|not-planned")
 
     parser = Parser(prog="alt issue", add_help=False)
     commands = parser.add_subparsers(dest="operation", required=True)
@@ -3270,6 +3271,10 @@ def issue_parser() -> argparse.ArgumentParser:
     close = commands.add_parser("close")
     close.add_argument("number", type=int)
     close.add_argument("--reason", required=True, choices=ISSUE_CLOSE_REASONS)
+    label = commands.add_parser("label")
+    label.add_argument("number", type=int)
+    label.add_argument("--add", action="append")
+    label.add_argument("--remove", action="append")
     return parser
 
 
@@ -3292,49 +3297,58 @@ def issue_repository() -> str:
 
 
 def issue_write(project: str, operation: str, body: str, *, actor: str, title: str = "",
-                labels: list[str] | None = None, number: int | None = None, reason: str | None = None) -> str:
+                labels: list[str] | None = None, number: int | None = None, reason: str | None = None,
+                add: list[str] | None = None, remove: list[str] | None = None) -> str:
     """Altd owns project-local issues; incident issues come from `incidents.publish_issue`."""
     if actor not in ("l3", "operator"):
         raise ValueError("alt issue: not available to an L2 worker")
-    if operation not in ("new", "comment", "close"):
-        raise ValueError("alt issue: only new, comment, and close are available")
-    creating = operation == "new"
+    if operation not in ("new", "comment", "close", "label"):
+        raise ValueError("alt issue: only new, comment, label, and close are available")
+    creating, labelling = operation == "new", operation == "label"
     if (not isinstance(body, str) or not isinstance(title, str)
-            or labels is not None and (not isinstance(labels, list) or any(not isinstance(x, str) for x in labels))):
+            or any(names is not None and (not isinstance(names, list) or any(not isinstance(x, str) for x in names))
+                   for names in (labels, add, remove))):
         raise ValueError("alt issue: body, title, and labels must be text")
     if creating and not title.strip():
         raise ValueError(f"alt issue {operation}: title is required")
-    if operation in ("comment", "close") and (type(number) is not int or number < 1):
+    if not creating and (type(number) is not int or number < 1):
         raise ValueError(f"alt issue {operation}: a positive issue number is required")
-    if not creating and (title or labels) or creating and number is not None or operation != "close" and reason is not None:
+    if (not creating and (title or labels) or creating and number is not None or operation != "close" and reason is not None
+            or not labelling and (add or remove)):
         raise ValueError("alt issue: fields do not match the operation")
     if operation == "close" and (reason not in ISSUE_CLOSE_REASONS or body):
         raise ValueError("alt issue close: --reason completed|not-planned is required; no body is accepted")
+    if labelling and (not (add or remove) or body):
+        raise ValueError("alt issue label: --add or --remove LABEL is required; no body is accepted")
     # Private incident evidence boundary: local evidence never leaves the machine in a public issue.
-    incidents.check_public("\n".join([body, title, *(labels or [])]))
+    incidents.check_public("\n".join([body, title, *(labels or []), *(add or []), *(remove or [])]))
     checkout = config.project_path(project)
     origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=checkout,
                             capture_output=True, text=True, timeout=10)
     repository = repository_url(origin.stdout) if origin.returncode == 0 else None
     if not repository:
         raise ValueError("alt issue: checkout origin must identify a GitHub repository")
-    args = ["gh", "issue", "create" if creating else operation]
+    args = ["gh", "issue", "create" if creating else "edit" if labelling else operation]
     if creating:
         args += [f"--title={title}", *(f"--label={label}" for label in labels or [])]
     else:
         args.append(str(number))
     args += ["--repo", repository]
-    args += ["--reason", reason.replace("-", " ")] if operation == "close" else ["--body-file", "-"]
+    if labelling:
+        args += [*(f"--add-label={label}" for label in add or []), *(f"--remove-label={label}" for label in remove or [])]
+    else:
+        args += ["--reason", reason.replace("-", " ")] if operation == "close" else ["--body-file", "-"]
     env = engines.clean_env()
     env.pop("GH_REPO", None)
     result = subprocess.run(args, input=body, cwd=checkout, env=env, capture_output=True, text=True, timeout=120)
     if result.returncode:
         raise ValueError("alt issue: " + " ".join((result.stderr or "gh failed").split()))
-    url = f"{repository}/issues/{number}" if operation == "close" else result.stdout.strip()
+    url = f"{repository}/issues/{number}" if operation in ("close", "label") else result.stdout.strip()
     with S.project_lock(project):
         S.project_log(project, f"issue-{operation}", actor=actor,
                       title=title if creating else f"Issue #{number}", url=url,
-                      **({"number": number, "reason": reason} if operation == "close" else {}))
+                      **({"number": number, "reason": reason} if operation == "close" else
+                         {"number": number, "add": add or [], "remove": remove or []} if labelling else {}))
     return url
 
 

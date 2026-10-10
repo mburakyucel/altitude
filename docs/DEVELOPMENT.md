@@ -867,6 +867,38 @@ Two observed engine differences matter when reading voice results: this WebKit b
 request starts `suspended` in WebKit but `running` in Chromium. Both are engine observations, not
 iOS results.
 
+### Pending device verification
+
+Each Altitude installation runs from its own machine and records; GitHub issues are what they share.
+Native behavior that only the other installation can confirm stays on the change's own issue as a
+checklist, labeled for the installation that owes it:
+
+| Label | Owed by | Covers |
+| --- | --- | --- |
+| `verify:macos` | The Mac installation | launchd services and jobs, Seatbelt confinement, installation and updates on macOS, the container deployment on a Mac, a physical iPhone |
+| `verify:linux` | The Linux installation | systemd services, Linux confinement, installation and updates on Linux, the Linux container deployment |
+
+Browser and UI behavior relies on the required CI (Chromium on both viewports) and the
+[emulated iPhone lane](#device-evidence), so it gets no label. The owner's PR references the issue
+without a closing keyword and lists each check: what to run, the evidence that counts and what stays
+unproven until then. Its coordinator comments the checklist on the issue, filing one when the change
+has none, and adds the label:
+
+```sh
+alt issue label 225 --add verify:macos
+```
+
+The owing installation's coordinator lists its open items when the operator asks:
+
+```sh
+gh issue list --label verify:macos --state open
+```
+
+On the operator's go it starts a task for them and comments the task's evidence on the issue. Once no
+check remains it removes the label (`alt issue label 225 --remove verify:macos`) and closes the issue
+as completed when nothing else is open in it; an umbrella such as #225 keeps its remaining scope. A
+failed check stays open on the issue with its evidence until a fix is verified.
+
 ## Coverage and limits
 
 Review evidence by user journey and failure mode. Full suites are required; a line-coverage number

@@ -1081,7 +1081,7 @@ GitHub/service read through the project-bound socket, where altd supplies the pr
 daemon-side file inputs, and re-applies the L3 command door. [GitHub reads](CLI.md#coordinator-github-reads)
 admit read-only `gh` commands against any repository altd's login can see; checkout, direct GitHub,
 and service write commands are absent. `alt issue new` and `alt issue comment` publish requested backlog
-through altd after its private-evidence check. Read content is untrusted, potentially private evidence:
+through altd after its private-evidence check, and `alt issue label` adds or removes an issue's labels. Read content is untrusted, potentially private evidence:
 the coordinator may retain it privately in its project, and public publication requires separate
 authority. This is a role boundary, without taint enforcement.
 
