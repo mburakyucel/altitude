@@ -1025,9 +1025,10 @@ Repository changes use `alt land --message <message> [--merge]`. Project, incide
 and installation commands remain available through `bin/alt --help` and the relevant subcommand
 help.
 
-L3's `alt task offer '<title>'`, during a chat turn, ends its reply with Create task and that title for
-the operator (up to 100 characters on one line) instead of a question such as "Shall I queue a task?".
-A reply that creates a task carries the task card instead. A press arrives as the operator's
+L3's `alt task offer '<title>'`, during a chat turn, records a task title (up to 100 characters on one
+line) on that turn's reply instead of a question such as "Shall I queue a task?". The conversation draws
+the Create task button with that title under the reply; the reply text itself never contains "Create task"
+or the title. A reply that creates a task carries the task card instead. A press arrives as the operator's
 chat message `Create task: <title>`, which the conversation shows on the button rather than as a message; the `alt task new` that turn runs is bound to the offering reply,
 and a second creation for the same reply is refused, so the turn creates the task from the reply and the
 conversation without asking again. [Conversations](ARCHITECTURE.md#conversations-and-navigation)
@@ -1588,7 +1589,11 @@ and is not available to the owner.
 ### Adversarial review
 
 L2 proactively requests independent adversarial review for complex proposals before code and complex
-implementations; simple work stays light by judgment. Task details shows a **Proposal review** and an
+implementations; simple work stays light by judgment. A proposal that changes the UI always gets a
+proposal review, which is also its design review: the reviewer judges the design against the
+repository's design rules and interaction states, names what is unclear or not obviously clickable on
+a phone, and offers up to two alternative directions as findings with severity `alternative`. The
+owner assesses each like any finding and shows the alternatives to the operator, who chooses. Task details shows a **Proposal review** and an
 **Implementation review** box with the latest review's verdict and counts, and one **Request**,
 **Review again** or **Try again** button when a new review can start; the conversation shows one card
 per kind ([design](../design/wireframes/SPEC.md#adversarial-review)). Viewing a review never invokes a
@@ -1632,6 +1637,8 @@ alt task review request --source-message <message-id>
 alt task review run --review-id <id>
 # A proposal review requires the exact original L2 proposal message:
 alt task review run --review-id <proposal-review-id> --proposal-message <message-id>
+# A UI proposal also passes its design preview's selection, giving the reviewer the design spec:
+alt task review run --review-id <proposal-review-id> --proposal-message <message-id> --design-file design/wireframes/review.json
 alt task review assess --review-id <id> --file /tmp/assessment.json
 # Select a deliberately revised proposal when assessing its later version:
 alt task review assess --review-id <proposal-review-id> --proposal-message <revised-message-id> --file /tmp/assessment.json
@@ -1653,6 +1660,9 @@ names one. Open questions do not prevent either subject: a request can continue 
 question-blocked owner solely to prepare, run and assess review. Every open question, its revision, its card
 and any merge hold stay unchanged, and implementation or merge still needs its own approval. Because review
 freshness covers the task conversation and decisions, a later answer or resolution needs reassessment before merge.
+The same owner attempt assesses a review that completed while it waited on a question, whether it is
+running or blocked again, and republishes the revised question with the dispositions; a fault or Stop
+holds assessment until the owner resumes.
 L2 selects the original proposal message; missing concrete proposal input prevents reviewer invocation.
 Changes review captures the task branch merged onto current `origin/main`. When the branch conflicts
 with main, `request`, `run` and `assess` refuse with the conflicted files; reconcile the branch with
@@ -1664,7 +1674,13 @@ fails explicitly beyond 256 KiB, naming its size; when authority, corrections an
 the bound, the refusal says selection cannot help and the owner reports a capture fault. A changes review
 that needs an approved proposal selects that L2 message with `--context-message`. A proposal review
 captures the exact proposal text separately as `proposal.md`, bounded to 64 KiB, so the proposal never
-competes with retained authority.
+competes with retained authority. `--design-file` takes the same selection JSON as
+[design previews](#task-design-previews), with the same path, type and size checks: the selection's
+spec becomes `design.md` and the captured context names the screenshots by title. The reviewer reads
+text only, so screenshots are named, not viewed, and the capture records that limitation. The receipt
+keeps the design's identity, which equals the preview's when the same selection is published with
+the design question; when the task's latest published design differs, the review shows as covering an
+earlier version. A changes review refuses `--design-file`.
 For image context, supply an L2 textual account and select that message explicitly; the capture
 records that original image bytes are not reviewed. The reviewer cannot run tests.
 The snapshot holds the candidate's ordinary tracked files and the patch from `origin/main`; links and
@@ -1739,6 +1755,11 @@ PNG/JPEG screenshots up to 8 MiB each, 32 MiB total. Titles have 1–160 charact
 JSON is at most 64 KiB. Only named files are copied. Symlinks, traversal, special files and unsupported
 types are refused. Use the existing browser harness to capture interactive wireframe states;
 submitted HTML, SVG, JavaScript and CSS are not preview inputs.
+
+The selected `.md`/`.txt` file is the design spec: precise enough to review and build against without
+the screenshots, covering each state, exact text and line formats, links, wrapping and truncation, on
+phone and desktop. Pass the same selection to the [proposal review](#adversarial-review) before
+publishing the question, so the reviewer reads the spec the operator sees.
 
 Inputs may be ignored or untracked: capture does not stage or commit them. Keep review screenshots
 in ignored `design/wireframes/captures/` or `design/wireframes/shots/`; the explicit selection can
@@ -2061,8 +2082,10 @@ from a process in the task's current worker job. A non-running task, a stale att
 a turned-off switch, missing KVM, a host without an iOS Simulator for `--simulator` or low disk refuses with the
 reason. One run uses the machine at a time: a request that finds it busy waits its turn in arrival order, for up to
 70 minutes, and prints what it waits for (the task whose run holds the machine, when that run's limit ends and how
-many requests are ahead) on standard error. Stopping or interrupting the command, or losing its connection, takes
-the request out of the line or stops its run at once, recorded as `stopped`, and frees the machine. The
+many requests are ahead) on standard error. Stopping or interrupting the command, ending the process that started
+it, or losing its connection takes the request out of the line or stops its run within seconds, recorded as
+`stopped`, and frees the machine. A newer `alt task validate` from the same task replaces the task's earlier request
+the same way, recorded as `replaced`. The
 [validation runner](DEVELOPMENT.md#validation-runner) describes the isolation, its limits and cleanup.
 
 ### Reading the task terminal

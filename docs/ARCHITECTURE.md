@@ -117,7 +117,9 @@ again. Successful input handoff and matching session initialization record deliv
 bound batch; native hook attachments can independently prove delivery.
 Inbox absence alone stays unconfirmed. Reading an inbox concurrently consumed by a resume sees an
 empty queue, without turning that absence into delivery proof. A clean worker turn with queued steering resumes the saved
-session, as does a clean exit after the hook ended the turn for operator messages that were then removed,
+session, as does a clean exit after the hook ended the turn for operator messages that were then removed.
+A clean exit with only a message and nothing queued resumes once with a system nudge to block or report;
+the next consecutive one is a dead-worker fault,
 while engine failures and explicit question blocks retain their existing recovery paths.
 No-code completion checks for accepted steering under the same task lock as archival. A pending
 message keeps the saved owner session available for continuation instead of finalizing its earlier result.
@@ -704,7 +706,9 @@ is dropped or summarized; beyond the bound capture refuses with the size and whe
 alone exceed it. Proposal capture
 also binds the exact original L2 message and text against the committed head's source tree, even before
 code differs from main. That text is captured once, as `proposal.md` with its own 64 KiB bound, and
-`context.json` names the proposal message and points to the file. Identity and freshness hash the
+`context.json` names the proposal message and points to the file. A UI proposal's design preview
+selection adds its spec as `design.md`, captured by the same checks as the preview, with the screenshots
+named in `context.json` but not viewed; the receipt keeps the design identity the preview shares. Identity and freshness hash the
 logical context, independent of this representation; the input hash covers every captured file. Changes reviews capture the merge-candidate tree and diff; a branch that conflicts with main is
 refused with its conflicted files. Missing proposal input prevents invocation. Image evidence needs a
 textual account and is explicitly outside the text reviewer's coverage.
@@ -1984,8 +1988,8 @@ way to create a task from the web: the L3 turn creates it through `alt task new`
 the slug on that turn's assistant row (`tasks: [slug]`), which the conversation renders as a task card
 under the reply. When L3 is unsure whether the operator wants work started, its chat turn runs
 `alt task offer '<title>'` instead of asking; altd keeps the title on that reply's assistant row
-(`offer`) when the turn created no task, and the conversation shows Create task with the title under
-the latest such reply (spec §3.3). A press posts `{project, offer_turn}` to `POST /api/chat`, and altd
+(`offer`) when the turn created no task, and the conversation draws the Create task button with the
+title under the latest such reply (spec §3.3); the reply text carries no Create task wording of its own. A press posts `{project, offer_turn}` to `POST /api/chat`, and altd
 queues the operator's ordinary chat message `Create task: <title>` carrying `offer_turn`; the conversation
 shows that message, queued or in history, as the state of the button rather than as a message. altd accepts
 the press only while that reply is the latest human-facing row and no operator message waits in the
