@@ -276,6 +276,11 @@ def _l3_verb_request(project: str, request: dict) -> dict:
             result = l3.project_message(project, options.target, options.text, summary=options.summary,
                                         request_id=options.request_id, reply_to=options.reply_to)
             return {"returncode": 0, "stdout": json.dumps(result) + "\n", "stderr": ""}
+        if args[:2] == ["task", "offer"]:
+            if stdin:
+                raise ValueError("alt task offer takes its title as one argument, not stdin")
+            result = l3.note_offer(project, l3.offer_parser().parse_args(args[2:]).title)
+            return {"returncode": 0, "stdout": json.dumps(result) + "\n", "stderr": ""}
         if args[:2] == ["project", "terminal"]:
             if stdin or args[2:] not in ([], ["--json"]):
                 raise ValueError("alt project terminal: the only option is --json")
@@ -324,6 +329,9 @@ def _l3_verb_request(project: str, request: dict) -> dict:
             return {"returncode": 0, "stdout": url + "\n", "stderr": ""}
         env = engines.clean_env()
         env.update({"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": project, "ALTITUDE_HOME": str(config.ROOT)})
+        env.pop("ALTITUDE_OFFER_TURN", None)  # only the running turn below binds a creation to a reply
+        if args[:2] == ["task", "new"] and (offer := l3.active_offer(project)):
+            env["ALTITUDE_OFFER_TURN"] = offer  # a turn answering a Create task press creates that reply's one task
         try:
             result = subprocess.run([sys.executable, "-B", str(config.SOURCE / "bin" / "alt"), *args], input=stdin,
                                     cwd=str(config.project_path(project)), env=env,
@@ -2529,6 +2537,14 @@ class Handler(BaseHTTPRequestHandler):
                 project, text = o["project"], (o.get("text") or "").strip()
                 if not config.is_managed(project):
                     return self._json({"error": "This project is not managed. Add its folder again to attach L3."}, 409)
+                if "offer_turn" in o:
+                    # Create task under a reply (SPEC.md §3.3): Altitude writes the message; the page sends no text.
+                    try:
+                        result = l3.queue_offer(project, str(o.get("offer_turn") or ""))
+                    except ValueError as exc:
+                        return self._json({"error": str(exc)}, 409)
+                    request_l3_drain(project)
+                    return self._json(result)
                 image_args = self._image_request(o) if o.get("images") or o.get("image_ids") else {}
                 if not text and not image_args:
                     return self._json({"error": "empty"}, 400)

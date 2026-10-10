@@ -1178,3 +1178,184 @@ describe("Conversation", () => {
     expect(screen.getByRole("heading", { level: 1, name: "altitude" })).toHaveClass("phone-title");
   });
 });
+
+describe.each([390, 1440])("Create task under a reply at %ipx (SPEC.md §3.3)", (width) => {
+  const title = "Refresh Needs you after an answer";
+  const asked = { at: ago(3), role: "user", text: "The badge lags. Bug?", trigger: "chat", turn_id: "a1b2c3d4e5f6" };
+  const offered = { at: ago(2), role: "assistant", text: "Yes, a small one.", trigger: "chat", engine: "alpha", turn_id: "a1b2c3d4e5f6", offer: title };
+  const pressRow = { id: "q9", at: ago(0), trigger: "chat", role: "user", text: `Create task: ${title}`, offer_turn: offered.turn_id, position: 1 };
+
+  function serve(post: (body: unknown) => Response | Promise<Response>, view: () => ChatView) {
+    setViewport(width);
+    return mockFetch({ chatFn: () => jsonResponse(view()), post });
+  }
+
+  it("offers Create task only on the latest reply, with its title as the description", async () => {
+    serve(() => jsonResponse({}), () => ({ ...chatView, history: [...history, asked, offered] }) as ChatView);
+    renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    const button = await within(region).findByRole("button", { name: "Create task" });
+    expect(button).toHaveAccessibleDescription(title);
+    expect(button.closest(".reply")).toHaveTextContent("Yes, a small one.");
+    expect(within(region).getAllByRole("button", { name: "Create task" })).toHaveLength(1);
+  });
+
+  it.each([
+    ["a later message", [asked, offered, { at: ago(1), role: "user", text: "Not now", trigger: "chat", turn_id: "c8" }, { at: ago(1), role: "assistant", text: "Noted.", trigger: "chat", turn_id: "c8" }], []],
+    ["a queued message of yours", [asked, offered], [{ id: "q1", trigger: "chat", role: "user", text: "Not now" }]],
+    ["a reply that created its task", [asked, { ...offered, tasks: ["fix-timer"] }], []],
+  ])("shows nothing after %s", async (_label, rows, queued) => {
+    serve(() => jsonResponse({}), () => ({ ...chatView, history: [...history, ...rows], queued }) as ChatView);
+    renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    await within(region).findByText(rows.length > 2 ? "Noted." : "Yes, a small one.");
+    expect(within(region).queryByRole("button", { name: "Create task" })).toBeNull();
+  });
+
+  it("changes the button in place while the press saves and waits, keeping focus and the draft, and adds no message", async () => {
+    const queue: unknown[] = [];
+    let release: () => void = () => undefined;
+    const fetchMock = serve(async () => {
+      await new Promise<void>((resolve) => { release = resolve; });
+      queue.push(pressRow);
+      return jsonResponse({ queued: pressRow });
+    }, () => ({ ...chatView, history: [...history, asked, offered], queued: queue }) as ChatView);
+    const { user } = renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    await user.type(screen.getByLabelText("Message L3 about altitude"), "half a thought");
+    const button = await within(region).findByRole("button", { name: "Create task" });
+    await user.click(button);
+    expect(button).toHaveAccessibleName("Create task, working");
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    await user.click(button);
+    release();
+    await waitFor(() => expect(button).toHaveAccessibleName("Create task, waiting for L3"));
+    expect(button).toHaveFocus();
+    expect(within(region).getByText("Create task sent")).toHaveAttribute("role", "status");
+    expect(within(region).queryByText(`Create task: ${title}`)).toBeNull();
+    expect(within(region).queryByRole("list", { name: "Queued messages" })).toBeNull();
+    expect(posted(fetchMock, "/api/chat")).toEqual({ project: "altitude", offer_turn: offered.turn_id });
+    expect(posted(fetchMock, "/api/chat", 1)).toBeNull();
+    expect(screen.getByLabelText("Message L3 about altitude")).toHaveValue("half a thought");
+    queue.length = 0;
+    await user.click(within(region).getByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(posted(fetchMock, "/api/chat/remove")).toEqual({ project: "altitude", id: pressRow.id }));
+    await waitFor(() => expect(within(region).getByRole("button", { name: "Create task" })).not.toHaveAttribute("aria-disabled"));
+  });
+
+  it.each([
+    ["working", { at: ago(1), role: "assistant", text: "unused", trigger: "chat", turn_id: "none" }, "Create task, working", true],
+    ["created", { at: ago(0), role: "assistant", text: "Created it.", trigger: "chat", turn_id: "c9", tasks: ["refresh-badge"] }, "Task created", true],
+    ["answered without a task", { at: ago(0), role: "assistant", text: "On reflection, no.", trigger: "chat", turn_id: "c9" }, "Create task, sent", true],
+    ["failed", { at: ago(0), role: "error", text: "L3 turn failed", trigger: "chat", turn_id: "c9" }, "Retry, Create task", false],
+  ])("shows the press turn %s on the button, never as a message", async (label, answer, name, disabled) => {
+    const pressTurn = { at: ago(1), role: "user", text: `Create task: ${title}`, trigger: "chat", turn_id: "c9", offer_turn: offered.turn_id };
+    serve(() => jsonResponse({}), () => ({ ...chatView, history: [...history, asked, offered, pressTurn, ...(label === "working" ? [] : [answer])],
+      active: label === "working" ? { id: "c9", started_at: ago(1), trigger: "chat" } : null }) as ChatView);
+    renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    const button = await within(region).findByRole("button", { name });
+    expect(button.closest(".reply")).toHaveTextContent("Yes, a small one.");
+    if (disabled) expect(button).toHaveAttribute("aria-disabled", "true");
+    else expect(button).not.toHaveAttribute("aria-disabled");
+    expect(within(region).queryByText(`Create task: ${title}`)).toBeNull();
+    expect(within(region).queryByText(/L3 could not answer this turn/)).toBeNull();
+  });
+
+  it("shows a press kept for an engine as waiting, without Remove or a second queued line", async () => {
+    const pressTurn = { at: ago(1), role: "user", text: `Create task: ${title}`, trigger: "chat", turn_id: "c9", offer_turn: offered.turn_id };
+    const kept = { ...pressRow, id: "c9", turn_id: "c9" };
+    serve(() => jsonResponse({}), () => ({ ...chatView, history: [...history, asked, offered, pressTurn], queued: [kept] }) as ChatView);
+    renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    const button = await within(region).findByRole("button", { name: "Create task, waiting for L3" });
+    expect(button.closest(".reply")).toHaveTextContent("Yes, a small one.");
+    expect(within(region).queryByRole("button", { name: "Remove" })).toBeNull();
+    expect(within(region).queryByText(`Create task: ${title}`)).toBeNull();
+    expect(within(region).queryByText(/Queued ·/)).toBeNull();
+    expect(within(region).queryByRole("list", { name: "Queued messages" })).toBeNull();
+  });
+
+  it("shows the reason when Altitude refuses a stale press, and the action leaves", async () => {
+    let rows = [asked, offered];
+    serve(() => {
+      rows = [asked, offered, { at: ago(0), role: "user", text: "Not now", trigger: "chat", turn_id: "c8" }];
+      return jsonResponse({ error: "The conversation has moved on, so this was not sent." }, 409);
+    }, () => ({ ...chatView, history: [...history, ...rows] }) as ChatView);
+    const { user } = renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    await user.click(await within(region).findByRole("button", { name: "Create task" }));
+    expect(await within(region).findByRole("alert")).toHaveTextContent("The conversation has moved on, so this was not sent.");
+    await waitFor(() => expect(within(region).queryByRole("button", { name: "Create task" })).toBeNull());
+    expect(within(region).getByRole("alert").closest(".reply")).toHaveTextContent("Yes, a small one.");
+  });
+
+  it.each([
+    ["saved", true, null],
+    ["not saved", false, "Not sent"],
+  ])("reads the conversation when the response is lost and the message was %s", async (_label, saved, message) => {
+    const queue: unknown[] = [];
+    let reads = 0;
+    let checking: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { checking = resolve; });
+    setViewport(width);
+    mockFetch({
+      chatFn: async () => {
+        reads += 1;
+        if (reads > 1) await gate;
+        return jsonResponse({ ...chatView, history: [...history, asked, offered], queued: queue });
+      },
+      post: () => {
+        if (saved) queue.push(pressRow);
+        throw new TypeError("Failed to fetch");
+      },
+    });
+    const { user } = renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    await user.click(await within(region).findByRole("button", { name: "Create task" }));
+    expect(await within(region).findByRole("button", { name: "Create task, working" })).toHaveAttribute("aria-disabled", "true");
+    checking();
+    if (saved) {
+      await within(region).findByRole("button", { name: "Create task, waiting for L3" });
+      await waitFor(() => expect(within(region).getByText("Create task sent")).toBeInTheDocument());
+      expect(within(region).queryByRole("alert")).toBeNull();
+    } else {
+      expect(await within(region).findByRole("alert")).toHaveTextContent(message!);
+      expect(within(region).getByRole("button", { name: "Create task" })).not.toHaveAttribute("aria-disabled");
+    }
+  });
+
+  it("shows a press as its message, with a Retry of the same press, once its reply has left the loaded history", async () => {
+    const fetchMock = serve(() => jsonResponse({ queued: pressRow }), () => ({ ...chatView, history: [...history,
+      { at: ago(1), role: "user", text: `Create task: ${title}`, trigger: "chat", turn_id: "c9", offer_turn: offered.turn_id },
+      { at: ago(0), role: "error", text: "L3 turn failed", trigger: "chat", turn_id: "c9" },
+    ] }) as ChatView);
+    const { user } = renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    expect(await within(region).findByText(`Create task: ${title}`)).toBeInTheDocument();
+    await user.click(within(within(region).getByText(/^L3 could not answer this turn\./)).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(posted(fetchMock, "/api/chat")).toEqual({ project: "altitude", offer_turn: offered.turn_id }));
+  });
+
+  it("lists a queued press with Send now and Remove once its reply has left the loaded history", async () => {
+    serve(() => jsonResponse({}), () => ({ ...chatView, history, queued: [pressRow] }) as ChatView);
+    renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    const list = await within(region).findByRole("list", { name: "Queued messages" });
+    expect(within(list).getByText(`Create task: ${title}`)).toBeInTheDocument();
+    expect(within(list).getByRole("button", { name: "Remove" })).toBeInTheDocument();
+  });
+
+  it("retries a failed Create task turn from the button with the same reply reference, not as typed text", async () => {
+    const fetchMock = serve(() => jsonResponse({ queued: pressRow }), () => ({ ...chatView, history: [
+      ...history, asked, offered,
+      { at: ago(1), role: "user", text: `Create task: ${title}`, trigger: "chat", turn_id: "c9", offer_turn: offered.turn_id },
+      { at: ago(1), role: "error", text: "L3 turn failed", trigger: "chat", turn_id: "c9" },
+    ] }) as ChatView);
+    const { user } = renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    expect(within(region).queryByRole("button", { name: "Create task" })).toBeNull();
+    await user.click(await within(region).findByRole("button", { name: "Retry, Create task" }));
+    await waitFor(() => expect(posted(fetchMock, "/api/chat")).toEqual({ project: "altitude", offer_turn: offered.turn_id }));
+  });
+});

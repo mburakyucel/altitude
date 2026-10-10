@@ -1978,7 +1978,17 @@ independently, and a comment line every 15 seconds keeps an idle stream open. `P
 turn for a managed project whose L3 never ran, from the header's Start L3. The conversation is the only
 way to create a task from the web: the L3 turn creates it through `alt task new`, and altd records
 the slug on that turn's assistant row (`tasks: [slug]`), which the conversation renders as a task card
-under the reply. Engine selection is in the project's Settings page and the desktop composer's pill;
+under the reply. When L3 is unsure whether the operator wants work started, its chat turn runs
+`alt task offer '<title>'` instead of asking; altd keeps the title on that reply's assistant row
+(`offer`) when the turn created no task, and the conversation shows Create task with the title under
+the latest such reply (spec §3.3). A press posts `{project, offer_turn}` to `POST /api/chat`, and altd
+queues the operator's ordinary chat message `Create task: <title>` carrying `offer_turn`; the conversation
+shows that message, queued or in history, as the state of the button rather than as a message. altd accepts
+the press only while that reply is the latest human-facing row and no operator message waits in the
+queue; anything else is refused with 409 and the reason. A repeated press returns the message it already
+queued. The turn that answers it gives `alt task new` the reply's turn id, which altd records on the
+task as `offer_turn` and uses to refuse a second task for the same reply, so a retried, restarted or
+repeated turn never duplicates it. Engine selection is in the project's Settings page and the desktop composer's pill;
 a non-Auto pin stays named in the phone header. It pins the project's L3 to one configured engine, named as
 `engines[]` reports it, until set back to Auto; Auto uses project preference tiers, weekly headroom
 within ties and the session continuity rule described above. A chat turn belongs to L3,
