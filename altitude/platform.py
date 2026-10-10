@@ -1,10 +1,10 @@
 """The platform seam: the host's service manager and process facilities.
 
-Two hosts are implemented. Linux x86_64 uses a systemd user manager, procfs and pidfd. macOS 15 or newer on Apple
-silicon uses a per-user LaunchAgent, one launchd job per worker job (each its own kernel coalition), libproc, sysctl
-and Seatbelt. This module is the only place that names them; engines, the terminal, images, installation and the
-server ask it for the service, jobs, processes and connections. Each operation reads `sys.platform` when called, so
-tests exercise either implementation against fixtures on any host.
+Two hosts are implemented. Linux uses a systemd user manager, procfs and pidfd. macOS 15 or newer uses a per-user
+LaunchAgent, one launchd job per worker job (each its own kernel coalition), libproc, sysctl and Seatbelt. This module
+is the only place that names them; engines, the terminal, images, installation and the server ask it for the service,
+jobs, processes and connections. Each operation reads `sys.platform` when called, so tests exercise either
+implementation against fixtures on any host.
 """
 from __future__ import annotations
 
@@ -47,21 +47,41 @@ def _darwin() -> bool:
     return sys.platform == "darwin"
 
 
-_GH_APT = "https://cli.github.com/packages"
+_GH_PACKAGES = "https://cli.github.com/packages"
+#: Each tool's own installation page, for a Linux system whose package manager install_command() does not know.
+INSTALL_PAGES = {"gh": "https://github.com/cli/cli#installation", "git": "https://git-scm.com/downloads/linux"}
 
 
-def install_command(tool: str) -> str:
-    """What First run and `alt doctor` show for a missing or outdated `gh` or `git`, run in the operator's own terminal.
-    Homebrew's gh is current; Debian and Ubuntu package one too old for alt land, so Linux adds GitHub's own apt
-    repository, whose `apt install` also upgrades an installed gh. The signing key replaces the keyring, readable by
-    apt, only once its download succeeds."""
+def package_manager() -> str | None:
+    """This Linux system's own package manager, apt, dnf, pacman or zypper, or None for another."""
+    return next((name for name, binary in (("apt", "apt-get"), ("dnf", "dnf"), ("pacman", "pacman"),
+                                           ("zypper", "zypper")) if shutil.which(binary)), None)
+
+
+def install_command(tool: str) -> str | None:
+    """What First run and `alt doctor` show for a missing or outdated `gh` or `git`, run in the operator's own terminal,
+    or None on a Linux system whose package manager this does not know; INSTALL_PAGES names the tool's own page then.
+    Homebrew's and Arch's gh are current; other distributions package one too old for alt land, so apt, dnf and zypper
+    add GitHub's own repository and install or upgrade gh from it; zypper names that repository, since it otherwise keeps
+    an installed gh's vendor. A repository file or signing key replaces the installed one only once its download
+    succeeds."""
     if _darwin():
         return {"gh": "brew install gh", "git": "xcode-select --install"}[tool]
-    keyring = "/etc/apt/keyrings/githubcli-archive-keyring.gpg"
-    return {"gh": f'key=$(mktemp) && curl -fsSL {_GH_APT}/githubcli-archive-keyring.gpg -o "$key" && sudo install -D -m 644 '
-                  f'"$key" {keyring} && rm "$key" && echo "deb [signed-by={keyring}] {_GH_APT} stable main" | sudo tee '
-                  "/etc/apt/sources.list.d/github-cli.list >/dev/null && sudo apt update && sudo apt install gh",
-            "git": "sudo apt install git"}[tool]
+    manager = package_manager()
+    if tool == "git":
+        return {"apt": "sudo apt install git", "dnf": "sudo dnf install git", "pacman": "sudo pacman -S git",
+                "zypper": "sudo zypper install git"}.get(manager)
+    if manager == "apt":
+        keyring = "/etc/apt/keyrings/githubcli-archive-keyring.gpg"
+        return (f'key=$(mktemp) && curl -fsSL {_GH_PACKAGES}/githubcli-archive-keyring.gpg -o "$key" && sudo install -D '
+                f'-m 644 "$key" {keyring} && rm "$key" && echo "deb [signed-by={keyring}] {_GH_PACKAGES} stable main" | '
+                "sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null && sudo apt update && sudo apt install gh")
+    if manager in ("dnf", "zypper"):
+        folder, install = (("/etc/yum.repos.d", "sudo dnf install gh && sudo dnf upgrade gh") if manager == "dnf"
+                           else ("/etc/zypp/repos.d", "sudo zypper install --from gh-cli gh"))
+        return (f'repo=$(mktemp) && curl -fsSL {_GH_PACKAGES}/rpm/gh-cli.repo -o "$repo" && sudo install -D -m 644 '
+                f'"$repo" {folder}/gh-cli.repo && rm "$repo" && {install}')
+    return "sudo pacman -S github-cli" if manager == "pacman" else None
 
 # Image-owned identity, outside every persistent/writable application volume. Neither an environment
 # variable nor a forwarded connection can select the privileged native deployment paths (issue #543).
@@ -918,12 +938,11 @@ def container_command(arguments: list[str], *, timeout: int = 30, interactive: b
 
 
 def require_supported() -> None:
-    machine = host_platform.machine()
-    if sys.platform == "linux" and machine in ("x86_64", "AMD64"):
+    """Refuse a system the service cannot run on: neither Linux nor macOS 15 or newer. Any architecture passes; the
+    features that need one say so when used, and install.sh names a host releases are not yet validated on."""
+    if sys.platform == "linux" or _darwin() and int(host_platform.mac_ver()[0].split(".")[0] or 0) >= 15:
         return
-    if _darwin() and machine == "arm64" and int(host_platform.mac_ver()[0].split(".")[0] or 0) >= 15:
-        return
-    raise RuntimeError("Altitude runs on Linux x86_64 with systemd, or on macOS 15 or newer on Apple silicon.")
+    raise RuntimeError("Altitude runs on Linux with a systemd user manager or on macOS 15 or newer.")
 
 
 def source_service() -> bool:

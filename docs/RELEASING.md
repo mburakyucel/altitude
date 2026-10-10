@@ -192,7 +192,8 @@ notices; users need no source build. Existing archive names are immutable. Build
 hand creates no tag, GitHub release or public publication.
 
 Record archive checksum and install/update/recovery evidence alongside candidate checks. The
-runtime targets are Ubuntu 24.04 x86_64 and macOS 15 or newer on Apple silicon. `make installation-vm`
+runtime targets are Linux with a systemd user manager and macOS 15 or newer; release evidence is
+recorded on Ubuntu 24.04 x86_64 and Apple silicon Macs. `make installation-vm`
 runs a release's install, update, recovery and uninstall in a disposable Linux VM, and
 [`make installation-mac`](DEVELOPMENT.md#macos-installation-lane) runs them on the Mac under a
 throwaway home. Deterministic fixtures do not establish fresh-machine, browser trust or live

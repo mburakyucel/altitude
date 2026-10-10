@@ -14,7 +14,7 @@ any task. The work keeps going on your machine after you put the phone away.
 [Set up phone access and voice](docs/OPERATIONS.md#on-iphone) with private HTTPS and a supported
 browser.
 
-**Early preview · Linux x86_64 · macOS on Apple silicon · [Get started](#get-started)**
+**Early preview · Linux · macOS · [Get started](#get-started)**
 
 <img src="docs/images/project-desktop.png" alt="Desktop: the project conversation with L3 beside the Work panel, where three task owners deliver in parallel." width="1440">
 
@@ -68,11 +68,11 @@ One engine is enough, and each integration is
 
 ## Get started
 
-Altitude runs for one person on a Linux x86_64 machine with a systemd user manager or a Mac with
-Apple silicon on macOS 15 or newer. You need Python 3.12+, Git, OpenSSL (on a Mac, Homebrew's
-`openssl@3`), an authenticated GitHub CLI 2.72 or newer ([setup](docs/SETUP.md)) and one authenticated
-coding CLI. Agent work uses your coding account's allowance and normal charges. A
-[Linux container deployment](docs/CONTAINERS.md) is under validation.
+Altitude runs for one person on Linux with a systemd user manager or on macOS 15 or newer; releases
+are validated on Ubuntu 24.04 x86_64 and Apple silicon Macs. You need Python 3.12+, Git, OpenSSL (on
+a Mac, Homebrew's `openssl@3`), an authenticated GitHub CLI 2.72 or newer ([setup](docs/SETUP.md))
+and one authenticated coding CLI. Agent work uses your coding account's allowance and normal charges.
+A [Linux container deployment](docs/CONTAINERS.md) is under validation.
 
 1. Install the latest release as the account that will use Altitude:
 
