@@ -5,7 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { ApiError, imageSendRefused, sendCreateTask, sendImageChat, streamChat, useChatDequeue, useSendNow } from "../data/api";
 import { SendNow, SendNowError } from "../components/SendNow";
-import type { ChatMessage, ChatSent, ChatView, ProjectView, QueuedMessage, TaskRow } from "../data/api";
+import type { ChatMessage, ChatSent, ChatView, ProjectView, TaskRow } from "../data/api";
 import { ProseScope } from "../components/Prose";
 import { ProseTerminal } from "../components/CodeBlock";
 import { requestCommand } from "../data/terminalCommand";

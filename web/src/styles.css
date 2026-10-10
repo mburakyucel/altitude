@@ -855,6 +855,7 @@
 .shell[data-phone] .queued-actions > button { min-width: 44px; min-height: 44px; }
 .queued-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 12px; }
 .queued-actions:empty { display: none; }
+.convo-col > .queued-actions { margin-top: -16px; }
 .msg-row:has(.queued-actions) > .msg-time { position: absolute; right: 0; bottom: -18px; }
 .send-now { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; background: transparent; color: var(--text-primary); font: inherit; cursor: pointer; white-space: nowrap; }
 .send-now:disabled,
