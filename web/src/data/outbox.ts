@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useRef, useSyncExternalStore } from "react";
 import { notifyManager, useQueryClient } from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
 import type { ChatMessage, ChatView } from "./api";
@@ -42,7 +42,6 @@ interface Reads {
   count: Map<string, number>;
   /** The read count each conversation snapshot came from; a page's own cache edit inherits its source's. */
   of: WeakMap<object, number>;
-  snapshots: Map<string, { entries: Outgoing[]; read: number }>;
 }
 const tracked = new WeakMap<QueryClient, Reads>();
 
@@ -50,7 +49,7 @@ const tracked = new WeakMap<QueryClient, Reads>();
 function reads(client: QueryClient): Reads {
   let state = tracked.get(client);
   if (state) return state;
-  const fresh: Reads = { count: new Map(), of: new WeakMap(), snapshots: new Map() };
+  const fresh: Reads = { count: new Map(), of: new WeakMap() };
   state = fresh;
   tracked.set(client, fresh);
   client.setQueryDefaults(["chat-outbox"], { gcTime: Infinity });
@@ -138,9 +137,13 @@ export function inFlight(entry: Outgoing): boolean {
   return !entry.done && !entry.uncertain;
 }
 
-/** The project's entries and the read count, re-rendering with both the conversation's reads and the entries. */
+/**
+ * The project's entries, re-rendering with both the conversation's reads and the entries. The last snapshot
+ * belongs to the mounted view alone, so only the query cache holds an entry once its view is gone.
+ */
 export function useOutbox(project: string): Outgoing[] {
   const client = useQueryClient();
+  const last = useRef<{ entries: Outgoing[]; read: number } | null>(null);
   const subscribe = useCallback((changed: () => void) => {
     const notify = notifyManager.batchCalls(changed);
     return client.getQueryCache().subscribe((event) => {
@@ -149,14 +152,10 @@ export function useOutbox(project: string): Outgoing[] {
     });
   }, [client, project]);
   const snapshot = useCallback(() => {
-    const state = reads(client);
     const entries = client.getQueryData<Outgoing[]>(outboxKey(project)) ?? NONE;
-    const read = state.count.get(project) ?? 0;
-    const cached = state.snapshots.get(project);
-    if (cached?.entries === entries && cached.read === read) return cached;
-    const next = { entries, read };
-    state.snapshots.set(project, next);
-    return next;
+    const read = reads(client).count.get(project) ?? 0;
+    if (last.current?.entries !== entries || last.current.read !== read) last.current = { entries, read };
+    return last.current;
   }, [client, project]);
   return useSyncExternalStore(subscribe, snapshot).entries;
 }
