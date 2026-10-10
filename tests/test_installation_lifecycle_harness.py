@@ -18,6 +18,40 @@ from scripts.installation_lifecycle import Lifecycle, failed_archive, following
 
 
 class TestLifecycleHarness(AltitudeCase):
+    def test_manual_journeys_opt_out_without_replacing_other_machine_settings(self):
+        harness = Lifecycle(self.tmp, self.tmp, self.tmp, "a" * 40)
+        harness.home = self.tmp
+        settings = self.tmp / ".altitude/settings.json"
+        settings.parent.mkdir()
+        settings.write_text(json.dumps({"terminal": True, "update_check": True}))
+        harness.manual_updates()
+        self.assertEqual(json.loads(settings.read_text()),
+                         {"terminal": True, "update_check": True, "update_automatic": False})
+
+    def test_forcing_a_release_check_preserves_the_failed_attempt_and_retry_fence(self):
+        harness = Lifecycle(self.tmp, self.tmp, self.tmp, "a" * 40)
+        harness.home = self.tmp
+        path = self.tmp / ".altitude/update.json"
+        path.parent.mkdir()
+        record = {"next": time.time() + 43200, "latest": {"version": "v0.0.4"},
+                  "attempt": {"id": "fixture", "version": "v0.0.4", "automatic": True, "state": "failed"},
+                  "automatic_attempts": ["v0.0.4"]}
+        path.write_text(json.dumps(record))
+        with mock.patch.object(harness, "wait_check") as wait:
+            harness.advance_check("v0.0.4")
+        wait.assert_called_once_with("v0.0.4", 75)
+        self.assertEqual(harness.record(), {**record, "next": 0})
+
+    def test_wait_attempt_does_not_accept_running_or_other_version_as_success(self):
+        harness = Lifecycle(self.tmp, self.tmp, self.tmp, "a" * 40)
+        succeeded = {"version": "v0.0.2", "state": "succeeded", "automatic": True}
+        with mock.patch.object(harness, "record", side_effect=[
+                {"attempt": {"version": "v0.0.1", "state": "succeeded"}},
+                {"attempt": {"version": "v0.0.2", "state": "running"}}, {"attempt": succeeded}]), \
+                mock.patch("scripts.installation_lifecycle.time.sleep") as sleep:
+            self.assertEqual(harness.wait_attempt("v0.0.2", "succeeded"), succeeded)
+        self.assertEqual(sleep.call_count, 2)
+
     def test_injected_archive_passes_verification_and_fails_only_packaged_entry(self):
         archive, checksum = test_installation.Installation.archive(self, "v0.0.0-rc.2")
         package = self.tmp / "package"
@@ -182,7 +216,8 @@ class TestLifecycleHarness(AltitudeCase):
             if label == "public-script":
                 Path(command[command.index("-o") + 1]).write_bytes(script)
             if label == "public-install":
-                (harness.home / ".altitude").mkdir()
+                (harness.home / ".altitude").mkdir(exist_ok=True)
+                self.assertFalse(json.loads((harness.home / ".altitude/settings.json").read_text())["update_automatic"])
                 (harness.home / ".altitude/update.json").write_text('{"latest": {"version": "v0.1.0"}}')
                 return f"Altitude {(before if update else after)['version']} is installed and its service is active."
             return "Altitude v0.1.0 is available: run alt update (notes: …)" if label == "notice" else ""
@@ -486,6 +521,21 @@ class TestMacLifecycle(AltitudeCase):
         verified = installation.extract(relabelled, hashlib.sha256(relabelled.read_bytes()).hexdigest(), self.tmp / "verified")
         self.assertEqual(verified, release)
         self.assertEqual({**verified, "version": before["version"]}, before)
+
+    def test_mac_versions_cover_automatic_cli_button_and_failed_automatic_release(self):
+        from scripts.installation_lifecycle import MacLifecycle
+        archive, checksum = test_installation.Installation.archive(self, "v0.0.1")
+        package = self.tmp / "package"
+        release = installation.extract(archive, checksum, package)
+        harness = MacLifecycle(self.tmp, self.tmp, release["commit"])
+        harness.home = self.tmp
+        made = harness.versions(package, release)
+        self.assertEqual(list(made), ["v0.0.2", "v0.0.3", "v0.0.4", "v0.0.5"])
+        self.assertEqual([entry["failing"] for entry in made.values()], [False, False, False, True])
+        for version, entry in made.items():
+            bundle = entry["folder"] / f"altitude-{version}.tar.gz"
+            verified = installation.extract(bundle, hashlib.sha256(bundle.read_bytes()).hexdigest(), self.tmp / version)
+            self.assertEqual(verified, entry["release"])
 
     def test_outside_a_throwaway_home_nothing_runs(self):
         from scripts.installation_lifecycle import MacLifecycle

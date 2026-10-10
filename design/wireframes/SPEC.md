@@ -834,9 +834,13 @@ question. When the open question is offscreen, use its floating question jump, t
 Question navigation follows an open group member with an attachment before another open member,
 including after partial answers. Work's task row opens the exact owning question.
 Links open `/projects/:name/tasks/:slug/design/:questionId/:revision`
-in another browser tab, leaving the original route and draft intact. Closing it returns to that view.
+in the same tab. Back (the browser's, the phone header's, or the page's own **← Back** on desktop) returns
+to the place it was opened from: the task conversation with that question in view, or Needs you with
+that card in view. Unsent answers and the task's unsent message are still in place on return. With no
+app history behind the preview (a pasted link or a new tab), Back opens its exact question; the task's
+Back then opens the project conversation, never the preview again.
 The page shows the captured title (identifying proposal or implementation review),
-named screenshots with **Full size** links, captured text and **Back to question**. Earlier proposal
+named screenshots with **Full size** links and captured text. Earlier proposal
 attachments remain with their historical questions. Screenshot links open the fixed image in a browser tab for
 native zoom. There is no added conversation, approval control or permanent task banner.
 
@@ -844,13 +848,13 @@ Each version contains explicitly selected PNG/JPEG screenshots and text. HTML si
 as captured states; active HTML is never embedded. Changing the working files does not change the
 saved version. A replacement advances the existing question revision, and the prior preview is
 labelled **Earlier preview** with **Open current question**. Question revisions fence identity and
-answers, not displayed proposal numbering. **Back to question** still targets the
+answers, not displayed proposal numbering. Back with no app history targets the
 exact version inspected. Viewing, opening a full-size screenshot and sending a follow-up leave the
 question unanswered. The existing decision controls record approval; merge holds remain unchanged.
 
 Phone and desktop states are walked in `web/e2e/task-design.pw.ts`: no design means no link;
 **Loading preview…** gives way to content; missing, changed, denied or failed reads show **Design
-unavailable**, **Retry** and **Back to question**, with saved content hidden. An image starts at
+unavailable**, **Retry** and Back, with saved content hidden. An image starts at
 **Loading screenshot…**; a failed image hides its preview and full-size control and shows
 **Screenshot unavailable** with **Retry screenshot**. Recovery removes the error/loading text.
 Earlier versions retain their original text and screenshots. Existing conversation listening and
@@ -979,7 +983,7 @@ live-panel control while disclosing long reasons. Closing details restores the o
 selection and reading position. A failure remains visible, not only inside details.
 
 Compact task states use the §3.5 labels (**L2 working**, **Waiting for coordinator**, **Your turn · …**,
-**L2 replying to you**, **Work interrupted**, **Paused**, **Stopped by you**); **Merge held** can
+**L2 replying to you**, **Work interrupted**, **Paused**, **Stopped by you**, **Stopped by coordinator**); **Merge held** can
 accompany any of these. Details separates each full reason. Waiting on L3 adds no operator badge.
 An operator question sits at the end of the chat with no generic Resume while the question is open.
 When it is offscreen, **1 question ↓** (or its count) floats above the composer. **Latest ↓** appears
@@ -1342,19 +1346,23 @@ and use normal page scrolling on both viewports. Pending, waiting, restarting, a
 request denial, loading, read error, empty, dismissed and new-event states are walked on phone
 and desktop in `web/e2e/restart-banner.pw.ts`, including removals after actions.
 
-**New version (installed copies).** When the overview's `update` names a newer stable release, the
-same compact row in the same place reads **Altitude <version> is available. What’s new · Update ·
-×**; What’s new opens the release page. Update turns the row into a confirm: "Install Altitude
+**New version (installed copies).** When the overview's `update` names a newer followed release,
+automatic updates show **Altitude <version> will install automatically at the next quiet point,
+when no browser terminal is open.** with **What’s new** and ×. When automatic updates are off or
+that version has already been attempted, the row reads **Altitude <version> is available. What’s
+new · Update · ×**. What’s new opens the release page. Update turns the row into a confirm: "Install Altitude
 <version>? Altitude checks the download, then restarts. If <version> does not start, <current>
 comes back." with **Install <version>** and **Cancel**. Install shows Starting…, then the row reads
 **Installing Altitude <version>… Altitude restarts when it is ready.** with no actions until the
-new version answers and the row leaves. A refused request keeps the confirm and shows the server's
+new version answers. A successful automatic update shows **Updated to <version>.** with **What’s
+new** and ×. A refused request keeps the confirm and shows the server's
 reason. A failed update reads "The update to <version> did not finish. <reason> Altitude <current>
 keeps running." with **Try again** and ×. Close (**Dismiss new version notice**) hides that version,
-or that failure, in this browser until a newer version or a new failure appears. Source deployments
-never show it. Data: `GET /api/overview` `update`; Install requests `POST /api/update` with the
+or that failure or installed-version notice, in this browser until a different notice appears.
+Dismissal affects presentation only; Settings retains a failed update's retry. Source deployments
+and containers never show it. Data: `GET /api/overview` `update`; Install requests `POST /api/update` with the
 version. Source deployment, available, confirm, refused, installing, failed, dismissed failure,
-dismissed version, newer version and updated states are walked on phone and desktop in
+dismissed version, newer version, automatic pending, saving, disabled, denied and updated states are walked on phone and desktop in
 `web/e2e/update-notice.pw.ts`.
 
 All banner notices and toasts offer an accessible close control. Toast timers, hover/focus pause
@@ -1507,8 +1515,14 @@ unavailable at both widths.
 An installed copy adds a **Version** row: the installed version, then "· Up to date" after a check,
 or "· <version> is available · What’s new" with the copyable `alt update` command. A **Check for
 new versions** switch (on after install) says "Twice a day Altitude asks GitHub for the latest
-release. Nothing else is sent, and nothing installs without you." It saves on change like Terminal;
-off hides the Version row's newer release and the notice. Source deployments show neither row.
+release. Nothing else is sent. Turning this off also stops automatic updates." An **Automatic
+updates** switch (on after install) says "Install new versions at the next quiet point, when no
+browser terminal is open. Turn this off to be asked before installing." Both save on change,
+disable while saving, show **Saving…**, and retain the prior setting with an inline error if denied.
+Turning checks off hides the newer release and notice and disables Automatic updates, retaining
+its saved preference for when checks resume. A failed update retains **Try again** in About even
+after dismissing its banner. Source deployments omit these rows; containers show their image-managed
+version without update switches.
 Voice input has a labelled **Settings** back button at both widths. It returns
 to the overview even on a direct visit; browser Back retains normal history. The phone header stays
 visible while the content scrolls. Opening a Settings page does not change a setting or probe a service.

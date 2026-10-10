@@ -164,6 +164,18 @@ describe("task explanations", () => {
     expect(taskExplanation({ ...blocked, stop_id: "stop-request", steering: { state } })).toMatch(expected);
   });
 
+  it("names the coordinator for its own Stop, queued or executed", () => {
+    const queued = { daemon_request: { id: "stop-request", actor: "l3" }, stop_id: "stop-request" };
+    expect(taskExplanation({ ...blocked, state: "running", ...queued, steering: { state: "stopping" } }))
+      .toBe("Stopping at the coordinator’s request; waiting for the session to end.");
+    const executed = { ...blocked, stop_id: "stop-request", block_actor: "l3", waiting_on: "l3" };
+    expect(taskExplanation({ ...executed, steering: { state: "stopped" } }))
+      .toBe("Stopped by the coordinator; its note is in the conversation.");
+    expect(taskExplanation(executed)).toBe("The coordinator requested a stop; confirmation is in the task.");
+    expect(taskExplanation({ ...blocked, stop_id: "stop-request", block_actor: "operator", steering: { state: "stopped" } }))
+      .toBe("Stopped by you; continue when you’re ready.");
+  });
+
   it("describes a Stop awaiting termination even while task state is running", () => {
     expect(taskExplanation({ ...blocked, state: "running", steering: { state: "stopping" }, stop_id: "stop-request" }))
       .toMatch(/waiting for the session to end/i);

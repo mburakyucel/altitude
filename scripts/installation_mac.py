@@ -6,8 +6,9 @@
 Builds a release from one committed revision (default HEAD) and runs installation_lifecycle.py's `mac` phase in a
 fresh HOME at $TMPDIR/altitude-installation-mac/home, with a clean environment, a loopback port of its own and the
 LaunchAgent label platform.service_label() derives from that HOME. The phase installs through install.sh, lets the
-installed daemon find newer synthetic releases, updates with alt update and the app's Update button, rolls back a
-release whose startup exits and uninstalls. Afterwards, also after a failure or a stop, the runner boots out what is
+installed daemon automatically install a newer synthetic release, opts out for alt update and the app's Update
+button, then verifies automatic rollback without repeat for a release whose startup exits, and uninstalls.
+Afterwards, also after a failure or a stop, the runner boots out what is
 left of that label and of the jobs the installation started, copies the evidence into RESULTS_DIR and deletes the
 HOME; RESULTS_DIR/mac.json records the outcome. The account's own Altitude service (dev.altitude.altd), its
 LaunchAgent, trust stores and ports are never addressed; its process is recorded before and after as evidence.

@@ -10,7 +10,7 @@ type Json = Record<string, unknown>;
 test.afterEach(async ({ page }) => { await page.unrouteAll({ behavior: "wait" }); });
 
 const NOTES = "https://github.com/example/altitude/releases/tag/v0.2.0";
-const installed = { current: "v0.1.0", available: null, check: true, command: "alt update", checked: "2026-10-01T08:00:00Z", attempt: null };
+const installed = { current: "v0.1.0", available: null, check: true, automatic: false, automatic_pending: false, installed: null, command: "alt update", checked: "2026-10-01T08:00:00Z", attempt: null };
 const available = { ...installed, available: { version: "v0.2.0", notes: NOTES } };
 
 /** Every overview read carries `state.update`, which a test changes as the daemon would. */
@@ -104,9 +104,12 @@ test("a newer release is offered, confirmed, installed or failed, and dismissed 
   await page.reload();
   await walk.state("09-newer-version-notifies-again", { visible: [notice.getByText("Altitude v0.3.0 is available.")], hidden: [] });
 
-  state.update = { ...installed, current: "v0.3.0" };
+  state.update = { ...installed, current: "v0.3.0", installed: { version: "v0.3.0", notes: NOTES.replace("v0.2.0", "v0.3.0") } };
   await page.reload();
-  await walk.state("10-updated-no-notice", { visible: [composer], hidden: [notice] });
+  await walk.state("10-updated", { visible: [notice.getByText("Updated to v0.3.0."), notice.getByRole("link", { name: "What’s new" }), dismiss], hidden: [update, install] });
+  await dismiss.click();
+  await page.reload();
+  await walk.state("10b-updated-dismissed", { visible: [composer], hidden: [notice] });
 });
 
 test("Settings shows the version, the command that installs a newer one and the check switch", async ({ page }, info) => {
@@ -114,26 +117,41 @@ test("Settings shows the version, the command that installs a newer one and the 
   const walk = walkthrough(page, info);
   const state: { update: Json | null } = { update: null };
   const switches: unknown[] = [];
+  const automaticSwitches: unknown[] = [];
+  let automatic = true;
+  let refuseAutomatic = false;
+  let saveGate: Promise<void> | null = null;
+  await page.route("**/api/update-automatic", async (route) => {
+    const { enabled } = route.request().postDataJSON() as { enabled: boolean };
+    automaticSwitches.push(enabled);
+    if (refuseAutomatic) return route.fulfill({ status: 403, json: { error: "Change refused." } });
+    if (saveGate) await saveGate;
+    automatic = enabled;
+    const machine = (await (await page.request.get("/api/machine")).json()) as Json;
+    state.update = { ...state.update, automatic, automatic_pending: automatic };
+    return route.fulfill({ json: { ...machine, update_automatic: automatic, update: state.update } });
+  });
   await page.route("**/api/update-check", async (route) => {
     const { enabled } = route.request().postDataJSON() as { enabled: boolean };
     switches.push(enabled);
     const machine = (await (await page.request.get("/api/machine")).json()) as Json;
-    state.update = enabled ? available : { ...installed, check: false };
+    state.update = enabled ? { ...available, automatic, automatic_pending: automatic } : { ...installed, check: false, automatic: false };
     return route.fulfill({ json: { ...machine, update_check: enabled, update: state.update } });
   });
   await overlay(page, state);
   const version = page.locator(".settings-version");
   const toggle = page.getByRole("switch", { name: /Check for new versions/ });
+  const autoToggle = page.getByRole("switch", { name: /Automatic updates/ });
 
   await walk.open("/settings");
-  await walk.state("11-settings-source-deployment", { visible: [page.getByRole("switch", { name: /Terminal/ })], hidden: [version, toggle] });
+  await walk.state("11-settings-source-deployment", { visible: [page.getByRole("switch", { name: /Terminal/ })], hidden: [version, toggle, autoToggle] });
 
-  state.update = { ...installed };
+  state.update = { ...installed, automatic };
   await page.reload();
   await walk.state("12-settings-up-to-date", { visible: [version.getByText("v0.1.0 · Up to date"), toggle], hidden: [version.getByRole("button", { name: "Copy" })] });
   await expect(toggle).toBeChecked();
 
-  state.update = available;
+  state.update = { ...available, automatic, automatic_pending: automatic };
   await page.reload();
   await walk.state("13-settings-available", {
     visible: [version.getByText(/v0.1.0 · v0.2.0 is available/), version.getByRole("link", { name: "What’s new" }), version.getByText("alt update", { exact: true }),
@@ -142,14 +160,77 @@ test("Settings shows the version, the command that installs a newer one and the 
   });
   expect(await page.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
 
+  const notice = page.getByRole("status", { name: "New version" });
+  await walk.state("13a-automatic-pending", {
+    action: () => autoToggle.scrollIntoViewIfNeeded(),
+    visible: [notice.getByText(/will install automatically at the next quiet point, when no browser terminal is open/), autoToggle],
+    hidden: [notice.getByRole("button", { name: "Update", exact: true })],
+  });
+  await expect(autoToggle).toBeChecked();
+  refuseAutomatic = true;
+  await walk.state("13b-automatic-change-denied", {
+    action: () => autoToggle.click(), visible: [page.getByRole("alert").getByText("Change refused.")], hidden: [],
+  });
+  await expect(autoToggle).toBeChecked();
+  refuseAutomatic = false;
+  await walk.state("13c-automatic-off-prompts", {
+    action: () => autoToggle.click(), visible: [notice.getByRole("button", { name: "Update", exact: true })], hidden: [page.getByRole("alert")],
+  });
+  await expect(autoToggle).not.toBeChecked();
+  let releaseSave!: () => void;
+  saveGate = new Promise<void>((resolve) => { releaseSave = resolve; });
+  try {
+    await walk.state("13d-automatic-saving", {
+      action: () => autoToggle.click(), visible: [page.getByText("Saving…", { exact: true })], hidden: [],
+    });
+    await expect(autoToggle).toBeDisabled();
+    await expect(toggle).toBeDisabled();
+  } finally {
+    releaseSave();
+    saveGate = null;
+  }
+  await expect(autoToggle).toBeChecked();
+  await expect(autoToggle).toBeEnabled();
+
   await walk.state("14-settings-check-off", {
     action: () => toggle.click(),
     visible: [version.getByText("v0.1.0", { exact: true }), page.getByText(/Twice a day Altitude asks GitHub for the latest release/)],
     hidden: [version.getByRole("button", { name: "Copy" }), page.getByRole("status", { name: "New version" })],
   });
   await expect(toggle).not.toBeChecked();
+  await expect(autoToggle).not.toBeChecked();
+  await expect(autoToggle).toBeDisabled();
   await toggle.click();
   await expect(toggle).toBeChecked();
   await expect(page.getByRole("status", { name: "New version" })).toBeVisible();
   expect(switches).toEqual([false, true]);
+  expect(automaticSwitches).toEqual([false, false, true]);
+
+  const retryPosts: unknown[] = [];
+  await page.route("**/api/update", async (route) => {
+    retryPosts.push(route.request().postDataJSON());
+    state.update = { ...available, automatic, attempt: { version: "v0.2.0", state: "running" } };
+    return route.fulfill({ json: { update: state.update } });
+  });
+  state.update = { ...available, automatic, attempt: { version: "v0.2.0", state: "failed", error: "Run alt update in a terminal to see why." } };
+  await page.reload();
+  await walk.state("15-automatic-failure", {
+    visible: [notice.getByText(/The update to v0.2.0 did not finish/), notice.getByRole("button", { name: "Try again" })],
+    hidden: [notice.getByText(/will install automatically/)],
+  });
+  await notice.getByRole("button", { name: "Dismiss new version notice" }).click();
+  const about = page.getByRole("region", { name: "About" });
+  await walk.state("16-dismissed-failure-settings-retry", {
+    action: () => about.getByRole("button", { name: "Try again" }).scrollIntoViewIfNeeded(),
+    visible: [about.getByText(/The update to v0.2.0 did not finish/), about.getByRole("button", { name: "Try again" })], hidden: [notice],
+  });
+  await about.getByRole("button", { name: "Try again" }).click();
+  await expect(notice.getByText(/Installing Altitude v0.2.0/)).toBeVisible();
+  expect(retryPosts).toEqual([{ version: "v0.2.0" }]);
+  state.update = { ...installed, automatic, current: "v0.2.0", installed: { version: "v0.2.0", notes: NOTES } };
+  await page.reload();
+  await walk.state("17-automatic-success", {
+    visible: [notice.getByText("Updated to v0.2.0."), notice.getByRole("link", { name: "What’s new" })],
+    hidden: [about.getByRole("button", { name: "Try again" })],
+  });
 });

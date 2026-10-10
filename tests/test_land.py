@@ -140,7 +140,7 @@ class TestLand(AltitudeCase):
         task.update(l2_engine=config.ENGINES[0], agent_id="fixture-owner")
         S.save_task("demo", task)
         (S.task_dir("demo", "fix-x") / "request.md").write_text("Preserve the public API.")
-        T.set_hold_merge("demo", "fix-x", "Operator approval before merging")
+        self.hold_a_second_ago("demo", "fix-x", "Operator approval before merging")
         approval = T.message("demo", "fix-x", T.OPERATOR_MESSAGE_ROLE, "Merge the reviewed PR after checks.")
         choice = {"engine": config.ENGINES[1], "model": "fixture", "label": "Second engine", "allowance_known": True}
         def review_engine(prompt, **kwargs):
@@ -199,7 +199,12 @@ class TestLand(AltitudeCase):
         self.configure_ci()
         self.staged_change()
         self.set_current_l2()
+        # Events keep whole seconds and messages keep microseconds; a race lands in the approval's second.
+        clock = ["2026-10-09T12:00:00+00:00"]
+        self.patch(S, "now", side_effect=lambda: clock[0][:19] + "+00:00")
+        self.patch(T, "_conversation_time", side_effect=lambda: clock[0])
         T.set_hold_merge("demo", "fix-x", "Operator approval before merging")
+        clock[0] = "2026-10-09T12:00:01.250000+00:00"
         approval = T.message("demo", "fix-x", T.OPERATOR_MESSAGE_ROLE, "Merge it after checks.")
         real, refused = land._run, []
 

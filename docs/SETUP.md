@@ -100,10 +100,12 @@ steps: put `~/.local/bin` on PATH, run `alt doctor`, trust the certificate and o
 Nothing is run from a download that does not match, and nothing runs as root. The script is one
 function called on its last line, so a download cut off midway does nothing.
 
-An installed copy checks for a newer release and offers it in the app, in `alt doctor` and through
-`alt update` ([operations](OPERATIONS.md#installed-application-lifecycle)); nothing updates until you
-confirm. A copy installed from a release candidate is offered newer candidates and stable releases;
-a copy installed from a stable release is offered stable releases only.
+Starting with `v0.1.2`, an installed copy checks for newer releases and installs them automatically
+at a quiet point with no browser terminal open. Running workers continue. Settings › This machine
+lets you turn **Automatic updates** off and confirm updates yourself; **Check for new versions**
+also stops automatic starts ([operations](OPERATIONS.md#installed-application-lifecycle)). A copy on
+`v0.1.0` or `v0.1.1` needs one manual `alt update` to reach this behavior. A release-candidate copy
+follows newer candidates and stable releases; a stable copy follows stable releases only.
 
 The command trusts GitHub's HTTPS and the published, immutable release for `install.sh` itself.
 Every release carries GitHub's release attestation for its files. Releases the release workflow

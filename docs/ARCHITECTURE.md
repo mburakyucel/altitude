@@ -307,16 +307,33 @@ timer thread: one anonymous request to GitHub for the repository in `release.jso
 an hour when offline. A stable installation reads GitHub's latest release, so it follows stable
 releases only; an installation from a release candidate reads the thirty newest releases and also
 follows newer candidates. Drafts never count. `update.json` in the runtime home keeps the newest followed release found and
-any update the app started, and the daemon, the app's request and
-the update itself change it under one lock; source deployments neither check nor record. The `update_check` machine setting turns the check off and hides what it found. The
+the latest update attempt and versions already attempted automatically. The daemon, the app's
+request and the updater change this record under one lock; source deployments and containers
+neither check nor record. The `update_check` machine setting turns the check off and hides what it found. The
 overview's `update` field and `alt doctor` report the installed version and a newer one; an
 interactive `alt` command prints one line about it at most once a day from that record, never to
 agents. `POST /api/update` accepts only the exact newer version the record shows and starts
 `alt update --version` in a job of its own (`platform.detach`), so the update outlives
 the service restart it causes; it passes the operator terminal's request checks, and Altitude has
 no login, so anyone who can open the page can start an update to that verified release, never a
-downgrade or another build. An update that fails, or has not finished after thirty minutes, reads
-as failed until retried; the installed version keeps running or is restored by activation recovery.
+downgrade or another build.
+
+The `update_automatic` machine setting defaults to true. At the existing restart quiet point,
+the daemon holds the exclusive restart gate, checks that no browser terminal is open, and reserves
+the offered version before starting the same detached updater. Terminal creation holds the shared
+gate through registration. The reservation fences new dispatch/resume work and terminal creation;
+running workers continue. Turning automatic updates off restores the confirm-and-update flow;
+turning checks off also prevents automatic starts, without changing the saved automatic preference.
+Neither setting cancels an admitted update. Sources and containers retain their existing lifecycle.
+
+The installation lock covers the entire manual or detached update, including download and recovery.
+A unique attempt identity reserves the interval before the detached child acquires that lock;
+expired children cannot run or finish a later request. Each release gets one automatic attempt,
+retained in `update.json`; explicit retries remain available. Failed activation restores the prior
+version, or keeps the recovery receipt if recovery cannot finish. An abandoned reservation becomes
+failed after thirty minutes only while the installation lock is free and no activation receipt is
+pending. Age in the UI never releases a live updater's fence. The app announces a successful
+automatic update with its installed version and release notes after reconnecting.
 The page shows a failure only as "Run alt update in a terminal to see why."; causes, which can name
 private paths, stay in the daemon log, the update unit's journal or the terminal.
 
@@ -2401,7 +2418,7 @@ unreadable state leaves the recorded review shown and says so on stderr. Any ope
 quick answer hands the task back; the next park by the L2 or L3 without a queued message returns the turn and
 marks still-open questions `asked_again`. `tasks.block_status` gives the CLI list/status, queue and
 restart notice one wait label (`<operator>'s turn · …`, `L2 replying to <operator>`,
-`paused · fault …`, `stopped by <operator>`, `waiting on L3`, `paused`). Question
+`paused · fault …`, `stopped by <operator>` or `stopped by L3`, `waiting on L3`, `paused`). Question
 state is independent of worker state: a discussion wake, capacity wait or ordinary resume never
 records a decision. On receiving guidance, the owner assesses each question before lengthy work.
 Unaffected choices remain answerable; doubtful ones are withdrawn with a reason in chat and re-asked
@@ -2661,12 +2678,20 @@ The conversation's offscreen-question jump reaches that question, where its prev
 Within a group it follows an open member with a preview, then another open member, including after
 partial answers. It uses that question's exact URL, never an earlier proposal's capture. Work reaches the same
 question through its task row. Preview headings use the captured title to distinguish a proposal
-from an implementation review. Opening a separate tab preserves the originating route and draft.
-`/projects/<project>/tasks/<slug>/design/<question>/<revision>` opens in a browser tab with the saved
-screenshots, full-size image links, explanation and **Back to question**, which returns to
-the exact captured question revision. Both **Back to question** and **Open current question**
-replace the preview's history entry, so the task's Back control opens the owning project conversation.
-Browser Back/Forward follows the remaining history; the originating tab and its draft stay intact.
+from an implementation review.
+`/projects/<project>/tasks/<slug>/design/<question>/<revision>` opens in the same tab with the saved
+screenshots, full-size image links (a new tab, for native zoom) and explanation. Its Back control (the
+phone header's, or the page's own on desktop) steps back through the router's history while its entry
+index is above zero, so it matches browser Back and returns to the conversation or Needs you it came
+from. At index zero (a pasted link, a new tab, a message link's own document) it replaces the preview with
+the exact captured question revision; **Open current question** likewise replaces it, so the task's Back
+then opens the owning project conversation. Pages keep what the operator leaves behind in
+`visitMemory.ts`: unsent answers (keyed by project, task, question and revision), the task's unsent
+message, and the question whose preview was opened. It lives in tab memory only, under the router's
+history entry key, and returns on each Back/Forward to that same entry; the task conversation then jumps to
+that question and Needs you scrolls its card into view. Answers whose revision is no longer open and
+operator-facing are dropped, and sends keep the server's revision fence. Reloading, closing the tab or
+pairing again clears it.
 The preview reads
 `GET /api/design/<project>/<slug>/<question>/<revision>`; image bytes use
 `/design/<project>/tasks/<slug>/<question>/<revision>/<content-hash>.png` (or `.jpg`). These reads
