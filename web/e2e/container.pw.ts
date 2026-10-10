@@ -53,10 +53,18 @@ test("container settings explain unavailable actions and container-only setup", 
   await walk.open("/settings/voice");
   const host = page.getByRole("radio", { name: "This computer", exact: true });
   await expect(host).toBeDisabled();
+  const setup = page.getByRole("button", { name: "Set up voice", exact: true });
+  const hostReason = page.getByText(/^Not available on this computer:/);
+  await expect(setup).toHaveAttribute("aria-disabled", "true");
+  await expect(hostReason).toHaveClass("sr-only");
   await walk.state("02-host-voice-unavailable", {
-    visible: [host, page.getByText(/Host voice is unavailable in this container/)],
-    hidden: [page.getByRole("button", { name: "Set up voice" }), page.getByRole("button", { name: /Remove voice/ })],
+    visible: [host, setup, page.getByText(/Host voice is unavailable in this container/)],
+    hidden: [page.getByRole("button", { name: /Remove voice/ })],
   });
+  await setup.focus();
+  await page.keyboard.press("Enter");
+  await expect(hostReason).not.toHaveClass("sr-only");
+  await walk.state("02b-host-voice-reason", { visible: [host, setup, hostReason], hidden: [] });
   await walk.open("/settings/prerequisites");
   await walk.state("03-tools-inside-container", {
     visible: [page.getByText(/Host tools and sign-ins do not count/), page.getByText(/Run on the host to open the container shell/),
