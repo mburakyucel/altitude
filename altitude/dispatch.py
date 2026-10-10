@@ -1569,6 +1569,10 @@ def poll(project: str) -> list[dict]:
         live_p = config.MONITOR_DIR / f"live-{project}--{t['slug']}.json"
         try:
             a = engines.worker(engine, t, job_root=l2_job_root(project, t["slug"]))
+            if a and a.get("job_active") and a.get("state") != "working":
+                # The worker ended while commands it started keep its job running; they end with it, so a
+                # waiting landing releases the repository turn and nothing runs beside a resumed session.
+                engines.stop_l2_worker(engine, a["id"], job_root=l2_job_root(project, t["slug"]))
         except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
             # #676: an unavailable unit is not an exited worker. Keep ownership and capacity;
             # a task fault would block it and release its slot. Other tick work still proceeds.
