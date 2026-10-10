@@ -2479,10 +2479,11 @@ response. Omitting the key explicitly selects the recorded recommendation. A gro
 each member supplies exactly one response kind. The existing project lock validates the entire batch
 before saving one attributed operator message and durable delivery receipt. It records no decision.
 Each submitted question projects `response: {text, at, message_id}` and stays semantically open until
-the owner resolves it. Sent members leave Needs you; their **Sent to L2** receipts remain in the
-owning group, alongside members still awaiting input. An identical retry reuses its receipt and repairs
+the owner resolves it. Sent members leave Needs you; the owning chat shows a picked option as that
+choice and typed words as the operator's bubble, each with its delivery state, alongside members still
+awaiting input. An identical retry reuses its receipt and repairs
 interrupted delivery. Stale or conflicting submissions fail together. The response names the original
-question revisions, so the owner cannot cite it to approve replacement wording. **Sent to L2** means
+question revisions, so the owner cannot cite it to approve replacement wording. A saved answer means
 saved for delivery; **Work resumed** requires observed running state. A queued owner stays explicit.
 
 Typed replies use `POST /api/l2/message`, optionally naming the viewed question/revision or

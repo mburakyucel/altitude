@@ -375,7 +375,7 @@ test("Needs you: empty, recommendation and chat entry, sending, sent, failed, er
   await card.getByRole("button", { name: "Fast-forward it", exact: true }).click();
   await walk.state("04-sending-overlay", {
     action: () => card.getByRole("button", { name: "Send 1 answer", exact: true }).click(),
-    visible: [card.getByRole("button", { name: "Sending…", disabled: true })],
+    visible: [card.getByRole("button", { name: "Send 1 answer", disabled: true })],
     hidden: [],
   });
   const oneLeft = v.main.getByText(/^1 stopped task/);

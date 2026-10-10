@@ -11,10 +11,11 @@ import { InlineProse, ProseScope } from "../components/Prose";
 import { ProseTerminal } from "../components/CodeBlock";
 import { requestCommand } from "../data/terminalCommand";
 import { agoText, modelName, when } from "../data/observed";
-import { questionPath, turnLabel } from "../data/decisions";
+import { questionPath, selections, turnLabel } from "../data/decisions";
 import { stoppedByCoordinator, taskExplanation } from "../data/taskStatus";
 import { holdText } from "../components/TaskCard";
-import { Bubble, Coordination, DayDivider, RemoveMessage, Reply, dayLabel } from "../components/Bubbles";
+import { Bubble, Coordination, DayDivider, MessageRow, RemoveMessage, Reply, dayLabel } from "../components/Bubbles";
+import { Choice, deliveryChoice } from "../components/Choice";
 import Composer from "../components/Composer";
 import { TaskActivity } from "../components/TaskActivity";
 import { Stamp } from "../components/Stamp";
@@ -400,6 +401,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     };
   };
   const rows: ReactNode[] = [];
+  const deliveries = Object.fromEntries(messages.map((message) => [message.id, message.delivery?.state]));
   const shownReviews = latestReviews(task);
   const restoreAccess = () => { setDenied(false); setAccessRefresh((value) => value + 1); refresh(); };
   let lastDay = "";
@@ -422,7 +424,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
       const withdrawn = question.resolution?.disposition === "withdrawn";
       const content = <>
         {!withdrawn ? <p className="text-meta text-muted">{question.asked_by === "l3" ? "L3 brought this question to the L2" : "L2"}</p> : null}
-        <Question key={`${question.id}:${question.revision}`} decision={question} refreshKey={accessRefresh} chat disabled={readOnly || checking || denied || facts.finished || question.audience === "l3"} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
+        <Question key={`${question.id}:${question.revision}`} decision={question} refreshKey={accessRefresh} deliveries={deliveries} chat disabled={readOnly || checking || denied || facts.finished || question.audience === "l3"} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
       </>;
       rows.push(<div key={`${key}-question`} className="conversation-question" data-historical={historical || undefined} tabIndex={-1} ref={(node) => {
         const id = `${question.id}:${question.revision}`;
@@ -443,7 +445,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         });
       }}>
         {!withdrawn ? <p className="text-meta text-muted">{group.questions.some((q) => q.asked_by === "l3") ? "L3 brought these questions to the L2" : "L2"}</p> : null}
-        <QuestionSet key={group.id} decisions={group.questions} group={group} target={target} refreshKey={accessRefresh} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
+        <QuestionSet key={group.id} decisions={group.questions} group={group} target={target} refreshKey={accessRefresh} deliveries={deliveries} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
       </div>);
     } else if (!question && message.review_id) {
       const review = task.review?.history.find((entry) => entry.id === message.review_id);
@@ -455,11 +457,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     } else if (!question && message.role === "system") {
       rows.push(<p key={key} className="text-meta text-muted"><InlineProse text={message.text} /></p>);
     } else if (!question) {
-      rows.push(!REPLIERS.has(message.role) ? <Bubble key={key} text={message.text} at={message.at}
-        images={<MessageImages project={project} images={message.images} />}
-        state={message.delivery?.state}
-        side={message.delivery?.removable ? <RemoveMessage message={message.text} removing={removal.isPending && removal.variables === message.id}
-          disabled={readOnly || checking || denied || removal.isPending || sendNow.isPending || Boolean(message.delivery.send_now_pending)} onClick={() => removal.mutate(message.id)} /> : undefined}>
+      const queueActions = <>
         {message.id === lastWaiting?.id ? <div className="queued-actions">
           <SendNow task pending={sendingNow}
             disabled={readOnly || checking || denied || removal.isPending || sendNow.isPending || !message.delivery?.send_now}
@@ -467,6 +465,32 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
             onClick={() => sendNow.mutate(message.id)} />
         </div> : null}
         {removal.isError && removal.variables === message.id ? <span role="alert">{removal.error instanceof ApiError && [401, 403].includes(removal.error.status) ? "You do not have permission to remove this message." : removal.error instanceof ApiError && removal.error.status === 409 ? removal.error.message : "Removal unconfirmed. Check this message’s status before trying again."}</span> : null}
+      </>;
+      const removeBlocked = readOnly || checking || denied || removal.isPending || sendNow.isPending || Boolean(message.delivery?.send_now_pending);
+      const chosen = REPLIERS.has(message.role) || message.images?.length ? [] : selections(message, questions);
+      if (chosen.length) {
+        const state = message.delivery?.state;
+        // A press shows as the choice it made, never as words the operator typed; written answers keep their
+        // bubble. Each names the question it answers (SPEC.md §3.8.2 Decision selections).
+        chosen.forEach((choice, index) => {
+          const last = index === chosen.length - 1;
+          rows.push(choice.label ? <MessageRow key={`${key}-${index}`} at={state === "queued" ? null : message.at} mine>
+            <Choice mine label={choice.label} about={choice.about} aboutShown
+              {...deliveryChoice(state, choice.question?.resolution?.disposition === "answered" && choice.question.resolution.message_id === message.id)}
+              onRemove={message.delivery?.removable ? () => removal.mutate(message.id) : undefined} removing={removeBlocked} />
+            {last ? queueActions : null}
+          </MessageRow> : <Bubble key={`${key}-${index}`} text={choice.text} at={message.at} state={state}>
+            <span className="choice-about">{choice.about}</span>{last ? queueActions : null}
+          </Bubble>);
+        });
+        return;
+      }
+      rows.push(!REPLIERS.has(message.role) ? <Bubble key={key} text={message.text} at={message.at}
+        images={<MessageImages project={project} images={message.images} />}
+        state={message.delivery?.state}
+        side={message.delivery?.removable ? <RemoveMessage message={message.text} removing={removal.isPending && removal.variables === message.id}
+          disabled={removeBlocked} onClick={() => removal.mutate(message.id)} /> : undefined}>
+        {queueActions}
       </Bubble> :
         message.role === "l3" ? <Coordination key={key} text={message.text} summary={message.summary} at={message.at} images={message.images?.length} onOpen={() => { following.current = false; }}><MessageImages project={project} images={message.images} /></Coordination>
         : <Reply key={key} text={message.text} at={message.at} role={message.role}><MessageImages project={project} images={message.images} /><CaptureLink project={project} slug={task.slug} message={message} /></Reply>);
@@ -511,7 +535,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
           }}>
             {turn.length || !(handedBack || group.questions.some((q) => q.response)) ? <>
               <p className="conversation-turn">{turn.length ? turnText : "L3 is answering"}</p>
-              <QuestionSet key={group.id} decisions={group.questions} group={group} target={target} refreshKey={accessRefresh} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
+              <QuestionSet key={group.id} decisions={group.questions} group={group} target={target} refreshKey={accessRefresh} deliveries={deliveries} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
             </> : <p className="text-meta text-muted" role="status">{task.state === "queued" ? "Sent · waiting for the L2 to start." : "Sent · the L2 has your reply."}</p>}
           </div> : (task.question?.status === "resolved" || task.question?.response) && !facts.finished ? <p className="text-meta text-muted" role="status">{task.state === "running" ? "Work resumed" : task.state === "queued" ? "Waiting for the L2 to start" : "Waiting to resume"}</p>
           : handedBack && !facts.finished && !facts.review ? <p className="text-meta text-muted" role="status">{task.state === "queued" ? "Sent · waiting for the L2 to start." : "Sent · the L2 has your reply."}</p> : null}
