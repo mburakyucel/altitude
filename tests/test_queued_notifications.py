@@ -269,11 +269,12 @@ class TestQueuedNotifications(AltitudeCase):
 
         self.assertIsNone(l3.deliver_queued(self.project), "system work does not overtake the operator's message")
         self.assertEqual(len(self.prompts), attempts)
-        urgent = l3.queue_message(self.project, "Fictional operator question now", trigger="chat",
-                                  role=config.OPERATOR_ACTOR)
-        l3.send_now(self.project, urgent["id"])
+        other = l3.queue_message(self.project, "Fictional operator question elsewhere", trigger="chat",
+                                 role=config.OPERATOR_ACTOR, slug="fictional-task")
+        l3.send_now(self.project, other["id"])
         l3.deliver_queued(self.project)
-        self.assertIn("Fictional operator question now", self.prompts[-1])
+        self.assertTrue(self.prompts[-1].endswith("End historical context.\n\nFictional operator question elsewhere"),
+                        "another conversation's group leaves the kept chat waiting")
         self.assertEqual([row["id"] for row in self.queue()], [kept["id"], notice["id"]])
 
         self.mode = "ok"
@@ -282,6 +283,114 @@ class TestQueuedNotifications(AltitudeCase):
         self.assertIn("Fictional refused chat", self.prompts[-1])
         self.assertEqual(self.rows_of(turn_id), [("user", "chat"), ("assistant", "chat")])
         self.assertEqual([row["id"] for row in self.queue()], [notice["id"]])
+
+    def kept_then_newer(self) -> tuple[dict, list[dict]]:
+        """One chat every option refuses stays kept under its turn, waiting for its retry time, and two newer
+        messages queue behind it."""
+        self.mode = "expired-limit"
+        l3.queue_message(self.project, "Kept fictional chat", trigger="chat", role=config.OPERATOR_ACTOR)
+        self.assertTrue(l3.deliver_queued(self.project)["undelivered"])
+        [kept] = self.queue()
+        self.assertIn("retry_at", kept)
+        self.mode = "ok"
+        newer = [l3.queue_message(self.project, text, trigger="chat", role=config.OPERATOR_ACTOR)
+                 for text in ("First newer chat", "Second newer chat")]
+        return kept, newer
+
+    def clear(self) -> None:
+        for name in ("l3-queue.jsonl", "chat.jsonl"):
+            (config.project_dir(self.project) / name).unlink(missing_ok=True)
+
+    def users(self) -> list[tuple]:
+        return [(row["text"], row["turn_id"], row.get("queue_ids")) for row in self.history() if row["role"] == "user"]
+
+    def assert_answered_once(self, kept: dict, newer: list[dict]) -> None:
+        texts = [kept["text"], *(row["text"] for row in newer)]
+        self.assertEqual([self.prompts[-1].count(text) for text in texts], [1] * len(texts))
+        self.assertLess(self.prompts[-1].index(texts[0]), self.prompts[-1].index(texts[-1]))
+        self.assertEqual(self.queue(), [])
+        self.assertIsNone(l3.deliver_queued(self.project))
+        for row in (kept, *newer):
+            self.assertEqual(l3.send_now(self.project, row["id"])["status"], "delivered")
+
+    def test_send_now_delivers_a_kept_chat_with_the_newer_messages_once_in_order(self):
+        for index in (0, 1, 2):
+            with self.subTest(pressed=index):
+                self.clear()
+                kept, newer = self.kept_then_newer()
+                l3.send_now(self.project, [kept, *newer][index]["id"])
+                self.assertTrue(all(row["send_now"] and "retry_at" not in row for row in self.queue()))
+                attempts = len(self.prompts)
+
+                result = l3.deliver_queued(self.project)
+
+                self.assertEqual(len(self.prompts), attempts + 1, "one turn takes the whole group")
+                users = self.users()
+                self.assertEqual(users[0], (kept["text"], kept["turn_id"], [kept["id"]]), "the kept bubble is not relogged")
+                self.assertEqual([user[0::2] for user in users[1:]], [(row["text"], [row["id"]]) for row in newer])
+                self.assertEqual(users[-1][1], result["turn_id"])
+                self.assertNotEqual(users[1][1], users[2][1], "each newer message keeps its own bubble")
+                self.assertEqual(self.rows_of(kept["turn_id"]), [("user", "chat")])
+                self.assertEqual(self.rows_of(result["turn_id"]), [("user", "chat"), ("assistant", "chat")])
+                self.assertEqual(self.history()[-1]["role"], "assistant", "the reply follows the whole group")
+                self.assert_answered_once(kept, newer)
+
+    def test_a_kept_chat_and_the_newer_messages_drain_as_one_group_once_its_retry_time_passes(self):
+        kept, newer = self.kept_then_newer()
+        attempts = len(self.prompts)
+        self.assertIsNone(l3.deliver_queued(self.project), "the newer messages wait behind the kept chat")
+        self.assertEqual(len(self.prompts), attempts)
+
+        self.later()
+        result = l3.deliver_queued(self.project)
+
+        self.assertEqual(len(self.prompts), attempts + 1)
+        self.assertEqual(self.users(), [(kept["text"], kept["turn_id"], [kept["id"]]),
+                                        ("First newer chat\n\nSecond newer chat", result["turn_id"],
+                                         [row["id"] for row in newer])])
+        self.assertEqual(self.rows_of(result["turn_id"]), [("user", "chat"), ("assistant", "chat")])
+        self.assert_answered_once(kept, newer)
+
+    def test_a_kept_and_newer_group_interrupted_again_keeps_every_identity_and_runs_once(self):
+        for send_now in (True, False):
+            with self.subTest(send_now=send_now):
+                self.clear()
+                kept, newer = self.kept_then_newer()
+                if send_now:
+                    l3.send_now(self.project, newer[0]["id"])
+                else:
+                    self.later()
+                self.mode = "limited"
+                interrupted = l3.deliver_queued(self.project)
+                self.assertTrue(interrupted["undelivered"])
+                [retained] = self.queue()
+                self.assertEqual((retained["id"], retained["turn_id"], retained["queue_ids"]),
+                                 (kept["id"], interrupted["turn_id"], [kept["id"], *(row["id"] for row in newer)]))
+                self.assertNotIn("send_now", retained)
+                logged = self.users()
+                self.assertEqual(logged[-1][1], interrupted["turn_id"], "the retained turn is the last new bubble's")
+                latest = l3.queue_message(self.project, "Latest newer chat", trigger="chat", role=config.OPERATOR_ACTOR)
+                self.recover()
+                self.mode = "ok"
+
+                result = l3.deliver_queued(self.project)
+
+                self.assertEqual(self.users(), [*logged, ("Latest newer chat", result["turn_id"], [latest["id"]])])
+                self.assertEqual(self.rows_of(interrupted["turn_id"]), [("user", "chat")])
+                self.assert_answered_once(kept, [*newer, latest])
+
+    def test_a_direct_turns_kept_message_leads_newer_messages_without_repeating_in_history(self):
+        self.mode = "limited"
+        direct = l3.turn(self.project, "Kept fictional direct chat", trigger="chat")
+        newer = l3.queue_message(self.project, "Newer fictional chat", trigger="chat", role=config.OPERATOR_ACTOR)
+        self.recover()
+        self.mode = "ok"
+
+        result = l3.deliver_queued(self.project)
+
+        self.assertEqual(self.users(), [("Kept fictional direct chat", direct["turn_id"], None),
+                                        ("Newer fictional chat", result["turn_id"], [newer["id"]])])
+        self.assert_answered_once(direct["queued"], [newer])
 
     def test_refusal_that_leaves_routing_available_waits_instead_of_looping(self):
         row = l3.queue_message(self.project, "Fictional restart inventory.", trigger="restart")

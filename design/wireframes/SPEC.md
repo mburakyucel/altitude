@@ -1731,8 +1731,9 @@ and show their own inline error after refreshing canonical state. The row become
 only when the server admits it; claimed, delivered or removed rows have no queued actions. A message
 admitted while no L3 engine can run keeps its bubble with the muted queued status (**Queued · runs
 next**) and Send now beneath it, disabled with the server's explanation; there is no error line and no
-Remove, because it was already sent. It runs before system work once an engine is available, and its
-reply appears beneath the same bubble. A kept message older than the loaded conversation appears in the
+Remove, because it was already sent. It runs before system work once an engine is available, together
+with the newer messages queued behind it; its reply appears beneath the same bubble, or beneath the last
+newer message. A kept message older than the loaded conversation appears in the
 queued rows with the same status and Send now, still without Remove.
 Send now has no timer and never stops running work; task-chat Stop remains the hard stop.
 Both controls have 44px phone targets and wrap with their explanations on narrow screens.
