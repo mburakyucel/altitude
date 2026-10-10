@@ -4,7 +4,8 @@ import { Link, useLocation, useMatch, useNavigate } from "react-router";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { useTask } from "../data/api";
 import type { Overview } from "../data/api";
-import { useTaskBack } from "../components/useTaskBack";
+import { useBack, useTaskBack } from "../components/useTaskBack";
+import { previewQuestion } from "../data/decisions";
 import FirstRun from "../routes/FirstRun";
 import { BrandMark } from "./BrandMark";
 import { Overlay } from "./Overlay";
@@ -77,10 +78,13 @@ export function PhoneHeader({ overview, status, children, onTitleClick, titleExp
   const taskViewMatch = useMatch("/projects/:name/tasks/:slug/live?");
   const terminalViewMatch = useMatch("/projects/:name/tasks/:slug/terminal");
   const decisionMatch = useMatch("/projects/:name/decisions/:slug");
+  const designMatch = useMatch("/projects/:name/tasks/:slug/design/:questionId/:revision");
   const pushed = Boolean(taskMatch || decisionMatch);
   const from = location.state && typeof location.state === "object" ? (location.state as { from?: unknown }).from : null;
   const name = projectMatch?.params.name ?? "";
   const taskBack = useTaskBack(name);
+  const design = designMatch?.params;
+  const designBack = useBack(design ? previewQuestion(design.name ?? "", design.slug ?? "", design.questionId ?? "", design.revision ?? "") : "");
   // The same cache entry the task page reads: no request of the header's own.
   const task = useTask(taskMatch?.params.name ?? "", taskMatch?.params.slug ?? "");
   const data = overview.data;
@@ -100,6 +104,7 @@ export function PhoneHeader({ overview, status, children, onTitleClick, titleExp
 
   const back = () => {
     if (taskViewMatch || terminalViewMatch) taskBack();
+    else if (designMatch) designBack();
     else if (location.key !== "default") navigate(-1);
     else if (decisionMatch && from === "needs") navigate("/");
     else navigate(`/projects/${name}?tab=work`);
