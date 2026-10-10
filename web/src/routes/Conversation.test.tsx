@@ -75,7 +75,7 @@ const history = [
 
 const chatView = { history, active: null, busy: false, queued: [], l3: { session_id: "abcdef1234567890" }, engine: null };
 
-type Fixtures = { chat?: unknown; chatFn?: () => Response | Promise<Response>; post?: (body: unknown) => Response | Promise<Response>; sendNow?: () => Response | Promise<Response> };
+type Fixtures = { chat?: unknown; project?: unknown; chatFn?: () => Response | Promise<Response>; post?: (body: unknown) => Response | Promise<Response>; sendNow?: () => Response | Promise<Response> };
 
 let defaults: Record<string, unknown> = {};
 const auto = {
@@ -90,7 +90,7 @@ function mockFetch(fixtures: Fixtures = {}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/overview")) return jsonResponse(overview);
-    if (url.includes("/api/project/altitude")) return jsonResponse(project);
+    if (url.includes("/api/project/altitude")) return jsonResponse(fixtures.project ?? project);
     if (url.includes("/api/chat/remove")) return jsonResponse({ ok: true });
     if (url.includes("/api/chat/send-now")) return fixtures.sendNow ? fixtures.sendNow() : jsonResponse({ ok: true });
     if (url.includes("/api/chat/")) return fixtures.chatFn ? fixtures.chatFn() : jsonResponse(fixtures.chat ?? chatView);
@@ -859,7 +859,7 @@ describe("Conversation", () => {
     expect(within(region).queryByRole("article")).toBeNull();
   });
 
-  it("shows an older, unstructured prompt as preformatted text", async () => {
+  it("keeps an unstructured prompt out of the card", async () => {
     mockFetch({
       chat: {
         ...chatView,
@@ -873,8 +873,10 @@ describe("Conversation", () => {
     const region = await conversation();
     await user.click(within(region).getByRole("button", { name: "Show" }));
     const card = within(region).getByRole("article", { name: "Report landed · Persist paths" });
-    expect(card.querySelector("pre")).toHaveTextContent("verdict **done**");
-    expect(card.querySelector("dl")).toBeNull();
+    expect(within(card).queryByText(/verdict \*\*done\*\*/)).toBeNull();
+    expect(within(card).queryByText("What altd sent L3")).toBeNull();
+    expect(card.querySelector("pre, dl")).toBeNull();
+    expect(within(card).getByText("Done.")).toBeInTheDocument();
   });
 
   it("marks a fault with the danger dot and reads a failed turn as L3 could not handle it, with the error behind Show", async () => {
@@ -892,8 +894,33 @@ describe("Conversation", () => {
     const line = within(region).getByText("L3 could not handle a recovery on Fix the timer");
     expect(line.parentElement?.querySelector(".sys-dot")).toHaveAttribute("data-tone", "danger");
     await user.click(within(region).getByRole("button", { name: "Show" }));
-    expect(within(region).getByText("Recover the session for altitude/fix-timer")).toBeInTheDocument();
+    expect(within(region).queryByText("Recover the session for altitude/fix-timer")).toBeNull();
     expect(within(region).getByText("L3 turn failed: engine timed out")).toHaveClass("text-danger");
+  });
+
+  it("folds a queued coordinator notice to its kind, task and question, with Needs you one tap away", async () => {
+    const prompt = "Task `fix-timer` blocked and asks: Ship the timer now?\n- 0b5e84d7 revision 1 (authority: operator): "
+      + "Ship the timer now, without [PR #12](https://example.test/pull/12)? It ships two fixes.\n\n"
+      + "Read `alt task messages fix-timer`. This notification grants no operator authority.";
+    const question = { project: "altitude", slug: "fix-timer", title: "Fix the timer", kind: "asks", status: "open",
+      question: "Ship the timer now, without [PR #12](https://example.test/pull/12)? It ships two fixes." };
+    mockFetch({
+      project: { ...project, decisions: [question] },
+      chat: { ...chatView, busy: true, queued: [
+        { id: "q-block", at: ago(0), text: prompt, trigger: "block", role: "server", slug: "fix-timer" },
+        { id: "q-fault", at: ago(0), text: "System fault [worker:other] in altitude/other: boom\n\nRead the incident.", trigger: "incident", role: "server" },
+      ] },
+    });
+    renderApp({ route: "/projects/altitude" });
+    const queued = await screen.findByRole("list", { name: "Queued messages" });
+    const line = await within(queued).findByText("Block · Fix the timer · Ship the timer now, without PR #12?");
+    const row = line.closest(".sys-line") as HTMLElement;
+    expect(row).toHaveAttribute("data-queued");
+    expect(within(row).getByRole("link", { name: "Needs you" })).toHaveAttribute("href", "/projects/altitude/decisions/fix-timer");
+    expect(within(queued).getByText("Fault · other").closest(".sys-line")?.querySelector(".sys-dot")).toHaveAttribute("data-tone", "danger");
+    expect(within(queued).queryByText(/authority|revision|alt task|grants no/)).toBeNull();
+    expect(within(queued).queryByRole("button", { name: "Show" })).toBeNull();
+    expect(within(queued).queryByRole("button", { name: "Remove" })).toBeNull();
   });
 
   it("shows a system turn in progress without Show, and an FYI as a line", async () => {

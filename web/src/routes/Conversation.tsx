@@ -516,7 +516,11 @@ export default function Conversation({
                     <Bubble text={row.text} at={row.at} state={row.sending ? "sending" : "queued"} images={<MessageImages project={name} images={row.images} />}
                       side={row.sending || row.turn_id ? undefined : <RemoveMessage message={row.text} removing={dequeue.isPending && dequeue.variables === row.id}
                         disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending} onClick={() => dequeue.mutate(row.id)} />} />
-                  ) : <p className="queued-text text-meta text-muted">{row.text}</p>}
+                  ) : (
+                    <SystemLine project={name} titles={titles} turn={{ id: row.id, at: row.at ?? null,
+                      trigger: row.trigger ?? "system", prompt: row.text, reply: null, error: null, inProgress: false,
+                      slug: subjectOf(row, name), fyi: false, headsUp: false, queued: true }} />
+                  )}
                   {row.id === lastWaiting?.id ? queueAction : null}
                 </li>
               ))}
