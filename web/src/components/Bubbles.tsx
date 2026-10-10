@@ -117,8 +117,9 @@ export function Bubble({ text, at, state, images, side, children }: { text: stri
 }
 
 /** The small × beside a queued bubble: it removes that one message and spins in place while removing. */
-export function RemoveMessage({ removing, disabled, onClick }: { removing: boolean; disabled: boolean; onClick: () => void }) {
+export function RemoveMessage({ message, removing, disabled, onClick }: { message: string; removing: boolean; disabled: boolean; onClick: () => void }) {
   return <button type="button" className="bubble-mark bubble-remove" aria-label={removing ? "Removing" : "Remove"} aria-busy={removing || undefined}
+    aria-description={message || "Image message"}
     disabled={disabled || removing} onClick={onClick}>{removing ? <span className="spinner" aria-hidden="true" /> : <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>}</button>;
 }
 

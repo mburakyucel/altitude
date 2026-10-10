@@ -445,6 +445,9 @@ describe.each([390, 1440])("project switching at %ipx", (width) => {
     const queue = await screen.findByRole("list", { name: "Queued messages" });
     expect(within(queue).getAllByRole("listitem").map((row) => row.querySelector(".bubble")?.textContent)).toEqual(["First accepted", "Second accepted"]);
     expect(within(queue).getAllByRole("button", { name: "Remove" })).toHaveLength(2);
+    within(queue).getAllByRole("button", { name: "Remove" }).forEach((button, index) => {
+      expect(button).toHaveAccessibleDescription(["First accepted", "Second accepted"][index]);
+    });
     expect(screen.getAllByRole("button", { name: "Send now" })).toHaveLength(1);
     expect(field("alpha")).toHaveValue("Newer source draft");
     expect(fetchMock.mock.calls.filter(([url, init]) => url === "/api/chat" && init?.method === "POST")).toHaveLength(2);

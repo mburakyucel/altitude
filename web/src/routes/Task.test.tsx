@@ -178,6 +178,9 @@ describe("queued L2 Send now", () => {
     expect(["First steer", "Second steer", "Third steer"].map((text) => within(row(text)).getAllByRole("button").map((button) => button.getAttribute("aria-label") ?? button.textContent)))
       .toEqual([["Remove"], ["Remove"], ["Remove", "Send now"]]);
     expect(screen.getAllByText("Queued")).toHaveLength(3);
+    for (const text of ["First steer", "Second steer", "Third steer"]) {
+      expect(within(row(text)).getByRole("button", { name: "Remove" })).toHaveAccessibleDescription(text);
+    }
     record = { ...record, messages: record.messages.map((message) => message.id === "second" ? { ...message, delivery: { ...message.delivery, state: "removed", removable: false, send_now: false } } : message) };
     await user.click(within(row("Second steer")).getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(screen.queryByText("Second steer")).toBeNull());

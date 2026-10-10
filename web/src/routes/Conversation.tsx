@@ -514,7 +514,7 @@ export default function Conversation({
                       inProgress: false, slug: null, fyi: true, headsUp: false, projectMessage: row.project_message }} />
                   ) : !row.trigger || row.trigger === "chat" ? (
                     <Bubble text={row.text} at={row.at} state={row.sending ? "sending" : "queued"} images={<MessageImages project={name} images={row.images} />}
-                      side={row.sending || row.turn_id ? undefined : <RemoveMessage removing={dequeue.isPending && dequeue.variables === row.id}
+                      side={row.sending || row.turn_id ? undefined : <RemoveMessage message={row.text} removing={dequeue.isPending && dequeue.variables === row.id}
                         disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending} onClick={() => dequeue.mutate(row.id)} />} />
                   ) : <p className="queued-text text-meta text-muted">{row.text}</p>}
                   {row.id === lastWaiting?.id ? queueAction : null}
