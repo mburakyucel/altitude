@@ -1180,6 +1180,29 @@ def terminal_session(fd: int) -> int:
 #: Linux's request for a terminal's session, which Python's termios module does not name.
 TIOCGSID = 0x5429
 
+#: Linux's request for a signal when the parent ends.
+PR_SET_PDEATHSIG = 1
+
+
+def end_with_parent() -> None:
+    """End this process when the process that started it ends. An engine can end a command's launcher yet leave the
+    command running and connected to altd (issue #796). Linux asks the kernel for SIGTERM when the parent ends, and the
+    handler matters: the first process of a sandbox's PID namespace ignores signals it does not handle. macOS watches
+    the parent's process id."""
+    signals.signal(signals.SIGTERM, lambda *_: sys.exit(143))
+    parent = os.getppid()
+    if _darwin():
+        def watch() -> None:
+            while os.getppid() == parent:
+                time.sleep(1)
+            os.kill(os.getpid(), signals.SIGTERM)
+        threading.Thread(target=watch, name="parent", daemon=True).start()
+        return
+    if ctypes.CDLL(None, use_errno=True).prctl(PR_SET_PDEATHSIG, signals.SIGTERM, 0, 0, 0):
+        raise OSError(ctypes.get_errno(), "Cannot ask to end with the parent process")
+    if os.getppid() != parent:   # it ended before the request
+        os.kill(os.getpid(), signals.SIGTERM)
+
 
 def detached_job_command(name: str, command: list[str], *, path: str) -> list[str]:
     """Start a command as a job outside the caller's own, so it survives the caller's restart."""
