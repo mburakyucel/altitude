@@ -65,7 +65,7 @@ test("an offering reply creates one task from one press", async ({ page, request
   await walk.state("create-task-03-pressed-working", { visible: [working], hidden: [c.press] });
   releasePost();
   await expect(working).toBeFocused();
-  await walk.state("create-task-04-l3-working", { visible: [working, c.typing], hidden: [c.press, c.convo.locator(".create-task-title")] });
+  await walk.state("create-task-04-l3-working", { visible: [working, c.typing], hidden: [c.press, c.convo.locator(".choice-about")] });
   await expect(working).toBeFocused();
   await expect(c.field).toHaveValue("A draft that stays");
   expect((await request.post("/fixture/release")).ok()).toBe(true);

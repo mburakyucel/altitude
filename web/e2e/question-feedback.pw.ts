@@ -51,7 +51,7 @@ test("mixed custom, preset and plain answers hand the turn back and remain conve
   await expectFooterAfterQuestions();
   await walk.state("02-custom-and-preset-staged-together", {
     visible: [retentionCard.getByRole("textbox"), card.getByRole("button", { name: "Send 2 answers", exact: true })],
-    hidden: [card.getByText("Sent to L2", { exact: true })],
+    hidden: [card.locator(".choice")],
   });
   if (info.project.name === "phone") {
     // Simulate the reduced viewport and focus scrolling; no native keyboard runs here.
@@ -189,7 +189,7 @@ test("refused and stale submissions retain independent drafts without accepting 
   await card.getByRole("textbox").fill("21 days");
   await page.route("**/api/decide", route => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Fixture transport refusal" }) }));
   await group.getByRole("button", { name: "Send 1 answer", exact: true }).click();
-  await walk.state("refused-answer-remains-editable", { visible: [card.getByRole("textbox"), group.getByRole("button", { name: "Retry", exact: true })], hidden: [group.getByText("Sent to L2", { exact: true })] });
+  await walk.state("refused-answer-remains-editable", { visible: [card.getByRole("textbox"), group.getByRole("button", { name: "Retry", exact: true })], hidden: [group.locator(".choice")] });
   await expect(card.getByRole("textbox")).toHaveValue("21 days");
   await page.unroute("**/api/decide");
   const recipientField = group.locator(`[data-question-id="${recipient.id}"]`).getByRole("textbox");

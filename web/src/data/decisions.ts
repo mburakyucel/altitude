@@ -1,4 +1,4 @@
-import type { Decision, Overview } from "./api";
+import type { Decision, Overview, TaskMessage } from "./api";
 
 /** Unknown attention never looks like a known empty inbox. */
 export function attentionCount(overview: Overview | undefined, failed: boolean) {
@@ -55,4 +55,39 @@ export function decisionKind(decision: Pick<Decision, "kind" | "asked_by">): { l
   if (decision.kind === "stopped") return { label: "Stopped mid-task", tone: "danger" };
   if (decision.kind === "review") return { label: "Review before merge", tone: "claimed" };
   return { label: decision.asked_by === "l3" ? "L3 brought this to you" : "The L2 asks", tone: "accent" };
+}
+
+export type Option = { key: string; label: string; text: string };
+/** A question's quick answers: its options, or its recommendation as the one accepting choice. */
+export function optionsFor(question: Decision): Option[] {
+  if (question.options) return question.options;
+  const recommended = question.recommendation;
+  return recommended?.text ? [{ key: "recommended", label: recommended.label || "Accept", text: recommended.text }] : [];
+}
+
+/** The review card's message, exactly as the merge check reads it (altitude/tasks.py `approved_pr`). */
+const APPROVAL = /^Approved: merge PR #(\d+)( at [0-9a-f]{7})?\.$/;
+
+/** One answer saved in an operator message: a quick option has its `label`; written text has none. */
+export type Selection = { question?: Decision; label?: string; text: string; about: string };
+
+/*
+ * What a saved operator message chose (SPEC.md §3.8.2 Decision selections), read from the record alone so a
+ * reload or another device shows the same: the answers whose saved response is this message, or the review
+ * card's approval. Nothing here changes what was recorded or how the owner cites it.
+ */
+export function selections(message: Pick<TaskMessage, "id" | "text">, questions: Decision[]): Selection[] {
+  const answered = new Map<string, Decision>();
+  for (const question of questions) {
+    if (question.response?.message_id === message.id) answered.set(question.id ?? question.slug, question);
+  }
+  if (answered.size) {
+    return [...answered.values()].map((question) => {
+      const text = question.response!.text;
+      return { question, text, label: optionsFor(question).find((option) => option.text === text)?.label,
+        about: question.question || question.title || question.slug };
+    });
+  }
+  const approval = APPROVAL.exec(message.text.trim());
+  return approval ? [{ label: "Approve merge", text: message.text, about: `PR #${approval[1]}` }] : [];
 }
