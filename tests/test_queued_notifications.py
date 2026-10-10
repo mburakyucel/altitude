@@ -1,9 +1,10 @@
 """A queued turn that every provider refuses before any output stays queued with its identity: a system notification
-keeps its place, and an operator chat keeps its turn and is answered first beneath its message."""
+keeps its place, and an operator chat keeps its turn and is answered first beneath its message. A notification that
+later state already answers never runs."""
 from datetime import datetime, timedelta, timezone
 
 from tests.support import AltitudeCase
-from altitude import config, engines, l3, route
+from altitude import config, engines, l3, route, state as S, tasks as T
 
 
 class TestQueuedNotifications(AltitudeCase):
@@ -38,6 +39,19 @@ class TestQueuedNotifications(AltitudeCase):
     def queue(self) -> list[dict]:
         return l3._queue_rows(l3.queue_path(self.project))
 
+    def ask(self, title: str, question: str, slug: str | None = None) -> dict:
+        """A fictional owner blocks on one question; returns its queued block notification."""
+        if slug is None:
+            task = T.new(self.project, title, "Fictional brief.")
+            task.update(state="running", attempt=1, agent_id="owner", session_id="conversation")
+            S.save_task(self.project, task)
+            slug = task["slug"]
+        else:
+            T.resume(self.project, slug)
+        T.block(self.project, slug, question, actor="l2", expected_attempt=1,
+                updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE}, tell_l3=True)
+        return next(row for row in self.queue() if row.get("slug") == slug)
+
     def recover(self) -> None:
         for engine in config.ENGINES:
             route.note_rejection({"engine": engine, "model": None}, {
@@ -53,15 +67,14 @@ class TestQueuedNotifications(AltitudeCase):
         return sum(row["role"] == role and row["trigger"] == "block" for row in l3.chat_history(self.project, None))
 
     def test_refused_notification_stays_queued_until_l3_is_available_then_is_delivered_once(self):
-        row = l3.queue_message(self.project, "Fictional task asks which mirror goes first.", trigger="block",
-                               slug="fictional-mirror")
+        row = self.ask("Mirror order", "Which mirror goes first?")
         self.mode = "limited"
 
         result = l3.deliver_queued(self.project)
 
         self.assertTrue(result["undelivered"])
         self.assertEqual([(item["id"], item["trigger"], item["slug"]) for item in self.queue()],
-                         [(row["id"], "block", "fictional-mirror")])
+                         [(row["id"], "block", row["slug"])])
         self.assertNotIn("retry_at", self.queue()[0], "an engine hold waits for an engine, not for a retry time")
         attempts = len(self.prompts)
         for _ in range(5):
@@ -75,7 +88,70 @@ class TestQueuedNotifications(AltitudeCase):
 
         self.assertEqual(self.queue(), [], "delivered as soon as L3 is available")
         self.assertEqual(self.turns("assistant"), 1)
-        self.assertEqual(self.prompts[-1].count("Fictional task asks which mirror goes first."), 1)
+        self.assertEqual(self.prompts[-1].count(row["text"]), 1)
+        self.assertIsNone(l3.deliver_queued(self.project))
+        self.assertEqual(self.turns("assistant"), 1, "an open question still arrives once")
+
+    def dropped(self) -> list[tuple]:
+        return [(event["message_id"], event["slug"]) for event in S.read_project_log(self.project, limit=0)
+                if event["kind"] == "l3-notice-dropped"]
+
+    def test_notification_answered_while_l3_was_unavailable_is_dropped_not_delivered(self):
+        self.mode = "limited"
+        row = self.ask("Mirror order", "Which mirror goes first?")
+        self.assertTrue(l3.deliver_queued(self.project)["undelivered"])
+        question = next(q for q in S.load_task(self.project, row["slug"])["questions"] if q["status"] == "open")
+        message = T.message(self.project, row["slug"], "burak", "The west mirror goes first.")
+        T.resolve_question(self.project, row["slug"], question["id"], question["revision"], message["id"],
+                           expected_attempt=1, disposition="answered", reason="The west mirror goes first.")
+        attempts = len(self.prompts)
+
+        self.recover()
+        self.mode = "ok"
+        self.assertIsNone(l3.deliver_queued(self.project))
+
+        self.assertEqual((self.queue(), len(self.prompts), self.turns("assistant")), ([], attempts, 0))
+        self.assertEqual(self.dropped(), [(row["id"], row["slug"])])
+
+    def test_notification_whose_task_ended_is_dropped_before_an_engine_is_available(self):
+        self.patch(engines, "remove_l2_worker", return_value="Fixture worker stopped.")
+        self.mode = "limited"
+        row = self.ask("Mirror order", "Which mirror goes first?")
+        self.assertTrue(l3.deliver_queued(self.project)["undelivered"])
+        T.reject(self.project, row["slug"], "Fictional request withdrawn.")  # also archives the task
+
+        self.assertIsNone(l3.deliver_queued(self.project), "no engine is eligible")
+        self.assertEqual(self.queue(), [])
+        self.assertEqual(self.dropped(), [(row["id"], row["slug"])])
+
+    def test_newer_notification_replaces_the_older_for_its_task(self):
+        first = self.ask("Mirror order", "Which mirror goes first?")
+        other = self.ask("Cache size", "How large may the cache grow?")
+        second = self.ask("Mirror order", "Which mirror goes first, given the outage?", slug=first["slug"])
+        self.assertIn("revision 2", second["text"])
+
+        self.assertEqual([row["id"] for row in self.queue()], [other["id"], second["id"]])
+        l3.deliver_queued(self.project)
+        l3.deliver_queued(self.project)
+
+        self.assertEqual(self.queue(), [])
+        self.assertEqual(self.turns("assistant"), 2)
+        self.assertNotIn("revision 1", self.prompts[-1])
+        self.assertEqual(self.prompts[-1].count(second["text"]), 1)
+
+    def test_newer_restart_notice_replaces_the_older(self):
+        chat = l3.queue_message(self.project, "Fictional operator question", trigger="chat", role=config.OPERATOR_ACTOR)
+        for inventory in ("first", "second", "third"):
+            notice = l3.queue_message(self.project, f"Fictional {inventory} restart inventory.", trigger="restart")
+        self.assertEqual(notice["position"], 2)
+        self.assertEqual([row["id"] for row in self.queue()], [chat["id"], notice["id"]])
+
+        l3.deliver_queued(self.project)
+        l3.deliver_queued(self.project)
+
+        self.assertEqual(self.queue(), [])
+        self.assertEqual([sum(f"Fictional {inventory} restart inventory." in prompt for prompt in self.prompts)
+                          for inventory in ("first", "second", "third")], [0, 0, 1])
 
     def test_a_turn_that_produced_output_is_not_replayed(self):
         l3.queue_message(self.project, "Fictional incident changed.", trigger="incident")
@@ -107,8 +183,7 @@ class TestQueuedNotifications(AltitudeCase):
         self.assertNotIn("retry_at", kept)
         self.assertEqual(self.rows_of(turn_id), [("user", "chat")], "the message stays without an error row")
         self.assertFalse(l3.drop_queued(self.project, kept["id"]), "a kept message is already in the conversation")
-        later = l3.queue_message(self.project, "Fictional task asks for a decision.", trigger="block",
-                                 slug="fictional-later")
+        later = self.ask("Decision", "Fictional task asks for a decision.")
         attempts = len(self.prompts)
         self.assertIsNone(l3.deliver_queued(self.project), "an unavailable L3 is not retried")
         self.assertEqual(len(self.prompts), attempts)

@@ -893,8 +893,9 @@ def queue_message(project: str, text: str, *, trigger: str, role: str = "server"
             refs = (image_store.store(project, uploads, message_id=request_id) if uploads
                     else image_store.lookup(project, image_ids))
             row.update(id=request_id, request_id=request_id, request_digest=request_digest, images=refs)
-        waiting = sum(row.get("trigger") != "project-message" for row in _queue_rows(path))
-        _write_queue(path, [*_queue_rows(path), row])
+        rows = _without_superseded(_queue_rows(path), row)
+        waiting = sum(item.get("trigger") != "project-message" for item in rows)
+        _write_queue(path, [*rows, row])
     return {**row, "position": waiting + 1}
 
 
@@ -904,8 +905,32 @@ def queue_locked(project: str, text: str, *, trigger: str, slug: str | None = No
     path = queue_path(project)
     row = {"at": S.now(), "id": uuid.uuid4().hex[:12], "trigger": trigger, "role": "server", "text": text,
            **_slug_meta(slug)}
-    _write_queue(path, [*_queue_rows(path), row])
+    _write_queue(path, [*_without_superseded(_queue_rows(path), row), row])
     return row
+
+
+def _without_superseded(rows: list[dict], new: dict) -> list[dict]:
+    """A restart notice lists every active task and a block notification every question then open, so a newer one
+    answers the older notice of its kind for the same project or task in full, and the older leaves the queue."""
+    if new["trigger"] not in ("block", "restart"):
+        return rows
+    return [row for row in rows if (row.get("trigger"), row.get("slug")) != (new["trigger"], new.get("slug"))]
+
+
+def _drop_answered_blocks(project: str) -> None:
+    """A block notification whose task no longer has an open question (answered, withdrawn, or closed when the task
+    reported, finished or was rejected) has nothing left to ask, so the drain drops it and records that."""
+    path = queue_path(project)
+    with S.project_lock(project):
+        rows = _queue_rows(path)
+        answered = [row for row in rows if row.get("trigger") == "block" and not any(
+            question["status"] == "open" for question in S.load_task(project, row["slug"]).get("questions", []))]
+        if not answered:
+            return
+        _write_queue(path, [row for row in rows if row not in answered])
+        for row in answered:
+            S.project_log(project, "l3-notice-dropped", message_id=row["id"], trigger="block", slug=row["slug"],
+                          reason="The task has no open question left.")
 
 
 def _ci_storage_failure(project: str, task: dict, exc: Exception) -> dict:
@@ -1283,6 +1308,7 @@ def deliver_queued(project: str) -> dict | None:
     for row in queued(project):
         if row.get("trigger") == "ci-recheck":
             queue_ci_recheck(project, row["slug"])
+    _drop_answered_blocks(project)
     if not path.exists():
         return None
     turn_lock = lock(project)

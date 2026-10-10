@@ -74,7 +74,7 @@ class TestSystemFault(AltitudeCase):
                 self.assertEqual(S.load_task(PROJECT, task["slug"]), saved)
                 self.assertEqual(dispatch.resume_due(PROJECT), [])
         self.assertEqual(len(incidents.index(PROJECT)), 1)
-        self.assertEqual([row["trigger"] for row in self.queued()], ["incident", "restart", "restart", "restart"])
+        self.assertEqual([row["trigger"] for row in self.queued()], ["incident", "restart"], "each restart notice replaced the last")
         self.assertEqual(len(self.inbox_texts()), 1)
         self.assertEqual(S.read_json(incidents.FAULTS)[json.dumps([PROJECT, "checkout"])]["incident"], first["incident"])
 
