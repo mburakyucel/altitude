@@ -905,6 +905,8 @@ def queue_message(project: str, text: str, *, trigger: str, role: str = "server"
             refs = (image_store.store(project, uploads, message_id=request_id) if uploads
                     else image_store.lookup(project, image_ids))
             row.update(id=request_id, request_id=request_id, request_digest=request_digest, images=refs)
+        elif request_id:
+            row.update(id=request_id, request_id=request_id)
         rows = _without_superseded(_queue_rows(path), row)
         waiting = sum(item.get("trigger") != "project-message" for item in rows)
         _write_queue(path, [*rows, row])
@@ -1534,11 +1536,12 @@ def _select(project: str, engine: str | None = None, *, model: str | None = None
 
 def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None = None,
          on_text=None, on_start=None, model: str | None = None, slug: str | None = None,
-         image_message: dict | None = None, on_split=None) -> dict:
+         image_message: dict | None = None, on_split=None, request_id: str | None = None) -> dict:
     """Run one L3 turn. `engine` pins this turn; otherwise the project pin or the weekly quota selects
     a provider. Each provider resumes only its own transcript. `slug` keeps the owning task reference on
     a task-linked project conversation and its queued turn. `on_split(text, delivery)` follows a Send now message the turn
-    took in; the turn then continues under its new id."""
+    took in; the turn then continues under its new id. `request_id` is the page's send id, kept on the
+    operator's row or, when the turn queues, as the queue row's id."""
     requested = engine
     with _turn_scope(project, trigger, slug) as active_turn:
         if active_turn is None:
@@ -1551,7 +1554,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
             if lifecycle and not lifecycle["ready"] and trigger == "report-landed":
                 return {"completed": False, "held": True, "error": why}
             row = queue_message(project, prompt, trigger=trigger, role=config.OPERATOR_ACTOR if trigger == "chat" else "server",
-                                slug=slug)
+                                slug=slug, request_id=request_id)
             return {"queued": row, "error": why + "; the turn is queued", "completed": False}
         turn_id = active_turn["id"]
         claimed = getattr(_turn_local, "claimed", None)
@@ -1570,7 +1573,8 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
         if not claimed or not claimed["logged"]:
             chat_log(project, "user", prompt, trigger=trigger, engine=choice.get("engine"), at=turn_started_at,
                      turn_id=turn_id, **_slug_meta(slug), **({key: image_message[key]
-                     for key in ("images", "request_id", "request_digest") if key in image_message} if image_message else {}))
+                     for key in ("images", "request_id", "request_digest") if key in image_message} if image_message
+                     else {"request_id": request_id} if request_id else {}))
         receipt_errors = []
         def receipt_error(exc):
             receipt_errors.append(str(exc))

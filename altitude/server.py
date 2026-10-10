@@ -2560,6 +2560,13 @@ class Handler(BaseHTTPRequestHandler):
                 image_args = self._image_request(o) if o.get("images") or o.get("image_ids") else {}
                 if not text and not image_args:
                     return self._json({"error": "empty"}, 400)
+                # The page's send id rides on the stored message or queue row, so its bubble reconciles by identity.
+                send_id = {}
+                if not image_args and "request_id" in o:
+                    try:
+                        send_id = {"request_id": uuid.UUID(o["request_id"]).hex}
+                    except (ValueError, TypeError, AttributeError):
+                        return self._json({"error": "Chat messages require a valid submission identity."}, 400)
                 # A follow-up from a decision page names the decision's task (SPEC.md §5.2 note 6).
                 try:
                     slug = S.require_task_slug(o["slug"]) if o.get("slug") else None
@@ -2583,7 +2590,8 @@ class Handler(BaseHTTPRequestHandler):
                     # The operator types faster than L3 answers. The message waits for the turn boundary in the
                     # durable queue instead of bouncing off a busy L3; the running turn drains it there.
                     try:
-                        row = l3.queue_message(project, text, trigger="chat", role=T.OPERATOR_MESSAGE_ROLE, slug=slug)
+                        row = l3.queue_message(project, text, trigger="chat", role=T.OPERATOR_MESSAGE_ROLE, slug=slug,
+                                               **send_id)
                     except ValueError as exc:
                         return self._json({"error": str(exc)}, 409)
                     request_l3_drain(project)
@@ -2632,7 +2640,7 @@ class Handler(BaseHTTPRequestHandler):
                 threading.Thread(target=watch, daemon=True).start()
                 try:
                     res = server_l3_turn(project, text, trigger="chat", on_text=send, on_start=started, on_split=split,
-                                         **({"slug": slug} if slug else {}))
+                                         **({"slug": slug} if slug else {}), **send_id)
                 finally:
                     over.set()
                 if gone:

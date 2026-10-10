@@ -748,6 +748,10 @@ export const ChatMessageSchema = z
     offer_turn: z.string().nullish(),
     /** Retained interrupted chat history: its text is the partial reply, possibly empty. */
     interrupted: z.boolean().nullish(),
+    /** On a user row the page sent directly: its send id. */
+    request_id: z.string().nullish(),
+    /** On a user row delivered from the queue: the queue rows it carries, each a send id when the page sent it. */
+    queue_ids: z.array(z.string()).nullish(),
   })
   .passthrough();
 
@@ -1460,7 +1464,7 @@ export async function forgetProject(queryClient: QueryClient, name: string) {
     projects: cached.projects.map((row) => row.name === name ? { ...row, managed: false } : row),
     queue: cached.queue.filter((row) => row.project !== name),
   });
-  for (const kind of ["project", "chat", "task", "transcript"]) {
+  for (const kind of ["project", "chat", "chat-outbox", "task", "transcript"]) {
     await queryClient.cancelQueries({ queryKey: [kind, name] });
     queryClient.removeQueries({ queryKey: [kind, name] });
   }
@@ -1656,13 +1660,15 @@ export async function streamChat(
   project: string,
   text: string,
   handlers: ChatStreamHandlers,
-  /** A follow-up from a decision page names the decision's task; its rows carry the slug (SPEC.md §4.3). */
-  options: { slug?: string } = {},
+  /** A follow-up from a decision page names the decision's task; its rows carry the slug (SPEC.md §4.3). The
+   * send id names the stored row or queue row, so the page reconciles its bubble by identity. */
+  options: { slug?: string; request_id?: string } = {},
 ): Promise<ChatSent> {
   const res = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ project, text, ...(options.slug ? { slug: options.slug } : {}) }),
+    body: JSON.stringify({ project, text, ...(options.slug ? { slug: options.slug } : {}),
+      ...(options.request_id ? { request_id: options.request_id } : {}) }),
   });
   if (!res.ok) throw await failure(res);
   if (!res.body) throw new Error("no response body");
