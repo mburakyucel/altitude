@@ -619,7 +619,10 @@ def assess(project, slug, review_id, *, actor, expected_attempt, dispositions, r
         task = _load(project, slug)
         _owner(task, actor, expected_attempt, required=True)
         review = _find(task, review_id)
-        if task.get("state") != "running" or review["state"] != "completed" or not isinstance(reason, str) or not reason.strip():
+        # The owner also assesses while parked on its own question; a fault or Stop holds the task instead.
+        parked = task.get("state") == "blocked" and not task.get("fault") and not task.get("stop_id")
+        if (task.get("state") != "running" and not parked or review["state"] != "completed"
+                or not isinstance(reason, str) or not reason.strip()):
             raise T.TransitionError("The current owner assesses a completed review with an evidence-bearing reason.")
         findings = {f["id"] for f in review["result"]["findings"]}
         if (not isinstance(dispositions, list) or any(not isinstance(d, dict) for d in dispositions)

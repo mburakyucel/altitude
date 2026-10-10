@@ -1259,6 +1259,42 @@ class TestReviews(AltitudeCase):
         self.assertEqual(task["state"], "blocked")
         self.assertEqual([q for q in task["questions"] if q["status"] == "open"], [original])
 
+    def test_owner_assesses_a_completed_review_while_parked_on_its_question(self):
+        git("reset", "--hard", "origin/main", cwd=self.worktree)
+        proposal = T.message(self.project, self.slug, "l2", "Proposal: preserve cursors while filtering deleted rows.")
+        T.block(self.project, self.slug, "Use this pagination design?", actor="l2", expected_attempt=1)
+        requested = self.request(actor=T.OPERATOR_MESSAGE_ROLE, subject="proposal")
+        with self.assertRaisesRegex(T.TransitionError, "completed review"):
+            self.assess(requested)
+        claim = T.claim_resume(self.project, self.slug)
+        T.resume(self.project, self.slug, agent_id="resumed-owner", expected_claim=claim["id"], input_delivered=True)
+        result = self.run_review(requested, proposal_id=proposal["id"], context_ids=[])
+        revised = T.message(self.project, self.slug, "l2", "Proposal: preserve cursors and add the missing fallback.")
+        task = T.block(self.project, self.slug, "Use this revised pagination design?", actor="l2", expected_attempt=1)
+        questions = [q for q in task["questions"] if q["status"] == "open"]
+        assess = lambda actor="l2", attempt=1: reviews.assess(
+            self.project, self.slug, result["id"], actor=actor, expected_attempt=attempt, proposal_id=revised["id"],
+            reason="The revised proposal answers the finding.",
+            dispositions=[{"finding_id": "f1", "disposition": "fixed", "reason": "The revision adds the fallback."}])
+        for actor, attempt in ((T.OPERATOR_MESSAGE_ROLE, None), ("l2", 2)):
+            with self.subTest(actor=actor, attempt=attempt), self.assertRaises(T.TransitionError):
+                assess(actor, attempt)
+        for held in ({"fault": "review-termination"}, {"stop_id": "operator-stop"}, {"state": "reported"}):
+            with self.subTest(held=held), self.assertRaisesRegex(T.TransitionError, "completed review"):
+                S.save_task(self.project, {**S.load_task(self.project, self.slug), **held})
+                try:
+                    assess()
+                finally:
+                    S.save_task(self.project, task)
+        assessed = assess()
+        self.assertEqual((assessed["reconciled"]["proposal_id"], assessed["unresolved"]), (revised["id"], []))
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual((task["state"], [q for q in task["questions"] if q["status"] == "open"]), ("blocked", questions))
+        S.save_task(self.project, {**task, "state": "rejected"})
+        T._archive(self.project, self.slug)
+        with self.assertRaisesRegex(T.TransitionError, "completed review"):
+            assess()
+
     def held_pr_question(self, text="Merge PR #42?"):
         task = S.load_task(self.project, self.slug)
         task.update(hold_merge="Operator review before merge", prs=[42], delivery={"number": 42, "head": "a" * 40, "at": S.now()})
