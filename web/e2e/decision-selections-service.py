@@ -67,7 +67,8 @@ def main():
             assert not resumed.is_alive(), "The fixture resume did not finish"
 
     class Handler(server.Handler):
-        def do_POST(self):
+        # Fixture controls answer PUT alone, so they never pass through the application's own routes.
+        def do_PUT(self):
             if self.path == "/fixture/record":
                 # The owner reads the answers and records each one as decided, citing the message that carried it.
                 settled(rollout)
@@ -89,7 +90,7 @@ def main():
                         task.setdefault("message_deliveries", {})[message_id] = {"at": S.now()}
                     S.save_task("atlas", task)
                 return self._json({"ok": True})
-            return super().do_POST()
+            return self._json({"error": "unknown fixture"}, 404)
 
     serve(Handler)
 

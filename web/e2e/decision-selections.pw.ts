@@ -22,8 +22,13 @@ function view(page: Page, info: TestInfo) {
   };
 }
 
-async function post(request: APIRequestContext, path: string, data?: object) {
-  const response = await request.post(path, data ? { data } : undefined);
+async function fixture(request: APIRequestContext, path: string) {
+  const response = await request.put(path);
+  expect(response.ok(), `${path} must succeed`).toBe(true);
+}
+
+async function post(request: APIRequestContext, path: string, data: object) {
+  const response = await request.post(path, { data });
   expect(response.ok(), `${path} must succeed`).toBe(true);
 }
 
@@ -66,7 +71,7 @@ test("quick answers show as the options pressed and follow their delivery to the
     visible: [page.getByRole("heading", { name: "Needs you", exact: true })], hidden: [rollout],
   });
 
-  await post(request, "/fixture/record");
+  await fixture(request, "/fixture/record");
   await walk.open("/projects/atlas/tasks/index-rollout");
   await expect(seven).toHaveAttribute("data-state", "done");
   await walk.state("04-decision-recorded-turns-green", {
@@ -144,7 +149,7 @@ test("a typed approval waits with Remove, then shows unconfirmed and sent delive
   await walk.state("10-removed-selection-leaves-the-chat", { action: () => remove.click(), visible: [v.conversation], hidden: [first] });
 
   await post(request, "/api/l2/message", { project: "atlas", slug: "cache-warmup", text: "Approved: merge PR #8." });
-  await post(request, "/fixture/take");
+  await fixture(request, "/fixture/take");
   await walk.open("/projects/atlas/tasks/cache-warmup");
   const second = v.pill("Approve merge", "PR #8");
   await walk.state("11-delivery-unconfirmed", {
@@ -153,7 +158,7 @@ test("a typed approval waits with Remove, then shows unconfirmed and sent delive
   });
   await expect(second).toHaveAttribute("data-state", "wait");
 
-  await post(request, "/fixture/receipt");
+  await fixture(request, "/fixture/receipt");
   await walk.open("/projects/atlas/tasks/cache-warmup");
   await expect(second).toHaveAttribute("data-state", "sent");
   await walk.state("12-delivered-shows-a-check", {
