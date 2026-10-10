@@ -321,15 +321,88 @@ class TestL2Steering(AltitudeCase):
         self.assertNotIn("never mind", resumed["prompt"])
         self.assertEqual(S.load_task(self.project, task["slug"])["state"], "running")
 
-    def test_an_unreleased_clean_exit_without_messages_is_still_a_fault(self):
-        task = self.launch("claude")
-        self.engine.workers[task["agent_id"]].update(state="done", status="exited")
+    def exit_turn(self, task, **worker):
+        """End the current worker's turn without a report and return the fault calls it raised."""
+        current = S.load_task(self.project, task["slug"])
+        self.engine.workers[current["agent_id"]].update(status="exited", **{"state": "done", **worker})
         item = next(row for row in dispatch.poll(self.project) if row["task"]["slug"] == task["slug"])
         with mock.patch.object(server.incidents, "system_fault") as fault:
             server.on_l2_finished(self.project, item)
-        blocked = S.load_task(self.project, task["slug"])
-        self.assertEqual((blocked["state"], blocked.get("resume_after")), ("blocked", None))
-        self.assertEqual(fault.call_args.args[0], "l2-died")
+        return fault.call_args_list
+
+    def nudges(self, task):
+        return [row for row in self.view(task)["messages"] if row["role"] == "system" and row["text"] == T.NUDGE]
+
+    def test_message_only_turn_is_nudged_once_then_a_second_one_is_a_dead_worker(self):
+        # #787: a clean exit with only a message resumes the same session once before the l2-died fault.
+        for engine in config.ENGINES:
+            with self.subTest(engine=engine):
+                task = self.launch(engine)
+                self.assertEqual(self.exit_turn(task), [])
+                nudged = S.load_task(self.project, task["slug"])
+                self.assertEqual((nudged["state"], nudged.get("fault"), nudged["nudged"]), ("blocked", None, True))
+                self.assertIn("only a message", nudged["blocked_reason"])
+                self.assertIn(task["slug"], dispatch.resume_due(self.project))
+                [row] = self.nudges(task)
+                self.assertEqual((row["by"], row["resume"]), ("altitude", True))
+                self.assertNotIn("delivery", row, "the nudge is a system row, not an operator message")
+                self.assertEqual(T.removable_messages(self.project, task["slug"], nudged), set())
+
+                dispatch.resume(self.project, task["slug"])
+                resumed = self.engine.calls[-1]
+                self.assertEqual((resumed["engine"], resumed["session_id"]), (engine, task["session_id"]))
+                self.assertEqual(resumed["prompt"], T.render_inbox([row]))
+                self.assertTrue(resumed["prompt"].startswith("Resumed by Altitude"))
+                self.assertEqual(S.load_task(self.project, task["slug"])["state"], "running")
+
+                faults = self.exit_turn(task)
+                self.assertEqual([call.args[0] for call in faults], ["l2-died"])
+                dead = S.load_task(self.project, task["slug"])
+                self.assertEqual((dead["state"], dead.get("resume_after"), dead.get("nudged")), ("blocked", None, None))
+                self.assertNotIn(task["slug"], dispatch.resume_due(self.project))
+                self.assertEqual(len(self.nudges(task)), 1)
+
+    def test_unclean_exit_faults_without_a_nudge(self):
+        for engine in config.ENGINES:
+            with self.subTest(engine=engine):
+                task = self.launch(engine)
+                faults = self.exit_turn(task, state="failed", detail="fixture CLI failure")
+                self.assertEqual([call.args[0] for call in faults], ["l2-died"])
+                self.assertEqual(S.load_task(self.project, task["slug"]).get("resume_after"), None)
+                self.assertEqual(self.nudges(task), [])
+
+    def test_queued_message_takes_precedence_over_the_nudge(self):
+        for engine in config.ENGINES:
+            with self.subTest(engine=engine):
+                task = self.launch(engine)
+                words = self.send(task, "Keep the old format.")
+                self.assertEqual(self.exit_turn(task), [])
+                self.assertIsNone(S.load_task(self.project, task["slug"]).get("nudged"))
+                dispatch.resume(self.project, task["slug"])
+                self.assertEqual(self.engine.calls[-1]["prompt"], T.render_inbox([words]))
+                self.assertEqual(self.nudges(task), [])
+
+    def test_owner_block_or_report_after_the_nudge_clears_it(self):
+        for engine in config.ENGINES:
+            for finish in ("block", "report"):
+                with self.subTest(engine=engine, finish=finish):
+                    task = self.launch(engine)
+                    self.assertEqual(self.exit_turn(task), [])
+                    dispatch.resume(self.project, task["slug"])
+                    if finish == "block":
+                        T.block(self.project, task["slug"], "Which approach?", actor="l2", updates={"waiting_on": "l3"})
+                        T.message(self.project, task["slug"], "l3", "Take the smaller approach.")
+                        dispatch.resume(self.project, task["slug"])
+                    else:
+                        T.report(self.project, task["slug"], {"verdict": "ok", "prs": []})
+                        T.continue_report(self.project, S.load_task(self.project, task["slug"]), actor="l3",
+                                          reason="Continue the delivery", check_pr=False)
+                        dispatch.resume(self.project, task["slug"])
+                    self.assertIsNone(S.load_task(self.project, task["slug"]).get("nudged"))
+                    self.assertEqual(S.load_task(self.project, task["slug"])["state"], "running")
+                    self.assertEqual(self.exit_turn(task), [], "a fresh message-only turn is nudged again")
+                    self.assertEqual(len(self.nudges(task)), 2)
+                    dispatch.resume(self.project, task["slug"])
 
     def test_stop_failure_never_confirms_and_resume_failure_restores_exact_queue(self):
         for engine in config.ENGINES:

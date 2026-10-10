@@ -854,7 +854,8 @@ def _on_l2_finished(project: str, item: dict) -> None:
         except T.TransitionError:
             log(f"[{project}/{slug}] dead-worker result lost a concurrent lifecycle race; ignored")
             return
-        if blocked.get("resume_after"):
+        if blocked.get("resume_after"):  # a queued message, a released turn or the one nudge continues the session
+            log(f"[{project}/{slug}] L2 turn ended without a report → resuming: {blocked.get('blocked_reason')}")
             request_task_resume(project, slug)
         else:
             incidents.system_fault("l2-died", detail, project=project, task=slug,
