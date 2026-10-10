@@ -1653,6 +1653,9 @@ names one. Open questions do not prevent either subject: a request can continue 
 question-blocked owner solely to prepare, run and assess review. Every open question, its revision, its card
 and any merge hold stay unchanged, and implementation or merge still needs its own approval. Because review
 freshness covers the task conversation and decisions, a later answer or resolution needs reassessment before merge.
+The same owner attempt assesses a review that completed while it waited on a question, whether it is
+running or blocked again, and republishes the revised question with the dispositions; a fault or Stop
+holds assessment until the owner resumes.
 L2 selects the original proposal message; missing concrete proposal input prevents reviewer invocation.
 Changes review captures the task branch merged onto current `origin/main`. When the branch conflicts
 with main, `request`, `run` and `assess` refuse with the conflicted files; reconcile the branch with
