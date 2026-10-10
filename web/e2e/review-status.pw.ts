@@ -47,6 +47,9 @@ test("Needs you shows each proposal and merge review and Back returns to its car
   expect(box.height).toBeGreaterThanOrEqual(info.project.name === "phone" ? 44 : 16);
   expect(box.x + box.width).toBeLessThanOrEqual((await notes.boundingBox())!.x + (await notes.boundingBox())!.width);
   await expect(longest.locator("span").last()).toHaveCSS("text-decoration-line", "underline");
+  await longest.scrollIntoViewIfNeeded();
+  await walk.state("01b-longest-line-and-no-line", { visible: [longest, header.getByText("Proposal review · not done", { exact: true })], hidden: [region.locator(".question-review")] });
+  await page.locator(".needs-page").evaluate((node) => { node.scrollTop = 0; });
 
   await roundTrip(page, merge.getByRole("link", { name: implementation, exact: true }), "keep-pagin-changes",
     "Expired cursors restart pagination", () => page.goBack());
