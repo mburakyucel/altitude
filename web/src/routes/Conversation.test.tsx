@@ -120,6 +120,24 @@ const conversation = () => screen.findByRole("region", { name: "Conversation" })
 afterEach(() => vi.useRealTimers());
 
 describe("queued L3 Send now", () => {
+  it("keeps the busy action before later arrivals and clears an error when its queue leaves", async () => {
+    let view: ChatView = { ...chatView, queued: [{ id: "first", text: "First instruction", trigger: "chat" }] };
+    mockFetch({ chatFn: () => jsonResponse(view), sendNow: () => jsonResponse({ error: "Fixture refusal" }, 409) });
+    const { user, queryClient } = renderApp({ route: "/projects/altitude" });
+    await user.click(await screen.findByRole("button", { name: "Send now" }));
+    await screen.findByText("Fixture refusal");
+    view = { ...view, queued: [{ id: "second", text: "Unrelated later instruction", trigger: "chat" }] };
+    await act(async () => { queryClient.setQueryData(["chat", "altitude"], view); });
+    await waitFor(() => expect(screen.queryByText("Fixture refusal")).toBeNull());
+    view = { ...view, queued: [
+      { id: "claimed", text: "Claimed instruction", trigger: "chat", send_now: true, sending: "turn" },
+      ...view.queued,
+    ] };
+    await act(async () => { queryClient.setQueryData(["chat", "altitude"], view); });
+    const busy = await screen.findByRole("button", { name: "Sending now" });
+    expect(busy.closest(".queued-row")).toHaveTextContent("Claimed instruction");
+    expect(screen.getByText("Unrelated later instruction").closest(".queued-row")).not.toContainElement(busy);
+  });
   it.each([390, 1440])("places incoming before its receiving turn and shows receipt warnings beside successful answers at %i", async (width) => {
     setViewport(width);
     mockFetch({ chat: { ...chatView, history: [
@@ -1255,6 +1273,7 @@ describe.each([390, 1440])("Create task under a reply at %ipx (SPEC.md §3.3)", 
     expect(within(region).getByText("Create task sent")).toHaveAttribute("role", "status");
     expect(within(region).queryByText(`Create task: ${title}`)).toBeNull();
     expect(within(region).queryByRole("list", { name: "Queued messages" })).toBeNull();
+    expect(within(region).queryByRole("button", { name: "Send now" })).toBeNull();
     expect(posted(fetchMock, "/api/chat")).toEqual({ project: "altitude", offer_turn: offered.turn_id });
     expect(posted(fetchMock, "/api/chat", 1)).toBeNull();
     expect(screen.getByLabelText("Message L3 about altitude")).toHaveValue("half a thought");

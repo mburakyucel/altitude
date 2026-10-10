@@ -131,6 +131,16 @@ interface StubOptions {
 const terminalRunning = { state: "running", id: "t1", enabled: true, folder: "/fixture/worktree", offset: 0, exit_code: null, reason: null, busy: null };
 
 describe("queued L2 Send now", () => {
+  it("clears a failed Send now alert when its queued message is delivered", async () => {
+    const message = { id: "first", role: "operator", text: "First steer", delivery: { state: "queued", removable: true, send_now: true } };
+    const record = { ...running, messages: [message] };
+    stub(record, { sendNow: () => jsonResponse({ error: "Fixture refusal" }, 409) });
+    const { user, queryClient } = renderApp({ route: "/projects/altitude/tasks/fix-timer" });
+    await user.click(await screen.findByRole("button", { name: "Send now" }));
+    await screen.findByText("Fixture refusal");
+    await act(async () => { queryClient.setQueryData(["task", "altitude", "fix-timer"], { ...record, messages: [{ ...message, delivery: { state: "delivered", removable: false } }] }); });
+    await waitFor(() => expect(screen.queryByText("Fixture refusal")).toBeNull());
+  });
   it("keeps the queued message through interruption until canonical delivery and sends its identity once", async () => {
     let release!: (response: Response) => void;
     const message = { id: "steer-now", role: "operator", text: "Check this first", delivery: { state: "queued", at: null, removable: true, send_now: true } };

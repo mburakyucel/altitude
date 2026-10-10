@@ -339,7 +339,8 @@ export default function Conversation({
   const kept = new Map(queued.flatMap((row) => row.turn_id && shown.has(row.turn_id) ? [[row.turn_id, row] as const] : []));
   const waiting = queued.filter((row) => !row.turn_id || !shown.has(row.turn_id));
   const operatorQueue = queued.filter((row) => !row.project_message && (!row.trigger || row.trigger === "chat"));
-  const lastWaiting = operatorQueue.at(-1);
+  const actionable = operatorQueue.filter((row) => !row.offer_turn);
+  const lastWaiting = actionable.filter((row) => row.send_now).at(-1) ?? actionable.at(-1);
   const sendingNow = sendNow.isPending || operatorQueue.some((row) => row.send_now);
   const busy = Boolean(view?.busy || view?.active || (local && !local.done));
   const empty = Boolean(view && view.history.length === 0 && !view.active && !local && queued.length === 0);
@@ -465,6 +466,12 @@ export default function Conversation({
     );
   }
 
+  const queueAction = lastWaiting ? <div className="queued-actions">
+    <SendNow pending={sendingNow} disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending}
+      reason={view?.send_now_reason || operatorQueue.find((row) => row.send_now)?.send_now_reason}
+      onClick={() => sendNow.mutate(lastWaiting.id)} />
+  </div> : null;
+
   return (
     <ProseScope project={name} repository={project.data?.repository}>
     <ProseTerminal value={runTarget}>
@@ -496,6 +503,7 @@ export default function Conversation({
           ) : null}
           {rows}
           <p className="visually-hidden" role="status">{announcement}</p>
+          {lastWaiting && !listed.some((row) => row.id === lastWaiting.id) ? queueAction : null}
           {listed.length > 0 ? (
             <ul className="queued" aria-label="Queued messages">
               {listed.map((row) => (
@@ -509,16 +517,12 @@ export default function Conversation({
                       side={row.sending || row.turn_id ? undefined : <RemoveMessage removing={dequeue.isPending && dequeue.variables === row.id}
                         disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending} onClick={() => dequeue.mutate(row.id)} />} />
                   ) : <p className="queued-text text-meta text-muted">{row.text}</p>}
+                  {row.id === lastWaiting?.id ? queueAction : null}
                 </li>
               ))}
             </ul>
           ) : null}
-          {lastWaiting ? <div className="queued-actions">
-            <SendNow pending={sendingNow} disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending}
-              reason={view?.send_now_reason || operatorQueue.find((row) => row.send_now)?.send_now_reason}
-              onClick={() => sendNow.mutate(lastWaiting.id)} />
-          </div> : null}
-          {sendNow.isError ? <SendNowError error={sendNow.error} /> : null}
+          {sendNow.isError && operatorQueue.some((row) => row.id === sendNow.variables) ? <SendNowError error={sendNow.error} /> : null}
           <p className="sr-only" role="status">{dequeue.isSuccess ? "Message removed" : ""}</p>
         </div>
       </div>

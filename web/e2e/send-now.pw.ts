@@ -310,9 +310,17 @@ test.describe("L3 Send now", () => {
     await walk.state("l3-02-removed-and-queued", { visible: [convo.getByRole("button", { name: "Send now", exact: true })], hidden: [row("Remove this message")] });
     await convo.getByRole("button", { name: "Send now", exact: true }).click();
     await walk.state("l3-03-sending-into-turn", { visible: [convo.getByRole("button", { name: "Sending now" }), row("Deliver this next").getByRole("status", { name: "Sending", exact: true })], hidden: [row("Deliver this next").getByRole("button", { name: "Remove", exact: true })] });
+    await field.fill("Later arrival stays queued");
+    await convo.getByRole("button", { name: /^(Send|Queue)$/ }).click();
+    await walk.state("l3-later-arrival-outside-claim", {
+      visible: [row("Deliver this next").getByRole("button", { name: "Sending now" }), row("Later arrival stays queued").getByRole("button", { name: "Remove", exact: true })],
+      hidden: [row("Later arrival stays queued").getByRole("status", { name: "Sending", exact: true })],
+    });
     expect((await request.post("/fixture/deliver")).ok()).toBe(true);
     await walk.state("l3-04-joined-turn", { visible: [convo.getByText("Checking the current work.", { exact: true }), convo.locator(".turn").getByText("Deliver this next", { exact: true })], hidden: [row("Deliver this next")] });
     expect((await status()).delivered).toEqual(["Earlier queued message\n\nDeliver this next"]);
+    await expect(row("Later arrival stays queued").getByRole("button", { name: "Send now", exact: true })).toBeVisible();
+    await row("Later arrival stays queued").getByRole("button", { name: "Remove", exact: true }).click();
     expect((await request.post("/fixture/release")).ok()).toBe(true);
     await walk.state("l3-12-turn-answers-sent-message", { visible: [convo.getByText("Read: Earlier queued message", { exact: true }), convo.getByText("Deliver this next.", { exact: true })], hidden: [row("Deliver this next"), row("Earlier queued message")] });
     await expect.poll(async () => (await (await request.get("/api/chat/atlas")).json()).active).toBeNull();

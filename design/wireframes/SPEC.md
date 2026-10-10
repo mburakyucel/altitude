@@ -1724,8 +1724,9 @@ removal is announced. Denied, conflict and unconfirmed actions keep their inline
 A message retained because no engine can run stays outlined in its historical position, without ×,
 and joins newer queued messages in order after recovery. Its reply appears beneath that bubble,
 or beneath the last newer message. Older retained messages appear in the
-queue list when their history is outside the loaded window. The queue action remains available even
-when retained messages or Create task controls occupy the visible conversation anchors.
+queue list when their history is outside the loaded window. The queue action remains available for
+retained messages. Create task presses keep their own control rather than a separate Send now.
+While a claimed group waits, its action stays with that group, before any later arrivals.
 Send now never stops running work; task-chat Stop remains the hard stop. Unavailable actions reveal
 the server's reason on press. Both controls have 44px phone targets; screen readers retain their
 names, busy state and delivery statuses.
