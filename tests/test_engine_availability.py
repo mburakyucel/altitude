@@ -91,7 +91,7 @@ class TestFailureEvidence(AltitudeCase):
     def test_codex_sync_uses_structured_failure_with_empty_stderr(self):
         stdout = stream({"type": "thread.started", "thread_id": "session"},
                         {"type": "turn.failed", "error": {"code": "model_not_found", "message": "missing"}})
-        process = mock.Mock(pid=123, returncode=1)
+        process = mock.Mock(pid=123, returncode=1, stdin=io.StringIO())
         process.communicate.return_value = (stdout, "")
         with mock.patch.object(engines.subprocess, "Popen", return_value=process), \
              mock.patch.object(engines, "_codex_session_model", return_value={}):
@@ -104,7 +104,7 @@ class TestFailureEvidence(AltitudeCase):
         for activity in ([], [{"type": "item.started", "item": {"type": "mcp_tool_call"}}]):
             stdout = stream({"type": "thread.started", "thread_id": "session"}, *activity,
                             {"type": "turn.failed", "error": {"message": "You've hit your usage limit"}})
-            process = mock.Mock(pid=123, returncode=1)
+            process = mock.Mock(pid=123, returncode=1, stdin=io.StringIO())
             process.communicate.return_value = (stdout, "")
             with self.subTest(activity=activity), mock.patch.object(engines.subprocess, "Popen", return_value=process), \
                  mock.patch.object(engines, "_codex_session_model", return_value={}):

@@ -28,7 +28,8 @@ try:
         if task.get("state") != "running":
             sys.exit(0)
         rows = T.pending(project, slug)
-        waiting = [row["id"] for row in rows if T.from_operator(row)]
+        sending = T.send_now_ids(task)  # the driver is writing them into this turn
+        waiting = [row["id"] for row in rows if T.from_operator(row) and row["id"] not in sending]
         rows = [row for row in rows if not T.from_operator(row)]
         attached = images.resolve(project, [image for row in rows for image in row.get("images") or []], task=slug)
     resolved = {image["id"]: image for image in attached}

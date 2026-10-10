@@ -1098,8 +1098,9 @@ blocked tasks.
 The existing message bubble shows **Queued · waiting for a checkpoint**, **Queued · held until you
 continue**, **Delivered to session** only with handoff evidence, or **Delivery unconfirmed** when
 evidence is missing. Each eligible queued operator bubble has a bordered **Send now** beside **Remove**;
-Send now explains **Stops work and reviews to deliver now.** It requests the
-existing Stop and same-session continuation for that message. Quick-choice receipts and
+Send now explains **Joins the current turn without stopping its work.** It hands the whole queued
+removable operator group to the running turn in arrival order; each message keeps its bubble and
+receipt, and later arrivals remain outside the claim. Quick-choice receipts and
 messages already used by recorded decisions keep their evidence. **Removing…** disables removal until
 the response; success removes only that bubble from the conversation. Original text remains in
 durable evidence. Claim shows **Sending to session ·
@@ -1107,9 +1108,11 @@ cannot remove**, and uncertain handoff shows **Delivery unconfirmed · cannot re
 A prelaunch failure restores the queued controls. A refused removal refreshes delivery and names the
 refusal beside that message; denied and unconfirmed requests show their own inline error. Saved or
 loading reads disable both actions. **Sending now…** disables repeated sends and removal while the
-request or server delivery is pending. The server's receipt establishes delivery; the UI does not move
-the message optimistically. Stopped, question-waiting, faulted or unavailable owners show the server's
-reason beside a disabled Send now. Denied, conflict and unconfirmed requests refresh the row and show
+request is pending; an accepted message shows **Sending now · joining the current turn** with no Remove
+until the turn takes it in (**Delivered to session**) or returns it to the queue. The server's receipt
+establishes delivery; the UI does not move the message optimistically. Stopped, question-waiting,
+faulted or unavailable owners, messages with images and a second message while one is being sent show
+the server's reason beside a disabled Send now. Denied, conflict and unconfirmed requests refresh the row and show
 their inline explanation. Claimed, delivered and removed messages have no Send now control.
 The empty queue has no queued controls; listening and transcription
 keep the existing composer behavior. Removal does not undo a lifecycle request or recorded decision.
@@ -1696,16 +1699,19 @@ Messages sent while L3 is mid-turn queue and run at the next turn boundary in or
 keeps its accent circle with the arrow. Phone names the active work in the header and the run order
 on queued rows; desktop also shows "L3 is mid-turn · runs next" under the field. Queued rows stay
 inside the message area until they run, with bordered **Send now** beside **Remove** while permitted.
-Send now puts that row first, interrupts an active chat at its engine's safe boundary, and runs the
-selected message next. The interrupted reply keeps any partial text as an ordinary reply, with no
-notice: the operator knows they interrupted it. A reply stopped before any text leaves no row, so the
-two operator bubbles sit back to back (8px apart, the first bubble's time beside it).
-System work finishes before the selected message runs. Pending rows say
-**Sending now…**, with **Waiting for current turn to stop** or **Runs next after system work** as
-appropriate; Send now is disabled. Remove is disabled while the HTTP request is pending and remains
-available after acceptance until claim, even when an engine becomes unavailable. Removal does not
-undo an interruption already requested. An unavailable engine, active chat still starting or operator
-wait disables Send now with the server's explanation. Denied, conflict and unconfirmed requests retain the row
+Send now promotes the whole queued operator group in arrival order; each message keeps its bubble
+and receipt, and later arrivals remain outside the claim. A coordinator that delivers at turn boundaries
+shows **Runs next after this turn** while its current chat turn continues. With native delivery, pending
+rows say **Sending now…** with **Sending into the current turn** and no Remove. Once the turn takes them in,
+the reply so far ends, each message appears as its own operator bubble, and the rest of the reply streams
+beneath the group. Historical interrupted replies keep any partial text as an ordinary reply,
+with no notice. An empty interrupted reply leaves no row, so the two operator bubbles sit back to
+back (8px apart, the first bubble's time beside it). A message whose engine acknowledgement is uncertain retains **Delivery unconfirmed**
+under its bubble after settlement and reload; it is never replayed automatically.
+A group with images, one sent during system work (**Runs next after system work**) or while
+no turn runs (**Runs next**) moves first and runs as the next turn; Remove stays available until claim.
+Remove is disabled while the HTTP request is pending. An unavailable engine or operator wait disables
+Send now with the server's explanation. Denied, conflict and unconfirmed requests retain the row
 and show their own inline error after refreshing canonical state. The row becomes its turn bubble
 only when the server admits it; claimed, delivered or removed rows have no queued actions. A message
 admitted while no L3 engine can run keeps its bubble with the muted queued status (**Queued · runs
@@ -1713,6 +1719,7 @@ next**) and Send now beneath it, disabled with the server's explanation; there i
 Remove, because it was already sent. It runs before system work once an engine is available, and its
 reply appears beneath the same bubble. A kept message older than the loaded conversation appears in the
 queued rows with the same status and Send now, still without Remove.
+Send now has no timer and never stops running work; task-chat Stop remains the hard stop.
 Both controls have 44px phone targets and wrap with their explanations on narrow screens.
 A running turn shows
 either a system line in progress (§3.4) or, for a `chat` turn, a typing indicator under the
