@@ -2101,11 +2101,11 @@ image-bearing and server-triggered messages keep their own turn, and nothing run
 An operator message whose turn finds no eligible engine, or whose every option refuses before provider
 output, is kept rather than failed. Its user row stays in history under the turn id and no error row is
 written; the queue keeps one chat row carrying that `turn_id`, its text and any images. `l3._keep` orders the
-queue as an accepted Send now group, then kept messages in send order, then the rest. A kept row leads a
-group like any chat row, folding the newer text messages of its conversation, while a second kept row starts
-its own turn. The claim logs only the rows not yet in history: a kept row alone publishes its own turn id
-without logging again, so the reply lands beneath it, and a kept row with newer rows runs under a new turn id
-that the newer bubbles end with. The page shows a kept message's queued status under its own bubble rather
+queue as an accepted Send now group, then kept messages in send order, then the rest. Kept rows fold like
+any text chat row of their conversation, and while one waits for its retry time only Send now rows run, so
+no message overtakes it. The claim logs only the rows not yet in history: kept rows alone publish the last
+one's turn id without logging again, so the reply lands beneath it, and kept rows with newer rows run under
+a new turn id that the newer bubbles end with. The page shows a kept message's queued status under its own bubble rather
 than in the queued list. Send now on any member promotes the whole group, kept row included, for boundary
 delivery; a kept row never joins a running turn natively. A refused group retains all original queue
 identities through subsequent retries, so its own bubbles are excluded from historical context and its

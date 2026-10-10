@@ -1257,14 +1257,14 @@ A turn that every option refuses before any provider output keeps its rows.
 A system notification (block, restart, incident or upstream issue) returns to the front of the queue with
 its id. An operator message, sent directly or from the queue, stays in the conversation as its own bubble
 with no error row; the queue keeps it with its `turn_id`, text and images. Kept messages lead the queue in
-send order, behind only an accepted Send now group. Each kept message starts its own turn and the newer
-messages of its conversation queued behind it fold into that turn; only those newer messages are added to
-the conversation, so the kept bubble appears once. A kept message alone runs under its original turn id, so
-its reply appears beneath it with trigger `chat`; with newer messages the reply follows the last of them. A
-kept message offers Send now but not Remove, since it was already sent; Send now runs its group without
-waiting for a retry delay. When routing still offers an engine right after the refusal, the kept rows wait
+send order, behind only an accepted Send now group, and fold with the rest of their conversation's
+queued messages into one turn like any chat row. Only the messages not yet in the conversation are added,
+so each kept bubble appears once. Kept messages alone run under the last one's turn id, so the reply appears
+beneath it with trigger `chat`; with newer messages the reply follows the last of them. A kept message
+offers Send now but not Remove, since it was already sent; Send now runs its group without waiting for a
+retry delay. When routing still offers an engine right after the refusal, the kept rows wait
 1, 5, 15, then 60 minutes (`retry_at`) so the drain cannot loop; a waiting notification lets later messages
-proceed, while a waiting operator message lets only a Send now row overtake it. An engine hold already
+proceed, while any waiting operator message lets only a Send now row overtake it. An engine hold already
 stops the drain, so kept rows run as soon as an engine is eligible; a pinned L3 waits for its own engine
 and model. A turn with provider output is never replayed and keeps its Retry. An Auto-selected turn resumes only the chosen provider's session;
 choosing another configured model on that provider retains its conversation.

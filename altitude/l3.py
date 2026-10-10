@@ -1054,11 +1054,10 @@ def _keep(project: str, kept: list[dict], *, claimed: bool = True) -> None:
 
 
 def _eligible(project: str, rows: list[dict]) -> list[dict]:
-    """The rows that may run now, in queue order. While the oldest kept chat waits for its retry time, only an
-    accepted Send now row may run, so system work never overtakes the operator's message."""
+    """The rows that may run now, in queue order. While a kept chat waits for its retry time, only an accepted
+    Send now row may run, so neither system work nor a newer message overtakes the operator's message."""
     ready = [row for row in rows if _queue_ready(project, row)]
-    kept = next((row for row in rows if row.get("turn_id")), None)
-    if kept is not None and kept not in ready:
+    if any(row.get("turn_id") and row not in ready for row in rows):
         return [row for row in ready if row.get("send_now")]
     return ready
 
@@ -1300,7 +1299,7 @@ def _finish_sends(project: str) -> None:
 def deliver_queued(project: str) -> dict | None:
     """Run the oldest queued message as one L3 turn, folding the chat messages that follow it into that
     same turn so the operator's consecutive messages are read together, each on its own line and in arrival
-    order. A kept chat leads the messages queued after it; alone, it runs under its own turn again.
+    order. Kept chats fold like any chat; without newer messages they run under the last kept turn again.
     Nothing runs while L3 is busy or no engine is available."""
     path = queue_path(project)
     if not config.is_managed(project) or not has_queued_turn(project):
@@ -1326,19 +1325,18 @@ def deliver_queued(project: str) -> dict | None:
             if not rows:
                 return None
             take = 1
-            # A Create task press is a turn of its own: the reply's button shows that turn, never typed text. A kept chat
-            # leads the newer messages behind it; each kept chat starts its own turn.
+            # A Create task press is a turn of its own: the reply's button shows that turn, never typed text.
             if rows[0].get("trigger") == "chat" and not rows[0].get("images") and not rows[0].get("offer_turn"):
                 while (take < len(rows) and rows[take].get("trigger") == "chat"
                        and rows[take].get("slug") == rows[0].get("slug") and not rows[take].get("images")
-                       and not rows[take].get("turn_id") and not rows[take].get("offer_turn")
+                       and not rows[take].get("offer_turn")
                        and bool(rows[take].get("send_now")) == bool(rows[0].get("send_now"))):
                     take += 1
             selected = rows[:take]
             selected_ids = [row.get("id") for row in selected]
             message_ids = [identity for row in selected for identity in row.get("queue_ids", [row["id"]])]
             prompt = "\n\n".join(row["text"] for row in selected)
-            # A kept chat's message is already in the conversation; only the messages after it are logged.
+            # A kept chat's message is already in the conversation; only the others are logged.
             new = [row for row in selected if not row.get("turn_id")]
 
             def claim(active_turn) -> bool:
@@ -1373,7 +1371,7 @@ def deliver_queued(project: str) -> dict | None:
                     if offer_turn:
                         active_turn["offer_turn"] = offer_turn  # task creation in this turn is bound to that reply
                     if not new:
-                        return True  # A kept chat alone runs under its turn, so the reply lands beneath it.
+                        return True  # Kept chats alone run under the last one's turn, so the reply lands beneath it.
                     try:
                         if selected[0].get("send_now") and not selected[0].get("images"):
                             bubbles = [{"role": "user", "text": row["text"], "trigger": trigger,
@@ -1401,7 +1399,7 @@ def deliver_queued(project: str) -> dict | None:
             trigger = selected[0].get("trigger") or "queued"
             slug = selected[0].get("slug") or None
             try:
-                kept_turn = None if new else selected[0]["turn_id"]
+                kept_turn = None if new else selected[-1]["turn_id"]
                 with _active_turn(project, trigger, claim=claim, slug=slug, turn_id=kept_turn) as active_turn:
                     if active_turn is None:  # activation or a removed row leaves the durable queue for the next tick
                         return None
