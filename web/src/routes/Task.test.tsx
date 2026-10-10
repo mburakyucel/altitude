@@ -1011,6 +1011,31 @@ describe("Phone swipe lifecycle", () => {
     } finally { clock.mockRestore(); }
   });
 
+  it("holds a swipe that lands during the settle until it lifts, across the switch, moving nothing", async () => {
+    stub(running);
+    const { router } = renderApp({ route });
+    await screen.findByRole("region", { name: "Task conversation" });
+    touch("touchStart", 300);
+    touch("touchMove", 100);
+    touch("touchEnd", 100);
+    expect(track().style.transform).toBe("translateX(-390px)");
+    const scroller = document.querySelector(".convo-scroll")!;
+    const move = (x: number, y = 300) => fireEvent.touchMove(scroller, { touches: [{ clientX: x, clientY: y }], cancelable: true });
+    touch("touchStart", 100);
+    expect(move(105)).toBe(true);
+    expect(move(300)).toBe(false);
+    expect(track().style.transform).toBe("translateX(-390px)");
+    await waitFor(() => expect(router.state.location.pathname).toBe(`${route}/live`));
+    expect(move(340)).toBe(false);
+    expect(track().style.transform).toBe("");
+    touch("touchEnd", 340);
+    expect(router.state.location.pathname).toBe(`${route}/live`);
+    // Once it lifts, the next touch is a swipe again.
+    touch("touchStart", 100, ".live-body");
+    touch("touchMove", 300, ".live-body");
+    expect(track().style.transform).toBe("translateX(200px)");
+  });
+
   it("springs back when a second finger lands during the drag", async () => {
     stub(running);
     const { router } = renderApp({ route });

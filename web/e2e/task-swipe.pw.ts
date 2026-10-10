@@ -88,6 +88,8 @@ test("@phone-only content swipes preserve both reading positions, draft and sele
   await expect(page.getByText("Terminal is off", { exact: true })).toBeVisible();
   await swipe(page, 290, 400, -220);
   await expect(page).toHaveURL(`${path}/terminal`);
+  // From rest, the swipe below is the first view's own rather than one held during this spring-back.
+  await expect.poll(() => page.locator(".task-track").evaluate((node) => node.style.transform)).toBe("");
   await tabs.getByRole("link", { name: "Conversation", exact: true }).click();
   await expect(conversation).toBeVisible();
   await swipe(page, 100, 320, 220);
@@ -213,6 +215,8 @@ test("@phone-only the swipe tracks the finger: reveal, load, settle, spring back
   expect(await offset(track)).toBeLessThan(60);
   await walk.state("08-end-resistance-before-conversation", { visible: [conversation], hidden: [] });
   await touch.lift();
+  // A swipe that lands during the spring-back is held: it neither moves the track nor reaches the browser's Back.
+  await swipe(page, 90, 400, 220);
   await expect.poll(() => offset(track)).toBe(0);
   await expect(page).toHaveURL(path);
   // The fixture task has a worktree, so Terminal is the last view.

@@ -2858,7 +2858,7 @@ read-only with the composer and activity preview gone. Phone swipes move one tab
 the tabs in their order, Conversation, Live session and Terminal when the task offers one, left to the
 next and right to the previous, without wrapping: the views sit on one track that follows the finger,
 settles into the switch past half the width or a fling, springs back otherwise and resists past either
-end; reduced motion switches instantly. Conversation and Live session stay mounted and laid out, the
+end; a swipe landing during a settle is held until it lifts; reduced motion switches instantly. Conversation and Live session stay mounted and laid out, the
 inactive one invisible with its transcript polling paused; a drag toward Terminal shows its loading
 view, and the shell opens or reattaches only once the switch completes. The tab row stays in place
 during the drag. Deliberate horizontal gestures exclude browser edges, selection, controls, the

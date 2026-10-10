@@ -53,6 +53,12 @@ export function completes(dx: number, velocity: number, width: number, view: num
   return Math.abs(dx) >= width * COMPLETE_AT;
 }
 
+/** The direction a touch has committed to, once it has: deliberately horizontal or vertical. */
+function locked(dx: number, dy: number): "x" | "y" | null {
+  if (Math.abs(dy) > 12 && Math.abs(dx) <= Math.abs(dy) * 1.5) return "y";
+  return Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.5 ? "x" : null;
+}
+
 interface Gesture extends Sample {
   y: number;
   width: number;
@@ -73,6 +79,9 @@ export function useTaskSwipe(enabled: boolean, view: number, views: number, swit
   const [dragging, setDragging] = useState(false);
   const navigate = useRef(switchView);
   navigate.current = switchView;
+  // A swipe that lands while the track settles is held until it lifts, across the switch it may outlast:
+  // it moves nothing, and the browser's own horizontal swipe (Back) never gets it.
+  const held = useRef<{ x: number; y: number; horizontal: boolean } | null>(null);
   // The resting position is the layout's own: a completed switch keeps its settled transform until the
   // route has changed, then drops it in the same paint, so the view never snaps.
   useLayoutEffect(() => {
@@ -116,25 +125,39 @@ export function useTaskSwipe(enabled: boolean, view: number, views: number, swit
       cancel();
       const target = event.target instanceof Element ? event.target : null;
       const touch = event.touches[0];
-      if (settling || event.touches.length !== 1 || !touch || selecting() ||
+      if (event.touches.length !== 1 || !touch || selecting() ||
           !target?.closest('.convo-scroll, .live-body, .terminal-body') ||
           target.closest('a, button, input, textarea, select, summary, pre, [contenteditable], [role="dialog"], .terminal-frame, .terminal-screen, .terminal-keys') ||
           touch.clientX < 24 || touch.clientX > window.innerWidth - 24) return;
       for (let element: Element | null = target; element && element !== node; element = element.parentElement) {
         if (element.scrollWidth > element.clientWidth && /auto|scroll/.test(getComputedStyle(element).overflowX)) return;
       }
+      if (settling) { held.current = { x: touch.clientX, y: touch.clientY, horizontal: false }; return; }
       gesture = { x: touch.clientX, y: touch.clientY, at: event.timeStamp, width: node.clientWidth, horizontal: false,
         reduced: Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches), samples: [{ x: touch.clientX, at: event.timeStamp }] };
     };
     const move = (event: TouchEvent) => {
-      if (!gesture) return;
       const touch = event.touches[0];
+      const hold = held.current;
+      if (hold) {
+        if (event.touches.length !== 1 || !touch) { held.current = null; return; }
+        if (!hold.horizontal) {
+          const way = locked(touch.clientX - hold.x, touch.clientY - hold.y);
+          if (way === "y") held.current = null;
+          if (way !== "x") return;
+          hold.horizontal = true;
+        }
+        if (event.cancelable) event.preventDefault();
+        return;
+      }
+      if (!gesture) return;
       if (event.touches.length !== 1 || !touch || selecting()) { cancel(); return; }
       const dx = touch.clientX - gesture.x;
       const dy = touch.clientY - gesture.y;
       if (!gesture.horizontal) {
-        if (Math.abs(dy) > 12 && Math.abs(dx) <= Math.abs(dy) * 1.5) { gesture = null; return; }
-        if (!(Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.5)) return;
+        const way = locked(dx, dy);
+        if (way === "y") { gesture = null; return; }
+        if (!way) return;
         gesture.horizontal = true;
         if (!gesture.reduced) setDragging(true);
       }
@@ -143,12 +166,14 @@ export function useTaskSwipe(enabled: boolean, view: number, views: number, swit
       if (!gesture.reduced) node.style.transform = `translateX(${dragOffset(dx, gesture.width, view, views)}px)`;
     };
     const end = (event: TouchEvent) => {
+      held.current = null;
       const touch = event.changedTouches[0];
       if (!gesture?.horizontal || !touch) { gesture = null; return; }
       gesture.samples.push({ x: touch.clientX, at: event.timeStamp });
       finish(touch.clientX - gesture.x, releaseVelocity(gesture.samples));
     };
     const cancel = () => {
+      held.current = null;
       if (gesture?.horizontal) finish(0, 0);
       gesture = null;
     };
