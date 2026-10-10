@@ -23,9 +23,10 @@ from . import config, engines, images as image_store, platform, route, state as 
 
 _locks: dict[str, threading.Lock] = {}
 _active: dict[str, dict] = {}
-#: Slugs of the tasks each running turn created through the daemon's `alt task new`, by turn id; the
-#: turn's assistant row carries them as `tasks` (SPEC.md §5.2 note 4) and the entry goes with the turn.
-_created: dict[str, list[str]] = {}
+#: What each running turn created through the daemon's verbs, by turn id: `tasks` (slugs from `alt task new`) and
+#: `issues` (title and URL from `alt issue new` and `alt incident new`). The turn's assistant row carries them
+#: (SPEC.md §4.1, §5.2 note 4) and the entry goes with the turn.
+_created: dict[str, dict[str, list]] = {}
 #: The task title each running chat turn offered through `alt task offer`, by turn id; the assistant row
 #: carries it as `offer` and the page shows Create task under that reply (SPEC.md §3.3).
 _offers: dict[str, str] = {}
@@ -722,23 +723,25 @@ def reading_blocks(project: str) -> set[str]:
     return slugs
 
 
-def note_task(project: str, slug: str) -> bool:
-    """Record that the project's running L3 turn created `slug`; false when no turn is running (a task
-    created from the CLI outside a turn belongs to no chat row)."""
+def note_created(project: str, kind: str, value: str | dict) -> bool:
+    """Record that the project's running L3 turn created a task (`kind` "tasks", its slug) or filed an issue
+    ("issues", its title and URL); false when no turn is running (work created from the CLI outside a turn belongs to no
+    chat row)."""
     with _lifecycle_guard(project):
         turn = _active.get(project)
         if not turn:
             return False
-        _created.setdefault(turn["id"], []).append(slug)
+        _created.setdefault(turn["id"], {}).setdefault(kind, []).append(value)
         return True
 
 
 def _created_meta(project: str, turn_id: str) -> dict:
-    """The `tasks` field for the assistant row of `turn_id`, taken once, or its `offer` when it created none."""
+    """The `tasks` and `issues` fields for the assistant row of `turn_id`, taken once, or its `offer` when it
+    created no task."""
     with _lifecycle_guard(project):
-        slugs = _created.pop(turn_id, None)
+        created = _created.pop(turn_id, None) or {}
         offer = _offers.pop(turn_id, None)
-    return {"tasks": slugs} if slugs else {"offer": offer} if offer else {}
+    return {**created, **({"offer": offer} if offer and not created.get("tasks") else {})}
 
 
 def chat_state(project: str, limit: int = 60) -> dict:
@@ -1201,7 +1204,7 @@ def _split_turn(project: str, active_turn: dict, message_id: str, text: str, *, 
         created = _created.pop(previous, None)
         if text:
             chat_log(project, "assistant", text, trigger="chat", engine=engine, turn_id=previous,
-                     **({"tasks": created} if created else {}), **_slug_meta(active_turn.get("slug")))
+                     **(created or {}), **_slug_meta(active_turn.get("slug")))
         elif created:
             _created[following] = created
         chat_log(project, "user", row["text"], trigger="chat", engine=engine, turn_id=following,

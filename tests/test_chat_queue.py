@@ -4,6 +4,7 @@ import io
 import json
 import runpy
 import socket
+import subprocess
 import threading
 import unittest
 from unittest import mock
@@ -1849,11 +1850,58 @@ class TestChatQueue(AltitudeCase):
         self.assertNotIn("tasks", user)
         self.assertEqual(S.load_task(self.project, created["slug"])["state"], "queued")
 
-        self.assertFalse(l3.note_task(self.project, "made-by-hand"), "no turn is running")
+        self.assertFalse(l3.note_created(self.project, "tasks", "made-by-hand"), "no turn is running")
         with self.deliverable(), mock.patch.object(engines, "claude_print",
                                                    return_value=self.claude_result("nothing new")):
             server.server_l3_turn(self.project, "anything new?", trigger="chat")
         self.assertNotIn("tasks", self.chat_view()["history"][-1])
+
+    def test_a_system_turn_names_the_tasks_and_issues_it_created_so_the_conversation_keeps_it_unfolded(self):
+        # SPEC.md §4.1: a system turn that created a task or filed an issue is notable; a plain one stays routine.
+        verbs = []
+
+        def provider(_prompt, **_kwargs):
+            for args, stdin in verbs:
+                reply = server.l3_verb_request(self.project, {"kind": "alt", "args": args, "stdin": stdin})
+                self.assertEqual(reply["returncode"], 0, reply["stderr"])
+            return self.claude_result("Handled.")
+
+        def run(trigger, *batch):
+            verbs[:] = batch
+            with self.deliverable(), mock.patch.object(engines, "claude_print", side_effect=provider), \
+                 mock.patch.object(server, "request_l3_drain"):
+                server.server_l3_turn(self.project, "System notice.", trigger=trigger)
+            return self.chat_view()["history"][-1]
+
+        reported = run("owner-message", (["task", "new", "--title", "Fix the landing race", "-"], "Serialize landings."))
+        slug = reported["tasks"][0]
+        self.assertEqual(S.load_task(self.project, slug)["title"], "Fix the landing race")
+        self.assertNotIn("issues", reported)
+
+        issue = "https://github.com/example/atlas/issues/7"
+        incident_issue = "https://github.com/example/atlas/issues/8"
+        real_run = subprocess.run
+
+        def alt(command, **options):
+            if command[3:5] == ["incident", "new"]:  # the incident CLI's printed result, with its new issue
+                return subprocess.CompletedProcess(command, 0, json.dumps(
+                    {"id": "I-20261010-120000", "issue": incident_issue, "created": True}), "")
+            return real_run(command, **options)
+
+        with mock.patch.object(server, "issue_write", return_value=issue) as write, \
+             mock.patch.object(server.subprocess, "run", side_effect=alt):
+            filed = run("incident", (["issue", "new", "--title", "Landing races on a busy main", "-"], "Fictional."),
+                        (["incident", "new", "--title=Worker stopped", "--what", "w", "--evidence", "e",
+                          "--cause", "c"], ""))
+        write.assert_called_once()
+        self.assertEqual(filed["issues"], [{"title": "Landing races on a busy main", "url": issue},
+                                           {"title": "Worker stopped", "url": incident_issue}])
+        self.assertNotIn("tasks", filed)
+
+        routine = run("report-landed")
+        self.assertEqual(routine["text"], "Handled.")
+        self.assertNotIn("tasks", routine)
+        self.assertNotIn("issues", routine)
 
     # ---- Create task under a reply (SPEC.md §3.3) ----------------------------
 

@@ -793,6 +793,52 @@ describe("Conversation", () => {
     expect(within(region).queryByRole("article")).toBeNull();
   });
 
+  it.each([390, 1440])("keeps a system turn that created a task or filed an issue outside the routine group at %ipx", async (width) => {
+    setViewport(width);
+    const routine = (id: string, minutes: number, reply: string) => [
+      { at: ago(minutes), role: "user", text: "Altitude restarted.", trigger: "restart", turn_id: id },
+      { at: ago(minutes), role: "assistant", text: reply, trigger: "restart", engine: "alpha", turn_id: id, tasks: [] },
+    ];
+    const issue = { title: "Landings race on a busy main", url: "https://github.com/example/altitude/issues/7" };
+    mockFetch({ chat: {
+      ...chatView,
+      history: [
+        ...history.slice(0, 2),
+        ...routine("r1", 30, "Routine restart one."),
+        ...routine("r2", 29, "Routine restart two."),
+        { at: ago(28), role: "user", text: "Task: persist-paths\nThe owner reports a problem.", trigger: "owner-message", turn_id: "n1", slug: "persist-paths" },
+        { at: ago(27), role: "assistant", text: "Checked the owner's evidence.\n\nPersist paths found that timers drift after sleep; I created **Fix the timer** to correct it.",
+          trigger: "owner-message", engine: "alpha", turn_id: "n1", slug: "persist-paths", tasks: ["fix-timer"] },
+        ...routine("r3", 26, "Routine restart three."),
+        { at: ago(25), role: "user", text: "System fault in altitude.", trigger: "incident", turn_id: "n2" },
+        { at: ago(24), role: "assistant", text: "A worker stopped twice for the same reason, so I filed an issue to fix it.", trigger: "incident", engine: "alpha", turn_id: "n2", issues: [issue] },
+        ...routine("r4", 23, "Routine restart four."),
+        ...routine("r5", 22, "Routine restart five."),
+      ],
+    } });
+    const { user } = renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    const created = within(region).getByText(/timers drift after sleep/).closest(".sys-line")!;
+    const filed = within(region).getByText(/filed an issue to fix it/).closest(".sys-line")!;
+    expect(created.closest(".sys-group")).toBeNull();
+    expect(within(created as HTMLElement).getByRole("link", { name: "Open task" })).toHaveAttribute("href", "/projects/altitude/tasks/fix-timer");
+    expect(within(filed as HTMLElement).getByRole("link", { name: "Open issue" })).toHaveAttribute("href", issue.url);
+    expect(within(created as HTMLElement).queryByRole("link", { name: "Open issue" })).toBeNull();
+    // Routine runs fold around them and count only themselves; a single routine turn between stays one plain line.
+    const [before, after] = within(region).getAllByText("L3 handled 2 system events between your messages");
+    expect(before!.compareDocumentPosition(created) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(filed.compareDocumentPosition(after!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(region).getByText("Routine restart three.").closest(".sys-line")?.querySelector("a")).toBeNull();
+    for (const text of ["Routine restart one.", "Routine restart four."]) expect(within(region).queryByText(text)).toBeNull();
+    await user.click(within(created as HTMLElement).getByRole("button", { name: "Show" }));
+    const card = within(region).getByRole("article", { name: "Owner message · Persist paths" });
+    expect(within(card).getByRole("link", { name: /Fix the timer/ })).toHaveAttribute("href", "/projects/altitude/tasks/fix-timer");
+    expect(within(card).getByRole("link", { name: "Open task" })).toHaveAttribute("href", "/projects/altitude/tasks/persist-paths");
+    await user.click(within(filed as HTMLElement).getByRole("button", { name: "Show" }));
+    const incident = within(region).getByRole("article", { name: "Fault" });
+    expect(within(incident).getByRole("link", { name: issue.title })).toHaveAttribute("href", issue.url);
+  });
+
   it.each([0, 12])("renders bubbles, prose, day dividers, and the task a turn created at hour %i", async (hour) => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(2026, 8, 11, hour, 3));
