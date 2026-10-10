@@ -304,10 +304,12 @@ Other self-deploy refusals fault immediately. A self-deploy fast-forward marks a
 pending for loaded backend paths (`altitude/`, `bin/`, `systemd/`) or tracked web build inputs
 (`web/src/`, `web/design/tokens.css`, `web/index.html`, `web/package.json`, `web/pnpm-lock.yaml`,
 `web/tsconfig.json`, `web/vite.config.ts`). Web docs and other non-build files do not trigger it.
-Dispatch continues while activation is pending. Once no dispatch or resume claim, L3 turn,
-adversarial review, validation run, or report verification is in flight, `altd` runs the guarded
-restart script below as a transient user unit. Validation holds the quiet point through its
-one-hour execution limit, evidence recording and cleanup. New validation runs wait once restart is requested.
+Dispatch, L3 turns and report verification continue while activation is pending; new validation runs and
+adversarial review runs are refused until the restart, so the long work in flight drains instead of being
+replaced. Once no dispatch or resume claim, L3 turn, adversarial review, validation run, or report verification
+is in flight, `altd` runs the guarded restart script below as a transient user unit. Validation holds the
+quiet point through its one-hour execution limit, evidence recording and cleanup, so a busy machine
+activates within one validation run. Monitor names the validation run and review tasks it waits for.
 A failing restart unit files a system fault naming its reason for L3 immediately. While its
 request is still pending it also records the reason as `error` in `monitor/restart-pending.json`
 and marks it `failed`, and the hold lifts. A restart that has not happened
@@ -391,7 +393,8 @@ image live in `~/.altitude-validation`, beside Altitude's home. A run needs 20 G
 when it ends; the first run builds the image, which takes several minutes. Settings → **Validation
 runs** turns the runner off: a running run stops and its container and scratch files are removed
 after its log and results are retained. Each run appears on its task as a machine run with purpose
-`validation`. Activation waits for admitted validation to finish recording evidence. After an
+`validation`. Activation waits for admitted validation to finish recording evidence, and new runs are
+refused while activation is pending. After an
 unexpected daemon exit or host reboot, startup stops abandoned runs, retains their logs and results,
 and records them as interrupted. If copying evidence fails, the ledger names the original paths
 in the runner area; that area stays intact and new runs stay refused pending recovery. A run area
