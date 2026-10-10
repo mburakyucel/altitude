@@ -219,6 +219,19 @@ class ClientStop:
         self.assertEqual([row["command"] for row in self.rows()][2:], ["echo replacing"])
         self.assertEqual(validation._latest, {})
 
+    def test_a_replacement_holds_after_the_newer_request_has_ended(self):
+        started, release = self.tmp / "started", self.tmp / "release"
+        self.stops.side_effect = lambda unit, env: release.touch()
+        self.send(["sh", "-c", f"touch {started}; until [ -e {release} ]; do sleep .02; done"])
+        wait_for(started.exists, "the abandoned run to start")
+        self.patch(validation, "WATCH_SECONDS", 3)   # the run's watcher next looks after the newer request has ended
+        threading.Event().wait(.2)
+        validation.WATCH_SECONDS = .02
+        self.send(["true"]).close()
+        wait_for(lambda: not validation._latest, "the newer request to end")
+        wait_for(lambda: self.rows()[0]["finished"], "the replaced run's record")
+        self.assertEqual(self.rows()[0]["ended"], "replaced")
+
 
 class TestValidationRunner(ClientStop, RunnerCase):
     host = "linux"  # the fixtures are systemd-run and Podman

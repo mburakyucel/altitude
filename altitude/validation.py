@@ -63,7 +63,7 @@ _state = threading.Lock()        # orders admission against turning the runner o
 _ready = threading.Event()       # no earlier run's area remains; until then each request retries their removal
 _active: dict = {}               # the admitted run's area and unit, and how it was stopped, if it was
 _holder: str | None = None       # the task whose admitted run holds activation, from admission through cleanup
-_latest: dict[str, dict] = {}    # each task's newest accepted request; an earlier one of the same task is replaced
+_latest: dict[str, dict] = {}    # each task's newest accepted request, which marks the one before it replaced
 
 
 def enabled() -> bool:
@@ -526,14 +526,15 @@ def run(project: str, slug: str, attempt: object, argv: object, *, kvm: object =
         phone = sim.plan() if simulator else None
     except ValueError as exc:
         raise ValueError(f"alt task validate: {exc}") from exc
-    key, mine = f"{project}/{slug}", {"at": datetime.now(timezone.utc)}
-    with _state:
+    key, mine = f"{project}/{slug}", {"at": datetime.now(timezone.utc), "replaced": None}
+    with _state:   # the mark stays even when the newer request ends first
+        if key in _latest:
+            _latest[key]["replaced"] = mine["at"]
         _latest[key] = mine
 
     def leaving() -> str | None:
-        newer = _latest.get(key, mine)
-        return (f"replaced by this task's newer validation request of {newer['at']:%Y-%m-%d %H:%M:%S} UTC"
-                if newer is not mine else line.CLIENT_GONE if gone() else None)
+        return (f"replaced by this task's newer validation request of {mine['replaced']:%Y-%m-%d %H:%M:%S} UTC"
+                if mine["replaced"] else line.CLIENT_GONE if gone() else None)
     try:
         with LINE.turn(f"the validation run of {project}/{slug} holds this machine",
                        TIMEOUT + (SIMULATOR_SECONDS if phone else 0), command="alt task validate", wait=WAIT,
@@ -542,6 +543,8 @@ def run(project: str, slug: str, attempt: object, argv: object, *, kvm: object =
                 if not ready:
                     raise ValueError(RESTARTING)
                 task = check()  # the task, the switch and the host may have changed while the request waited
+                if mine["replaced"]:
+                    raise ValueError(f"alt task validate: {leaving()} while it waited")
                 _holder = key
                 try:
                     return _run(project, slug, task, argv, kvm=kvm, publish=publish, phone=phone, capture=capture,
