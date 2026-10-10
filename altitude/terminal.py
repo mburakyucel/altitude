@@ -165,18 +165,21 @@ def open_terminal(project: str, slug: str | None) -> dict:
         term = _terminals.get((project, slug))
         if term is not None and not term.ended:
             return view(term)
-        master, child, ident = *os.openpty(), uuid.uuid4().hex
-        try:
-            _winsize(master, 24, 80)
-            os.set_blocking(master, False)
-            proc = launch(f"altitude-terminal-{ident}.service", os.ttyname(child), path)
-        except OSError as exc:
-            os.close(master)
-            os.close(child)
-            raise TerminalError(f"Could not start the shell: {exc}") from exc
-        term = Terminal(project, slug, path, proc, master, child, ident)
-        _terminals[(project, slug)] = term
-        _ended.pop((project, slug), None)
+        with config.restart_lock() as admitted:
+            if config.RELEASE is not None and (not admitted or config.restart_in_progress()):
+                raise TerminalError("Altitude is updating. Open the terminal again when it finishes.", 409)
+            master, child, ident = *os.openpty(), uuid.uuid4().hex
+            try:
+                _winsize(master, 24, 80)
+                os.set_blocking(master, False)
+                proc = launch(f"altitude-terminal-{ident}.service", os.ttyname(child), path)
+            except OSError as exc:
+                os.close(master)
+                os.close(child)
+                raise TerminalError(f"Could not start the shell: {exc}") from exc
+            term = Terminal(project, slug, path, proc, master, child, ident)
+            _terminals[(project, slug)] = term
+            _ended.pop((project, slug), None)
     _record(term, "opened")
     threading.Thread(target=_read, args=(term,), name=f"terminal:{project}:{slug or ''}", daemon=True).start()
     return view(term)
@@ -460,6 +463,12 @@ def sweep() -> None:
     with _lock:
         for key in [key for key in _ended if _finished(*key)]:
             del _ended[key]
+
+
+def any_open() -> bool:
+    """Whether a terminal is running; a service restart would end it, so an automatic update waits."""
+    with _lock:
+        return any(not term.ended for term in _terminals.values())
 
 
 def close_all() -> None:

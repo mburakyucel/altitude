@@ -15,8 +15,9 @@ the test suite, merging a PR, or recording an Unreleased changelog entry.
 Source-deployed merged changes activate through the existing [service lifecycle](OPERATIONS.md#service-lifecycle).
 That process continues while a release candidate is evaluated. A service can therefore run a
 newer commit than the latest published version. Release readiness and activation are separate;
-record the exact source SHA when reporting either. Installed archives update only through the
-explicit [application update command](OPERATIONS.md#installed-application-lifecycle). Public visibility and licensing
+record the exact source SHA when reporting either. Installed copies automatically update at a quiet
+point by default, or use the explicit command when automatic updates are off; both share the
+[application update lifecycle](OPERATIONS.md#installed-application-lifecycle). Public visibility and licensing
 remain separate [release prerequisites](ROADMAP.md#early-user-onboarding-and-public-release).
 
 ## Cadence and versions
