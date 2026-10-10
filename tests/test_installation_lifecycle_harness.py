@@ -98,9 +98,9 @@ class TestLifecycleHarness(AltitudeCase):
         with self.assertRaisesRegex(AssertionError, "candidate archive commit differs"):
             published.archive(artifacts, "candidate")
 
-    def test_injected_failure_is_always_newer_than_the_candidate(self):
+    def test_a_following_release_is_newer_and_on_the_same_channel(self):
         self.assertEqual([following(v) for v in ("v0.0.0-rc.2", "v0.2.0-rc.1", "v0.1.3")],
-                         ["v0.0.0-rc.3", "v0.2.0-rc.2", "v0.1.4-rc.1"])
+                         ["v0.0.0-rc.3", "v0.2.0-rc.2", "v0.1.4"])
 
     def test_non_disposable_account_refuses_before_any_application_or_service_command(self):
         results = self.tmp / "results"
@@ -366,7 +366,8 @@ class TestInstallationVm(AltitudeCase):
         self.assertEqual(attempt("good"), {"release": "v0.1.0-rc.2", "commit": commit,
                                            "sha256": dict(reversed(line.split()) for line in
                                                           (assets / "SHA256SUMS").read_text().splitlines())})
-        self.assertEqual(vm.next_minor("v0.1.0-rc.2"), "v0.2.0-rc.1")
+        # The candidate stays on the baseline's channel, so the installed baseline's daemon follows it.
+        self.assertEqual([vm.next_minor(v) for v in ("v0.1.0-rc.2", "v0.1.2")], ["v0.2.0-rc.1", "v0.2.0"])
         tags["refs"] = f"{commit}\trefs/tags/v0.1.0-rc.2\n"  # lightweight tag
         self.assertEqual(attempt("lightweight")["commit"], commit)
         tags["refs"] = f"{'b' * 40}\trefs/tags/v0.1.0-rc.2\n"
@@ -391,6 +392,45 @@ class TestInstallationVm(AltitudeCase):
         (assets / "SHA256SUMS").unlink()
         with self.assertRaisesRegex(SystemExit, "no SHA256SUMS"):
             attempt("unlisted")
+
+    def test_published_baseline_run_updates_to_a_candidate_on_its_channel_through_every_phase(self):
+        from scripts import installation_vm as vm
+        phases, builds = [], []
+        native = subprocess.run
+
+        class Machine:
+            def __init__(self, work, image):
+                pass
+            start = wait_ready = unplug_online_card = stop = copy = lambda self, *args, **kwargs: None
+            ssh = lambda self, *args, **kwargs: subprocess.CompletedProcess(args, 0, "Ubuntu 24.04 fixture\n", "")
+            reboot = lambda self, deadline: "boot-2"
+
+        def published(repository, tag, folder):
+            folder.mkdir(parents=True)
+            return {"release": tag, "commit": "b" * 40, "sha256": {}}
+
+        def harness(machine, commits, phase, log):
+            phases.append((commits, phase))
+            return 0
+        reachable = iter([{"internet": True, "host-through-online-card": True, "host-through-network": True,
+                           "host-through-offline-card": False}] + [{"internet": False}] * 2)
+        results = self.tmp / "results"
+        with mock.patch.object(vm.subprocess, "run", side_effect=lambda command, **kw: subprocess.CompletedProcess(
+                    command, 0, "QEMU emulator version 9.0 fixture\n", "") if command[0] == "qemu-system-x86_64"
+                    else native(command, **kw)), \
+                mock.patch.object(vm, "build", side_effect=lambda commit, work, results, versions: builds.append(versions)), \
+                mock.patch.object(vm, "repository", return_value="https://github.com/example/altitude"), \
+                mock.patch.object(vm, "published", side_effect=published), \
+                mock.patch.object(vm, "base_image", return_value={"image": "fixture"}), mock.patch.object(vm, "Machine", Machine), \
+                mock.patch.object(vm, "harness", side_effect=harness), \
+                mock.patch.object(vm, "reachable", side_effect=lambda machine: next(reachable)), mock.patch("sys.stdout"):
+            code = vm.run(results, "c" * 40, self.tmp / "cache", "v0.1.2")
+        record = json.loads((results / "vm.json").read_text())
+        self.assertEqual((code, record["passed"]), (0, True))
+        # A stable baseline follows only stable releases, so its own daemon can install the candidate automatically.
+        self.assertEqual(builds, [(("candidate", "v0.2.0"),)])
+        self.assertEqual([phase for _, phase in phases], ["all", "bootstrap", "update", "reboot-install", "reboot-verify"])
+        self.assertEqual({commits for commits, _ in phases}, {f"{'b' * 40}..{'c' * 40}"})
 
     def test_public_run_downloads_both_releases_keeps_only_the_internet_and_runs_both_public_phases(self):
         from scripts import installation_vm as vm
