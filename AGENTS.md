@@ -43,9 +43,9 @@ on the required CI. The PR merges with `Addresses #N`, and the issue closes once
 records the evidence. By the operator's decision of 2026-10-10, L3 comments, labels and closes these
 issues, filing one when the change has none, as [pending device
 verification](docs/DEVELOPMENT.md#pending-device-verification) describes. Linux merge checks and holds
-are unchanged. By the operator's decision of 2026-10-09, the early
-preview supports Linux x86_64 and Apple silicon macOS; the [roadmap](docs/ROADMAP.md#native-macos-runtime)
-lists the native confirmation still open.
+are unchanged. By the operator's decisions of 2026-10-09 and 2026-10-10, the early preview supports
+Linux with a systemd user manager and macOS 15 or newer, validated on Ubuntu 24.04 x86_64 and Apple
+silicon; the [roadmap](docs/ROADMAP.md#native-macos-runtime) lists the native confirmation still open.
 
 Both engines use one execution and authority contract. Adapt that common contract when an
 integration conflicts with an engine's native operating model; do not build a second engine-specific

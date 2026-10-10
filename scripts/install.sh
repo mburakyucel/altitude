@@ -53,6 +53,17 @@ older_python() {
     return 1
 }
 
+# How to install a package with this system's own package manager; never another distribution's command.
+package_hint() {
+    if command -v apt-get >/dev/null 2>&1; then printf 'sudo apt install %s' "$1"
+    elif command -v dnf >/dev/null 2>&1; then printf 'sudo dnf install %s' "$1"
+    elif command -v pacman >/dev/null 2>&1; then printf 'sudo pacman -S %s' "$([ "$1" = python3 ] && echo python || echo "$1")"
+    elif command -v zypper >/dev/null 2>&1; then printf 'sudo zypper install %s' "$1"
+    elif command -v brew >/dev/null 2>&1; then printf 'brew install %s' "$1"
+    else printf "with your distribution's package manager"
+    fi
+}
+
 sha256() {
     if command -v sha256sum >/dev/null 2>&1; then
         sha256sum "$1" | cut -d ' ' -f 1
@@ -73,9 +84,9 @@ main() {
     case "$VERSION" in @*) stop "this is the release template; download install.sh from a published release." ;; esac
     system=$(uname -s)
     machine=$(uname -m)
-    case "$system/$machine" in
-        Linux/x86_64 | Darwin/arm64) ;;
-        *) stop "Altitude $VERSION runs on Linux x86_64 or on a Mac with Apple silicon; this machine is $system $machine." ;;
+    case "$system" in
+        Linux | Darwin) ;;
+        *) stop "Altitude $VERSION runs on Linux with a systemd user manager or on macOS 15 or newer; this machine runs $system." ;;
     esac
     [ "$(id -u)" != 0 ] || stop "run this as the account that will use Altitude, not as root." \
         "Altitude installs into your home directory and needs no administrator rights."
@@ -85,14 +96,14 @@ main() {
             "Update macOS in System Settings > General > Software Update, then run this again."
         python_fix="Install it first (with Homebrew: brew install python@3.12), then run this again."
     else
-        python_fix="Install it first (Ubuntu 24.04 and newer include it: sudo apt install python3), then run this again."
+        python_fix="Install it first ($(package_hint python3)), then run this again."
     fi
     python=$(find_python) || stop "Python 3.12 or newer was not found ($(older_python || echo 'no python3'))." "$python_fix"
     command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 ||
         stop "no SHA-256 tool (sha256sum or shasum) is installed." "Install coreutils, then run this again."
     for tool in curl openssl; do
         command -v "$tool" >/dev/null 2>&1 || stop "$tool is not installed." \
-            "Install it with your package manager (for example: sudo apt install $tool), then run this again."
+            "Install it first ($(package_hint "$tool")), then run this again."
     done
     [ "$system" != Linux ] || systemctl --user show-environment >/dev/null 2>&1 || stop "no systemd user manager is reachable." \
         "Altitude runs as a systemd user service. Run this from a login or SSH session where systemctl --user works."
@@ -106,6 +117,11 @@ main() {
         launchctl print "gui/$(id -u)" >/dev/null 2>&1 || stop "no logged-in desktop session of this account is reachable." \
             "Altitude runs as a LaunchAgent in your desktop session. Log in to this Mac's desktop, then run this again."
     fi
+    case "$system/$machine" in
+        Linux/x86_64 | Darwin/arm64) ;;
+        *) printf 'Altitude is not yet validated on %s %s; please report anything that does not work at %s/issues.\n' \
+               "$([ "$system" = Darwin ] && echo macOS || echo Linux)" "$machine" "$REPOSITORY" ;;
+    esac
 
     # macOS mktemp ignores TMPDIR without a template.
     workdir=$(mktemp -d "${TMPDIR:-/tmp}/altitude-install.XXXXXXXX")
