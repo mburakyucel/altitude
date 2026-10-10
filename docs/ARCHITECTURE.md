@@ -2009,7 +2009,9 @@ independently, and a comment line every 15 seconds keeps an idle stream open. `P
 turn for a managed project whose L3 never ran, from the header's Start L3. The conversation is the only
 way to create a task from the web: the L3 turn creates it through `alt task new`, and altd records
 the slug on that turn's assistant row (`tasks: [slug]`), which the conversation renders as a task card
-under the reply. When L3 is unsure whether the operator wants work started, its chat turn runs
+under the reply. An issue filed during a turn through `alt issue new`, or the issue an
+`alt incident new|publish` newly created, is recorded the same way as `issues: [{title, url}]`; a turn
+that fails after creating either carries them on its error row. When L3 is unsure whether the operator wants work started, its chat turn runs
 `alt task offer '<title>'` instead of asking; altd keeps the title on that reply's assistant row
 (`offer`) when the turn created no task, and the conversation draws the Create task button with the
 title under the latest such reply (spec §3.3); the reply text carries no Create task wording of its own. A press posts `{project, offer_turn}` to `POST /api/chat`, and altd
@@ -2065,7 +2067,9 @@ your messages", that expands to the list with each turn's own Show; a turn in pr
 handling <what>" with no Show, a failed one "L3 could not handle <what>" with its error behind Show.
 A failed chat turn reads "L3 could not answer this turn." with Retry, which resends the same text.
 Explicit L3 FYIs with `heads_up: true` stay outside those groups in chronological order, splitting
-the routine runs before and after them. Their full concise text is visible in the existing compact
+the routine runs before and after them. So does a notable system turn, one during which L3 created a
+task or filed a GitHub issue: its line ends with Open task or Open issue, and its card shows the
+created task cards and titled issue links. Their full concise text is visible in the existing compact
 system line; Show opens the FYI card and task links, and Hide restores the line. Automatic FYIs and
 historical rows without explicit selection remain eligible for grouping. Conversation loading,
 cached-error display and following the latest messages use the same existing behavior.

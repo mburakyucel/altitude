@@ -129,3 +129,14 @@ export function TaskCard({
     </Link>
   );
 }
+
+/** The task cards under a reply that created tasks (SPEC.md §3.5, §5.2 note 4). */
+export function TaskCards({ project, slugs, tasks }: { project: string; slugs: string[]; tasks: Map<string, TaskRow> }) {
+  return (
+    <div className="turn-tasks">
+      {slugs.map((slug) => (
+        <TaskCard key={slug} project={project} task={tasks.get(slug) ?? { slug }} />
+      ))}
+    </div>
+  );
+}

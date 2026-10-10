@@ -2,15 +2,16 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { useProject, useTask } from "../data/api";
 import { questionPath } from "../data/decisions";
-import type { ChatMessage } from "../data/api";
+import type { ChatMessage, TaskRow } from "../data/api";
 import { stampText } from "../data/observed";
 import { InlineProse, Prose, ProseProject, ProseRepository, lastParagraph } from "./Prose";
 import { Stamp } from "./Stamp";
+import { TaskCards } from "./TaskCard";
 
 /*
  * The system line (SPEC.md §3.4, §4.1): every chat row whose trigger is not "chat" is a system turn,
  * folded to one centred line with a dot, its recorded time, the reply's last paragraph, and Show. A run of them folds to
- * one line naming the count; selected heads-ups stay separate. What altd sends L3 is written for L3: the operator sees
+ * one line naming the count; selected heads-ups and notable turns stay separate. What altd sends L3 is written for L3: the operator sees
  * its structured fields at most, never its prose, so a waiting notice reads from the records (kind, task, question).
  */
 
@@ -33,6 +34,26 @@ export interface SystemTurn {
   /** Waiting in L3's queue: no reply yet, so the line names the notice instead. */
   queued?: boolean;
   projectMessage?: ChatMessage["project_message"];
+  /** Tasks the turn created, by slug. */
+  created?: string[];
+  /** GitHub issues the turn filed. */
+  issues?: { title: string; url: string }[];
+}
+
+/** A turn that created a task or filed an issue: its own line, never folded into a routine group (SPEC.md §4.1). */
+export function notable(turn: SystemTurn): boolean {
+  return Boolean(turn.created?.length || turn.issues?.length);
+}
+
+/** The notable line's one link: the task it created, else the issue it filed; several leave it to the card. */
+function NewWork({ turn, project }: { turn: SystemTurn; project: string }) {
+  const [task] = turn.created ?? [];
+  const [issue] = turn.issues ?? [];
+  if (turn.created?.length === 1 && task) return <Link className="link" to={`/projects/${project}/tasks/${task}`}>Open task</Link>;
+  if (!turn.created?.length && turn.issues?.length === 1 && issue) {
+    return <a className="link" href={issue.url} target="_blank" rel="noreferrer">Open issue</a>;
+  }
+  return null;
 }
 
 const DANGER = new Set(["incident", "system-recovery", "project-message-error"]);
@@ -180,11 +201,13 @@ function SystemCard({
   turn,
   project,
   title,
+  tasks,
   onHide,
 }: {
   turn: SystemTurn;
   project: string;
   title: string | null;
+  tasks: Map<string, TaskRow>;
   onHide: () => void;
 }) {
   // The task's record names it and says whether a digest exists; read only while the card is open.
@@ -247,6 +270,21 @@ function SystemCard({
               <p className="sys-card-error text-danger">{turn.error}</p>
             </>
           ) : null}
+          {notable(turn) ? (
+            <>
+              <p className="sys-card-label">L3 created</p>
+              {turn.created?.length ? <TaskCards project={project} slugs={turn.created} tasks={tasks} /> : null}
+              {turn.issues?.length ? (
+                <ul className="sys-card-issues">
+                  {turn.issues.map((issue) => (
+                    <li key={issue.url}>
+                      <a href={issue.url} target="_blank" rel="noreferrer">{issue.title}</a>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </>
+          ) : null}
         </>
       )}
       {turn.slug ? (
@@ -285,16 +323,16 @@ function QueuedLine({ turn, project, title }: { turn: SystemTurn; project: strin
 export function SystemLine({
   turn,
   project,
-  titles,
+  tasks,
 }: {
   turn: SystemTurn;
   project: string;
-  titles: Map<string, string>;
+  tasks: Map<string, TaskRow>;
 }) {
   const [open, setOpen] = useState(false);
-  const title = turn.slug ? (titles.get(turn.slug) ?? null) : null;
+  const title = turn.slug ? (tasks.get(turn.slug)?.title || null) : null;
   if (turn.queued) return <QueuedLine turn={turn} project={project} title={title} />;
-  if (open) return <SystemCard turn={turn} project={project} title={title} onHide={() => setOpen(false)} />;
+  if (open) return <SystemCard turn={turn} project={project} title={title} tasks={tasks} onHide={() => setOpen(false)} />;
   const text = lineText(turn, title ?? turn.slug);
   return (
     <div className="sys-line" data-turn={turn.id} data-progress={turn.inProgress || undefined}>
@@ -303,6 +341,7 @@ export function SystemLine({
       <span className="sys-text">
         {turn.projectMessage ? text : <InlineProse text={text} />}
       </span>
+      {turn.inProgress ? null : <NewWork turn={turn} project={project} />}
       {turn.inProgress ? null : (
         <button type="button" className="link" onClick={() => setOpen(true)}>
           Show
@@ -316,11 +355,11 @@ export function SystemLine({
 export function SystemGroup({
   turns,
   project,
-  titles,
+  tasks,
 }: {
   turns: SystemTurn[];
   project: string;
-  titles: Map<string, string>;
+  tasks: Map<string, TaskRow>;
 }) {
   const [open, setOpen] = useState(false);
   const danger = turns.some((turn) => dangerTrigger(turn.trigger));
@@ -339,7 +378,7 @@ export function SystemGroup({
   return (
     <div className="sys-group" role="group" aria-label={`${turns.length} system events`}>
       {turns.map((turn) => (
-        <SystemLine key={turn.id} turn={turn} project={project} titles={titles} />
+        <SystemLine key={turn.id} turn={turn} project={project} tasks={tasks} />
       ))}
       <div className="sys-line">
         <span className="sys-text" />

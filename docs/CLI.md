@@ -291,6 +291,9 @@ to a task. It records the caller's actor; an explicit L3 call marks the row as a
 that stays visible outside routine system groups. Show opens its full text and task link; Hide
 restores the compact line. Other FYIs and historical rows without selection remain eligible for
 grouping. This command changes no task state and creates no operator decision.
+A system turn during which L3 runs `alt task new`, `alt issue new` or an `alt incident new|publish`
+that creates an issue needs no FYI: altd records what it created on the turn, and that turn stays visible the same
+way, showing the reply's last paragraph with Open task or Open issue.
 The [L3 persona](../personas/l3.md) defines when and how the coordinator uses this mechanism.
 
 ## Coordinator information messages

@@ -64,11 +64,11 @@ def main():
         T.escalate(project, decision["slug"], "Which validation scope? Option A: Keep the bounded scope. "
                    "Option B: Expand the scope. I recommend A.")
 
-    def turn(prompt, reply, turn_id, *, trigger="chat", tasks=(), slug=None):
+    def turn(prompt, reply, turn_id, *, trigger="chat", tasks=(), slug=None, **created):
         meta = {"slug": slug} if slug else {}
         l3.chat_log(project, "user", prompt, trigger=trigger, turn_id=turn_id, engine=config.ENGINES[0], **meta)
         l3.chat_log(project, "assistant", reply, trigger=trigger, turn_id=turn_id,
-                    engine=config.ENGINES[0], tasks=list(tasks), **meta)
+                    engine=config.ENGINES[0], tasks=list(tasks), **created, **meta)
 
     turn("Keep the search contract stable.", "Two bounded tasks cover the migration.", "fixture-chat-1",
          tasks=(running["slug"], queued["slug"]))
@@ -110,6 +110,38 @@ def main():
                             trigger="fyi", by="l3")
                 T.fyi(project, running["slug"], "Routine owner progress.", actor="l2")
                 return self._json(row)
+            if self.path == "/fixture/notable":
+                # System turns as altd records them: routine ones around one that created a task and one that filed
+                # an issue (the rows' `tasks` and `issues`, SPEC.md §4.1).
+                made = T.new(project, "Serialize concurrent landings", "Fictional follow-up work.")
+                turn("Altitude restarted.", "Nothing to resume.", "notable-restart-1", trigger="restart")
+                turn("Altitude restarted.", "The saved context is current.", "notable-restart-0", trigger="restart")
+                turn(f"Task: {running['slug']}\nThe owner reports a problem.", "Read the owner's evidence.\n\n"
+                     "Prepare index migration found that two landings can race on a busy main; I created "
+                     "Serialize concurrent landings to fix it.", "notable-task", trigger="owner-message",
+                     slug=running["slug"], tasks=[made["slug"]])
+                turn(f"Report landed for `{completed['slug']}`.", "The contract delivery is verified.",
+                     "notable-report", trigger="report-landed", slug=completed["slug"])
+                turn("System fault in atlas.", "A worker stopped twice for the same reason, so I filed an issue "
+                     "for the fix.", "notable-issue", trigger="incident",
+                     issues=[{"title": "Workers stop when their session file rotates",
+                              "url": "https://github.com/example/atlas/issues/7"}])
+                # A turn that failed after creating a task, and one that created several things.
+                retry = T.new(project, "Retry the stalled backfill", "Fictional follow-up work.")
+                l3.chat_log(project, "user", f"Task: {queued['slug']}\nThe owner is blocked.", trigger="block",
+                            turn_id="notable-failed", slug=queued["slug"])
+                l3.chat_log(project, "error", "The provider stopped.", trigger="block", turn_id="notable-failed",
+                            slug=queued["slug"], tasks=[retry["slug"]])
+                split = [T.new(project, title, "Fictional follow-up work.")["slug"]
+                         for title in ("Split the search index", "Measure the split index")]
+                turn("Report landed.", "The review found two separate follow-ups and a provider defect; I created "
+                     "Split the search index and Measure the split index and filed an issue for the defect.",
+                     "notable-several", trigger="report-landed", tasks=split,
+                     issues=[{"title": "Search requests time out on large indexes",
+                              "url": "https://github.com/example/atlas/issues/8"}])
+                turn("Altitude restarted.", "The saved tasks have been checked.", "notable-restart-2", trigger="restart")
+                turn("Altitude restarted.", "The running task continues.", "notable-restart-3", trigger="restart")
+                return self._json({"slug": made["slug"]})
             if self.path == "/fixture/queued-notices":
                 # Coordinator notices as altd writes them: a handled block in history, then a block, a report and a
                 # fault still waiting in L3's queue. Their prompts carry ids and instructions the chat never shows.
