@@ -4,10 +4,11 @@ import { walkthrough } from "./walkthrough";
 
 /**
  * Decision alerts (issue #221) at both widths: the switch's states, one alert for a new decision,
- * none for a decision already on screen, and none repeated after a refresh. A headless browser has
- * no notification platform, so the walkthrough records the page's own calls into the service
- * worker's registration — the last step before the operating system shows the alert. It has no push
- * service either, so the subscription the page hands altd is a fixture one; altd stores the real record.
+ * none for a decision already on screen, none repeated after a refresh, and a push waking the real
+ * service worker. The page's alerts are recorded at its calls into the worker's registration — the
+ * last step before the operating system shows them; the worker's banners are read back from that
+ * registration. A headless browser has no push service, so the subscription the page hands altd is a
+ * fixture one, altd stores the real record, and the wake is delivered to the worker directly.
  */
 test.use({ serviceScript: "decision-alerts-service.py" });
 
@@ -47,19 +48,17 @@ test("the switch walks its states and alerts once for each new decision", { tag:
   const on = page.getByRole("button", { name: "Alerts on" });
 
   await recordAlerts(page);
-  await fakePushService(page);
   await context.grantPermissions(["notifications"]);
+  // A device push cannot wake is alerted by the open page; one push wakes is alerted by its worker (below).
+  await page.route("**/api/alerts", (route) => route.fulfill({ json: { key: null } }));
   await walk.open("/");
   await walk.state("01-alerts-off", { visible: [offer, card("Choose backup retention")], hidden: [on] });
 
   await walk.state("02-alerts-on", {
     action: () => offer.click(),
-    visible: [on, page.getByText(/even when Altitude is closed/)], hidden: [offer],
+    visible: [on, page.getByText(/only while Altitude is open/)], hidden: [offer],
   });
   expect(await alerts(page)).toEqual([]); // the waiting decision is not announced as news
-  // altd holds what waking this device takes, and nothing else about it.
-  expect(await (await request.get("/fixture/push")).json())
-    .toEqual({ subscriptions: ["https://push.example/wake/walkthrough"] });
 
   // On screen in Needs you: the new card appears, and nothing pops up over it.
   await decision("beacon", "Run a restore drill", "Which drill first?");
@@ -110,6 +109,60 @@ test("the switch walks its states and alerts once for each new decision", { tag:
   const blocked = page.getByText(/blocked in this browser's settings/);
   await walk.state("06-permission-blocked", { visible: [blocked, card("Choose backup retention")], hidden: [on] });
   await expect(offer).toBeDisabled();
+});
+
+/** Every banner the device shows now, as the real service worker left them. */
+const banners = (page: Page) => page.evaluate(async () => {
+  const registration = await navigator.serviceWorker.getRegistration("/sw.js");
+  return ((await registration?.getNotifications()) ?? []).map((banner) => ({ title: banner.title, body: banner.body, tag: banner.tag }));
+});
+
+test("a push wakes the real worker, which names the decision and never shows a bare banner", { tag: "@chromium" }, async ({ page, context, request }, info) => {
+  const walk = walkthrough(page, info);
+  await fakePushService(page);
+  await context.grantPermissions(["notifications"]);
+  await walk.open("/");
+  await page.getByRole("button", { name: "Alert me about new decisions" }).click();
+  await expect(page.getByText(/even when Altitude is closed/)).toBeVisible();
+  // altd holds what waking this device takes, and nothing else about it.
+  expect(await (await request.get("/fixture/push")).json())
+    .toEqual({ subscriptions: ["https://push.example/wake/walkthrough"] });
+
+  // The push service's wake, delivered to the registered worker as the browser delivers it: no payload.
+  const cdp = await context.newCDPSession(page);
+  const registrations: { registrationId: string; scopeURL: string }[] = [];
+  cdp.on("ServiceWorker.workerRegistrationUpdated", ({ registrations: updated }) => registrations.push(...updated));
+  await cdp.send("ServiceWorker.enable");
+  await expect.poll(() => registrations.length).toBeGreaterThan(0);
+  const wake = async () => {
+    const [registration] = registrations;
+    await cdp.send("ServiceWorker.deliverPushMessage", {
+      origin: new URL(page.url()).origin, registrationId: registration!.registrationId, data: "",
+    });
+  };
+
+  // The decision already waiting when alerts were turned on is not news; a wake with nothing new says so.
+  await wake();
+  await expect.poll(() => banners(page)).toEqual([
+    { title: "No new decision", body: "Nothing new since your last alert.", tag: "altitude-nothing-new" }]);
+
+  // A new decision: the worker names its project and task, and the page, which push now covers, adds nothing.
+  const slug = (await (await request.post("/fixture/decision", {
+    data: { project: "beacon", title: "Pick a drill day", question: "Which day?" } })).json()).slug as string;
+  await wake();
+  await expect.poll(async () => (await banners(page)).map((banner) => banner.title)).toEqual(["beacon needs a decision"]);
+  expect((await banners(page))[0]).toEqual({ title: "beacon needs a decision", body: "Pick a drill day", tag: expect.stringContaining(slug) });
+  await walk.state("12-push-names-the-decision", { visible: [page.getByRole("article", { name: "Pick a drill day" })], hidden: [] });
+
+  // Answered elsewhere: the open page closes its banner without being touched.
+  expect((await request.post("/fixture/answer", { data: { project: "beacon", slug } })).ok()).toBe(true);
+  await expect.poll(() => banners(page), { timeout: 30_000 }).toEqual([]);
+  await walk.state("13-answered-banner-closed", { visible: [page.getByRole("article", { name: "Choose backup retention" })], hidden: [page.getByRole("article", { name: "Pick a drill day" })] });
+
+  // No path shows a bare "Altitude".
+  await wake();
+  await expect.poll(async () => (await banners(page)).map((banner) => banner.title)).toEqual(["No new decision"]);
+  expect((await banners(page)).map((banner) => banner.title)).not.toContain("Altitude");
 });
 
 test("a browser without notifications keeps every decision usable", async ({ page }, info) => {
@@ -163,18 +216,4 @@ test("a push service that refuses alerts is named with its reason until a push g
   expect(await tick(201)).toEqual({ refused: [] });
   await page.reload();
   await walk.state("11-refusal-cleared", { visible: [on, reach], hidden: [refused] });
-});
-
-test("a device that cannot be woken keeps alerting while Altitude is open, and says so", { tag: "@chromium" }, async ({ page, context }, info) => {
-  const walk = walkthrough(page, info);
-  await recordAlerts(page);
-  await context.grantPermissions(["notifications"]);
-  // No key on the machine: nothing can wake this device, and the switch says what alerts it does give.
-  await page.route("**/api/alerts", (route) => route.fulfill({ json: { key: null } }));
-  await walk.open("/");
-  await page.getByRole("button", { name: "Alert me about new decisions" }).click();
-  await walk.state("08-alerts-on-without-push", {
-    visible: [page.getByRole("button", { name: "Alerts on" }), page.getByText(/only while Altitude is open/)],
-    hidden: [page.getByRole("button", { name: "Alert me about new decisions" })],
-  });
 });

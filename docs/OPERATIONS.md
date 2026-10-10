@@ -158,6 +158,17 @@ once it succeeds, held tasks and report turns on the engine continue on their ne
 login is still invalid, the attempt records the rejection again and automatic retries keep waiting
 for up to thirty minutes. A usage limit is not cleared this way; it waits for its reset.
 
+## Decision alerts on a device
+
+A subscribed phone or browser is woken once for each new decision that still needs you after L3 has had
+its turn and the owner has stopped, or an hour after it was asked if either is still busy. The banner reads
+"<project> needs a decision" with the task name, and tapping it opens that decision. Away from Altitude's
+network it reads "A decision needs you" and says Altitude is out of reach; a decision settled in the moment
+before the device read it shows "No decision needs you now". PR reviews, faults and stops stay in Needs you
+without waking a device. No push is sent only to clear a banner, because Safari shows something for every
+push: an answered banner closes when Altitude is next open on that device or the next alert arrives. altd
+logs each wake as `push wakes <n> device(s) for <m> new decision(s)`.
+
 ## Refused decision alerts
 
 A push service that refuses Altitude's alert keeps its device subscribed, and altd tries that device

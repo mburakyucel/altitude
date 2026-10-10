@@ -15,18 +15,26 @@ self.addEventListener("notificationclick", (event) => {
       const open = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
       const client = open.find((candidate) => new URL(candidate.url).origin === self.location.origin);
       if (!client) return self.clients.openWindow(url);
-      await client.focus();
-      // The open app routes to the decision itself: a reload would lose an unsent reply.
+      // The open app routes to the decision itself: a reload would lose an unsent reply. The route goes first,
+      // so a window the platform will not focus still shows the decision when the tap brings it forward.
       client.postMessage({ type: "alert-open", url });
+      try {
+        await client.focus();
+      } catch {
+        await self.clients.openWindow(url);
+      }
     })(),
   );
 });
 
 /**
- * A push carries nothing: it only wakes this device, for a decision that newly needs the operator or for
- * one that no longer does. The worker asks Altitude what is waiting, names the project and task of each
- * new decision, and closes the banners whose decision has left the queue. `altitude-alerts` keeps the
- * tags already announced, so a later push repeats none of them.
+ * A push carries nothing and is sent only when a decision newly needs the operator. The worker asks Altitude
+ * what is waiting, closes the banners whose decision has left the queue, and names the project and task of
+ * each new decision. `altitude-alerts` keeps the tags already announced, so a later push repeats none.
+ *
+ * Every push shows a notification, because Safari ends a subscription after three that show none, and
+ * none is a bare "Altitude": WebKit keeps a banner it is asked to close within 30 seconds, and a tag never
+ * replaces an earlier banner on iOS, so whatever is shown stays and must say something true.
  */
 const ANNOUNCED = "altitude-alerts";
 const ANY_DECISION = "altitude-decision"; // shown when Altitude is out of reach; stands for any waiting decision
@@ -35,51 +43,36 @@ self.addEventListener("push", (event) => event.waitUntil(alertWaiting()));
 
 async function alertWaiting() {
   const open = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-  const shown = await self.registration.getNotifications();
-  // A page on screen alerts for itself and closes what it no longer lists.
-  if (open.some((client) => client.visibilityState === "visible")) return acknowledge(shown);
+  // With Altitude on screen the alert still shows, without a sound.
+  const silent = open.some((client) => client.visibilityState === "visible");
   const waiting = await pending();
   if (!waiting) {
-    // The push may announce a decision or clear one, so a banner already shown stays and none is added;
-    // with none shown, the phone says a decision is waiting and no more.
-    if (shown.length) return acknowledge(shown);
     return self.registration.showNotification("A decision needs you", {
-      body: "Open Altitude to read it.", tag: ANY_DECISION, data: { url: "/" },
+      body: "Altitude is out of reach, so this alert can't name it.", tag: ANY_DECISION, data: { url: "/" }, silent,
     });
   }
   const tags = new Set(waiting.map((decision) => decision.tag));
-  const kept = [];
-  for (const banner of shown) {
-    if (banner.tag === ANY_DECISION ? tags.size : tags.has(banner.tag)) kept.push(banner);
-    else banner.close(); // answered, withdrawn or superseded since it was shown
+  for (const banner of await self.registration.getNotifications()) {
+    // Answered, withdrawn or superseded since it was shown; a generic banner is named below or no longer true.
+    if (banner.tag === ANY_DECISION || !tags.has(banner.tag)) banner.close();
   }
   const announced = await remembered();
   // A decision whose task is still moving is neither shown nor recorded, so it alerts once the task rests.
   const fresh = waiting.filter((decision) => !decision.held && !announced.includes(decision.tag));
   await remember(waiting.filter((decision) => !decision.held || announced.includes(decision.tag))
     .map((decision) => decision.tag));
-  if (!fresh.length) return acknowledge(kept);
   for (const decision of fresh) {
     await self.registration.showNotification(`${decision.project} needs a decision`, {
-      body: decision.title, tag: decision.tag, data: { url: decision.url },
+      body: decision.title, tag: decision.tag, data: { url: decision.url }, silent,
     });
   }
-}
-
-/**
- * Every push must show a notification, or Safari ends the subscription after three. With nothing new to
- * say, a banner still standing is shown again in place without a sound; with none, a silent one is shown
- * and closed at once, so no invented decision stays on the device.
- */
-async function acknowledge(kept) {
-  const [banner] = kept;
-  if (banner) {
-    return self.registration.showNotification(banner.title, {
-      body: banner.body, tag: banner.tag, data: banner.data, silent: true,
-    });
-  }
-  await self.registration.showNotification("Altitude", { tag: "altitude-quiet", silent: true });
-  for (const quiet of await self.registration.getNotifications({ tag: "altitude-quiet" })) quiet.close();
+  if (fresh.length) return;
+  // Settled or handed back between the wake and this read, or already announced: the push still shows, truthfully.
+  const settled = !waiting.some((decision) => !decision.held);
+  return self.registration.showNotification(settled ? "No decision needs you now" : "No new decision", {
+    body: settled ? "It was settled before this alert arrived." : "Nothing new since your last alert.",
+    tag: "altitude-nothing-new", data: { url: "/" }, silent: true,
+  });
 }
 
 /** What Altitude says is waiting, or null while this device cannot reach it. */

@@ -146,14 +146,14 @@ def _save(record: dict) -> None:
 
 
 def _waiting() -> tuple[list[str], list[str]]:
-    """The key of every waiting operator question or held review, in the form the page and the worker both
-    use, and the keys among them that may wake a device now: a decision whose task is still moving waits.
+    """The key of every waiting operator question, in the form the page and the worker both use, and the keys
+    among them that may wake a device now: a decision whose task is still moving waits. Reviews, faults and
+    stops stay in Needs you without waking anyone.
 
     Keyed on the decision, not its revision: a block and its escalation publish the same waiting
     decision twice, and the operator is woken for it once."""
-    rows = [row for row in digest.queue() if row.get("id") or row["kind"] == "review"]  # not a fault or a stop
-    keys = [f"{row['project']}:{row['slug']}:{row.get('group_id') or row.get('id') or 'review:%s' % row['pr']}"
-            for row in rows]
+    rows = [row for row in digest.queue() if row.get("id")]
+    keys = [f"{row['project']}:{row['slug']}:{row.get('group_id') or row['id']}" for row in rows]
     return keys, [key for key, row in zip(keys, rows) if not row.get("alert_held")]
 
 
@@ -194,8 +194,10 @@ def refused() -> list[dict]:
 
 
 def notify(log=lambda message: None) -> None:
-    """Called each tick: a decision that newly may alert, or an announced one that has left the queue,
-    owes every subscribed device one wake, so it alerts once or closes the banner it no longer needs.
+    """Called each tick: a decision that newly may alert owes every subscribed device one wake. Nothing else
+    wakes a device: Safari shows something for every push, and WebKit keeps a banner it is asked to close
+    within 30 seconds, so a wake that only cleared a banner left a bare one behind. An answered banner closes
+    when the page next reads the queue or the next alert wakes the device.
 
     A device stays owed until its push service takes a wake. One asleep, off its network or refused when
     the decision arrived therefore still wakes on the next tick that gets through, even when another device
@@ -206,10 +208,15 @@ def notify(log=lambda message: None) -> None:
             return
         keys, alerting = _waiting()
         fresh = [key for key in alerting if key not in record["seen"]]
-        if fresh or any(key not in keys for key in record["seen"]):
-            # Answered decisions drop out, so the record stays the size of the queue.
-            record["seen"] = [key for key in keys if key in record["seen"] or key in fresh]
-            record["owed"] = list(record["subscriptions"])
+        # Answered decisions drop out, so the record stays the size of the queue and one that returns alerts again.
+        seen = [key for key in keys if key in record["seen"] or key in fresh]
+        if fresh or seen != record["seen"]:
+            record["seen"] = seen
+            if fresh:
+                record["owed"] = list(record["subscriptions"])
+                log(f"push wakes {len(record['owed'])} device(s) for {len(fresh)} new decision(s)")
+            elif not seen:  # every decision a device was owed is settled: a late wake would announce nothing
+                record["owed"] = []
             _save(record)
         endpoints = list(record["owed"])
         before = dict(record["refused"])  # a subscription renewed while sending starts clean, not refused again
