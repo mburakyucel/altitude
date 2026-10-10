@@ -71,6 +71,23 @@ if args[:1] == ["run"]:
 '''
 
 
+class TestValidationClient(TestCase):
+    def test_the_client_ends_when_its_launcher_ends(self):
+        """An engine cancelled a command by ending its launcher, and the client lived on, connected (issue #796)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            ready, ended = Path(tmp) / "ready", Path(tmp) / "ended"
+            client = ("import pathlib, sys, time; from altitude import platform; platform.end_with_parent(); "
+                      f"pathlib.Path({str(ready)!r}).touch()\n"
+                      f"try: time.sleep(60)\nfinally: pathlib.Path({str(ended)!r}).touch()")
+            launcher = subprocess.Popen([sys.executable, "-c", "import subprocess, sys, time; "
+                                         f"subprocess.Popen([sys.executable, '-c', {client!r}]); time.sleep(60)"],
+                                        cwd=Path(__file__).resolve().parents[1])
+            self.addCleanup(launcher.wait)
+            wait_for(ready.exists, "the client to start")
+            launcher.kill()
+            wait_for(ended.exists, "the client to end with its launcher")
+
+
 class RunnerCase(AltitudeCase):
     """A running task whose worker owns the request, and altd's HTTP door; each host's fixtures come from a subclass."""
 
@@ -89,12 +106,7 @@ class RunnerCase(AltitudeCase):
         validation._ready.set()
         self.stops = self.patch(platform, "job_stop")
         self.active = self.patch(platform, "job_active", return_value=False)
-        self.slug = T.new(self.project, "Check the installation", "Run the VM lifecycle.")["slug"]
-        T.dispatch(self.project, self.slug, attempt=1, session_id="session", agent_id="agent",
-                   worktree=str(self.repo), branch="work")
-        root = dispatch.l2_job_root(self.project, self.slug)
-        root.mkdir(parents=True, exist_ok=True)
-        S.write_json(root / "agent.json", {"id": "agent", "engine": "claude", "unit": engines._claude_unit("agent")})
+        self.slug = self.task("Check the installation")
         self.head = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD"], capture_output=True,
                                    text=True, check=True).stdout.strip()
         self.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
@@ -102,6 +114,16 @@ class RunnerCase(AltitudeCase):
         threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": .01}, daemon=True).start()
         self.addCleanup(self.httpd.server_close)
         self.addCleanup(self.httpd.shutdown)
+
+    def task(self, title, agent="agent"):
+        """A running task whose worker is `agent`; returns its slug."""
+        slug = T.new(self.project, title, "Run the VM lifecycle.")["slug"]
+        T.dispatch(self.project, slug, attempt=1, session_id="session", agent_id=agent, worktree=str(self.repo),
+                   branch="work")
+        root = dispatch.l2_job_root(self.project, slug)
+        root.mkdir(parents=True, exist_ok=True)
+        S.write_json(root / f"{agent}.json", {"id": agent, "engine": "claude", "unit": engines._claude_unit(agent)})
+        return slug
 
     def request(self, path, body, *, status=200):
         connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=60)
@@ -118,12 +140,12 @@ class RunnerCase(AltitudeCase):
         return self.request("/api/task/validate", {"project": self.project, "slug": self.slug, "attempt": attempt,
                                                    "command": command, **options}, status=status)
 
-    def send(self, command, *, lines=True):
+    def send(self, command, *, lines=True, slug=None):
         """A validate request left open, from a client that hears what it waits for when `lines`."""
         connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=60)
         self.addCleanup(connection.close)
         connection.request("POST", "/api/task/validate", body=json.dumps({
-            "project": self.project, "slug": self.slug, "attempt": "1", "command": command}),
+            "project": self.project, "slug": slug or self.slug, "attempt": "1", "command": command}),
             headers={"Content-Type": "application/json", **({"Accept": "application/x-ndjson"} if lines else {})})
         return connection
 
@@ -139,11 +161,11 @@ class RunnerCase(AltitudeCase):
         wait_for(started.exists, "the holding run to start")
         return release, thread, answers
 
-    def ledger(self):
-        return S.task_dir(self.project, self.slug) / "machine.jsonl"
+    def ledger(self, slug=None):
+        return S.task_dir(self.project, slug or self.slug) / "machine.jsonl"
 
-    def rows(self):
-        return [json.loads(line) for line in self.ledger().read_text().splitlines()]
+    def rows(self, slug=None):
+        return [json.loads(line) for line in self.ledger(slug).read_text().splitlines()]
 
 
 class ClientStop:
@@ -163,6 +185,39 @@ class ClientStop:
         self.assertEqual(self.stops.call_args.args[0], row["unit"])
         self.assertEqual(self.validate(["true"])["exit"], 0, "the next request has the machine")
         self.assertEqual(list((validation.home() / "runs").iterdir()), [])
+
+    def test_a_newer_request_from_the_same_task_replaces_its_earlier_run_and_waiting_request(self):
+        """An engine cancelled an owner's command but left its client running and connected, so the owner's corrected
+        request waited behind its own abandoned run until the session ended (issue #796)."""
+        started, release = self.tmp / "started", self.tmp / "release"
+        self.stops.side_effect = lambda unit, env: release.touch()   # the service manager stops the unit
+        abandoned = self.send(["sh", "-c", f"touch {started}; until [ -e {release} ]; do sleep .02; done; exit 143"])
+        wait_for(started.exists, "the abandoned run to start")
+        newer = self.validate(["echo", "newer"])   # the abandoned client is still connected
+        self.assertEqual((newer["exit"], newer["ended"], newer["output"]), (0, "exit", "newer\n"))
+        first, second = self.rows()
+        self.assertEqual((first["ended"], first["cleanup"]), ("replaced", None))
+        self.assertRegex(first["error"], r"^replaced by this task's newer validation request of "
+                                         r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC$")
+        self.assertEqual(self.stops.call_args_list[0].args[0], first["unit"])
+        self.assertEqual(json.loads(abandoned.getresponse().read().splitlines()[-1])["ended"], "replaced")
+
+        other = self.task("Check another lane", agent="other")   # holds the machine, so this task's requests wait
+        release.unlink()
+        holder = self.send(["sh", "-c", f"until [ -e {release} ]; do sleep .02; done"], slug=other)
+        wait_for(lambda: self.ledger(other).exists(), "the other task's run to start")
+        waiting = self.send(["echo", "abandoned"]).getresponse()
+        self.assertIn(f"the validation run of {self.project}/{other} holds this machine",
+                      json.loads(waiting.readline())["waiting"])
+        replacing = self.send(["echo", "replacing"]).getresponse()
+        self.assertRegex(json.loads(waiting.read().splitlines()[-1])["error"],
+                         r"^alt task validate: replaced by this task's newer validation request of .* UTC while it "
+                         r"waited$")
+        release.touch()
+        holder.getresponse().read()
+        self.assertEqual(json.loads(replacing.read().splitlines()[-1])["output"], "replacing\n")
+        self.assertEqual([row["command"] for row in self.rows()][2:], ["echo replacing"])
+        self.assertEqual(validation._latest, {})
 
 
 class TestValidationRunner(ClientStop, RunnerCase):
@@ -287,20 +342,21 @@ class TestValidationRunner(ClientStop, RunnerCase):
 
     def test_a_request_for_a_busy_machine_waits_its_turn_in_arrival_order(self):
         release, holder, answers = self.holding()
-        second = self.send(["echo", "second"]).getresponse()
+        tasks = {name: self.task(f"Check the {name} lane", agent=name) for name in ("second", "third", "leaving", "silent")}
+        second = self.send(["echo", "second"], slug=tasks["second"]).getresponse()
         self.assertEqual((second.status, second.headers["Content-Type"]), (200, "application/x-ndjson"))
         with validation.LINE.lock:
             ends = f"{validation.LINE.holders[0]['ends']:%Y-%m-%d %H:%M:%S} UTC"
         self.assertEqual(json.loads(second.readline()), {"waiting": (
             f"waiting for the validation slot: the validation run of {self.project}/{self.slug} holds this machine "
             f"until its limit at {ends}")})
-        third = self.send(["echo", "third"]).getresponse()
+        third = self.send(["echo", "third"], slug=tasks["third"]).getresponse()
         self.assertIn(f"until its limit at {ends}; 1 request(s) ahead of this one", json.loads(third.readline())["waiting"])
-        leaving = self.send(["echo", "leaving"])
+        leaving = self.send(["echo", "leaving"], slug=tasks["leaving"])
         self.assertIn("2 request(s) ahead", json.loads(leaving.getresponse().readline())["waiting"])
         leaving.close()   # a waiting client that stops leaves the line
         wait_for(lambda: len(validation.LINE._queue) == 2, "the stopped client to leave the line")
-        silent = self.send(["echo", "silent"], lines=False)   # a client that reads one JSON reply waits without lines
+        silent = self.send(["echo", "silent"], lines=False, slug=tasks["silent"])   # a client that reads one JSON reply waits without lines
         wait_for(lambda: len(validation.LINE._queue) == 3, "the silent request to wait")
         release.touch()
         holder.join()
@@ -312,9 +368,11 @@ class TestValidationRunner(ClientStop, RunnerCase):
         self.assertIn("the validation run of", waits[-1]["waiting"], "the line moved up behind the second run")
         self.assertNotIn("ahead", waits[-1]["waiting"])
         self.assertEqual(json.loads(silent.getresponse().read())["output"], "silent\n")
-        self.assertEqual([(row["command"], row["ended"]) for row in self.rows()],
+        self.assertEqual([(row["command"], row["ended"]) for slug in (self.slug, tasks["second"], tasks["third"],
+                                                                      tasks["silent"]) for row in self.rows(slug)],
                          [(f"sh -c 'touch {self.tmp / 'holding'}; until [ -e {release} ]; do sleep .02; done'", "exit"),
                           ("echo second", "exit"), ("echo third", "exit"), ("echo silent", "exit")])
+        self.assertFalse(self.ledger(tasks["leaving"]).exists())
         self.assertEqual(validation.LINE._queue, [])
 
     def test_a_client_that_stops_while_its_run_is_set_up_ends_it_before_it_starts(self):
@@ -375,13 +433,14 @@ class TestValidationRunner(ClientStop, RunnerCase):
 
     def test_a_request_that_waited_is_checked_again_when_admitted(self):
         release, _, _ = self.holding()
-        waiting = self.send(["true"]).getresponse()
+        other = self.task("Check another lane", agent="other")
+        waiting = self.send(["true"], slug=other).getresponse()
         waiting.readline()
-        T.block(self.project, self.slug, "Waiting", actor="l2", expected_state="running", expected_attempt=1)
+        T.block(self.project, other, "Waiting", actor="l2", expected_state="running", expected_attempt=1)
         release.touch()
         self.assertEqual(json.loads(waiting.read()), {
             "error": "alt task validate: only the running owner's current attempt may run validation"})
-        self.assertEqual(len(self.rows()), 1)
+        self.assertEqual((len(self.rows()), self.ledger(other).exists()), (1, False))
 
     def test_the_switch_is_the_operators_and_off_stops_the_running_run(self):
         self.assertTrue(server.machine_view()["validation"])
@@ -491,7 +550,8 @@ class TestValidationRunner(ClientStop, RunnerCase):
         new runs away; the admitted one finishes and the next tick restarts."""
         flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
         release, holder, answers = self.holding()
-        queued = self.send(["true"], lines=False)
+        other = self.task("Check another lane", agent="other")
+        queued = self.send(["true"], lines=False, slug=other)
         wait_for(lambda: validation.LINE._queue, "the next run to wait its turn")
         S.write_json(flag, {"since": S.now(), "head": "merged", "files": ["altitude/dispatch.py"]})
         with mock.patch.object(server, "_request_restart_unit", return_value={"ok": True, "unit": "restart"}) as restart:
@@ -504,7 +564,7 @@ class TestValidationRunner(ClientStop, RunnerCase):
             response = queued.getresponse()
             self.assertEqual(response.status, 400)
             self.assertIn("activating merged changes", json.loads(response.read())["error"])
-            self.assertEqual(len(self.rows()), 1, "the waiting request never ran")
+            self.assertEqual((len(self.rows()), self.ledger(other).exists()), (1, False), "the waiting request never ran")
             self.assertEqual(server.restart_status()["waiting_for"], [])
             server.auto_restart()
             restart.assert_called_once()
