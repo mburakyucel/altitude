@@ -1076,10 +1076,12 @@ and the live task owner/hold/active receipt are rechecked before merging. The fe
 is authoritative; lagging `baseRefOid` metadata does not replace it. Check evidence confirms the
 current GitHub base target/head and exact candidate association, with real movement refusing merge.
 Required checks from branch protection and active rules remain mandatory, including missing or
-skipped checks. Completed skipped checks identified as nonrequired by GitHub are ignored without
-interpreting workflow conditions. Failed, cancelled and pending checks still block, including
-nonrequired checks; pending checks use the existing wait. Unknown requiredness or ambiguous
-candidate association refuses delivery. At least one check must actually pass under the hosted gate.
+skipped checks. Completed check runs that GitHub identifies as nonrequired and that ended skipped,
+neutral or cancelled are ignored without interpreting workflow conditions: they neither block nor
+count as a pass, so a code-scanning summary that completes neutral before its analysis starts costs
+no landing attempt. Failed and pending checks still block, including nonrequired checks; pending
+checks use the existing wait. Unknown requiredness or ambiguous candidate association refuses
+delivery. At least one check must actually pass under the hosted gate.
 For other projects without CI, the full local suite runs on a clean single-parent squash
 candidate, for adopted PRs too. The suite is one `--test-cmd` argv
 command run without a shell. Workflows on either pinned side keep the hosted gate, so a head that
