@@ -104,7 +104,7 @@ class TestReviews(AltitudeCase):
         self.patch(engines, "_review_command", return_value=["fixture-only"])
         self.patch(engines.platform, "job_active", return_value=False)
         records = [
-            {"is_error": True, "errors": ["captured adapter connection refused PRIVATE SOURCE"]},
+            {"type": "result", "is_error": True, "errors": ["captured adapter connection refused PRIVATE SOURCE"]},
             {"type": "turn.failed", "error": {"message": "captured adapter connection refused PRIVATE SOURCE"}},
         ]
         # Both configured engine fixtures share the same real process/task receipt path.

@@ -725,7 +725,10 @@ code-mode host, the one native feature left enabled besides skipping host skill 
 JavaScript tool bridge without filesystem, process or network globals, whose patch tool the read-only
 sandbox rejects. Claude loads it from the command-line MCP configuration in restricted mode with no
 built-in tools, no skills and no safe mode, which disables every MCP server; its prompt arrives as one
-stream-json user line and its answer is the final stream-json result record. Both are provider
+stream-json user line and its answer is the final stream-json result record. Review stdout keeps only
+the records the result and its diagnostics read (Claude's result record, Codex's status events and
+agent messages); tool calls and their results echo captured input and are dropped before the 2 MiB
+stdout bound, so a long review cannot exhaust it. Both are provider
 properties established by recorded reviewer runs, not by the suite. The result's `text` is a
 one-sentence verdict the UI shows as the review's summary. The adapter records the first
 content-bearing read in the review runtime; a reviewer that read no content fails with that reason

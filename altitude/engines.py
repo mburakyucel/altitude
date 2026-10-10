@@ -2850,6 +2850,23 @@ def review_stop(worker: dict) -> bool:
         return False
 
 
+def _review_kept(engine: str, line: str) -> bool:
+    """Whether a stdout line reaches the review's result and diagnostics. Tool calls and their results only echo
+    captured input; Claude's verbose stream carries every one, so they would exhaust the stdout bound of a long
+    review. Kept: Claude's result record, Codex's status events and agent messages, and any line that is not a
+    complete record."""
+    try:
+        record = json.loads(line)
+    except ValueError:
+        return True
+    if not isinstance(record, dict):
+        return True
+    if engine == "claude":
+        return record.get("type") == "result"
+    item = record.get("item")
+    return not isinstance(item, dict) or item.get("type") == "agent_message"
+
+
 def _review_object(text: str) -> dict:
     """The first complete JSON object in the answer, fenced or bare; surrounding prose is ignored.
 
@@ -3028,10 +3045,11 @@ def review(prompt: str, *, engine: str, snapshot: Path, runtime: Path, model: st
     captures = [_BoundedRawCapture(), _BoundedRawCapture()]
     readers = []
     read_errors = []
-    def drain(stream, capture):
+    def drain(stream, capture, keep):
         try:
-            while chunk := stream.read(65536):
-                capture.add(chunk)
+            while chunk := stream.readline(65536):
+                if keep(chunk):
+                    capture.add(chunk)
         except (OSError, ValueError):
             read_errors.append(True)
         finally:
@@ -3060,8 +3078,9 @@ def review(prompt: str, *, engine: str, snapshot: Path, runtime: Path, model: st
             ticks = None
         worker = {"unit": unit, "pid": proc.pid, "started_ticks": ticks}
         out.update(worker=worker, termination_confirmed=False)
-        for stream, capture in zip((proc.stdout, proc.stderr), captures):
-            reader = threading.Thread(target=drain, args=(stream, capture), daemon=True)
+        keeps = (lambda line: _review_kept(engine, line), lambda line: True)
+        for stream, capture, keep in zip((proc.stdout, proc.stderr), captures, keeps):
+            reader = threading.Thread(target=drain, args=(stream, capture, keep), daemon=True)
             reader.start()
             readers.append(reader)
         if on_start and on_start(worker) is False:
