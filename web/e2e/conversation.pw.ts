@@ -500,8 +500,8 @@ test("busy: the arrow queues, the queued row with Remove, the typing indicator, 
   await expect(v.hint).toHaveText("L3 is mid-turn · runs next");
   await walk.state("03-queued-row-overlay", {
     action: () => v.queue.click(),
-    visible: [list.getByText(text), list.getByRole("button", { name: "Remove", exact: true })],
-    hidden: [v.bubble(text)],
+    visible: [list.locator('.bubble[data-state="queued"]').filter({ hasText: text }), list.getByRole("button", { name: "Remove", exact: true })],
+    hidden: [v.bubble(text).locator(':scope:not([data-state="queued"])')],
   });
   await expect(v.field).toHaveValue("");
   await walk.state("04-removed-overlay", {
