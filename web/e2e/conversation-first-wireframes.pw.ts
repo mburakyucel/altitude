@@ -52,7 +52,10 @@ test("conversation-first design: custom answers, staged presets and conversation
     hidden: [page.getByText("Decision recorded", { exact: true })],
   });
   await page.getByRole("button", { name: "Send 2 answers", exact: true }).click();
-  await expect(page.getByText("Sent to L2", { exact: true })).toHaveCount(2);
+  await expect(page.locator(".cf-receipt")).toHaveCount(2);
+  // A picked option shows as its pill; typed words keep their text under the delivery state (SPEC.md §3.8.2).
+  await expect(page.locator(".cf-receipt .choice").filter({ hasText: "East" })).toBeVisible();
+  await expect(page.locator(".cf-receipt").filter({ hasText: "Waiting for the L2" })).toContainText("21 days");
   await expect(custom).toBeHidden();
   await expect(page.getByText("21 days", { exact: true })).toBeVisible();
   await expect(page.getByText("Decision recorded", { exact: true })).toBeHidden();
@@ -60,7 +63,7 @@ test("conversation-first design: custom answers, staged presets and conversation
   await recipient.fill("Release team");
   await walk.state("05-one-remaining", { visible: [recipient, page.getByRole("button", { name: "Send 1 answer", exact: true })], hidden: [custom] });
   await page.getByRole("button", { name: "Send 1 answer", exact: true }).click();
-  await expect(page.getByText("Sent to L2", { exact: true })).toHaveCount(3);
+  await expect(page.locator(".cf-receipt")).toHaveCount(3);
   await expect(recipient).toBeHidden();
   await expect(page.getByText("Decision recorded", { exact: true })).toBeHidden();
   await page.getByRole("link", { name: "Design example: later L2 decision", exact: true }).click();
@@ -72,15 +75,15 @@ test("conversation-first design: custom answers, staged presets and conversation
 
   await walk.open(route("Question") + "?reset");
   await page.getByRole("button", { name: "14 days", exact: true }).click();
-  await expect(page.getByText("Sent to L2", { exact: true })).toBeHidden();
+  await expect(page.locator(".cf-receipt")).toBeHidden();
   await page.getByRole("button", { name: "Send 1 answer", exact: true }).click();
-  await walk.state("02-single-submitted", { visible: [page.getByText("Sent to L2", { exact: true }), field], hidden: [page.getByText("Decision recorded", { exact: true })] });
+  await walk.state("02-single-submitted", { visible: [page.locator(".cf-receipt"), field], hidden: [page.getByText("Decision recorded", { exact: true })] });
 
   await walk.open(route("Question") + "?reset");
   await page.getByRole("button", { name: "Other…", exact: true }).click();
   await custom.fill("Could we roll back after day seven?");
   await page.getByRole("button", { name: "Send 1 answer", exact: true }).click();
-  await expect(page.getByText("Sent to L2", { exact: true })).toBeVisible();
+  await expect(page.locator(".cf-receipt")).toBeVisible();
   await expect(page.getByText("Decision recorded", { exact: true })).toBeHidden();
   await page.getByRole("link", { name: "Design example: later L2 reply", exact: true }).click();
   await expect(page.getByText("Sent · the L2 has your reply.", { exact: true })).toBeVisible();
@@ -90,10 +93,10 @@ test("conversation-first design: custom answers, staged presets and conversation
   await expect(page.locator('[data-pick][aria-pressed="true"]')).toHaveCount(0);
   for (const choice of await page.locator("[data-recommended]").all()) await choice.click();
   await expect(page.locator('[data-pick][aria-pressed="true"]')).toHaveCount(2);
-  await expect(page.getByText("Sent to L2", { exact: true })).toHaveCount(0);
+  await expect(page.locator(".cf-receipt")).toHaveCount(0);
   await page.getByRole("button", { name: "Send 2 answers", exact: true }).click();
   await expect(recipient).toBeVisible();
-  await expect(page.getByText("Sent to L2", { exact: true })).toHaveCount(2);
+  await expect(page.locator(".cf-receipt")).toHaveCount(2);
 
   await walk.open(route("Group") + "?reset");
   await field.fill("Could we roll back after day seven?");
@@ -170,7 +173,7 @@ test("conversation-first proposal: recovery and voice actions", async ({ page },
   await walk.open(route("waiting"));
   await page.getByRole("button", { name: "7 days", exact: true }).click();
   await page.getByRole("button", { name: "Send 1 answer", exact: true }).click();
-  await expect(page.getByText("Sent to L2", { exact: true })).toBeVisible();
+  await expect(page.locator(".cf-receipt")).toBeVisible();
   await expect(page.getByText("Decision recorded", { exact: true })).toBeHidden();
   await walk.open(route("read-error"));
   await page.getByRole("link", { name: "Retry", exact: true }).click();

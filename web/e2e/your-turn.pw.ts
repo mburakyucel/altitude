@@ -151,7 +151,8 @@ test("a held PR waits for review before merge in the chat; approval hands it bac
   const v = view(page, info);
   const review = v.conversation.locator("[data-review-pr='42']");
   const approve = review.getByRole("button", { name: "Approve merge", exact: true });
-  const receipt = review.getByText("Approval sent · the L2 merges after a final check of the same PR.", { exact: true });
+  // The press shows on the operator's side as the action it took, never as a typed message (SPEC.md §3.8.2).
+  const approval = v.conversation.locator(".choice-mine").filter({ hasText: "Approve merge" }).filter({ hasText: "PR #42" });
   await walk.open("/projects/atlas/tasks/release-notes");
   await expect(review.getByRole("link", { name: "View PR #42", exact: true })).toHaveAttribute("href", "https://github.com/example/atlas/pull/42");
   await walk.state("07-review-before-merge-in-chat", {
@@ -159,14 +160,14 @@ test("a held PR waits for review before merge in the chat; approval hands it bac
       review.getByText("Review PR #42 before merge", { exact: true }),
       review.getByText("Operator review of the published release notes", { exact: true }), approve,
       v.main.getByText("Your turn · review PR #42").first(), v.badge(3)],
-    hidden: [receipt, v.card],
+    hidden: [approval, v.card],
   });
   const sent = page.waitForResponse((row) => new URL(row.url()).pathname === "/api/l2/message" && row.request().method() === "POST");
   await approve.click();
   expect((await sent).request().postDataJSON().text).toBe("Approved: merge PR #42.");
   await walk.state("08-approval-sent", {
-    visible: [v.bubble("Approved: merge PR #42."), v.main.getByText("L2 replying to you").first(), v.conversation.getByText("Sent · the L2 has your reply."), v.badge(2)],
-    hidden: [approve, v.conversation.getByText("Your turn · review before merge", { exact: true })],
+    visible: [approval, v.main.getByText("L2 replying to you").first(), v.conversation.getByText("Sent · the L2 has your reply."), v.badge(2)],
+    hidden: [approve, v.bubble("Approved: merge PR #42."), v.conversation.getByText("Your turn · review before merge", { exact: true })],
   });
   await walk.open("/");
   await walk.state("08b-review-leaves-needs-you", {
@@ -177,7 +178,7 @@ test("a held PR waits for review before merge in the chat; approval hands it bac
   expect((await request.post("/fixture/integrate")).ok()).toBe(true);
   await walk.open("/projects/atlas/tasks/release-notes");
   await walk.state("08c-integrated-head-stays-approved", {
-    visible: [v.main.getByText("Waiting for coordinator").first(), v.bubble("Approved: merge PR #42.")],
+    visible: [v.main.getByText("Waiting for coordinator").first(), approval],
     hidden: [approve, v.conversation.getByText("Your turn · review before merge", { exact: true }), v.main.getByText("Your turn · review PR #42")],
   });
   await walk.open("/projects/atlas?tab=work");

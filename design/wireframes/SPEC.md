@@ -391,7 +391,7 @@ form, dialog or second copy of the reply.
 | L3 could not answer | Danger outline, retry icon, "Retry": it sends the same press and never makes a second task. No failed-turn line. |
 | Answered another way | Any message the operator sends or queues, typed, spoken or with images, retires the offer. A stale window's press is refused with "The conversation has moved on, so this was not sent." |
 
-A press runs as its own L3 turn, never folded into typed messages queued with it. Once its reply has left
+Decision selections (§3.8.2) use the same pill. A press runs as its own L3 turn, never folded into typed messages queued with it. Once its reply has left
 the loaded history, a press reads as its message, with the ordinary queue controls or failed-turn Retry.
 
 `web/e2e/create-task.pw.ts` walks these states at both widths against a disposable service running the
@@ -779,9 +779,10 @@ the owner's checkpoint; the owner considers an earlier answer with later guidanc
 The recommendation body and response controls are the same component as the open question at the
 end of the chat. Loading uses a skeleton with no inferred count; empty Needs you says
 **Nothing needs you.** A read failure offers Retry. Cached failure keeps saved cards with an explicit
-refresh notice and disabled sending. During submission, the control says **Sending…** and cannot be
-repeated. Sending anything hands the turn back: the task's card leaves Needs you and the badge drops,
-though every question stays open in the record. A brief **Sent to L2** receipt links to chat. When
+refresh notice and disabled sending. During submission, **Send N answers** keeps its label with a
+spinner and cannot be repeated. Sending anything hands the turn back: the task's card leaves Needs you
+and the badge drops, though every question stays open in the record. The chat shows each answer as
+§3.8.2 describes. When
 the owner parks again, still-needed questions return labelled **asked again**; a revised question
 is new. This records delivery, not agreement:
 the L2 interprets presets and typed responses alike, records clear decisions, and discusses follow-ups.
@@ -814,6 +815,45 @@ alerting. Refreshing, reconnecting, polling and other tasks' activity repeat not
 switch on never announces what is already waiting. A question shows in Needs you at once but alerts
 only once L3 has had its turn and it is still open (or 15 minutes after it was asked), and an alert
 whose decision is answered, withdrawn or superseded disappears from every device untouched.
+
+#### 3.8.2 Decision selections
+
+A press on a decision shows as the action it took, in the Create task pill (§3.3), never as a message
+the operator typed (boards `DecisionChoiceStates`, `MobileDecisionChoiceStates`). The record is the
+same: each press saves the operator message it always saved, and the owner cites that message.
+
+In the conversation, a quick answer or an approval sits on the operator's side as a pill with the
+option's own label ("7 days", "Approve merge") and, beneath it in 13px muted text, the question it
+answers or the PR it approves. Answers sent together show one pill each. An **Other…** answer keeps a
+bubble with its words and its question beneath; a typed reply, with or without question context, and
+any message with images keep their ordinary bubble. A pill follows its message's delivery record and
+claims no more than Altitude observed:
+
+| State | The pill |
+| --- | --- |
+| Waiting for the L2 | Clock. While Altitude can still remove the message (an approval queued for a checkpoint), × (Remove, 44px target) sits inside the pill and **Send now** below it; a quick answer is never removable. |
+| Sending to session | Spinner while the L2's session takes the message. |
+| Sent | Grey check once the session has the message. |
+| Delivery unconfirmed | Clock with **Delivery unconfirmed** beneath; no check and no ×. |
+| Decision recorded | Green fill and check once the owner records a decision citing this message. |
+
+A message is a quick answer when a question's saved response names it and the response text equals one
+of that question's options; an **Other…** answer worded exactly like an option shows as that option.
+A message is an approval when its text is exactly the one the merge check accepts ("Approved: merge PR
+#N.", optionally with "at" and a short head), so those words typed in the composer show as the action
+too. Both come from the saved conversation, so a reload, another device and a mixed batch look the same.
+
+On a card, in Needs you and the chat, **Approve merge** is the primary pill and changes in place: accent
+fill and a spinner while sending, keeping focus and ignoring presses; then a clock while the message
+waits for the L2. A refused or failed send turns it into a red **Retry** with **Not sent**
+(`role=alert`), and a denied write disables it with "You cannot approve here." **View PR #N** and the
+hint stay beside it. Saving hands the turn back and the card leaves Needs you. Where a card stays in
+view with a saved answer (the owning chat after re-parking, or a member answered in another window),
+an option shows its pill and a typed answer its words under its delivery state, until the owner
+records the decision.
+
+`web/e2e/decision-selections.pw.ts` walks these states at both widths against real question, review
+and delivery records, with a refused send as a browser overlay.
 
 ### 3.9 Open the owning L2 question
 
@@ -1029,7 +1069,7 @@ the conversation's lower corner without reducing its viewport. View preview stay
 and Needs you; View question stays in task details, useful from Live session. A held review-ready PR whose owner has stopped
 (#419) shows **Your turn · review before merge** at the end of the chat and in Needs you:
 **Approve merge** sends the operator's own message "Approved: merge PR #N." and the L2 merges
-with it after fresh checks of the current head (the chat then shows "Sent · the L2 has your reply."); **View PR #N** opens it; asking below discusses it. A later,
+with it after fresh checks of the current head (the press shows as its pill, §3.8.2, and the chat then shows "Sent · the L2 has your reply."); **View PR #N** opens it; asking below discusses it. A later,
 unrelated question never hides that review; an open operator question that links or names the PR
 supplies its single response surface, with quick options or a freeform field. The separate card stays
 away until the owner resolves the question, including while a submitted response waits for interpretation.
@@ -1102,7 +1142,7 @@ for another blocked task. Confirmed Stop reads **Send a correction to continue t
 refused or unconfirmed send uses the shared composer states in §3.6, preserving newer draft edits.
 Accepted messages stay sent through wake or refresh errors. The composer appears for running and
 blocked tasks.
-Queued operator messages form a group of outlined bubbles, 6px apart, each with a quiet ×
+Queued operator messages form a group of outlined bubbles, 6px apart (a decision selection shows its delivery on its pill instead, §3.8.2), each with a quiet ×
 (**Remove**) in the gutter. One bordered **Send now** follows the group. Its accessible description is
 **Joins the current turn without stopping its work.** It hands the queued removable operator group
 to the running turn in arrival order; each message retains its receipt and later arrivals stay outside

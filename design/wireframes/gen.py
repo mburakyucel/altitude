@@ -1059,7 +1059,7 @@ state_sheet("ReplyTaskStates", "Create task: states", OFFER_STATES, 1280)
 board("MobileReplyTaskStates", 390, 2560, '<div style="padding:20px 16px"><h1 style="font-size:18px;margin:0 0 16px">Create task: phone states</h1>'
       + ''.join(state(label, note, '<div class="statebox" style="padding:12px">' + body + '</div>') for label, note, body in OFFER_STATES) + '</div>')
 
-# A decision selection is the operator's action, shown with the Create task pill (SPEC.md §3.9 Decision selections).
+# A decision selection is the operator's action, shown with the Create task pill (SPEC.md §3.8.2 Decision selections).
 def choice(label, state="sent", about=None):
     """The chosen option in the pill; its icon and colour say where the choice stands. `about` names the question."""
     icon, cls = {"busy": ("spin", " busy"), "wait": ("clock", " wait"), "sent": ("check", " sent"),
@@ -1093,8 +1093,8 @@ DECISION_STATES = [
     ("Several answers sent together", "one pill per pick; a written answer stays your bubble",
      choice("7 days", "sent", CHOICE_Q) + choice("West", "sent", "Where should the backup live?")
      + '<div class="me">Send it to the release team.</div><p class="ot" style="align-self:flex-end;margin:-4px 0 0">Who should receive the rollout report?</p>'),
-    ("Needs you after sending", "saved answers show a clock until the L2 reads them; the card then leaves the list",
-     '<div class="l3"><p style="margin:0"><b>Index rollout</b></p><p class="muted" style="margin:0">1 question to answer</p>'
+    ("Saved answer on a card", "saving hands the turn back and the card leaves Needs you; a card still in view (re-parked in the chat) shows the saved option as its pill until the owner records it",
+     '<div class="l3"><p style="margin:0"><b>Your turn · 1 question · asked again</b></p>'
      '<p style="margin:0">' + CHOICE_Q + '</p>' + choice("7 days", "wait").replace('class="choice"', 'class="choice start"').replace('<span class="x" role="button" aria-label="Remove">' + I("x", "i sm") + '</span>', '')
      + '<p style="margin:0">Where should the backup live?</p><div class="links"><span class="btn">West ★</span><span class="btn">East</span><span class="btn">Other…</span></div></div>'),
 ]

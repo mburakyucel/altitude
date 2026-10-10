@@ -29,8 +29,9 @@ function setup({ archived = false, denied = false, missing = false } = {}) {
     if (path === "/api/task/atlas/index") return json(task);
     if (path === "/api/decide") {
       if (refuse) return json({ error: "Access denied" }, 403);
-      const closed = { ...question, response: { text: "Use seven days.", at, message_id: "answer" } };
-      task = { ...task, state: "running", handed_back: handed, question: closed, questions: [closed], messages: [...task.messages!, { id: "answer", role: operator, text: "Use seven days.", at }] };
+      // The server saves the chosen option's text, and the message joins the question with it.
+      const closed = { ...question, response: { text: "Keep it for seven days.", at, message_id: "answer" } };
+      task = { ...task, state: "running", handed_back: handed, question: closed, questions: [closed], messages: [...task.messages!, { id: "answer", role: operator, text: `${question.question}\nKeep it for seven days.`, at }] };
       return json({ question: closed });
     }
     if (path === "/api/l2/message") {
@@ -150,7 +151,8 @@ describe("Independent questions in one conversation", () => {
       ...(q.id === "q-index" ? { response: { text: "21 days", at, message_id: "elsewhere" } } : {}),
     })) }));
     await act(() => queryClient.invalidateQueries({ queryKey: ["task", "atlas", "index"] }));
-    await screen.findByText("Sent to L2");
+    // The member answered elsewhere shows the words it saved, waiting for the L2 (SPEC.md §3.8.2).
+    expect((await screen.findByText("21 days")).closest("[role=status]")).toHaveTextContent(/^Waiting for the L2/);
     expect(screen.getByRole("textbox", { name: "Your answer to: Which region should host the backup?" })).toHaveValue("Europe");
     await user.click(screen.getByRole("button", { name: "Send 1 answer" }));
     const call = server.fetch.mock.calls.find(([url]) => url === "/api/decide")!;
@@ -300,7 +302,7 @@ describe("Conversation-first decisions", () => {
     const { user } = renderApp({ route: path });
     await user.click(await screen.findByRole("button", { name: "Use 7 days & resume" }));
     await user.click(screen.getByRole("button", { name: "Send 1 answer" }));
-    await within(convo()).findByText("Sent to L2");
+    expect((await within(convo()).findAllByText("Use 7 days & resume", { selector: ".choice-label" }))[0]!.closest(".choice")).toHaveAttribute("data-state", "wait");
     expect(within(convo()).queryByRole("button", { name: "Use 7 days & resume" })).toBeNull();
     expect(within(convo()).queryByText("Decision recorded")).toBeNull();
     const calls = fetch.mock.calls.filter(([url]) => url === "/api/decide");

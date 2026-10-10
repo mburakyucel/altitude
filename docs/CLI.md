@@ -1296,7 +1296,8 @@ The worker handoff names the pending question ID/revision and each task message 
 judges the reply in context: discuss a follow-up, clarify genuine uncertainty, or record a clear
 decision and continue. No special approval phrase or extra confirmation is required.
 The question UI sends presets and **Other…** text through the same conversational handoff, including
-plain questions with no recommendations. **Sent to L2** means a response is saved; the owner still
+plain questions with no recommendations. A saved response shows as the choice made or the words
+typed; the owner still
 judges its meaning and uses `resolve` for an actual decision. Submitted members leave the attention
 count. To explicitly ask a responded member again, include its ID in `--questions-file`; publication
 creates a new revision and restores its answer field even when wording is unchanged. Ordinary

@@ -395,8 +395,10 @@ test("sending a quick answer persists its context, resumes the same L2 and clear
   await page.reload();
   const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
   await walk.state("03-answer-durable-awaiting-interpretation", {
-    visible: [conversation.getByRole("status").filter({ hasText: "Sent · the L2 has your reply." }), conversation.locator(".bubble").filter({ hasText: "Keep the bounded scope." })],
-    hidden: [inline, choice, conversation.getByText("Decision recorded", { exact: true })],
+    // The quick answer shows as the option pressed, not as words the operator typed (SPEC.md §3.8.2).
+    visible: [conversation.getByRole("status").filter({ hasText: "Sent · the L2 has your reply." }),
+      conversation.locator(".choice-mine").filter({ has: page.locator(".choice-label", { hasText: "Keep the bounded scope" }) })],
+    hidden: [inline, choice, conversation.locator(".bubble").filter({ hasText: "Keep the bounded scope." }), conversation.getByText("Decision recorded", { exact: true })],
   });
   await walk.open("/");
   await walk.state("04-needs-you-cleared", { visible: [page.getByRole("heading", { name: "Needs you", exact: true })], hidden: [card] });

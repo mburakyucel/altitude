@@ -246,6 +246,77 @@ function stub(task: unknown, options: StubOptions = {}) {
   return fetchMock;
 }
 
+describe("decision selections in the task conversation", () => {
+  const retention = { ...decision, id: "q-ret", question: "How long should we keep the old index?", recommendation: null,
+    options: [{ key: "7", label: "7 days", text: "Keep the old index for 7 days." }, { key: "30", label: "30 days", text: "Keep the old index for 30 days." }] };
+  const owner = { ...decision, id: "q-owner", question: "Who should receive the rollout report?", recommendation: null, options: null };
+  const answered = (delivery: string, resolved = false) => {
+    const at = "2026-08-30T10:00:00Z";
+    return { ...running, questions: [
+      { ...retention, status: resolved ? "resolved" : "open", response: { text: "Keep the old index for 7 days.", at, message_id: "answer-1" },
+        resolution: resolved ? { disposition: "answered", text: "Keeping 7 days.", by: "l2", at, message_id: "answer-1", source: "task" } : null },
+      { ...owner, response: { text: "Send it to the release team.", at, message_id: "answer-1" } }],
+      messages: [...running.messages.slice(0, 2), { id: "answer-1", at, role: "operator",
+        text: "How long should we keep the old index?\nKeep the old index for 7 days.\n\nWho should receive the rollout report?\nSend it to the release team.",
+        delivery: { state: delivery, at: null, removable: false } }] };
+  };
+  const conversation = () => screen.getByRole("region", { name: "Task conversation" });
+  const selection = async () => { await screen.findByRole("region", { name: "Task conversation" }); return conversation().querySelector<HTMLElement>(".choice-mine")!; };
+
+  it("shows a quick answer as its option with the question, and a written answer as the operator's own bubble", async () => {
+    stub(answered("delivered"));
+    renderApp({ route });
+    const pill = await waitFor(selection);
+    expect(pill).toHaveAttribute("data-state", "sent");
+    expect(pill).toHaveTextContent("7 days, sent");
+    expect(within(pill).getByText("How long should we keep the old index?")).toBeVisible();
+    const written = screen.getByText("Send it to the release team.").closest<HTMLElement>(".msg-row")!;
+    expect(written.querySelector(".bubble")).toHaveTextContent(/^Send it to the release team\.$/);
+    expect(within(written).getByText("Who should receive the rollout report?")).toBeVisible();
+    // The saved text that joins questions and answers is never shown as something the operator typed.
+    expect(screen.queryByText(/Keep the old index for 7 days\./)).toBeNull();
+  });
+
+  it.each([["queued", "wait", "7 days, waiting for the L2"], ["sending", "busy", "7 days, sending"], ["unconfirmed", "wait", "7 days, delivery unconfirmed"]])(
+    "says only what Altitude has observed of its delivery (%s)", async (delivery, state, name) => {
+      stub(answered(delivery));
+      renderApp({ route });
+      const pill = await waitFor(selection);
+      expect(pill).toHaveAttribute("data-state", state);
+      expect(pill).toHaveTextContent(name);
+      expect(within(pill).queryByRole("button", { name: "Remove" })).toBeNull();
+      if (delivery === "unconfirmed") expect(within(pill).getByText("Delivery unconfirmed")).toBeVisible();
+    });
+
+  it("turns the pill green once the L2 records the decision from this message", async () => {
+    stub(answered("delivered", true));
+    renderApp({ route });
+    expect(await waitFor(selection)).toHaveAttribute("data-state", "done");
+  });
+
+  it("shows the review card's approval as Approve merge with its PR, removable while it waits", async () => {
+    const approval = { id: "approve", at: "2026-08-30T10:00:00Z", role: "operator", text: "Approved: merge PR #204.", delivery: { state: "queued", at: null, removable: true, send_now: false } };
+    const fetchMock = stub({ ...running, messages: [...running.messages, approval] });
+    const { user } = renderApp({ route });
+    const row = await waitFor(selection);
+    expect(row).toHaveAttribute("data-state", "wait");
+    expect(row).toHaveTextContent("Approve merge, waiting for the L2");
+    expect(within(row).getByText("PR #204")).toBeVisible();
+    expect(screen.queryByText("Approved: merge PR #204.")).toBeNull();
+    await user.click(within(row).getByRole("button", { name: "Remove" }));
+    const removed = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/l2/remove"));
+    expect(JSON.parse(String(removed[0]?.[1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", id: "approve" });
+  });
+
+  it("keeps a typed reply about a question in its bubble", async () => {
+    const typed = { id: "typed", at: "2026-08-30T10:00:00Z", role: "operator", text: "Could we roll back after day seven?", question_id: "q-ret", question_revision: 1, answers: ["q-ret"], delivery: { state: "delivered", at: null } };
+    stub({ ...running, questions: [retention], messages: [...running.messages, typed] });
+    renderApp({ route });
+    expect((await screen.findByText("Could we roll back after day seven?")).closest(".bubble")).not.toBeNull();
+    expect(document.querySelector(".choice-mine")).toBeNull();
+  });
+});
+
 const actionCall = (fetchMock: ReturnType<typeof stub>) =>
   fetchMock.mock.calls.find(([u]) => String(u).includes("/api/task/action"));
 
@@ -656,15 +727,18 @@ describe("Task on desktop", () => {
       expect(turn).toHaveTextContent(hold);
       expect(within(turn).getByRole("link", { name: "View PR #204" })).toHaveAttribute("href", "https://github.com/example/altitude/pull/204");
       expect(screen.getByText("Your turn · review PR #204")).toBeInTheDocument();
-      await user.click(within(turn).getByRole("button", { name: "Approve merge" }));
-      await within(turn).findByText("Approval sent · the L2 merges after a final check of the same PR.");
-      expect(within(turn).queryByRole("button", { name: "Approve merge" })).toBeNull();
+      const approve = within(turn).getByRole("button", { name: "Approve merge" });
+      await user.click(approve);
+      // The button changes in place and keeps focus: saved, waiting for the L2 to read it (SPEC.md §3.8.2).
+      expect(await within(turn).findByRole("button", { name: "Approve merge, waiting for the L2" })).toBe(approve);
+      expect(approve).toHaveFocus();
+      expect(approve).toHaveAttribute("aria-disabled", "true");
       const sent = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/l2/message"));
       expect(sent).toHaveLength(1);
       expect(JSON.parse(String(sent[0]![1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", text: "Approved: merge PR #204." });
     });
 
-    it("keeps the review open with Not sent. Retry when the send fails", async () => {
+    it("turns Approve merge into a red Retry with Not sent when the send fails", async () => {
       let fail = true;
       const fetchMock = stub(reported, { overview: { ...overview, queue: [review] },
         message: () => fail ? jsonResponse({ error: "unavailable" }, 500) : approved() });
@@ -673,11 +747,10 @@ describe("Task on desktop", () => {
       const turn = await waitFor(reviewTurn);
       expect(within(turn).queryByRole("link", { name: /View PR/ })).toBeNull();
       await user.click(within(turn).getByRole("button", { name: "Approve merge" }));
-      expect(await within(turn).findByRole("alert")).toHaveTextContent("Not sent. Retry");
-      expect(within(turn).getByRole("button", { name: "Approve merge" })).toBeEnabled();
+      expect(await within(turn).findByRole("alert")).toHaveTextContent(/^Not sent$/);
       fail = false;
-      await user.click(within(turn).getByRole("button", { name: "Retry" }));
-      await within(turn).findByText("Approval sent · the L2 merges after a final check of the same PR.");
+      await user.click(within(turn).getByRole("button", { name: "Retry, Approve merge" }));
+      await within(turn).findByRole("button", { name: "Approve merge, waiting for the L2" });
       expect(within(turn).queryByRole("alert")).toBeNull();
       const sent = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/l2/message"));
       expect(sent).toHaveLength(2);
@@ -692,8 +765,8 @@ describe("Task on desktop", () => {
       const turn = await waitFor(reviewTurn);
       await user.click(within(turn).getByRole("button", { name: "Approve merge" }));
       expect(await within(turn).findByRole("alert")).toHaveTextContent("You cannot approve here.");
-      expect(within(turn).queryByRole("button", { name: "Retry" })).toBeNull();
-      expect(within(turn).getByRole("button", { name: "Approve merge" })).toBeDisabled();
+      expect(within(turn).queryByRole("button", { name: /Retry/ })).toBeNull();
+      expect(within(turn).getByRole("button", { name: "Approve merge" })).toHaveAttribute("aria-disabled", "true");
     });
   });
 
