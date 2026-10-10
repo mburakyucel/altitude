@@ -122,11 +122,25 @@ class InstallScript(unittest.TestCase):
                          [f"{REPOSITORY}/releases/download/v0.1.0/altitude-v0.1.0.tar.gz",
                           f"{REPOSITORY}/releases/download/v0.1.0/install.py"])
         self.assertIn("Altitude v0.1.0 is installed and its service is running.", result.stdout)
+        self.assertNotIn("not yet validated", result.stdout)
+
+    def test_a_host_releases_are_not_validated_on_installs_and_says_so_once(self):
+        for env, host in (({"FIXTURE_MACHINE": "aarch64"}, "Linux aarch64"),
+                          ({"FIXTURE_SYSTEM": "Darwin", "FIXTURE_MACHINE": "x86_64"}, "macOS x86_64")):
+            with self.subTest(host):
+                (self.tmp / "downloads").unlink(missing_ok=True)
+                result = self.run_script(**env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.count("not yet validated"), 1)
+                self.assertIn(f"Altitude is not yet validated on {host}; please report anything that does not work at "
+                              f"{REPOSITORY}/issues.", result.stdout)
+                self.assertIn("Altitude v0.1.0 is installed and its service is running.", result.stdout)
+        result = self.run_script()
+        self.assertNotIn("not yet validated", result.stdout)
 
     def test_mac_prerequisites_stop_with_the_fix_before_downloading(self):
         mac = {"FIXTURE_SYSTEM": "Darwin", "FIXTURE_MACHINE": "arm64"}
-        cases = [({"FIXTURE_MACHINE": "x86_64"}, "or on a Mac with Apple silicon; this machine is Darwin x86_64", None),
-                 ({"FIXTURE_MACOS": "14.6.1"}, "needs macOS 15 or newer; this Mac runs macOS 14.6.1", "Software Update"),
+        cases = [({"FIXTURE_MACOS": "14.6.1"}, "needs macOS 15 or newer; this Mac runs macOS 14.6.1", "Software Update"),
                  ({"FIXTURE_OPENSSL": "LibreSSL 3.3.6"}, "the openssl on PATH is LibreSSL 3.3.6, not OpenSSL 3",
                   'brew install openssl@3), put it ahead of /usr/bin (export PATH="$(brew --prefix openssl@3)/bin:$PATH"'),
                  ({"FIXTURE_LAUNCHD": "1"}, "no logged-in desktop session of this account is reachable",
@@ -146,8 +160,8 @@ class InstallScript(unittest.TestCase):
         self.assertIn("brew install python@3.12", result.stderr)
 
     def test_unsupported_machines_and_missing_prerequisites_stop_with_the_fix(self):
-        cases = [({"FIXTURE_MACHINE": "aarch64"}, "runs on Linux x86_64 or on a Mac with Apple silicon; this machine is Linux aarch64"),
-                 ({"FIXTURE_SYSTEM": "FreeBSD"}, "this machine is FreeBSD x86_64"),
+        cases = [({"FIXTURE_SYSTEM": "FreeBSD"}, "runs on Linux with a systemd user manager or on macOS 15 or newer; "
+                                                 "this machine runs FreeBSD."),
                  ({"FIXTURE_UID": "0"}, "not as root"),
                  ({"FIXTURE_SYSTEMD": "1"}, "no systemd user manager is reachable")]
         for env, message in cases:
@@ -160,7 +174,22 @@ class InstallScript(unittest.TestCase):
         self.fixture("python3", 'case "$*" in *exit*) exit 1 ;; *) echo 3.10.12 ;; esac')
         result = self.run_script()
         self.assertIn("Python 3.12 or newer was not found (3.10.12)", result.stderr)
-        self.assertIn("sudo apt install python3", result.stderr)
+        self.assertIn("Install it first (with your distribution's package manager), then run this again.", result.stderr)
+        for manager, hint in (("apt-get", "sudo apt install python3"), ("dnf", "sudo dnf install python3"),
+                              ("pacman", "sudo pacman -S python"), ("zypper", "sudo zypper install python3")):
+            with self.subTest(manager):
+                self.fixture(manager, "exit 0")
+                result = self.run_script()
+                self.assertIn(f"Install it first ({hint}), then run this again.", result.stderr)
+                self.assertNotIn("apt" if manager != "apt-get" else "dnf", result.stderr)
+                (self.bin / manager).unlink()
+        (self.bin / "python3").unlink()
+        (self.bin / "python3").symlink_to(sys.executable)
+        self.fixture("pacman", "exit 0")
+        (self.bin / "curl").unlink()
+        result = self.run_script()
+        self.assertIn("curl is not installed.", result.stderr)
+        self.assertIn("Install it first (sudo pacman -S curl), then run this again.", result.stderr)
 
     def test_the_unfilled_template_refuses(self):
         result = subprocess.run(["sh", str(REPO / "scripts/install.sh")], env=self.env, capture_output=True, text=True)

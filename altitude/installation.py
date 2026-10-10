@@ -524,13 +524,14 @@ def prerequisites() -> list[dict]:
     gh = shutil.which("gh")
     lacks = _gh_lacks() if gh else []
     install = None if platform.containerized() else platform.install_command("gh")
+    page = "" if install else f" ({platform.INSTALL_PAGES['gh']})"
     if not gh:
         github = {"label": "GitHub CLI not installed", "state": "unmet", "command": install,
-                  "detail": "Agents push branches and open pull requests through the GitHub CLI. Install it, then sign "
-                  "in with gh auth login."}
+                  "detail": f"Agents push branches and open pull requests through the GitHub CLI. Install it{page}, "
+                  "then sign in with gh auth login."}
     elif lacks:
         github = {"label": "GitHub CLI too old", "state": "unmet", "command": install,
-                  "detail": _GH_TOO_OLD.format(", ".join(lacks)) + " Install the current release, then check again."}
+                  "detail": _GH_TOO_OLD.format(", ".join(lacks)) + f" Install the current release{page}, then check again."}
     else:
         signed = _gh_signed_in()
         github = {"label": "GitHub CLI signed in", "state": "met" if signed else "unmet", "command": "gh auth login",
@@ -557,8 +558,10 @@ def prerequisites() -> list[dict]:
                 agent.update(state="optional", detail=f"Optional: Altitude works with any one coding agent. {agent['detail']}")
     items += agents
     git = shutil.which("git")
+    install = None if git else platform.install_command("git")
+    detail = "Agents work in Git checkouts." + ("" if install else f" Install it ({platform.INSTALL_PAGES['git']}).")
     items.append({"key": "git", "label": "Git installed" if git else "Git not installed", "state": "met" if git else "unmet",
-                  "detail": None if git else "Agents work in Git checkouts.", "command": None if git else platform.install_command("git")})
+                  "detail": None if git else detail, "command": install})
     if not git and platform.containerized():
         items[-1].update(detail="Git is bundled in the image. Replace this incomplete image from the host.", command=None)
     return items
@@ -583,7 +586,8 @@ def doctor() -> dict:
                        "state": "unknown" if lacks is None else "unavailable" if lacks else "tested",
                        "detail": "gh pr view --json listed no fields; run it to see why." if lacks is None
                        else f"{_GH_TOO_OLD.format(', '.join(lacks))} Install the current release: "
-                       f"{platform.install_command('gh')}" if lacks else "Offers every field alt land reads."})
+                       f"{platform.install_command('gh') or platform.INSTALL_PAGES['gh']}" if lacks
+                       else "Offers every field alt land reads."})
     authenticated = _gh_signed_in()
     checks.append({"name": "GitHub authentication", "state": "tested" if authenticated else "unknown",
                    "detail": "Authentication check passed; repository permissions are checked during project setup."
