@@ -530,7 +530,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
           {sendNow.isError && waiting.some((row) => row.id === sendNow.variables) ? <SendNowError error={sendNow.error} /> : null}
           {task.review?.history.filter((review) => shownReviews.has(review.id) && !messages.some((message) => message.review_id === review.id)).map((review) => <ReviewCard key={review.id} review={review} task={task} controls={reviewControls} target={reviewId === review.id} onRead={() => { following.current = false; }} />)}
           <ReviewFeedback controls={reviewControls} />
-          {live && group ? <div className="conversation-question" data-turn={turn.length ? "operator" : "l2"} tabIndex={-1} ref={(node) => {
+          {live && group ? <div className={turn.length || !(handedBack || group.questions.some((q) => q.response)) ? "conversation-question" : "sr-only"} data-turn={turn.length ? "operator" : "l2"} tabIndex={-1} ref={(node) => {
             group.questions.forEach((q) => {
               const id = `${q.id}:${q.revision}`;
               if (node) anchors.current.set(id, node); else anchors.current.delete(id);

@@ -56,9 +56,10 @@ test("quick answers show as the options pressed and follow their delivery to the
   await card.getByRole("button", { name: "Send 2 answers", exact: true }).click();
   // The owner's resume delivers the answers at once, so the pill reaches its delivered check.
   await expect(seven).toHaveAttribute("data-state", "sent");
+  await expect(v.conversation.getByText("Sent · the L2 has your reply.")).toHaveClass("sr-only");
+  await expect(card).toHaveCount(0);
   await walk.state("03-answers-sent-as-a-pill-and-a-bubble", {
-    visible: [seven, seven.getByText(retention, { exact: true }), north, north.getByText(region, { exact: true }),
-      v.conversation.getByText("Sent · the L2 has your reply.")],
+    visible: [seven, seven.getByText(retention, { exact: true }), north, north.getByText(region, { exact: true })],
     hidden: [v.bubble("Keep the old index for seven days."), seven.getByRole("button", { name: "Remove" }), card.getByRole("button", { name: /14 days/ })],
   });
   await page.reload();

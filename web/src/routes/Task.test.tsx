@@ -704,7 +704,8 @@ describe("Task on desktop", () => {
       await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
       const convo = screen.getByRole("region", { name: "Task conversation" });
       expect(within(convo).getByText(line)).toHaveAttribute("role", "status");
-      expect(convo.querySelector(".conversation-question")).toHaveAttribute("data-turn", "l2");
+      expect(convo.querySelector('[data-turn="l2"]')).toHaveClass("sr-only");
+      expect(convo.querySelector(".conversation-question")).toBeNull();
       expect(convo.querySelector("[data-question-id]")).toBeNull();
       expect(within(convo).queryByRole("button", { name: "Keep it" })).toBeNull();
       expect(screen.queryByText(/Your turn/)).toBeNull();
