@@ -142,6 +142,43 @@ test.describe("L3 Send now", () => {
     expect((await request.post("/fixture/release")).ok()).toBe(true);
   });
 
+  test("one Send now delivers kept and newer messages together in order", async ({ page, request }, info) => {
+    const walk = walkthrough(page, info);
+    const convo = page.getByRole("region", { name: "Conversation", exact: true });
+    const field = page.getByRole("textbox", { name: "Message L3 about atlas" });
+    const send = async (text: string) => {
+      await field.fill(text);
+      await convo.getByRole("button", { name: "Send", exact: true }).click();
+    };
+    expect((await request.post("/fixture/exhausted")).ok()).toBe(true);
+    await walk.open("/projects/atlas");
+    await send("Keep the first instruction.");
+    const kept = convo.locator(".turn").filter({ hasText: "Keep the first instruction." });
+    await expect(kept.locator('.bubble[data-state="queued"]')).toBeVisible();
+    await send("Then the second instruction.");
+    await send("Finally the third instruction.");
+    const action = convo.getByRole("button", { name: "Send now", exact: true });
+    await expect(action).toHaveCount(1);
+    await walk.state("l3-mixed-queue", { visible: [action, kept], hidden: [kept.getByRole("button", { name: "Remove", exact: true })] });
+    const before = await (await request.get("/api/chat/atlas")).json();
+    const keptId = before.history.find((row: { text: string }) => row.text === "Keep the first instruction.").turn_id;
+    expect((await request.post("/fixture/recovered-ready")).ok()).toBe(true);
+    await page.reload();
+    await expect(action).not.toHaveAttribute("aria-disabled", "true");
+    await action.click();
+    const combined = "Keep the first instruction.\n\nThen the second instruction.\n\nFinally the third instruction.";
+    await walk.state("l3-mixed-delivered", { visible: [convo.getByText("Finally the third instruction. answered.", { exact: true })], hidden: [action, convo.locator('.bubble[data-state="queued"]')] });
+    const after = await (await request.get("/api/chat/atlas")).json();
+    expect(after.history.filter((row: { role: string }) => row.role === "user").map((row: { text: string }) => row.text)).toEqual([
+      "Keep the first instruction.", "Then the second instruction.", "Finally the third instruction.",
+    ]);
+    expect(after.history.find((row: { text: string }) => row.text === "Keep the first instruction.").turn_id).toBe(keptId);
+    expect((await (await request.get("/fixture/status")).json()).calls.map((row: { text: string }) => row.text)).toEqual([combined]);
+    await page.reload();
+    await expect(convo.getByText("Keep the first instruction.", { exact: true })).toHaveCount(1);
+    await expect(action).toHaveCount(0);
+  });
+
   test("shows Runs next after system work without interrupting the system turn", async ({ page, request }, info) => {
     const walk = walkthrough(page, info);
     const status = async () => (await (await request.get("/fixture/status")).json());

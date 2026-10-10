@@ -108,12 +108,13 @@ def main():
                 self.rfile.read(int(self.headers.get("Content-Length", "0")))
                 exhausted.set()
                 return self._json({"ok": True})
-            if self.path == "/fixture/recovered":
+            if self.path in ("/fixture/recovered", "/fixture/recovered-ready"):
                 self.rfile.read(int(self.headers.get("Content-Length", "0")))
                 exhausted.clear()
                 route.note_limit(config.ENGINES[0], {"scope": "engine", "why": "Fixture window reset.",
                                                      "until": "2000-01-01T00:00:00+00:00"})
-                server.request_l3_drain(project)
+                if self.path == "/fixture/recovered":
+                    server.request_l3_drain(project)
                 return self._json({"ok": True})
             if self.path == "/fixture/unavailable":
                 self.rfile.read(int(self.headers.get("Content-Length", "0")))
