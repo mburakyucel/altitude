@@ -31,6 +31,8 @@ test.describe("L2 Send now", () => {
     const queuedIds = (await status()).tasks[0].pending.map((message: { id: string }) => message.id);
     await expect(convo.getByRole("button", { name: "Send now", exact: true })).toHaveCount(1);
     const selected = row("Check this immediately.");
+    await expect(selected.getByRole("button", { name: "Remove", exact: true })).toHaveAccessibleDescription("Check this immediately.");
+    await expect(row("Earlier instruction joins too.").getByRole("button", { name: "Remove", exact: true })).toHaveAccessibleDescription("Earlier instruction joins too.");
     const button = selected.getByRole("button", { name: "Send now", exact: true });
     await walk.state("l2-02-queued-actions", { visible: [button, selected.getByRole("button", { name: "Remove", exact: true })], hidden: [] });
     if (info.project.name === "phone") expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44);
@@ -96,6 +98,7 @@ test.describe("L3 Send now", () => {
     await convo.getByRole("button", { name: /^(Send|Queue)$/ }).click();
     await convo.getByRole("button", { name: "Send now", exact: true }).click();
     const row = convo.locator(".queued-row").filter({ hasText: "Remove accepted priority" });
+    await expect(row.getByRole("button", { name: "Remove", exact: true })).toHaveAccessibleDescription("Remove accepted priority");
     await expect(row.getByRole("button", { name: "Remove", exact: true })).toBeEnabled();
     expect((await request.post("/fixture/unavailable")).ok()).toBe(true);
     await page.reload();
