@@ -57,8 +57,8 @@ def launchd(label: str) -> dict | None:
 
 def missing_prerequisites() -> list[str]:
     missing = []
-    if sys.platform != "darwin" or platform.machine() != "arm64" or int(platform.mac_ver()[0].split(".")[0]) < 15:
-        missing.append("macOS 15 or newer on Apple silicon")
+    if sys.platform != "darwin" or int(platform.mac_ver()[0].split(".")[0]) < 15:
+        missing.append("macOS 15 or newer")
     if sys.version_info < (3, 12):
         missing.append(f"Python 3.12 or newer (this is {platform.python_version()})")
     openssl = shutil.which("openssl")

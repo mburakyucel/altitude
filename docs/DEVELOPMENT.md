@@ -1105,7 +1105,7 @@ of the run as `captures/installation-vm.gif` ([validation captures](#validation-
 
 ### macOS installation lane
 
-`scripts/installation_mac.py` runs the lifecycle on a Mac with macOS 15 or newer on Apple silicon,
+`scripts/installation_mac.py` runs the lifecycle on a Mac with macOS 15 or newer,
 Homebrew's Python 3.12 and OpenSSL 3 first on `PATH`, Git, GitHub CLI and `pnpm`:
 
 ```sh

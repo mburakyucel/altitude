@@ -603,7 +603,7 @@ class TestMacLifecycle(AltitudeCase):
         from scripts import installation_mac as mac
         with mock.patch.object(mac.sys, "platform", "linux"), mock.patch.object(mac, "sandboxed", return_value=True):
             missing = mac.missing_prerequisites()
-        self.assertIn("macOS 15 or newer on Apple silicon", missing)
+        self.assertIn("macOS 15 or newer", missing)
         self.assertIn("a process outside the worker sandbox (alt task run under an operator grant, or a terminal)", missing)
         with mock.patch.object(mac, "missing_prerequisites", return_value=["fixture"]), \
                 mock.patch.object(mac, "run") as run, mock.patch.object(sys, "argv", ["installation_mac.py", str(self.tmp / "r")]):
