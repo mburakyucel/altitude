@@ -253,13 +253,18 @@ class TranscriptBody extends Component<ScrollProps> {
   }
   getSnapshotBeforeUpdate(previous: ScrollProps) {
     const node = this.body.current;
-    if (previous.following !== this.props.following) this.following = this.props.following;
+    const toggled = previous.following !== this.props.following;
+    if (toggled) this.following = this.props.following;
     // A refresh can commit after native scrolling but before its scroll event.
     // Capture that reading position before the DOM changes, not the stale anchor.
-    if (previous.active && this.props.active && !this.following && node && node.scrollTop !== this.previousScroll) {
-      const up = node.scrollTop < this.previousScroll;
-      this.remember();
-      return up;
+    // An upward scroll stops following before restore can pin it, unless Follow is newer.
+    if (previous.active && this.props.active && node && node.scrollTop !== this.previousScroll) {
+      const up = this.movedUp(node);
+      if (up && !toggled) this.following = false;
+      if (!this.following) {
+        this.remember();
+        return up;
+      }
     }
     return false;
   }
@@ -269,6 +274,12 @@ class TranscriptBody extends Component<ScrollProps> {
     if (movedUp) this.upward();
   }
   componentWillUnmount() { this.observer?.disconnect(); }
+
+  // Content shrinking under a following view lowers scrollTop too, but leaves it at the bottom.
+  private movedUp(node: HTMLDivElement) {
+    return node.scrollTop < this.previousScroll
+      && !(this.following && node.scrollHeight - node.scrollTop - node.clientHeight <= 1);
+  }
 
   private upward = () => {
     if (!this.props.active) return;
@@ -292,9 +303,7 @@ class TranscriptBody extends Component<ScrollProps> {
       onScroll={() => {
         const node = this.body.current;
         if (!node || !this.props.active || node.scrollTop === this.previousScroll) return;
-        // Content shrinking under a following view lowers scrollTop too, but leaves it at the bottom.
-        const up = node.scrollTop < this.previousScroll
-          && !(this.following && node.scrollHeight - node.scrollTop - node.clientHeight <= 1);
+        const up = this.movedUp(node);
         this.remember();
         if (up) this.upward();
       }}>

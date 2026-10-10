@@ -74,7 +74,11 @@ test("a task terminal opens in its worktree, closes when its shell exits and fol
   await expect(output).toContainText("completed-3");
   await page.keyboard.press("ArrowUp");
   await page.keyboard.press("Control+U");
+  // Escape then # is Alt+#: the shell runs the line as a comment. Ctrl+C waits for the next prompt: bash
+  // misses an interrupt that arrives while it still takes earlier keys.
   await page.keyboard.press("Escape");
+  await page.keyboard.press("#");
+  await expect(output).toHaveText(/\$ #prepare-index-migration \$\s*$/);
   await page.keyboard.press("Control+C");
   await expect(panel).toBeVisible();
   // The shell turns bracketed paste back on as its new prompt starts; a paste before that would run at once.
@@ -101,7 +105,8 @@ test("a task terminal opens in its worktree, closes when its shell exits and fol
   if (phone) {
     // A hidden password prompt (as sudo shows) takes its answer with the same key.
     await run(page, "read -rs -p 'Password: ' secret; echo; echo got-${#secret}-$secret");
-    await expect(output).toContainText("Password:");
+    // The typed line holds the prompt's text too: read has started once the screen ends with its prompt.
+    await expect(output).toHaveText(/Password:\s*$/);
     await page.evaluate(() => navigator.clipboard.writeText("hunter2"));
     await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
     await keys.getByRole("button", { name: "Paste" }).click();
@@ -123,6 +128,8 @@ test("a task terminal opens in its worktree, closes when its shell exits and fol
   }
 
   await run(page, "sleep 300");
+  // Close names the program holding the terminal: the shell has started sleep once its status says so.
+  await expect.poll(async () => (await (await request.get("/api/terminal/atlas?task=prepare-index-migration")).json()).busy).toBe("sleep");
   await close.click();
   const confirm = panel.getByText("sleep is still running and will be stopped.");
   await walk.state("04-close-running-command", { visible: [panel.getByText("Close the terminal?"), confirm], hidden: [] });

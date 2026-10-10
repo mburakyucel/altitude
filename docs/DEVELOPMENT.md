@@ -219,6 +219,9 @@ The change-stream outage fixture reports its captured shutdown targets; connecti
 erase them from the count before the response reaches the browser assertion.
 The lost-queue-receipt test waits for the initial streamed reply before installing its overlay,
 so the intended queued request is the only send it interrupts.
+The live-loading measurement waits for the service to finish the transcript read its navigation
+abandoned before measuring the task switch, so that read neither shares the next phase's CPU nor
+outlives the test.
 The reattachment walkthrough forces an overlapping browser overview read while registration fails.
 It releases the read after the error appears and keeps its route handler until teardown; removing
 the last page route also continues held requests, so their callbacks cannot continue them again.
@@ -256,10 +259,10 @@ tasks/history for route and component walkthroughs. Project-isolation and projec
 services exercise real streaming/queue/history and removal/reattachment; task-lifecycle specs
 exercise real message/decision effects. Fixture providers replace external calls at the engine
 boundary. HTTP overlays are reserved for named loading, transport failure and presentation states;
-an intercepted success response alone is not evidence of a backend transition. Request
-interception stays on for each test's browser context, so an overlay that expires or is removed
-while the app sends its next request cannot strand that request in Chromium; `route-overlays.pw.ts`
-guards this.
+an intercepted success response alone is not evidence of a backend transition. Each test's browser
+context fails any request beyond loopback at once, so no walkthrough waits on the internet. That
+route also keeps request interception on, so an overlay that expires or is removed while the app
+sends its next request cannot strand that request in Chromium; `route-overlays.pw.ts` guards this.
 
 Loading walkthroughs scope assertions to their owning region; the Send now case holds independent
 Conversation and Work reads together so both loading states are present on desktop.
