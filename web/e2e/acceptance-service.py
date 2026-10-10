@@ -64,10 +64,11 @@ def main():
         T.escalate(project, decision["slug"], "Which validation scope? Option A: Keep the bounded scope. "
                    "Option B: Expand the scope. I recommend A.")
 
-    def turn(prompt, reply, turn_id, *, trigger="chat", tasks=()):
-        l3.chat_log(project, "user", prompt, trigger=trigger, turn_id=turn_id, engine=config.ENGINES[0])
+    def turn(prompt, reply, turn_id, *, trigger="chat", tasks=(), slug=None):
+        meta = {"slug": slug} if slug else {}
+        l3.chat_log(project, "user", prompt, trigger=trigger, turn_id=turn_id, engine=config.ENGINES[0], **meta)
         l3.chat_log(project, "assistant", reply, trigger=trigger, turn_id=turn_id,
-                    engine=config.ENGINES[0], tasks=list(tasks))
+                    engine=config.ENGINES[0], tasks=list(tasks), **meta)
 
     turn("Keep the search contract stable.", "Two bounded tasks cover the migration.", "fixture-chat-1",
          tasks=(running["slug"], queued["slug"]))
@@ -117,7 +118,7 @@ def main():
                            "It covers the saved migration paths; the wider scope can follow in the next patch.")
                 prompt = T.block_question(S.load_task(project, slug))
                 turn(prompt, "Asked for the validation scope; the owner keeps the bounded plan meanwhile.",
-                     "queued-notices-handled", trigger="block")
+                     "queued-notices-handled", trigger="block", slug=slug)
                 turn("Anything else waiting?", "Only the validation scope question.", "queued-notices-chat")
                 with S.project_lock(project):
                     l3.queue_locked(project, prompt, trigger="block", slug=slug)
