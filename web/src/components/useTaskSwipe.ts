@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 /** Give past either end as a fraction of the width: the familiar rubber band, never a switch. */
 const RESISTANCE = 0.55;
@@ -79,7 +79,8 @@ export function useTaskSwipe(enabled: boolean, view: number, views: number, swit
     rest(track.current);
     setDragging(false);
   }, [view]);
-  useEffect(() => {
+  // Bound in the commit that shows `view`: the first touch on a view never reaches the previous view's handlers.
+  useLayoutEffect(() => {
     const node = track.current;
     if (!enabled || !node) return;
     let gesture: Gesture | null = null;
