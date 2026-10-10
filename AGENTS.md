@@ -166,6 +166,13 @@ remaining after sending a voice message.
 Phone-facing changes also run the opt-in emulated iPhone lane (`make ui-ios`); its results are
 desktop WebKit evidence, not iOS acceptance (see [device evidence](docs/DEVELOPMENT.md#device-evidence)).
 
+Every task that changes the UI gets a design review before implementation: its proposal review,
+by another engine unless none is eligible, which judges the design against this tenet and the
+interaction states and offers up to two alternative directions. A design proposal saves its captures
+beside a written spec precise enough to review against (states, exact text and line formats, links,
+wrapping and truncation, phone and desktop), and the review reads that spec. The owner shows the
+operator the review's alternatives alongside its proposal; the operator chooses.
+
 For a major UX change, settle the user-facing decisions before finalizing implementation or
 migrating tests. Present a concise proposal and a small set of reviewable wireframes; discuss
 unresolved behavior with the operator at that level. Positive overall feedback does not settle
