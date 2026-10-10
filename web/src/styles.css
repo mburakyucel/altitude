@@ -852,13 +852,19 @@
 }
 .menu.project-menu { width: min(320px, calc(100vw - 24px)); }
 .shell[data-phone] .project-menu .menu-item { min-height: 44px; }
-.queued-status { display: block; font-size: var(--text-meta); }
 .shell[data-phone] .queued-actions > button { min-width: 44px; min-height: 44px; }
 .queued-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 12px; }
 .queued-actions:empty { display: none; }
+.convo-col > .queued-actions { margin-top: -16px; }
+.queued-row > .queued-actions { margin-top: 6px; }
 .msg-row:has(.queued-actions) > .msg-time { position: absolute; right: 0; bottom: -18px; }
 .send-now { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; background: transparent; color: var(--text-primary); font: inherit; cursor: pointer; white-space: nowrap; }
-.send-now:disabled { opacity: .55; cursor: default; }
+.send-now:disabled,
+.send-now[aria-disabled="true"] { opacity: .55; cursor: default; }
+/* Pending keeps the button's size: the spinner takes the label's place (SPEC.md §1.1). */
+.send-now[aria-busy="true"] { position: relative; }
+.send-now[aria-busy="true"] .send-now-label { visibility: hidden; }
+.send-now[aria-busy="true"] .spinner { position: absolute; inset: 0; margin: auto; }
 .send-now-help { flex-basis: 100%; font-size: var(--text-meta); }
 .queued-actions .send-now-help { order: 1; }
 .shell[data-phone] .message-delivery > .link { min-width: 44px; min-height: 44px; }
@@ -1768,6 +1774,10 @@
 .turn[data-joined] + .turn {
   margin-top: -14px;
 }
+/* The operator's consecutive messages sit close together, read as sent back to back. */
+.msg-row[data-mine] + .msg-row[data-mine] {
+  margin-top: -16px;
+}
 .bubble {
   position: relative;
   max-width: 76%;
@@ -1785,18 +1795,72 @@
   padding: 10px 14px;
   font-size: 16px;
 }
-/* The progress cue beside a pending bubble (§3.6 Sending): a ring in the gutter, outside the flow. */
-.bubble-sending {
+/* Where the operator's message stands (§3.6, §3.10): a ring or warning mark in the gutter, outside the flow;
+   an outline while it waits in the queue. */
+.bubble-mark {
   position: absolute;
   top: calc(50% - 7px);
   left: -22px;
   color: var(--text-muted);
 }
+.bubble-warning {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--data-claimed);
+  color: var(--page);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+/* A queued message's remove: a quiet × in the gutter, recognisable at rest, darker on hover; 44px on phone. */
+.bubble-remove {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  top: calc(50% - 11px);
+  left: -30px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+  cursor: pointer;
+}
+.bubble-remove:hover:not(:disabled) {
+  border-color: var(--text-muted);
+  color: var(--text-primary);
+}
+.bubble-remove:disabled {
+  opacity: .55;
+  cursor: default;
+}
+.bubble-remove .spinner {
+  width: 10px;
+  height: 10px;
+  border-width: 1.5px;
+}
+.shell[data-phone] .bubble-remove::after {
+  content: "";
+  position: absolute;
+  inset: -11px;
+}
+.bubble-warning-text {
+  color: var(--chip-claimed-text);
+}
+.bubble[data-state="queued"] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
 @media (prefers-reduced-motion: reduce) {
   .msg-row[data-mine] {
     transition: none;
   }
-  .bubble-sending {
+  .bubble-mark.spinner {
     animation: none;
   }
 }
@@ -1956,22 +2020,14 @@
 .queued {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
-.queued-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: flex-end;
-  gap: 12px;
-  font-size: var(--text-meta);
-  color: var(--text-muted);
-}
 .queued-text {
-  min-width: 0;
+  margin: 0;
+  text-align: right;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

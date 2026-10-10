@@ -573,7 +573,7 @@ test("task: removing a queued image preserves later text checkpoint delivery", a
   await page.reload();
   // This fixture consumes the real inbox without a native session receipt; the UI stays candid.
   await walk.state("03-only-later-text-consumed", {
-    visible: [textRow.getByText("Delivery unconfirmed · cannot remove", { exact: true })],
+    visible: [textRow.getByText("Unconfirmed", { exact: true })],
     hidden: [v.preview, textRow.getByRole("button", { name: "Remove", exact: true })],
   });
 });

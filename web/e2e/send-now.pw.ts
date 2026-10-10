@@ -16,7 +16,7 @@ test.describe("L2 Send now", () => {
     const send = async (text: string) => {
       await field.fill(text);
       await convo.getByRole("button", { name: "Send", exact: true }).click();
-      await expect(row(text).getByRole("button", { name: "Send now", exact: true })).toBeVisible();
+      await expect(convo.getByRole("button", { name: "Send now", exact: true })).toBeVisible();
     };
     let releaseRead!: () => void;
     const readGate = new Promise<void>((resolve) => { releaseRead = resolve; });
@@ -28,19 +28,30 @@ test.describe("L2 Send now", () => {
     await walk.state("l2-01-empty-queue", { visible: [field], hidden: [convo.getByRole("button", { name: "Send now", exact: true })] });
     await send("Earlier instruction joins too.");
     await send("Check this immediately.");
+    const queuedIds = (await status()).tasks[0].pending.map((message: { id: string }) => message.id);
+    await expect(convo.getByRole("button", { name: "Send now", exact: true })).toHaveCount(1);
     const selected = row("Check this immediately.");
+    await expect(selected.getByRole("button", { name: "Remove", exact: true })).toHaveAccessibleDescription("Check this immediately.");
+    await expect(row("Earlier instruction joins too.").getByRole("button", { name: "Remove", exact: true })).toHaveAccessibleDescription("Earlier instruction joins too.");
     const button = selected.getByRole("button", { name: "Send now", exact: true });
-    await walk.state("l2-02-queued-actions", { visible: [button, selected.getByRole("button", { name: "Remove", exact: true }), selected.getByText("Joins the current turn without stopping its work.")], hidden: [] });
+    await walk.state("l2-02-queued-actions", { visible: [button, selected.getByRole("button", { name: "Remove", exact: true })], hidden: [] });
     if (info.project.name === "phone") expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44);
     await button.click();
-    await walk.state("l2-03-sending-now", { visible: [selected.getByText("Sending now · joining the current turn")], hidden: [selected.getByText("Delivered to session"), selected.getByRole("button", { name: /^Send(ing)? now/ }), selected.getByRole("button", { name: "Remove", exact: true })] });
+    await walk.state("l2-03-sending-now", { visible: [selected.getByRole("status", { name: "Sending", exact: true })], hidden: [selected.getByText("Delivered to session"), selected.getByRole("button", { name: /^Send(ing)? now/ }), selected.getByRole("button", { name: "Remove", exact: true })] });
     expect((await status()).tasks[0].state).toBe("running");
+    expect((await status()).tasks[0].send_now.ids).toEqual(queuedIds);
     await control("deliver-send-now");
-    await walk.state("l2-04-delivered", { visible: [selected.getByText("Delivered to session")], hidden: [selected.getByRole("button", { name: "Send now", exact: true }), selected.getByRole("button", { name: "Remove", exact: true })] });
+    await walk.state("l2-04-delivered", { visible: [selected], hidden: [selected.getByRole("button", { name: "Send now", exact: true }), selected.getByRole("button", { name: "Remove", exact: true })] });
     const after = await status();
     expect(after.tasks[0].state).toBe("running");
     expect(after.calls.filter((call: { prompt?: string }) => call.prompt?.includes("Check this immediately."))).toHaveLength(0);
-    await expect(row("Earlier instruction joins too.").getByText("Delivered to session")).toBeVisible();
+    await expect(row("Earlier instruction joins too.").locator(".bubble")).not.toHaveAttribute("data-state");
+    await expect(selected.locator(".bubble")).not.toHaveAttribute("data-state");
+    expect(after.tasks[0].pending).toEqual([]);
+    const delivered = await (await request.get(`/api/task/atlas/${slug}`)).json();
+    const receipts = delivered.messages.filter((message: { id: string }) => queuedIds.includes(message.id));
+    expect(receipts.map((message: { id: string }) => message.id)).toEqual(queuedIds);
+    expect(receipts.map((message: { delivery: { state: string } }) => message.delivery.state)).toEqual(["delivered", "delivered"]);
     await send("Remove this later message.");
     await row("Remove this later message.").getByRole("button", { name: "Remove", exact: true }).click();
     await walk.state("l2-05-removed", { visible: [selected], hidden: [row("Remove this later message."), convo.getByRole("button", { name: "Send now", exact: true })] });
@@ -57,14 +68,19 @@ test.describe("L2 Send now", () => {
     await convo.getByRole("button", { name: "Send", exact: true }).click();
     await page.route("**/api/l2/send-now", (route) => route.fulfill({ status: 403, json: { error: "Fixture denied" } }), { times: 1 });
     await button.click();
-    await walk.state("l2-06-denied", { visible: [convo.getByText("You do not have permission to send this message now.")], hidden: [convo.getByText("Delivered to session")] });
+    await walk.state("l2-06-denied", { visible: [convo.getByText("You do not have permission to send this message now.")], hidden: [] });
     await page.route("**/api/l2/send-now", (route) => route.abort(), { times: 1 });
     await button.click();
-    await walk.state("l2-07-unconfirmed", { visible: [convo.getByText("Send now unconfirmed. Check this message’s status before trying again.")], hidden: [convo.getByText("Delivered to session")] });
+    await walk.state("l2-07-unconfirmed", { visible: [convo.getByText("Send now unconfirmed. Check this message’s status before trying again.")], hidden: [] });
     expect((await request.post("/fixture/control", { data: { slug, mode: "blocked" } })).ok()).toBe(true);
     await page.reload();
-    await expect(button).toBeDisabled();
-    await walk.state("l2-08-question-wait-unavailable", { visible: [button, convo.getByText("Keep this steering.", { exact: true })], hidden: [] });
+    await expect(button).toHaveAttribute("aria-disabled", "true");
+    const reason = convo.locator(".send-now-help");
+    await walk.state("l2-08-question-wait-unavailable", { visible: [button, convo.getByText("Keep this steering.", { exact: true })], hidden: [reason] });
+    // An unavailable Send now stays pressable (aria-disabled) so pressing it can show its reason; Playwright treats it as disabled.
+    await button.click({ force: true });
+    await walk.state("l2-09-unavailable-reason-on-press", { visible: [button, reason], hidden: [] });
+    await expect(button).toHaveAccessibleDescription(await reason.innerText());
   });
 });
 
@@ -82,11 +98,12 @@ test.describe("L3 Send now", () => {
     await convo.getByRole("button", { name: /^(Send|Queue)$/ }).click();
     await convo.getByRole("button", { name: "Send now", exact: true }).click();
     const row = convo.locator(".queued-row").filter({ hasText: "Remove accepted priority" });
+    await expect(row.getByRole("button", { name: "Remove", exact: true })).toHaveAccessibleDescription("Remove accepted priority");
     await expect(row.getByRole("button", { name: "Remove", exact: true })).toBeEnabled();
     expect((await request.post("/fixture/unavailable")).ok()).toBe(true);
     await page.reload();
     await expect(row.getByRole("button", { name: "Remove", exact: true })).toBeEnabled();
-    await walk.state("l3-10-accepted-priority-removable", { visible: [row.getByRole("button", { name: "Sending now…" }), row.getByRole("button", { name: "Remove", exact: true })], hidden: [] });
+    await walk.state("l3-10-accepted-priority-removable", { visible: [convo.getByRole("button", { name: "Sending now", exact: true }), row.getByRole("button", { name: "Remove", exact: true })], hidden: [] });
     await row.getByRole("button", { name: "Remove", exact: true }).click();
     await walk.state("l3-11-priority-removed-before-claim", { visible: [page.getByRole("textbox", { name: "Message L3 about atlas" })], hidden: [row] });
     expect((await request.post("/fixture/release")).ok()).toBe(true);
@@ -105,16 +122,16 @@ test.describe("L3 Send now", () => {
     await field.fill("Are you there?");
     await convo.getByRole("button", { name: "Send", exact: true }).click();
     await walk.state("l3-12-kept-during-engine-hold", {
-      visible: [turn.getByText("Queued · runs next", { exact: true }), turn.getByRole("button", { name: "Send now", exact: true }),
-        turn.getByText("No engine is available. The message stays queued.", { exact: true })],
+      visible: [turn.locator('.bubble[data-state="queued"]'), convo.getByRole("button", { name: "Send now", exact: true }),
+        convo.getByRole("button", { name: "Send now", exact: true })],
       hidden: [convo.getByText(/could not answer/), convo.getByText(/usage window/), turn.getByRole("button", { name: "Remove", exact: true }),
         convo.getByRole("list", { name: "Queued messages" })],
     });
-    await expect(turn.getByRole("button", { name: "Send now", exact: true })).toBeDisabled();
+    await expect(convo.getByRole("button", { name: "Send now", exact: true })).toHaveAttribute("aria-disabled", "true");
     expect((await request.post("/fixture/system")).ok()).toBe(true);
     await page.reload();
     await walk.state("l3-13-kept-after-reload-ahead-of-system-work", {
-      visible: [turn.getByText("Queued · runs next", { exact: true }), convo.locator(".queued-row").filter({ hasText: "Fixture system work" })],
+      visible: [turn.locator('.bubble[data-state="queued"]'), convo.locator(".queued-row").filter({ hasText: "Fixture system work" })],
       hidden: [convo.getByText(/could not answer/)],
     });
     await expect(convo.getByText("Are you there?", { exact: true })).toHaveCount(1);
@@ -122,10 +139,55 @@ test.describe("L3 Send now", () => {
     expect((await request.post("/fixture/recovered")).ok()).toBe(true);
     await walk.state("l3-14-reply-beneath-kept-message", {
       visible: [turn.getByText("Are you there? answered.", { exact: true })],
-      hidden: [turn.getByText("Queued · runs next", { exact: true }), turn.getByRole("button", { name: "Send now", exact: true })],
+      hidden: [turn.locator('.bubble[data-state="queued"]'), convo.getByRole("button", { name: "Send now", exact: true })],
     });
     await expect.poll(async () => (await status()).calls.map((call: { text: string }) => call.text)).toEqual(["Are you there?", "Fixture system work"]);
     expect((await request.post("/fixture/release")).ok()).toBe(true);
+  });
+
+  test("one Send now delivers kept and newer messages together in order", async ({ page, request }, info) => {
+    const walk = walkthrough(page, info);
+    const convo = page.getByRole("region", { name: "Conversation", exact: true });
+    const field = page.getByRole("textbox", { name: "Message L3 about atlas" });
+    const send = async (text: string) => {
+      await field.fill(text);
+      await convo.getByRole("button", { name: "Send", exact: true }).click();
+    };
+    expect((await request.post("/fixture/exhausted")).ok()).toBe(true);
+    await walk.open("/projects/atlas");
+    await send("Keep the first instruction.");
+    const kept = convo.locator(".turn").filter({ hasText: "Keep the first instruction." });
+    await expect(kept.locator('.bubble[data-state="queued"]')).toBeVisible();
+    // Retain one admitted message, then add ordinary inbox rows through the real queue writer.
+    // Sending directly while no engine runs would admit and retain each message individually.
+    for (const text of ["Then the second instruction.", "Finally the third instruction."]) {
+      expect((await request.post("/fixture/queued", { data: { text } })).ok()).toBe(true);
+    }
+    await page.reload();
+    await expect(convo.getByRole("button", { name: "Remove", exact: true })).toHaveCount(2);
+    const action = convo.getByRole("button", { name: "Send now", exact: true });
+    await expect(action).toHaveCount(1);
+    await walk.state("l3-mixed-queue", { visible: [action, kept], hidden: [kept.getByRole("button", { name: "Remove", exact: true })] });
+    const before = await (await request.get("/api/chat/atlas")).json();
+    const keptId = before.history.find((row: { text: string }) => row.text === "Keep the first instruction.").turn_id;
+    expect((await request.post("/fixture/recovered-ready")).ok()).toBe(true);
+    await page.reload();
+    await expect(action).not.toHaveAttribute("aria-disabled", "true");
+    await action.click();
+    const combined = "Keep the first instruction.\n\nThen the second instruction.\n\nFinally the third instruction.";
+    await walk.state("l3-mixed-delivered", { visible: [convo.getByText("Finally the third instruction. answered.", { exact: true })], hidden: [action, convo.locator('.bubble[data-state="queued"]')] });
+    const after = await (await request.get("/api/chat/atlas")).json();
+    expect(after.history.filter((row: { role: string }) => row.role === "user").map((row: { text: string }) => row.text)).toEqual([
+      "Keep the first instruction.", "Then the second instruction.", "Finally the third instruction.",
+    ]);
+    expect(after.history.find((row: { text: string }) => row.text === "Keep the first instruction.").turn_id).toBe(keptId);
+    const calls = (await (await request.get("/fixture/status")).json()).calls;
+    expect(calls).toHaveLength(1);
+    expect(calls[0].prompt.endsWith(combined)).toBe(true);
+    for (const text of combined.split("\n\n")) expect(calls[0].prompt.split(text)).toHaveLength(2);
+    await page.reload();
+    await expect(convo.getByText("Keep the first instruction.", { exact: true })).toHaveCount(1);
+    await expect(action).toHaveCount(0);
   });
 
   test("shows Runs next after system work without interrupting the system turn", async ({ page, request }, info) => {
@@ -139,7 +201,9 @@ test.describe("L3 Send now", () => {
     await convo.getByRole("button", { name: /^(Send|Queue)$/ }).click();
     await convo.getByRole("button", { name: "Send now", exact: true }).click();
     const row = convo.locator(".queued-row").filter({ hasText: "Follow the system work" });
-    await walk.state("l3-08-after-system-work", { visible: [row.getByRole("button", { name: "Sending now…" }), row.getByText("Runs next after system work", { exact: true })], hidden: [] });
+    await walk.state("l3-08-after-system-work", { visible: [convo.getByRole("button", { name: "Sending now", exact: true })], hidden: [convo.locator(".send-now-help")] });
+    await convo.getByRole("button", { name: "Sending now", exact: true }).click({ force: true });
+    await walk.state("l3-08b-reason-on-press", { visible: [convo.getByText("Runs next after system work", { exact: true })], hidden: [] });
     expect((await status()).calls).toHaveLength(1);
     expect((await status()).delivered).toEqual([]);
     expect((await request.post("/fixture/release")).ok()).toBe(true);
@@ -166,7 +230,7 @@ test.describe("L3 Send now", () => {
     await walk.state("l3-06-unconfirmed", { visible: [convo.getByText("Send now unconfirmed. Check this message’s status before trying again.")], hidden: [] });
     expect((await request.post("/fixture/unavailable")).ok()).toBe(true);
     await page.reload();
-    await expect(button).toBeDisabled();
+    await expect(button).toHaveAttribute("aria-disabled", "true");
     await walk.state("l3-07-unavailable", { visible: [button, convo.locator(".queued-row").getByText("Keep the queued text", { exact: true })], hidden: [] });
   });
 
@@ -184,13 +248,13 @@ test.describe("L3 Send now", () => {
     await convo.getByRole("button", { name: /^(Send|Queue)$/ }).click();
     await convo.getByRole("button", { name: "Send now", exact: true }).click();
     expect((await request.post("/fixture/deliver")).ok()).toBe(true);
-    await walk.state("l3-15-unconfirmed-receipt", { visible: [convo.getByText("Delivery unconfirmed", { exact: true })], hidden: [convo.locator(".queued-row")] });
+    await walk.state("l3-15-unconfirmed-receipt", { visible: [convo.getByText("Unconfirmed", { exact: true })], hidden: [convo.locator(".queued-row")] });
     expect((await request.post("/fixture/release")).ok()).toBe(true);
     await expect.poll(async () => (await (await request.get("/api/chat/atlas")).json()).active).toBeNull();
     await page.reload();
-    await walk.state("l3-16-unconfirmed-reloaded", { visible: [convo.getByText("Delivery unconfirmed", { exact: true })], hidden: [convo.locator(".queued-row")] });
+    await walk.state("l3-16-unconfirmed-reloaded", { visible: [convo.getByText("Unconfirmed", { exact: true })], hidden: [convo.locator(".queued-row")] });
     expect((await status()).calls).toHaveLength(1);
-    await expect(convo.locator(".bubble").filter({ hasText: /^Possibly received$/ })).toHaveCount(1);
+    await expect(convo.locator(".bubble").filter({ hasText: "Possibly received" })).toHaveCount(1);
   });
 
   test("promotes the queued group for a boundary-only coordinator without interrupting", async ({ page, request }, info) => {
@@ -209,9 +273,9 @@ test.describe("L3 Send now", () => {
       await convo.getByRole("button", { name: /^(Send|Queue)$/ }).click();
       await expect(row(text)).toBeVisible();
     }
-    await row("Second queued message").getByRole("button", { name: "Send now", exact: true }).click();
+    await convo.getByRole("button", { name: "Send now", exact: true }).click();
     await page.reload();
-    await walk.state("l3-13-turn-boundary", { visible: [row("First queued message"), row("Second queued message").getByText("Runs next after this turn", { exact: true })], hidden: [] });
+    await walk.state("l3-13-turn-boundary", { visible: [row("First queued message"), convo.getByRole("button", { name: "Sending now", exact: true })], hidden: [] });
     expect((await status()).calls).toHaveLength(1);
     expect((await status()).delivered).toEqual([]);
     expect((await request.post("/fixture/release")).ok()).toBe(true);
@@ -246,12 +310,20 @@ test.describe("L3 Send now", () => {
       await expect(row(text)).toBeVisible();
     }
     await row("Remove this message").getByRole("button", { name: "Remove", exact: true }).click();
-    await walk.state("l3-02-removed-and-queued", { visible: [row("Deliver this next").getByRole("button", { name: "Send now", exact: true })], hidden: [row("Remove this message")] });
-    await row("Deliver this next").getByRole("button", { name: "Send now", exact: true }).click();
-    await walk.state("l3-03-sending-into-turn", { visible: [row("Deliver this next").getByRole("button", { name: "Sending now…" }), row("Deliver this next").getByText("Sending into the current turn", { exact: true })], hidden: [row("Deliver this next").getByRole("button", { name: "Remove", exact: true })] });
+    await walk.state("l3-02-removed-and-queued", { visible: [convo.getByRole("button", { name: "Send now", exact: true })], hidden: [row("Remove this message")] });
+    await convo.getByRole("button", { name: "Send now", exact: true }).click();
+    await walk.state("l3-03-sending-into-turn", { visible: [convo.getByRole("button", { name: "Sending now" }), row("Deliver this next").getByRole("status", { name: "Sending", exact: true })], hidden: [row("Deliver this next").getByRole("button", { name: "Remove", exact: true })] });
+    await field.fill("Later arrival stays queued");
+    await convo.getByRole("button", { name: /^(Send|Queue)$/ }).click();
+    await walk.state("l3-later-arrival-outside-claim", {
+      visible: [row("Deliver this next").getByRole("button", { name: "Sending now" }), row("Later arrival stays queued").getByRole("button", { name: "Remove", exact: true })],
+      hidden: [row("Later arrival stays queued").getByRole("status", { name: "Sending", exact: true })],
+    });
     expect((await request.post("/fixture/deliver")).ok()).toBe(true);
     await walk.state("l3-04-joined-turn", { visible: [convo.getByText("Checking the current work.", { exact: true }), convo.locator(".turn").getByText("Deliver this next", { exact: true })], hidden: [row("Deliver this next")] });
     expect((await status()).delivered).toEqual(["Earlier queued message\n\nDeliver this next"]);
+    await expect(row("Later arrival stays queued").getByRole("button", { name: "Send now", exact: true })).toBeVisible();
+    await row("Later arrival stays queued").getByRole("button", { name: "Remove", exact: true }).click();
     expect((await request.post("/fixture/release")).ok()).toBe(true);
     await walk.state("l3-12-turn-answers-sent-message", { visible: [convo.getByText("Read: Earlier queued message", { exact: true }), convo.getByText("Deliver this next.", { exact: true })], hidden: [row("Deliver this next"), row("Earlier queued message")] });
     await expect.poll(async () => (await (await request.get("/api/chat/atlas")).json()).active).toBeNull();

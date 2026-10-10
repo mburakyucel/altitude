@@ -547,9 +547,9 @@ the project lock: only the selected ID leaves pending input, and later arrivals 
 the next checkpoint. The existing delivery metadata records removal while original conversation text
 remains evidence; the message leaves the task conversation. Removed text cannot authorize a new decision.
 Quick-choice receipts and messages already used by recorded decisions cannot be removed. Cancellation
-does not undo a resume request, Stop, fault or question. Claimed messages say Sending to session and
+does not undo a resume request, Stop, fault or question. Claimed messages show a sending ring and
 cannot be removed. A failure before launch restores removal; an attempted but unconfirmed handoff
-retains Delivery unconfirmed and cannot be removed even when recovery restores the inbox batch.
+shows an amber warning and Unconfirmed even when recovery restores the inbox batch.
 **Send now** hands the whole queued removable operator group to the running owner in arrival order.
 It is available while the owner runs through the engine driver and no message in the group has images.
 Under the project lock, the request records a `send_now` claim on the task and writes the group to the
@@ -557,7 +557,7 @@ worker's `sends` folder; it neither stops the worker nor launches another. The d
 into the running turn as the operator's next input (see
 [message delivery](ARCHITECTURE.md#message-delivery-and-voice)) and, once the engine confirms it, records
 each message's delivery receipt on the task and removes the claimed rows from the inbox. Each message
-retains its own conversation row. The claimed rows say Sending into the current turn and cannot be
+retains its own conversation row. The claimed rows show a sending ring and cannot be
 removed; the inbox hook neither announces them nor ends the turn for them, and only one group is sent
 at a time. Later arrivals wait outside that claim. A group the turn returns at its end stays queued for
 the next turn. Images anywhere in the group keep the whole group queued for next-turn delivery in
@@ -1277,17 +1277,17 @@ while the current chat turn runs. Where the engine supports native project-chat 
 that turn's `sends` folder. The turn's engine driver writes the group as the operator's next input, and the turn continues
 without stopping. Once the engine confirms it, the reply so far is recorded as the turn's answer, the
 messages are recorded as separate user rows, each with its own turn id, queue id and receipt,
-and the rest of the reply belongs to the last new turn. The claimed rows say **Sending into the current
-turn** and cannot be removed until they settle. A group the turn returns at its end, one containing
+and the rest of the reply belongs to the last new turn. The claimed rows show a sending ring
+and cannot be removed until they settle. A group the turn returns at its end, one containing
 images, one sent during a system turn (**Runs next after system work**) or while no turn runs
 (**Runs next**) moves to the queue front for next-turn delivery in arrival order. Text never overtakes
 an image in the group; the remaining rows retain their relative order and normal folding. Active
 system turns keep their existing boundary to preserve notification and report receipts. After each turn,
 and at the next drain after a restart, a row still marked as sending settles from its outcome file: a
 message the engine may have read is recorded once and never replayed; one it never read runs next.
-An uncertain delivery retains **Delivery unconfirmed** on each message after settlement and reload.
+An uncertain delivery retains an amber warning and **Unconfirmed** on each message after settlement and reload.
 Repeated requests return the same receipt. Engine unavailability and launch pauses leave the row queued
-with an explanation. The priority marker adds no quiet-point restart hold.
+with its reason available on demand. The priority marker adds no quiet-point restart hold.
 No timer stops a running command or escalates Send now into a hard interruption. Task-chat Stop
 remains the explicit hard stop.
 A group led by a kept message already in history runs at the next turn boundary instead of joining the

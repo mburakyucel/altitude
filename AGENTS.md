@@ -160,7 +160,8 @@ error, denied, and what appears/disappears after actions — on phone and deskto
 [browser walkthroughs](docs/DEVELOPMENT.md#browser-walkthroughs) for the harness, viewports,
 fictional fixtures, named screenshots and browser prerequisites; `project-menu.pw.ts` is the example.
 The PR lists states walked at each viewport and links their spec or screenshot evidence.
-Describing a state is not walking it. This prevents the issue #195 failure: the transcript box
+Describing a state is not walking it. The walkthrough also checks for restating text: no line repeats
+what the screen already shows or says what cannot be done ([SPEC.md §1.1](design/wireframes/SPEC.md#11-standing-design-tenet)). This prevents the issue #195 failure: the transcript box
 remaining after sending a voice message.
 Phone-facing changes also run the opt-in emulated iPhone lane (`make ui-ios`); its results are
 desktop WebKit evidence, not iOS acceptance (see [device evidence](docs/DEVELOPMENT.md#device-evidence)).

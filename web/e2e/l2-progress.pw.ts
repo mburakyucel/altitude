@@ -102,7 +102,7 @@ for (const index of [0, 1]) {
     await walk.state("06-unavailable-removes-preview", { visible: [field, stop], hidden: [preview] });
     await field.fill("Keep the original page size.");
     await convo.getByRole("button", { name: "Send", exact: true }).click();
-    await walk.state("07-steering-is-queued", { visible: [convo.getByText("Queued · waiting for a checkpoint", { exact: true })], hidden: [convo.getByText("Delivered to session", { exact: true })] });
+    await walk.state("07-steering-is-queued", { visible: [convo.getByText("Queued", { exact: true })], hidden: [convo.getByRole("status", { name: "Sending", exact: true })] });
     const before = await task();
     await field.fill("Use the existing retry rule.");
     await field.evaluate((element: HTMLTextAreaElement) => { element.setSelectionRange(4, 12); element.dispatchEvent(new Event("select", { bubbles: true })); });
@@ -123,7 +123,7 @@ for (const index of [0, 1]) {
       expect((await request.post("/api/l2/message", { data: { project: "atlas", slug, text: "Racing message stays held." } })).ok()).toBe(true);
     } finally { await control("release-stop"); }
     await expect.poll(async () => (await task()).steering.state).toBe("stopped");
-    await walk.state("10-stopped-and-queued-messages-held", { visible: [page.getByRole("button", { name: "Continue" }), convo.getByText("Send a correction to continue this session."), convo.getByText("Queued · held until you continue").first()], hidden: [stop, preview] });
+    await walk.state("10-stopped-and-queued-messages-held", { visible: [page.getByRole("button", { name: "Continue" }), convo.getByText("Send a correction to continue this session."), convo.getByText("Queued", { exact: true }).first()], hidden: [stop, preview] });
     const continueBox = (await page.getByRole("button", { name: "Continue", exact: true }).boundingBox())!;
     expect([continueBox.x, continueBox.y, continueBox.width, continueBox.height]).toEqual([actionBox.x, actionBox.y, actionBox.width, actionBox.height]);
     expect((await status()).tasks.find((row: { slug: string }) => row.slug === slug).pending).toHaveLength(2);
@@ -135,7 +135,7 @@ for (const index of [0, 1]) {
       await expect(field).toHaveValue("");
     } finally { await control("release-resume"); }
     await expect.poll(async () => (await task()).state).toBe("running");
-    await walk.state("12-resumed-awaits-new-output", { visible: [stop, convo.getByText("Delivered to session", { exact: true }).first()], hidden: [preview, page.getByRole("button", { name: "Resuming…", exact: true })] });
+    await walk.state("12-resumed-awaits-new-output", { visible: [stop, convo.locator(".bubble:not([data-state])").first()], hidden: [preview, page.getByRole("button", { name: "Resuming…", exact: true }), convo.getByText("Queued", { exact: true })] });
     const resumed = await task();
     expect(resumed.session_id).toBe(before.session_id);
     expect(resumed.attempt).toBe(before.attempt);
@@ -236,9 +236,9 @@ test("loading, compact activity, unconfirmed delivery and voice keep worker stee
   await page.setViewportSize(viewport);
   await field.fill("A saved message without delivery evidence.");
   await convo.getByRole("button", { name: "Send", exact: true }).click();
-  await expect(convo.getByText("Queued · waiting for a checkpoint")).toBeVisible();
+  await expect(convo.getByText("Queued", { exact: true })).toBeVisible();
   await control("unconfirmed-delivery");
-  await walk.state("04-delivery-unconfirmed-without-receipt", { visible: [convo.getByText("Delivery unconfirmed")], hidden: [convo.getByText("Delivered to session"), convo.getByText("Queued · waiting for a checkpoint")] });
+  await walk.state("04-delivery-unconfirmed-without-receipt", { visible: [convo.getByText("Unconfirmed", { exact: true })], hidden: [convo.getByText("Queued", { exact: true })] });
   await field.fill("Typed correction.");
   await convo.getByRole("button", { name: "Start voice input" }).click();
   await walk.state("05-listening-keeps-worker-stop-distinct", { visible: [convo.getByRole("button", { name: "Stop voice input" }), convo.getByRole("button", { name: "Cancel voice input" }), stop], hidden: [convo.getByRole("button", { name: "Start voice input" })] });

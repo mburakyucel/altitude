@@ -78,7 +78,7 @@ def main():
             if self.path == "/fixture/status":
                 return self._json({"calls": fake.calls, "workers": fake.workers,
                     "tasks": [{"slug": row["slug"], "engine": row["l2_engine"], "state": row["state"],
-                               "pending": T.pending(project, row["slug"]),
+                               "pending": T.pending(project, row["slug"]), "send_now": row.get("send_now"),
                                "edit": (Path(row["worktree"]) / "kept-edit.txt").read_text()}
                               for row in S.list_tasks(project)]})
             return super().do_GET()
