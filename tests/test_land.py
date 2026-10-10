@@ -899,6 +899,24 @@ class TestLand(AltitudeCase):
         self.assertEqual(len([a for a in commands if a[:2] == ["git", "push"]]), 1)
         self.assertEqual(S.load_task("demo", "fix-x")["review_merged_head"], result["head"])
 
+    def test_pr_retargeted_and_merged_during_a_refused_merge_is_not_recorded_as_delivered(self):
+        self.staged_change()
+        self.git("push", "-q", "origin", "origin/main:refs/heads/release")
+
+        def merged_elsewhere(args):
+            if args[:3] == ["gh", "pr", "merge"]:  # refused here, then another actor retargets and merges it
+                (self.ghdir / "rate_limited.json").write_text(json.dumps({"count": 1, "prefix": "pr merge"}))
+                pr = json.loads((self.ghdir / "pr.json").read_text())
+                (self.ghdir / "pr.json").write_text(json.dumps({**pr, "baseRefName": "release", "state": "MERGED"}))
+            return None
+
+        self.record_commands(merged_elsewhere)
+        with mock.patch.object(land, "time", wraps=land.time) as clock:
+            clock.sleep.side_effect = lambda _seconds: None
+            with self.assertRaisesRegex(land.LandError, "targets 'release'"):
+                land.land("fix: merged elsewhere", cwd=self.repo, wait=600, merge=True)
+        self.assertNotIn("review_merged_head", S.load_task("demo", "fix-x"))
+
     def test_refused_merged_tree_read_is_checked_again_against_the_tested_tree(self):
         workflow = self.repo / land.config.PR_CHECK_WORKFLOW
         workflow.parent.mkdir(parents=True)

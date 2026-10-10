@@ -1325,6 +1325,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                 after = _pull(root, attempted["number"])
                 if after.get("state") == "MERGED":  # a refusal here asks again; the branch is never republished
                     pair = attempted
+                    _require_pr_target(after, pair["branch"], pair["base"])
                     if after.get("headRefOid") != pair["head_sha"]:
                         raise LandError(f"PR #{pair['number']} merged at head {after.get('headRefOid')}, not the candidate "
                                         f"{pair['head_sha']}; report delivery for recovery")
