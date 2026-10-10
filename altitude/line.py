@@ -1,7 +1,8 @@
 """A fixed number of places on this machine that requests take in arrival order.
 
 A request that finds every place taken waits its turn, says what it waits for, and leaves the line when its client
-goes away. The validation runner has one place (`validation.LINE`) and `alt task run` a few (`server.MACHINE_LINE`).
+goes away or a newer request replaces it. The validation runner has one place (`validation.LINE`) and `alt task run` a
+few (`server.MACHINE_LINE`).
 See docs/DEVELOPMENT.md#validation-runner.
 """
 from __future__ import annotations
@@ -38,8 +39,9 @@ class Line:
         """Hold a place for `what` (as the line describes it), whose limit ends `limit` seconds from admission.
         A request that finds every place taken waits in arrival order for up to `wait` seconds, telling
         `waiting(text)` what it waits for when that changes and at least every minute, and checking every `watch`
-        seconds that `gone()` does not say its client stopped. `force` takes a place at once even beyond the line's
-        places, for work already running. Yields the place, whose limit `ends` can move."""
+        seconds that `gone()` does not say its client stopped (True) or give another reason it leaves. `force` takes a
+        place at once even beyond the line's places, for work already running. Yields the place, whose limit `ends`
+        can move."""
         ticket, deadline, told, last = object(), time.monotonic() + wait, None, 0.0
         with self.lock:
             self._queue.append(ticket)
@@ -51,8 +53,9 @@ class Line:
                         self.holders.append(place)
                         break
                     text = self._waiting_for(self._queue.index(ticket))
-                if gone():
-                    raise ValueError(f"{command}: {CLIENT_GONE} while it waited")
+                why = gone()
+                if why:
+                    raise ValueError(f"{command}: {CLIENT_GONE if why is True else why} while it waited")
                 if time.monotonic() >= deadline:
                     raise ValueError(f"{command}: not admitted within {wait // 60} minutes, {text}; try again")
                 if text != told or time.monotonic() - last >= 60:
