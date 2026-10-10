@@ -64,7 +64,7 @@ without feeling lost. Intuitiveness is a first-order requirement, not a finish: 
 is immediately recognisable as clickable at rest, before hover or focus. This central project tenet
 guides future iterations as the visual direction evolves.
 
-In the existing design review and [phone and desktop walkthrough](../../AGENTS.md#ui), check that:
+In the cross-engine design review of every UI proposal and the [phone and desktop walkthrough](../../AGENTS.md#ui), check that:
 
 - Visual hierarchy makes the primary action clear; navigation and plain labels show where people
   are, where they can go, and what an action does.
