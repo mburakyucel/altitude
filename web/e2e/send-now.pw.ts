@@ -155,8 +155,13 @@ test.describe("L3 Send now", () => {
     await send("Keep the first instruction.");
     const kept = convo.locator(".turn").filter({ hasText: "Keep the first instruction." });
     await expect(kept.locator('.bubble[data-state="queued"]')).toBeVisible();
-    await send("Then the second instruction.");
-    await send("Finally the third instruction.");
+    // Retain one admitted message, then add ordinary inbox rows through the real queue writer.
+    // Sending directly while no engine runs would admit and retain each message individually.
+    for (const text of ["Then the second instruction.", "Finally the third instruction."]) {
+      expect((await request.post("/fixture/queued", { data: { text } })).ok()).toBe(true);
+    }
+    await page.reload();
+    await expect(convo.getByRole("button", { name: "Remove", exact: true })).toHaveCount(2);
     const action = convo.getByRole("button", { name: "Send now", exact: true });
     await expect(action).toHaveCount(1);
     await walk.state("l3-mixed-queue", { visible: [action, kept], hidden: [kept.getByRole("button", { name: "Remove", exact: true })] });

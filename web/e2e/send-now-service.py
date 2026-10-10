@@ -76,6 +76,10 @@ def main():
             return super().do_GET()
 
         def do_POST(self):
+            if self.path == "/fixture/queued":
+                payload = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
+                l3.queue_message(project, payload["text"], trigger="chat", role=config.OPERATOR_ACTOR)
+                return self._json({"ok": True})
             if self.path == "/fixture/interrupted-history":
                 self.rfile.read(int(self.headers.get("Content-Length", "0")))
                 for turn, text, reply, interrupted in (
