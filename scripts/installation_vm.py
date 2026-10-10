@@ -12,8 +12,8 @@ deleted afterwards. The guest has two network cards: one is online only while cl
 the harness prerequisites and is then unplugged; the other is restricted to the loopback SSH
 forward, so during the tests the guest reaches neither the internet nor this host's services.
 After the lifecycle passes, another disposable account installs through the built install.sh from a
-release server inside the guest. Without --baseline-release, a third installs the baseline while that server
-answers for GitHub's release list and downloads: the daemon installs the candidate automatically, then an
+release server inside the guest. A third installs the baseline while that server answers for GitHub's
+release lookup and downloads: the baseline's own daemon installs the candidate automatically, then an
 explicit opt-out and app Update request install a newer synthetic release. Another installs the baseline,
 the VM restarts and the harness checks that the service came back
 on its own before removing it. --recovery instead runs only the
@@ -323,12 +323,10 @@ def harness(machine: Machine, commit: str, phase: str, log: Path) -> int:
             stdout=stream, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, timeout=1200).returncode
 
 
-def lifecycle(machine: Machine, commits: str, results: Path, record: dict, published: bool) -> None:
-    """The lifecycle, then install.sh's bootstrap, the offered update, and an install that must survive the VM's restart.
-
-    A published baseline looks up releases with its own code, so the offered update runs only for same-source versions."""
+def lifecycle(machine: Machine, commits: str, results: Path, record: dict) -> None:
+    """The lifecycle, then install.sh's bootstrap, the offered update, and an install that must survive the VM's restart."""
     exits = record["harness_exit"]
-    for phase in ("all", "bootstrap", *(() if published else ("update",)), "reboot-install"):
+    for phase in ("all", "bootstrap", "update", "reboot-install"):
         note(f"running the {phase} phase")
         exits[phase] = harness(machine, commits, phase, results / ("harness.log" if phase == "all" else f"harness-{phase}.log"))
         if exits[phase]:
@@ -407,8 +405,8 @@ def published(repository: str, tag: str, folder: Path) -> dict:
 
 
 def next_minor(version: str) -> str:
-    """A synthetic candidate label newer than the published VERSION."""
-    return f"v0.{int(version.split('.')[1]) + 1}.0-rc.1"
+    """A synthetic candidate label newer than the published VERSION and on its channel, so the installed VERSION follows it."""
+    return f"v0.{int(version.split('.')[1]) + 1}.0" + ("-rc.1" if "-rc." in version else "")
 
 
 def build(commit: str, work: Path, results: Path, versions: tuple = (("baseline", "v0.0.0-rc.1"), ("candidate", "v0.0.0-rc.2"))) -> None:
@@ -498,14 +496,14 @@ def run(results: Path, commit: str, cache: Path, baseline_release: str | None = 
                     if exits[phase]:
                         break
             else:
-                lifecycle(machine, commits, results, record, bool(baseline_release))
+                lifecycle(machine, commits, results, record)
         finally:
             note(f"harness exits {exits}; copying its results")
             try:
                 machine.copy("ubuntu@127.0.0.1:results/.", str(results))
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
                 record["uncopied_results"] = str(error)
-        phases = 1 if recovery else 2 if public else 4 if baseline_release else 5
+        phases = 1 if recovery else 2 if public else 5
         record["passed"] = list(exits.values()) == [0] * phases and "uncopied_results" not in record
     finally:
         try:
