@@ -83,17 +83,20 @@ svg.i.sm{width:14px;height:14px}
 .tcard .tt{font-weight:600;font-size:14px;line-height:1.3}.tcard .tm{font-size:12px;color:var(--text-muted);margin-top:2px}
 .tcard .go{margin-left:auto;color:var(--text-muted)}
 .offer{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
-.offer .ob{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 14px 0 10px;border:1px solid var(--border);border-radius:999px;background:var(--card);font-size:13px;font-weight:600;color:var(--accent-text);white-space:nowrap}
-.offer .ob[aria-disabled]{color:var(--text-muted)}
-.offer .ot{font-size:13px;color:var(--text-muted);min-width:0}
+.ob{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 14px 0 10px;border:1px solid var(--border);border-radius:999px;background:var(--card);font-size:13px;font-weight:600;color:var(--accent-text);white-space:nowrap}
+.ob[aria-disabled]{color:var(--text-muted)}
+.ot{font-size:13px;color:var(--text-muted);min-width:0}
 .offer .err{flex-basis:100%;font-size:13px;color:var(--danger)}
 .qrow{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;color:var(--text-muted);font-size:14px}.qrow .qacts{display:flex;gap:16px;margin-left:auto}
-.offer .ob.busy{background:var(--accent-tint);border-color:transparent;color:var(--accent-text)}
-.offer .ob.wait{color:var(--text-secondary)}.offer .ob.wait .x{display:inline-flex;margin:0 -6px 0 2px;padding:2px;border-radius:50%;color:var(--text-muted)}
-.offer .ob.done{background:var(--success-bg);border-color:transparent;color:var(--success-text)}
-.offer .ob.fail{border-color:var(--danger);color:var(--danger)}
-.offer .ob.sent{color:var(--text-muted)}
-.m .offer .ob{position:relative}.m .offer .ob::after{content:"";position:absolute;inset:-5px 0}
+.ob.busy{background:var(--accent-tint);border-color:transparent;color:var(--accent-text)}
+.ob.wait{color:var(--text-secondary)}.ob.wait .x{display:inline-flex;margin:0 -6px 0 2px;padding:2px;border-radius:50%;color:var(--text-muted)}
+.ob.done{background:var(--success-bg);border-color:transparent;color:var(--success-text)}
+.ob.fail{border-color:var(--danger);color:var(--danger)}
+.ob.sent{color:var(--text-muted)}
+.m .ob{position:relative}.m .ob::after{content:"";position:absolute;inset:-5px 0}
+.choice{align-self:flex-end;display:flex;flex-direction:column;align-items:flex-end;gap:4px;max-width:76%;text-align:right}
+.choice.start{align-self:flex-start;align-items:flex-start;text-align:left}
+.flow{display:flex;flex-direction:column;gap:12px}
 .dots{display:inline-flex;gap:4px;padding:6px 0}.dots i{width:6px;height:6px;border-radius:50%;background:var(--text-muted);opacity:.6}
 .composer{border:1px solid var(--border);border-radius:var(--radius-composer);background:var(--card);box-shadow:var(--shadow);padding:14px 12px 10px 18px;width:100%;max-width:720px;margin:0 auto}
 .composer .ph2{color:var(--text-muted);font-size:15px;min-height:24px;line-height:24px}
@@ -1056,6 +1059,47 @@ state_sheet("ReplyTaskStates", "Create task: states", OFFER_STATES, 1280)
 board("MobileReplyTaskStates", 390, 2560, '<div style="padding:20px 16px"><h1 style="font-size:18px;margin:0 0 16px">Create task: phone states</h1>'
       + ''.join(state(label, note, '<div class="statebox" style="padding:12px">' + body + '</div>') for label, note, body in OFFER_STATES) + '</div>')
 
+# A decision selection is the operator's action, shown with the Create task pill (SPEC.md §3.9 Decision selections).
+def choice(label, state="sent", about=None):
+    """The chosen option in the pill; its icon and colour say where the choice stands. `about` names the question."""
+    icon, cls = {"busy": ("spin", " busy"), "wait": ("clock", " wait"), "sent": ("check", " sent"),
+                 "done": ("check", " done"), "fail": ("retry", " fail"), "ready": (None, "")}[state]
+    extra = f'<span class="x" role="button" aria-label="Remove">{I("x", "i sm")}</span>' if state == "wait" else ""
+    pill = f'<button class="ob{cls}" type="button">{I(icon, "i sm") if icon else ""}{label}{extra}</button>'
+    return f'<div class="choice">{pill}' + (f'<span class="ot">{about}</span>' if about else "") + '</div>'
+
+CHOICE_Q = "How long should we keep the old index?"
+choice_ask = ('<div class="l3"><p class="muted" style="margin:0">L2</p><p style="margin:0"><b>' + CHOICE_Q + '</b></p>'
+              '<p style="margin:0">Recommended: 7 days of instant rollback.</p></div>')
+review_card = lambda body: ('<div class="l3"><p class="muted" style="margin:0">Your turn · review before merge</p>'
+                            '<p style="margin:0"><b>Review PR #42 before merge</b></p>' + body + '</div>')
+review_ready = review_card('<div class="links"><span class="btn primary">Approve merge</span><span class="btn">View PR #42</span></div>'
+                           '<p class="muted" style="margin:0">Or ask below. Approving sends your message; nothing merges before the L2 checks the same PR again.</p>')
+sent_line = '<p class="muted" role="status" style="margin:0">Sent · the L2 has your reply.</p>'
+
+DECISION_STATES = [
+    ("Typed reply", "your own words keep their bubble", choice_ask + '<div class="me">Could we roll back after day seven?</div>'),
+    ("Approve merge offered", "the review card at the end of the chat and in Needs you", review_ready),
+    ("Sending", "pressed: Approve merge fills and spins in place; focus stays on it",
+     review_card('<div class="links"><span class="ob busy" style="height:34px">' + I("spin", "i sm") + 'Approve merge</span><span class="btn">View PR #42</span></div>')),
+    ("Not sent", "refused or lost: red Retry in place with the reason", review_card('<div class="offer"><button class="ob fail" type="button">' + I("retry", "i sm") + 'Retry</button><span class="err" role="alert" style="flex-basis:auto">Not sent</span><span class="btn">View PR #42</span></div>')),
+    ("Approval in the chat", "a check on your side of the chat, with the PR it approves", choice("Approve merge", "sent", "PR #42") + sent_line),
+    ("Waiting for a checkpoint", "the L2 is working: a clock; × removes the approval before it is read", choice("Approve merge", "wait", "PR #42")),
+    ("Quick answer in the chat", "the option you picked, with the question it answers", choice_ask + choice("7 days", "sent", CHOICE_Q) + sent_line),
+    ("Decision recorded", "green once the L2 records it", choice("7 days", "done", CHOICE_Q) + '<div class="l3"><p>Keeping the old index for 7 days.</p></div>'),
+    ("Several answers sent together", "one pill per pick; a written answer stays your bubble",
+     choice("7 days", "sent", CHOICE_Q) + choice("West", "sent", "Where should the backup live?")
+     + '<div class="me">Send it to the release team.</div><p class="ot" style="align-self:flex-end;margin:-4px 0 0">Who should receive the rollout report?</p>'),
+    ("Needs you after sending", "the card shows the same pills until it leaves the list",
+     '<div class="l3"><p style="margin:0"><b>Index rollout</b></p><p class="muted" style="margin:0">1 question to answer</p>'
+     '<p style="margin:0">' + CHOICE_Q + '</p>' + choice("7 days", "sent").replace('class="choice"', 'class="choice start"')
+     + '<p style="margin:0">Where should the backup live?</p><div class="links"><span class="btn">West ★</span><span class="btn">East</span><span class="btn">Other…</span></div></div>'),
+]
+DECISION_STATES = [(label, note, '<div class="flow">' + body + '</div>') for label, note, body in DECISION_STATES]
+state_sheet("DecisionChoiceStates", "Decision selections: states", DECISION_STATES, 1340)
+board("MobileDecisionChoiceStates", 390, 2340, '<div style="padding:20px 16px"><h1 style="font-size:18px;margin:0 0 16px">Decision selections: phone states</h1>'
+      + ''.join(state(label, note, '<div class="statebox" style="padding:12px">' + body + '</div>') for label, note, body in DECISION_STATES) + '</div>')
+
 report_content = (
     '<p class="muted"><a href="Task.html">← Persist paths when L3 resumes a task</a></p><h1>Report</h1>'
     '<h2>Landed</h2><ul><li>PR #178 merged · Persist task paths</li><li>Main checks success</li><li>Deploy: healthy</li></ul>'
@@ -1152,6 +1196,7 @@ ROUTES = [
     ("Conversation and report states", "ConversationStates", None),
     ("Create task: a reply that could become a task", "ReplyTask", "MobileReplyTask"),
     ("Create task states", "ReplyTaskStates", "MobileReplyTaskStates"),
+    ("Decision selections: states", "DecisionChoiceStates", "MobileDecisionChoiceStates"),
     ("Project lifecycle states", "ProjectLifecycleStates", None),
 ]
 ROUTES = conversation_first_boards(OUT, board, I) + ROUTES
