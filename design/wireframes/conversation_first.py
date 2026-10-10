@@ -198,7 +198,7 @@ if(scene==='Partial'&&!Object.keys(answers).length)answers={retention:'14 days',
 function render(){
  if(read('single')&&(scene==='Question'||scene==='States'&&!['archived','revised','missing','accepted-waiting'].includes(state))){location.replace(dest('Accepted'));return}
  const members=document.querySelector('.cf-group')?['retention','region','owner']:['retention'];
- document.querySelectorAll('[data-item]').forEach(row=>{const id=row.dataset.item;row.hidden=Boolean(answers[id]);if(responses[id]){row.querySelectorAll('.cf-choices,.cf-answer,.cf-recommendation').forEach(e=>e.hidden=true);if(!row.querySelector('.cf-receipt')){const receipt=document.createElement('div');receipt.className='cf-receipt';receipt.innerHTML='<b>Sent to L2</b><p></p>';receipt.querySelector('p').textContent=responses[id];row.append(receipt)}}});
+ document.querySelectorAll('[data-item]').forEach(row=>{const id=row.dataset.item;row.hidden=Boolean(answers[id]);if(responses[id]){row.querySelectorAll('.cf-choices,.cf-answer,.cf-recommendation').forEach(e=>e.hidden=true);if(!row.querySelector('.cf-receipt')){const receipt=document.createElement('div');receipt.className='cf-receipt';const picked=[...row.querySelectorAll('[data-pick]')].some(b=>b.dataset.value===responses[id]);receipt.innerHTML=picked?'<div class="choice start"><span class="ob wait">CLOCK_ICON<span></span></span></div>':'<b>Waiting for the L2</b><p></p>';receipt.querySelector(picked?'.ob span':'p').textContent=responses[id];row.append(receipt)}}});
  const left=members.filter(id=>!answers[id]&&!responses[id]);
  if(['NeedsYou','Group','Partial','Followup'].includes(scene))document.querySelectorAll('[data-attention]').forEach(e=>{e.textContent=left.length;e.hidden=!left.length});
  if(scene==='NeedsYou'){document.querySelector('[data-summary]').textContent=left.length?left.length+' question'+(left.length===1?'':'s')+' across 1 project':'All caught up';if(!left.length){document.querySelector('.cf-column').innerHTML='<div class="cf-empty"><h2>Nothing needs you.</h2><p>The sent responses stay in the L2 conversation.</p><a class="cf-link" href="'+dest('Group')+'">View conversation</a></div>';return}}
@@ -231,7 +231,7 @@ document.querySelector('form')?.addEventListener('submit',e=>{e.preventDefault()
  else if(['14 days','Keep it for 14 days, then delete it. Go ahead.'].includes(text)){write('answer',text);write('draft','');if(scene==='Question'||scene==='States'){write('single','14');location.href=dest('Accepted')}else{answers.retention='14 days';save();location.href=dest('Partial')}}
  else document.querySelector('.cf-hint').textContent='Prototype: try the example messages in CONVERSATION_FIRST.md.'});
 document.querySelectorAll('[data-back]').forEach(a=>a.onclick=e=>{if(document.referrer&&new URL(document.referrer).origin===location.origin&&history.length>1){e.preventDefault();history.back()}});
-</script>"""
+</script>""".replace("CLOCK_ICON", icon("clock", "i sm"))
     for scene,label in scenes+[('States','Shared input and recovery appendix')]:
         for mobile in (False,True):
             inner=('<div data-stage></div>'+''.join(f'<template data-state="{state}">{frame(scene,mobile,state)}</template>' for state in STATES)) if scene=='States' else frame(scene,mobile)

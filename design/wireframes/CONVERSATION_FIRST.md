@@ -49,7 +49,7 @@ L2 interprets it in context, records an explicit decision against that message, 
 ambiguity. There is no extra approval phrase, recipient selector, note form or blanket confirmation.
 A follow-up can wake the L2 to answer but does not approve implementation of the disputed approach.
 
-Submitted members leave Needs you and retain **Sent to L2** receipts in chat. Presets and custom text
+Submitted members leave Needs you; the chat shows each as the choice made or the words typed ([§3.8.2](SPEC.md#382-decision-selections)). Presets and custom text
 both deliver ordinary messages; the L2 interprets their meaning and records actual decisions against
 the source. A sent follow-up starts discussion, with a fresh prompt only when needed. Explicitly
 republishing a responded member restores input at a new revision; unchanged ordinary re-parking

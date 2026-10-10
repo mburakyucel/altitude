@@ -1,8 +1,10 @@
 """Long fictional transcripts behind real task storage, projection and HTTP handlers."""
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import sys
+import threading
 
 from service_support import configure, serve
 from tests.support import add_worktree, make_repo
@@ -56,18 +58,43 @@ def main():
         T.message(project, slug, "l2", f"Conversation for {count} records is ready.")
         tasks.append({"slug": slug, "count": count, "latest": f"Activity {count} {count}:"})
 
+    # Application requests in progress, apart from the open change stream. A read the browser abandons keeps
+    # running here until it finishes.
+    active = [0]
+    settled = threading.Condition()
+
+    @contextmanager
+    def tracked():
+        with settled:
+            active[0] += 1
+        try:
+            yield
+        finally:
+            with settled:
+                active[0] -= 1
+                settled.notify_all()
+
     class Handler(server.Handler):
         def do_GET(self):
             if self.path == "/fixture/status":
                 return self._json({"tasks": tasks})
-            return super().do_GET()
+            if self.path == "/api/changes":
+                return super().do_GET()
+            with tracked():
+                return super().do_GET()
 
         def do_POST(self):
             if self.path not in ("/fixture/append", "/fixture/control"):
-                return super().do_POST()
+                with tracked():
+                    return super().do_POST()
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
             slug = body["slug"]
             mode = "append" if self.path == "/fixture/append" else body["mode"]
+            if mode == "settle":
+                with settled:
+                    if not settled.wait_for(lambda: not active[0], timeout=20):
+                        return self._json({"error": "Requests are still running"}, 503)
+                return self._json({"ok": True})
             path = sources[slug][0]
             if mode == "reset-index":
                 with transcript._indexes_lock:

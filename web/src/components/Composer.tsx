@@ -420,8 +420,13 @@ export default function Composer({
     const node = field.current;
     if (!node) return;
     const sizeField = () => {
+      // The box holds its height while the field collapses to measure, so the page around it never
+      // reflows: a conversation that grew taller for that moment would clamp its scroll position.
+      const box = node.parentElement;
+      if (box) box.style.minHeight = getComputedStyle(box).height;
       node.style.height = "auto";
       node.style.height = `${node.scrollHeight}px`;
+      if (box) box.style.minHeight = "";
       // Recognized words land at the end of a read-only field: once it reaches its cap, follow them,
       // including the last phrase that arrives while Stop waits for the recognizer to settle.
       if (live !== null) node.scrollTop = node.scrollHeight;

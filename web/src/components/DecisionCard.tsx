@@ -1,28 +1,23 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { StatusMark, BusyLabel } from "./StatusMark";
 import { ApiError, sendL2Message, useDecide, useProject } from "../data/api";
 import type { DecideInput, Decision, QuestionAnswer, QuestionGroup } from "../data/api";
 import { useToast } from "../data/Toast";
-import { decisionKind, questionPath } from "../data/decisions";
+import { decisionKind, optionsFor, questionPath } from "../data/decisions";
 import { ageText, exactTime } from "../data/observed";
 import { setSelectedProject } from "../shell/scope";
+import { Choice, deliveryChoice } from "./Choice";
+import type { ChoiceState } from "./Choice";
 import { InlineProse, Prose, ProseScope, QuestionProse } from "./Prose";
 import { keepForVisit, useVisitMemory } from "./visitMemory";
 
-type Option = { key: string; label: string; text: string };
 type Draft = { option?: string; text?: string };
 const draftKey = (q: Decision) => `${q.project}:${q.slug}:${q.id}:${q.revision}`;
 /** Who closed a question; any actor other than the agents and Altitude is the operator. */
 const closedBy = (by: string) => by === "l2" || by === "l3" ? by.toUpperCase() : by === "altd" ? "Altitude" : "You";
 /** The question whose preview was opened from a history entry, so returning there brings it into view. */
 export type PreviewOrigin = Pick<Decision, "project" | "slug" | "id" | "revision">;
-function optionsFor(question: Decision): Option[] {
-  if (question.options) return question.options;
-  const recommended = question.recommendation;
-  return recommended?.text ? [{ key: "recommended", label: recommended.label || "Accept", text: recommended.text }] : [];
-}
 function recommendedKey(question: Decision) {
   return question.recommended_key ?? (!question.options && question.recommendation?.text ? "recommended" : null);
 }
@@ -31,10 +26,22 @@ type QuestionProps = {
   disabled?: boolean; onDenied?: () => void; onRefresh?: () => void;
   refreshKey?: number;
   chat?: boolean; from?: "needs" | "project";
+  /** Delivery states of the conversation's saved messages; unknown (Needs you) reads as not yet read. */
+  deliveries?: Record<string, string | undefined>;
 };
 
+/** A saved answer before its decision is recorded (SPEC.md §3.8.2): a pressed option as its pill, typed words as text. */
+function Receipt({ response, picked, delivery }: { response: NonNullable<Decision["response"]>; picked?: string; delivery?: string }) {
+  const shown = deliveryChoice(delivery);
+  if (picked) return <Choice {...shown} label={picked} />;
+  return <div className="decision-receipt" role="status">
+    <b>{shown.spoken[0]!.toUpperCase() + shown.spoken.slice(1)}</b><p><InlineProse text={response.text} /></p>
+    <span className="text-meta text-muted" title={exactTime(response.at)}>{ageText(response.at)}</span>
+  </div>;
+}
+
 /** Preset and custom answers share one conversational handoff in Needs you and chat. */
-export function QuestionSet({ decisions, group, target, disabled = false, onDenied, onRefresh, refreshKey, chat = false, from = "project" }: QuestionProps & {
+export function QuestionSet({ decisions, group, target, disabled = false, onDenied, onRefresh, refreshKey, chat = false, from = "project", deliveries }: QuestionProps & {
   decisions: Decision[]; group?: QuestionGroup | null; target?: Decision;
 }) {
   const decide = useDecide();
@@ -136,10 +143,8 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
         {!withdrawn ? <b>{question.resolution?.disposition === "answered" ? "Decision recorded" : "Question closed"}</b> : null}
         {question.resolution ? <><p><InlineProse text={question.resolution.text} /></p><span className="text-meta text-muted" title={exactTime(question.resolution.at)}>{closedBy(question.resolution.by)} · {ageText(question.resolution.at)}</span></> : null}
       </div> : null}
-      {!resolved && question.response ? <div className="decision-receipt" role="status">
-        <StatusMark busy={false} announce={false} label="Sent to L2" /><p><InlineProse text={question.response.text} /></p>
-        <span className="text-meta text-muted" title={exactTime(question.response.at)}>{ageText(question.response.at)}</span>
-      </div> : null}
+      {!resolved && question.response ? <Receipt response={question.response} picked={options.find((option) => option.text === question.response!.text)?.label}
+        delivery={deliveries?.[question.response.message_id]} /> : null}
       {question.design_url ? <Link className="text-meta question-preview" to={question.design_url} onClick={(event) => {
         if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
           keepForVisit(location.key, "preview", { project: question.project, slug: question.slug, id: question.id, revision: question.revision } satisfies PreviewOrigin);
@@ -183,7 +188,7 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
       </details> : null}
       {shown.filter((question) => !earlier.includes(question)).map(render)}
       {open.length ? <div className="question-batch">
-        <button type="button" className="btn btn-primary" disabled={unavailable || !selected.length} onClick={() => submit(selected)}><BusyLabel busy={decide.isPending} label={selected.length ? `Send ${selected.length} answer${selected.length === 1 ? "" : "s"}` : "Send answers"} working="Sending…" /></button>
+        <button type="button" className="btn btn-primary" aria-busy={decide.isPending || undefined} disabled={unavailable || !selected.length} onClick={() => submit(selected)}>{decide.isPending ? <span className="spinner" aria-hidden /> : null}{selected.length ? `Send ${selected.length} answer${selected.length === 1 ? "" : "s"}` : "Send answers"}</button>
         {selected.length ? <p className="text-meta text-muted">Only these answers will be sent. You can answer the rest later.</p> : null}
       </div> : null}
       {decide.isError ? <p className="text-meta text-danger" role="alert">
@@ -212,18 +217,18 @@ export function ReviewDecision({ decision, repository, disabled = false, chat = 
     },
   });
   const denied = approve.error instanceof ApiError && [401, 403].includes(approve.error.status);
+  // Approve merge changes in place (SPEC.md §3.8.2): it spins while sending and then waits to be read.
+  const state: ChoiceState = approve.isPending ? "busy" : approve.isSuccess ? "wait" : approve.isError && !denied ? "fail" : "ready";
   return <div className="question-set" data-review-pr={decision.pr ?? undefined}>
     <QuestionProse className="decision-question" text={decision.question || `Review PR #${decision.pr} before merge`} />
     {decision.detail ? <QuestionProse className="decision-why" text={decision.detail} /> : null}
-    {approve.isSuccess ? <p className="text-meta text-muted" role="status">Approval sent · the L2 merges after a final check of the same PR.</p> : <>
-      <div className="decision-options" role="group" aria-label="Merge review">
-        <button className="btn btn-primary" type="button" disabled={disabled || denied || approve.isPending} onClick={() => approve.mutate()}><BusyLabel busy={approve.isPending} label="Approve merge" working="Sending…" /></button>
-        {repository && decision.pr != null ? <a className="btn btn-ghost" href={`${repository}/pull/${decision.pr}`} target="_blank" rel="noopener noreferrer">View PR #{decision.pr}</a> : null}
-      </div>
-      <p className="text-meta text-muted">{chat ? "Or ask below. " : ""}Approving sends your message; nothing merges before the L2 checks the same PR again.</p>
-    </>}
-    {approve.isError ? <p className="text-meta text-danger" role="alert">{denied ? "You cannot approve here." : "Not sent."}{" "}
-      {!denied ? <button type="button" className="link" onClick={() => approve.mutate()} disabled={disabled}>Retry</button> : null}</p> : null}
+    <div className="decision-options" role="group" aria-label="Merge review">
+      <Choice primary label={state === "fail" ? "Retry" : "Approve merge"} state={state} disabled={disabled || denied}
+        spoken={state === "busy" ? "sending" : state === "wait" ? "waiting for the L2" : state === "fail" ? "Approve merge" : undefined}
+        error={approve.isError ? denied ? "You cannot approve here." : "Not sent" : null} onPress={() => approve.mutate()} />
+      {repository && decision.pr != null ? <a className="btn btn-ghost" href={`${repository}/pull/${decision.pr}`} target="_blank" rel="noopener noreferrer">View PR #{decision.pr}</a> : null}
+    </div>
+    <p className="text-meta text-muted">{chat ? "Or ask below. " : ""}Approving sends your message; nothing merges before the L2 checks the same PR again.</p>
   </div>;
 }
 
