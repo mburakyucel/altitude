@@ -2144,12 +2144,9 @@ button.choice-button::after { content: ""; position: absolute; left: -1px; right
 .sys-card-body {
   color: var(--text-primary);
 }
-/* What a notable turn created (§4.1): its task cards and filed issues, under the reply. */
-.sys-card .turn-tasks,
+/* The issues a notable turn filed (§4.1), under "L3 created" with its task cards. */
 .sys-card-issues {
-  margin: 10px 0 0;
-}
-.sys-card-issues {
+  margin: 8px 0 0;
   display: flex;
   flex-direction: column;
   gap: 4px;

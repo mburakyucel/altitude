@@ -126,6 +126,19 @@ def main():
                      "for the fix.", "notable-issue", trigger="incident",
                      issues=[{"title": "Workers stop when their session file rotates",
                               "url": "https://github.com/example/atlas/issues/7"}])
+                # A turn that failed after creating a task, and one that created several things.
+                retry = T.new(project, "Retry the stalled backfill", "Fictional follow-up work.")
+                l3.chat_log(project, "user", f"Task: {queued['slug']}\nThe owner is blocked.", trigger="block",
+                            turn_id="notable-failed", slug=queued["slug"])
+                l3.chat_log(project, "error", "The provider stopped.", trigger="block", turn_id="notable-failed",
+                            slug=queued["slug"], tasks=[retry["slug"]])
+                split = [T.new(project, title, "Fictional follow-up work.")["slug"]
+                         for title in ("Split the search index", "Measure the split index")]
+                turn("Report landed.", "The review found two separate follow-ups and a provider defect; I created "
+                     "Split the search index and Measure the split index and filed an issue for the defect.",
+                     "notable-several", trigger="report-landed", tasks=split,
+                     issues=[{"title": "Search requests time out on large indexes",
+                              "url": "https://github.com/example/atlas/issues/8"}])
                 turn("Altitude restarted.", "The saved tasks have been checked.", "notable-restart-2", trigger="restart")
                 turn("Altitude restarted.", "The running task continues.", "notable-restart-3", trigger="restart")
                 return self._json({"slug": made["slug"]})

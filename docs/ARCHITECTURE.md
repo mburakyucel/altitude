@@ -1996,8 +1996,9 @@ independently, and a comment line every 15 seconds keeps an idle stream open. `P
 turn for a managed project whose L3 never ran, from the header's Start L3. The conversation is the only
 way to create a task from the web: the L3 turn creates it through `alt task new`, and altd records
 the slug on that turn's assistant row (`tasks: [slug]`), which the conversation renders as a task card
-under the reply. An issue filed during a turn through `alt issue new`, or the new issue of an
-`alt incident new`, is recorded the same way as `issues: [{title, url}]`. When L3 is unsure whether the operator wants work started, its chat turn runs
+under the reply. An issue filed during a turn through `alt issue new`, or the issue an
+`alt incident new|publish` newly created, is recorded the same way as `issues: [{title, url}]`; a turn
+that fails after creating either carries them on its error row. When L3 is unsure whether the operator wants work started, its chat turn runs
 `alt task offer '<title>'` instead of asking; altd keeps the title on that reply's assistant row
 (`offer`) when the turn created no task, and the conversation draws the Create task button with the
 title under the latest such reply (spec §3.3); the reply text carries no Create task wording of its own. A press posts `{project, offer_turn}` to `POST /api/chat`, and altd

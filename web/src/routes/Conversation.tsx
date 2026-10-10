@@ -92,8 +92,9 @@ function systemTurn(turn: Turn, project: string, activeId: string | null): Syste
     fyi: turn.fyi,
     headsUp: turn.fyi && (turn.trigger === "project-message-error" || (turn.trigger === "fyi" && turn.user?.heads_up === true)),
     projectMessage: row?.project_message,
-    created: turn.assistant?.tasks ?? [],
-    issues: turn.assistant?.issues ?? [],
+    // A failed turn's error row names what it created before failing.
+    created: (turn.assistant ?? turn.error)?.tasks ?? [],
+    issues: (turn.assistant ?? turn.error)?.issues ?? [],
   };
 }
 

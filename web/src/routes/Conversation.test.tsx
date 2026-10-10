@@ -812,6 +812,8 @@ describe("Conversation", () => {
         ...routine("r3", 26, "Routine restart three."),
         { at: ago(25), role: "user", text: "System fault in altitude.", trigger: "incident", turn_id: "n2" },
         { at: ago(24), role: "assistant", text: "A worker stopped twice for the same reason, so I filed an issue to fix it.", trigger: "incident", engine: "alpha", turn_id: "n2", issues: [issue] },
+        { at: ago(23), role: "user", text: "Task: persist-paths\nThe owner is blocked.", trigger: "block", turn_id: "n3", slug: "persist-paths" },
+        { at: ago(23), role: "error", text: "The provider stopped.", trigger: "block", turn_id: "n3", slug: "persist-paths", tasks: ["fix-timer"] },
         ...routine("r4", 23, "Routine restart four."),
         ...routine("r5", 22, "Routine restart five."),
       ],
@@ -824,14 +826,17 @@ describe("Conversation", () => {
     expect(within(created as HTMLElement).getByRole("link", { name: "Open task" })).toHaveAttribute("href", "/projects/altitude/tasks/fix-timer");
     expect(within(filed as HTMLElement).getByRole("link", { name: "Open issue" })).toHaveAttribute("href", issue.url);
     expect(within(created as HTMLElement).queryByRole("link", { name: "Open issue" })).toBeNull();
+    const failed = within(region).getByText("L3 could not handle a block on Persist paths").closest(".sys-line")!;
+    expect(within(failed as HTMLElement).getByRole("link", { name: "Open task" })).toHaveAttribute("href", "/projects/altitude/tasks/fix-timer");
     // Routine runs fold around them and count only themselves; a single routine turn between stays one plain line.
     const [before, after] = within(region).getAllByText("L3 handled 2 system events between your messages");
     expect(before!.compareDocumentPosition(created) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(filed.compareDocumentPosition(after!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(failed.compareDocumentPosition(after!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(region).getByText("Routine restart three.").closest(".sys-line")?.querySelector("a")).toBeNull();
     for (const text of ["Routine restart one.", "Routine restart four."]) expect(within(region).queryByText(text)).toBeNull();
     await user.click(within(created as HTMLElement).getByRole("button", { name: "Show" }));
     const card = within(region).getByRole("article", { name: "Owner message · Persist paths" });
+    expect(within(card).getByText("L3 created")).toBeVisible();
     expect(within(card).getByRole("link", { name: /Fix the timer/ })).toHaveAttribute("href", "/projects/altitude/tasks/fix-timer");
     expect(within(card).getByRole("link", { name: "Open task" })).toHaveAttribute("href", "/projects/altitude/tasks/persist-paths");
     await user.click(within(filed as HTMLElement).getByRole("button", { name: "Show" }));

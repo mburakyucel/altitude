@@ -414,9 +414,9 @@ def _l3_gh_api(args: list[str], refuse) -> list[str]:
 
 
 def _note_created(project: str, args: list[str], stdout: str) -> None:
-    """Attach the task `alt task new` created, or the issue `alt incident new` filed, to the L3 turn that ran it,
-    so the turn's assistant chat row names it (SPEC.md §4.1, §5.2 note 4)."""
-    if args[:2] not in (["task", "new"], ["incident", "new"]):
+    """Attach the task `alt task new` created, or the issue `alt incident new|publish` filed, to the L3 turn that ran
+    it, so the turn's chat row names it (SPEC.md §4.1, §5.2 note 4). Finding an incident's existing issue files none."""
+    if args[:2] not in (["task", "new"], ["incident", "new"], ["incident", "publish"]):
         return
     try:
         printed = json.loads(stdout)
@@ -427,9 +427,7 @@ def _note_created(project: str, args: list[str], stdout: str) -> None:
     if args[0] == "task" and isinstance(printed.get("slug"), str) and printed["slug"]:
         l3.note_created(project, "tasks", printed["slug"])
     elif args[0] == "incident" and printed.get("created") is True and isinstance(printed.get("issue"), str):
-        title = next((arg.split("=", 1)[1] for arg in args if arg.startswith("--title=")), None)
-        if title is None and "--title" in args[:-1]:
-            title = args[args.index("--title") + 1]
+        title = next((row.get("title") for row in incidents.index(project) if row.get("id") == printed.get("id")), None)
         l3.note_created(project, "issues", {"title": title or "Incident", "url": printed["issue"]})
 
 

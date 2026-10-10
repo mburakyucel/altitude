@@ -263,6 +263,16 @@ function SystemCard({
               <div className="sys-card-body">
                 <Prose text={turn.reply} />
               </div>
+            </>
+          ) : turn.error ? (
+            <>
+              <p className="sys-card-label">L3 could not answer</p>
+              <p className="sys-card-error text-danger">{turn.error}</p>
+            </>
+          ) : null}
+          {notable(turn) ? (
+            <>
+              <p className="sys-card-label">L3 created</p>
               {turn.created?.length ? <TaskCards project={project} slugs={turn.created} tasks={tasks} /> : null}
               {turn.issues?.length ? (
                 <ul className="sys-card-issues">
@@ -273,11 +283,6 @@ function SystemCard({
                   ))}
                 </ul>
               ) : null}
-            </>
-          ) : turn.error ? (
-            <>
-              <p className="sys-card-label">L3 could not answer</p>
-              <p className="sys-card-error text-danger">{turn.error}</p>
             </>
           ) : null}
         </>

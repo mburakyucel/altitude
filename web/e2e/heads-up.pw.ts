@@ -143,9 +143,11 @@ test("a system turn that created a task or filed an issue stays its own line bet
   const before = groups.nth(1);
   const after = groups.nth(2);
   const routine = convo.locator(".sys-line", { hasText: "The contract delivery is verified." });
+  const failed = convo.locator(".sys-line", { hasText: "L3 could not handle a block on Check backfill recovery" });
+  const several = convo.locator(".sys-line", { hasText: "filed an issue for the defect." });
   await walk.state("01-notable-lines-between-routine-groups", {
     visible: [created, filed, before, after, routine, created.getByRole("link", { name: "Open task" }),
-      filed.getByRole("link", { name: "Open issue" })],
+      filed.getByRole("link", { name: "Open issue" }), failed.getByRole("link", { name: "Open task" }), several],
     hidden: [convo.getByText("Nothing to resume."), convo.getByText("The running task continues.")],
   });
   await expect(groups).toHaveCount(3);
@@ -155,14 +157,16 @@ test("a system turn that created a task or filed an issue stays its own line bet
     await after.elementHandle())).toBe(true);
   await expect(created.getByRole("link", { name: "Open issue" })).toHaveCount(0);
   await expect(routine.getByRole("link")).toHaveCount(0);
+  await expect(several.getByRole("link")).toHaveCount(0);
+  await expect(several.getByRole("button", { name: "Show", exact: true })).toBeVisible();
   expect(await filed.getByRole("link", { name: "Open issue" }).getAttribute("href")).toBe("https://github.com/example/atlas/issues/7");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 
   const card = convo.getByRole("article", { name: "Owner message · Prepare index migration" });
   await walk.state("02-notable-card-with-created-task", {
     action: () => created.getByRole("button", { name: "Show", exact: true }).click(),
-    visible: [card, card.getByText("Read the owner's evidence."), card.getByRole("link", { name: /Serialize concurrent landings/ }),
-      card.getByRole("link", { name: "Open task" })],
+    visible: [card, card.getByText("Read the owner's evidence."), card.getByText("L3 created"),
+      card.getByRole("link", { name: /Serialize concurrent landings/ }), card.getByRole("link", { name: "Open task" })],
     hidden: [created],
   });
   await walk.state("03-notable-line-restored", {
@@ -176,7 +180,22 @@ test("a system turn that created a task or filed an issue stays its own line bet
     hidden: [filed],
   });
   await issueCard.getByRole("button", { name: "Hide", exact: true }).click();
-  await walk.state("05-created-task-opens", {
+  const severalCard = convo.getByRole("article", { name: "Report landed" });
+  await walk.state("05-notable-card-with-several-outcomes", {
+    action: () => several.getByRole("button", { name: "Show", exact: true }).click(),
+    visible: [severalCard.getByRole("link", { name: /Split the search index/ }), severalCard.getByRole("link", { name: /Measure the split index/ }),
+      severalCard.getByRole("link", { name: "Search requests time out on large indexes" })],
+    hidden: [several],
+  });
+  await severalCard.getByRole("button", { name: "Hide", exact: true }).click();
+  const failedCard = convo.getByRole("article", { name: "Block · Check backfill recovery" });
+  await walk.state("06-failed-turn-keeps-created-task", {
+    action: () => failed.getByRole("button", { name: "Show", exact: true }).click(),
+    visible: [failedCard.getByText("The provider stopped."), failedCard.getByRole("link", { name: /Retry the stalled backfill/ })],
+    hidden: [failed],
+  });
+  await failedCard.getByRole("button", { name: "Hide", exact: true }).click();
+  await walk.state("07-created-task-opens", {
     action: () => created.getByRole("link", { name: "Open task" }).click(),
     visible: [page.getByRole("heading", { name: "Serialize concurrent landings", exact: true })],
     hidden: [created],

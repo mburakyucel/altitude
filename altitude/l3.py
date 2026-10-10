@@ -739,9 +739,16 @@ def _created_meta(project: str, turn_id: str) -> dict:
     """The `tasks` and `issues` fields for the assistant row of `turn_id`, taken once, or its `offer` when it
     created no task."""
     with _lifecycle_guard(project):
-        created = _created.pop(turn_id, None) or {}
         offer = _offers.pop(turn_id, None)
+    created = _created_only(project, turn_id)
     return {**created, **({"offer": offer} if offer and not created.get("tasks") else {})}
+
+
+def _created_only(project: str, turn_id: str) -> dict:
+    """The `tasks` and `issues` fields, taken once. A failed turn's error row carries them too, so work it created
+    before failing stays visible (SPEC.md §4.1)."""
+    with _lifecycle_guard(project):
+        return _created.pop(turn_id, None) or {}
 
 
 def chat_state(project: str, limit: int = 60) -> dict:
@@ -788,7 +795,8 @@ def _publish_active_turn(project: str, trigger: str, claim=None, slug: str | Non
     try:
         yield turn
     except Exception as exc:
-        chat_log(project, "error", f"L3 turn failed: {exc}", trigger=trigger, turn_id=turn["id"], **_slug_meta(slug))
+        chat_log(project, "error", f"L3 turn failed: {exc}", trigger=trigger, turn_id=turn["id"],
+                 **_created_only(project, turn["id"]), **_slug_meta(slug))
         raise
     finally:
         with lifecycle_guard:
@@ -1634,14 +1642,15 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                         row.get("turn_id") == turn_id and row.get("role") == "error"
                         for row in chat_history(project, None)):
                     chat_log(project, "error", res["error"], trigger=trigger, turn_id=active_turn["id"],
-                             **_slug_meta(slug))
+                             **_created_only(project, active_turn["id"]), **_slug_meta(slug))
                 return res
             pinned = config.pinned_option("l3", config.project(project), engine=requested, model=model)
             if keeps and res.get("safe_to_retry") and (image_message or pinned):
                 return kept(res)
             if image_message or pinned or not res.get("safe_to_retry"):
                 chat_log(project, "error", res.get("error") or "Provider unavailable; check authentication/model access.",
-                         trigger=trigger, engine=choice["engine"], turn_id=active_turn["id"], **_slug_meta(slug))
+                         trigger=trigger, engine=choice["engine"], turn_id=active_turn["id"],
+                         **_created_only(project, active_turn["id"]), **_slug_meta(slug))
                 return {**res, "undelivered": bool(res.get("safe_to_retry"))}
             tried.append(route.option_key(choice))
             choice = _select(project, requested, model=model, excluded=tried)
@@ -1735,7 +1744,7 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
             return res
         if res.get("error") and not res.get("session_id"):
             chat_log(project, "error", res["error"], trigger=trigger, engine="claude", turn_id=turn_id,
-                     tools=_tool_log(res.get("tools") or []),
+                     tools=_tool_log(res.get("tools") or []), **_created_only(project, turn_id),
                      **_slug_meta(slug))
             res["turn_id"] = turn_id
             return res
@@ -1834,7 +1843,8 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, a
             _save_session(inf, session, "codex", reported_sid, pct, fresh, 0.0, usage, choice)
             save_info(project, inf)
         chat_log(project, "error", f"codex L3 turn failed: {out['error']}", trigger=trigger,
-                 engine="codex", turn_id=turn_id, tools=_tool_log(out["tools"]), **_slug_meta(slug))
+                 engine="codex", turn_id=turn_id, tools=_tool_log(out["tools"]), **_created_only(project, turn_id),
+                 **_slug_meta(slug))
         return out
     if out["session_id"]:
         _save_session(inf, session, "codex", out["session_id"], pct, fresh, 0.0, usage, choice)

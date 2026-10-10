@@ -437,9 +437,10 @@ happened and the task or issue it produced in one or two plain sentences, then o
 The link is **Open task** (that task's page) when the turn created exactly one task, else **Open issue**
 (the issue on GitHub, a new tab) when it filed exactly one issue and created no task; with several, the
 line has no link and the card lists them. The text wraps in full on phone and desktop; it is never cut.
-Its card is the ordinary system card, with the tasks the turn created as task cards (§3.5) under "L3
-replied" and each filed issue as a link named by its title; the footer's **Open task** still opens the
-task the turn was about. The dot keeps its trigger's tone. It is information, never a question: no
+A turn whose reply failed after creating something stays notable: its line reads "L3 could not handle
+<what>" with the same link. Its card is the ordinary system card plus an **L3 created** label listing
+the created tasks as task cards (§3.5) and each filed issue as a link named by its title; the footer's
+**Open task** still opens the task the turn was about. The dot keeps its trigger's tone. It is information, never a question: no
 Needs you entry, badge or notification.
 
 | Heads-up state or action | What appears and disappears |
@@ -451,7 +452,9 @@ Needs you entry, badge or notification.
 | Hide on heads-up | The card and its task link leave; the compact heads-up returns. |
 | Show/Hide on routine group | Routine evidence appears/disappears; the selected heads-up remains outside it. |
 | Notable turn between routine turns | Its line, with Open task or Open issue and Show, splits the routine run; each side folds and counts only its own turns, and a single routine turn reads as its own plain line. |
-| Show on notable turn | The line becomes its card: L3's full reply, the created task's card or the filed issue's titled link, and the footer links; routine groups stay folded. Hide restores the line. |
+| Show on notable turn | The line becomes its card: L3's full reply (or its error), then L3 created with each created task's card and each filed issue's titled link, and the footer links; routine groups stay folded. Hide restores the line. |
+| Notable turn with several outcomes | The line has no Open link, only Show; the card lists every task and issue. |
+| Notable turn whose reply failed | "L3 could not handle <what>", with Open task or Open issue and Show; the card shows the error and what was created. |
 | Open task on notable turn | The created task's page opens; Back returns to the conversation. |
 | Conversation read fails | Error and Retry appear; any cached heads-up remains. A successful Retry removes the error. |
 | Listening or microphone denied | Composer states in §3.6; the heads-up remains unchanged and requests no permission. |
@@ -1767,9 +1770,9 @@ text is the last paragraph of the turn's assistant row; while no assistant row e
 block on <task>", "a fault on <task>", "the restart"). An active turn stays outside the group so
 its current handling line remains visible. A selected L3 FYI (`trigger == "fyi"`, `role == "system"`,
 `heads_up == true`) also stays visible as its full concise text, splitting the routine runs around it.
-So does a notable turn, one whose assistant row names tasks it created (`tasks`) or issues it filed
-(`issues`, §3.4); altd records both from the verbs L3 ran during the turn, so L3 need not remember to
-announce it. A turn that only resumed, messaged or answered stays routine.
+So does a notable turn, one whose assistant or error row names tasks it created (`tasks`) or issues it
+filed (`issues`, §3.4); altd records both from the verbs L3 ran during the turn, so L3 need not remember
+to announce it. A turn that only resumed, messaged or answered stays routine.
 Consecutive completed routine system turns with no chat, active turn, selected heads-up or notable
 turn between them collapse to one line: "L3 handled N system events between your messages", expanding to the list.
 Other FYIs are ordinary system lines (`trigger == "fyi"`, `role == "system"`, no reply), eligible
@@ -1894,7 +1897,8 @@ the working rules (the design decision of 2026-09-05).
    There is no project inbox file or `fyis` field in the digest or overview.
 4. **Turns name what they created.** The assistant chat row of a turn that created a task carries
    `tasks: [slug]`, written by the server when the turn's task creation lands; one that filed GitHub
-   issues through `alt issue new` or `alt incident new` carries `issues: [{title, url}]`.
+   issues through `alt issue new` or an `alt incident new|publish` that created the issue carries
+   `issues: [{title, url}]`. A turn that fails after creating them carries both on its error row.
 5. **Dilemmas have durable identity.** Task `questions` contains ID/revision, message anchor,
    question/options/recommendation, source/audience and resolution. `question_group` projects up to
    three open members plus closed history, its revision and stable anchor. Task `question`, history and Needs you
