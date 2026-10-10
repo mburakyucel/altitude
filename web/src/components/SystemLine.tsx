@@ -65,6 +65,8 @@ export function handling(trigger: string, task?: string | null): string {
       return `a CI recheck${on}`;
     case "upstream-issue":
       return "an upstream issue";
+    case "owner-message":
+      return `an owner's message${on}`;
     default:
       return `a system event${on}`;
   }
@@ -97,6 +99,8 @@ export function kindLabel(trigger: string): string {
       return "CI recheck";
     case "upstream-issue":
       return "Upstream issue";
+    case "owner-message":
+      return "Owner message";
     default:
       return "System event";
   }

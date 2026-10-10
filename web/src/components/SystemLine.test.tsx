@@ -36,6 +36,7 @@ describe("system line text (SPEC.md §3.4, §4.1)", () => {
     expect(lineText(turn({ trigger: "system-recovery", error: "engine timed out" }), null)).toBe("L3 could not handle a recovery");
     expect(handling("start")).toBe("the start");
     expect(handling("other")).toBe("a system event");
+    expect(handling("owner-message", "Fix the timer")).toBe("an owner's message on Fix the timer");
   });
 
   it("finds the turn's task from the row's slug, the Task row, or the older prompt shapes", () => {
@@ -82,7 +83,7 @@ describe("system line text (SPEC.md §3.4, §4.1)", () => {
     expect(lineText(queued, "Publish the next release")).toBe("Block · Publish the next release");
     const report = "Task: fix-timer\nVerdict: incomplete\nProblems: none\nPost-mortem signals: none\nPRs: none\nSpend: none recorded";
     expect(lineText(turn({ prompt: report, queued: true }), "Fix the timer")).toBe("Report landed · Fix the timer · incomplete");
-    for (const trigger of ["incident", "restart", "terminal", "ci-recheck", "upstream-issue", "start", "new-kind"]) {
+    for (const trigger of ["incident", "restart", "terminal", "ci-recheck", "upstream-issue", "owner-message", "start", "new-kind"]) {
       const text = lineText(turn({ trigger, prompt: "Long coordinator instructions. Read `alt task show`.", queued: true }), null);
       expect(text).toBe(kindLabel(trigger));
     }

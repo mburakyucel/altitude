@@ -419,7 +419,7 @@ grouped (N turns); failed turn (the line reads "L3 could not handle <what>"; Sho
 error); queued (below).
 
 A queued notice, one altd has written for L3 that has not run yet (block, report, fault, restart, CI
-recheck, terminal, upstream issue or any other trigger), is the same line in the queued rows (§4.2)
+recheck, terminal, upstream issue, owner message or any other trigger), is the same line in the queued rows (§4.2)
 with an outlined dot in its tone and no Show: **<kind> · <task title> · <need>**. The need is the first
 sentence of the task's open Needs you question, as plain words of at most 90 characters, or a report's
 verdict; a notice with neither reads kind and task alone, and one without a task reads its kind. The line
