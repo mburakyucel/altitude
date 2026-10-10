@@ -712,20 +712,17 @@ def stopped_by(task: dict) -> str | None:
 
 
 def record_stop(project: str, slug: str, stop_id: str, actor: str, reason: str) -> None:
-    """An executed Stop names its requester as the block's actor, also when the task had blocked meanwhile.
-    L3's Stop waits on L3, unless an open operator question keeps the operator's turn, and leaves its reason as one
-    L3 note in the conversation; it asks nobody anything."""
+    """L3's executed Stop waits on L3, unless an open operator question keeps the operator's turn, and leaves its
+    reason as one L3 note in the conversation; it asks nobody anything."""
+    if actor != "l3":
+        return
     with S.project_lock(project):
         task = S.load_task(project, slug)
         if task.get("stop_id") != stop_id:
             return
-        task["block_actor"] = actor
-        if actor == "l3":
-            task.setdefault("waiting_on", "l3")
+        task.setdefault("waiting_on", "l3")
         S.save_task(project, task)
         S.regen_state_md(project)
-        if actor != "l3":
-            return
         path = S.task_dir(project, slug) / "conversation.jsonl"
         if not any(row["id"] == stop_id for row in _rows(path, "task conversation")):
             _append_jsonl(path, {"id": stop_id, "at": _conversation_time(), "role": "l3", "by": "l3",

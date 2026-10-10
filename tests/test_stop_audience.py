@@ -45,6 +45,8 @@ class TestStopAudience(AltitudeCase):
         self.assertEqual(T.pending(self.project, slug), [], "the note is not inbox input for the stopped owner")
         self.assertIn(slug, (config.project_dir(self.project) / "STATE.md").read_text().split("## Needs L3 input")[1])
         self.assertNotEqual(queued.get("block_id"), task["block_id"])
+        later = {**task, "daemon_request": {"id": "later-request", "operation": "preserve-checkout", "actor": "altd"}}
+        self.assertEqual(T.stopped_by(later), "l3", "a later request does not relabel the Stop")
 
         T.message(self.project, slug, "l3", "Resume follows with the candidate state.", by="l3")
         self.assertEqual(S.load_task(self.project, slug).get("questions", []), [],
@@ -84,19 +86,3 @@ class TestStopAudience(AltitudeCase):
         T.message(self.project, slug, "l3", "Coordinating.", by="l3")
         self.assertEqual(S.load_task(self.project, slug).get("questions", []), [],
                          "a later read never adopts a non-owner block as a question")
-
-    def test_l3_stop_of_a_blocked_send_now_continuation_keeps_its_actor(self):
-        slug = self.task()["slug"]
-        T.block(self.project, slug, "Sending now.", actor=config.OPERATOR_ACTOR)
-        task = S.load_task(self.project, slug)
-        task["send_now"] = "operator-message"
-        S.save_task(self.project, task)
-        self.stop(slug, "l3", "Stop the continuation; recovery follows.")
-        task = S.load_task(self.project, slug)
-        self.assertEqual((task["block_actor"], task["waiting_on"], task.get("questions", [])), ("l3", "l3", []))
-        task["daemon_request"] = {"id": "later-request", "operation": "preserve-checkout", "actor": "l3",
-                                  "status": "done"}
-        S.save_task(self.project, task)
-        self.assertEqual(T.stopped_by(task), "l3", "a later request does not reattribute the Stop")
-        self.assertEqual(self.card(slug), [])
-        self.assertEqual(len(self.notes(slug)), 1)
