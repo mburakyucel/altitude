@@ -428,7 +428,7 @@
   overscroll-behavior: none;
 }
 .page, .rail, .work-panel, .convo-scroll, .live-body, .terminal-body, .overlay-panel,
-.session-code, .session-out, .sys-card-pre, pre {
+.session-code, .session-out, pre {
   overscroll-behavior: contain;
 }
 .page {
@@ -2033,12 +2033,6 @@ button.choice-button::after { content: ""; position: absolute; left: -1px; right
   padding: 0;
   list-style: none;
 }
-.queued-text {
-  margin: 0;
-  text-align: right;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
 
 /* ---- The system line (§3.4): one centred line between hairlines, a dot, the text, Show. ---- */
 .sys-line {
@@ -2068,6 +2062,14 @@ button.choice-button::after { content: ""; position: absolute; left: -1px; right
 }
 .sys-line[data-progress] .sys-dot {
   background: var(--accent);
+}
+/* A queued notice has not run yet: the dot is an outline in its tone. */
+.sys-line[data-queued] .sys-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--text-muted);
+}
+.sys-line[data-queued] .sys-dot[data-tone="danger"] {
+  box-shadow: inset 0 0 0 1px var(--danger);
 }
 .sys-text {
   min-width: 0;
@@ -2138,18 +2140,6 @@ button.choice-button::after { content: ""; position: absolute; left: -1px; right
 .sys-card-fields dd {
   margin: 0;
   overflow-wrap: anywhere;
-}
-.sys-card-pre {
-  max-height: 40vh;
-  margin: 0;
-  padding: 8px 10px;
-  border-radius: var(--radius-input);
-  background: var(--surface);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  overflow-y: auto;
 }
 .sys-card-body {
   color: var(--text-primary);
