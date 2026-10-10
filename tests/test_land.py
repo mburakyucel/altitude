@@ -11,7 +11,6 @@ import stat
 import subprocess
 import sys
 import unittest
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -141,9 +140,7 @@ class TestLand(AltitudeCase):
         task.update(l2_engine=config.ENGINES[0], agent_id="fixture-owner")
         S.save_task("demo", task)
         (S.task_dir("demo", "fix-x") / "request.md").write_text("Preserve the public API.")
-        earlier = (datetime.now(timezone.utc) - timedelta(seconds=1)).replace(microsecond=0).isoformat()
-        with mock.patch.object(S, "now", return_value=earlier):  # the approval comes in a later second
-            T.set_hold_merge("demo", "fix-x", "Operator approval before merging")
+        self.hold_a_second_ago("demo", "fix-x", "Operator approval before merging")
         approval = T.message("demo", "fix-x", T.OPERATOR_MESSAGE_ROLE, "Merge the reviewed PR after checks.")
         choice = {"engine": config.ENGINES[1], "model": "fixture", "label": "Second engine", "allowance_known": True}
         def review_engine(prompt, **kwargs):
