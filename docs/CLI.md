@@ -2067,8 +2067,10 @@ from a process in the task's current worker job. A non-running task, a stale att
 a turned-off switch, missing KVM, a host without an iOS Simulator for `--simulator` or low disk refuses with the
 reason. One run uses the machine at a time: a request that finds it busy waits its turn in arrival order, for up to
 70 minutes, and prints what it waits for (the task whose run holds the machine, when that run's limit ends and how
-many requests are ahead) on standard error. Stopping or interrupting the command, or losing its connection, takes
-the request out of the line or stops its run at once, recorded as `stopped`, and frees the machine. The
+many requests are ahead) on standard error. Stopping or interrupting the command, ending the process that started
+it, or losing its connection takes the request out of the line or stops its run within seconds, recorded as
+`stopped`, and frees the machine. A newer `alt task validate` from the same task replaces the task's earlier request
+the same way, recorded as `replaced`. The
 [validation runner](DEVELOPMENT.md#validation-runner) describes the isolation, its limits and cleanup.
 
 ### Reading the task terminal
