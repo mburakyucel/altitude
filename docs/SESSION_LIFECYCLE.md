@@ -1254,7 +1254,8 @@ restart notice replaces the queued one, a newer block notification replaces the 
 (it names every question then open), and each drain, with or without an engine, drops a block
 notification whose task has no open question left, recording an `l3-notice-dropped` project event.
 A turn that every option refuses before any provider output keeps its rows.
-A system notification (block, restart, incident or upstream issue) returns to the front of the queue with
+An owner's `alt task reply --to l3` queues one owner-message notification per reply, never replaced.
+A system notification (block, owner message, restart, incident or upstream issue) returns to the front of the queue with
 its id. An operator message, sent directly or from the queue, stays in the conversation as its own bubble
 with no error row; the queue keeps it with its `turn_id`, text and images. Kept messages lead the queue in
 send order, behind only an accepted Send now group, and fold with the rest of their conversation's

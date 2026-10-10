@@ -397,6 +397,18 @@ class TestTaskConversation(ChatCase):
             cli(["--project", self.project, "task", "reply", "forged"])
         self.assertEqual(len(T.task_messages(self.project, self.slug)), 1)
 
+    def test_current_l2_cli_reply_to_l3_says_it_was_queued_for_l3(self):
+        self.setenv("ALTITUDE_ACTOR", "l2")
+        self.setenv("ALTITUDE_PROJECT", self.project)
+        self.setenv("ALTITUDE_TASK", self.slug)
+        self.setenv("ALTITUDE_ATTEMPT", "1")
+        payload = cli(["task", "reply", "--to", "l3", "The docs change needs its own task."])
+        [notice] = l3.queued(self.project)
+        self.assertEqual((payload["queued_for_l3"], notice["trigger"], notice["slug"]),
+                         (notice["id"], "owner-message", self.slug))
+        cli(["task", "reply", "Ordinary progress."])
+        self.assertEqual(len(l3.queued(self.project)), 1)
+
     def test_cli_message_queues_for_a_running_l2_and_leaves_blocked_resume_to_altd(self):
         self.setenv("ALTITUDE_ACTOR", "burak")
         with mock.patch.object(dispatch, "resume") as resume:
