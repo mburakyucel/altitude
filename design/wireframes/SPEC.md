@@ -75,6 +75,8 @@ In the cross-engine design review of every UI proposal and the [phone and deskto
 - State shows visually before it is written: a control changes in place, and an icon, colour or
   motion says that something is working, waiting, done or failed. Text appears only where a cue
   cannot carry the meaning, such as an error's reason. No line restates what the screen already shows.
+- The UI never tells people what they cannot do. Unavailable controls look unavailable; their
+  reason appears on demand or on press. Accessible names, busy states and descriptions retain meaning.
 - Typography, spacing, alignment, colour, and component treatment have a consistent visual finish;
   interaction states and transitions feel complete and polished on phone and desktop.
 
@@ -573,10 +575,10 @@ at both phone and desktop widths; `mobile-chat.pw.ts` walks the task page's pend
 | --- | --- | --- |
 | Idle | placeholder, mic, arrow disabled | typing enables the arrow |
 | Typing | draft text, arrow enabled | Enter or the arrow: the draft becomes a bubble at once, the field clears |
-| Sending | the bubble is in the conversation at once at 60%, a small progress ring beside it, until the server acknowledges it (stream accepted, queued receipt or stored row); the task page's receipt line reads "Sending…" | accepted: the same bubble settles to full opacity in place over 240ms, the ring leaves, and the stored copy replaces it without a duplicate row, re-layout or scroll jump; refused: the bubble leaves, the draft returns, hint reads "Not sent. Retry." in `--danger` |
+| Sending | the bubble is in the conversation at once at 60%, a small progress ring beside it, until the server acknowledges it (stream accepted, queued receipt or stored row); screen readers hear "Sending" | accepted: the same bubble settles to full opacity in place over 240ms, the ring leaves, and the stored copy replaces it without a duplicate row, re-layout or scroll jump; refused: the bubble leaves, the draft returns, hint reads "Not sent. Retry." in `--danger` |
 | Accepted; stream or refresh interrupted | sent bubble or saved queue row; the composer stays cleared and newly typed text stays | refresh reconstructs history, active turn and queue by their IDs; read-error Retry only reads; no unsent Retry or invented answer failure |
 | Delivery unconfirmed | submitted text followed by any newly typed draft on a new line; hint reads "Could not confirm delivery. Check the conversation before sending again." | no send Retry; the operator checks history before editing or sending; HTTP headers, server errors and matching text alone do not prove delivery |
-| Busy (L3 mid-turn) | the same arrow, enabled with a draft; header names the active work and queued rows say what runs next; desktop retains its mid-turn hint | the arrow appends to `queued[]`; a queued row appears in the conversation in muted text with **Send now** beside **Remove**, both 44px targets on phone |
+| Busy (L3 mid-turn) | the same arrow, enabled with a draft; header names the active work; desktop retains its mid-turn hint | the arrow appends to `queued[]`; the message joins the queued group (§4.2) as an outlined bubble |
 | Opening microphone | "Opening microphone…" with an indeterminate spinner inside the composer box; existing text remains readable and read-only. A restart waits for recognizer shutdown (at most three seconds), followed by the waveform audio context's asynchronous close (at most three more seconds), before opening another microphone. Its waveform graph connects before capture starts, without waiting for graph activation | Cancel or Esc restores editing and prevents the waiting attempt from opening audio later; denial or failure preserves the draft |
 | Listening | Read-only, selectable draft; "Listening… Stop to add text, or Send." with activity indicator inside the box. With the browser backend, recognized words appear after the draft while speaking and the last phrase may still change; English phrases gain punctuation and capitals once final, while the phrase being heard shows as heard; once the text passes the field's height, the field follows the latest words. With either backend, new words flow in letter by letter at a steady pace timed to finish as the next update arrives (about speaking pace, faster while catching up); a revised word changes in place without the text backing up, and under reduced motion each update appears at once. Stop, Send and a recording that stops early use every recognized word, including any still flowing in. Cancel, Stop, arrow, waveform and timer share one control row: on desktop they sit together at the right beside the engine pill with a crisp 168px waveform; at 390px the waveform fills the row without wrapping | Cancel or Esc: back to editing, nothing added; the X leaves focus on the microphone so no phone keyboard opens, and Esc returns focus to the field; Stop or Ctrl/⌘+M: land the words in the draft; the arrow or Enter: land them, then send at once; a later browser dictation in the page whose live microphone stays exactly silent for three seconds before any words (iOS 27 Safari, [WebKit bug 326069](https://bugs.webkit.org/show_bug.cgi?id=326069)): back to editing with nothing added, focus on the microphone and "The microphone went silent. Close and reopen Altitude to dictate again. Typing works." |
 | Transcribing | "Transcribing…" and an indeterminate spinner inside the box; draft stays readable and read-only, mic and arrow disabled, Cancel available. Desktop waveform and timer freeze. Host voice finishes its last words here; the browser backend only waits, at most three seconds, for the recognizer's last phrase and then, at most ten seconds (three while the model still loads), for its punctuation | after Stop: Landed; after Send: append and send once through Typing → Sending (Busy queues); Cancel, failure or timeout restores editing and preserves the draft; failure: "Could not transcribe. Typing works.", and a recognizer error keeps the words already shown; empty transcript: send nothing, return to Idle or Typing |
@@ -1100,25 +1102,18 @@ for another blocked task. Confirmed Stop reads **Send a correction to continue t
 refused or unconfirmed send uses the shared composer states in §3.6, preserving newer draft edits.
 Accepted messages stay sent through wake or refresh errors. The composer appears for running and
 blocked tasks.
-The existing message bubble shows **Queued · waiting for a checkpoint**, **Queued · held until you
-continue**, **Delivered to session** only with handoff evidence, or **Delivery unconfirmed** when
-evidence is missing. Each eligible queued operator bubble has a bordered **Send now** beside **Remove**;
-Send now explains **Joins the current turn without stopping its work.** It hands the whole queued
-removable operator group to the running turn in arrival order; each message keeps its bubble and
-receipt, and later arrivals remain outside the claim. Quick-choice receipts and
-messages already used by recorded decisions keep their evidence. **Removing…** disables removal until
-the response; success removes only that bubble from the conversation. Original text remains in
-durable evidence. Claim shows **Sending to session ·
-cannot remove**, and uncertain handoff shows **Delivery unconfirmed · cannot remove**, with no Remove.
-A prelaunch failure restores the queued controls. A refused removal refreshes delivery and names the
-refusal beside that message; denied and unconfirmed requests show their own inline error. Saved or
-loading reads disable both actions. **Sending now…** disables repeated sends and removal while the
-request is pending; an accepted message shows **Sending now · joining the current turn** with no Remove
-until the turn takes it in (**Delivered to session**) or returns it to the queue. The server's receipt
-establishes delivery; the UI does not move the message optimistically. Stopped, question-waiting,
-faulted or unavailable owners, messages with images and a second message while one is being sent show
-the server's reason beside a disabled Send now. Denied, conflict and unconfirmed requests refresh the row and show
-their inline explanation. Claimed, delivered and removed messages have no Send now control.
+Queued operator messages form a group of outlined bubbles, 6px apart, each with a quiet ×
+(**Remove**) in the gutter. One bordered **Send now** follows the group. Its accessible description is
+**Joins the current turn without stopping its work.** It hands the queued removable operator group
+to the running turn in arrival order; each message retains its receipt and later arrivals stay outside
+the claim. Quick-choice receipts and messages used by recorded decisions keep their evidence.
+A pressed × spins until success removes its bubble and announces removal. Original text stays in
+the record. A claimed message has a sending ring and no ×; a delivered message is a plain filled
+bubble. Uncertain handoff shows an amber **!** and **Unconfirmed**. Screen readers hear queued and
+sending states, and confirmed receipts retain screen-reader-only “Delivered”. Each remove control has its message as an accessible description. A prelaunch failure restores queued controls; failed actions retain an inline reason.
+Saved or loading reads disable actions. Pending Send now holds a spinner in place and ignores
+repeated delivery requests. Unavailable Send now looks unavailable and reveals the server's reason
+on press. The server receipt establishes delivery; the UI never moves messages optimistically.
 The empty queue has no queued controls; listening and transcription
 keep the existing composer behavior. Removal does not undo a lifecycle request or recorded decision.
 `web/e2e/queued-messages.pw.ts` walks queue, removal, handoff, recovery and failure states on phone and
@@ -1713,32 +1708,30 @@ week. This is a rendering rule over data the chat log already stores; slice 2 ad
 ### 4.2 One conversation, in order
 
 Messages sent while L3 is mid-turn queue and run at the next turn boundary in order; the composer
-keeps its accent circle with the arrow. Phone names the active work in the header and the run order
-on queued rows; desktop also shows "L3 is mid-turn · runs next" under the field. Queued rows stay
-inside the message area until they run, with bordered **Send now** beside **Remove** while permitted.
-Send now promotes the whole queued operator group in arrival order; each message keeps its bubble
-and receipt, and later arrivals remain outside the claim. A coordinator that delivers at turn boundaries
-shows **Runs next after this turn** while its current chat turn continues. With native delivery, pending
-rows say **Sending now…** with **Sending into the current turn** and no Remove. Once the turn takes them in,
-the reply so far ends, each message appears as its own operator bubble, and the rest of the reply streams
-beneath the group. Historical interrupted replies keep any partial text as an ordinary reply,
-with no notice. An empty interrupted reply leaves no row, so the two operator bubbles sit back to
-back (8px apart, the first bubble's time beside it). A message whose engine acknowledgement is uncertain retains **Delivery unconfirmed**
-under its bubble after settlement and reload; it is never replayed automatically.
-A group with images, one sent during system work (**Runs next after system work**) or while
-no turn runs (**Runs next**) moves first and runs as the next turn; Remove stays available until claim.
-Remove is disabled while the HTTP request is pending. An unavailable engine or operator wait disables
-Send now with the server's explanation. Denied, conflict and unconfirmed requests retain the row
-and show their own inline error after refreshing canonical state. The row becomes its turn bubble
-only when the server admits it; claimed, delivered or removed rows have no queued actions. A message
-admitted while no L3 engine can run keeps its bubble with the muted queued status (**Queued · runs
-next**) and Send now beneath it, disabled with the server's explanation; there is no error line and no
-Remove, because it was already sent. It runs before system work once an engine is available, together
-with the newer messages queued behind it; its reply appears beneath the same bubble, or beneath the last
-newer message. A kept message older than the loaded conversation appears in the
-queued rows with the same status and Send now, still without Remove.
-Send now has no timer and never stops running work; task-chat Stop remains the hard stop.
-Both controls have 44px phone targets and wrap with their explanations on narrow screens.
+keeps its accent circle with the arrow. Phone names the active work in the header; desktop retains
+its mid-turn hint. Queued operator messages appear as outlined bubbles, 6px apart, with a quiet ×
+(**Remove**) each and one bordered **Send now** following the group. System rows keep their own
+position and have no operator actions. Send now promotes the operator group in arrival order;
+each message keeps its bubble and receipt, and later arrivals stay outside the claim.
+A pending Send now shows a spinner in place. Native claims show sending rings and no ×.
+Boundary delivery retains the outlined queue; pressing the busy control reveals its waiting reason.
+Once the turn takes the messages in, the reply so far ends, each message appears as its own operator
+bubble, and the rest of the reply streams beneath the group. Historical interrupted replies retain
+partial text as an ordinary reply with no notice; an empty interrupted reply leaves no row, so the
+two operator bubbles sit back to back (8px apart, the first bubble's time beside it).
+Uncertain engine acknowledgement shows an amber **!** and **Unconfirmed** after settlement and reload;
+it never causes automatic replay. Groups with images or without an active chat turn run at a turn
+boundary; Remove stays available until claim. A pressed × spins until its bubble disappears and
+removal is announced. Denied, conflict and unconfirmed actions keep their inline error after refresh.
+A message retained because no engine can run stays outlined in its historical position, without ×,
+and joins newer queued messages in order after recovery. Its reply appears beneath that bubble,
+or beneath the last newer message. Older retained messages appear in the
+queue list when their history is outside the loaded window. The queue action remains available for
+retained messages. Create task presses keep their own control rather than a separate Send now.
+While a claimed group waits, its action stays with that group, before any later arrivals.
+Send now never stops running work; task-chat Stop remains the hard stop. Unavailable actions reveal
+the server's reason on press. Both controls have 44px phone targets; screen readers retain their
+names, busy state and delivery statuses.
 A running turn shows
 either a system line in progress (§3.4) or, for a `chat` turn, a typing indicator under the
 operator's bubble. `GET /api/chat` is the authority for what is running and what is queued; the UI

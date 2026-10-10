@@ -131,6 +131,17 @@ interface StubOptions {
 const terminalRunning = { state: "running", id: "t1", enabled: true, folder: "/fixture/worktree", offset: 0, exit_code: null, reason: null, busy: null };
 
 describe("queued L2 Send now", () => {
+  it("clears a failed Send now alert when its queued message is delivered", async () => {
+    const message = { id: "first", role: "operator", text: "First steer", delivery: { state: "queued", at: null, removable: true, send_now: true } };
+    const record = { ...running, messages: [message] };
+    stub(record, { sendNow: () => jsonResponse({ error: "Fixture refusal" }, 409) });
+    const { user, queryClient } = renderApp({ route: "/projects/altitude/tasks/fix-timer" });
+    await user.click(await screen.findByRole("button", { name: "Send now" }));
+    await screen.findByText("Fixture refusal");
+    await act(async () => { queryClient.setQueryData(["task", "altitude", "fix-timer"], { ...record, messages: [{ ...message, delivery: { state: "delivered", removable: false } }] }); });
+    await waitFor(() => expect(screen.queryByText("Fixture refusal")).toBeNull());
+    expect(screen.getByText("Delivered", { exact: true })).toHaveClass("sr-only");
+  });
   it("keeps the queued message through interruption until canonical delivery and sends its identity once", async () => {
     let release!: (response: Response) => void;
     const message = { id: "steer-now", role: "operator", text: "Check this first", delivery: { state: "queued", at: null, removable: true, send_now: true } };
@@ -138,18 +149,47 @@ describe("queued L2 Send now", () => {
     const fetchMock = stub(record, { task: () => jsonResponse(record), sendNow: () => new Promise((resolve) => { release = resolve; }) });
     const { user } = renderApp({ route: "/projects/altitude/tasks/fix-timer" });
     await user.click(await screen.findByRole("button", { name: "Send now" }));
-    expect(screen.getByRole("button", { name: "Sending now…" })).toBeDisabled();
+    const pending = screen.getByRole("button", { name: "Sending now" });
+    expect(pending).toHaveAttribute("aria-busy", "true");
+    expect(pending).toHaveAttribute("aria-disabled", "true");
+    expect(pending).toHaveAccessibleDescription("Joins the current turn without stopping its work.");
     expect(screen.getByRole("button", { name: "Remove" })).toBeDisabled();
-    expect(screen.getByText("Joins the current turn without stopping its work.")).toBeVisible();
-    expect(screen.getByText("Queued · waiting for a checkpoint")).toBeVisible();
+    expect(screen.getByText("Joins the current turn without stopping its work.")).toHaveClass("sr-only");
+    expect(screen.getByText("Queued")).toHaveClass("sr-only");
     record = { ...record, messages: [{ ...message, delivery: { ...message.delivery, state: "delivered", removable: false, send_now: false } }] };
     await act(async () => release(jsonResponse({ ok: true })));
-    await screen.findByText("Delivered to session");
+    await waitFor(() => expect(screen.getByText("Check this first").closest(".bubble")).not.toHaveAttribute("data-state"));
     expect(screen.queryByRole("button", { name: "Send now" })).toBeNull();
     expect(screen.getAllByText("Check this first")).toHaveLength(1);
     const calls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/l2/send-now"));
     expect(calls).toHaveLength(1);
     expect(JSON.parse(String(calls[0]?.[1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", id: "steer-now" });
+  });
+
+  it("groups queued messages under one Send now, each with its own remove, and drops a removed one", async () => {
+    const queued = (id: string, text: string) => ({ id, role: "operator", text, delivery: { state: "queued", at: null, removable: true, send_now: true } });
+    let record = { ...running, messages: [queued("first", "First steer"), queued("second", "Second steer"), queued("third", "Third steer")] };
+    const fetchMock = stub(record, { task: () => jsonResponse(record) });
+    const { user } = renderApp({ route: "/projects/altitude/tasks/fix-timer" });
+    const row = (text: string) => screen.getByText(text).closest(".msg-row") as HTMLElement;
+    await screen.findByText("Third steer");
+    const removalStatus = document.querySelector('p.sr-only[role="status"]');
+    expect(removalStatus).toBeEmptyDOMElement();
+    expect(["First steer", "Second steer", "Third steer"].map((text) => within(row(text)).getAllByRole("button").map((button) => button.getAttribute("aria-label") ?? button.textContent)))
+      .toEqual([["Remove"], ["Remove"], ["Remove", "Send now"]]);
+    expect(screen.getAllByText("Queued")).toHaveLength(3);
+    for (const text of ["First steer", "Second steer", "Third steer"]) {
+      expect(within(row(text)).getByRole("button", { name: "Remove" })).toHaveAccessibleDescription(text);
+    }
+    record = { ...record, messages: record.messages.map((message) => message.id === "second" ? { ...message, delivery: { ...message.delivery, state: "removed", removable: false, send_now: false } } : message) };
+    await user.click(within(row("Second steer")).getByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(screen.queryByText("Second steer")).toBeNull());
+    expect(screen.getByText("Message removed")).toHaveAttribute("role", "status");
+    expect(screen.getByText("Message removed")).toBe(removalStatus);
+    expect(screen.getAllByRole("button", { name: "Send now" })).toHaveLength(1);
+    await user.click(within(row("Third steer")).getByRole("button", { name: "Send now" }));
+    const calls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/l2/send-now"));
+    expect(JSON.parse(String(calls[0]?.[1]?.body))).toEqual({ project: "altitude", slug: "fix-timer", id: "third" });
   });
 
   it.each([[403, "You do not have permission to send this message now."], [409, "Answer the open question first"], [500, "Send now unconfirmed. Check this message’s status before trying again."]])("refreshes and explains failed delivery (%s)", async (status, expected) => {
@@ -186,6 +226,7 @@ function stub(task: unknown, options: StubOptions = {}) {
     if (url.includes("/api/task/action")) return options.action ? options.action() : jsonResponse({ ok: true });
     if (url.includes("/api/transcript/")) return jsonResponse(transcript);
     if (url.includes("/api/l2/send-now")) return options.sendNow ? options.sendNow() : jsonResponse({ ok: true });
+    if (url.includes("/api/l2/remove")) return jsonResponse({ ok: true });
     if (url.startsWith("/api/terminal/")) return jsonResponse(terminalRunning);
     if (url.includes("/api/task/")) {
       if (options.task) return options.task();
@@ -589,7 +630,7 @@ describe("Task on desktop", () => {
 
       await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
       const convo = screen.getByRole("region", { name: "Task conversation" });
-      expect(within(convo).getByRole("status")).toHaveTextContent(line);
+      expect(within(convo).getByText(line)).toHaveAttribute("role", "status");
       expect(convo.querySelector(".conversation-question")).toHaveAttribute("data-turn", "l2");
       expect(convo.querySelector("[data-question-id]")).toBeNull();
       expect(within(convo).queryByRole("button", { name: "Keep it" })).toBeNull();
@@ -762,7 +803,6 @@ describe("Task on desktop", () => {
     const row = screen.getByText("prefer the smaller diff").closest<HTMLElement>(".msg-row")!;
     expect(row).toHaveAttribute("data-pending");
     expect(within(row).getByRole("status", { name: "Sending" })).toBeInTheDocument();
-    expect(within(row).getByText("Sending…")).toBeInTheDocument();
     expect(screen.getByLabelText("Message the L2")).toHaveValue("");
 
     const message = { id: input.request_id, at: new Date().toISOString(), role: running.messages[0]!.role, text: "prefer the smaller diff", delivery: { state: "queued", at: null, removable: true } };
@@ -773,8 +813,7 @@ describe("Task on desktop", () => {
     expect(screen.getByText("prefer the smaller diff").closest<HTMLElement>(".msg-row")).toBe(row);
     expect(screen.getAllByText("prefer the smaller diff")).toHaveLength(1);
     expect(within(row).queryByRole("status", { name: "Sending" })).toBeNull();
-    expect(within(row).queryByText("Sending…")).toBeNull();
-    expect(within(row).getByText("Queued · waiting for a checkpoint")).toBeInTheDocument();
+    expect(within(row).getByText("Queued")).toHaveClass("sr-only");
     expect(within(row).getByRole("button", { name: "Remove" })).toBeInTheDocument();
     expect(screen.queryByRole("alert")).toBeNull();
   });
@@ -1451,11 +1490,11 @@ describe("L2 activity and steering", () => {
     const message = { ...running.messages[0]!, delivery: { state: "queued", at: null } };
     stub({ ...active, messages: [message] });
     const { queryClient } = renderApp({ route });
-    await screen.findByText("Queued · waiting for a checkpoint");
+    await screen.findByText("Queued");
     const update = (next: unknown) => act(async () => { queryClient.setQueryData(["task", "altitude", "fix-timer"], next); await new Promise((resolve) => setTimeout(resolve, 0)); });
     await update({ ...active, messages: [{ ...message, delivery: { state: "delivered", at: ago(1) } }] });
-    expect(screen.getByText("Delivered to session")).toBeInTheDocument();
-    expect(screen.queryByText("Queued · waiting for a checkpoint")).toBeNull();
+    expect(screen.getByText(message.text).closest(".bubble")).not.toHaveAttribute("data-state");
+    expect(screen.queryByText("Queued")).toBeNull();
     expect(screen.getAllByText(message.text)).toHaveLength(1);
     await update({ ...active, state: "blocked", steering: { ...steering, state: "idle" }, question: decision, messages: running.messages });
     expect(screen.queryByRole("region", { name: "L2 activity" })).toBeNull();

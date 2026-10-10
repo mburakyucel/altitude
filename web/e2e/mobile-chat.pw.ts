@@ -155,15 +155,15 @@ test("a task message appears at once as a pending bubble and settles in place wh
   await field.fill(text);
   await conversation.getByRole("button", { name: "Send", exact: true }).click();
   try {
-    await walk.state("01-sent-pending-bubble-with-cue", { visible: [bubble, cue, row.getByText("Sending…", { exact: true })], hidden: [remove] });
+    await walk.state("01-sent-pending-bubble-with-cue", { visible: [bubble, cue], hidden: [remove, row.getByText("Queued", { exact: true })] });
     await expect(row).toHaveAttribute("data-pending", "true");
     await expect(row).toHaveCSS("opacity", "0.6");
     await expect(field).toHaveValue("");
     await row.evaluate((node) => node.setAttribute("data-walk", "pending"));
   } finally { release(); }
   await walk.state("02-settled-in-place", {
-    visible: [bubble, row.getByText("Queued · waiting for a checkpoint", { exact: true }), remove],
-    hidden: [cue, row.getByText("Sending…", { exact: true })],
+    visible: [bubble, row.getByText("Queued", { exact: true }), remove],
+    hidden: [cue],
   });
   await expect(row).not.toHaveAttribute("data-pending");
   await expect(row).toHaveCSS("opacity", "1");

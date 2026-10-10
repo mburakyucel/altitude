@@ -3,15 +3,56 @@
 Release notes describe user-visible behavior, compatibility and recovery. The project is an early
 preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is not a published release.
 
+## v0.2.0 — 2026-10-10
+
+Feature release of the early preview, with the same Linux x86_64 and Apple silicon macOS targets
+and known limitations as `v0.1.2`.
+
+Updating: copies on `v0.1.2` install this release automatically at a quiet point, or offer it in
+the app and through `alt update` when automatic updates are off. Copies on `v0.1.0` or `v0.1.1`
+need one manual update. Configuration, TLS identity and data are kept; nothing needs migrating.
+
+- Queued task and project messages appear as outlined bubbles, each with its own quiet remove
+  control and one Send now for the group. Sending shows a ring or an in-place spinner, and a
+  delivery Altitude cannot confirm keeps an amber warning marked Unconfirmed. Repeated queue,
+  delivery and inability explanations are gone; an unavailable action shows its reason when pressed.
+- In project chat, L3 can end a reply with a **Create task** button and the proposed task's title.
+  Pressing it asks L3 to create that task from the reply; one reply creates at most one task, and the
+  button shows in place whether the press is working, waiting, done or failed.
+- Send now on a queued message also delivers messages kept from an earlier turn that could not run,
+  each once and in order, with the reply beneath the last of them.
+- On a phone, returning to a task's Conversation no longer opens the keyboard when a Send finished
+  while another view was open.
+- Your configured name replaces the internal operator identity in `alt task messages`,
+  `alt task events`, `alt l3 search` and closed-question receipts.
+- On Linux, First run and `alt doctor` point a missing or outdated GitHub CLI at GitHub's own apt
+  repository and check that it supports every pull request field `alt land` reads (gh 2.72 or
+  newer). `alt doctor` adds a GitHub CLI pull request fields row.
+- `alt land --merge` takes the repository-wide landing turn only to confirm its candidate is still
+  current and merge it, so a PR that is green on current main merges without waiting for other
+  owners' CI runs. When another merge moves main first, the same command integrates it and waits
+  for the new head's fresh check. Landings that do not merge take no turn.
+- While merged changes wait to activate, new validation and adversarial review runs are refused
+  and runs already admitted finish, so activation is no longer delayed indefinitely by back-to-back
+  runs. Monitor names the tasks an activation waits for.
+- Queued coordinator notices that later state already answers are dropped instead of replayed: a
+  newer block or restart notice replaces the queued one, and a notice whose questions are all
+  closed is not delivered.
+- The operations guide describes a private backup of runtime state with ordinary tools, how to
+  inspect it safely and what a copy does not hold.
+- Task owners without a native helper do the work in their own role and end each turn with a
+  report, completion or block.
+
+If an update fails to activate, Altitude restores the previous version. Use `alt recover` from a
+desktop or SSH terminal for interrupted activation, or retry an offered update explicitly after
+checking its error. Native macOS confirmation and real-provider compatibility remain limited as
+described for `v0.1.1`.
+
 ## v0.1.2 — 2026-10-10
 
 Patch release of the early preview, with the same Linux x86_64 and Apple silicon macOS targets
 and known limitations as `v0.1.1`.
 
-- `alt land --merge` takes the repository-wide landing turn only to confirm its candidate is still
-  current and merge it, so a PR that is green on current main merges without waiting for other
-  owners' CI runs. When another merge moves main first, the same command integrates it and waits
-  for the new head's fresh check. Landings that do not merge take no turn.
 - Adversarial review is one request and one result. Task details shows a Proposal review and an
   Implementation review box with the latest verdict and a single Request, Review again or Try again
   button; the conversation shows one card per kind with earlier iterations inside it. Requests queue

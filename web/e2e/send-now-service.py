@@ -34,7 +34,7 @@ def main():
             # The provider refuses before any output, as a spent usage window does.
             return {"text": "", "session_id": "", "error": "Fixture usage window exhausted.", "tools": [], "safe_to_retry": True,
                     "limited": {"scope": "engine", "why": "Fixture usage window exhausted.", "until": "2999-01-01T00:00:00+00:00"}}
-        calls.append({"text": text, "resume": options.get("resume")})
+        calls.append({"text": text, "prompt": _prompt, "resume": options.get("resume")})
         if options.get("on_start"):
             options["on_start"](None)
         if text == "Fixture system work":
@@ -76,6 +76,10 @@ def main():
             return super().do_GET()
 
         def do_POST(self):
+            if self.path == "/fixture/queued":
+                payload = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
+                l3.queue_message(project, payload["text"], trigger="chat", role=config.OPERATOR_ACTOR)
+                return self._json({"ok": True})
             if self.path == "/fixture/interrupted-history":
                 self.rfile.read(int(self.headers.get("Content-Length", "0")))
                 for turn, text, reply, interrupted in (
@@ -108,12 +112,13 @@ def main():
                 self.rfile.read(int(self.headers.get("Content-Length", "0")))
                 exhausted.set()
                 return self._json({"ok": True})
-            if self.path == "/fixture/recovered":
+            if self.path in ("/fixture/recovered", "/fixture/recovered-ready"):
                 self.rfile.read(int(self.headers.get("Content-Length", "0")))
                 exhausted.clear()
                 route.note_limit(config.ENGINES[0], {"scope": "engine", "why": "Fixture window reset.",
                                                      "until": "2000-01-01T00:00:00+00:00"})
-                server.request_l3_drain(project)
+                if self.path == "/fixture/recovered":
+                    server.request_l3_drain(project)
                 return self._json({"ok": True})
             if self.path == "/fixture/unavailable":
                 self.rfile.read(int(self.headers.get("Content-Length", "0")))

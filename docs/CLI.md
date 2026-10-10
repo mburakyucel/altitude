@@ -339,7 +339,7 @@ alt pr close <number>
 ```
 
 L3 and the operator use this verb for authorized superseded-PR cleanup. L2 supplies the existing
-authorization and superseding delivery evidence through `alt task reply` and report follow-ups;
+authorization and superseding delivery evidence through `alt task reply --to l3` and report follow-ups;
 L3 verifies it before closing. This permits no autonomous unrelated cleanup. The command enforces
 project and actor boundaries; L3 judges the authorization and replacement's completeness.
 
@@ -430,7 +430,7 @@ URL. The socket fixes actor `l3`; HTTP fixes actor `operator`. A successful clos
 ### Incremental issue delivery
 
 L3 maintains the authorized issue breakdown through `alt issue comment <number> -`, with its public
-body on stdin, using L2's `alt task reply` and report `follow_ups` for progress and delivery evidence.
+body on stdin, using L2's `alt task reply --to l3` and report `follow_ups` for progress and delivery evidence.
 The [coordinator instructions](../personas/l3.md) define breakdown contents, increment briefs and
 authorization; the [owner instructions](../personas/l2.md#scope-and-evidence) define acceptance and
 safe delivery. A task can complete its agreed increment while the parent issue retains outstanding
@@ -467,7 +467,7 @@ L3 records delivered PR evidence and remaining scope in the open issue. Rejected
 do not complete issues. Merge holds and all applicable checks still apply. Verify the issue state
 after merge and record the evidence in the task report's `fyi`.
 
-For an already merged delivery with a missing link, L2 sends `alt task reply` and a report `follow_ups`
+For an already merged delivery with a missing link, L2 sends `alt task reply --to l3` and a report `follow_ups`
 entry naming the issue, merged PR and proof that all acceptance scope is satisfied, requesting
 `alt issue close 42 --reason completed`. L3 verifies that evidence and uses the documented issue verb
 in the owning project. An issue umbrella remains open if only a part shipped. This reconciliation
@@ -991,7 +991,7 @@ replaying tool logs. See [session lifecycle](SESSION_LIFECYCLE.md#messages-resum
 alt task new --title <title> [--wait <reason> | --after <task>] [--effort <level>] [--paths a.py,b/] [--hold-merge <reason>] [--image <id>] -
 alt task release <slug> --reason <reason>
 alt task message <slug> <text>|- [--file <path>] [--image <id>] [--summary <line>]
-alt task reply [<slug>] <text>|- [--file <path>] [--capture <run>]
+alt task reply [<slug>] <text>|- [--file <path>] [--capture <run>] [--to l3]
 alt task block <slug> --reason <question> [--recommendation <approach> --label <action> --why <reason>] [--for-operator | --fault]
 alt task escalate <slug> --question <question> [--recommendation <approach> --label <action> --why <reason>]
 alt task resume|stop <slug> --reason <reason>
@@ -1013,7 +1013,12 @@ alt task reject <slug> --reason <reason>
 argument suffices for one line. A reply always goes to the current task; like the sibling verbs it may
 lead with that task's slug (`alt task reply "$ALTITUDE_TASK" -`), and any other extra argument is
 refused. `--capture <run>` attaches that validation run's [captures](DEVELOPMENT.md#validation-captures)
-as fixed copies; the reply shows **Watch capture** under its text. Without `--questions-file`, a block's reason is its question: a different reason revises the
+as fixed copies; the reply shows **Watch capture** under its text. `--to l3` is an owner's one way
+to message L3: the reply is recorded as usual and, in the same step, queued as one L3 turn
+(trigger `owner-message`) about the task, carrying the text and its message id. The output and the
+conversation row name that notice in `queued_for_l3`, and `alt task messages` marks the row
+**[Queued for L3]**. The notice grants no operator authority and changes no question or hold. A plain
+reply, and a block that re-parks an unchanged question, queue nothing for L3. Without `--questions-file`, a block's reason is its question: a different reason revises the
 open question, and the saved reason re-parks it unchanged.
 
 Repository changes use `alt land --message <message> [--merge]`. Project, incident, service, TLS,
