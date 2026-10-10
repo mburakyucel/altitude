@@ -145,7 +145,7 @@ NATIVE_PLATFORM = sys.platform
 
 #: Fake gh: every call is logged; the answers come from files the test writes into $FAKE_GH_DIR.
 GH = r'''#!/usr/bin/env python3
-import json, os, subprocess, sys
+import json, os, re, subprocess, sys
 d = os.environ["FAKE_GH_DIR"]
 args = sys.argv[1:]
 with open(os.path.join(d, "log.jsonl"), "a") as f:
@@ -181,6 +181,16 @@ def connection(nodes):
 if read("fail.txt") is not None:
     fail("fake gh failure", 2)
 cmd = tuple(args[:2])
+rate_limited = read("rate_limited.json")
+if rate_limited is not None:  # GitHub refuses the next N matching calls for the account's rate limit
+    refusals = json.loads(rate_limited)
+    if refusals["count"] > 0 and " ".join(args).startswith(refusals.get("prefix", "")):
+        refusals["count"] -= 1
+        open(os.path.join(d, "rate_limited.json"), "w").write(json.dumps(refusals))
+        fail("GraphQL: API rate limit already exceeded for user ID 1.")
+if cmd[0] == "api" and re.fullmatch(r"repos/[^/]+/[^/]+/pulls/[0-9]+", cmd[1]):
+    # REST's pull request, answered in the GraphQL field names the caller's --jq projection produces.
+    args, cmd = ["pr", "view", cmd[1].rsplit("/", 1)[1]], ("pr", "view")
 if cmd == ("pr", "view"):
     error = read("view_error.txt")
     if error is not None:  # a broken or logged-out gh, not a missing PR
@@ -206,6 +216,10 @@ elif cmd == ("pr", "create"):
             "baseRefName": args[args.index("--base") + 1], "headRefName": args[args.index("--head") + 1]}
     open(os.path.join(d, "pr.json"), "w").write(json.dumps(body))
     print(body["url"])
+elif cmd[0] == "api" and re.fullmatch(r"repos/[^/]+/[^/]+/commits/[0-9a-f]+/check-runs\?per_page=1", cmd[1]):
+    print(len(json.loads(read("checks.json", '[{"bucket": "pass"}]') or "[]")))  # REST's --jq .total_count
+elif cmd[0] == "api" and re.fullmatch(r"repos/[^/]+/[^/]+/commits/[0-9a-f]+/status\?per_page=1", cmd[1]):
+    print(0)
 elif cmd == ("pr", "checks"):
     body = read("checks.json", '[{"bucket": "pass"}]')
     if not body.strip():
@@ -225,8 +239,11 @@ elif cmd == ("api", "graphql"):
         contexts = [{"__typename": "CheckRun", "name": item.get("name", "fixture-check-" + str(i)),
                      "status": "IN_PROGRESS" if item["bucket"] == "pending" else "COMPLETED",
                      "conclusion": conclusions.get(item["bucket"]), "isRequired": False,
-                     "checkSuite": {"commit": {"oid": head}, "app": {"databaseId": 1, "slug": "fixture-ci"},
-                                    "branch": {"name": body["headRefName"]}, "workflowRun": None,
+                     # An item may name its app and workflow file, as a hosted Actions check does.
+                     "checkSuite": {"commit": {"oid": head}, "app": {"databaseId": item.get("app", 1), "slug": "fixture-ci"},
+                                    "branch": {"name": body["headRefName"]},
+                                    "workflowRun": {"event": "pull_request", "file": {"path": item["workflow"]}}
+                                                   if item.get("workflow") else None,
                                     "matchingPullRequests": connection([{"number": body["number"],
                                         "baseRefName": body["baseRefName"], "headRefName": body["headRefName"]}])}}
                     for i, item in enumerate(checks)]

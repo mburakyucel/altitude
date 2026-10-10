@@ -3,12 +3,13 @@
 The bare Git remote and task lifecycle are real; only hosted GitHub and worker execution
 use deterministic fixtures. In particular, hosted squash merges do not retain PR ancestry.
 """
+import json
 import subprocess
 from pathlib import Path
 
 from tests.support import AltitudeCase, git, make_repo
 from tests.fakes import FakeL2
-from altitude import config, dispatch, land, server, state as S, tasks as T, verify
+from altitude import config, dispatch, incidents, land, server, state as S, tasks as T, verify
 
 
 class TestContinuationJourney(AltitudeCase):
@@ -141,6 +142,21 @@ class TestContinuationJourney(AltitudeCase):
         server.on_l2_finished(self.project, dispatch.poll(self.project)[0])
         archived = S.load_task(self.project, self.slug)
         self.assertEqual((archived["state"], archived["verified"]["verdict"]), ("done", "ok"))
+
+    def test_rate_limited_report_verification_waits_for_the_next_tick(self):
+        # #814: GitHub refusing the verifier's PR read for the account's rate limit is no verifier fault.
+        self.commit("README.md", "Delivered change\n", "Delivered change")
+        delivery = land.land("Checked delivery", cwd=self.worktree, merge=True, wait=0)
+        self.write_report([(delivery["pr"], git("rev-parse", "main", cwd=self.remote).strip())])
+        self.engine.workers[self.initial["agent_id"]].update(state="done", status="exited")
+        (self.ghdir / "rate_limited.json").write_text('{"count": 1, "prefix": "api repos/"}')
+        server.on_l2_finished(self.project, dispatch.poll(self.project)[0])
+        waiting = S.load_task(self.project, self.slug)
+        self.assertEqual((waiting["state"], waiting.get("fault"), waiting.get("verified")), ("running", None, None))
+        self.assertNotIn(json.dumps([self.project, "verifier"]), S.read_json(incidents.FAULTS, {}))
+        server.on_l2_finished(self.project, dispatch.poll(self.project)[0])  # the next tick
+        verified = S.load_task(self.project, self.slug)
+        self.assertEqual((verified["state"], verified["verified"]["verdict"]), ("done", "ok"))
 
     def test_dirty_deployment_survives_checked_delivery_and_same_owner_followup(self):
         deployment_head = git("rev-parse", "HEAD", cwd=self.repo)

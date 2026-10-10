@@ -123,7 +123,7 @@ class TestOfflineJourneys(AltitudeCase):
         self.assertEqual(landed["pr"], 101)
         self.assertEqual(git("show", "main:README.md", cwd=self.tmp / "origin.git"), "Delivered and validated.\n")
         self.assertEqual((self.repo / "README.md").read_text(), "readme\n", "landing does not activate the project")
-        self.assertTrue(any(call[:2] == ["pr", "checks"] for call in self.gh_log()))
+        self.assertTrue(any(call[:2] == ["api", "graphql"] for call in self.gh_log()))
         self.assertTrue(any(call[:2] == ["pr", "merge"] for call in self.gh_log()))
         self.assertEqual(S.load_task(self.project, slug)["state"], "running", "a merged PR alone is not completion")
 

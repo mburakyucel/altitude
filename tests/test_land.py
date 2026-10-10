@@ -18,6 +18,11 @@ from tests.support import ALT, AltitudeCase, add_worktree, git, make_repo
 from altitude import land, state as S
 
 
+def pull_read(args):
+    """GitHub's REST read of one pull request, which landing uses for the PR's identity and state."""
+    return args[:1] == ["api"] and "/pulls/" in args[1]
+
+
 class TestLand(AltitudeCase):
     def setUp(self):
         super().setUp()
@@ -528,7 +533,7 @@ class TestLand(AltitudeCase):
             if args[:3] == ["gh", "repo", "view"]:
                 self.validated_links = True
                 return subprocess.CompletedProcess(args, 0, '{"defaultBranchRef":{"name":"main"}}', "")
-            if args[:3] == ["gh", "pr", "checks"]:
+            if args[:3] == ["gh", "api", "graphql"]:
                 self.observed_checks = True
             if args[:3] in (["gh", "pr", "create"], ["gh", "pr", "edit"]) and "--body-file" in args:
                 self.pr_bodies.append(Path(args[args.index("--body-file") + 1]).read_text())
@@ -733,13 +738,13 @@ class TestLand(AltitudeCase):
             land.land("fix: report remote", cwd=self.repo, wait=0)
 
     def stale_pr_view(self, previous, stale_views):
-        """After the landing's own push, `gh pr view` keeps naming `previous` for `stale_views` reads (#480)."""
+        """After the landing's own push, GitHub's PR keeps naming `previous` for `stale_views` reads (#480)."""
         real, state = land._run, {"pushed": False, "stale": 0}
 
         def answer(args):
             if args[:2] == ["git", "push"]:
                 state["pushed"] = True
-            elif args[:3] == ["gh", "pr", "view"] and state["pushed"] and state["stale"] < stale_views:
+            elif pull_read(args[1:]) and state["pushed"] and state["stale"] < stale_views:
                 state["stale"] += 1
                 body = json.loads(real(args, self.repo).stdout)
                 body["headRefOid"] = previous
@@ -777,7 +782,7 @@ class TestLand(AltitudeCase):
                 land.land("fix: second", cwd=self.repo, wait=0, merge=True)
         self.assertIn(previous, str(cm.exception))
         self.assertEqual(clock.sleep.call_count, land.PR_VIEW_SETTLE_SECONDS // land.PR_VIEW_POLL_SECONDS)
-        self.assertEqual(self.gh_log()[-1][:2], ["pr", "view"])
+        self.assertTrue(pull_read(self.gh_log()[-1]))
 
     def test_head_the_landing_did_not_push_refuses_without_re_reading(self):
         self.staged_change()
@@ -788,7 +793,7 @@ class TestLand(AltitudeCase):
         def answer(args):
             if args[:2] == ["git", "push"]:
                 state["pushed"] = True
-            elif args[:3] == ["gh", "pr", "view"] and state["pushed"] and state["moved"] is None:
+            elif pull_read(args[1:]) and state["pushed"] and state["moved"] is None:
                 git("fetch", "-q", "origin", cwd=foreign)
                 git("checkout", "-q", "-B", "worktree-fix-x", "origin/worktree-fix-x", cwd=foreign)
                 (foreign / "src/foreign.py").write_text("foreign\n")
@@ -806,13 +811,185 @@ class TestLand(AltitudeCase):
         clock.sleep.assert_not_called()
         self.assertEqual(self.remote_heads(), ["main", "worktree-fix-x"])
 
+    def test_check_wait_reads_graphql_once_per_poll_and_backs_off(self):
+        # #814: a waiting landing reads the PR's identity through REST and only the exact check evidence through
+        # the GraphQL budget that every landing and worker shares, polling after 15, 30 and then 60 seconds.
+        self.staged_change()
+        (self.ghdir / "checks.json").write_text('[{"bucket": "pending"}]')
+        sleeps = []
+
+        def sleep(seconds):
+            sleeps.append(seconds)
+            if len(sleeps) == 4:
+                (self.ghdir / "checks.json").write_text('[{"bucket": "pass"}]')
+
+        with mock.patch.object(land, "time", wraps=land.time) as clock:
+            clock.sleep.side_effect = sleep
+            result = land.land("fix: waits", cwd=self.repo, wait=600, merge=True)
+        self.assertEqual((result["checks"], result["merged"]), ("pass", True))
+        self.assertEqual(sleeps, [15, 30, 60, 60])
+        calls = self.gh_log()
+        # Five polls and the merge turn's confirmation; whole-PR reads do not repeat with the polls.
+        self.assertEqual(len([a for a in calls if a[:2] == ["api", "graphql"]]), 6)
+        self.assertEqual(len([a for a in calls if a[:2] == ["pr", "view"]]), 4)
+        self.assertFalse(any(a[:2] == ["pr", "checks"] for a in calls))
+
+    def test_rate_limit_refusal_waits_and_the_landing_resumes(self):
+        # #814: GitHub refusing the account's exhausted budget is a wait for it to clear, not a failed landing.
+        self.staged_change()
+        (self.ghdir / "rate_limited.json").write_text(json.dumps({"count": 2, "prefix": "api graphql"}))
+        stderr = io.StringIO()
+        with mock.patch.object(land, "time", wraps=land.time) as clock, contextlib.redirect_stderr(stderr):
+            clock.sleep.side_effect = lambda _seconds: None
+            result = land.land("fix: refused", cwd=self.repo, wait=600, merge=True)
+        self.assertEqual((result["checks"], result["merged"]), ("pass", True))
+        self.assertEqual(clock.sleep.call_args_list, [mock.call(land.RATE_LIMIT_POLL_SECONDS)] * 2)
+        self.assertEqual(stderr.getvalue().count("for its rate limit"), 2)
+        self.assertEqual(len([a for a in self.gh_log() if a[:2] == ["api", "graphql"]]), 4)
+
+    def test_rate_limit_refusals_that_outlast_the_wait_end_the_landing_unmerged(self):
+        self.staged_change()
+        (self.ghdir / "rate_limited.json").write_text(json.dumps({"count": 10 ** 6, "prefix": "api graphql"}))
+        now = {"seconds": 0.0}
+        with mock.patch.object(land, "time", wraps=land.time) as clock:
+            clock.monotonic.side_effect = lambda: now["seconds"]
+            clock.sleep.side_effect = lambda seconds: now.__setitem__("seconds", now["seconds"] + seconds)
+            with self.assertRaisesRegex(land.LandError, "API rate limit already exceeded.*the wait is over"):
+                land.land("fix: refused", cwd=self.repo, wait=300, merge=True)
+        # A refusal with no more than one poll left ends the landing instead of starting it again at the deadline.
+        self.assertEqual(clock.sleep.call_args_list, [mock.call(land.RATE_LIMIT_POLL_SECONDS)] * 4)
+        self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
+
+    def test_refusal_near_the_deadline_ends_without_starting_again(self):
+        self.staged_change()
+        (self.ghdir / "rate_limited.json").write_text(json.dumps({"count": 1, "prefix": "api graphql"}))
+        with mock.patch.object(land, "time", wraps=land.time) as clock:
+            with self.assertRaisesRegex(land.LandError, "the wait is over"):
+                land.land("fix: refused", cwd=self.repo, wait=30, merge=True)
+        clock.sleep.assert_not_called()
+        self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
+
+    def test_refused_read_back_of_a_created_pr_never_creates_it_twice(self):
+        self.staged_change()
+        (self.ghdir / "rate_limited.json").write_text(json.dumps({"count": 1, "prefix": "pr view https://"}))
+        with mock.patch.object(land, "time", wraps=land.time) as clock:
+            clock.sleep.side_effect = lambda _seconds: None
+            result = land.land("fix: created", cwd=self.repo, wait=600, merge=True)
+        self.assertEqual((result["pr"], result["merged"]), (101, True))
+        self.assertEqual(len([a for a in self.gh_log() if a[:2] == ["pr", "create"]]), 1)
+
+    def test_refused_merge_confirmation_is_settled_by_github_without_publishing_again(self):
+        # #814: GitHub merged the candidate, then refused the read that confirms it; the landing asks again and
+        # records the merge instead of publishing the merged branch as a new candidate.
+        self.staged_change()
+
+        def refuse_confirmation(args):
+            if args[:3] == ["gh", "pr", "merge"]:
+                (self.ghdir / "rate_limited.json").write_text(json.dumps({"count": 1, "prefix": "api repos/"}))
+            return None
+
+        commands = self.record_commands(refuse_confirmation)
+        stderr = io.StringIO()
+        with mock.patch.object(land, "time", wraps=land.time) as clock, contextlib.redirect_stderr(stderr):
+            clock.sleep.side_effect = lambda _seconds: None
+            result = land.land("fix: confirmed", cwd=self.repo, wait=600, merge=True)
+        self.assertTrue(result["merged"])
+        self.assertIn("GitHub confirms PR #101 merged", stderr.getvalue())
+        self.assertEqual(len([a for a in commands if a[:3] == ["gh", "pr", "merge"]]), 1)
+        self.assertEqual(len([a for a in commands if a[:2] == ["git", "push"]]), 1)
+        self.assertEqual(S.load_task("demo", "fix-x")["review_merged_head"], result["head"])
+
+    def test_pr_retargeted_and_merged_during_a_refused_merge_is_not_recorded_as_delivered(self):
+        self.staged_change()
+        self.git("push", "-q", "origin", "origin/main:refs/heads/release")
+
+        def merged_elsewhere(args):
+            if args[:3] == ["gh", "pr", "merge"]:  # refused here, then another actor retargets and merges it
+                (self.ghdir / "rate_limited.json").write_text(json.dumps({"count": 1, "prefix": "pr merge"}))
+                pr = json.loads((self.ghdir / "pr.json").read_text())
+                (self.ghdir / "pr.json").write_text(json.dumps({**pr, "baseRefName": "release", "state": "MERGED"}))
+            return None
+
+        self.record_commands(merged_elsewhere)
+        with mock.patch.object(land, "time", wraps=land.time) as clock:
+            clock.sleep.side_effect = lambda _seconds: None
+            with self.assertRaisesRegex(land.LandError, "targets 'release'"):
+                land.land("fix: merged elsewhere", cwd=self.repo, wait=600, merge=True)
+        self.assertNotIn("review_merged_head", S.load_task("demo", "fix-x"))
+
+    def test_refused_merged_tree_read_is_checked_again_against_the_tested_tree(self):
+        workflow = self.repo / land.config.PR_CHECK_WORKFLOW
+        workflow.parent.mkdir(parents=True)
+        workflow.write_text("on: [pull_request]\njobs:\n  check:\n    runs-on: ubuntu-latest\n")
+        self.git("add", land.config.PR_CHECK_WORKFLOW)
+        self.git("commit", "-q", "-m", "require the PR check")
+        self.git("push", "-q", "origin", "HEAD:main")
+        self.git("fetch", "-q", "origin")
+        (self.ghdir / "merge_git.txt").touch()
+        (self.ghdir / "checks.json").write_text(json.dumps(
+            [{"bucket": "pass", "name": "check", "app": 15368, "workflow": land.config.PR_CHECK_WORKFLOW}]))
+        self.staged_change()
+        reads = {"after_merge": None}
+
+        def refuse_tree_read(args):
+            if args[:3] == ["gh", "pr", "merge"]:
+                reads["after_merge"] = 0
+            elif reads["after_merge"] is not None and pull_read(args[1:]):
+                reads["after_merge"] += 1
+                if reads["after_merge"] in (2, 4):  # the confirmation passes; each tree read is refused once
+                    (self.ghdir / "rate_limited.json").write_text(json.dumps({"count": 1, "prefix": "api repos/"}))
+            return None
+
+        commands = self.record_commands(refuse_tree_read)
+        with mock.patch.object(land, "time", wraps=land.time) as clock:
+            clock.sleep.side_effect = lambda _seconds: None
+            result = land.land("fix: tree", cwd=self.repo, wait=600, merge=True)
+        self.assertTrue(result["merged"])
+        self.assertEqual(len([a for a in commands if a[:3] == ["gh", "pr", "merge"]]), 1)
+        # A refused tree read, then a confirmation and a refused tree read again, then a confirmation and the tree.
+        self.assertEqual(reads["after_merge"], 6)
+        self.assertEqual(len([a for a in commands if a[:2] == ["git", "push"]]), 1)
+
+    def test_refused_merge_is_attempted_again_only_after_every_gate_is_read_again(self):
+        # #814: a refused merge did nothing; the next attempt re-reads the candidate, its checks and its gates.
+        self.staged_change()
+        (self.ghdir / "rate_limited.json").write_text(json.dumps({"count": 1, "prefix": "pr merge"}))
+        with mock.patch.object(land, "time", wraps=land.time) as clock:
+            clock.sleep.side_effect = lambda _seconds: None
+            result = land.land("fix: merge refused", cwd=self.repo, wait=600, merge=True)
+        self.assertTrue(result["merged"])
+        calls = [a[:2] for a in self.gh_log()]
+        merges = [i for i, call in enumerate(calls) if call == ["pr", "merge"]]
+        self.assertEqual(len(merges), 2)
+        self.assertIn(["api", "graphql"], calls[merges[0]:merges[1]])
+        self.assertIn(["pr", "view"], calls[merges[0]:merges[1]])
+
+    def test_pr_retargeted_while_its_merge_was_refused_is_not_merged(self):
+        self.staged_change()
+        self.git("push", "-q", "origin", "origin/main:refs/heads/release")
+        (self.ghdir / "rate_limited.json").write_text(json.dumps({"count": 1, "prefix": "pr merge"}))
+
+        def retarget(args):
+            if args[:3] == ["gh", "pr", "merge"]:
+                pr = json.loads((self.ghdir / "pr.json").read_text())
+                (self.ghdir / "pr.json").write_text(json.dumps({**pr, "baseRefName": "release"}))
+            return None
+
+        self.record_commands(retarget)
+        with mock.patch.object(land, "time", wraps=land.time) as clock:
+            clock.sleep.side_effect = lambda _seconds: None
+            with self.assertRaisesRegex(land.LandError, "targets 'release'"):
+                land.land("fix: retargeted", cwd=self.repo, wait=600, merge=True)
+        self.assertEqual(len([a for a in self.gh_log() if a[:2] == ["pr", "merge"]]), 1)
+        self.assertNotEqual(json.loads((self.ghdir / "pr.json").read_text())["state"], "MERGED")
+
     def test_wait_zero_reports_pending_without_waiting(self):
         self.staged_change()
         (self.ghdir / "checks.json").write_text('[{"bucket": "pending"}]')
         res = land.land("fix: pending", cwd=self.repo, wait=0)
         self.assertEqual(res["checks"], "pending")
         self.assertFalse(res["merged"])
-        self.assertEqual(len([a for a in self.gh_log() if a[:2] == ["pr", "checks"]]), 1)
+        self.assertEqual(len([a for a in self.gh_log() if a[:2] == ["api", "graphql"]]), 1)
 
     def hold_merge(self, reason="production migration is costly"):
         d = S.tasks_dir("demo") / "fix-x"
@@ -1021,11 +1198,11 @@ class TestLand(AltitudeCase):
         for name in names:
             self.assertEqual(self.git("show", f"HEAD:{name}"), "changed\n")
 
-    def test_unknown_check_bucket_is_an_error_not_a_pass(self):
+    def test_unrecognised_check_result_is_not_a_pass(self):
         self.staged_change()
         (self.ghdir / "checks.json").write_text('[{"bucket": "neutral"}]')
-        with self.assertRaisesRegex(land.LandError, "neutral"):
-            land.land("fix: odd", cwd=self.repo, wait=0, merge=True)
+        result = land.land("fix: odd", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual((result["checks"], result["merged"]), ("skipped", False))
         self.assertEqual([a for a in self.gh_log() if a[:2] == ["pr", "merge"]], [])
 
     # Where no workflow and no check exist, the exact merge candidate's local suite is the gate. Absence,
@@ -1197,16 +1374,16 @@ class TestLand(AltitudeCase):
 
     def test_first_adoption_during_ordinary_checks_cannot_change_the_merge_target(self):
         self.staged_change()
-        real = land._checks_state
+        real = land._checks_evidence
 
-        def adopt_after_checks(root, number):
-            result = real(root, number)
+        def adopt_after_checks(root, pair):
+            result = real(root, pair)
             task = S.load_task("demo", "fix-x")
             task["adopted_pr"] = {"number": 102, "branch": "proposal/other"}
             S.save_task("demo", task)
             return result
 
-        self.patch(land, "_checks_state", side_effect=adopt_after_checks)
+        self.patch(land, "_checks_evidence", side_effect=adopt_after_checks)
         with self.assertRaisesRegex(land.LandError, "task adoption changed"):
             land.land("fix: ordinary target", cwd=self.repo, wait=0, merge=True)
         self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
@@ -1566,7 +1743,7 @@ class TestLand(AltitudeCase):
         self.assertEqual(self.remote_heads(), ["main"])
 
     def test_create_path_reads_the_pr_back_once(self):
-        pr = land._ensure_pr(self.repo, "worktree-fix-x", "main", "fix: new", None, None, "demo/fix-x", pr=None)
+        pr = land._created_pr(self.repo, land._create_pr(self.repo, "worktree-fix-x", "main", "fix: new", None, None, "demo/fix-x"))
         self.assertEqual(pr["number"], 101)
         # pr=None is "the caller looked and there is no PR", so no view before the create
         self.assertEqual([a[:2] for a in self.gh_log()], [["pr", "create"], ["pr", "view"]])
@@ -1574,8 +1751,10 @@ class TestLand(AltitudeCase):
     def test_full_run_rechecks_the_pr_around_check_classification(self):
         self.staged_change()
         land.land("fix: once", cwd=self.repo, wait=0)
-        # Prefetch + create read-back + snapshot + the before/after check-state bracket.
-        self.assertEqual(len([a for a in self.gh_log() if a[:2] == ["pr", "view"]]), 5)
+        # Prefetch and create read-back read the whole PR; the snapshot and the before/after check-state
+        # bracket read its identity through REST.
+        self.assertEqual(len([a for a in self.gh_log() if a[:2] == ["pr", "view"]]), 2)
+        self.assertEqual(len([a for a in self.gh_log() if pull_read(a)]), 3)
 
     def test_gh_404_stops_the_run_before_any_mutation(self):
         self.staged_change()
@@ -2294,7 +2473,8 @@ class TestRequiredPrCheck(AltitudeCase):
             clock.sleep.side_effect = lambda seconds: now.__setitem__("seconds", now["seconds"] + seconds)
             result = land.land("required check never registers", cwd=self.repo, wait=60, merge=True)
         self.assertEqual((result["checks"], result["merged"], result["local_tests"]), ("missing", False, None))
-        self.assertEqual(clock.sleep.call_count, 60 // land.CHECK_POLL_SECONDS)
+        # The poll backs off from 15 to 30 seconds; the last sleep ends at the bound.
+        self.assertEqual(clock.sleep.call_args_list, [mock.call(15), mock.call(30), mock.call(15)])
         self.assertIn("not merging: checks are 'missing'; required check check has not registered on head "
                       f"{self.head}; registered: lint skipped (not required)", stderr.getvalue())
         self.assert_not_merged()

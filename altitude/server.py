@@ -874,6 +874,8 @@ def _on_l2_finished(project: str, item: dict) -> None:
         return
     v = verify.verify(project, slug)
     log(f"[{project}/{slug}] L2 finished; verdict {v['verdict']}; problems {v['problems']}")
+    if v["verdict"] == "rate-limited":
+        return  # The task stays as it is; the next tick hands the finished worker back for verification.
     with S.project_lock(project):
         live = S.load_task(project, slug)
         if (live.get("daemon_request") or {}).get("status") in ("pending", "executing"):
