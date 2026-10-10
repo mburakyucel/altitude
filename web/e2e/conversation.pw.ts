@@ -354,7 +354,7 @@ test("send: the pending bubble with its cue, the settled bubble and streamed rep
   await overlayChat(page, project.name, (live) => ({ ...live, history: [...live.history, ...stored], active: null, busy: false, queued: [] }));
 
   await walk.open(project.path);
-  const alert = v.main.getByRole("alert").filter({ hasText: "Not sent." });
+  const alert = v.convo.locator(".msg-row").filter({ hasText: text }).getByRole("alert").filter({ hasText: "Not sent: no L3 for this project." });
   await walk.state("01-typing", {
     action: () => v.field.fill(text),
     visible: [v.send],
@@ -363,21 +363,23 @@ test("send: the pending bubble with its cue, the settled bubble and streamed rep
   await expect(v.send).toBeEnabled();
   await expect(v.send).toHaveText("");
   await expect(v.send.locator("svg")).toBeVisible();
+  const row = v.convo.locator(".msg-row").filter({ hasText: text });
+  const retry = row.getByRole("button", { name: "Retry", exact: true });
+  // A refusal stays on the message, with Retry and Edit; the composer stays clear for the next message.
   await walk.state("02-refused-not-sent-retry", {
     action: () => v.send.click(),
-    visible: [alert, alert.getByRole("button", { name: "Retry", exact: true })],
-    hidden: [v.bubble(text)],
+    visible: [v.bubble(text), alert, retry, row.getByRole("button", { name: "Edit", exact: true })],
+    hidden: [v.main.locator(".composer-hint").filter({ hasText: "Not sent" })],
   });
-  await expect(v.field).toHaveValue(text);
+  await expect(v.field).toHaveValue("");
   await expect(alert).toHaveClass(/text-danger/);
 
   mode = "stream";
   const pending = v.convo.locator(".msg-row[data-pending]");
-  const row = v.convo.locator(".msg-row").filter({ hasText: text });
   const cue = row.getByRole("status", { name: "Sending", exact: true });
-  // The held stream is the slow link: the bubble is already in the conversation, muted, with its ring.
+  // The held stream is the slow link: Retry returns the same bubble to sending in place, muted.
   await walk.state("03-sending-pending-bubble-with-cue", {
-    action: () => alert.getByRole("button", { name: "Retry", exact: true }).click(),
+    action: () => retry.click(),
     visible: [pending, v.bubble(text), cue],
     hidden: [alert],
   });
@@ -468,7 +470,7 @@ test("a sent message stays in the conversation through the Work tab and back, an
   await expect(v.convo.locator(".reply", { hasText: "Kept and answered." })).toHaveCount(1);
 });
 
-test("an interrupted request without a receipt preserves both drafts without an unsent Retry", async ({ page, request }, info) => {
+test("an interrupted request without a receipt stays Unconfirmed on its message without an unsent Retry", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
@@ -486,16 +488,24 @@ test("an interrupted request without a receipt preserves both drafts without an 
   await v.field.fill(text);
   await v.send.click();
   const pending = v.convo.locator(".msg-row[data-pending]");
-  const uncertain = v.main.getByRole("alert").filter({ hasText: "Could not confirm delivery. Check the conversation before sending again." });
+  const row = v.convo.locator(".msg-row").filter({ hasText: text });
+  const unconfirmed = row.getByText("Unconfirmed", { exact: true });
   try {
     await v.field.fill(next);
-    await walk.state("01-unconfirmed-request-next-draft", { visible: [pending, v.bubble(text), v.field], hidden: [uncertain] });
+    await walk.state("01-unconfirmed-request-next-draft", { visible: [pending, v.bubble(text), v.field], hidden: [unconfirmed] });
   } finally { release(); }
-  await walk.state("02-delivery-unknown-both-drafts-recoverable", {
-    visible: [uncertain, v.field],
-    hidden: [pending, v.bubble(text), v.main.getByRole("alert").filter({ hasText: "Not sent." }), uncertain.getByRole("button", { name: "Retry", exact: true })],
+  // Delivery is unknown: the message says so on itself and offers its words back, never a send Retry.
+  await walk.state("02-delivery-unknown-on-its-message", {
+    visible: [v.bubble(text), unconfirmed, row.getByRole("button", { name: "Copy to draft", exact: true })],
+    hidden: [pending, row.getByRole("button", { name: "Retry", exact: true }), v.main.getByRole("alert").filter({ hasText: "Not sent" }),
+      v.main.locator(".composer-hint").filter({ hasText: "Could not confirm delivery." })],
   });
-  await expect(v.field).toHaveValue(`${text}\n${next}`);
+  await expect(v.field).toHaveValue(next);
+  await page.reload();
+  // After a reload the words return to the field with the cautious hint; nothing is sent again.
+  const hint = v.main.getByText("Could not confirm delivery. Check the conversation before sending again.", { exact: true });
+  await walk.state("03-reloaded-words-in-the-field", { visible: [hint, v.field], hidden: [v.bubble(text)] });
+  await expect(v.field).toHaveValue(new RegExp(`^${text}`));
   expect(posts).toBe(1);
   const history = (await (await request.get(`/api/chat/${project.name}`)).json()).history;
   expect(history.some((row: { text: string }) => row.text === text)).toBe(false);

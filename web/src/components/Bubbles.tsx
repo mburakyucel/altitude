@@ -52,18 +52,21 @@ export function DayDivider({ label }: { label: string }) {
 
 /**
  * One row with its time in the gutter. `mine` right-aligns it (the operator's bubble); `pending` shows
- * it at 60% until the server accepts the message, then it settles in place (SPEC.md §3.6 Sending).
+ * it at 60% until the server accepts the message, then it settles in place (SPEC.md §3.6 Sending);
+ * `enter` fades a row in that arrives while the conversation is open.
  */
 export function MessageRow({
   at,
   mine = false,
   pending = false,
+  enter = false,
   role,
   children,
 }: {
   at?: string | null;
   mine?: boolean;
   pending?: boolean;
+  enter?: boolean;
   role?: string;
   children: ReactNode;
 }) {
@@ -76,6 +79,7 @@ export function MessageRow({
       data-role={role}
       data-mine={mine || undefined}
       data-pending={pending || undefined}
+      data-enter={enter || undefined}
       data-time-shown={shown || undefined}
       {...press}
     >
@@ -90,21 +94,22 @@ export function MessageRow({
 }
 
 /** Where the operator's message stands; ordinary messages have no delivery receipt. */
-export type BubbleState = "pending" | "sending" | "queued" | "delivered" | "unconfirmed";
+export type BubbleState = "pending" | "sending" | "queued" | "delivered" | "unconfirmed" | "failed";
 
 /**
  * The operator's message: a right-aligned bubble (`--bubble`, `--radius-bubble`, 15px). Its shape says where it
- * stands (SPEC.md §3.6, §3.10): a ring in the gutter while sending, at 60% until the server acknowledges it; an
- * outline while queued; a warning mark and one word when delivery is unconfirmed. Queued bubbles have no time
- * yet. `side` is a quiet control in the same gutter, such as a queued message's remove.
+ * stands (SPEC.md §3.6, §3.10), one cue each: at 60% while it is on its way (until the server, or for a claimed
+ * message the session, acknowledges it); an outline while queued; a warning mark when it may not have arrived,
+ * with one word when delivery is unconfirmed. Queued bubbles have no time yet. `side` is a quiet control in the same gutter, such as a queued message's remove.
  */
-export function Bubble({ text, at, state, images, side, children }: { text: string; at?: string | null; state?: BubbleState; images?: ReactNode; side?: ReactNode; children?: ReactNode }) {
+export function Bubble({ text, at, state, images, side, enter, children }: { text: string; at?: string | null; state?: BubbleState; images?: ReactNode; side?: ReactNode; enter?: boolean; children?: ReactNode }) {
   const unconfirmed = state === "unconfirmed";
+  const failed = state === "failed";
   return (
-    <MessageRow at={state === "queued" ? null : at} mine pending={state === "pending"}>
+    <MessageRow at={state === "queued" || state === "sending" ? null : at} mine pending={state === "pending" || state === "sending"} enter={enter}>
       <div className="bubble" data-state={state === "delivered" ? undefined : state}>
-        {state === "pending" || state === "sending" ? <span className="spinner bubble-mark" role="status" aria-label="Sending" />
-          : unconfirmed ? <span className="bubble-mark bubble-warning" aria-hidden="true">!</span> : side}
+        {state === "pending" || state === "sending" ? <span className="sr-only" role="status" aria-label="Sending" />
+          : unconfirmed || failed ? <span className="bubble-mark bubble-warning" data-tone={failed ? "danger" : undefined} aria-hidden="true">!</span> : side}
         {text}{images}
       </div>
       {state === "queued" ? <span className="sr-only">Queued</span> : null}
@@ -128,15 +133,17 @@ export function Reply({
   text,
   at,
   role,
+  enter,
   children,
 }: {
   text: string;
   at?: string | null;
   role?: string;
+  enter?: boolean;
   children?: ReactNode;
 }) {
   return (
-    <MessageRow at={at} role={role}>
+    <MessageRow at={at} role={role} enter={enter}>
       <div className="reply">
         <Prose text={text} />
         {children}

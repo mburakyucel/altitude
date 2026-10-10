@@ -75,7 +75,8 @@ const history = [
 
 const chatView = { history, active: null, busy: false, queued: [], l3: { session_id: "abcdef1234567890" }, engine: null };
 
-type Fixtures = { chat?: unknown; project?: unknown; chatFn?: () => Response | Promise<Response>; post?: (body: unknown) => Response | Promise<Response>; sendNow?: () => Response | Promise<Response> };
+type Fixtures = { chat?: unknown; project?: unknown; chatFn?: () => Response | Promise<Response>; post?: (body: unknown) => Response | Promise<Response>;
+  sendNow?: () => Response | Promise<Response>; remove?: () => Response | Promise<Response> };
 
 let defaults: Record<string, unknown> = {};
 const auto = {
@@ -91,7 +92,7 @@ function mockFetch(fixtures: Fixtures = {}) {
     const url = String(input);
     if (url.includes("/api/overview")) return jsonResponse(overview);
     if (url.includes("/api/project/altitude")) return jsonResponse(fixtures.project ?? project);
-    if (url.includes("/api/chat/remove")) return jsonResponse({ ok: true });
+    if (url.includes("/api/chat/remove")) return fixtures.remove ? fixtures.remove() : jsonResponse({ ok: true });
     if (url.includes("/api/chat/send-now")) return fixtures.sendNow ? fixtures.sendNow() : jsonResponse({ ok: true });
     if (url.includes("/api/chat/")) return fixtures.chatFn ? fixtures.chatFn() : jsonResponse(fixtures.chat ?? chatView);
     if (url.endsWith("/api/chat")) {
@@ -122,7 +123,7 @@ const sendId = expect.stringMatching(/^[0-9a-f]{32}$/);
 afterEach(() => vi.useRealTimers());
 
 describe("queued L3 Send now", () => {
-  it("keeps the busy action before later arrivals and clears an error when its queue leaves", async () => {
+  it("moves Send now to the messages still waiting and clears an error when its queue leaves", async () => {
     let view: ChatView = { ...chatView, queued: [{ id: "first", text: "First instruction", trigger: "chat" }] };
     mockFetch({ chatFn: () => jsonResponse(view), sendNow: () => jsonResponse({ error: "Fixture refusal" }, 409) });
     const { user, queryClient } = renderApp({ route: "/projects/altitude" });
@@ -136,9 +137,17 @@ describe("queued L3 Send now", () => {
       ...(view.queued ?? []),
     ] };
     await act(async () => { queryClient.setQueryData(["chat", "altitude"], view); });
-    const busy = await screen.findByRole("button", { name: "Sending now" });
-    expect(busy.closest(".queued-row")).toHaveTextContent("Claimed instruction");
-    expect(screen.getByText("Unrelated later instruction").closest(".queued-row")).not.toContainElement(busy);
+    // The taken message is on its way: faded, no Remove, no control of its own.
+    const claimed = (await screen.findByText("Claimed instruction")).closest(".queued-row") as HTMLElement;
+    expect(claimed.querySelector(".msg-row")).toHaveAttribute("data-pending", "true");
+    expect(within(claimed).queryByRole("button")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Sending now" })).toBeNull();
+    const later = screen.getByText("Unrelated later instruction").closest(".queued-row") as HTMLElement;
+    expect(within(later).getByRole("button", { name: "Send now" })).toBeEnabled();
+    view = { ...view, queued: view.queued!.slice(0, 1) };
+    await act(async () => { queryClient.setQueryData(["chat", "altitude"], view); });
+    await waitFor(() => expect(screen.queryByText("Unrelated later instruction")).toBeNull());
+    expect(screen.queryByRole("button", { name: "Send now" })).toBeNull();
   });
   it.each([390, 1440])("places incoming before its receiving turn and shows receipt warnings beside successful answers at %i", async (width) => {
     setViewport(width);
@@ -213,11 +222,14 @@ describe("queued L3 Send now", () => {
     let view: ChatView = { ...chatView, send_now_reason: "No engine is available", queued: [{ id: "q-now", text: "Remove before claim", trigger: "chat", send_now: true, send_now_reason: "Runs next after system work" }] };
     const fetchMock = mockFetch({ chatFn: () => jsonResponse(view) });
     const { user } = renderApp({ route: "/projects/altitude" });
-    const pending = await screen.findByRole("button", { name: "Sending now" });
-    expect(pending).toHaveAttribute("aria-disabled", "true");
-    expect(pending).toHaveAccessibleDescription("No engine is available");
+    // The server holds the press: Send now shows its clock, and the reason shows on press.
+    const held = await screen.findByRole("button", { name: "Send now" });
+    expect(held).toHaveAttribute("data-waiting", "");
+    expect(held.querySelector("svg")).not.toBeNull();
+    expect(held).toHaveAttribute("aria-disabled", "true");
+    expect(held).toHaveAccessibleDescription("No engine is available");
     expect(screen.getByText("No engine is available")).toHaveClass("sr-only");
-    await user.click(pending);
+    await user.click(held);
     expect(screen.getByText("No engine is available")).not.toHaveClass("sr-only");
     expect(posted(fetchMock, "/api/chat/send-now")).toBeNull();
     const remove = screen.getByRole("button", { name: "Remove" });
@@ -312,6 +324,178 @@ describe("queued L3 Send now", () => {
     expect(screen.getByText("No engine is available")).not.toHaveClass("sr-only");
     expect(posted(fetchMock, "/api/chat/send-now")).toBeNull();
     expect(screen.getAllByRole("button", { name: "Send now" })).toHaveLength(1);
+  });
+});
+
+describe("the operator's message states (SPEC.md §3.6, §4.2)", () => {
+  const busy = { ...chatView, active: { id: "c2", started_at: ago(1), trigger: "chat" }, busy: true };
+  const queuedRow = { id: "q-third", text: "Keep it under one page", trigger: "chat" };
+  const rowOf = (text: string) => screen.getByText(text).closest(".msg-row") as HTMLElement;
+
+  it("Remove spins on its own control and the message stays until the server answers; a failure a read confirms says Not removed", async () => {
+    let answer!: (response: Response) => void;
+    const view: ChatView = { ...busy, queued: [queuedRow] };
+    mockFetch({ chatFn: () => jsonResponse(view), remove: () => new Promise((resolve) => { answer = resolve; }) });
+    const { user } = renderApp({ route: "/projects/altitude" });
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    const removing = screen.getByRole("button", { name: "Removing" });
+    expect(removing).toHaveAttribute("aria-busy", "true");
+    expect(rowOf("Keep it under one page")).not.toHaveAttribute("data-pending");
+    await act(async () => answer(jsonResponse({ error: "Queue temporarily unavailable" }, 503)));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Not removed: queue temporarily unavailable.");
+    expect(rowOf("Keep it under one page")).toContainElement(alert);
+    expect(within(rowOf("Keep it under one page")).getByRole("button", { name: "Retry" })).toBeVisible();
+    expect(document.querySelector(".toast")).toBeNull();
+  });
+
+  it("a removal whose answer was lost but which worked leaves without a failure line", async () => {
+    let view: ChatView = { ...busy, queued: [queuedRow] };
+    mockFetch({ chatFn: () => jsonResponse(view), remove: () => { view = { ...view, queued: [] }; throw new TypeError("Connection interrupted"); } });
+    const { user } = renderApp({ route: "/projects/altitude" });
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(screen.queryByText("Keep it under one page")).toBeNull());
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("a message the turn took before Remove shows as taken, with no failure line", async () => {
+    let view: ChatView = { ...busy, queued: [queuedRow] };
+    mockFetch({ chatFn: () => jsonResponse(view), remove: () => {
+      view = { ...view, queued: [{ ...queuedRow, send_now: true, sending: "turn" }] };
+      return jsonResponse({ error: "that message has already started" }, 409);
+    } });
+    const { user } = renderApp({ route: "/projects/altitude" });
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(rowOf("Keep it under one page")).toHaveAttribute("data-pending", "true"));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Remov/ })).toBeNull();
+  });
+
+  it("a failed removal says nothing while no read has confirmed the message is still there", async () => {
+    let failReads = false;
+    const view: ChatView = { ...busy, queued: [queuedRow] };
+    mockFetch({ chatFn: () => failReads ? jsonResponse({ error: "Read unavailable" }, 503) : jsonResponse(view),
+      remove: () => { failReads = true; return jsonResponse({ error: "Queue temporarily unavailable" }, 503); } });
+    const { user } = renderApp({ route: "/projects/altitude" });
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    await screen.findByText("Could not load the conversation.", { exact: false });
+    expect(screen.queryByText(/Not removed/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Remove" })).toBeDisabled();
+  });
+
+  it("the Work tab and back while removing shows the server's last read with Remove ready", async () => {
+    setViewport(390);
+    const view: ChatView = { ...busy, queued: [queuedRow] };
+    mockFetch({ chatFn: () => jsonResponse(view), remove: () => new Promise(() => undefined) });
+    const { user, router } = renderApp({ route: "/projects/altitude" });
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    expect(screen.getByRole("button", { name: "Removing" })).toBeInTheDocument();
+    await act(() => router.navigate("/projects/altitude?tab=work"));
+    await screen.findByRole("region", { name: "Work" });
+    await act(() => router.navigate("/projects/altitude"));
+    expect(await screen.findByRole("button", { name: "Remove" })).toBeEnabled();
+    expect(screen.getByText("Keep it under one page")).toBeVisible();
+  });
+
+  it("Send now shows its clock only once the server holds the press", async () => {
+    let release!: (response: Response) => void;
+    let view: ChatView = { ...busy, queued: [queuedRow] };
+    mockFetch({ chatFn: () => jsonResponse(view), sendNow: () => new Promise((resolve) => { release = resolve; }) });
+    const { user } = renderApp({ route: "/projects/altitude" });
+    await user.click(await screen.findByRole("button", { name: "Send now" }));
+    const sending = screen.getByRole("button", { name: "Sending now" });
+    expect(sending.querySelector(".spinner")).not.toBeNull();
+    expect(sending).not.toHaveAttribute("data-waiting");
+    view = { ...view, queued: [{ ...queuedRow, send_now: true, send_now_reason: "Runs next after this turn" }] };
+    await act(async () => release(jsonResponse({ ok: true })));
+    const held = await screen.findByRole("button", { name: "Send now" });
+    expect(held).toHaveAttribute("data-waiting", "");
+    expect(held).toHaveAccessibleDescription("Runs next after this turn");
+    expect(within(rowOf("Keep it under one page")).getByRole("button", { name: "Remove" })).toBeEnabled();
+  });
+
+  it("keeps one recovery copy per failed message, marked with how it failed, and none for a confirmed one", async () => {
+    const outcomes = [() => jsonResponse({ error: "No L3 for this project" }, 409), () => { throw new TypeError("Connection interrupted"); },
+      () => streamResponse(['{"t":"Sure."}', '{"done":{"turn_id":"c3"}}'])];
+    mockFetch({ post: () => outcomes.shift()!() });
+    const { user } = renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    const field = screen.getByLabelText("Message L3 about altitude");
+    for (const text of ["Refused words", "Unconfirmed words", "Confirmed words"]) {
+      await user.type(field, text);
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      await waitFor(() => expect(outcomes.length).toBe(["Refused words", "Unconfirmed words", "Confirmed words"].indexOf(text) === 2 ? 0 : 2 - ["Refused words", "Unconfirmed words"].indexOf(text)));
+    }
+    await within(region).findByText("Sure.");
+    await within(region).findByText("Unconfirmed", { exact: true });
+    const saved = JSON.parse(sessionStorage.getItem("altitude.submitted:project/altitude")!) as { pending: Record<string, string>; refused?: string[] };
+    expect(Object.values(saved.pending)).toEqual(["Refused words", "Unconfirmed words"]);
+    expect(saved.refused?.map((id) => saved.pending[id])).toEqual(["Refused words"]);
+    expect(field).toHaveValue("");
+  });
+
+  it.each([
+    [["refused", "unconfirmed"], "Could not confirm delivery. Check the conversation before sending again."],
+    [["refused", "refused"], "Not sent. Retry"],
+  ])("after a reload the copies %j return to the field in send order, ahead of the draft, with the cautious hint", async (kinds, hint) => {
+    const ids = kinds.map((_, index) => `reload-copy-${index}-${kinds.join("-")}`);
+    sessionStorage.setItem("altitude.submitted:project/altitude", JSON.stringify({ text: "", failure: null,
+      pending: Object.fromEntries(ids.map((id, index) => [id, `Copy ${index + 1}`])), refused: ids.filter((_, index) => kinds[index] === "refused") }));
+    const fetchMock = mockFetch();
+    renderApp({ route: "/projects/altitude" });
+    await conversation();
+    expect(screen.getByLabelText("Message L3 about altitude")).toHaveValue("Copy 1\nCopy 2");
+    expect(document.querySelector(".composer-hint[role=alert]")).toHaveTextContent(hint);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url) === "/api/chat")).toHaveLength(0);
+  });
+
+  it("returns a failed message's words to the field once re-pairing clears it from the conversation", async () => {
+    mockFetch({ post: () => jsonResponse({ error: "No L3 for this project" }, 409) });
+    const { user, queryClient, router } = renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    await user.type(screen.getByLabelText("Message L3 about altitude"), "Words to keep");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await within(region).findByText("Not sent: no L3 for this project.");
+    await act(async () => { await router.navigate("/settings"); });
+    // Pairing again starts the app fresh: every query, the outbox included, is removed (PairGate.tsx).
+    act(() => queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "access" }));
+    await act(async () => { await router.navigate("/projects/altitude"); });
+    const back = await conversation();
+    expect(screen.getByLabelText("Message L3 about altitude")).toHaveValue("Words to keep");
+    expect(document.querySelector(".composer-hint[role=alert]")).toHaveTextContent("Not sent. Retry");
+    expect(within(back).queryByText("Not sent: no L3 for this project.")).toBeNull();
+  });
+
+  it("fades in a row that arrives while the conversation is open, and nothing it opened or returned with", async () => {
+    setViewport(390);
+    let view: ChatView = chatView;
+    mockFetch({ chatFn: () => jsonResponse(view) });
+    const { user, queryClient, router } = renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    await within(region).findByText("Created one task for it.");
+    expect(region.querySelector("[data-enter]")).toBeNull();
+    await user.type(screen.getByLabelText("Message L3 about altitude"), "Next step");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await within(region).findByText("Sure.");
+    expect(rowOf("Next step")).toHaveAttribute("data-enter", "true");
+    expect(within(region).getByText("Sure.").closest(".msg-row")).toHaveAttribute("data-enter", "true");
+    // The stored copy replaces the pending bubble without a second entrance.
+    const { request_id } = posted(vi.mocked(fetch), "/api/chat");
+    view = { ...chatView, history: [...history,
+      { at: ago(0), role: "user", text: "Next step", trigger: "chat", turn_id: "c3", request_id },
+      { at: ago(0), role: "assistant", text: "Sure.", trigger: "chat", turn_id: "c3" },
+      { at: ago(0), role: "system", text: "Another device's note", trigger: "fyi", turn_id: "s9" }] };
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["chat", "altitude"] }); });
+    await waitFor(() => expect(region.querySelector("[data-local]")).toBeNull());
+    expect(rowOf("Next step")).not.toHaveAttribute("data-enter");
+    expect(region.querySelector('.sys-line[data-enter]')).not.toBeNull();
+    await act(() => router.navigate("/projects/altitude?tab=work"));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Conversation" })).toBeNull());
+    await act(() => router.navigate("/projects/altitude"));
+    const back = await conversation();
+    expect(back).not.toBe(region);
+    await within(back).findByText("Next step");
+    expect(back.querySelector("[data-enter]")).toBeNull();
   });
 });
 
@@ -481,9 +665,8 @@ describe.each([390, 1440])("project switching at %ipx", (width) => {
     expect(fetchMock.mock.calls.filter(([url, init]) => url === "/api/chat" && init?.method === "POST")).toHaveLength(1);
   });
 
-  it("an unconfirmed image replay keeps its Retry through leaving the project, without holding the composer", async () => {
-    const outcomes: (() => Response)[] = [() => { throw new TypeError("Connection interrupted"); }, () => jsonResponse({ error: "no L3 for this project" }, 409)];
-    const { chats } = projectChats(() => outcomes.shift()!());
+  it("an unconfirmed image replay stays Unconfirmed on its message through leaving the project, without holding the composer", async () => {
+    const { chats, fetchMock } = projectChats(() => { throw new TypeError("Connection interrupted"); });
     chats["alpha-project"]!.history.push(
       { role: "user", text: "Image sample", turn_id: "failed-image", trigger: "chat", images: [
         { id: "sample-image", name: "sample.png", mime_type: "image/png", size: 10, width: 1, height: 1, source_message_id: "original-image" },
@@ -494,18 +677,19 @@ describe.each([390, 1440])("project switching at %ipx", (width) => {
     const { user, router } = renderApp({ route: "/projects/alpha-project" });
     const failed = await screen.findByText(/^L3 could not answer this turn\./);
     await user.click(within(failed).getByRole("button", { name: "Retry" }));
-    await screen.findByText("Could not confirm send.", { exact: false });
+    const local = () => document.querySelector("[data-local]") as HTMLElement;
+    await waitFor(() => expect(within(local()).getByText("Unconfirmed", { exact: true })).toBeVisible());
     expect(field("alpha")).toBeEnabled();
     await act(() => router.navigate("/projects/beta-project"));
     await screen.findByText("beta-project history");
     await act(() => router.navigate("/projects/alpha-project"));
-    const uncertain = (await screen.findByText("Could not confirm send.", { exact: false })).closest("p")!;
+    await waitFor(() => expect(within(local()).getByText("Unconfirmed", { exact: true })).toBeVisible());
+    // Unknown delivery never offers a send Retry; its words can go back to the field.
+    expect(within(local()).queryByRole("button", { name: "Retry" })).toBeNull();
+    await user.click(within(local()).getByRole("button", { name: "Copy to draft" }));
+    expect(field("alpha")).toHaveValue("Image sample");
     expect(field("alpha")).toBeEnabled();
-    // The same submission again; the server refuses it, which settles the send.
-    await user.click(within(uncertain).getByRole("button", { name: "Retry" }));
-    await waitFor(() => expect(screen.queryByText("Could not confirm send.", { exact: false })).toBeNull());
-    expect(outcomes).toHaveLength(0);
-    expect(field("alpha")).toBeEnabled();
+    expect(fetchMock.mock.calls.filter(([url, init]) => url === "/api/chat" && init?.method === "POST")).toHaveLength(1);
   });
 
   it("prevents an earlier read replacing a late queue receipt while its conversation is unmounted", async () => {
@@ -545,7 +729,7 @@ describe.each([390, 1440])("project switching at %ipx", (width) => {
     expect(fetchMock.mock.calls.filter(([url, init]) => url === "/api/chat" && init?.method === "POST")).toHaveLength(1);
   });
 
-  it("recovers an unconfirmed submitted message in its source conversation after navigation", async () => {
+  it("shows an unconfirmed message on its own bubble in its source conversation after navigation", async () => {
     let reject!: (error: Error) => void;
     const pending = new Promise<Response>((_, fail) => { reject = fail; });
     const { fetchMock } = projectChats(() => pending);
@@ -560,17 +744,20 @@ describe.each([390, 1440])("project switching at %ipx", (width) => {
     await user.type(field("beta"), "Keep this new draft");
     await act(async () => { reject(new TypeError("Controlled lost receipt")); });
     expect(field("beta")).toHaveValue("Keep this new draft");
-    expect(screen.queryByRole("alert")).toBeNull();
-    await act(() => router.navigate("/projects/alpha-project"));
-    await screen.findByText("alpha-project history");
-    expect(field("alpha")).toHaveValue("Please inspect the sample project\nAlpha next draft");
-    expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery. Check the conversation before sending again.");
-    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(screen.queryByText("Please inspect the sample project")).toBeNull();
+    for (let visit = 0; visit < 2; visit++) {
+      await act(() => router.navigate("/projects/alpha-project"));
+      await screen.findByText("alpha-project history");
+      const bubble = screen.getByText("Please inspect the sample project").closest(".msg-row") as HTMLElement;
+      expect(within(bubble).getByText("Unconfirmed", { exact: true })).toBeVisible();
+      expect(within(bubble).getByRole("button", { name: "Copy to draft" })).toBeVisible();
+      expect(field("alpha")).toHaveValue("Alpha next draft");
+      expect(screen.queryByText(/Could not confirm delivery/)).toBeNull();
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+      await act(() => router.navigate("/projects/beta-project"));
+      expect(field("beta")).toHaveValue("Keep this new draft");
+    }
     expect(fetchMock.mock.calls.filter(([url, init]) => url === "/api/chat" && init?.method === "POST")).toHaveLength(1);
-    await act(() => router.navigate("/projects/beta-project"));
-    expect(field("beta")).toHaveValue("Keep this new draft");
-    await act(() => router.navigate("/projects/alpha-project"));
-    expect(field("alpha")).toHaveValue("Please inspect the sample project\nAlpha next draft");
   });
 
   it("polls accepted text after returning before the original send receives its turn receipt", async () => {
@@ -1269,17 +1456,50 @@ describe("Conversation", () => {
     } finally { await act(async () => reply.close()); }
   });
 
-  it("refused: the bubble leaves, the draft returns, and the hint reads Not sent. Retry", async () => {
-    mockFetch({ post: () => jsonResponse({ error: "no L3 for this project" }, 409) });
+  it.each(["", "Typed since"])("refused: the bubble stays with Not sent and its reason, and Edit returns its words ahead of '%s'", async (typed) => {
+    mockFetch({ post: () => jsonResponse({ error: "No L3 for this project" }, 409) });
     const { user } = renderApp({ route: "/projects/altitude" });
     const region = await conversation();
     const field = screen.getByLabelText("Message L3 about altitude");
     await user.type(field, "Ship it");
     await user.click(screen.getByRole("button", { name: "Send" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Not sent. Retry");
-    expect(field).toHaveValue("Ship it");
-    expect([...region.querySelectorAll(".bubble")].map((el) => el.textContent)).not.toContain("Ship it");
-    expect(region.querySelector("[data-pending]")).toBeNull();
+    const bubble = await waitFor(() => {
+      const row = within(region).getByText("Ship it").closest(".msg-row") as HTMLElement;
+      expect(within(row).getByRole("alert")).toHaveTextContent("Not sent: no L3 for this project.");
+      return row;
+    });
+    expect(bubble).not.toHaveAttribute("data-pending");
+    expect(bubble.querySelector(".bubble")).toHaveAttribute("data-state", "failed");
+    expect(field).toHaveValue("");
+    expect(region.querySelector(".composer-hint[role=alert]")).toBeNull();
+    // A failed message is not activity: the arrow sends, it does not queue.
+    if (typed) await user.type(field, typed);
+    await user.click(within(bubble).getByRole("button", { name: "Edit" }));
+    expect(within(region).queryByText("Ship it", { selector: ".bubble *, .bubble" })).toBeNull();
+    expect(field).toHaveValue(typed ? `Ship it\n${typed}` : "Ship it");
+    await waitFor(() => expect(field).toHaveFocus());
+    expect((field as HTMLTextAreaElement).selectionStart).toBe((field as HTMLTextAreaElement).value.length);
+    expect(sessionStorage.getItem("altitude.submitted:project/altitude")).toBeNull();
+  });
+
+  it("refused: Retry sends the same words again in place, with a new send id", async () => {
+    let posts = 0;
+    const fetchMock = mockFetch({ post: () => ++posts === 1 ? jsonResponse({ error: "Busy elsewhere" }, 409) : streamResponse(['{"t":"Sure."}', '{"done":{"turn_id":"c3"}}']) });
+    const { user } = renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    await user.type(screen.getByLabelText("Message L3 about altitude"), "Ship it");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await within(region).findByText("Not sent: busy elsewhere.");
+    const bubble = within(region).getByText("Ship it");
+    await user.click(within(region).getByRole("button", { name: "Retry" }));
+    await within(region).findByText("Sure.");
+    expect(within(region).queryByRole("alert")).toBeNull();
+    expect(within(region).getAllByText("Ship it")).toHaveLength(1);
+    // The same bubble, not a new row: its entrance does not play again.
+    expect(within(region).getByText("Ship it")).toBe(bubble);
+    const [first, second] = [posted(fetchMock, "/api/chat", 0), posted(fetchMock, "/api/chat", 1)];
+    expect(second.text).toBe("Ship it");
+    expect(second.request_id).not.toBe(first.request_id);
   });
 
   it.each(["", "My next draft"])("keeps an accepted message sent after stream failure with draft '%s' and failed refresh", async (draft) => {
@@ -1343,20 +1563,37 @@ describe("Conversation", () => {
     expect(fetchMock.mock.calls.filter(([url]) => String(url) === "/api/chat")).toHaveLength(2);
   });
 
-  it("an ambiguous server failure restores both drafts and asks for a read before another send", async () => {
+  it("an ambiguous server failure shows Unconfirmed with Copy to draft, and a read that shows it settles the bubble", async () => {
     let release!: (response: Response) => void;
     const waiting = new Promise<Response>((resolve) => { release = resolve; });
-    const fetchMock = mockFetch({ post: () => waiting });
-    const { user } = renderApp({ route: "/projects/altitude" });
+    let view: ChatView = chatView;
+    const fetchMock = mockFetch({ post: () => waiting, chatFn: () => jsonResponse(view) });
+    const { user, queryClient } = renderApp({ route: "/projects/altitude" });
     const region = await conversation();
     const field = screen.getByLabelText("Message L3 about altitude");
     await user.type(field, "Original message");
     await user.click(screen.getByRole("button", { name: "Send" }));
+    const pending = within(region).getByText("Original message").closest(".msg-row") as HTMLElement;
+    expect(pending).toHaveAttribute("data-pending", "true");
+    expect(within(pending).getByRole("status", { name: "Sending" })).toBeInTheDocument();
+    expect(pending.querySelector(".spinner")).toBeNull();
     await user.type(field, "New thought");
     await act(async () => { release(jsonResponse({ error: "Acceptance could not be confirmed" }, 500)); });
-    expect(field).toHaveValue("Original message\nNew thought");
-    expect(region.querySelector(".composer-hint[role=alert]")).toHaveTextContent("Could not confirm delivery. Check the conversation before sending again.");
+    const bubble = within(region).getByText("Original message").closest(".msg-row") as HTMLElement;
+    await waitFor(() => expect(within(bubble).getByText("Unconfirmed", { exact: true })).toBeVisible());
+    expect(bubble).not.toHaveAttribute("data-pending");
+    expect(field).toHaveValue("New thought");
     expect(within(region).queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+    await user.click(within(bubble).getByRole("button", { name: "Copy to draft" }));
+    expect(field).toHaveValue("Original message\nNew thought");
+    expect(within(bubble).getByText("Unconfirmed", { exact: true })).toBeVisible();
+    const { request_id } = posted(fetchMock, "/api/chat");
+    view = { ...chatView, history: [...history, { at: ago(0), role: "user", text: "Original message", trigger: "chat", turn_id: "c9", request_id }] };
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["chat", "altitude"] }); });
+    await waitFor(() => expect(within(region).queryByText("Unconfirmed", { exact: true })).toBeNull());
+    expect(within(region).getAllByText("Original message")).toHaveLength(1);
+    expect(sessionStorage.getItem("altitude.submitted:project/altitude")).toBeNull();
     expect(fetchMock.mock.calls.filter(([url]) => String(url) === "/api/chat")).toHaveLength(1);
   });
 

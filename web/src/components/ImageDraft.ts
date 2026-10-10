@@ -5,11 +5,12 @@ import type { ImagePreview } from "./MessageImages";
 
 export interface ImageScope { project: string; task?: string; engine?: string | null }
 export interface ImageSubmission extends ImageSend { previews: ImagePreview[] }
-interface Selection extends ImagePreview { file: File; key: string }
+/** A chosen image, read once when chosen, so Send takes the selection at once. */
+interface Selection extends ImagePreview { file: File; key: string; data: string }
 const LIMITS = { max_count: 4, max_bytes: 10 << 20, max_total_bytes: 20 << 20 };
 export const IMAGE_HELP = "PNG, JPEG or static WebP. Up to 4 images, 10 MiB each, 20 MiB total; 25 megapixels and 8192 pixels per side.";
 
-/** Selection stays in this mounted conversation; only Send reads it for admission. */
+/** Selection stays in this mounted conversation until Send takes it. */
 export function useImageDraft(scope?: ImageScope) {
   const [selected, setSelected] = useState<Selection[]>([]);
   const selection = useRef(selected);
@@ -74,19 +75,26 @@ export function useImageDraft(scope?: ImageScope) {
           else {
             const url = URL.createObjectURL(file);
             pendingPreview.current = url;
-            const problem = await new Promise<string>((resolve) => {
+            const unreadable = `${file.name} could not be read. Export a PNG, JPEG or static WebP and try again.`;
+            let problem = await new Promise<string>((resolve) => {
               const image = new Image();
-              const unreadable = `${file.name} could not be read. Export a PNG, JPEG or static WebP and try again.`;
               image.onerror = () => resolve(unreadable);
               image.onload = () => resolve(!image.naturalWidth || !image.naturalHeight ? unreadable
                 : image.naturalWidth > limits.max_dimension || image.naturalHeight > limits.max_dimension || image.naturalWidth * image.naturalHeight > limits.max_pixels
                   ? `${file.name} exceeds 25 megapixels or 8192 pixels per side. Choose a smaller image.` : "");
               image.src = url;
             });
+            const data = problem ? null : await new Promise<string | null>((resolve) => {
+              const reader = new FileReader();
+              reader.onerror = () => resolve(null);
+              reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
+              reader.readAsDataURL(file);
+            });
             if (!current()) return;
             pendingPreview.current = null;
-            if (problem) { URL.revokeObjectURL(url); failure = problem; }
-            else replace([...selection.current, { name: file.name, key: crypto.randomUUID(), file, url }]);
+            if (!problem && data === null) problem = unreadable;
+            if (problem || data === null) { URL.revokeObjectURL(url); failure = problem; }
+            else replace([...selection.current, { name: file.name, key: crypto.randomUUID(), file, url, data }]);
           }
         }
         if (current()) setError(failure);
@@ -96,15 +104,25 @@ export function useImageDraft(scope?: ImageScope) {
     },
     remove(key: string) { replace(selection.current.filter((image) => image.key !== key)); setError(""); },
     clear() { replace([]); setError(""); },
-    async submission(): Promise<ImageSubmission> {
-      const originals = [...selection.current];
-      const images = await Promise.all(originals.map((image) => new Promise<{ name: string; data: string }>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onerror = () => reject(new Error(`Could not read ${image.name}. Choose it again.`));
-        reader.onload = () => resolve({ name: image.name, data: String(reader.result).split(",")[1] ?? "" });
-        reader.readAsDataURL(image.file);
-      })));
-      return { request_id: crypto.randomUUID(), images, previews: originals.map(({ name, file }, index) => ({ name, url: `data:${file.type};base64,${images[index]!.data}` })) };
+    /** Edit returns a failed message's images to the picker from the copies its bubble kept; nothing changes and
+        the picker says why when they do not fit beside the current selection. */
+    restore(previews: ImagePreview[]): boolean {
+      const files = previews.map(({ name, url }) => {
+        const [head = "", data = ""] = url.split(",");
+        return { data, file: new File([Uint8Array.from(atob(data), (char) => char.charCodeAt(0))], name, { type: head.slice(5, head.indexOf(";")) }) };
+      });
+      const problem = selection.current.length + files.length > LIMITS.max_count ? "Up to 4 images per message. Remove an image to add another."
+        : [...selection.current, ...files].reduce((sum, { file }) => sum + file.size, 0) > LIMITS.max_total_bytes
+          ? "Images exceed 20 MiB total. Remove an image or choose smaller copies." : "";
+      if (problem) { setError(problem); return false; }
+      replace([...selection.current, ...files.map(({ file, data }) => ({ name: file.name, key: crypto.randomUUID(), file, data, url: URL.createObjectURL(file) }))]);
+      return true;
+    },
+    /** The selection as one message: its images and the previews its bubble shows. */
+    submission(): ImageSubmission {
+      const chosen = selection.current;
+      return { request_id: crypto.randomUUID(), images: chosen.map(({ name, data }) => ({ name, data })),
+        previews: chosen.map(({ name, file, data }) => ({ name, url: `data:${file.type};base64,${data}` })) };
     },
   };
 }

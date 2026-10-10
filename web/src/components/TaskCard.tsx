@@ -131,9 +131,9 @@ export function TaskCard({
 }
 
 /** The task cards under a reply that created tasks (SPEC.md §3.5, §5.2 note 4). */
-export function TaskCards({ project, slugs, tasks }: { project: string; slugs: string[]; tasks: Map<string, TaskRow> }) {
+export function TaskCards({ project, slugs, tasks, enter }: { project: string; slugs: string[]; tasks: Map<string, TaskRow>; enter?: boolean }) {
   return (
-    <div className="turn-tasks">
+    <div className="turn-tasks" data-enter={enter || undefined}>
       {slugs.map((slug) => (
         <TaskCard key={slug} project={project} task={tasks.get(slug) ?? { slug }} />
       ))}

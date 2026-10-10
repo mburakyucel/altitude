@@ -13,7 +13,7 @@ import { when } from "../data/observed";
 import { carries, inFlight, readOf, retired, settleOutgoing, startOutgoing, updateOutgoing, dropOutgoing, useOutbox } from "../data/outbox";
 import type { Outgoing } from "../data/outbox";
 import { Bubble, DayDivider, RemoveMessage, Reply, Typing, dayLabel } from "../components/Bubbles";
-import Composer from "../components/Composer";
+import Composer, { markSubmitted, releaseSubmitted, returnToComposer } from "../components/Composer";
 import { L3ModelButton } from "../components/Models";
 import type { ImageSubmission } from "../components/ImageDraft";
 import { MessageImages, PendingImages } from "../components/MessageImages";
@@ -132,6 +132,12 @@ export function itemsOf(turns: Turn[], project: string, activeId: string | null)
   return items;
 }
 
+/** "Not sent: <reason>." with the refusal's own words, or "Not sent." without any; removal reads "Not removed". */
+function notDone(what: string, reason?: string): string {
+  const words = reason?.trim().replace(/\.+$/, "");
+  return words ? `${what}: ${words.charAt(0).toLowerCase()}${words.slice(1)}.` : `${what}.`;
+}
+
 function itemAt(item: Item): string | null {
   return item.kind === "group" ? item.at : item.turn.at;
 }
@@ -144,6 +150,27 @@ function Skeleton() {
       <div className="skeleton" />
     </div>
   );
+}
+
+/**
+ * Entrance (SPEC.md §3.6): a row that first appears while this view is open fades in once. Whatever the view
+ * opened with appears at once, and so does a row already known under another of its ids: a message moving
+ * between the outbox, the queue and the history, or a reply passing from its stream to its stored copy.
+ */
+function useEntrance(ready: boolean) {
+  const state = useRef({ opened: false, known: new Set<string>(), decided: new Map<string, boolean>() });
+  useEffect(() => { if (ready) state.current.opened = true; });
+  return useCallback((key: string, ...ids: (string | null | undefined)[]) => {
+    const { opened, known, decided } = state.current;
+    const named = [key, ...ids].filter((id): id is string => Boolean(id));
+    let entering = decided.get(key);
+    if (entering === undefined) {
+      entering = opened && !named.some((id) => known.has(id));
+      decided.set(key, entering);
+    }
+    for (const id of named) known.add(id);
+    return entering;
+  }, []);
 }
 
 export default function Conversation({
@@ -166,13 +193,19 @@ export default function Conversation({
     updateDraft(text);
   }, [name, queryClient]);
   const outbox = useOutbox(name);
-  // Sends from this view. Another view's uncertain image send leaves with its composer, whose remount recovers the caption.
-  const mine = useRef(new Set<string>());
+  const conversation = `project/${name}`;
+  // A failed send's recovery copy stays with its message while the outbox shows it; pairing clears both.
+  const shownCopy = useCallback((copy: string) => outbox.some((entry) => entry.copy === copy), [outbox]);
   // A Create task press (SPEC.md §3.3): the reply being pressed while it saves, a reason it was not sent, the spoken receipt.
   const [press, setPress] = useState<string | null>(null);
   const [pressError, setPressError] = useState<{ turnId: string; message: string } | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const dequeue = useChatDequeue(name);
+  const removeFailedAt = useRef<number | null>(null);
+  const remove = useCallback((id: string) => {
+    removeFailedAt.current = null;
+    dequeue.mutate(id, { onError: () => { removeFailedAt.current = Date.now(); } });
+  }, [dequeue]);
   const sendNow = useSendNow(name);
   const navigate = useNavigate();
   const location = useLocation();
@@ -184,6 +217,7 @@ export default function Conversation({
   } }), [name, location.pathname, navigate]);
 
   const view = chat.data;
+  const enter = useEntrance(Boolean(view));
   const activeId = view?.active?.id ?? null;
   const tasks = useMemo(() => {
     const map = new Map<string, TaskRow>();
@@ -197,13 +231,14 @@ export default function Conversation({
   // The server's record takes over an entry on the snapshot this view renders, so a bubble never leaves before
   // its stored copy arrives; the effect then drops it from the outbox.
   const read = readOf(queryClient, view);
-  const gone = useCallback((entry: Outgoing) => retired(entry, view, read)
-    || Boolean(entry.uncertain && !entry.replay && !mine.current.has(entry.id)), [view, read]);
+  const gone = useCallback((entry: Outgoing) => retired(entry, view, read), [view, read]);
   const pending = useMemo(() => outbox.filter((entry) => !gone(entry)), [outbox, gone]);
   useEffect(() => {
-    const ids = new Set(outbox.filter(gone).map((entry) => entry.id));
-    if (ids.size) dropOutgoing(queryClient, name, ids);
-  }, [outbox, gone, name, queryClient]);
+    const leaving = outbox.filter(gone);
+    if (!leaving.length) return;
+    for (const entry of leaving) if (entry.copy) releaseSubmitted(conversation, entry.copy);
+    dropOutgoing(queryClient, name, new Set(leaving.map((entry) => entry.id)));
+  }, [outbox, gone, name, conversation, queryClient]);
 
   // Stay at the bottom while the operator is there: new rows, a streamed reply growing, a card or
   // group opening, a title arriving for a line, the fonts landing. Scrolling up releases the follow.
@@ -221,18 +256,19 @@ export default function Conversation({
   }, []);
 
   const send = useCallback(
-    async (text: string, onAccepted?: () => void, images?: ImageSubmission) => {
-      following.current = true;
+    async (text: string, onAccepted?: () => void, images?: ImageSubmission, copy?: string, replaces?: string) => {
+      // A new message brings the operator to the bottom; Retry keeps the reader where they are.
+      if (!replaces) following.current = true;
       setPressError(null);
-      // The send id the server keeps on the stored row or queue row; an image Retry keeps its submission's.
+      // The send id the server keeps on the stored row or queue row; an image submission names its own.
       const id = (images?.request_id ?? crypto.randomUUID()).replaceAll("-", "");
-      mine.current.add(id);
       const update = (change: (current: Outgoing) => Outgoing | null) => updateOutgoing(queryClient, name, id, change);
-      startOutgoing(queryClient, name, { id, text, reply: "", accepted: false, turnId: null, error: null, done: false, images: images?.previews, replay: images?.image_ids ? images : undefined });
+      if (copy) markSubmitted(conversation, copy, null);
+      startOutgoing(queryClient, name, { id, text, reply: "", accepted: false, turnId: null, error: null, done: false, images: images?.previews, replay: images, copy }, replaces);
       let result: ChatSent;
       try {
         result = images ? await sendImageChat(name, text, { request_id: images.request_id, images: images.images, image_ids: images.image_ids }) : await streamChat(name, text, {
-          onAccepted: () => { onAccepted?.(); update((cur) => ({ ...cur, accepted: true })); },
+          onAccepted: () => { onAccepted?.(); if (copy) releaseSubmitted(conversation, copy); update((cur) => ({ ...cur, accepted: true })); },
           onTurn: (turn, user, delivery) => {
             if (user === undefined) return update((cur) => ({ ...cur, turnId: turn.id }));
             void queryClient.invalidateQueries({ queryKey: ["chat", name] });
@@ -242,27 +278,41 @@ export default function Conversation({
           onText: (chunk) => update((cur) => ({ ...cur, reply: cur.reply + chunk })),
         }, { request_id: id });
       } catch (error) {
-        // Refused: the bubble leaves and the composer brings the draft back with "Not sent. Retry."
-        if (images && !imageSendRefused(error)) update((cur) => ({ ...cur, uncertain: true }));
-        else if (images?.image_ids) await settleOutgoing(queryClient, name, id, (cur) => ({ ...cur, error: error instanceof Error ? error.message : "Could not resend images." }));
-        else update(() => null);
+        // The message keeps its bubble: refused says why with Retry, an unknown outcome says Unconfirmed. A text
+        // message the server accepted before its stream broke is in the record; the next read shows it.
+        const refused = images ? imageSendRefused(error) : error instanceof ApiError && error.status < 500;
+        const failure = refused ? "refused" : "unconfirmed";
+        const accepted = updateOutgoing(queryClient, name, id, (cur) => cur.accepted ? null
+          : { ...cur, failure, reason: refused && error instanceof Error ? error.message : undefined }) === null;
+        if (copy) {
+          if (accepted) releaseSubmitted(conversation, copy);
+          else markSubmitted(conversation, copy, failure);
+        }
         void queryClient.invalidateQueries({ queryKey: ["chat", name] });
         throw error;
       }
       onAccepted?.();
-      if (result.queued) {
-        // A receipt proves acceptance, not that the row still waits: it may already have run or
-        // been removed. Only a fresh canonical snapshot can project its current state.
-        await settleOutgoing(queryClient, name, id, (cur) => ({ ...cur, accepted: true, replay: undefined, queueId: result.queued!.id }));
-      } else if (images) update(() => null);
-      else {
-        await settleOutgoing(queryClient, name, id, (cur) => ({ ...cur, error: result.error ?? null, turnId: cur.turnId ?? result.turn_id ?? null }));
-      }
+      if (copy) releaseSubmitted(conversation, copy);
+      // A receipt proves acceptance, not that the row still waits: it may already have run or been removed.
+      // Only a fresh canonical snapshot can project its current state.
+      await settleOutgoing(queryClient, name, id, (cur) => ({ ...cur, accepted: true, replay: undefined, copy: undefined,
+        ...(result.queued ? { queueId: result.queued.id } : { error: result.error ?? null, turnId: cur.turnId ?? result.turn_id ?? null }) }));
       void queryClient.invalidateQueries({ queryKey: ["chat", name], refetchType: "all" });
       void queryClient.invalidateQueries({ queryKey: ["project", name] });
     },
-    [name, queryClient],
+    [name, conversation, queryClient],
   );
+
+  // A failed message's words go back into the field, before anything typed since. Edit takes a refused message
+  // off the conversation, its images back to the picker; an unconfirmed one stays, since it may already have arrived.
+  // Edit hands the words and images back first; a message whose images do not fit beside the picker's stays.
+  const edit = useCallback((entry: Outgoing) => {
+    if (!returnToComposer(conversation, entry.text, entry.images)) return;
+    dropOutgoing(queryClient, name, new Set([entry.id]));
+    if (entry.copy) releaseSubmitted(conversation, entry.copy);
+  }, [conversation, name, queryClient]);
+  const retry = (entry: Outgoing) => void send(entry.text, undefined, entry.replay && { ...entry.replay, request_id: crypto.randomUUID() }, entry.copy, entry.id)
+    .catch(() => undefined);
 
   // Create task is the operator's next message under the hood: Altitude writes the instruction and the
   // queue or a new turn carries it, while the button under the reply shows where it stands.
@@ -302,10 +352,14 @@ export default function Conversation({
   const kept = new Map(queued.flatMap((row) => row.turn_id && shown.has(row.turn_id) ? [[row.turn_id, row] as const] : []));
   const waiting = queued.filter((row) => !row.turn_id || !shown.has(row.turn_id));
   const operatorQueue = queued.filter((row) => !row.project_message && (!row.trigger || row.trigger === "chat"));
-  const actionable = operatorQueue.filter((row) => !row.offer_turn);
+  // A failed removal says "Not removed" only once a read after it still lists the message; a message the turn
+  // took meanwhile (409) needs no line, its own state says it (SPEC.md §4.2).
+  const notRemoved = dequeue.isError && !(dequeue.error instanceof ApiError && dequeue.error.status === 409)
+    && removeFailedAt.current !== null && chat.dataUpdatedAt > removeFailedAt.current ? dequeue.variables : undefined;
+  // Send now closes the operator's messages still waiting; the ones the turn has taken are on their way.
+  const actionable = operatorQueue.filter((row) => !row.offer_turn && !row.sending);
   const lastWaiting = actionable.filter((row) => row.send_now).at(-1) ?? actionable.at(-1);
-  const sendingNow = sendNow.isPending || operatorQueue.some((row) => row.send_now);
-  const busy = Boolean(view?.busy || view?.active || pending.some((entry) => !entry.done));
+  const busy = Boolean(view?.busy || view?.active || pending.some(inFlight));
   const empty = Boolean(view && view.history.length === 0 && !view.active && pending.length === 0 && queued.length === 0);
   // Only the latest reply offers Create task, while nothing of the operator's waits or runs after it.
   const lastChat = [...turns].reverse().find((turn) => turn.trigger === "chat");
@@ -348,9 +402,10 @@ export default function Conversation({
     if (item.kind === "chat" && shadowed.has(item.turn.id)) continue;
     divide(itemAt(item));
     if (item.kind === "group") {
-      rows.push(<SystemGroup key={item.turns[0]?.id ?? item.at ?? "group"} turns={item.turns} project={name} tasks={tasks} />);
+      rows.push(<SystemGroup key={item.turns[0]?.id ?? item.at ?? "group"} turns={item.turns} project={name} tasks={tasks}
+        enter={enter(`group:${item.turns[0]?.id}`, ...item.turns.map((turn) => `sys:${turn.id}`))} />);
     } else if (item.kind === "system") {
-      rows.push(<SystemLine key={item.turn.id} turn={item.turn} project={name} tasks={tasks} />);
+      rows.push(<SystemLine key={item.turn.id} turn={item.turn} project={name} tasks={tasks} enter={enter(`sys:${item.turn.id}`)} />);
     } else {
       const { turn } = item;
       const pressed = Boolean(turn.user?.offer_turn && offering.has(turn.user.offer_turn));
@@ -362,10 +417,11 @@ export default function Conversation({
       const keptRow = kept.get(turn.id);
       rows.push(
         <div key={turn.id} className="turn" data-turn={turn.id} data-joined={silent || undefined}>
-          {turn.user && !pressed ? <Bubble text={turn.user.text} at={turn.user.at} state={keptRow ? keptRow.sending ? "sending" : "queued" : turn.user.delivery?.state} images={<MessageImages project={name} images={turn.user.images} />} /> : null}
+          {turn.user && !pressed ? <Bubble text={turn.user.text} at={turn.user.at} state={keptRow ? keptRow.sending ? "sending" : "queued" : turn.user.delivery?.state} images={<MessageImages project={name} images={turn.user.images} />}
+            enter={enter(`user:${turn.id}`, `turn:${turn.id}`, turn.user.request_id && `msg:${turn.user.request_id}`, ...(turn.user.queue_ids ?? []).map((id) => `msg:${id}`))} /> : null}
           {turn.assistant ? silent ? null : (
-            <Reply text={turn.assistant.text} at={turn.assistant.at} role="assistant">
-              {turn.assistant.tasks?.length ? <TaskCards project={name} slugs={turn.assistant.tasks} tasks={tasks} /> : null}
+            <Reply text={turn.assistant.text} at={turn.assistant.at} role="assistant" enter={enter(`reply:${turn.id}`)}>
+              {turn.assistant.tasks?.length ? <TaskCards project={name} slugs={turn.assistant.tasks} tasks={tasks} enter={enter(`cards:${turn.id}`)} /> : null}
               {offer ? (
                 <CreateTask title={turn.assistant.offer!} state={offer} error={refused} onPress={() => void pressCreateTask(turn.id)}
                   onRemove={pressRow && !pressRow.turn_id ? () => dequeue.mutate(pressRow.id) : undefined} removing={dequeue.isPending} />
@@ -399,28 +455,39 @@ export default function Conversation({
         turn={{ id: view.active.id, trigger: view.active.trigger, at: view.active.started_at, prompt: "", reply: null, error: null, inProgress: true, slug: null, fyi: false, headsUp: false }}
         project={name}
         tasks={tasks}
+        enter={enter(`sys:${view.active.id}`)}
       />,
     );
   }
   for (const entry of pending) {
     divide(new Date().toISOString());
+    const key = entry.row ?? entry.id;
     for (const segment of entry.earlier ?? []) {
       if (stored(segment.turnId)) continue;
       rows.push(
-        <div key={`local-${entry.id}-${segment.turnId}`} className="turn" data-local>
-          <Bubble text={segment.text} at={new Date().toISOString()} state={segment.delivery?.state} />
-          {segment.reply ? <Reply text={segment.reply} role="assistant" /> : null}
+        <div key={`local-${key}-${segment.turnId}`} className="turn" data-local>
+          <Bubble text={segment.text} at={new Date().toISOString()} state={segment.delivery?.state} enter={enter(`local:${key}:${segment.turnId}`, segment.turnId && `turn:${segment.turnId}`)} />
+          {segment.reply ? <Reply text={segment.reply} role="assistant" enter={enter(`reply-local:${key}:${segment.turnId}`, segment.turnId && `reply:${segment.turnId}`)} /> : null}
         </div>,
       );
     }
     rows.push(
-      <div key={`local-${entry.id}`} className="turn" data-local>
-        <Bubble text={entry.text} at={new Date().toISOString()} state={!entry.accepted ? "pending" : entry.delivery?.state} images={<PendingImages images={entry.images} />} />
-        {entry.replay ? <p className={`turn-failed ${entry.error || entry.uncertain ? "text-danger" : "text-muted"}`} role={entry.error || entry.uncertain ? "alert" : "status"}>
-          {entry.error ? `Not sent. ${entry.error}` : entry.uncertain ? "Could not confirm send." : "Sending images…"}{" "}
-          {entry.error || entry.uncertain ? <button type="button" className="link" onClick={() => void send(entry.text, undefined, entry.error ? { ...entry.replay!, request_id: crypto.randomUUID() } : entry.replay).catch(() => undefined)}>Retry</button> : null}
-        </p> : entry.reply ? (
-          <Reply text={entry.reply} role="assistant" />
+      <div key={`local-${key}`} className="turn" data-local>
+        <Bubble text={entry.text} at={new Date().toISOString()} images={<PendingImages images={entry.images} />}
+          enter={enter(`local:${key}`, `msg:${entry.id}`, entry.queueId && `msg:${entry.queueId}`, entry.turnId && `turn:${entry.turnId}`)}
+          state={entry.failure === "refused" ? "failed" : entry.failure ?? (!entry.accepted ? "pending" : entry.delivery?.state)}>
+          {entry.failure === "refused" ? <span className="text-danger" role="alert">{notDone("Not sent", entry.reason)}</span> : null}
+          {entry.failure === "refused" ? <span className="message-actions">
+            <button type="button" className="link" onClick={() => retry(entry)}>Retry</button>
+            {/* Images already stored by the server cannot return to the picker, so only Retry sends them. */}
+            {entry.replay?.image_ids ? null : <><span aria-hidden="true">·</span>
+              <button type="button" className="link" onClick={() => edit(entry)}>Edit</button></>}
+          </span> : entry.failure ? <span className="message-actions">
+            <button type="button" className="link" onClick={() => returnToComposer(conversation, entry.text)}>Copy to draft</button>
+          </span> : null}
+        </Bubble>
+        {entry.reply ? (
+          <Reply text={entry.reply} role="assistant" enter={enter(`reply-local:${key}`, entry.turnId && `reply:${entry.turnId}`)} />
         ) : entry.done && entry.error ? (
           // The server's answer for this very turn; the first read after it brings the stored turn and its Retry.
           <p className="turn-failed text-muted">
@@ -436,10 +503,13 @@ export default function Conversation({
     );
   }
 
+  // Send now under the group changes in place: a spinner while its request is out, a clock once the server holds
+  // the press for the turn boundary, muted while it cannot act; each reason shows on press. Once the turn takes
+  // the group, its bubbles fade until the session confirms them and the control leaves.
+  const pressed = actionable.find((row) => row.send_now);
   const queueAction = lastWaiting ? <div className="queued-actions">
-    <SendNow pending={sendingNow} disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending}
-      reason={view?.send_now_reason || operatorQueue.find((row) => row.send_now)?.send_now_reason}
-      onClick={() => sendNow.mutate(lastWaiting.id)} />
+    <SendNow pending={sendNow.isPending} waiting={Boolean(pressed) || (sendNow.isSuccess && chat.dataUpdatedAt <= sendNow.submittedAt)} disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending}
+      reason={view?.send_now_reason || pressed?.send_now_reason} onClick={() => sendNow.mutate(lastWaiting.id)} />
   </div> : null;
 
   return (
@@ -481,22 +551,28 @@ export default function Conversation({
                   {row.project_message ? (
                     <SystemLine project={name} tasks={tasks} turn={{ id: row.id, at: row.at ?? null,
                       trigger: "project-message", prompt: row.text, reply: null, error: null,
-                      inProgress: false, slug: null, fyi: true, headsUp: false, projectMessage: row.project_message }} />
+                      inProgress: false, slug: null, fyi: true, headsUp: false, projectMessage: row.project_message }} enter={enter(`sys:${row.id}`)} />
                   ) : !row.trigger || row.trigger === "chat" ? (
                     <Bubble text={row.text} at={row.at} state={row.sending ? "sending" : "queued"} images={<MessageImages project={name} images={row.images} />}
+                      enter={enter(`queued:${row.id}`, `msg:${row.id}`, row.turn_id && `turn:${row.turn_id}`)}
                       side={row.sending || row.turn_id ? undefined : <RemoveMessage message={row.text} removing={dequeue.isPending && dequeue.variables === row.id}
-                        disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending} onClick={() => dequeue.mutate(row.id)} />} />
+                        disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending} onClick={() => remove(row.id)} />}>
+                      {notRemoved === row.id && !row.sending ? <>
+                        <span className="text-danger" role="alert">{notDone("Not removed", dequeue.error instanceof ApiError ? dequeue.error.message : undefined)}</span>
+                        <span className="message-actions"><button type="button" className="link" onClick={() => remove(row.id)}>Retry</button></span>
+                      </> : null}
+                    </Bubble>
                   ) : (
                     <SystemLine project={name} tasks={tasks} turn={{ id: row.id, at: row.at ?? null,
                       trigger: row.trigger ?? "system", prompt: row.text, reply: null, error: null, inProgress: false,
-                      slug: subjectOf(row, name), fyi: false, headsUp: false, queued: true }} />
+                      slug: subjectOf(row, name), fyi: false, headsUp: false, queued: true }} enter={enter(`sys:${row.id}`)} />
                   )}
                   {row.id === lastWaiting?.id ? queueAction : null}
                 </li>
               ))}
             </ul>
           ) : null}
-          {sendNow.isError && operatorQueue.some((row) => row.id === sendNow.variables) ? <SendNowError error={sendNow.error} /> : null}
+          {sendNow.isError && !pressed && actionable.some((row) => row.id === sendNow.variables) ? <SendNowError error={sendNow.error} /> : null}
           <p className="sr-only" role="status">{dequeue.isSuccess ? "Message removed" : ""}</p>
         </div>
       </div>
@@ -506,8 +582,9 @@ export default function Conversation({
           value={draft}
           onChange={setDraft}
           onSubmit={send}
+          showsFailures
+          shows={shownCopy}
           imageScope={{ project: name, engine: view?.engine }}
-          disabled={pending.some((entry) => entry.replay && inFlight(entry))}
           placeholder={`Message L3 about ${name}`}
           ariaLabel={`Message L3 about ${name}`}
           busy={busy}

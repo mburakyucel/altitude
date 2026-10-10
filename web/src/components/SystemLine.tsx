@@ -301,12 +301,12 @@ function SystemCard({
 }
 
 /** A queued notice's line: its kind, task and question, with the decision or the task one tap away. */
-function QueuedLine({ turn, project, title }: { turn: SystemTurn; project: string; title: string | null }) {
+function QueuedLine({ turn, project, title, enter }: { turn: SystemTurn; project: string; title: string | null; enter?: boolean }) {
   const decisions = useProject(project).data?.decisions;
   const decision = turn.slug ? decisions?.find((row) => row.slug === turn.slug) : undefined;
   const need = decision ? decision.question || decision.detail || null : null;
   return (
-    <div className="sys-line" data-turn={turn.id} data-queued>
+    <div className="sys-line" data-turn={turn.id} data-queued data-enter={enter || undefined}>
       <Dot trigger={turn.trigger} />
       <Stamp at={turn.at} className="sys-time" />
       <span className="sys-text">{lineText(turn, title ?? turn.slug, need)}</span>
@@ -324,18 +324,21 @@ export function SystemLine({
   turn,
   project,
   tasks,
+  enter,
 }: {
   turn: SystemTurn;
   project: string;
   tasks: Map<string, TaskRow>;
+  /** It arrived while the conversation is open: it fades in once. */
+  enter?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const title = turn.slug ? (tasks.get(turn.slug)?.title || null) : null;
-  if (turn.queued) return <QueuedLine turn={turn} project={project} title={title} />;
+  if (turn.queued) return <QueuedLine turn={turn} project={project} title={title} enter={enter} />;
   if (open) return <SystemCard turn={turn} project={project} title={title} tasks={tasks} onHide={() => setOpen(false)} />;
   const text = lineText(turn, title ?? turn.slug);
   return (
-    <div className="sys-line" data-turn={turn.id} data-progress={turn.inProgress || undefined}>
+    <div className="sys-line" data-turn={turn.id} data-progress={turn.inProgress || undefined} data-enter={enter || undefined}>
       <Dot trigger={turn.trigger} />
       <Stamp at={turn.at} className="sys-time" />
       <span className="sys-text">
@@ -356,16 +359,18 @@ export function SystemGroup({
   turns,
   project,
   tasks,
+  enter,
 }: {
   turns: SystemTurn[];
   project: string;
   tasks: Map<string, TaskRow>;
+  enter?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const danger = turns.some((turn) => dangerTrigger(turn.trigger));
   if (!open) {
     return (
-      <div className="sys-line" data-group={turns.length}>
+      <div className="sys-line" data-group={turns.length} data-enter={enter || undefined}>
         <span className="sys-dot" data-tone={danger ? "danger" : undefined} aria-hidden />
         <Stamp at={turns.at(-1)?.at} className="sys-time" />
         <span className="sys-text">L3 handled {turns.length} system events between your messages</span>

@@ -1534,11 +1534,10 @@ export function useL3Reset(project: string) {
 
 /** Drop a message that has not started yet. */
 export function useChatDequeue(project: string) {
-  return useOptimisticMutation<string, unknown, ChatView>({
-    mutationFn: (id) => post("/api/chat/remove", { project, id }),
-    queryKey: ["chat", project],
-    update: () => undefined,
-    failureMessage: "Couldn't remove the queued message.",
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => post("/api/chat/remove", { project, id }),
+    onSettled: () => client.invalidateQueries({ queryKey: ["chat", project] }),
   });
 }
 
