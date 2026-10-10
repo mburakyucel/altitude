@@ -1095,12 +1095,34 @@ Phone anatomy: one compact header with Back, a bordered title dropdown with down
 Stop/Continue/Check status, concise L2 state and independent **Merge held** status; a full-width
 two-tab row **Conversation | Live session** (the `live` route selects the second); content;
 scrolling fresh activity and the shared compact composer on Conversation. The header action remains
-visible in either view and while typing. The title dropdown opens a scrollable sheet
-with full title, attempt/context/tokens, PR/checks, complete block/hold reasons, and existing
-View question, Reject confirmation and operational Resume. A long phone title opens in full in
-details. Desktop retains its direct operational actions and
+visible in either view and while typing. Nothing sits between the header and the tab row (desktop:
+the chip row), so the conversation starts right under them. The title dropdown opens a scrollable sheet
+with full title, attempt, state chips, then the complete block, start-condition and hold reasons, then
+context/tokens, model, and existing View question, Reject confirmation and operational Resume. A long
+phone title opens in full in details. Desktop retains its direct operational actions and
 live-panel control while disclosing long reasons. Closing details restores the opener, draft,
-selection and reading position. A failure remains visible, not only inside details.
+selection and reading position. A failure remains visible, not only inside details: when the state dot
+is red (**Work interrupted**, rejected) the phone state label is red and the desktop state chip uses the
+danger tone, on every view and at any scroll position.
+
+What the task waits on ends the conversation: one line after the last message and every card that
+ends the chat (review cards, the question card, **Your turn · review before merge**), immediately
+before the collapsed **Activity & evidence**, so at the latest messages it is the last content line.
+It reads the state dot, 8px gap, then the reason in the 13px meta size and secondary colour (danger red
+on a fault), wrapping in full; the text is the shared excerpt of at most 120 characters. Because the
+header names the state, the line gives only the reason: an L3 wait or pause reads its recorded reason
+("Wait for the required checks on the approved pull request, then merge it."), a fault "The task
+session ended before completion. Waiting for the coordinator to check the blocker." (or "A system
+problem paused work. …", with "Coordinator needed: …" when L3 holds a question), a planned task
+"Waiting for “Publish the installation package” to finish.", a queued or resume-held task its start
+condition. There is no line while running or finished, for a pause without a displayable reason (the
+recorded reason, if any, is in details), for Stop states (the steering notice and Continue say them),
+for operator questions (the turn card says them), or while L3's open question card shows without a fault,
+since that card carries the same reason; with a fault the red line follows the card. The line is a
+status region; it updates in place as polling changes the task, never moves an older-message reader,
+and scrolls away with the chat while the header keeps the state. `web/e2e/task-room.pw.ts` walks these
+states at phone and desktop width: latest messages, reading older, details with reasons first, and
+details closed at the same reading position.
 
 Compact task states use the §3.5 labels (**L2 working**, **Waiting for coordinator**, **Your turn · …**,
 **L2 replying to you**, **Work interrupted**, **Paused**, **Stopped by you**, **Stopped by coordinator**); **Merge held** can
@@ -1120,7 +1142,7 @@ away until the owner resolves the question, including while a submitted response
 Resolution restores the fallback when merge approval is still needed; a PR mention alone grants no
 approval. Independent questions and ordinary chat remain available. After **Approve merge**, a later park
 on another dependency shows that wait and no card (the CLI and queue add "PR #N approved"), including after routine integration
-gives the PR a new head; a new hold or a later operator message naming the PR brings the card back. A fault retains a red explanation of the interruption and its known wait. Operational
+gives the PR a new head; a new hold or a later operator message naming the PR brings the card back. A fault keeps its red header state and red end-of-chat explanation of the interruption and its known wait. Operational
 pauses without questions retain Resume/Reject. No disclosure or reply releases a merge hold.
 
 Navigation states: Conversation, Live session and, for a task with a worktree, Terminal are local

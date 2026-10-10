@@ -678,7 +678,7 @@ describe("Task on desktop", () => {
     expect(turn.previousElementSibling).toHaveTextContent("L3 messaged the L2");
     expect(convo.querySelectorAll(".conversation-question")).toHaveLength(1);
     expect(screen.getAllByText("Your turn · 1 question")).toHaveLength(2);
-    expect(document.querySelector(".task-explanation")).toBeNull();
+    expect(document.querySelector(".conversation-status")).toBeNull();
     expect(screen.getByLabelText("Message the L2")).toBeInTheDocument();
     expect(screen.queryByText("Replying hands the turn back to the L2.")).toBeNull();
   });
@@ -773,16 +773,62 @@ describe("Task on desktop", () => {
     });
   });
 
-  it("discloses the full L3 block reason without a permanent paragraph", async () => {
+  it("ends the conversation with the L3 wait reason and discloses it first in details", async () => {
     stub(askingL3);
     const { user } = renderApp({ route });
 
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
     expect(screen.getByText("Waiting for coordinator")).toBeInTheDocument();
-    expect(screen.queryByText("which suite covers the timer")).toBeNull();
-    expect(document.querySelector(".task-explanation")).toHaveTextContent("Waiting for the coordinator: which suite covers the timer.");
+    // The header names the state; the reason alone ends the chat, after the last message.
+    const line = screen.getByRole("region", { name: "Task conversation" }).querySelector(".convo-col > .conversation-status")!;
+    expect(line).toHaveTextContent(/^which suite covers the timer\.$/);
+    expect(line.querySelector(".dot")).toHaveAttribute("data-state", "waiting");
+    expect(document.querySelector(".task-header")).not.toHaveTextContent("which suite");
     await user.click(screen.getByRole("button", { name: /Task details$/ }));
-    expect(within(screen.getByRole("dialog", { name: "Task details" })).getByText("which suite covers the timer")).toBeInTheDocument();
+    const details = screen.getByRole("dialog", { name: "Task details" });
+    expect(within(details).getAllByRole("heading", { level: 3 })[0]).toHaveTextContent("Waiting for coordinator");
+    expect(within(details).getByText("which suite covers the timer")).toBeInTheDocument();
+  });
+
+  it("leaves the wait to L3's open question card unless work was interrupted", async () => {
+    const question = { ...decision, id: "q-suite", audience: "l3", question: "Which suite covers the timer?", detail: "Which suite covers the timer?" };
+    const asking = { ...askingL3, question, questions: [question], question_group: { ...group, questions: [question] } };
+    stub(asking);
+    const { unmount } = renderApp({ route });
+    expect(await screen.findByText("L3 is answering")).toBeInTheDocument();
+    expect(document.querySelector(".conversation-status")).toBeNull();
+    unmount();
+
+    stub({ ...asking, fault: "sandbox" });
+    renderApp({ route });
+    expect(await screen.findByText("L3 is answering")).toBeInTheDocument();
+    expect(document.querySelector(".conversation-status")).toHaveAttribute("data-tone", "danger");
+  });
+
+  it("updates the end-of-chat reason and header state as the task changes", async () => {
+    stub(running);
+    const { queryClient } = renderApp({ route });
+    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
+    expect(document.querySelector(".conversation-status")).toBeNull();
+    const key = ["task", "altitude", "fix-timer"];
+    const view = (task: object) => act(async () => { queryClient.setQueryData(key, { ...queryClient.getQueryData<TaskView>(key), ...task }); });
+
+    await view(faulted);
+    expect(await screen.findByText("Work interrupted")).toHaveAttribute("data-tone", "danger");
+    expect(document.querySelector(".conversation-status")).toHaveAttribute("data-tone", "danger");
+
+    const question = { ...decision, id: "q-suite", audience: "l3", question: "Which suite covers the timer?", detail: "Which suite covers the timer?" };
+    await view({ ...askingL3, fault: null, question, questions: [question], question_group: { ...group, questions: [question] } });
+    expect(await screen.findByText("L3 is answering")).toBeInTheDocument();
+    expect(document.querySelector(".conversation-status")).toBeNull();
+
+    const resolved = { ...question, status: "resolved" };
+    await view({ question: resolved, questions: [resolved], question_group: null });
+    await waitFor(() => expect(document.querySelector(".conversation-status")).toHaveTextContent(/^which suite covers the timer\.$/));
+
+    await view({ ...running, question: null, questions: [] });
+    expect(await screen.findByText("L2 working")).toBeInTheDocument();
+    expect(document.querySelector(".conversation-status")).toBeNull();
   });
 
   it("explains a fault in red without inferring its cause from diagnostic prose", async () => {
@@ -790,10 +836,11 @@ describe("Task on desktop", () => {
     renderApp({ route });
 
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
-    const line = document.querySelector(".task-line");
+    const line = document.querySelector(".conversation-status");
     expect(line).toHaveTextContent("A system problem paused work. Waiting for the coordinator to check the blocker.");
     expect(line).not.toHaveTextContent("Tried twice");
-    expect(line).toHaveClass("text-danger");
+    expect(line).toHaveAttribute("data-tone", "danger");
+    expect(line!.querySelector(".dot")).toHaveAttribute("data-state", "danger");
   });
 
   it("keeps an unpunctuated fault concise and discloses its complete reason", async () => {
@@ -801,7 +848,7 @@ describe("Task on desktop", () => {
     stub({ ...faulted, blocked_reason: reason });
     const { user } = renderApp({ route });
     const opener = await screen.findByRole("button", { name: /Task details$/ });
-    const notice = document.querySelector(".task-fault");
+    const notice = document.querySelector(".conversation-status");
     expect(notice).toHaveTextContent("A system problem paused work.");
     expect(notice).not.toHaveTextContent(reason);
     expect(notice!.textContent!.length).toBeLessThanOrEqual(120);
@@ -1375,12 +1422,15 @@ describe("Task on the phone", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("shows the fault line and the decision card on the phone too", async () => {
+  it("ends the phone conversation with the fault line, leaving the header to the state", async () => {
     setViewport(390);
     stub(faulted);
     renderApp({ route });
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
-    expect(document.querySelector(".task-line")).toHaveTextContent("A system problem paused work. Waiting for the coordinator to check the blocker.");
+    expect(document.querySelector(".convo-col > .conversation-status")).toHaveTextContent("A system problem paused work. Waiting for the coordinator to check the blocker.");
+    // Nothing sits between the header and the tabs.
+    expect(document.querySelector(".task-page[data-phone] > .task-tabs")?.previousElementSibling).toBeNull();
+    expect(document.querySelector(".task-state-line")).toHaveTextContent(/^Work interrupted$/);
   });
 });
 

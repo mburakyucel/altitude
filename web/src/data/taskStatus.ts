@@ -36,7 +36,7 @@ function questionRecords(task: TaskRow): Record<string, unknown>[] {
 
 /** Read-only wording shared by task rows and pages. It creates no action, recovery or timer. */
 export function taskExplanation(task: TaskRow, decision?: Decision, includeStateLabel = false): string | null {
-  // Cards need a primary label; task pages already have a state chip and turn card.
+  // Cards need a primary label; task pages already show the state, so they say only its reason.
   const label = (value: string) => includeStateLabel ? value : null;
   const state = task.state;
   if (state === "done" || state === "rejected") return null;
@@ -57,7 +57,8 @@ export function taskExplanation(task: TaskRow, decision?: Decision, includeState
     return `${cause} ${question ? sentence(`Coordinator needed: ${question}`) : "Waiting for the coordinator to check the blocker."}`;
   }
   if (steering === "stopping") return label("Stopping");
-  if (steering === "stop_unconfirmed") return "Stop is unconfirmed; the session may still be running.";
+  // The page's steering notice already says this beside Check status.
+  if (steering === "stop_unconfirmed") return label("Stop is unconfirmed; the session may still be running.");
   if (steering === "stopped") return label(stoppedByCoordinator(task) ? "Stopped by coordinator" : "Stopped");
   if ((task["stop_id"] && !task.resume_after && steering !== "resuming") || decision?.kind === "stopped") {
     return label("Stop requested");
@@ -80,13 +81,14 @@ export function taskExplanation(task: TaskRow, decision?: Decision, includeState
     if (coordinator || task["waiting_on"] === "l3") {
       const reason = question || statusExcerpt(task["blocked_reason"]);
       if (coordinator || !questions.some((q) => q["response"])) {
-        return reason ? sentence(`Waiting for the coordinator: ${reason}`) : label("Coordinator");
+        return reason ? sentence(includeStateLabel ? `Waiting for the coordinator: ${reason}` : reason) : label("Coordinator");
       }
     }
     if (questions.some((q) => q["response"])) return label("L2 replying");
     if (task["waiting_on"] === "operator") return label("Needs you");
     if (state === "reported") return label("Coordinator review");
     const reason = statusExcerpt(task["blocked_reason"]);
+    if (!includeStateLabel) return reason ? sentence(reason) : null;
     return reason ? sentence(`Paused: ${reason}`) : task["blocked_reason"] ? "Work is paused; see details for the recorded reason." : "Work is paused; no reason is recorded.";
   }
   return null;

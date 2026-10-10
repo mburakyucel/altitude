@@ -1296,6 +1296,9 @@
 .conversation-jumps { position: absolute; bottom: 12px; right: 16px; display: flex; gap: 8px; max-width: calc(100% - 32px); font-size: var(--text-meta); }
 .conversation-jumps .btn { box-shadow: var(--shadow-card); }
 .conversation-activity { color: var(--text-secondary); font-size: var(--text-meta); }
+.conversation-status { display: flex; gap: 8px; align-items: flex-start; margin: 0; color: var(--text-secondary); font-size: var(--text-meta); overflow-wrap: anywhere; }
+.conversation-status > .dot { margin-top: 0.5em; }
+.conversation-status[data-tone="danger"] { color: var(--danger); }
 .conversation-activity summary { cursor: pointer; padding: 8px 0; }
 .conversation-activity p { overflow-wrap: anywhere; }
 

@@ -266,7 +266,8 @@ test("a blocked task: the question at the end of the chat, waiting for L3, a fau
   const v = views(page, info);
   const base = await runningTask(request, project.name);
   const title = (base.title as string) || base.slug;
-  const line = v.main.locator(".task-line");
+  // What the task waits on ends the chat (SPEC.md §3.10).
+  const line = v.main.locator(".conversation-status");
 
   const question = "Should the timer keep the old default?";
   const asked = new Date().toISOString();
@@ -308,7 +309,7 @@ test("a blocked task: the question at the end of the chat, waiting for L3, a fau
   const l3Question = v.conversation.locator(`[data-question-id="${waiting.id}"]`);
   await walk.state("02-blocked-waiting-for-l3", {
     visible: [v.main.getByText("Waiting for coordinator", { exact: true }).first(), v.conversation.getByText("L3 is answering", { exact: true }), l3Question.getByText("which suite covers the timer", { exact: true }), v.composer],
-    hidden: [card, l3Question.getByRole("button"), v.main.getByRole("button", { name: "Resume", exact: true })],
+    hidden: [card, line, l3Question.getByRole("button"), v.main.getByRole("button", { name: "Resume", exact: true })],
   });
 
   await clearRoutes(page);

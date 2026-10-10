@@ -10,10 +10,12 @@ const recordedHandoff = "L3: record the supported machine-grant handoff from the
 const scenes = [
   { key: "interrupted-access", fault: "l2-died", reason: polluted, audience: "l3", explanation: "The task session ended before completion. Coordinator needed: record the supported machine-grant handoff from the existing published-release VM approval." },
   { key: "unknown-fault", fault: "unknown-code", reason: polluted, explanation: "A system problem paused work. Waiting for the coordinator to check the blocker." },
-  { key: "coordinator", audience: "l3", reason: prerequisite, explanation: `Waiting for the coordinator: ${prerequisite}` },
+  // The page's header names the state, so its end-of-chat line gives only the reason; L3's card carries it here.
+  { key: "coordinator", audience: "l3", reason: prerequisite, explanation: `Waiting for the coordinator: ${prerequisite}`, page: null },
+  { key: "coordinator-reason", waiting: "l3", reason: prerequisite, explanation: `Waiting for the coordinator: ${prerequisite}`, page: prerequisite },
   { key: "operator", audience: "operator", reason: "Which release should the checks use?", explanation: "Waiting for your answer to the task’s question." },
   { key: "fault-and-question", fault: "l2-died", audience: "operator", reason: polluted, explanation: "The task session ended before completion. Waiting for the coordinator to check the blocker." },
-  { key: "unknown-pause", reason: "", explanation: "Work is paused; no reason is recorded." },
+  { key: "unknown-pause", reason: "", explanation: "Work is paused; no reason is recorded.", page: null },
   { key: "stopped", stop: true, reason: "Operator requested Stop.", explanation: "Stopped by you; continue when you’re ready." },
   { key: "coordinator-stopped", stop: true, by: "l3", reason: "The orphaned landing holds the repository turn; stopping to release it.", explanation: "Stopped by the coordinator; its note is in the conversation." },
   { key: "planned", planned: true, reason: "", explanation: "Waiting for “Publish the installation package” to finish." },
@@ -35,7 +37,7 @@ for (const scene of scenes) test(`task status: ${scene.key}, row and page`, asyn
   const coordinatorStop = "by" in scene;
   const planned = "planned" in scene;
   const task = { ...source, title: "Verify installation", state: planned ? "queued" : "blocked",
-    fault, blocked_reason: scene.reason, waiting_on: coordinatorStop ? "l3" : audience, handed_back: null, resume_after: null,
+    fault, blocked_reason: scene.reason, waiting_on: coordinatorStop ? "l3" : audience ?? ("waiting" in scene ? scene.waiting : null), handed_back: null, resume_after: null,
     block_actor: coordinatorStop ? "l3" : stopped ? "operator" : "l2",
     hold_merge: "Review the completed change before merging.", stop_id: stopped ? "fictional-stop" : null,
     steering: { state: stopped ? "stopped" : "idle", stop_id: stopped ? "fictional-stop" : null, generation: null, error: null },
@@ -58,15 +60,16 @@ for (const scene of scenes) test(`task status: ${scene.key}, row and page`, asyn
   const walk = walkthrough(page, info);
   await walk.open(`${project.path}?tab=work`);
   const row = page.getByRole("region", { name: "Work", exact: true }).getByRole("link", { name: /^Verify installation ·/ });
-  const routine = stopped || scene.key === "operator";
+  const pageLine = "page" in scene ? scene.page : scene.explanation;
+  const routine = stopped || scene.key === "operator" || pageLine === null;
   const rowExplanation = stopped ? "Stop requested" : scene.key === "operator" ? "Needs you" : planned ? `Planned · ${scene.explanation}` : scene.explanation;
   await walk.state("01-row-explanation", { visible: [row.getByText(rowExplanation, { exact: true })], hidden: [] });
   expect(await row.innerText()).not.toMatch(/aabbccdd|attempt 1|worker state|l2-died|thinking_tokens|\\n/);
   if (fault || stopped) await expect(row.locator(".dot")).toHaveAttribute("data-state", coordinatorStop ? "running" : "danger");
   if (audience === "operator") await expect(row.getByText("Your turn · 1 question")).toBeVisible();
   await row.click();
-  const explanation = page.locator(".task-explanation");
-  await walk.state("02-page-explanation", { visible: [...(routine ? [] : [explanation.getByText(scene.explanation, { exact: true })]), page.getByText("Merge held", { exact: false }).first()], hidden: routine ? [explanation] : [] });
+  const explanation = page.locator(".conversation-status");
+  await walk.state("02-page-explanation", { visible: [...(routine ? [] : [explanation.getByText(pageLine!, { exact: true })]), page.getByText("Merge held", { exact: false }).first()], hidden: routine ? [explanation] : [] });
   if (!routine) expect((await explanation.innerText()).length).toBeLessThan(220);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   if (audience === "operator") await expect(page.locator('[data-question-id="status-question"]').first()).toBeVisible();
