@@ -9,7 +9,7 @@ type Shown = { title: string; options: NotificationOptions };
 type Waiting = { waitUntil: (work: Promise<unknown>) => void };
 type Banner = { title: string; body?: string; tag: string; data?: unknown; close: () => void };
 
-function worker(options: { visible?: boolean } = {}) {
+function worker(options: { visible?: boolean; focus?: () => Promise<unknown> } = {}) {
   const handlers: Record<string, (event: Waiting) => void> = {};
   const shown: Shown[] = [];
   const displayed = new Map<string, Banner>(); // what the device shows now, one banner per tag
@@ -32,15 +32,29 @@ function worker(options: { visible?: boolean } = {}) {
         [...displayed.values()].filter((banner) => filter.tag === undefined || banner.tag === filter.tag),
     },
     clients: {
-      matchAll: async () => (options.visible === undefined ? [] : [{ visibilityState: options.visible ? "visible" : "hidden" }]),
+      matchAll: async () => (options.visible === undefined ? [] : [{
+        url: "https://altitude.test/", visibilityState: options.visible ? "visible" : "hidden",
+        focus: options.focus ?? (async () => undefined),
+        postMessage: (message: unknown) => { posted.push(message); },
+      }]),
+      openWindow: async (url: string) => { opened.push(url); },
     },
     location: { origin: "https://altitude.test" },
   };
   const fetched = vi.fn();
+  const posted: unknown[] = [];
+  const opened: string[] = [];
   new Function("self", "fetch", "caches", SOURCE)(self, fetched, caches);
   return {
-    shown, fetched,
+    shown, fetched, posted, opened,
     showing: () => [...displayed.keys()],
+    /** The operator taps the banner shown under `tag`. */
+    tap: async (tag: string) => {
+      let work: Promise<unknown> = Promise.resolve();
+      const banner = displayed.get(tag)!;
+      handlers.notificationclick!({ notification: banner, waitUntil: (given: Promise<unknown>) => { work = given; } } as unknown as Waiting);
+      await work;
+    },
     push: async () => {
       let work: Promise<unknown> = Promise.resolve();
       handlers.push!({ waitUntil: (given) => { work = given; } });
@@ -75,24 +89,24 @@ describe("the service worker's push", () => {
         body: "Run a restore drill",
         tag: "atlas:run-restore-drill:q-drill",
         data: { url: "/projects/atlas/tasks/run-restore-drill?question=q-drill&revision=2" },
+        silent: false,
       },
     }]);
     // The question itself stays in Altitude, and a fault is not a decision.
     expect(JSON.stringify(running.shown)).not.toContain("Which drill first?");
 
-    // A push must show something, so with nothing new the standing banner is shown again in place,
-    // without a sound: the phone keeps one banner for the decision and is not alerted twice.
+    // A second wake with nothing new still shows a notification, and it says so: the standing banner is not
+    // shown again, since iOS would stack a second one for the same decision.
     await running.push();
     expect(running.shown[1]).toEqual({
-      title: "atlas needs a decision",
-      options: { ...running.shown[0]!.options, silent: true },
+      title: "No new decision",
+      options: { body: "Nothing new since your last alert.", tag: "altitude-nothing-new", data: { url: "/" }, silent: true },
     });
-    expect(running.showing()).toEqual(["atlas:run-restore-drill:q-drill"]);
 
-    // The same decision at a later revision is the same decision, and the same banner.
+    // The same decision at a later revision is the same decision.
     running.fetched.mockImplementation(queue([{ ...question, revision: 3 }]));
     await running.push();
-    expect(running.shown[2]!.options).toMatchObject({ tag: "atlas:run-restore-drill:q-drill", silent: true });
+    expect(running.shown[2]!.title).toBe("No new decision");
 
     running.fetched.mockImplementation(queue([question, { ...question, id: "q-key", slug: "rotate-the-signing-key", title: "Rotate the signing key" }]));
     await running.push();
@@ -102,42 +116,50 @@ describe("the service worker's push", () => {
       options: {
         body: "Rotate the signing key", tag: "atlas:rotate-the-signing-key:q-key",
         data: { url: "/projects/atlas/tasks/rotate-the-signing-key?question=q-key&revision=2" },
+        silent: false,
       },
     });
+    // The note that nothing was new has done its work once a decision is named.
+    expect(running.showing()).toEqual(["atlas:run-restore-drill:q-drill", "atlas:rotate-the-signing-key:q-key"]);
   });
 
-  it("waits to alert for a decision whose task is still moving, then alerts once it rests", async () => {
+  it("never shows a bare banner: a settled, held or review-only queue leaves a plain, true note", async () => {
     const running = worker();
-    running.fetched.mockImplementation(queue([{ ...question, alert_held: true }]));
+    const review = { project: "atlas", slug: "ship-it", title: "Ship it", kind: "review", pr: 12, question: "Review PR #12 before merge" };
+    running.fetched.mockImplementation(queue([review]));
     await running.push();
-    expect(running.showing()).toEqual([]); // acknowledged silently, and nothing stays on the device
+    running.fetched.mockImplementation(queue([{ ...question, alert_held: true }, review]));
+    await running.push();
+    expect(running.shown).toEqual([{
+      title: "No decision needs you now",
+      options: { body: "It was settled before this alert arrived.", tag: "altitude-nothing-new", data: { url: "/" }, silent: true },
+    }, {
+      // Handed back to L3 or its owner since the wake: still open, so not called settled.
+      title: "No decision needs you now",
+      options: { body: "L3 or the task's owner is handling it first.", tag: "altitude-nothing-new", data: { url: "/" }, silent: true },
+    }]);
+    expect(running.shown.map((shown) => shown.title)).not.toContain("Altitude");
 
+    // The task rests with the decision open: it alerts, with a sound, once.
     running.fetched.mockImplementation(queue([question]));
     await running.push();
     expect(running.showing()).toEqual(["atlas:run-restore-drill:q-drill"]);
-    expect(running.shown.at(-1)!.options.silent).toBeUndefined();
+    expect(running.shown.at(-1)!.options.silent).toBe(false);
   });
 
-  it("closes the banner of a decision answered since, and invents none in its place", async () => {
+  it("closes the banner of a decision answered since when the next alert wakes it", async () => {
     const running = worker();
     const key = { ...question, id: "q-key", slug: "rotate-the-signing-key", title: "Rotate the signing key" };
     running.fetched.mockImplementation(queue([question, key]));
     await running.push();
     expect(running.showing()).toEqual(["atlas:run-restore-drill:q-drill", "atlas:rotate-the-signing-key:q-key"]);
 
-    // L3 or the owner settled the drill: its banner goes, and the one still waiting stays as it was.
-    running.fetched.mockImplementation(queue([key]));
+    // The drill was settled elsewhere and a new decision wakes the device: the drill's banner goes,
+    // the one still waiting stays, and the new one is named.
+    const logs = { ...question, id: "q-logs", slug: "archive-logs", title: "Archive the old logs" };
+    running.fetched.mockImplementation(queue([key, logs]));
     await running.push();
-    expect(running.showing()).toEqual(["atlas:rotate-the-signing-key:q-key"]);
-    expect(running.shown.at(-1)).toEqual({ title: "atlas needs a decision", options: expect.objectContaining({
-      tag: "atlas:rotate-the-signing-key:q-key", silent: true }) });
-
-    // The last one answered too: the device shows nothing, though the push still showed a notification.
-    const before = running.shown.length;
-    running.fetched.mockImplementation(queue([]));
-    await running.push();
-    expect(running.showing()).toEqual([]);
-    expect(running.shown.slice(before)).toEqual([{ title: "Altitude", options: { tag: "altitude-quiet", silent: true } }]);
+    expect(running.showing()).toEqual(["atlas:rotate-the-signing-key:q-key", "atlas:archive-logs:q-logs"]);
 
     // A decision that returns after being answered alerts again.
     running.fetched.mockImplementation(queue([question]));
@@ -145,45 +167,69 @@ describe("the service worker's push", () => {
     expect(running.showing()).toEqual(["atlas:run-restore-drill:q-drill"]);
   });
 
-  it("says a decision is waiting, and nothing more, when it cannot reach Altitude", async () => {
-    const running = worker();
-    running.fetched.mockRejectedValue(new TypeError("Failed to fetch"));
-    await running.push();
-    expect(running.shown).toEqual([{
-      title: "A decision needs you",
-      options: { body: "Open Altitude to read it.", tag: "altitude-decision", data: { url: "/" } },
-    }]);
-
-    // Back in reach, the generic banner stands for a decision while one waits and goes when none does.
-    running.fetched.mockImplementation(queue([{ ...question, alert_held: true }]));
-    await running.push();
-    expect(running.showing()).toEqual(["altitude-decision"]);
-    running.fetched.mockImplementation(queue([]));
-    await running.push();
-    expect(running.showing()).toEqual([]);
-  });
-
-  it("adds no banner out of reach while one already shows, since the push may clear rather than announce", async () => {
+  it("says plainly that it cannot name the decision when Altitude is out of reach", async () => {
     const running = worker();
     running.fetched.mockImplementation(queue([question]));
     await running.push();
     running.fetched.mockRejectedValue(new TypeError("Failed to fetch"));
     await running.push();
-    expect(running.showing()).toEqual(["atlas:run-restore-drill:q-drill"]);
-    expect(running.shown.at(-1)!.options.silent).toBe(true);
+    expect(running.shown.at(-1)).toEqual({
+      title: "A decision needs you",
+      options: {
+        body: "Altitude is out of reach, so this alert can't name it.", tag: "altitude-decision",
+        data: { url: "/" }, silent: false,
+      },
+    });
+    expect(running.showing()).toEqual(["atlas:run-restore-drill:q-drill", "altitude-decision"]);
+
+    // Back in reach, the next wake names what waits and the generic banner goes.
+    const key = { ...question, id: "q-key", slug: "rotate-the-signing-key", title: "Rotate the signing key" };
+    running.fetched.mockImplementation(queue([question, key]));
+    await running.push();
+    expect(running.showing()).toEqual(["atlas:run-restore-drill:q-drill", "atlas:rotate-the-signing-key:q-key"]);
   });
 
-  it("leaves alerting to a page on screen, and still shows a notification for the push", async () => {
+  it("still alerts with Altitude on screen, without a sound", async () => {
     const visible = worker({ visible: true });
     visible.fetched.mockImplementation(queue([question]));
     await visible.push();
-    expect(visible.fetched).not.toHaveBeenCalled();
-    expect(visible.shown).toEqual([{ title: "Altitude", options: { tag: "altitude-quiet", silent: true } }]);
-    expect(visible.showing()).toEqual([]);
+    expect(visible.shown).toEqual([expect.objectContaining({
+      title: "atlas needs a decision", options: expect.objectContaining({ silent: true }) })]);
 
     const hidden = worker({ visible: false });
     hidden.fetched.mockImplementation(queue([question]));
     await hidden.push();
-    expect(hidden.showing()).toEqual(["atlas:run-restore-drill:q-drill"]);
+    expect(hidden.shown[0]!.options.silent).toBe(false);
+  });
+});
+
+describe("tapping a banner", () => {
+  const url = "/projects/atlas/tasks/run-restore-drill?question=q-drill&revision=2";
+
+  it("opens the decision in the app already running, without reloading it", async () => {
+    const running = worker({ visible: false });
+    running.fetched.mockImplementation(queue([question]));
+    await running.push();
+    await running.tap("atlas:run-restore-drill:q-drill");
+    expect(running.posted).toEqual([{ type: "alert-open", url }]);
+    expect(running.opened).toEqual([]);
+    expect(running.showing()).toEqual([]);
+  });
+
+  it("still routes the app when the platform refuses to focus it, and opens the decision instead", async () => {
+    const running = worker({ visible: false, focus: async () => { throw new DOMException("not allowed", "InvalidAccessError"); } });
+    running.fetched.mockImplementation(queue([question]));
+    await running.push();
+    await running.tap("atlas:run-restore-drill:q-drill");
+    expect(running.posted).toEqual([{ type: "alert-open", url }]);
+    expect(running.opened).toEqual([url]);
+  });
+
+  it("opens the decision when Altitude is closed", async () => {
+    const running = worker();
+    running.fetched.mockImplementation(queue([question]));
+    await running.push();
+    await running.tap("atlas:run-restore-drill:q-drill");
+    expect(running.opened).toEqual([url]);
   });
 });

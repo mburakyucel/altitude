@@ -45,6 +45,10 @@ def main():
                 push._send = lambda endpoint: (body["status"], body.get("reason", ""))
                 push.notify()
                 return self._json({"refused": push.refused()})
+            if self.path == "/fixture/answer":  # the operator answers from another device
+                body = self._body()
+                T.message(body["project"], body["slug"], T.OPERATOR_MESSAGE_ROLE, "Thirty days.")
+                return self._json({"ok": True})
             if self.path == "/fixture/escalate":
                 body = self._body()
                 [row] = [d for d in T.decisions(body["project"]) if d["slug"] == body["slug"]]

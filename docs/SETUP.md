@@ -578,17 +578,15 @@ Screen, which uses the Altitude mark as its icon) and opened from there.
 
 A decision appears in Needs you at once, but alerts only when it still needs you after L3 has had
 its turn: while L3 reads the block that raised it, or the owner L3 answered resumes to settle it,
-nothing alerts. A decision still waiting 15 minutes after it was asked alerts even if L3 or the owner
-has stalled. When a decision is answered, withdrawn or superseded, its alert disappears from every
-device on its own, whether Altitude is open or the phone is closed.
+nothing alerts. A decision still waiting an hour after it was asked alerts even if L3 or the owner
+has stalled. When a decision is answered, withdrawn or superseded, its alert closes when Altitude is
+next open on that device or the next alert arrives.
 
 Turning the switch on also subscribes that device to its browser's push service, so a decision
 reaches a closed phone. Altitude signs each push with a key it generates in `~/.altitude/push/` and
 sends no payload, so the push service learns only that this device should wake; the device then asks
 Altitude what is waiting. On your own network the alert names the project and task, and away from it
-the alert says a decision is waiting and nothing more. A phone away from your network that already
-shows an alert keeps it and adds none; an alert it could not clear there closes with the next alert it
-receives or when you open Altitude on it. It needs outbound internet from altd; where a
+the alert says a decision is waiting and that Altitude is out of reach, so it cannot name it. It needs outbound internet from altd; where a
 push service is unreachable the switch says alerts arrive only while Altitude is open, which on a
 phone means while it is on screen. Each alert opens that decision and carries no conversation text.
 While a push service refuses Altitude's alerts, the line under the switch names it and the reason it

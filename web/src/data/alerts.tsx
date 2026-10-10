@@ -6,11 +6,12 @@ import { questionPath } from "./decisions";
 /**
  * Decision alerts (issue #221): one notification per newly escalated operator question, carrying the
  * project and task name only. The switch is per device, because each browser grants its own
- * permission, and lives under "altitude.alerts" beside the theme. Alerts arrive only while an
- * Altitude page is open — a background desktop tab still alerts; a phone stops the page shortly after
- * it leaves the screen. `altitude.alerts.seen` keeps the keys already alerted, so a refresh,
- * a reconnection or activity on other tasks never repeats one, and a device that has never
- * recorded a key starts from what is already waiting instead of announcing the backlog.
+ * permission, and lives under "altitude.alerts" beside the theme. A device that push can wake is alerted
+ * by the service worker, open page or not; any other device is alerted by an open Altitude page — a
+ * background desktop tab still alerts; a phone stops the page shortly after it leaves the screen.
+ * `altitude.alerts.seen` keeps the keys the page already alerted, so a refresh, a reconnection or
+ * activity on other tasks never repeats one, and a device that has never recorded a key starts from
+ * what is already waiting instead of announcing the backlog.
  */
 export const ALERTS_KEY = "altitude.alerts";
 export const ALERTS_SEEN_KEY = "altitude.alerts.seen";
@@ -146,7 +147,19 @@ function writeSeen(keys: string[] | null) {
   }
 }
 
-/** Turning alerts on records what is already waiting, so the switch never announces the backlog. */
+/** The service worker's record of the decisions it announced (`altitude-alerts` in web/public/sw.js). */
+async function rememberInWorker(keys: string[]): Promise<void> {
+  try {
+    await (await caches.open("altitude-alerts")).put("/announced", new Response(JSON.stringify(keys)));
+  } catch {
+    // no Cache Storage: the first wake may name a decision that was already waiting
+  }
+}
+
+/**
+ * Turning alerts on records what is already waiting, for the page and for the worker, so neither the switch
+ * nor the first wake announces the backlog.
+ */
 export async function enableAlerts(pending: Decision[]): Promise<AlertState> {
   if (!supported()) return "unsupported";
   const permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
@@ -155,7 +168,9 @@ export async function enableAlerts(pending: Decision[]): Promise<AlertState> {
     return readAlertState();
   }
   await navigator.serviceWorker.register("/sw.js");
-  writeSeen(pending.filter((decision) => decision.id).map(alertKey));
+  const waiting = pending.filter((decision) => decision.id).map(alertKey);
+  writeSeen(waiting);
+  await rememberInWorker(waiting);
   store(ALERTS_KEY, "on");
   announce();
   store(ALERTS_PUSH_KEY, await subscribePush() ? "on" : null);
@@ -217,23 +232,30 @@ async function deliver(decision: Decision, key: string): Promise<void> {
 const ANY_DECISION = "altitude-decision";
 
 /**
- * A banner whose decision has left the queue was answered, withdrawn or superseded: this device closes it
- * without being touched. The worker does the same when a push wakes it with the page closed.
+ * A banner whose decision has left the queue was answered, withdrawn or superseded, and a generic one has
+ * been read here: this device closes them without being touched. WebKit ignores a close within 30 seconds
+ * of the banner appearing, so an open page tries again on each later read; the worker does the same when
+ * the next alert wakes it with the page closed.
  */
 async function closeAnswered(waiting: Set<string>): Promise<void> {
   const registration = await navigator.serviceWorker.getRegistration("/sw.js");
   for (const banner of (await registration?.getNotifications()) ?? []) {
-    if (banner.tag === ANY_DECISION ? waiting.size === 0 : !waiting.has(banner.tag)) banner.close();
+    if (banner.tag === ANY_DECISION || !waiting.has(banner.tag)) banner.close();
   }
 }
 
+/** How often an open page tries again to close what WebKit kept open in a banner's first 30 seconds. */
+const CLOSE_RETRY_MS = 30_000;
+
 /**
- * Mounted once by the shell. Published operator questions alert; faults, stopped tasks and finished
+ * Mounted once by the shell. Published operator questions alert; faults, stopped tasks, reviews and finished
  * work stay in Needs you without one. A decision already on screen is recorded without alerting, and
- * one marked `alert_held` waits, unrecorded, until its task rests.
+ * one marked `alert_held` waits, unrecorded, until its task rests. A device push wakes leaves alerting to
+ * the service worker, so one decision never shows twice there.
  */
 export function useDecisionAlerts(overview: Overview | undefined, pathname: string): void {
   const state = useAlertState();
+  const pushed = useSyncExternalStore(watch, readPushState, () => false);
   const navigate = useNavigate();
   const asks = (overview?.queue ?? []).filter((decision) => decision.id);
   const signature = asks.map((decision) => `${alertKey(decision)}${decision.alert_held ? " held" : ""}`).join("\n");
@@ -249,14 +271,27 @@ export function useDecisionAlerts(overview: Overview | undefined, pathname: stri
     // Answered decisions drop out, so the record stays the size of the queue.
     writeSeen([...new Set([...(seen ?? []).filter((key) => waiting.has(key)), ...current.keys()])]);
     void closeAnswered(waiting).catch(() => undefined); // a banner left open still opens the queue
-    if (seen === null) return; // storage lost its record: start again from what is waiting now
+    if (seen === null || pushed) return; // storage lost its record: start again from what is waiting now
     for (const [key, decision] of current) {
       if (seen.includes(key)) continue;
       if (!document.hidden && showsDecision(pathname, decision)) continue;
       // A permission revoked since the last read leaves the decision in Needs you and nothing else.
       void deliver(decision, key).catch(() => announce());
     }
-  }, [state, signature, pathname]);
+  }, [state, signature, pathname, pushed]);
+
+  useEffect(() => {
+    if (state !== "on") return;
+    const retry = () => {
+      if (!document.hidden) void closeAnswered(new Set(latest.current.map(alertKey))).catch(() => undefined);
+    };
+    const timer = window.setInterval(retry, CLOSE_RETRY_MS);
+    document.addEventListener("visibilitychange", retry);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", retry);
+    };
+  }, [state]);
 
   useEffect(() => {
     if (!supported()) return;
@@ -311,7 +346,7 @@ function useRefusals(on: boolean, pushed: boolean): Refusal[] {
 
 function refusedNote({ host, reason }: Refusal): string {
   return `The push service at ${host} refused Altitude's last alert${reason ? ` (${reason})` : ""}, so that device `
-    + "alerts only while Altitude is open. Turn alerts off and on there to subscribe it again.";
+    + "gets no alerts. Turn alerts off and on there to subscribe it again.";
 }
 
 /** The switch on Needs you (SPEC.md §2.1), set on each device that should alert. */

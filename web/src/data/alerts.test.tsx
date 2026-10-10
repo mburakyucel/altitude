@@ -139,18 +139,23 @@ const KEY = "altitude:choose-retention:q-retention";
 
 afterEach(() => {
   Reflect.deleteProperty(navigator, "serviceWorker");
+  Reflect.deleteProperty(globalThis, "caches");
   vi.restoreAllMocks();
 });
 
 describe("decision alerts", () => {
   it("asks for permission once, registers the worker and starts from what is already waiting", async () => {
     const browser = alertingBrowser("default", "granted");
+    const stored = new Map<string, string>(); // the worker's own record, in Cache Storage
+    vi.stubGlobal("caches", { open: async () => ({ put: async (key: string, value: Response) => { stored.set(key, await value.text()); } }) });
     mockFetch([question]);
     const { user } = renderApp({ route: "/" });
 
     await user.click(await screen.findByRole("button", { name: "Alert me about new decisions" }));
     await waitFor(() => expect(browser.register).toHaveBeenCalledWith("/sw.js"));
     expect(JSON.parse(localStorage.getItem(ALERTS_SEEN_KEY)!)).toEqual([KEY]);
+    // The first wake must not announce the backlog either.
+    await waitFor(() => expect(stored.get("/announced")).toBe(JSON.stringify([KEY])));
     expect(browser.shown).not.toHaveBeenCalled();
     expect(await screen.findByRole("button", { name: "Alerts on" })).toHaveAttribute("aria-pressed", "true");
 
@@ -212,7 +217,7 @@ describe("decision alerts", () => {
 
     expect(await screen.findByText(
       "The push service at push.example refused Altitude's last alert (403 BadJwtToken), so that device "
-      + "alerts only while Altitude is open. Turn alerts off and on there to subscribe it again.",
+      + "gets no alerts. Turn alerts off and on there to subscribe it again.",
     )).toBeVisible();
     expect(screen.queryByText(/even when Altitude is closed/)).toBeNull();
   });
@@ -278,27 +283,49 @@ describe("decision alerts", () => {
     expect(browser.shown).toHaveBeenCalledTimes(1);
   });
 
-  it("closes the banner of a decision answered since, and keeps the ones still waiting", async () => {
+  it("closes the banner of a decision answered since, keeps the ones still waiting, and retries a kept one", async () => {
     const browser = alreadyOn([KEY, "altitude:run-restore-drill:q-drill"]);
     browser.registration.show(KEY, "altitude:run-restore-drill:q-drill", "altitude-decision");
     const setQueue = mockFetch([question, { ...second, alert_held: true }]);
     const { queryClient } = renderApp({ route: "/projects/altitude" });
     await waitFor(() => expect(localStorage.getItem(ALERTS_SEEN_KEY)).toContain("q-drill"));
-    expect(browser.registration.banners.map((banner) => banner.tag))
-      .toEqual([KEY, "altitude:run-restore-drill:q-drill", "altitude-decision"]);
+    // The page read the queue, so the banner that said only "a decision needs you" has done its work.
+    await waitFor(() => expect(browser.registration.banners.map((banner) => banner.tag))
+      .toEqual([KEY, "altitude:run-restore-drill:q-drill"]));
 
-    // The drill was settled: its banner closes without being touched; the other stays.
+    // The drill was settled within the banner's first 30 seconds: WebKit keeps it open once.
+    const [, drill] = browser.registration.banners;
+    const close = drill!.close;
+    drill!.close = vi.fn(() => { drill!.close = close; });
     setQueue([question]);
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
-    await waitFor(() => expect(browser.registration.banners.map((banner) => banner.tag))
-      .toEqual([KEY, "altitude-decision"]));
+    await waitFor(() => expect(drill!.close).toBe(close));
+    expect(browser.registration.banners.map((banner) => banner.tag)).toEqual([KEY, "altitude:run-restore-drill:q-drill"]);
 
-    // Nothing waits: the banner that said only "a decision is waiting" goes too.
+    // The page tries again, here on its return to the screen, and the answered banner goes; the other stays.
+    act(() => { document.dispatchEvent(new Event("visibilitychange")); });
+    await waitFor(() => expect(browser.registration.banners.map((banner) => banner.tag)).toEqual([KEY]));
+
     setQueue([]);
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
     await waitFor(() => expect(browser.registration.banners).toEqual([]));
     expect(JSON.parse(localStorage.getItem(ALERTS_SEEN_KEY)!)).toEqual([]);
     expect(browser.shown).not.toHaveBeenCalled();
+  });
+
+  it("leaves alerting to the service worker on a device push wakes", async () => {
+    const browser = alreadyOn([KEY]);
+    localStorage.setItem(ALERTS_PUSH_KEY, "on");
+    const setQueue = mockFetch([question]);
+    const { queryClient } = renderApp({ route: "/projects/altitude" });
+    await waitFor(() => expect(localStorage.getItem(ALERTS_SEEN_KEY)).toContain("q-retention"));
+
+    // The worker announces it on this device, with or without the page: one decision, one banner.
+    setQueue([question, second]);
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
+    await waitFor(() => expect(localStorage.getItem(ALERTS_SEEN_KEY)).toContain("q-drill"));
+    expect(browser.shown).not.toHaveBeenCalled();
+    localStorage.removeItem(ALERTS_PUSH_KEY);
   });
 
   it("records a decision the operator is already looking at without alerting, and alerts elsewhere", async () => {

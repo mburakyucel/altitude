@@ -161,7 +161,8 @@ class TestPush(AltitudeCase):
         notes = []
         push.notify(notes.append)
         self.assertEqual(json.loads((self.tmp / "push.json").read_text())["subscriptions"], [self.endpoint])
-        self.assertIn("refused with 503", notes[0])
+        self.assertEqual(notes[0], "push wakes 1 device(s) for 1 new decision(s)")  # the daemon log shows each wake
+        self.assertIn("refused with 503", notes[1])
 
         # A decision no device took is still owed, and the next tick that gets through carries it.
         self.service.status = 201
@@ -178,15 +179,16 @@ class TestPush(AltitudeCase):
         for _ in range(3):
             push.notify(notes.append)
         self.assertEqual(len(self.service.requests), 3)  # tried each tick, so a fix on either side needs no step
-        self.assertEqual(notes, ["push to %s refused with 403 BadJwtToken" % self.endpoint.split("/")[2]])
+        self.assertEqual(notes, ["push wakes 1 device(s) for 1 new decision(s)",
+                                 "push to %s refused with 403 BadJwtToken" % self.endpoint.split("/")[2]])
         self.assertEqual(push.refused(), [{"host": self.endpoint.split("/")[2], "reason": "403 BadJwtToken"}])
 
         self.service.status = 201
         push.notify(notes.append)
-        self.assertEqual(notes[1:], ["push to %s delivered again" % self.endpoint.split("/")[2]])
+        self.assertEqual(notes[2:], ["push to %s delivered again" % self.endpoint.split("/")[2]])
         self.assertEqual(push.refused(), [])
         push.notify(notes.append)
-        self.assertEqual((len(notes), len(self.service.requests)), (2, 4))
+        self.assertEqual((len(notes), len(self.service.requests)), (3, 4))
 
     def test_a_refusal_without_a_reason_and_a_resubscribed_device_start_clean(self):
         push.subscribe(self.endpoint)
@@ -321,7 +323,9 @@ class TestPush(AltitudeCase):
         push.notify()
         self.assertEqual(len(self.service.requests), 1)
 
-    def test_an_answered_decision_wakes_each_device_once_more_to_close_its_banner(self):
+    def test_an_answered_decision_wakes_no_device(self):
+        # Safari shows something for every push and WebKit keeps a banner closed within 30 seconds, so a wake
+        # that only cleared an answered banner left a bare "Altitude" one on the phone.
         second = self.endpoint.replace("device-1", "device-2")
         push.subscribe(self.endpoint)
         push.subscribe(second)
@@ -331,14 +335,39 @@ class TestPush(AltitudeCase):
 
         T.message(self.project, task["slug"], T.OPERATOR_MESSAGE_ROLE, "Thirty days.")  # answered
         self.assertEqual(digest.queue(), [])
-        self.service.status = 503  # no device takes it: the clearing is owed until one does
-        push.notify()
-        self.service.status = 201
         push.notify()
         push.notify()
-        self.assertEqual(sorted(sent["path"] for sent in self.service.requests[2:]),
-                         ["/wake/device-1", "/wake/device-1", "/wake/device-2", "/wake/device-2"])
+        self.assertEqual(len(self.service.requests), 2)
         self.assertEqual(json.loads((self.tmp / "push.json").read_text())["seen"], [])
+
+        # The same question asked again is a new alert.
+        self.decision("Choose backup retention again", "How long should backups stay now?")
+        push.notify()
+        self.assertEqual(len(self.service.requests), 4)
+
+    def test_a_device_still_owed_a_wake_is_not_woken_once_every_decision_is_settled(self):
+        second = self.endpoint.replace("device-1", "device-2")
+        push.subscribe(self.endpoint)
+        push.subscribe(second)
+        task = self.decision("Choose backup retention", "How long should backups stay?")
+        self.service.refusing = {"/wake/device-2": 503}
+        push.notify()  # the first device takes the alert; the second is owed it
+        self.service.refusing = {}
+        T.message(self.project, task["slug"], T.OPERATOR_MESSAGE_ROLE, "Thirty days.")  # answered on the first
+        push.notify()
+        self.assertEqual([sent["path"] for sent in self.service.requests], ["/wake/device-1", "/wake/device-2"])
+        self.assertEqual(json.loads((self.tmp / "push.json").read_text())["owed"], [])
+
+    def test_a_review_held_for_the_operator_wakes_no_device(self):
+        push.subscribe(self.endpoint)
+        task = T.new(self.project, "Ship the release", "Do it.", actor="burak")
+        self.patch(T, "review_row", lambda project, record: {
+            "project": project, "slug": record["slug"], "title": record.get("title"), "kind": "review", "pr": 12,
+            "question": "Review PR #12 before merge", "asked": "2026-10-10T00:00:00+00:00"}
+            if record["slug"] == task["slug"] else None)
+        self.assertEqual([row["kind"] for row in digest.queue()], ["review"])  # Needs you lists it
+        push.notify()
+        self.assertEqual(self.service.requests, [])
 
     def test_a_reader_while_the_question_is_published_already_sees_it_held(self):
         task = T.new(self.project, "Choose backup retention", "Do it.", actor="burak")
@@ -358,34 +387,7 @@ class TestPush(AltitudeCase):
         readers[0].join(30)
         self.assertEqual([row.get("alert_held") for row in read[0]], [True])
 
-    def test_a_device_that_misses_the_clearing_wake_is_tried_until_one_reaches_it(self):
-        second = self.endpoint.replace("device-1", "device-2")
-        push.subscribe(self.endpoint)
-        push.subscribe(second)
-        task = self.decision("Choose backup retention", "How long should backups stay?")
-        push.notify()
-        T.message(self.project, task["slug"], T.OPERATOR_MESSAGE_ROLE, "Thirty days.")  # answered
-        self.service.refusing = {"/wake/device-2": 503}
-        push.notify()  # the first device takes the clearing; the second is still owed it
-        push.notify()
-        self.assertEqual([sent["path"] for sent in self.service.requests[2:]],
-                         ["/wake/device-1", "/wake/device-2", "/wake/device-2"])
-
-        self.service.refusing = {}
-        sending = push._send
-
-        def unreachable_once(endpoint):  # no route to its push service this tick, then one
-            self.patch(push, "_send", sending)
-            raise OSError("network is unreachable")
-
-        self.patch(push, "_send", unreachable_once)
-        push.notify()
-        push.notify()
-        push.notify()
-        self.assertEqual([sent["path"] for sent in self.service.requests[5:]], ["/wake/device-2"])
-        self.assertEqual(push.refused(), [])
-
-    def test_a_decision_settled_before_it_alerted_sends_no_clearing_wake(self):
+    def test_a_decision_settled_before_it_alerted_wakes_no_device(self):
         push.subscribe(self.endpoint)
         slug = self.for_operator("Choose backup retention", "How long should backups stay?")
         push.notify()
@@ -400,7 +402,7 @@ class TestPush(AltitudeCase):
         self.decision("Choose backup retention", "How long should backups stay?")
         notes = []
         push.notify(notes.append)
-        self.assertIn("deferred", notes[0])
+        self.assertIn("deferred", notes[1])
         self.assertEqual(json.loads((self.tmp / "push.json").read_text())["subscriptions"], [self.endpoint])
 
     def test_a_subscription_needs_the_https_endpoint_a_push_service_issued(self):

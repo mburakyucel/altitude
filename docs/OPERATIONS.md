@@ -158,6 +158,17 @@ once it succeeds, held tasks and report turns on the engine continue on their ne
 login is still invalid, the attempt records the rejection again and automatic retries keep waiting
 for up to thirty minutes. A usage limit is not cleared this way; it waits for its reset.
 
+## Decision alerts on a device
+
+A subscribed phone or browser is woken once for each new decision that still needs you after L3 has had
+its turn and the owner has stopped, or an hour after it was asked if either is still busy. The banner reads
+"<project> needs a decision" with the task name, and tapping it opens that decision. Away from Altitude's
+network it reads "A decision needs you" and says Altitude is out of reach; a decision settled in the moment
+before the device read it shows "No decision needs you now". PR reviews, faults and stops stay in Needs you
+without waking a device. No push is sent only to clear a banner, because Safari shows something for every
+push: an answered banner closes when Altitude is next open on that device or the next alert arrives. altd
+logs each wake as `push wakes <n> device(s) for <m> new decision(s)`.
+
 ## Refused decision alerts
 
 A push service that refuses Altitude's alert keeps its device subscribed, and altd tries that device
@@ -166,7 +177,7 @@ fix on either side takes effect without another step. altd records the refusal a
 service gave in `~/.altitude/push.json`, logs it once as `push to <host> refused with
 <status> <reason>` and logs `push to <host> delivered again` once a push gets through. Until then,
 the line under the alert switch in Needs you names that push service and its reason, and that device
-alerts only while Altitude is open.
+gets no alerts.
 
 - `403 BadJwtToken`: the service rejects the signed sender token, most often its contact address.
   Set `ALTITUDE_PUSH_CONTACT` to a `mailto:` address with a real domain (see [configuration](SETUP.md#configuration-and-limits)).

@@ -801,7 +801,7 @@ its line below states the reach honestly: a device the browser's push service ca
 Altitude closed, and says that away from your network the alert names nothing; a device that cannot be
 woken alerts only while Altitude is open, which on a phone means while it is on screen. While a push
 service refuses Altitude's alerts, the line names that service and the reason it gave, says its device
-alerts only while Altitude is open and offers turning alerts off and on there to subscribe it again; the
+gets no alerts and offers turning alerts off and on there to subscribe it again; the
 line returns to the reach once a push gets through. A browser that cannot show notifications disables the switch and says so;
 refused permission says the browser's settings block alerts and how to allow them again. Every state
 leaves Needs you, its cards and all typing untouched.
@@ -809,11 +809,15 @@ leaves Needs you, its cards and all typing untouched.
 Each newly published operator question alerts once, titled with the project and carrying the task name
 only — never question, conversation or incident text. Activating it opens that decision in the running
 app. Faults, stopped tasks, reviews and completed work stay in Needs you without an alert. A grouped
-ask alerts once. A decision already on screen, in Needs you or its owning task, is recorded without
-alerting. Refreshing, reconnecting, polling and other tasks' activity repeat nothing, and turning the
-switch on never announces what is already waiting. A question shows in Needs you at once but alerts
-only once L3 has had its turn and it is still open (or 15 minutes after it was asked), and an alert
-whose decision is answered, withdrawn or superseded disappears from every device untouched.
+ask alerts once. On a device without push, a decision already on screen, in Needs you or its owning task,
+is recorded without alerting; a device push wakes gets the alert without sound while Altitude is on screen.
+Refreshing, reconnecting, polling and other tasks' activity repeat nothing, and turning the switch on never
+announces what is already waiting. A question shows in Needs you at once but alerts only once L3 has had
+its turn and the owner has stopped with it still open (or an hour after it was asked). No alert is ever a
+bare "Altitude": out of reach it reads **A decision needs you** / *Altitude is out of reach, so this alert
+can't name it.*, and a decision settled just before the device read it shows **No decision needs you now**.
+An alert whose decision is answered, withdrawn or superseded closes when Altitude is next open on that
+device or the next alert arrives.
 
 ### 3.9 Open the owning L2 question
 
