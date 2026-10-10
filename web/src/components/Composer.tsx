@@ -74,7 +74,7 @@ const liveSubmissions = new Set<string>();
 // A failed update retains the current recovery within this document. The stored bytes identify
 // the copy it supersedes; clearing/replacing browser storage also discards that fallback.
 const unwrittenRecovery = new Map<string, { stored: string | null; value: SubmittedText }>();
-const recoveryViews = new Map<string, { draft: () => string; failure: () => SendFailure; restore: (saved: SubmittedText, unavailable?: boolean) => void;
+const recoveryViews = new Map<string, { draft: () => string; failure: () => SendFailure; restore: (saved: SubmittedText, unavailable?: boolean, id?: string) => void;
   voice: (send: VoiceSend | null) => void; submit: (text: string, retry?: ImageSubmission, voice?: VoiceSend) => Promise<void> }>();
 const recoveryKey = (conversation: string) => `altitude.submitted:${conversation}`;
 function readSubmitted(conversation: string): SubmittedText {
@@ -119,7 +119,7 @@ function settleSubmitted(conversation: string, id: string, text: string, failure
   // If browser storage stops accepting writes after admission, its earlier pending copy remains
   // recoverable as unconfirmed on reload. A storage error cannot undo a server receipt.
   try { if (readable) saveSubmitted(conversation, saved); } catch { /* retain the pending recovery copy */ }
-  if (failure || restore) view?.restore(saved, !readable || unwrittenRecovery.has(conversation));
+  if (failure || restore) view?.restore(saved, !readable || unwrittenRecovery.has(conversation), id);
 }
 
 export interface ComposerProps {
@@ -365,6 +365,9 @@ export default function Composer({
   // Only a cancel made in view takes focus back, even when a recorder reports its end later (issue
   // #495): the field after Escape, the microphone after the X, so a phone keyboard does not open.
   const focusAfterCancel = useRef<"field" | "mic" | null>(null);
+  // Likewise only a Send made in view, by its submission id, while the composer stays in view:
+  // returning to a view whose message is still sending does not open the phone keyboard (SPEC.md §3.10).
+  const focusAfterSend = useRef(new Set<string>());
   const mic = useRef<HTMLButtonElement>(null);
   const stopRequested = useRef(false);
   const sendAfterTranscribing = useRef<VoiceSend | null>(null);
@@ -497,14 +500,15 @@ export default function Composer({
       submit: (text: string, retry?: ImageSubmission, voice?: VoiceSend) => currentSubmit.current(text, retry, voice),
       draft: () => deferredRecovery.current?.text ?? draft.current,
       failure: () => failure.current,
-      restore: (saved: SubmittedText, unavailable = false) => {
+      restore: (saved: SubmittedText, unavailable = false, id?: string) => {
         if (admitting.current) { deferredRecovery.current = saved; return; }
         draft.current = saved.text;
         onChange(saved.text);
         failure.current = saved.failure;
         setSendFailure(saved.failure);
         setRecoveryUnavailable(unavailable);
-        focusField(saved.text.length);
+        // A reload's recovery has no Send; a Cancel made in view takes focus whatever the Send's claim.
+        if (id === undefined || focusAfterSend.current.delete(id) || focusAfterCancel.current) focusField(saved.text.length);
       },
     };
     recoveryViews.set(conversation, view);
@@ -567,6 +571,7 @@ export default function Composer({
         return;
       }
       const id = voice?.id ?? (retry && retryImage.current ? retryImage.current.recoveryId : crypto.randomUUID());
+      if (!voice && visible.current) focusAfterSend.current.add(id);
       try {
         beginSubmitted(conversation, text, id, preserveDraft);
       } catch {
@@ -621,10 +626,10 @@ export default function Composer({
             current.text = saved.text; current.failure = saved.failure;
             saveSubmitted(conversation, current);
           } catch { unavailable = true; }
-          recoveryViews.get(conversation)?.restore(saved, unavailable);
+          recoveryViews.get(conversation)?.restore(saved, unavailable, id);
         }
       }
-      focusField();
+      if (focusAfterSend.current.delete(id)) focusField();
     },
     [conversation, disabled, sendDisabled, focusField, images, onChange, onSubmit],
   );
@@ -721,6 +726,7 @@ export default function Composer({
       // Image reads start now, while the selected Files and reply context still belong to this Send.
       void sending.images?.catch(() => undefined);
       sendAfterTranscribing.current = sending;
+      if (visible.current) focusAfterSend.current.add(id);
       voiceSends.set(conversation, sending);
       recoveryViews.get(conversation)?.voice(sending);
       draft.current = "";
@@ -871,6 +877,9 @@ export default function Composer({
   useEffect(() => {
     if (!active && capturePhase !== "idle" && !voiceSend) cancel();
   }, [active, capturePhase, voiceSend, cancel]);
+  useEffect(() => {
+    if (!active) focusAfterSend.current.clear();
+  }, [active]);
 
   useEffect(() => {
     if (phase === "idle" || (!active && !voiceSend)) return;
