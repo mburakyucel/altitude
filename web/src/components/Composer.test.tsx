@@ -795,12 +795,16 @@ describe("Composer", () => {
     await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
   });
 
-  it("Unavailable: no mic and Voice needs HTTPS on an insecure origin; no mic and no hint without recording", () => {
+  it("discloses the HTTPS requirement on press; omits voice when recording is unsupported", async () => {
     installVoiceBrowser();
     vi.stubGlobal("isSecureContext", false);
     const first = render(<Harness />);
-    expect(screen.queryByRole("button", { name: /voice input/ })).toBeNull();
-    expect(screen.getByText("Voice needs HTTPS")).toBeInTheDocument();
+    const unavailable = screen.getByRole("button", { name: /voice input/ });
+    expect(unavailable).toHaveAttribute("aria-disabled", "true");
+    expect(unavailable).toHaveAccessibleDescription("Voice needs HTTPS");
+    expect(screen.getByText("Voice needs HTTPS").closest("p")).toHaveClass("sr-only");
+    await userEvent.click(unavailable);
+    expect(screen.getByText("Voice needs HTTPS").closest("p")).not.toHaveClass("sr-only");
     first.unmount();
 
     vi.stubGlobal("isSecureContext", true);
@@ -808,6 +812,18 @@ describe("Composer", () => {
     render(<Harness />);
     expect(screen.queryByRole("button", { name: /voice input/ })).toBeNull();
     expect(screen.queryByText("Voice needs HTTPS")).toBeNull();
+  });
+
+  it.each(["unsupported", "pending"])("keeps authored hints visible when voice is %s", (state) => {
+    installVoiceBrowser();
+    if (state === "unsupported") vi.stubGlobal("AudioWorkletNode", undefined);
+    else {
+      presetVoiceBackend(null);
+      vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    }
+    render(<Harness hint="L3 answers or creates one task." />);
+    expect(screen.getByText("L3 answers or creates one task.").closest("p")).not.toHaveClass("sr-only");
+    expect(screen.queryByRole("button", { name: "Start voice input" })).toBeNull();
   });
 
   it("Ctrl+M starts and stops the microphone from the field", async () => {
@@ -1175,10 +1191,13 @@ describe("Composer", () => {
   it.each([
     [{ state: "unavailable", reason: "voice runs on Linux x86_64 only for now" }, "Voice isn't available on this computer: voice runs on Linux x86_64 only for now. Typing works."],
     [{ state: "failed", download_bytes: 698_000_000, reason: "a download failed" }, "Voice setup did not finish. Retry in Settings. Typing works."],
-  ] as const)("host voice that cannot run here (%o) hides the mic and says why", async (host, hint) => {
+  ] as const)("host voice that cannot run here (%o) explains the unavailable mic on press", async (host, hint) => {
     installVoiceBrowser({ backend: "host", host });
     render(<MemoryRouter><Harness /></MemoryRouter>);
-    expect(screen.queryByRole("button", { name: "Start voice input" })).toBeNull();
+    const unavailable = screen.getByRole("button", { name: "Start voice input" });
+    expect(unavailable).toHaveAttribute("aria-disabled", "true");
+    expect(unavailable).toHaveAccessibleDescription(hint);
+    await userEvent.click(unavailable);
     expect(screen.getByText((_, node) => node?.classList.contains("composer-hint") === true && node.textContent === hint)).toBeInTheDocument();
   });
 
@@ -1860,8 +1879,8 @@ describe("Composer", () => {
   it("browser recognition: no recognizer in this browser hides the mic and says so; the backend read hides the mic until it answers", async () => {
     installVoiceBrowser({ backend: "browser", recognition: false });
     const first = render(<Harness />);
-    expect(screen.queryByRole("button", { name: /voice input/ })).toBeNull();
-    expect(screen.getByText("This browser has no speech recognition. Typing works.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /voice input/ })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: /voice input/ })).toHaveAccessibleDescription("This browser has no speech recognition. Typing works.");
     first.unmount();
 
     installVoiceBrowser({ backend: "browser" });

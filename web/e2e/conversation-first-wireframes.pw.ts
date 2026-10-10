@@ -189,5 +189,5 @@ test("conversation-first proposal: recovery and voice actions", async ({ page },
   await page.getByRole("textbox").fill("Keep it for 14 days,");
   await page.getByRole("button", { name: "Use microphone", exact: true }).click();
   await page.getByRole("button", { name: "Send", exact: true }).click();
-  await walk.state("voice-sent", { visible: [page.getByText("Decision recorded", { exact: true })], hidden: [page.getByLabel("Audio waveform"), page.getByText("Transcribing…", { exact: true })] });
+  await walk.state("voice-sent", { visible: [page.getByText("Decision recorded", { exact: true })], hidden: [page.getByLabel("Audio waveform"), page.getByRole("status", { name: "Transcribing…", exact: true })] });
 });

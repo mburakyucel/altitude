@@ -77,7 +77,7 @@ firstOpen("first open: the app arrives compressed, opening fetches nothing for d
   await walk.state("first-open-01-cold-typing", {
     action: () => field(main).fill("a draft typed on first open"),
     visible: [field(main), main.getByRole("button", { name: "Start voice input", exact: true })],
-    hidden: [main.getByText("Transcribing…", { exact: true })],
+    hidden: [main.getByRole("status", { name: "Transcribing…", exact: true })],
   });
 
   const warm = await visit.open(project.path, "first-open-warm");

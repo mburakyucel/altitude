@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { StatusMark, BusyLabel } from "../components/StatusMark";
 import { startUpdate } from "../data/api";
 import type { Overview, Update } from "../data/api";
 
@@ -36,11 +37,11 @@ export function UpdateNotice({ update }: { update: Update | null | undefined }) 
   }}>×</button>;
 
   if (running) return <div className="restart-banner update-notice" role="status" aria-label="New version">
-    <p className="restart-banner-summary">Installing Altitude {running}… Altitude restarts when it is ready.</p>
+    <p className="restart-banner-summary"><StatusMark announce={false} label={`Installing Altitude ${running}… Altitude restarts when it is ready.`} /> Altitude {running}</p>
   </div>;
 
   if (installed) return <div className="restart-banner update-notice" role="status" aria-label="New version">
-    <p className="restart-banner-summary">Updated to {installed.version}.{" "}
+    <p className="restart-banner-summary"><StatusMark announce={false} busy={false} label={`Updated to ${installed.version}.`} /> {installed.version}{" "}
       <a href={installed.notes} target="_blank" rel="noreferrer">What’s new</a>
     </p>
     {dismiss}
@@ -55,7 +56,7 @@ export function UpdateNotice({ update }: { update: Update | null | undefined }) 
 
   const version = available!.version;
   const install = <button type="button" className="btn btn-primary" disabled={start.isPending} onClick={() => start.mutate(version)}>
-    {start.isPending ? "Starting…" : failed ? "Try again" : `Install ${version}`}
+    <BusyLabel busy={start.isPending} label={failed ? "Try again" : `Install ${version}`} working="Starting…" />
   </button>;
   return <div className="restart-banner update-notice" role="status" aria-label="New version">
     {failed ? <p className="restart-banner-summary">

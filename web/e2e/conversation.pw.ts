@@ -654,21 +654,21 @@ test("voice: starting, listening, cancelled, transcribing, landed (nothing else 
   });
   const wave = v.main.locator(".composer-wave");
   const timer = v.main.getByLabel("Recording time", { exact: true });
-  const transcribing = v.main.getByText("Transcribing…", { exact: true });
+  const transcribing = v.main.getByRole("status", { name: "Transcribing…", exact: true });
 
   await walk.open(project.path);
   await v.field.fill("Keep the draft");
   await page.evaluate("window.fixtureMicGate = new Promise(resolve => { window.releaseFixtureMic = resolve; }); void 0");
   await walk.state("00-starting-overlay", {
     action: () => v.mic.click(),
-    visible: [v.main.locator(".composer-box").getByText("Opening microphone…"), v.main.locator(".composer-box .spinner"), v.field, v.cancel],
+    visible: [v.main.locator(".composer-box").getByRole("status", { name: "Opening microphone…", exact: true }), v.main.locator(".composer-box .spinner"), v.field, v.cancel],
     hidden: [transcribing],
   });
   await expectVoiceDraftLocked(page, v.field, "Keep the draft");
   await expectStacked(v);
   await walk.state("01-listening-three-controls-overlay", {
     action: () => page.evaluate("window.releaseFixtureMic()"),
-    visible: [v.stop, v.cancel, v.send, wave, timer, v.hint, v.field, v.main.getByText("Listening… Stop to add text, or Send.", { exact: true })],
+    visible: [v.stop, v.cancel, v.send, wave, timer, v.hint, v.field, v.main.getByRole("status", { name: "Listening… Stop to add text, or Send.", exact: true })],
     hidden: [v.mic, transcribing],
   });
   await expect(v.hint).toHaveText("Listening… Stop to add text, or Send.");
@@ -785,7 +785,7 @@ test("voice: Send at once transcribes the draft into the normal pending bubble",
   await v.mic.click();
   await expect(v.stop).toBeVisible();
   await expect(v.field).toHaveValue(/^Keep the draft check/, { timeout: 5000 });
-  const transcribing = v.main.getByText("Transcribing…", { exact: true });
+  const transcribing = v.main.getByRole("status", { name: "Transcribing…", exact: true });
   await walk.state("01-send-at-once-transcribing-overlay", {
     action: () => v.send.click(),
     visible: [transcribing, v.field, v.cancel, v.main.locator(".composer-box .spinner"), ...(!v.phone ? [v.main.locator(".composer-wave")] : [])],
@@ -844,7 +844,7 @@ test("voice: cancelling delayed Send transcription restores editing and ignores 
   await expect(v.field).not.toBeEditable();
   await walk.state("02-cancelled-transcription-editable-overlay", {
     action: () => v.cancel.click(), visible: [v.field, v.mic, v.send],
-    hidden: [v.cancel, v.main.getByText("Transcribing…", { exact: true }), v.main.locator(".composer-box .spinner")],
+    hidden: [v.cancel, v.main.getByRole("status", { name: "Transcribing…", exact: true }), v.main.locator(".composer-box .spinner")],
   });
   await expect(v.field).toHaveValue("Keep the preexisting draft");
   await expect(v.field).toBeEditable();
@@ -889,10 +889,15 @@ test("voice: denied and unavailable", { tag: "@chromium" }, async ({ page, reque
   const w = views(insecure, info);
   const insecureWalk = walkthrough(insecure, info);
   await insecureWalk.open(project.path);
+  await expect(w.mic).toHaveAttribute("aria-disabled", "true");
+  await expect(w.main.getByText("Voice needs HTTPS", { exact: true }).locator("..")).toHaveClass("sr-only");
+  await w.mic.focus();
+  await insecure.keyboard.press("Enter");
   await insecureWalk.state("02-unavailable-voice-needs-https-overlay", {
-    visible: [w.main.getByText("Voice needs HTTPS", { exact: true }), w.field, w.send],
-    hidden: [w.mic, w.stop],
+    visible: [w.main.getByText("Voice needs HTTPS", { exact: true }), w.field, w.send, w.mic],
+    hidden: [w.stop],
   });
+  await expect(w.main.getByText("Voice needs HTTPS", { exact: true }).locator("..")).not.toHaveClass("sr-only");
   await insecure.close();
 });
 

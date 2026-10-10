@@ -60,8 +60,9 @@ describe("Pair this device", () => {
   it("on the computer running Altitude, needs no certificate step and pairs with a code", async () => {
     const calls = service({ local: true, https: false, check: false, certificate: null });
     const user = renderGate();
-    expect(await screen.findByText("This is the computer running Altitude.")).toBeVisible();
-    expect(within(step(/^Trust Altitude’s certificate/)).getByText("Trusted")).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Pair" })).toBeVisible();
+    expect(screen.queryByText("This is the computer running Altitude.")).toBeNull();
+    expect(within(step(/^Trust Altitude’s certificate/)).getByRole("status", { name: "Trusted" })).toBeVisible();
     expect(screen.queryByRole("link", { name: /Download/ })).toBeNull();
     const field = screen.getByLabelText("Pairing code");
     await user.type(field, "2222-2222");
@@ -80,7 +81,8 @@ describe("Pair this device", () => {
     agent(IPHONE);
     const calls = service(remote, ["untrusted", "trusted"]);
     const user = renderGate();
-    expect(await screen.findByText("You opened Altitude’s HTTPS address.")).toBeVisible();
+    await screen.findByText("Not trusted yet");
+    expect(screen.queryByText("You opened Altitude’s HTTPS address.")).toBeNull();
     expect(await screen.findByText("Not trusted yet. The usual missing step is the switch in Certificate Trust Settings.")).toBeVisible();
     const trust = step(/^Trust Altitude’s certificate/);
     expect(within(trust).getByText("Not trusted yet")).toBeVisible();
@@ -89,7 +91,7 @@ describe("Pair this device", () => {
     expect(screen.queryByLabelText("Pairing code")).toBeNull();
     // Coming back from Settings checks again by itself.
     await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
-    expect(await within(trust).findByText("Trusted")).toBeVisible();
+    expect(await within(trust).findByRole("status", { name: "Trusted" })).toBeVisible();
     expect(within(trust).queryByRole("link", { name: "Download the profile" })).toBeNull();
     await user.type(screen.getByLabelText("Pairing code"), "ABCD-2345");
     await user.click(screen.getByRole("button", { name: "Pair" }));
@@ -113,17 +115,17 @@ describe("Pair this device", () => {
       return original(input, init);
     }));
     await user.click(within(trust).getByRole("button", { name: "Check again" }));
-    expect(await within(trust).findByText("Checking…")).toBeVisible();
+    expect(await within(trust).findByRole("status", { name: "Checking…" })).toBeVisible();
     expect(within(trust).getByRole("button", { name: "Check again" })).toBeDisabled();
     release();
-    expect(await within(trust).findByText("Trusted")).toBeVisible();
+    expect(await within(trust).findByRole("status", { name: "Trusted" })).toBeVisible();
     expect(screen.getByLabelText("Pairing code")).toBeVisible();
   });
 
   it("tries again on an ordinary connection, starts over on an expired challenge, and gives up after three", async () => {
     const calls = service(remote, ["retry", "expired", "trusted"]);
     renderGate();
-    expect(await within(await waitFor(() => step(/^Trust Altitude’s certificate/))).findByText("Trusted")).toBeVisible();
+    expect(await within(await waitFor(() => step(/^Trust Altitude’s certificate/))).findByRole("status", { name: "Trusted" })).toBeVisible();
     expect(calls.checks).toEqual(["c1", "c1", "c2"]);
   });
 
@@ -163,7 +165,7 @@ describe("Pair this device", () => {
     expect(await screen.findByText(/Altitude can’t check this automatically\./)).toBeVisible();
     expect(screen.queryByLabelText("Pairing code")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Continue" }));
-    expect(within(step(/^Trust Altitude’s certificate/)).getByText("Trusted")).toBeVisible();
+    expect(within(step(/^Trust Altitude’s certificate/)).getByRole("status", { name: "Trusted" })).toBeVisible();
     await user.type(screen.getByLabelText("Pairing code"), "ABCD-2345");
     await user.click(screen.getByRole("button", { name: "Pair" }));
     expect(await screen.findByRole("heading", { name: "The app" })).toBeVisible();

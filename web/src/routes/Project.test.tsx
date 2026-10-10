@@ -353,7 +353,7 @@ describe("Project page", () => {
     const { queryClient } = renderApp({ route: "/projects/altitude" });
     const panel = await screen.findByRole("region", { name: "Work" });
     const row = within(panel).getByRole("link", { name: /^Add the badge/ });
-    expect(row).toHaveAccessibleName("Add the badge · Your turn · 1 question · You requested a stop; confirmation is in the task.");
+    expect(row).toHaveAccessibleName("Add the badge · Your turn · 1 question · Stop requested");
     expect(row.querySelector(".dot")).toHaveAttribute("data-state", "danger");
     fixtures.project = { ...project, tasks: [{ slug: decision.slug, title: decision.title, state: "blocked", fault: "host", blocked_reason: "Cannot write the checkout.", resume_after: ago(-1) }] };
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ["project", "altitude"] }); });

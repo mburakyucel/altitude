@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { TaskView } from "../data/api";
 import { Stamp } from "./Stamp";
+import { StatusMark } from "./StatusMark";
 
 export function elapsed(at: string | null | undefined, now: number) {
   const time = at ? Date.parse(at) : NaN;
@@ -28,6 +29,7 @@ export interface Cue {
   /** working: output recorded within 60 seconds; quiet: none since; idle: no evidence either way. */
   state: "working" | "quiet" | "idle";
   text: string;
+  loading?: boolean;
 }
 
 /** The one activity line Conversation and Live session share (SPEC.md §3.10), from the recorded output time. */
@@ -35,7 +37,7 @@ export function activityCue(activity: TaskView["activity"], now: number): Cue {
   const observation = activity?.observation;
   const quiet = elapsed(observation?.at, now);
   if (activity?.state === "unavailable") return { state: "idle", text: "Activity unavailable" };
-  if (!observation) return { state: "idle", text: activity ? "No activity recorded yet" : "Reading activity…" };
+  if (!observation) return { state: "idle", text: activity ? "No activity recorded yet" : "Reading activity…", ...(!activity ? { loading: true } : {}) };
   if (quiet == null) return { state: "idle", text: "Output recorded · time unavailable" };
   if (quiet >= 60) return { state: "quiet", text: `No new activity for ${duration(quiet)}` };
   return { state: "working", text: `Working · output ${age(quiet)}` };
@@ -43,6 +45,7 @@ export function activityCue(activity: TaskView["activity"], now: number): Cue {
 
 /** The dot and words of the activity line; the dot pulses only while output is recent (never under reduced motion). */
 export function CueLine({ cue }: { cue: Cue }) {
+  if (cue.loading) return <StatusMark label={cue.text} announce={false} />;
   return <span className="cue-line">
     <span className="dot" data-state={cue.state === "working" ? "running" : "idle"} data-pulse={cue.state === "working" || undefined} aria-hidden />
     {cue.text}

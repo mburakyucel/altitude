@@ -61,10 +61,10 @@ describe("Host voice settings", () => {
     expect(await screen.findByText("Needs a one-time download of about 698 MB, checked against this release.")).toBeVisible();
     expect(screen.getByText("Speech model: NVIDIA Parakeet TDT 0.6B v2, licensed CC-BY-4.0.")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Set up voice" }));
-    expect(await screen.findByText("Setting up… 0 MB of 698 MB")).toBeVisible();
+    expect(await screen.findByRole("progressbar", { name: "Voice setup" })).toBeVisible();
     expect(screen.getByRole("progressbar", { name: "Voice setup" })).toBeVisible();
     host.advance({ state: "setting-up", download_bytes: 698435338, done_bytes: 349000000 });
-    expect(await screen.findByText("Setting up… 349 MB of 698 MB")).toBeVisible();
+    await waitFor(() => expect(screen.getByRole("progressbar", { name: "Voice setup" })).toHaveAttribute("value", "349000000"));
     await user.click(screen.getByRole("button", { name: "Cancel setup" }));
     expect(await screen.findByRole("button", { name: "Set up voice" })).toBeVisible();
     expect(host.actions).toEqual(["setup", "cancel"]);
@@ -73,7 +73,7 @@ describe("Host voice settings", () => {
   it("a finished setup can be removed, and a failed one retried", async () => {
     const host = hostFixture({ state: "ready", download_bytes: 698435338 }, "host");
     const { user } = renderApp({ route: "/settings/voice" });
-    expect(await screen.findByText(/Ready on this computer/)).toBeVisible();
+    expect(await screen.findByRole("button", { name: /Remove voice/ })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Remove voice (698 MB)" }));
     expect(await screen.findByRole("button", { name: "Set up voice" })).toBeVisible();
     expect(host.actions).toEqual(["remove"]);
@@ -243,7 +243,7 @@ describe("Projects folder setting", () => {
     const browser = await screen.findByRole("region", { name: "Choose a folder" });
     await user.click(await within(browser).findByRole("button", { name: /code/ }));
     await user.click(await within(browser).findByRole("button", { name: "Use “code”" }));
-    await screen.findByText("Saved. First run now lists the folders in ~/code.");
+    await screen.findByRole("status", { name: "Saved." });
     expect(saves).toEqual([{ path: "/home/ada/code" }]);
     expect(screen.getByText("~/code")).toBeInTheDocument();
   });

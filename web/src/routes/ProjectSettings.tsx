@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
+import { StatusMark, BusyLabel } from "../components/StatusMark";
 import { ApiError, forgetProject, overviewQuery, useOverview, useProject, useProjectDefaults, useProjectRemove, useSetDefault } from "../data/api";
 import type { Overview, ProjectDefaults } from "../data/api";
 import { ModelsDialog, choiceLabel, closedLabel } from "../components/Models";
@@ -19,7 +20,7 @@ function SaveStatus({ save, retry }: { save: Save; retry: () => void }) {
   if (save.isError) return <p className="text-meta text-danger" role="alert">
     {save.error.message} <button type="button" className="link" onClick={retry}>Retry save</button>
   </p>;
-  return save.isPending || save.isSuccess ? <p className="text-meta text-muted" role="status">{save.isPending ? "Saving…" : "Saved."}</p> : null;
+  return save.isPending || save.isSuccess ? <StatusMark busy={save.isPending} label={save.isPending ? "Saving…" : "Saved."} /> : null;
 }
 
 /** Free text with suggestions: Enter or leaving the field saves, Escape restores, empty means Default. */
@@ -79,14 +80,14 @@ function L3Section({ name, data }: { name: string; data: ProjectDefaults }) {
     <div className="settings-group">
       <div className="settings-row">
         <span><strong>{closedLabel(data.l3_choice, data.l3_unavailable, data, data.engines)}</strong>{" "}
-          <small>{data.l3_choice ? "Until you choose Auto" : "Project routing and defaults"} · {last}</small>
+          <small>{last}</small>
           {data.l3_unavailable && data.l3_choice ? <small>{data.l3_unavailable}</small> : null}
           {save.isError ? <small role="alert" className="text-danger">{save.error.message}</small> : null}
         </span>
         <span className="settings-actions">
           {data.l3_choice ? <button type="button" className="link" disabled={save.isPending}
             onClick={() => save.mutate({ setting: "l3_choice", value: null, expected: data.l3_choice },
-              { onError: () => void client.invalidateQueries({ queryKey: ["defaults", name] }) })}>{save.isPending ? "Saving…" : "Back to Auto"}</button> : null}
+              { onError: () => void client.invalidateQueries({ queryKey: ["defaults", name] }) })}><BusyLabel busy={save.isPending} label="Back to Auto" working="Saving…" /></button> : null}
           <button type="button" className="btn" aria-haspopup="dialog" onClick={() => setOpen(true)}>Change…</button>
         </span>
       </div>
@@ -169,7 +170,7 @@ function RoutingSection({ name, data }: { name: string; data: ProjectDefaults })
         </select>
       </label>
     </div>
-    {save.isPending ? <p role="status" className="text-meta text-muted">Saving…</p> : null}
+    {save.isPending ? <StatusMark label="Saving…" /> : null}
     {changed ? <p role="alert" className="text-meta text-danger">Changed in another window. The page shows the current routing.</p>
       : error ? <p role="alert" className="text-meta text-danger">{error.message}</p> : null}
   </section>;
@@ -198,13 +199,13 @@ function RemoveDialog({ name, removal, onRemove, onCheck, onClose }: {
       {removal.status === "refused" ? <p role="alert" className="text-danger">{removal.message}</p> : null}
       {removal.status === "unconfirmed" ? <p role="alert" className="text-danger">Couldn't confirm removal; {name} is still in Altitude.</p> : null}
       {removal.status === "unknown" ? <p role="alert" className="text-danger">Couldn't confirm removal, and the project list could not be read.</p> : null}
-      {busy ? <p role="status" className="text-meta text-muted">{removal.status === "checking" ? "Checking whether it was removed…" : "Removing…"} Closing doesn't cancel removal.</p> : null}
+      {busy ? <p role="status" className="text-meta text-muted">Closing doesn't cancel removal.</p> : null}
       <div className="remove-actions">
         <button type="button" className="btn" data-autofocus disabled={busy} onClick={onClose}>Cancel</button>
         {/* Removing again is offered only once the project is known to be present. */}
         {removal.status === "unknown" ? <button type="button" className="btn" onClick={onCheck}>Check again</button>
           : <button type="button" className="btn btn-danger" disabled={busy} onClick={onRemove}>
-            {busy ? "Removing…" : removal.status === "unconfirmed" ? "Retry" : `Remove ${name}`}
+            <BusyLabel busy={busy} label={removal.status === "unconfirmed" ? "Retry" : `Remove ${name}`} working={removal.status === "checking" ? "Checking whether it was removed…" : "Removing…"} />
           </button>}
       </div>
     </div>
@@ -272,7 +273,7 @@ export default function ProjectSettings() {
     <div className="page settings-page">
       {!phone ? <>{back}<h1>{name}</h1></> : null}
       <p className="text-meta text-muted">Applies to this project only. A model or effort L3 sets for one task wins over these.</p>
-      {defaults.isPending ? <p role="status">Loading settings…</p>
+      {defaults.isPending ? <p><StatusMark label="Loading settings…" /></p>
         : defaults.isError ? <p role="alert" className="text-danger">Could not load settings. <button className="link" onClick={() => void defaults.refetch()}>Retry</button></p>
           : <>
             <L3Section name={name} data={defaults.data} />

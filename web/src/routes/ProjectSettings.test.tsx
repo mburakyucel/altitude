@@ -184,7 +184,7 @@ describe("Project settings", () => {
     const { user } = renderApp({ route: "/settings/projects/example" });
     const section = await screen.findByRole("region", { name: "L3" });
     await within(section).findByText("Deep · High");
-    expect(section).toHaveTextContent("Until you choose Auto · last reply reported alpha-deep-2 · Low");
+    expect(section).toHaveTextContent("last reply reported alpha-deep-2 · Low");
     await user.click(within(section).getByRole("button", { name: "Change…" }));
     const dialog = await screen.findByRole("dialog", { name: "Models · L3 · example only" });
     expect(within(dialog).getByRole("tab", { name: /L3/ })).toHaveAttribute("aria-selected", "true");
@@ -193,7 +193,7 @@ describe("Project settings", () => {
     await within(section).findByText("Auto");
     expect(posts).toEqual([{ project: "example", setting: "l3_choice", value: null, expected: { engine: "alpha", model: "deep", effort: "high" } }]);
     expect(within(section).queryByRole("button", { name: "Back to Auto" })).toBeNull();
-    expect(section).toHaveTextContent("Project routing and defaults · last reply reported");
+    expect(section).toHaveTextContent("Auto last reply reported");
   });
 
   it("says when L3 has not replied and shows Retry when the settings cannot load", async () => {

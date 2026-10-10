@@ -87,7 +87,7 @@ test("the folder browser lists the computer running Altitude and adds a folder, 
   await row("code").click();
   await walk.state("11-projects-folder-saved", {
     action: () => browser.getByRole("button", { name: "Use “code”" }).click(),
-    visible: [page.getByText("Saved. First run now lists the folders in ~/code.")],
+    visible: [page.getByRole("status", { name: "Saved." })],
     hidden: [page.getByRole("alert")],
   });
 

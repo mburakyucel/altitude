@@ -263,7 +263,7 @@ describe("Needs you", () => {
     expect(within(stoppedCard).getByText("yesterday")).toBeInTheDocument();
     expect(within(stoppedCard).getAllByText("the recording upload fails at 10 minutes")).toHaveLength(1);
     expect(within(stoppedCard).queryByRole("button")).toBeNull();
-    expect(screen.getByText(/That is everything\. Running work stays in each project\./)).toHaveClass("calm");
+    expect(screen.queryByText(/That is everything\. Running work stays in each project\./)).toBeNull();
   });
 
   it("keeps discussion in the owning chat and does not fetch per-card conversation rows", async () => {

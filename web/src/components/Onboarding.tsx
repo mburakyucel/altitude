@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { useSearchParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { StatusMark, BusyLabel } from "./StatusMark";
 import { changeHostVoice, readVoiceSettings, saveIncidentReports, saveOperatorName, saveVoiceSettings, useMachine, usePrerequisites } from "../data/api";
 import type { Machine, VoiceSettings } from "../data/api";
 import { updateVoiceSettings } from "./voiceBackend";
@@ -35,7 +36,7 @@ function Failure({ save }: { save: Save }) {
 function Loading({ machine }: { machine: ReturnType<typeof useMachine> }) {
   return machine.isError
     ? <p role="alert" className="text-meta text-danger">Could not load this setting. <button type="button" className="link" onClick={() => void machine.refetch()}>Retry</button></p>
-    : <p role="status" className="text-meta text-muted">Loading…</p>;
+    : <p className="text-meta text-muted"><StatusMark label="Loading…" /></p>;
 }
 
 /**
@@ -62,7 +63,7 @@ export function NameForm({ onSaved, actions, save: label }: FormProps) {
       <p className="text-meta text-muted">{machine.data.operator ? "Filled in from your settings or your Git name. " : ""}Change it here or later in Settings.</p>
       <Failure save={save} />
     </div>
-    {actions(<button type="submit" className="btn btn-primary" disabled={save.status === "saving"}>{save.status === "saving" ? "Saving…" : label ?? "Continue"}</button>)}
+    {actions(<button type="submit" className="btn btn-primary" disabled={save.status === "saving"}><BusyLabel busy={save.status === "saving"} label={label ?? "Continue"} working="Saving…" /></button>)}
   </form>;
 }
 
@@ -77,7 +78,7 @@ export function Command({ text }: { text: string }) {
   return <div className="onboarding-command">
     <code>{text}</code>
     <button type="button" className="btn" onClick={() => void navigator.clipboard?.writeText(text).then(() => setCopied(true))}>
-      {copied ? "Copied" : "Copy"}
+      {copied ? <StatusMark label="Copied" busy={false} /> : "Copy"}
     </button>
   </div>;
 }
@@ -90,12 +91,12 @@ export function PrerequisiteList({ actions }: { actions: (check: ReactNode, read
   const machine = useMachine();
   const checking = checks.isFetching;
   const check = <button type="button" className="btn" disabled={checking} onClick={() => void checks.refetch()}>
-    {checking ? "Checking…" : "Check again"}
+    <BusyLabel busy={checking} label="Check again" working="Checking…" />
   </button>;
   return <>
     {machine.data?.container_shell ? <div className="onboarding-note">Run on the host to open the container shell:<Command text={machine.data.container_shell} /></div> : null}
     <div className="settings-card onboarding-checks" aria-busy={checking}>
-      {checks.isPending ? <p role="status" className="text-meta text-muted">Checking this computer…</p>
+      {checks.isPending ? <p className="text-meta text-muted"><StatusMark label="Checking this computer…" /></p>
         : checks.isError ? <p role="alert" className="text-meta text-danger">Could not check this computer: {checks.error.message}</p>
           : checks.data.map((item) => <div key={item.key} className="onboarding-check">
             <span className={`onboarding-mark onboarding-${item.state}`} aria-hidden>{marks[item.state]}</span>
@@ -148,7 +149,7 @@ export function IncidentReportsForm({ onSaved, actions, save: label }: FormProps
     <p className="onboarding-note"><strong>What leaves this computer.</strong> Only the system-level cause and a fictional or redacted
       reproduction. Paths, project and task names, your name, ids, addresses and credentials are removed before publishing, and
       project code or conversations are never included. {target.trim() === machine.data.altitude_repository ? "Altitude’s repository is public, so these issues are public." : "A public repository makes these issues public."}</p>
-    {actions(<button type="submit" className="btn btn-primary" disabled={busy}>{busy ? "Checking…" : label ?? (publishing && changed ? "Save and continue" : "Continue")}</button>)}
+    {actions(<button type="submit" className="btn btn-primary" disabled={busy}><BusyLabel busy={busy} label={label ?? (publishing && changed ? "Save and continue" : "Continue")} working="Checking…" /></button>)}
   </form>;
 }
 
@@ -180,7 +181,7 @@ export function VoiceStep({ onDone, actions }: { onDone: () => void; actions: (c
   if (!voice.data) {
     return <>{voice.isError
       ? <p role="alert" className="text-meta text-danger">Could not load this setting. <button type="button" className="link" onClick={() => void voice.refetch()}>Retry</button></p>
-      : <p role="status" className="text-meta text-muted">Loading…</p>}{actions(null)}</>;
+      : <p className="text-meta text-muted"><StatusMark label="Loading…" /></p>}{actions(null)}</>;
   }
   const host = voice.data.host;
   const busy = save.status === "saving";
@@ -207,7 +208,7 @@ export function VoiceStep({ onDone, actions }: { onDone: () => void; actions: (c
     </div>
     {actions(<>
       {voice.data.backend === "browser" && started ? null : browserButton("Use browser recognition instead")}
-      {started ? null : <button key="setup" type="button" className="btn btn-primary" disabled={busy} onClick={() => void setUp()}>{busy ? "Starting…" : "Set up voice"}</button>}
+      {started ? null : <button key="setup" type="button" className="btn btn-primary" disabled={busy} onClick={() => void setUp()}><BusyLabel busy={busy} label="Set up voice" working="Starting…" /></button>}
     </>, started)}
   </>;
 }

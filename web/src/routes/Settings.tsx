@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { StatusMark, BusyLabel } from "../components/StatusMark";
 import FolderBrowser from "../components/FolderBrowser";
 import { Command, IncidentReportsForm, NameForm, PrerequisiteList } from "../components/Onboarding";
 import { ApiError, type Machine, changeHostVoice, closePhoneShare, makePairingCode, openPhoneShare, readVoiceSettings, revokeDevice, saveProjectsFolder, saveTerminalAccess, saveUpdateAutomatic, saveUpdateCheck, saveValidationAccess, saveVoiceSettings, startUpdate, useDevices, useMachine, useOverview, useProjectDefaults } from "../data/api";
@@ -12,6 +13,7 @@ import type { HostVoice, VoiceBackend, VoiceSettings, VoiceUpdate } from "../dat
 import { updateVoiceSettings } from "../components/voiceBackend";
 import { useViewport } from "../shell/breakpoints";
 import VoiceDiagnostics from "../components/VoiceDiagnostics";
+import { UnavailableAction } from "../components/UnavailableAction";
 import "./settings.css";
 
 const labels: Record<VoiceBackend, string> = { host: "This computer", browser: "Browser recognition" };
@@ -44,15 +46,15 @@ function HostVoicePanel({ host, onChange }: { host: HostVoice; onChange: (value:
       setBusy(false);
     }
   };
-  if (host.state === "unavailable") return <p className="text-meta text-danger">Not available on this computer: {host.reason}.</p>;
+  if (host.state === "unavailable") return <UnavailableAction label="Set up voice" reason={`Not available on this computer: ${host.reason}.`} />;
   const size = megabytes(host.download_bytes);
   return <div className="voice-host">
     {host.state === "setting-up" ? <>
       <progress max={host.download_bytes} value={host.done_bytes ?? 0} aria-label="Voice setup" />
-      <p role="status" className="text-meta text-muted">Setting up… {megabytes(host.done_bytes ?? 0)} of {size}</p>
+      <p role="status" className="text-meta text-muted"><span className="sr-only">Setting up… </span>{megabytes(host.done_bytes ?? 0)} of {size}</p>
       <button type="button" className="btn" disabled={busy} onClick={() => void act("cancel")}>Cancel setup</button>
     </> : host.state === "ready" ? <>
-      <p className="text-meta text-muted">Ready on this computer. While you dictate, the speech process uses about 2 GB of memory.</p>
+      <p className="text-meta text-muted">While you dictate, the speech process uses about 2 GB of memory.</p>
       <button type="button" className="btn" disabled={busy} onClick={() => void act("remove")}>Remove voice ({size})</button>
     </> : <>
       <p className={`text-meta ${host.state === "failed" ? "text-danger" : "text-muted"}`} role={host.state === "failed" ? "alert" : undefined}>
@@ -116,7 +118,7 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
           {backend === "host" && (choice === "host" || saved.host.state !== "absent") ? <HostVoicePanel host={saved.host} onChange={hostChanged} /> : null}
         </div>)}
       </fieldset>
-      {save.status === "saving" || save.status === "saved" ? <p role="status" className="text-meta text-muted">{save.status === "saving" ? "Saving…" : "Saved."}</p> : null}
+      {save.status === "saving" || save.status === "saved" ? <StatusMark busy={save.status === "saving"} label={save.status === "saving" ? "Saving…" : "Saved."} /> : null}
       {save.status === "failed" ? <p role="alert" className="text-meta text-danger">{save.error.message}{" "}
         <button type="button" className="link" onClick={() => stale ? reload() : void submit(save.value)}>{stale ? "Reload settings" : "Retry"}</button>
       </p> : null}
@@ -148,7 +150,7 @@ function ProjectsPage({ state }: { state: unknown }) {
   const roots = overview.data?.roots ?? [];
   return <>
     <p className="text-meta text-muted">Each project's L3, default models, routing, setup and removal.</p>
-    {overview.isPending ? <p role="status">Loading projects…</p>
+    {overview.isPending ? <p><StatusMark label="Loading projects…" /></p>
       : overview.isError && !overview.data ? <p role="alert" className="text-danger">Could not load projects. <button className="link" onClick={() => void overview.refetch()}>Retry</button></p>
         : <div className="settings-group">
           {names.map((name) => <Link key={name} className="settings-row" to={`/settings/projects/${encodeURIComponent(name)}`} state={state}>
@@ -180,7 +182,7 @@ function NewTasksRow({ project }: { project?: string }) {
   const label = tasks ? closedLabel(tasks.value, tasks.unavailable, tasks, overview.data?.engines) : "Loading…";
   return <>
     <button type="button" className="settings-row" aria-haspopup="dialog" disabled={!tasks} onClick={() => setOpen(true)}>
-      <span><strong>New tasks</strong>{" "}<small>{!tasks ? label : tasks.value ? `${label} in every project, until you go back to Auto` : "Auto · each project's own defaults"}</small></span><span aria-hidden>›</span>
+      <span><strong>New tasks</strong>{" "}<small>{!tasks ? label : tasks.value ? `${label} in every project` : "Auto · each project's own defaults"}</small></span><span aria-hidden>›</span>
     </button>
     {open ? <ModelsDialog project={project} tab="tasks" onClose={() => setOpen(false)} /> : null}
   </>;
@@ -203,7 +205,7 @@ function ProjectsFolderForm({ roots }: { roots: string[] }) {
   return <>
     <dl className="settings-card settings-network"><dt>Current</dt><dd>{roots.join(" and ") || "Loading…"}</dd></dl>
     <FolderBrowser action="Use" allowHome busy={save.status === "saving"} busyLabel="Saving…" onChoose={(path) => void choose(path)} />
-    {save.status === "saved" ? <p role="status" className="text-meta text-muted">Saved. First run now lists the folders in {roots.join(" and ")}.</p> : null}
+    {save.status === "saved" ? <StatusMark busy={false} label="Saved." /> : null}
     {save.status === "failed" ? <p role="alert" className="text-meta text-danger">{save.error.message}{" "}
       <button type="button" className="link" onClick={() => void choose(save.path)}>Retry</button></p> : null}
   </>;
@@ -215,6 +217,7 @@ function MachineSwitch({ id, title, detail, enabled, unavailable, save: send }: 
   save: (on: boolean) => Promise<unknown>;
 }) {
   const [save, setSave] = useState<{ status: "idle" | "saving" } | { status: "failed"; error: Error }>({ status: "idle" });
+  const [showReason, setShowReason] = useState(false);
   const change = async (on: boolean) => {
     setSave({ status: "saving" });
     try {
@@ -227,11 +230,13 @@ function MachineSwitch({ id, title, detail, enabled, unavailable, save: send }: 
   return <div className="settings-row settings-switch-row">
     <label htmlFor={id}>
       <strong>{title}</strong>{" "}
-      <small>{unavailable ? `Not available here: ${unavailable}.` : detail}</small>
+      <small id={`${id}-reason`} className={unavailable && !showReason ? "sr-only" : undefined}>{unavailable ? `Not available here: ${unavailable}.` : detail}</small>
       {save.status === "failed" ? <small role="alert" className="text-danger">{save.error.message}</small> : null}
     </label>
-    <input id={id} type="checkbox" role="switch" className="settings-switch" checked={!unavailable && (enabled ?? false)}
-      disabled={enabled === undefined || Boolean(unavailable) || save.status === "saving"} onChange={(event) => void change(event.target.checked)} />
+    {unavailable ? <button id={id} type="button" role="switch" className="settings-switch" aria-checked="false" aria-label={title}
+      aria-disabled="true" aria-describedby={`${id}-reason`} onClick={() => setShowReason(!showReason)} />
+      : <input id={id} type="checkbox" role="switch" className="settings-switch" checked={enabled ?? false}
+        disabled={enabled === undefined || save.status === "saving"} onChange={(event) => void change(event.target.checked)} />}
   </div>;
 }
 
@@ -239,12 +244,12 @@ function MachineSwitch({ id, title, detail, enabled, unavailable, save: send }: 
 function TerminalSwitch({ machine }: { machine: Machine | undefined }) {
   const client = useQueryClient();
   return <>
-    {machine?.terminal_unavailable ? <div className="settings-row"><span><strong>Terminal unavailable</strong>{" "}<small>{machine.terminal_unavailable}</small></span></div> : <MachineSwitch id="terminal-switch" title="Terminal" enabled={machine?.terminal}
+    <MachineSwitch id="terminal-switch" title="Terminal" enabled={machine?.terminal} unavailable={machine?.terminal_unavailable}
       detail="Every paired browser can run commands as you on this computer. Terminals close when Altitude restarts or when you turn this off."
       save={async (on) => {
         client.setQueryData(["machine"], await saveTerminalAccess(on));
         await client.invalidateQueries({ queryKey: ["terminal"] });
-      }} />}
+      }} />
   </>;
 }
 
@@ -283,7 +288,7 @@ function DeviceRow({ device, current, onRemoved }: { device: Device; current: bo
     {state.status === "confirm" || state.status === "removing" ? <span className="device-actions" role="group" aria-label={`Remove ${device.name}?`}
       onKeyDown={(event) => { if (event.key === "Escape" && state.status === "confirm") setState({ status: "idle" }); }}>
       <button type="button" className="btn" autoFocus disabled={state.status === "removing"} onClick={() => setState({ status: "idle" })}>Cancel</button>
-      <button type="button" className="btn btn-danger" disabled={state.status === "removing"} onClick={() => void remove()}>{state.status === "removing" ? "Removing…" : "Remove device"}</button>
+      <button type="button" className="btn btn-danger" disabled={state.status === "removing"} onClick={() => void remove()}><BusyLabel busy={state.status === "removing"} label="Remove device" working="Removing…" /></button>
     </span> : <button type="button" className="btn" onClick={() => setState({ status: "confirm" })}>Remove</button>}
   </li>;
 }
@@ -303,7 +308,7 @@ function DevicesPage() {
   };
   return <>
     <p className="text-meta text-muted">Browsers that can open Altitude. Each pairs once with a one-time code and stays paired until you remove it here. Removing a device signs it out at once.</p>
-    {devices.isPending ? <p role="status">Loading devices…</p>
+    {devices.isPending ? <p><StatusMark label="Loading devices…" /></p>
       : devices.isError ? <p role="alert" className="text-danger">Could not load devices. <button className="link" onClick={() => void devices.refetch()}>Retry</button></p>
         : <ul className="settings-card device-list" aria-label="Paired devices">
           {devices.data.devices.map((device) => <DeviceRow key={device.id} device={device} current={device.id === devices.data.current}
@@ -325,7 +330,7 @@ function DevicesPage() {
         <button type="button" className="btn" onClick={() => void make()}>Make a new code</button>
       </> : <>
         <p className="text-meta text-muted">Make a one-time code here, or run <code>alt pair</code> on the computer running Altitude. A new code cancels the previous one.</p>
-        <button type="button" className="btn btn-primary" disabled={code.status === "making"} onClick={() => void make()}>{code.status === "making" ? "Making a code…" : "Make a pairing code"}</button>
+        <button type="button" className="btn btn-primary" disabled={code.status === "making"} onClick={() => void make()}><BusyLabel busy={code.status === "making"} label="Make a pairing code" working="Making a code…" /></button>
         {code.status === "failed" ? <p role="alert" className="text-meta text-danger">{code.error.message}</p> : null}
       </>}
     </section>
@@ -424,14 +429,14 @@ function DeviceSetup() {
       <p className="text-meta text-muted phone-share-link">{state.share.link}</p>
       <div className="phone-share-time">
         <span role="timer" aria-live="off">Closes in {minutes}:{seconds}</span>
-        <button type="button" className="btn" disabled={state.status === "closing"} onClick={() => void close()}>{state.status === "closing" ? "Closing…" : "Close"}</button>
+        <button type="button" className="btn" disabled={state.status === "closing"} onClick={() => void close()}><BusyLabel busy={state.status === "closing"} label="Close" working="Closing…" /></button>
       </div>
       {state.error ? <p role="alert" className="text-meta text-danger">The link is still open: {state.error.message}</p> : null}
     </div>;
   }
   return <>
-    <button type="button" className="btn btn-primary" disabled={state.status === "opening"} onClick={() => void open()}>{state.status === "opening" ? "Opening…" : "Set up a device"}</button>
-    {state.status === "closed" ? <p role="status" className="text-meta text-muted">The link is closed.</p> : null}
+    <button type="button" className="btn btn-primary" disabled={state.status === "opening"} onClick={() => void open()}><BusyLabel busy={state.status === "opening"} label="Set up a device" working="Opening…" /></button>
+    {state.status === "closed" ? <StatusMark label="The link is closed." busy={false} /> : null}
     {state.status === "failed" ? <p role="alert" className="text-meta text-danger">{state.error.message}</p> : null}
   </>;
 }
@@ -478,7 +483,7 @@ function VersionRows({ update }: { update: Update }) {
   </div>;
   return <>
     <div className="settings-row settings-version">
-      <span><strong>Version</strong>{" "}<small>{update.current}{available ? <> · {available.version} is available · <a href={available.notes} target="_blank" rel="noreferrer">What’s new</a></> : update.check && update.checked ? " · Up to date" : ""}</small></span>
+      <span><strong>Version</strong>{" "}<small>{update.current}{available ? <> · {available.version} is available · <a href={available.notes} target="_blank" rel="noreferrer">What’s new</a></> : ""}</small></span>
       {available && update.command ? <Command text={update.command} /> : null}
     </div>
     {failed ? <div className="settings-row">
@@ -501,7 +506,7 @@ function VersionRows({ update }: { update: Update }) {
       <input id="update-automatic-switch" type="checkbox" role="switch" className="settings-switch" checked={update.automatic}
         disabled={!update.check || save.status === "saving"} onChange={(event) => void change(event.target.checked, true)} />
     </div>
-    {save.status === "saving" ? <p role="status">Saving…</p> : null}
+    {save.status === "saving" ? <StatusMark label="Saving…" /> : null}
     {save.status === "failed" ? <p role="alert" className="text-danger">{save.error.message}</p> : null}
   </>;
 }
@@ -515,7 +520,7 @@ const titles = {
 function MachinePage({ page }: { page: "name" | "prerequisites" | "incident-reports" }) {
   const inContainer = useMachine().data?.deployment === "container";
   const [saved, setSaved] = useState(false);
-  const status = saved ? <p role="status" className="text-meta text-muted">Saved.</p> : null;
+  const status = saved ? <StatusMark busy={false} label="Saved." /> : null;
   const submitRow = (submit: ReactNode) => <div className="onboarding-nav">{submit}{status}</div>;
   if (page === "name") return <>
     <p className="text-meta text-muted">Screens, task records and agents use this name wherever they would otherwise say “the operator”.</p>
@@ -557,7 +562,7 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
   const title = page ? titles[page] : "Settings";
   const back = page ? <Link to="/settings" state={state} className="btn settings-back">‹ Settings</Link>
     : <button type="button" className="btn settings-back" onClick={() => navigate(state?.settingsFrom || "/projects", { replace: true })}>‹ Back</button>;
-  const voiceRow = settings.isPending ? <p role="status" className="settings-row">Loading voice settings…</p>
+  const voiceRow = settings.isPending ? <p className="settings-row"><StatusMark label="Loading voice settings…" /></p>
     : settings.isError ? <p role="alert" className="settings-row text-danger">Could not load voice settings. <button className="link" onClick={() => void settings.refetch()}>Retry</button></p>
       : <Link className="settings-row" to="/settings/voice" state={state}>
         <span><strong>Voice input</strong>{" "}<small>{voiceSummary(settings.data)}</small></span><span aria-hidden>›</span>
@@ -574,7 +579,7 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
         <ProjectsFolderForm roots={roots} />
       </> : page === "voice" ? <>
         <p className="text-meta text-muted">Choose how speech becomes text. Applies to every project.</p>
-        {settings.isPending ? <p role="status">Loading settings…</p>
+        {settings.isPending ? <p><StatusMark label="Loading settings…" /></p>
           : settings.isError ? <p role="alert" className="text-danger">Could not load settings. <button className="link" onClick={() => void settings.refetch()}>Retry</button></p>
             : <VoiceForm key={reloadKey} saved={settings.data} reload={() => void settings.refetch().then(() => setReloadKey((value) => value + 1))} />}
       </> : <div className="settings-columns">
@@ -600,7 +605,7 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
             </Link>
             <TerminalSwitch machine={machine.data} />
             <div className="settings-row" aria-label="Network">
-              <span><strong>Network</strong>{" "}<small>{window.location.origin} · HTTPS {window.location.protocol === "https:" ? "on" : "off"} · view only</small></span>
+              <span><strong>Network</strong>{" "}<small>{window.location.origin} · HTTPS {window.location.protocol === "https:" ? "on" : "off"}</small></span>
             </div>
           </Group>
           <Group title="Coding agents">

@@ -15,7 +15,7 @@ function screen(page: Page) {
     heading: page.getByRole("heading", { name: "Pair this device" }),
     trust,
     notTrusted: trust.getByText("Not trusted yet", { exact: true }),
-    trusted: trust.getByText("Trusted", { exact: true }),
+    trusted: trust.getByRole("status", { name: "Trusted", exact: true }),
     field: page.getByLabel("Pairing code"),
   };
 }

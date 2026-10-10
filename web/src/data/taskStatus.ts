@@ -35,7 +35,9 @@ function questionRecords(task: TaskRow): Record<string, unknown>[] {
 }
 
 /** Read-only wording shared by task rows and pages. It creates no action, recovery or timer. */
-export function taskExplanation(task: TaskRow, decision?: Decision): string | null {
+export function taskExplanation(task: TaskRow, decision?: Decision, includeStateLabel = false): string | null {
+  // Cards need a primary label; task pages already have a state chip and turn card.
+  const label = (value: string) => includeStateLabel ? value : null;
   const state = task.state;
   if (state === "done" || state === "rejected") return null;
   const steering = record(task["steering"])["state"];
@@ -54,12 +56,11 @@ export function taskExplanation(task: TaskRow, decision?: Decision): string | nu
       : "A system problem paused work.";
     return `${cause} ${question ? sentence(`Coordinator needed: ${question}`) : "Waiting for the coordinator to check the blocker."}`;
   }
-  const byCoordinator = stoppedByCoordinator(task);
-  if (steering === "stopping") return `Stopping at ${byCoordinator ? "the coordinator’s" : "your"} request; waiting for the session to end.`;
+  if (steering === "stopping") return label("Stopping");
   if (steering === "stop_unconfirmed") return "Stop is unconfirmed; the session may still be running.";
-  if (steering === "stopped") return byCoordinator ? "Stopped by the coordinator; its note is in the conversation." : "Stopped by you; continue when you’re ready.";
+  if (steering === "stopped") return label(stoppedByCoordinator(task) ? "Stopped by coordinator" : "Stopped");
   if ((task["stop_id"] && !task.resume_after && steering !== "resuming") || decision?.kind === "stopped") {
-    return `${byCoordinator ? "The coordinator" : "You"} requested a stop; confirmation is in the task.`;
+    return label("Stop requested");
   }
   if (state === "running") return null;
   if (state === "queued" && task.planned_wait) {
@@ -69,22 +70,22 @@ export function taskExplanation(task: TaskRow, decision?: Decision): string | nu
     }
     return `Waiting for ${statusExcerpt(task.planned_wait.reason) || "a recorded prerequisite"}.`;
   }
-  if (task.resume_after || steering === "resuming") return "Waiting for Altitude to resume the task.";
-  if (state === "queued") return "Waiting for Altitude to start the task.";
+  if (task.resume_after || steering === "resuming") return label("Resuming");
+  if (state === "queued") return label("Queued");
   if (state === "blocked" || state === "reported") {
-    if (decision?.kind === "review") return "Waiting for your review before merge.";
+    if (decision?.kind === "review") return label("Review");
     if (questions.some((q) => q["audience"] === "operator" && !q["response"]) || incomingQuestion) {
-      return "Waiting for your answer to the task’s question.";
+      return label("Needs you");
     }
     if (coordinator || task["waiting_on"] === "l3") {
       const reason = question || statusExcerpt(task["blocked_reason"]);
       if (coordinator || !questions.some((q) => q["response"])) {
-        return reason ? sentence(`Waiting for the coordinator: ${reason}`) : "Waiting for the coordinator to resolve a blocker.";
+        return reason ? sentence(`Waiting for the coordinator: ${reason}`) : label("Coordinator");
       }
     }
-    if (questions.some((q) => q["response"])) return "Waiting for the task owner to continue after the reply.";
-    if (task["waiting_on"] === "operator") return "Waiting for your input; see the task conversation.";
-    if (state === "reported") return "Waiting for the coordinator to check the task’s report.";
+    if (questions.some((q) => q["response"])) return label("L2 replying");
+    if (task["waiting_on"] === "operator") return label("Needs you");
+    if (state === "reported") return label("Coordinator review");
     const reason = statusExcerpt(task["blocked_reason"]);
     return reason ? sentence(`Paused: ${reason}`) : task["blocked_reason"] ? "Work is paused; see details for the recorded reason." : "Work is paused; no reason is recorded.";
   }

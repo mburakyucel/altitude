@@ -41,7 +41,7 @@ function views(page: Page, info: TestInfo) {
     hint: main.locator(".composer-hint"),
     wave: main.locator(".composer-wave"),
     timer: main.getByLabel("Recording time", { exact: true }),
-    transcribing: main.getByText("Transcribing…", { exact: true }),
+    transcribing: main.getByRole("status", { name: "Transcribing…", exact: true }),
     // Stop shows while the microphone opens; the recognizer exists once the composer is listening.
     listening: main.locator('.composer[data-phase="listening"]'),
     bubble: (text: string) => main.getByRole("region", { name: "Conversation", exact: true }).locator(".bubble", { hasText: text }),
@@ -163,7 +163,7 @@ test("voice diagnostics: opt-in report distinguishes suspended restart and exclu
   await walk.state("diagnostics-01-off", { visible: [start], hidden: [report] });
   await walk.state("diagnostics-02-collecting", {
     action: () => start.click(),
-    visible: [page.getByRole("button", { name: "Stop diagnostics", exact: true }), page.getByText("Collecting on this device. Return here after reproducing.", { exact: true })], hidden: [report],
+    visible: [page.getByRole("button", { name: "Stop diagnostics", exact: true }), page.getByRole("status", { name: "Collecting on this device", exact: true })], hidden: [report],
   });
   await page.goBack();
   await page.goBack();
@@ -212,7 +212,7 @@ test("voice diagnostics: opt-in report distinguishes suspended restart and exclu
   });
   await walk.state("diagnostics-04b-copied", {
     action: () => page.getByRole("button", { name: "Copy report", exact: true }).click(),
-    visible: [report, page.getByText("Copied. Paste it into the task conversation.", { exact: true })],
+    visible: [report, page.getByRole("status", { name: "Copied. Paste it into the task conversation.", exact: true })],
     hidden: [page.getByText("Could not copy. Select and copy the report above.", { exact: true })],
   });
   expect(await page.evaluate(() => (window as unknown as { copiedReport: string }).copiedReport)).toBe(text);
@@ -580,7 +580,7 @@ test.describe("recognizer text as heard", () => {
     });
     await expect(v.field).toHaveValue("Typed draft");
     await expect(v.field).toBeEditable();
-    const opening = v.main.getByText("Opening microphone…", { exact: true });
+    const opening = v.main.getByRole("status", { name: "Opening microphone…", exact: true });
     await walk.state("08-restart-waits-for-the-cancelled-recognizer", {
       action: () => v.mic.click(),
       visible: [opening, v.field],
@@ -708,16 +708,22 @@ test.describe("recognizer text as heard", () => {
     await v.stop.click();
     await expect(v.field).toHaveValue("Typing still works asked again");
 
-    // A browser without speech recognition (Firefox today) shows the hint instead of the microphone.
+    // The unavailable microphone discloses the browser limitation without starting recognition.
     const plain = await page.context().newPage();
     await browserBackend(plain);
     await plain.addInitScript("delete window.SpeechRecognition; delete window.webkitSpeechRecognition;");
     const w = views(plain, info);
     const plainWalk = walkthrough(plain, info);
     await plainWalk.open(project.path);
+    const reason = w.main.getByText("This browser has no speech recognition. Typing works.", { exact: true });
+    await expect(w.mic).toHaveAttribute("aria-disabled", "true");
+    await expect(reason.locator("..")).toHaveClass("sr-only");
+    await w.mic.focus();
+    await plain.keyboard.press("Enter");
+    await expect(reason.locator("..")).not.toHaveClass("sr-only");
     await plainWalk.state("02-no-speech-recognition-typing-works", {
-      visible: [w.field, w.send, w.main.getByText("This browser has no speech recognition. Typing works.", { exact: true })],
-      hidden: [w.mic, w.stop],
+      visible: [w.field, w.send, reason, w.mic],
+      hidden: [w.stop],
     });
     await w.field.fill("Typed instead");
     await expect(w.send).toBeEnabled();

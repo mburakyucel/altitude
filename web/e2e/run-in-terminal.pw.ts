@@ -149,9 +149,13 @@ test("a task's chat command opens its terminal typed, and runs only on Enter", {
   await request.post("/fixture/finish");
   await expect(page).toHaveURL(new RegExp(`${TASK}/live$`));
   await conversation();
+  await expect(openIt).toHaveAttribute("aria-disabled", "true");
+  await expect(openIt).toHaveAccessibleDescription("This task has no terminal now.");
+  // aria-disabled keeps the native button pressable for its reason; Playwright needs an explicit press.
+  await openIt.click({ force: true });
   await walk.state("08-no-terminal-here", {
-    visible: [block.getByText("This task has no terminal now."), block.getByRole("button", { name: "Copy" })],
-    hidden: [openIt],
+    visible: [openIt, block.getByText("This task has no terminal now."), block.getByRole("button", { name: "Copy" })],
+    hidden: [],
   });
 });
 
@@ -170,10 +174,16 @@ test("a project chat command opens the project terminal; other blocks copy only"
     visible: [
       command.first().getByRole("button", { name: "Open in terminal" }),
       plain.getByText("uname -a"), plain.getByRole("button", { name: "Copy" }),
-      command.last().getByText("Not offered for the terminal: more than one line."),
+      command.last().getByRole("button", { name: "Open in terminal" }),
     ],
-    hidden: [plain.getByRole("button", { name: "Open in terminal" }), command.last().getByRole("button", { name: "Open in terminal" })],
+    hidden: [plain.getByRole("button", { name: "Open in terminal" })],
   });
+  const unavailable = command.last().getByRole("button", { name: "Open in terminal" });
+  await expect(unavailable).toHaveAttribute("aria-disabled", "true");
+  await expect(unavailable).toHaveAccessibleDescription("Not offered for the terminal: more than one line.");
+  await unavailable.focus();
+  await page.keyboard.press("Enter");
+  await walk.state("11b-unavailable-reason", { visible: [command.last().getByText("Not offered for the terminal: more than one line.")], hidden: [output] });
 
   await page.evaluate(() => { navigator.clipboard.writeText = () => Promise.reject(new Error("refused")); });
   await plain.getByRole("button", { name: "Copy" }).click();

@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { Link, useLocation } from "react-router";
+import { UnavailableAction } from "../components/UnavailableAction";
+import { StatusMark } from "../components/StatusMark";
 import { useRestart } from "../data/api";
 import type { Restart } from "../data/api";
 import { agoText, exactTime } from "../data/observed";
@@ -26,7 +28,7 @@ export function RestartBanner({ restart }: { restart: Restart | null | undefined
   if (!restart || location.pathname === "/monitor" ||
     (dismissed?.update === update && (!restart.failed || dismissed.failure === restart.failed))) return null;
   return <div className="restart-banner" role="status" aria-label="Restart pending">
-    <p className="restart-banner-summary">{restart.failed ? "Activation failed" : restart.requested_at ? "Altitude is restarting…" : "Update ready"}</p>
+    <p className="restart-banner-summary">{restart.failed ? "Activation failed" : restart.requested_at ? <StatusMark announce={false} label="Altitude is restarting…" /> : "Update ready"}</p>
     <Link className="btn" to="/monitor" aria-label="Update details in Monitor">Details</Link>
     <button type="button" className="btn btn-ghost" aria-label="Dismiss update notice" onClick={() => {
       const next = { update, failure: restart.failed };
@@ -58,11 +60,11 @@ export function RestartDetails({ restart }: { restart: Restart }) {
         </p>
         <p className="restart-banner-rule">
           {underWay
-            ? "Altitude is restarting…"
+            ? <StatusMark announce={false} label="Altitude is restarting…" />
             : restart.failed
-              ? "Automatic activation did not complete; L3 has the fault."
-              : "Altitude restarts at the next quiet moment."}
-          {!underWay && waiting.length > 0 ? ` Waiting for ${waiting.join(", ")}.` : null}
+              ? `Automatic activation did not complete; L3 has the fault.${waiting.length ? ` Waiting for ${waiting.join(", ")}.` : ""}`
+              : null}
+          {!underWay && !restart.failed && waiting.length > 0 ? <UnavailableAction label="Restart" reason={`Altitude restarts at the next quiet moment. Waiting for ${waiting.join(", ")}.`} /> : null}
         </p>
       </div>
       {!underWay && waiting.length === 0 ? (

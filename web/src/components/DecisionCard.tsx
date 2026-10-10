@@ -122,7 +122,7 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
   };
   // Open questions that are not the operator's (waits on L3) need no summary; their turn line says who answers.
   const summary = open.length ? `${open.length} question${open.length === 1 ? "" : "s"} to answer`
-    : decisions.some((q) => q.response && q.status !== "resolved") ? "Responses sent to L2"
+    : decisions.some((q) => q.response && q.status !== "resolved") ? null
     : decisions.every((q) => q.status === "resolved") ? "Questions closed" : null;
   const render = (question: Decision) => {
     const resolved = question.status === "resolved";
@@ -189,7 +189,7 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
       {shown.filter((question) => !earlier.includes(question)).map(render)}
       {open.length ? <div className="question-batch">
         <button type="button" className="btn btn-primary" aria-busy={decide.isPending || undefined} disabled={unavailable || !selected.length} onClick={() => submit(selected)}>{decide.isPending ? <span className="spinner" aria-hidden /> : null}{selected.length ? `Send ${selected.length} answer${selected.length === 1 ? "" : "s"}` : "Send answers"}</button>
-        <p className="text-meta text-muted">{selected.length ? "Only these answers will be sent. You can answer the rest later." : "Choose an answer or write your own. Follow-up questions are welcome."}</p>
+        {selected.length ? <p className="text-meta text-muted">Only these answers will be sent. You can answer the rest later.</p> : null}
       </div> : null}
       {decide.isError ? <p className="text-meta text-danger" role="alert">
         {denied ? "You cannot send answers here. Refresh after access is restored." : stale ? "These questions have changed. Refresh and review the current choices." : "Could not send answers. Your responses are kept here."}{" "}

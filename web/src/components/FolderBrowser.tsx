@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { BusyLabel } from "./StatusMark";
 import { useFolders } from "../data/api";
 import "./folder-browser.css";
 
@@ -72,7 +73,7 @@ export default function FolderBrowser({
           <span className="flex-1" />
           {cancel}
           <button type="submit" className="btn btn-primary" disabled={busy || !folder}>
-            {busy ? <><span className="spinner" aria-hidden /> {busyLabel}</> : action}
+            <BusyLabel busy={busy} label={action} working={busyLabel} />
           </button>
         </div>
       </form>
@@ -137,7 +138,7 @@ export default function FolderBrowser({
         {cancel}
         <button type="button" className="btn btn-primary" disabled={chooseDisabled}
           onClick={() => view && onChoose(view.path, current?.name ?? folderName(view.path))}>
-          {busy ? <><span className="spinner" aria-hidden /> {busyLabel}</> : `${action} “${here}”`}
+          <BusyLabel busy={busy} label={`${action} “${here}”`} working={busyLabel} />
         </button>
       </div>
     </section>

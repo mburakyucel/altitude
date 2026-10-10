@@ -120,10 +120,11 @@ describe("LiveSession", () => {
 
     expect(view.textContent).not.toContain("attachment");
     expect(within(panel).getByRole("button", { name: "Raw events" })).toHaveAttribute("title", transcript.redaction);
-    expect(within(panel).getByText("Following live · new steps appear at the bottom").closest("[role=separator]")).toHaveAttribute("data-tone", "live");
+    expect(within(panel).getByText("Following live · new steps appear at the bottom")).toHaveClass("sr-only");
+    expect(within(panel).getByText("Following live · new steps appear at the bottom")).toHaveAttribute("role", "status");
     expect(panel.querySelector(".live-pulse")).toHaveAttribute("data-tone", "live");
-    expect(within(panel).getByRole("status")).toHaveTextContent(/^Working · output \d+ sec ago$/);
-    expect(within(panel).getByRole("status").querySelector(".dot")).toHaveAttribute("data-pulse", "true");
+    expect(within(panel).getByRole("status", { name: "Activity" })).toHaveTextContent(/^Working · output \d+ sec ago$/);
+    expect(within(panel).getByRole("status", { name: "Activity" }).querySelector(".dot")).toHaveAttribute("data-pulse", "true");
   });
 
   it("stops the pulse and names the quiet time when a running worker records no output", async () => {
@@ -131,7 +132,7 @@ describe("LiveSession", () => {
     stub({ task: { ...task, activity: { ...task.activity, observation: { at: quiet, label: "Recorded output changed" } } } });
     renderApp({ route });
     const panel = await openPanel();
-    const status = await within(panel).findByRole("status");
+    const status = await within(panel).findByRole("status", { name: "Activity" });
     expect(status).toHaveTextContent("No new activity for 4 min");
     expect(status.querySelector(".dot")).not.toHaveAttribute("data-pulse");
     expect(panel.querySelector(".live-pulse")).toHaveAttribute("data-tone", "muted");
@@ -141,7 +142,7 @@ describe("LiveSession", () => {
     stub({ task: { ...task, activity: { ...task.activity, state: "unavailable" } } });
     renderApp({ route });
     const panel = await openPanel();
-    expect(await within(panel).findByRole("status")).toHaveTextContent("Activity unavailable");
+    expect(await within(panel).findByRole("status", { name: "Activity" })).toHaveTextContent("Activity unavailable");
     expect(panel.querySelector(".live-pulse")).toHaveAttribute("data-tone", "muted");
   });
 

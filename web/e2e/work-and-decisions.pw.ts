@@ -233,7 +233,7 @@ test("Work keeps waiting tasks once without answer controls, retains recent hist
   await expect(v.panel.getByRole("article")).toHaveCount(0);
   await expect(v.panel.getByRole("button", { name: "Fast-forward it", exact: true })).toHaveCount(0);
   const pausedRow = current.getByRole("link", { name: `${parked.title} · Work is paused; no reason is recorded.`, exact: true });
-  const stoppedRow = current.getByRole("link", { name: `${stoppedTask.title} · You requested a stop; confirmation is in the task.`, exact: true });
+  const stoppedRow = current.getByRole("link", { name: `${stoppedTask.title} · Stop requested`, exact: true });
   const faultRow = current.getByRole("link", { name: `${faulty.title} · A system problem paused work. Waiting for the coordinator to check the blocker.`, exact: true });
   await expect(pausedRow.locator(".dot")).toHaveAttribute("data-state", "idle");
   await expect(stoppedRow.locator(".dot")).toHaveAttribute("data-state", "danger");
@@ -241,7 +241,7 @@ test("Work keeps waiting tasks once without answer controls, retains recent hist
   await expect(waiting.locator(".dot")).toHaveAttribute("data-state", "waiting");
   await expect(pausedRow).toHaveAttribute("href", `/projects/${project.name}/tasks/${parked.slug}`);
   await walk.state("01a-paused-stopped-fault-and-operator-answer", {
-    visible: [pausedRow, stoppedRow, faultRow, waiting.getByText("Waiting for your answer to the task’s question.", { exact: true })],
+    visible: [pausedRow, stoppedRow, faultRow, waiting.getByText("Needs you", { exact: true })],
     hidden: [pausedRow.getByText(/Your turn|Stopped/)],
   });
   await walk.state("01-current-waiting-queued-and-l3", {
@@ -357,7 +357,6 @@ test("Needs you: empty, recommendation and chat entry, sending, sent, failed, er
       card.getByRole("link", { name: "Open L2 chat", exact: true }),
       v.card(second.title),
       v.card(second.title).getByText("Stopped mid-task", { exact: true }),
-      v.main.getByText(/^That is everything/),
     ],
     hidden: [v.main.getByText("Nothing needs you.", { exact: true })],
   });

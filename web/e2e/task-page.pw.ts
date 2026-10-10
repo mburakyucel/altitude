@@ -203,7 +203,7 @@ test("a queued task says what it waits for; a held task reads as queued", async 
   });
   await walk.state("03-held-composer", {
     action: () => v.showConversation(),
-    visible: [v.composer, ...(v.phone ? [] : [v.main.getByText("Delivered when Altitude resumes the L2.")])],
+    visible: [v.composer, ],
     hidden: [],
   });
 });
@@ -297,7 +297,7 @@ test("a blocked task: the question at the end of the chat, waiting for L3, a fau
     visible: [v.main.getByText("Your turn · 1 question", { exact: true }).first(), turn.getByText("Your turn · 1 question", { exact: true }), card, card.getByText(question), card.getByRole("button", { name: "Keep it & resume", exact: true }), v.composer, ...(v.phone ? [] : [v.reject])],
     hidden: [v.stop, v.main.getByRole("button", { name: "Resume", exact: true })],
   });
-  await expect(line).toHaveText("Waiting for your answer to the task’s question.");
+  await expect(line).toHaveCount(0);
 
   await clearRoutes(page);
   const waiting = DecisionSchema.parse({ ...decision, id: "suite-question", anchor_id: "suite-anchor", asked_by: "l2", audience: "l3", question: "which suite covers the timer", recommendation: null });

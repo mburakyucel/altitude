@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router";
+import { StatusMark } from "../components/StatusMark";
 import { ApiError, useTaskCaptures } from "../data/api";
 import type { TaskCapture } from "../data/api";
 import { agoText, exactTime } from "../data/observed";
@@ -16,7 +17,7 @@ function Capture({ title, url, width, height, ...meta }: TaskCapture) {
   return <figure className="capture" aria-label={title} aria-busy={state === "loading"}>
     <figcaption><b>{title}</b>{state !== "error" ? <span className="text-muted">{captureMeta(meta)}</span> : null}</figcaption>
     {state === "error" ? <p className="text-danger" role="alert">Capture unavailable. <button className="link" onClick={() => { setState("loading"); setAttempt((value) => value + 1); }}>Retry capture</button></p> : <>
-      {state === "loading" ? <p className="text-muted" role="status">Loading capture…</p> : null}
+      {state === "loading" ? <p className="text-muted"><StatusMark label="Loading capture…" /></p> : null}
       {/* A GIF loops by itself; its saved dimensions reserve the space before it loads. */}
       <img key={attempt} src={`${url}${attempt ? `?retry=${attempt}` : ""}`} alt={title} width={width} height={height} hidden={state !== "ready"}
         onLoad={() => setState("ready")} onError={() => setState("error")} />
@@ -31,7 +32,7 @@ export default function TaskCaptures() {
   const denied = captures.error instanceof ApiError && [401, 403].includes(captures.error.status);
   return <div className="page design-page">
     <Link className="text-meta" to={captures.data?.conversation_url ?? `/projects/${name}/tasks/${slug}`} replace>← Back to conversation</Link>
-    {captures.isPending ? <p className="text-muted" role="status">Loading captures…</p> : captures.isError ? <div role="alert" className="design-unavailable">
+    {captures.isPending ? <p className="text-muted"><StatusMark label="Loading captures…" /></p> : captures.isError ? <div role="alert" className="design-unavailable">
       <h1>Capture unavailable</h1>
       <p className="text-muted">{denied ? "Access to these captures is unavailable. Retry after access is restored." : "These captures could not be loaded. Return to the conversation for an update, or try again."}</p>
       <button className="link" onClick={() => void captures.refetch()}>Retry</button>

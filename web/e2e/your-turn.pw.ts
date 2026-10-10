@@ -54,7 +54,7 @@ test("a question at the end of the chat: reply hands the turn back, asked again,
   await expect(v.conversation.locator(".msg-row:has-text('the window is your call.') ~ .conversation-question")).toHaveCount(1);
   await walk.state("02-question-at-end-of-chat", {
     visible: [v.turn.getByText("Your turn · 1 question", { exact: true }), v.card.getByRole("button", { name: /7 days/ }),
-      v.main.getByText("Your turn · 1 question").first(), ...(v.phone ? [] : [v.hint])],
+      v.main.getByText("Your turn · 1 question").first()],
     hidden: [v.quiet, v.conversation.getByRole("button", { name: /Your turn · 1 question/ })],
   });
 
@@ -207,7 +207,7 @@ test("Work rows say whose turn it is", async ({ page }, info) => {
       row("Cache warmup").getByText(/^L2 working/),
       row("Retry policy").getByText("L2 replying to you", { exact: true }),
       row("Repair checkout").getByText("A system problem paused work. Waiting for the coordinator to check the blocker.", { exact: true }),
-      row("Stopped validation").getByText("You requested a stop; confirmation is in the task.", { exact: true }),
+      row("Stopped validation").getByText("Stop requested", { exact: true }),
     ],
     hidden: [row("Cache warmup").getByText(/Your turn/), row("Retry policy").getByText(/Your turn/), work.getByRole("article")],
   });

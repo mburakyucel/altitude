@@ -2,6 +2,7 @@ import { Component, Suspense, lazy, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useLocation } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
+import { StatusMark } from "./StatusMark";
 import { terminalOpen, terminalSend, terminalStatus, useOverview, useTerminalStatus } from "../data/api";
 import type { TerminalStatus } from "../data/api";
 import { useToast } from "../data/Toast";
@@ -56,7 +57,7 @@ function Card({ title, children, action, tone }: { title?: string; children?: Re
 function Loading({ opening }: { opening: boolean }) {
   return <div className="terminal-card" role="status" aria-label="Starting the terminal">
     <div className="skeleton h-4 w-2/3" /><div className="skeleton h-4 w-1/3" />
-    <p className="text-muted">{opening ? "Starting the terminal…" : "Loading the terminal…"}</p>
+    <p className="text-muted"><StatusMark label={opening ? "Starting the terminal…" : "Loading the terminal…"} /></p>
   </div>;
 }
 

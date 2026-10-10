@@ -54,7 +54,7 @@ export function taskCardFacts(task: TaskRow, overview: Overview | undefined, pro
   const state = task.state ?? "";
   const held = state === "blocked" && Boolean(task.resume_after);
   const fault = str(task["fault"]);
-  const explanation = taskExplanation(task, decision);
+  const explanation = taskExplanation(task, decision, true);
   const waitsOnL3 = str(task["waiting_on"]) === "l3";
   const steering = task["steering"] as { state?: string } | undefined;
   const stopped = decision?.kind === "stopped" || ["stopped", "stopping", "stop_unconfirmed"].includes(steering?.state ?? "") || (Boolean(task["stop_id"]) && !held);

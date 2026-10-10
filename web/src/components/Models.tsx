@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { KeyboardEvent } from "react";
 import { Link } from "react-router";
+import { StatusMark, BusyLabel } from "./StatusMark";
 import { ApiError, useOverview, useProject, useProjectDefaults, useSaveNewTasks, useSetDefault } from "../data/api";
 import type { Choice, ChoiceOptions, Overview } from "../data/api";
 import { Overlay } from "../shell/Overlay";
@@ -141,7 +142,7 @@ export function ModelsDialog({ project, tab: initial, onClose }: { project?: str
       </div> : null}
       <div id="models-panel" role={project ? "tabpanel" : undefined} aria-labelledby={project ? `models-tab-${tab}` : undefined} className="models-panel">
         {state.failed ? <p role="alert" className="text-danger">Could not load models. <button type="button" className="link" onClick={state.reload}>Retry</button></p>
-          : state.loading || !state.options ? <p role="status" className="text-muted">Loading models…</p>
+          : state.loading || !state.options ? <p className="text-muted"><StatusMark label="Loading models…" /></p>
             : <Choices key={tab} tab={tab} project={project} state={state as TabState & { options: ChoiceOptions }} draft={draft}
               setDraft={(next) => { save.reset(); if (next && !draft) setBase(state.saved); setDraft(next); }} saving={saving}
               l3Only={defaults.data?.l3_engine ?? null} only={tasks?.only ?? []}
@@ -236,7 +237,7 @@ function Choices({ tab, project, state, draft, setDraft, saving, l3Only, only, l
     <div className="models-actions">
       {saved ? <button type="button" className="btn" disabled={saving} onClick={() => onUse(null)}>Back to Auto</button> : null}
       <button type="button" className="btn btn-primary" disabled={saving || !dirty || invalid} onClick={() => onUse(value)}>
-        {saving ? "Saving…" : tab === "l3" ? `Use for L3 in ${project}` : "Use for all new tasks"}
+        <BusyLabel busy={saving} label={tab === "l3" ? `Use for L3 in ${project}` : "Use for all new tasks"} working="Saving…" />
       </button>
     </div>
     {tab === "tasks" ? <p className="models-hint">For one task, tell L3: “use Opus at Max for this”.</p> : null}

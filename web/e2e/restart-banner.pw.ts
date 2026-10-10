@@ -106,10 +106,17 @@ test("Monitor retains waiting, denied, requesting, accepted and failed update ac
   await restartIs(page, { ...pending, waiting_for: ["altitude/walkthrough-task", "altitude L3"] });
   await walk.open("/");
   await notice.getByRole("link", { name: "Update details in Monitor" }).click();
-  await walk.state("01-waiting-details-overlay", { visible: [status, status.getByText(/Waiting for altitude\/walkthrough-task, altitude L3\.$/)], hidden: [notice, restart] });
+  const waiting = status.getByText(/Waiting for altitude\/walkthrough-task, altitude L3\.$/);
+  await expect(restart).toHaveAttribute("aria-disabled", "true");
+  await expect(waiting).toHaveClass("sr-only");
+  await walk.state("01-waiting-details-overlay", { visible: [status, restart], hidden: [notice] });
+  await restart.focus();
+  await page.keyboard.press("Enter");
+  await expect(waiting).not.toHaveClass("sr-only");
+  await walk.state("01b-waiting-reason", { visible: [status, restart, waiting], hidden: [notice] });
   await restartIs(page, pending);
   await page.reload();
-  await walk.state("02-quiet-point-overlay", { visible: [restart, status.getByText("Altitude restarts at the next quiet moment.")], hidden: [notice, restarting] });
+  await walk.state("02-quiet-point-overlay", { visible: [restart, status.getByRole("button", { name: "Restart", exact: true })], hidden: [notice, restarting] });
   await walk.state("03-request-denied-overlay", { action: () => restart.click(), visible: [restart, status.getByRole("alert").filter({ hasText: "Restart permission denied." })], hidden: [restarting] });
   const toast = page.getByRole("status").filter({ hasText: "Couldn't start the restart." });
   await expect(toast).toBeVisible();
@@ -149,7 +156,7 @@ test("Monitor update status has explicit loading and recoverable read-error stat
   });
   const walk = walkthrough(page, info);
   const section = page.getByRole("region", { name: "Altitude update" });
-  const loading = section.getByText("Loading update status…", { exact: true });
+  const loading = section.getByRole("status", { name: "Loading update status…", exact: true });
   const error = section.getByText("Could not read update status.", { exact: false });
   await walk.open("/monitor");
   try {

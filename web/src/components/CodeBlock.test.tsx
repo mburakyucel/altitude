@@ -32,21 +32,30 @@ describe("code blocks in prose", () => {
     expect(open).toHaveBeenCalledWith(shown);
   });
 
-  it("offers Copy only where the conversation has no terminal, and says why", () => {
+  it("explains an unavailable terminal on press without opening one", async () => {
     const { rerender } = render(<ProseTerminal value={{ unavailable: "This task has no terminal now." }}><Prose text={block("ls")} /></ProseTerminal>);
-    expect(screen.getByText("This task has no terminal now.")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Open in terminal" })).toBeNull();
+    const unavailable = screen.getByRole("button", { name: "Open in terminal" });
+    expect(unavailable).toHaveAttribute("aria-disabled", "true");
+    expect(unavailable).toHaveAccessibleDescription("This task has no terminal now.");
+    expect(screen.getByText("This task has no terminal now.")).toHaveClass("sr-only");
+    await userEvent.click(unavailable);
+    expect(screen.getByText("This task has no terminal now.")).not.toHaveClass("sr-only");
     rerender(<Prose text={block("ls")} />);
     expect(screen.getByRole("group", { name: "Command" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Copy" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Open in terminal" })).toBeNull();
   });
 
-  it("shows a refused run block verbatim with its reason and no action", () => {
-    render(<ProseTerminal value={{ open: vi.fn() }}><Prose text={block("cd /tmp\nls")} /></ProseTerminal>);
+  it("shows a refused run block verbatim and discloses its reason without running it", async () => {
+    const open = vi.fn();
+    render(<ProseTerminal value={{ open }}><Prose text={block("cd /tmp\nls")} /></ProseTerminal>);
     expect(screen.getByRole("group", { name: "Command" }).querySelector("pre")!.textContent).toBe("cd /tmp\nls");
-    expect(screen.getByText("Not offered for the terminal: more than one line.")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Open in terminal" })).toBeNull();
+    const unavailable = screen.getByRole("button", { name: "Open in terminal" });
+    expect(unavailable).toHaveAttribute("aria-disabled", "true");
+    expect(unavailable).toHaveAccessibleDescription("Not offered for the terminal: more than one line.");
+    await userEvent.click(unavailable);
+    expect(screen.getByText("Not offered for the terminal: more than one line.")).not.toHaveClass("sr-only");
+    expect(open).not.toHaveBeenCalled();
   });
 
   it("never makes another fence an action", () => {

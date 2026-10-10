@@ -58,16 +58,16 @@ for (const scene of scenes) test(`task status: ${scene.key}, row and page`, asyn
   const walk = walkthrough(page, info);
   await walk.open(`${project.path}?tab=work`);
   const row = page.getByRole("region", { name: "Work", exact: true }).getByRole("link", { name: /^Verify installation ·/ });
-  const rowExplanation = coordinatorStop ? "The coordinator requested a stop; confirmation is in the task."
-    : stopped ? "You requested a stop; confirmation is in the task." : planned ? `Planned · ${scene.explanation}` : scene.explanation;
+  const routine = stopped || scene.key === "operator";
+  const rowExplanation = stopped ? "Stop requested" : scene.key === "operator" ? "Needs you" : planned ? `Planned · ${scene.explanation}` : scene.explanation;
   await walk.state("01-row-explanation", { visible: [row.getByText(rowExplanation, { exact: true })], hidden: [] });
   expect(await row.innerText()).not.toMatch(/aabbccdd|attempt 1|worker state|l2-died|thinking_tokens|\\n/);
   if (fault || stopped) await expect(row.locator(".dot")).toHaveAttribute("data-state", coordinatorStop ? "running" : "danger");
   if (audience === "operator") await expect(row.getByText("Your turn · 1 question")).toBeVisible();
   await row.click();
   const explanation = page.locator(".task-explanation");
-  await walk.state("02-page-explanation", { visible: [explanation.getByText(scene.explanation, { exact: true }), page.getByText("Merge held", { exact: false }).first()], hidden: [] });
-  expect((await explanation.innerText()).length).toBeLessThan(220);
+  await walk.state("02-page-explanation", { visible: [...(routine ? [] : [explanation.getByText(scene.explanation, { exact: true })]), page.getByText("Merge held", { exact: false }).first()], hidden: routine ? [explanation] : [] });
+  if (!routine) expect((await explanation.innerText()).length).toBeLessThan(220);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   if (audience === "operator") await expect(page.locator('[data-question-id="status-question"]').first()).toBeVisible();
   if (stopped) await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeVisible();
@@ -83,5 +83,5 @@ for (const scene of scenes) test(`task status: ${scene.key}, row and page`, asyn
     await walk.state("03-original-evidence", { visible: [details.getByText(scene.reason, { exact: true }), ...label], hidden: [] });
   }
   await page.getByRole("button", { name: "Close task details", exact: true }).click();
-  await walk.state("04-return-to-conversation", { visible: [explanation], hidden: [details] });
+  await walk.state("04-return-to-conversation", { visible: routine ? [page.getByRole("textbox", { name: "Message the L2" })] : [explanation], hidden: [details, ...(routine ? [explanation] : [])] });
 });

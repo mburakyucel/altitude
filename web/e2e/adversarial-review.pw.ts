@@ -237,5 +237,5 @@ test("review loading and uncertain receipt preserve listening and draft", async 
   await expect(field).toHaveValue(/^Keep my draft\. check/, { timeout: 5000 });
   await page.getByRole("button", { name: "Stop voice input", exact: true }).click();
   await expect(field).toHaveValue("Keep my draft. Please check expiry.");
-  await walk.state("04-transcription-in-draft", { visible: [field, page.getByRole("button", { name: "Start voice input", exact: true })], hidden: [page.getByRole("button", { name: "Stop voice input", exact: true }), page.getByText("Transcribing…", { exact: true })] });
+  await walk.state("04-transcription-in-draft", { visible: [field, page.getByRole("button", { name: "Start voice input", exact: true })], hidden: [page.getByRole("button", { name: "Stop voice input", exact: true }), page.getByRole("status", { name: "Transcribing…", exact: true })] });
 });

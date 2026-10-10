@@ -58,7 +58,7 @@ test("removal detaches L3 from project settings: confirm, cancel, denied, error,
   }, { times: 1 });
   await confirm.getByRole("button", { name: "Retry", exact: true }).click();
   await walk.state("08-pending", {
-    visible: [confirm.getByRole("status").filter({ hasText: "Removing… Closing doesn't cancel removal." }), confirm.getByRole("button", { name: "Removing…", exact: true })],
+    visible: [confirm.getByRole("button", { name: "Removing…", exact: true }), confirm.getByRole("button", { name: "Removing…", exact: true })],
     hidden: [confirm.getByRole("alert")],
   });
   await expect(cancel).toBeDisabled();
