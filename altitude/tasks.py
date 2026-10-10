@@ -1171,7 +1171,9 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
 def new(project: str, title: str, request: str, actor: str = "l3", source: str = "chat", model: str | None = None,
         paths: list[str] | None = None, hold_merge: str | None = None, engine: str | None = None,
         effort: str | None = None, image_ids: list[str] | None = None,
-        wait: str | None = None, after: str | None = None) -> dict:
+        wait: str | None = None, after: str | None = None, offer_turn: str | None = None) -> dict:
+    """`offer_turn` names the coordinator reply whose Create task press this creation answers (SPEC.md §3.3);
+    a reply produces at most one task, however often its turn is retried."""
     if source not in ("chat", "recovery"):
         raise TransitionError("task source must be chat or recovery")
     if wait is not None and after is not None:
@@ -1202,6 +1204,8 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
         config.project(project)
         if after is not None:
             S.load_task(project, after)  # dependencies are existing tasks in this project
+        if offer_turn and (existing := offered_task(project, offer_turn)):
+            raise TransitionError(f"this reply already created task {existing}; one Create task press makes one task")
         refs = image_store.lookup(project, image_ids) if image_ids else []
         base = S.slugify(title)
         slug, n = base, 1
@@ -1223,10 +1227,18 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
             task["planned_wait"] = None if after and _dependency_done(project, after) else planned
         if refs:
             task["images"] = refs
+        if offer_turn:
+            task["offer_turn"] = offer_turn
         S.save_task(project, task)
         S.append_event(project, slug, "new", by=actor, title=title, source=source, queued=True, planned_wait=planned)
         S.regen_state_md(project)
         return task
+
+
+def offered_task(project: str, offer_turn: str) -> str | None:
+    """The task already created from the coordinator reply of turn `offer_turn`, active or archived."""
+    return next((task["slug"] for task in S.list_tasks(project, include_archive=True)
+                 if task.get("offer_turn") == offer_turn), None)
 
 
 def _dependency_done(project: str, slug: str) -> bool:

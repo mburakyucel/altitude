@@ -72,6 +72,9 @@ In the existing design review and [phone and desktop walkthrough](../../AGENTS.m
   bordered or filled button; a borderless ghost button sits only beside a visible bordered or
   filled action; a text link is underlined. Plain text beside muted meta lines is not a control.
 - Complexity is restrained: each visible control and detail earns its place in the current task.
+- State shows visually before it is written: a control changes in place, and an icon, colour or
+  motion says that something is working, waiting, done or failed. Text appears only where a cue
+  cannot carry the meaning, such as an error's reason. No line restates what the screen already shows.
 - Typography, spacing, alignment, colour, and component treatment have a consistent visual finish;
   interaction states and transitions feel complete and polished on phone and desktop.
 
@@ -239,7 +242,8 @@ content widths. No separate detached-but-managed state exists.
 Anatomy: a single column, max 720px, bottom-anchored, newest last. Day dividers ("Today", a date).
 Operator messages are right-aligned bubbles (`--bubble`, radius `--radius-bubble`, 15px). L3 replies
 are left-aligned prose with no bubble (15px, line-height 1.65): paragraphs, lists, inline code,
-links; no headings, no tables. A task card (§3.5) sits under an L3 reply whose turn created a task.
+links; no headings, no tables. A task card (§3.5) sits under an L3 reply whose turn created a task,
+and Create task (below) under the latest reply that offered one.
 System turns render as system lines (§3.4). Hovering a row shows its time in the gutter; on the
 phone a long-press shows it. The phone layout is portrait 390 wide only; landscape is unsupported.
 The conversation scrolls inside the fixed shell, shrinks above the keyboard, and follows its newest
@@ -360,6 +364,36 @@ on both, including switching back before or after a response finishes:
 
 `web/e2e/project-isolation.pw.ts` walks these transitions with fictional projects and a disposable
 file-backed service; delayed refusals and microphone results are controlled browser overlays.
+
+#### Create task
+
+When L3 is unsure whether the operator wants work started, its reply offers it instead of asking
+(boards `ReplyTask`, `MobileReplyTask` and their state sheets). The reply ends with one quiet outlined
+button, **Create task**, led by a plus, then the task's short title in 13px muted text. The title is
+the button's accessible description. The button is 34px tall; on phone its touch area extends to 44px.
+Pressing sends L3 the instruction `Create task: <title>` as the operator's next chat message, but the
+conversation shows no message: the button changes in place, and its icon and colour say where the press
+stands. The draft, images and voice input in the composer stay untouched. L3 creates the task from its
+reply and the conversation without asking again, and its answer carries the task card. There is no
+form, dialog or second copy of the reply.
+
+| State | The button |
+| --- | --- |
+| Reply without an offer | Absent: ordinary answers, reports, system lines and replies that created a task show nothing. |
+| Offered | Plus, Create task, and the title, under the latest reply only. |
+| Working | Accent fill and a spinner, from the press until L3 answers; it ignores presses and keeps focus. "Create task sent" is announced once Altitude saves the press. L3's typing indicator follows. |
+| Waiting for L3 | A clock while the press waits behind L3's current work, with × (Remove, 44px target) inside the pill. Remove brings the offer back. A press kept while no engine can run (§4.2) shows the clock without ×, as a kept message cannot be removed. The press is not listed among queued messages. |
+| Task created | Green fill, check, "Task created"; L3's answer below carries the task card. It stays in the history. |
+| Answered without a task | Muted check: L3 answered the press without creating a task. |
+| Not sent | Altitude refused the press or did not save it: the offer stays with a short danger note (`role=alert`): Altitude's reason, "Not sent" or, when the conversation cannot be read, "Not confirmed". Pressing again is safe. |
+| L3 could not answer | Danger outline, retry icon, "Retry": it sends the same press and never makes a second task. No failed-turn line. |
+| Answered another way | Any message the operator sends or queues, typed, spoken or with images, retires the offer. A stale window's press is refused with "The conversation has moved on, so this was not sent." |
+
+A press runs as its own L3 turn, never folded into typed messages queued with it. Once its reply has left
+the loaded history, a press reads as its message, with the ordinary queue controls or failed-turn Retry.
+
+`web/e2e/create-task.pw.ts` walks these states at both widths against a disposable service running the
+real coordinator verbs, queue and task store; lost and refused responses are browser overlays.
 
 ### 3.4 System line
 
@@ -1759,7 +1793,7 @@ retain phone/desktop state verification and accessible review evidence.
 | Surface | Reads | Writes |
 | --- | --- | --- |
 | Rail, Needs you, badges | `GET /api/overview` | `POST /api/project/add`, `POST /api/project/remove` |
-| Project conversation | `GET /api/chat/<project>` | `POST /api/chat` (message, queue), `POST /api/chat/remove`, `POST /api/l3/reset` |
+| Project conversation | `GET /api/chat/<project>` | `POST /api/chat` (message, queue, Create task press), `POST /api/chat/remove`, `POST /api/l3/reset` |
 | Models and settings | `GET /api/overview` `new_tasks`, `GET /api/defaults/<project>` | `POST /api/new-tasks`, `POST /api/defaults` (choice, defaults, routing; each with `expected`) |
 | Project setup | `GET /api/setup/<project>` | `POST /api/project/setup` (check, repair, operator-approved hook integration) |
 | Work panel | `GET /api/project/<name>`, `GET /api/overview` `queue` | none; rows open the owning conversation |
@@ -1806,6 +1840,11 @@ the working rules (the design decision of 2026-09-05).
    reuse the receipt and repair interrupted delivery. A remainder publishes a new revision without
    an inherited default. L3-authored prose cannot impersonate operator approval. The existing task
    lock, inbox/resume and provider conversation remain the supporting machinery.
+7. **Replies can offer a task.** L3's `alt task offer '<title>'` during a chat turn puts `offer:
+   <title>` on that turn's assistant row when it created no task. A press posts `{project,
+   offer_turn}` to `POST /api/chat`, which queues the operator message `Create task: <title>` with
+   `offer_turn` while the reply is still the latest and nothing of the operator's waits; the task that
+   turn creates records `offer_turn`, and a second one for the same reply is refused.
 
 Everything else is client rendering. No new daemon, no new store, no second conversation.
 

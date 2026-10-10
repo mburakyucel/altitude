@@ -311,6 +311,7 @@ def main(argv=None) -> None:
     wait = n.add_mutually_exclusive_group()
     wait.add_argument("--wait", help="plan without dispatch until explicitly released; one short reason")
     wait.add_argument("--after", help="plan until one existing task in this project is archived done")
+    ts.add_parser("offer", parents=[l3.offer_parser()], help="coordinator socket: end this reply with Create task <title> for the operator")
     release = ts.add_parser("release", help="L3/operator: clear a planned wait; ordinary dispatch gates still apply")
     release.add_argument("slug"); release.add_argument("--reason", required=True)
     for name in ("reject", "block"):
@@ -476,6 +477,8 @@ def main(argv=None) -> None:
     c = args.cmd
     if c == "project" and args.pcmd in ("message", "terminal"):
         sys.exit(f"alt project {args.pcmd} is available only through the project's coordinator socket")
+    if c == "task" and args.tcmd == "offer":
+        sys.exit("alt task offer is available only through the project's coordinator socket, during a chat turn")
     closing_pr = c == "pr" and args.target == "close"
     actor_command = (c, getattr(args, "tcmd", None) if c == "task" else
                      getattr(args, "acmd", None) if c == "audit" else
@@ -711,7 +714,9 @@ def main(argv=None) -> None:
     if c == "task":
         p = _project(args); tc = args.tcmd
         if tc == "new":
-            out(T.new(p, args.title, _stdin_or_file(args), actor=ACTOR, source=args.source, model=args.model, engine=args.engine, effort=args.effort, paths=(args.paths or "").split(",") if args.paths else None, hold_merge=args.hold_merge, image_ids=args.image_ids, wait=args.wait, after=args.after))
+            # The coordinator socket names the reply a Create task press answers; nothing else sets it.
+            offer_turn = os.environ.get("ALTITUDE_OFFER_TURN") if ACTOR == "l3" else None
+            out(T.new(p, args.title, _stdin_or_file(args), actor=ACTOR, source=args.source, model=args.model, engine=args.engine, effort=args.effort, paths=(args.paths or "").split(",") if args.paths else None, hold_merge=args.hold_merge, image_ids=args.image_ids, wait=args.wait, after=args.after, offer_turn=offer_turn))
         elif tc == "release":
             out(T.release(p, args.slug, args.reason, actor=ACTOR))
         elif tc in ("reject", "resume", "stop", "preserve-checkout", "handoff"):
