@@ -822,8 +822,10 @@ log show --last 10m --style compact --predicate "eventMessage CONTAINS '$label'"
 
 def phase_lifecycle(guest: Guest, repository: str, results: Path, record: dict, release: Path, commit: str) -> None:
     """installation_lifecycle.py's `mac` phase, as installation_mac.py runs it on a configured Mac, in this fresh guest:
-    install through the public command, health, doctor, updates to newer stable releases by `alt update` and by the
-    app's Update button, a failed update rolled back, and uninstall, under a throwaway HOME of the account."""
+    install through the public command, health, doctor, the daemon's automatic installation of a newer stable release
+    with no browser terminal open, with automatic updates off a release that waits for `alt update` and then the app's
+    Update button, a failed automatic update rolled back and not retried, and uninstall, under a throwaway HOME of the
+    account."""
     fix_openssl(guest)
     add_github_cli(guest, record)
     record["prerequisites"] = prerequisites(guest)

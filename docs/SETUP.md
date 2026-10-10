@@ -26,7 +26,8 @@ updates `v0.1.0-rc.2` to it, both from GitHub itself),
 without establishing browser/device certificate trust, live provider readiness or a minimal OS install.
 On an Apple silicon Mac, the [macOS VM run](DEVELOPMENT.md#macos-vm-run) checks in fresh, offline
 macOS guests that the built `install.sh` stops with its documented fix for each missing prerequisite,
-installs, updates, recovers and uninstalls, and that the service starts again at login after a restart.
+installs, updates automatically or after confirmation, recovers and uninstalls, and that the service
+starts again at login after a restart.
 See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](DEVELOPMENT.md#coverage-and-limits).
 
 ## Prerequisites
@@ -78,7 +79,8 @@ The command downloads anonymously and needs no GitHub sign-in. `latest` names th
 newest stable release and skips release candidates; to install one exact release,
 replace `latest/download` with `download/<tag>`, using a tag from the
 [releases](https://github.com/mburakyucel/altitude/releases). On the Mac, installation,
-updates, rollback, uninstall and starting again at login pass in fresh macOS virtual machines; the
+automatic and confirmed updates, rollback, uninstall and starting again at login pass in fresh macOS
+virtual machines with synthetic releases; the
 [roadmap](ROADMAP.md#native-macos-runtime) lists the native checks still open.
 
 `v0.1.0-rc.1` cannot start its service: systemd refuses the working directory its unit names, so
