@@ -53,13 +53,14 @@ _GH_APT = "https://cli.github.com/packages"
 def install_command(tool: str) -> str:
     """What First run and `alt doctor` show for a missing or outdated `gh` or `git`, run in the operator's own terminal.
     Homebrew's gh is current; Debian and Ubuntu package one too old for alt land, so Linux adds GitHub's own apt
-    repository, whose `apt install` also upgrades an installed gh."""
+    repository, whose `apt install` also upgrades an installed gh. The signing key replaces the keyring, readable by
+    apt, only once its download succeeds."""
     if _darwin():
         return {"gh": "brew install gh", "git": "xcode-select --install"}[tool]
-    return {"gh": f"curl -fsSL {_GH_APT}/githubcli-archive-keyring.gpg | sudo tee /etc/apt/keyrings/githubcli-archive-"
-                  f"keyring.gpg >/dev/null && echo 'deb [signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] "
-                  f"{_GH_APT} stable main' | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null && sudo apt "
-                  "update && sudo apt install gh",
+    keyring = "/etc/apt/keyrings/githubcli-archive-keyring.gpg"
+    return {"gh": f'key=$(mktemp) && curl -fsSL {_GH_APT}/githubcli-archive-keyring.gpg -o "$key" && sudo install -D -m 644 '
+                  f'"$key" {keyring} && rm "$key" && echo "deb [signed-by={keyring}] {_GH_APT} stable main" | sudo tee '
+                  "/etc/apt/sources.list.d/github-cli.list >/dev/null && sudo apt update && sudo apt install gh",
             "git": "sudo apt install git"}[tool]
 
 # Image-owned identity, outside every persistent/writable application volume. Neither an environment

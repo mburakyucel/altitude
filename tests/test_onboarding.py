@@ -3,6 +3,7 @@ prerequisites the agents need. Fixture engine and GitHub CLIs only."""
 import json
 import os
 import subprocess
+from pathlib import Path
 from unittest import mock
 
 from tests.support import AltitudeCase
@@ -157,8 +158,31 @@ class TestPrerequisites(OnboardingCase):
         with mock.patch.object(platform.sys, "platform", "linux"):
             command = platform.install_command("gh")
             self.assertEqual(platform.install_command("git"), "sudo apt install git")
-        self.assertIn("https://cli.github.com/packages stable main", command)
-        self.assertTrue(command.endswith("&& sudo apt update && sudo apt install gh"), command)
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        log = self.tmp / "commands"
+        for name, body in (("sudo", f'echo "sudo $*" >> {log}; [ "$1" = tee ] && cat >> {log}; exit 0'),
+                           ("curl", f'echo "curl $*" >> {log}; [ -n "$FAIL" ] && exit 22; echo key > "$4"')):
+            (bin_dir / name).write_text(f"#!/bin/sh\n{body}\n")
+            (bin_dir / name).chmod(0o755)
+        keyring = "/etc/apt/keyrings/githubcli-archive-keyring.gpg"
+        for fail in ("1", ""):
+            log.unlink(missing_ok=True)
+            run = subprocess.run(["sh", "-c", command], env={"PATH": f"{bin_dir}:/usr/bin:/bin", "FAIL": fail, "TMPDIR": str(self.tmp)},
+                                 capture_output=True, text=True)
+            lines = log.read_text().splitlines()
+            self.assertEqual(lines[0], "curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o "
+                             + lines[0].split()[-1])
+            if fail:
+                self.assertEqual((run.returncode, len(lines)), (22, 1), "a failed download leaves the keyring alone")
+                continue
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertFalse(Path(lines[0].split()[-1]).exists(), "the downloaded key is removed once installed")
+            self.assertEqual(lines[1:], [
+                f"sudo install -D -m 644 {lines[0].split()[-1]} {keyring}",
+                "sudo tee /etc/apt/sources.list.d/github-cli.list",
+                f"deb [signed-by={keyring}] https://cli.github.com/packages stable main",
+                "sudo apt update", "sudo apt install gh"])
 
     def test_the_landing_fields_come_from_the_github_cli_field_list_without_credentials(self):
         bin_dir = self.tmp / "bin"
