@@ -175,8 +175,8 @@ class TestTaskConversation(ChatCase):
         cards = T.decisions(self.project)
         self.assertEqual([(c["kind"], c["asked_by"], c["question"]) for c in cards], [("asks", "l2", "Which colour?")])
         self.assertIsNone(cards[0]["recommendation"])
-        self.assertEqual(len(self.l3_queue()), 2, "operator-directed questions also reach the coordinator")
-        notification = self.l3_queue()[-1]
+        [notification] = self.l3_queue()
+        self.assertNotEqual(notification["id"], queued[0]["id"], "operator-directed questions also reach the coordinator")
         self.assertEqual(notification["slug"], self.slug)
         self.assertIn("authority: operator", notification["text"])
         self.assertIn(cards[0]["id"], notification["text"])
@@ -184,12 +184,14 @@ class TestTaskConversation(ChatCase):
         out = self.alt("--project", self.project, "task", "block", self.slug, "--reason", "Which colour?",
                        "--for-operator", env=self.worker_env())
         self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertEqual(len(self.l3_queue()), 2, "re-parking the same revision does not notify again")
+        self.assertEqual([row["id"] for row in self.l3_queue()], [notification["id"]],
+                         "re-parking the same revision does not notify again")
         T.resume(self.project, self.slug)
         out = self.alt("--project", self.project, "task", "block", self.slug, "--reason", "Which accent colour?",
                        "--for-operator", env=self.worker_env())
         self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertEqual(len(self.l3_queue()), 3, "a revised question carries new coordinator context")
+        [revised] = self.l3_queue()
+        self.assertNotEqual(revised["id"], notification["id"], "a revised question carries new coordinator context")
 
     def test_an_operator_question_reworded_into_a_wait_leaves_the_operators_turn(self):
         """The close-device sequence: operator-directed questions later revised into waits on L3 or an external event."""
@@ -223,7 +225,7 @@ class TestTaskConversation(ChatCase):
         self.assertEqual((T.decisions(self.project), task["waiting_on"]), ([], "l3"))
         self.assertEqual(T.block_status(self.project, task)[0], "waiting-l3")
         notifications = self.l3_queue()
-        self.assertEqual([row["trigger"] for row in notifications], ["block"] * 3)
+        self.assertEqual([row["trigger"] for row in notifications], ["block"], "each notification replaced the last")
         self.assertIn(f"{mirror['id']} revision 2 (authority: l3): Waiting for the next mirror CI run.",
                       notifications[-1]["text"])
         T.resume(self.project, self.slug)
