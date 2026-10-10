@@ -683,7 +683,7 @@ no reservation while waiting for preparation and no automatic retry. L2 and revi
 set expectations for a relatively quick, focused review without a programmatic duration cutoff.
 The command waits without a review deadline; streamed JSON whitespace detects disconnected callers.
 Owner changes, cancellation and caller disconnect stop the run. Planned activation waits for in-flight
-reviews to return their results; review admission shares the restart fence. Capacity contention refuses
+reviews to return their results; new review runs wait while activation is pending. Capacity contention refuses
 `run` and leaves the accepted request waiting for the reviewer, shown as such, until a later explicit run. Unexpected restart reconciliation cancels an
 orphaned invocation rather than leaving it running without a result consumer.
 The engine checks service inspection before launch. Its cleanup stops the independent reviewer unit
@@ -888,27 +888,30 @@ branch is deleted once the tip is on `origin/main` or a verified PR merged it; a
 found only on this machine stays and the `cleanup-worktree` event names it and its unmerged commit count.
 A running worker or failed fetch retries on the next tick; any other refusal is a recorded note, not a
 fault. A done task's cleanup then fast-forwards a self-deploying checkout.
-Invocations with `--merge` hold a separate `flock`
-on `altitude-land.lock` in the repository's common Git directory, from before ownership reads and
-fetch through checks and merge. All its worktrees share the lock; task-state locks remain short,
-so messages and Stop stay available. Admission waits at most one hour, reports
-the seconds waited, and refreshes ownership and holds before publication. Current main is merged
-into the task branch before pushing when needed, preserving adopted ancestry and triggering fresh
-head checks. Base-only movement during checks or merge automatically repeats integration,
-publication and fresh checks under the original publication deadline. Head or PR identity movement
-refuses. Adopted PR pushes remain fast-forward only. A conflicting integration is aborted with local
-work retained for owner reconciliation.
-For a completed review whose assessment is stale, the current L2's merging invocation retains the
-turn while the owner explicitly reassesses the pinned candidate through the existing review command.
-CI and assessment share one deadline, an hour after publication unless `--wait` shortens it, so a
-merging candidate keeps the turn through its fresh required check. Polls hold the task review lock
+A merging invocation holds a separate `flock` on `altitude-land.lock` in the repository's common
+Git directory only for its final step: confirming the pinned candidate is still current (base, head,
+checks, ownership, holds and review) and merging it, plus the full local candidate suite in projects
+without hosted CI, since that suite uses this machine. All its worktrees share the lock; publication,
+hosted CI and owner assessment wait outside it, so a green candidate on current main never waits for
+another owner's CI. Task-state locks remain short, so messages and Stop stay available. Admission waits
+at most one hour and reports the seconds waited; ownership and holds are rechecked before it.
+Current main is merged into the task branch before pushing when needed, preserving adopted ancestry
+and triggering fresh head checks. When another merge moves main before this one, during the check,
+the assessment or at the turn, the same invocation integrates the new main, pushes and pins the new
+head, and waits for its fresh check; nonmerging invocations stop with the PR published. A conflicting
+integration is aborted with local work retained for owner reconciliation. Head or PR identity movement
+refuses; adopted PR pushes remain fast-forward only.
+For a completed review whose assessment is stale, the current L2's merging invocation waits while the
+owner explicitly reassesses the pinned candidate through the existing review command.
+CI and assessment share one deadline, an hour after publication unless `--wait` shortens it, across
+fresh checks after main moves. Polls hold the task review lock
 only for local review reads; network reads and sleeps leave review requests available. Assessment
 fetches preserve landing's `FETCH_HEAD` receipt. A notice names every stale review and subject with
 the assessed/current values of its changed evidence, so the owner posts explanations together before
 assessing each request.
 Proposal and changes findings remain separate; a changes assessment does not retire a proposal.
-Fresh context invalidation, including during final merge validation, uses the same wait and original
-deadline. Final candidate, checks, ownership and hold validation repeats after assessment.
+Fresh context invalidation, including during final merge validation, leaves the turn and uses the same
+wait and original deadline. Final candidate, checks, ownership and hold validation repeats after assessment.
 Missing or unfinished review, head or PR identity movement or ownership loss refuses.
 No review identity or disposition is automatically transferred.
 The final review/context check precedes recorded approval application, preserving holds on review refusal.
@@ -1208,7 +1211,7 @@ storage so a worker cannot turn it back on) stops running runs and refuses new o
 admitting a run, altd stops abandoned runs, retains their logs and results, records them as interrupted
 and removes their scratch files. Failed evidence delivery retains the original area and keeps the
 runner closed for recovery. Validation holds the shared restart fence through its bounded execution,
-evidence recording and cleanup, and refuses admission once restart is requested. On a Mac,
+evidence recording and cleanup, and refuses admission while activation is pending. On a Mac,
 `--simulator` adds a disposable iOS Simulator iPhone (`altitude/simulator.py`): altd creates it in a
 private device set in the run's area and removes it afterwards, and the run, which stays refused the
 Simulator service, reaches only that phone's Safari pages through altd's filtering relay, and two fixed native

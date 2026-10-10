@@ -948,16 +948,15 @@ CLI, and the backend applies the identity, clean-Git, isolation, and merge-polic
 command and effect boundary. Claude hooks add telemetry, coordination delivery and the operator-message notice;
 they are not the backend authority check. Claude launches with images stream the prompt as one user message
 marked as the human's.
-Landings with `--merge` wait up to one hour for a
-repository turn, keeping the owner session alive and reporting seconds waited. The turn serializes
-publication and check waiting; external runner executions do not share it. The admitted command rereads task authority and holds, fetches the
-base, incorporates it into the task branch and validates the fresh PR base/head pair through
-merge. Nonmerging invocations never take the turn. If only main moves, the admitted merging command
+A merging landing fetches the base, incorporates it into the task branch, publishes and waits for that
+head's own checks and owner assessment, keeping the owner session alive. Only the final
+confirm-and-merge takes the repository turn, which waits at most one hour and reports seconds waited;
+external runner executions do not share it. When another merge moves main first, the same command
 integrates it, pushes and waits for fresh checks within its original publication deadline, repeating
 ownership, review, hold, approval and issue-closure gates. Head or PR identity movement refuses;
-adopted PR pushes remain fast-forward only. Task messages and Stop use their ordinary lifecycle
-while it waits. Failure, timeout or process exit releases the turn; a later invocation validates
-the current candidate and checks afresh.
+adopted PR pushes remain fast-forward only. Nonmerging invocations never take the turn. Task messages
+and Stop use their ordinary lifecycle while it waits. Failure, timeout or process exit releases the
+turn; a later invocation validates the current candidate and checks afresh.
 An owner whose branch needs manual conflict reconciliation updates it in the worktree; a conflict
 they cannot resolve goes to L3 through an ordinary `alt task block`, without `--fault`.
 The delivery gate requires Python, web, build and phone/desktop browser checks. Review captures stay
@@ -967,7 +966,8 @@ Owners and helpers run relevant tests during development. This repository's GitH
 `alt land` requires successful CI for the current head and tested tree, without a duplicate
 local full run. The branch includes current main; `--merge` integrates a missing base and waits
 for fresh PR checks on the new head. Final validation and merge are serialized across Altitude
-owners sharing the common Git directory, and the merged tree must equal the tested tree.
+owners sharing the common Git directory, while each candidate's hosted CI runs outside that turn.
+The merged tree must equal the tested tree.
 Other installations do not share the turn; this repository's strict GitHub up-to-date required-check
 rule protects their final merge race. GitHub merges do not enforce Altitude's task holds and review
 protocol. Superseded PR checks are cancelled on a new PR push; main and manual runs are never cancelled.
@@ -1377,7 +1377,9 @@ re-running `alt land`. A merged change
 to Altitude's backend, launch source or served web bundle inputs activates at a narrow quiet point: no dispatch
 marker or resume claim, L3 turn, adversarial review, validation run, or report verification in flight.
 Validation holds through bounded execution, evidence recording and cleanup. Running and blocked workers themselves do not
-hold activation, and new dispatches continue while activation is pending. The regular thirty-second
+hold activation, and new dispatches continue while activation is pending. New validation runs and adversarial
+review runs are refused from the moment activation is pending until the restart (or a failed activation), so
+in-flight work drains to the quiet point within one validation run. The regular thirty-second
 tick discovers merged changes independently of worker completion. Dispatch, resume, L3 turns
 and report verification wait only from the restart unit request until the replacement daemon is
 ready; a failing restart unit releases the window at once with its reason, and the ten-minute restart
@@ -1387,7 +1389,7 @@ returning Stop or bootstrapping the replacement, with a 45-second removal limit.
 remain in their own jobs. Failed activation restores an available prior web bundle and verifies the
 recovery service's API/UI health from a new process; its error retains both activation failure and
 recovery outcome. An absent prior bundle is explicit, and no recovery is attempted without one.
-Validation also refuses new runs during that window. Unexpected daemon exit or host
+Unexpected daemon exit or host
 reboot leaves an interrupted validation record and retained log/results at startup; failed evidence
 delivery keeps the original run area for recovery.
 The web update notice is dismissible per browser for the pending update and failure identity.

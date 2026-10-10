@@ -52,7 +52,8 @@ USER = "1000:1000"               # the image's `ubuntu` user, mapped to the oper
 IMAGE_CACHE = "/home/ubuntu/.cache/altitude-installation-vm"
 
 OFF = "alt task validate: the operator has turned validation runs off in Settings"
-RESTARTING = "alt task validate: Altitude is restarting; retry when it is ready"
+RESTARTING = ("alt task validate: Altitude is activating merged changes; new runs start once it has restarted "
+              "(`alt repo` shows the pending activation)")
 
 UNIT_PREFIX = "altitude-validation-"   # every unit the runner starts; its rows are recorded by reconcile()
 
@@ -61,6 +62,7 @@ LINE = line.Line(1, "the validation slot")   # one run on the machine at a time,
 _state = threading.Lock()        # orders admission against turning the runner off
 _ready = threading.Event()       # no earlier run's area remains; until then each request retries their removal
 _active: dict = {}               # the admitted run's area and unit, and how it was stopped, if it was
+_holder: str | None = None       # the task whose admitted run holds activation, from admission through cleanup
 
 
 def enabled() -> bool:
@@ -508,6 +510,8 @@ def run(project: str, slug: str, attempt: object, argv: object, *, kvm: object =
     `owner(task)` says whether the request comes from that task's own worker. A request that finds the machine busy
     waits its turn, telling `waiting(text)` what it waits for. `gone()` says the request's client stopped: a waiting
     request leaves the line, and an admitted run is stopped and recorded as stopped."""
+    global _holder
+
     def check() -> dict:
         return _check(project, slug, attempt, argv, kvm=kvm, publish=publish, simulator=simulator, capture=capture,
                       owner=owner)
@@ -526,14 +530,23 @@ def run(project: str, slug: str, attempt: object, argv: object, *, kvm: object =
             if not ready:
                 raise ValueError(RESTARTING)
             task = check()  # the task, the switch and the host may have changed while the request waited
-            return _run(project, slug, task, argv, kvm=kvm, publish=publish, phone=phone, capture=capture, gone=gone,
-                        place=place)
+            _holder = f"{project}/{slug}"
+            try:
+                return _run(project, slug, task, argv, kvm=kvm, publish=publish, phone=phone, capture=capture,
+                            gone=gone, place=place)
+            finally:
+                _holder = None
+
+
+def holder() -> str | None:
+    """The task whose validation run pending activation waits for."""
+    return _holder
 
 
 def _check(project: str, slug: str, attempt: object, argv: object, *, kvm: object, publish: object,
            simulator: object, capture: object, owner) -> dict:
     """Refuse a request this runner cannot or may not run; returns its task."""
-    if config.restart_in_progress():
+    if config.activation_pending():  # an admitted run finishes; a new one would keep the quiet point from opening
         raise ValueError(RESTARTING)
     S.require_task_slug(slug)
     if (not isinstance(argv, list) or not argv or not all(isinstance(a, str) and a for a in argv)
