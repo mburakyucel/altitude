@@ -1425,6 +1425,58 @@ class TestReviews(AltitudeCase):
         self.assertEqual(assessed["snapshot"]["proposal"]["text"], proposal["text"])
         reviews.require_merge(self.project, self.slug, self.pair())
 
+    def test_proposal_review_reads_the_design_spec_the_preview_publishes(self):
+        # A proposal review once saw only a question pointing at a preview it could not open.
+        from tests.test_task_design import png
+        boards = self.worktree / "design" / "wireframes"
+        boards.mkdir(parents=True)
+        spec = "# Compact rows\nPhone: one line, `Coordinator · 2 min`, truncated with an ellipsis.\n"
+        (boards / "spec.md").write_text(spec)
+        (boards / "phone.png").write_bytes(png())
+        selection = {"title": "Compact rows", "proposal": "design/wireframes/spec.md",
+                     "images": [{"title": "Phone — idle", "path": "design/wireframes/phone.png"}]}
+        captured = {}
+        def inspect(prompt, **kwargs):
+            design = kwargs["snapshot"] / "design.md"
+            captured.update(prompt=prompt, design=design.read_text() if design.exists() else None,
+                            context=json.loads((kwargs["snapshot"] / "context.json").read_text()))
+            return self.success(prompt, **kwargs)
+        self.engine.side_effect = inspect
+        proposal = T.message(self.project, self.slug, "l2", "Build the compact rows in the saved design.", expected_attempt=1)
+        result = self.run_review(self.request(subject="proposal"), proposal_id=proposal["id"], design=selection)
+
+        self.assertEqual(result["state"], "completed")
+        self.assertEqual(captured["design"], spec)
+        self.assertEqual(captured["context"]["design"], {"title": "Compact rows", "file": "design.md",
+                                                         "screenshots": ["Phone — idle"]})
+        self.assertIn("Design screenshots are named, not viewed; design.md is the design under review.",
+                      captured["context"]["limitations"])
+        for words in ("proposal.md and design.md", "not obviously clickable on a phone", "up to two alternative directions",
+                      'severity "alternative"'):
+            self.assertIn(words, captured["prompt"])
+
+        # A proposal review without a design still asks for the design part when the UI changes; changes review refuses a design.
+        self.assess(result)
+        plain = self.run_review(self.request(subject="proposal", previous=result["id"]), proposal_id=proposal["id"])
+        self.assertEqual(plain["state"], "completed")
+        self.assertIsNone(captured["design"])
+        self.assertNotIn("design.md", captured["prompt"])
+        self.assertIn("also review it as a design", captured["prompt"])
+        self.engine.reset_mock()
+        changes = self.run_review(self.request(), design=selection)
+        self.assertEqual(changes["state"], "failed")
+        self.assertIn("--design-file", changes["error"])
+        self.engine.assert_not_called()
+        # The reviewed design is the one the operator's preview shows; a changed spec makes the review an earlier version.
+        question = T.block(self.project, self.slug, "Build the rows as shown?", actor="l2", expected_attempt=1, design=selection)
+        self.assertEqual(result["snapshot"]["design"], {"id": question["questions"][-1]["design"]["id"], "title": "Compact rows"})
+        reviewed = lambda: next(r for r in reviews.view(self.project, self.slug)["history"] if r["id"] == result["id"])
+        self.assertFalse(reviewed()["earlier"])
+        (boards / "spec.md").write_text(spec + "Desktop: two lines.\n")
+        T.resume(self.project, self.slug)
+        T.block(self.project, self.slug, "Build the rows as shown?", actor="l2", expected_attempt=1, design=selection)
+        self.assertTrue(reviewed()["earlier"])
+
     def test_missing_proposal_never_invokes_provider_and_retry_preserves_subject(self):
         result = self.run_review(self.request(subject="proposal"))
         self.assertEqual(result["state"], "failed")
