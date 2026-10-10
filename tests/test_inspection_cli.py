@@ -150,6 +150,7 @@ class TestInspectionCLI(AltitudeCase):
                   {"at": S.now(), "kind": "state", "frm": "queued", "to": "running", "by": "altd"},
                   {"at": S.now(), "kind": "stopped", "reason": "one\nreason", "by": "burak"}]
         (directory / "events.log").write_text("".join(json.dumps(row) + "\n" for row in events))
+        self.patch(config, "OPERATOR", "Avery")
 
         message_text = cli("task", "messages", "inspect", "--last", "2")
         event_text = cli("task", "events", "inspect", "--last", "2")
@@ -162,6 +163,9 @@ class TestInspectionCLI(AltitudeCase):
         self.assertRegex(message_text.splitlines()[0], r"^\[-?\d+[mhd]\]")
         self.assertIn("queued → running", event_text)
         self.assertIn("one reason", event_text)
+        self.assertIn("] Avery (Avery, message 2)", message_text)
+        self.assertTrue(event_text.endswith("stopped: one reason · Avery"))
+        self.assertNotIn(config.OPERATOR_ACTOR, message_text + event_text)
         self.assertEqual(message_json, rows[-2:])
         self.assertEqual(event_json, events[-2:])
 
@@ -199,7 +203,7 @@ class TestInspectionCLI(AltitudeCase):
         self.assertIn(f"{self.project}/holder", text)
         self.assertIn("WIP limit", next(row["reason"] for row in record["waiting"] if row["slug"] == "lease-wait"))
         self.assertEqual(next(row["files"] for row in record["waiting"] if row["slug"] == "lease-wait"), [])
-        self.assertEqual({row["kind"] for row in record["waiting"]}, {"wip", "waiting-burak"})
+        self.assertEqual({row["kind"] for row in record["waiting"]}, {"wip", "waiting-operator"})
         self.assertIn("Choose a colour", text)
 
         S.write_json(config.MONITOR_DIR / "restart-pending.json", {"since": S.now(), "files": ["bin/alt"]})

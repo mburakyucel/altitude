@@ -71,5 +71,12 @@ describe("question and review text", () => {
     const { container } = mount(<QuestionSet decisions={[closed]} chat />);
     expect(container.querySelector("details.question-earlier")).toBeNull();
     expect(screen.getByText("Decision recorded")).toBeVisible();
+    expect(screen.getByText(/^L2 · /)).toBeVisible();
+  });
+  it("names the operator as you when they close a question, never by the stored identity", () => {
+    const closed = DecisionSchema.parse({ ...base, status: "resolved", question: "Publish rc.2?", resolution: { disposition: "rejected", text: "Task rejected", at: "2026-09-23T21:00:00Z", by: "operator" } });
+    mount(<QuestionSet decisions={[closed]} chat />);
+    expect(screen.getByText(/^You · /)).toBeVisible();
+    expect(screen.queryByText(/operator · /)).toBeNull();
   });
 });
