@@ -185,16 +185,14 @@ def conversation_review(project: str, prompt: str, *, engine: str, model: str) -
     started = time.monotonic()
     try:
         body = repository_rule_prompt(config.project_path(project)) + prompt
-        common = {"cwd": runtime, "model": model, "timeout": session_timeout(engine), "durable_timeout": True,
-                  "resume": None, "extra_env": l3._l3_env(project, runtime)}
+        common = {"cwd": runtime, "model": model, "timeout": session_timeout(engine),
+                  "extra_env": l3._l3_env(project, runtime)}
         if engine == "claude":
-            native = claude_print(body, **common, allowed_tools=L3_ALLOWED_TOOLS, tools=l3.L3_TOOLS,
-                                  permission_mode="dontAsk", permission_prompts="none", restricted=True,
+            native = claude_print(body, **common, durable_timeout=True, allowed_tools=L3_ALLOWED_TOOLS,
+                                  tools=l3.L3_TOOLS, permission_mode="dontAsk", permission_prompts="none", restricted=True,
                                   add_dirs=(config.project_path(project), config.ROOT))
         else:
-            native = codex_exec(body, **common,
-                                sandbox_settings=codex_l3_permissions(runtime, project=project),
-                                ignore_user_config=True)
+            native = codex_exec(body, **common, sandbox_settings=codex_l3_permissions(runtime, project=project))
         result.update(text=native.get("final_text", native.get("text")) or "", usage=native.get("usage") or None,
                       cost=native.get("reported_cost"), engine_model=native.get("engine_model"),
                       session_id=native.get("session_id"), error=native.get("error"), tools=native.get("tools", []))
@@ -228,14 +226,10 @@ def image_capability(engine: str) -> dict:
 @lru_cache(maxsize=16)
 def _image_cli_support(engine: str, executable: str, modified: int, size: int) -> bool:
     """Cache help by executable identity; replacing an installed CLI invalidates the observation."""
-    commands = [[]] if engine == "claude" else [["exec"], ["exec", "resume"]]
-    for args in commands:
-        result = subprocess.run([executable, *args, "--help"], capture_output=True, text=True,
-                                timeout=5, env=clean_env())
-        markers = ("--input-format", "stream-json") if engine == "claude" else ("--image",)
-        if result.returncode or not all(marker in result.stdout for marker in markers):
-            return False
-    return True
+    args, markers = (([], ("--input-format", "stream-json")) if engine == "claude"
+                     else (["app-server"], ("--strict-config",)))
+    result = subprocess.run([executable, *args, "--help"], capture_output=True, text=True, timeout=5, env=clean_env())
+    return not result.returncode and all(marker in result.stdout for marker in markers)
 
 
 def image_read_instructions(engine: str, images: list[dict] | tuple = (), *, attached: bool = False) -> str:
@@ -263,28 +257,24 @@ def image_read_instructions(engine: str, images: list[dict] | tuple = (), *, att
             "\n".join(rows) + "\n[altitude] End image references.\n")
 
 
-def _image_input(engine: str, prompt: str, images: list[dict] | tuple) -> tuple[list[str], str]:
-    """Use bounded native input, or keep a larger inbox batch fully inspectable through visual reads."""
-    if not images:
-        return [], prompt
-    native = len(images) <= 4 and sum(item["size"] for item in images) <= 20 * 1024 * 1024
-    prompt += image_read_instructions(engine, images, attached=native)
-    if not native:
-        return [], prompt
+def _engine_input(engine: str, prompt: str, images: list[dict] | tuple = ()) -> list[dict]:
+    """The first user turn in the engine's native input: bounded images attach natively, and a larger inbox
+    batch stays fully inspectable through visual reads."""
+    native = bool(images) and len(images) <= 4 and sum(item["size"] for item in images) <= 20 * 1024 * 1024
+    if images:
+        prompt += image_read_instructions(engine, images, attached=native)
     if engine == "codex":
-        return [arg for item in images for arg in ("--image", item["path"])], prompt
+        return [{"type": "text", "text": prompt, "text_elements": []},
+                *({"type": "localImage", "path": item["path"]} for item in images if native)]
     content = [{"type": "text", "text": prompt}]
-    for item in images:
+    for item in images if native else ():
         try:
             data = base64.b64encode(Path(item["path"]).read_bytes()).decode("ascii")
         except OSError as exc:
             raise ImageInputError(f"Image {item['id']} is unavailable; the message is retained.") from exc
         content.append({"type": "image", "source": {
             "type": "base64", "media_type": item["mime_type"], "data": data}})
-    # A text prompt is the human's turn; a streamed message without an origin is unattributed and lacks user standing.
-    return ["--input-format", "stream-json"], json.dumps({
-        "type": "user", "message": {"role": "user", "content": content}, "parent_tool_use_id": None,
-        "origin": {"kind": "human"}}) + "\n"
+    return content
 
 
 def _event_error(engine: str, event: dict):
@@ -523,13 +513,453 @@ def clean_env() -> dict:
     return env
 
 
-#: Job settings appear on the job's command line, so a worker's GitHub token travels on its first input line instead.
-#: Only a pipe gives up that line for good: an engine reading a file from its beginning sent the token as prompt text,
-#: so the reader starts no engine on any other input.
+#: Job settings appear on the job's command line, so a worker's GitHub token travels in the driver's input instead.
 GITHUB_TOKEN_VARIABLES = ("GH_TOKEN", "GITHUB_TOKEN")
-GITHUB_INPUT = ('[ -p /dev/stdin ] || { echo "altitude-worker: input is not a pipe; the engine was not started" >&2; '
-                'exit 125; }; IFS= read -r GH_TOKEN && [ -n "$GH_TOKEN" ] && export GH_TOKEN || unset GH_TOKEN; '
-                'exec "$@"')
+#: How often the driver looks for a Send now message, and how long a written message may stay unacknowledged once
+#: the turn has ended before the driver stops waiting for the engine's echo.
+SEND_POLL, SEND_ECHO_WAIT = 0.2, 10.0
+
+
+def _driver_command() -> list[str]:
+    """The job's own process: `engine_driver`, loaded from the protected checkout with isolated Python."""
+    adapter = (f"import sys; sys.dont_write_bytecode = True; sys.path.insert(0, {str(config.SOURCE.resolve())!r}); "
+               "from altitude.engines import engine_driver; engine_driver()")
+    return [sys.executable, "-I", "-c", adapter]
+
+
+def _driver_input(spec: dict) -> str:
+    return json.dumps(spec) + "\n"
+
+
+def coordinator_native_send(engine: str) -> bool:
+    """Whether the isolated coordinator invocation accepts a message inside its running turn."""
+    return engine == "claude"
+
+
+def send_into_turn(sends: Path, message_id: str, text: str) -> None:
+    """Hand one message to the driver of a running turn. The driver claims the file before it writes to the engine,
+    and its final name records the outcome: `.delivered`, `.returned` (the turn had ended) or `.unconfirmed`."""
+    sends.mkdir(parents=True, exist_ok=True)
+    S.atomic_write(sends / f"{message_id}.json", json.dumps({"id": message_id, "text": text}))
+
+
+def recover_send(sends: Path, message_id: str) -> str:
+    """A message's outcome once its driver has finished or its job has gone. One the driver never took is withdrawn,
+    so a driver still running cannot take it later, and returned; one it was writing is unconfirmed."""
+    try:
+        os.rename(sends / f"{message_id}.json", sends / f"{message_id}.returned")
+    except OSError:
+        pass
+    for state in ("delivered", "returned", "unconfirmed"):
+        if (sends / f"{message_id}.{state}").exists():
+            return state
+    return "unconfirmed" if (sends / f"{message_id}.writing").exists() else "returned"
+
+
+class _Driver:
+    """Hold an engine's input open for one job, so a Send now message reaches the running turn without stopping it.
+
+    The engine's events go to the job's output unchanged (Codex's are translated to the `codex exec --json` form the
+    rest of Altitude reads). A message file in `sends` is claimed by renaming, written to the engine, and settled once
+    the engine accepts it; a task's record learns the outcome under the project lock, and the job's output carries an
+    `altitude.send` event at that point of the turn. Once the turn has ended, a message is returned for the next turn.
+    """
+
+    def __init__(self, spec: dict, env: dict):
+        self.spec, self.lock, self.output = spec, threading.Lock(), threading.Lock()
+        self.sends = Path(spec["sends"]) if spec.get("sends") else None
+        self.closed = self.finished = False
+        self.session_id = spec.get("resume")
+        self.child = subprocess.Popen(spec["command"], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                      bufsize=0)
+
+    def emit(self, event: dict | bytes) -> None:
+        data = event if isinstance(event, bytes) else (json.dumps(event) + "\n").encode()
+        with self.output:
+            try:
+                sys.stdout.buffer.write(data)
+                sys.stdout.buffer.flush()
+            except OSError:
+                pass  # a chat turn's reader has gone; the engine's own record keeps the turn
+
+    def write(self, payload: dict) -> None:
+        self.child.stdin.write((json.dumps(payload) + "\n").encode())
+        self.child.stdin.flush()
+
+    def close(self) -> None:
+        """Called with the lock held: no message is written after this."""
+        if not self.closed:
+            self.closed = True
+            try:
+                self.child.stdin.close()
+            except OSError:
+                pass
+
+    def watch(self) -> None:
+        while self.sends is not None:
+            done = self.finished
+            for drop in sorted(self.sends.glob("*.json")):
+                claimed = drop.with_suffix(".writing")
+                try:
+                    os.rename(drop, claimed)
+                    message = json.loads(claimed.read_text())
+                except (OSError, ValueError):
+                    continue
+                outcome = self.deliver(message)
+                if outcome:
+                    self.settle(message["id"], outcome)
+            if done:
+                return
+            time.sleep(SEND_POLL)
+
+    def settle(self, message_id: str, outcome: str) -> None:
+        if self.sends is not None:
+            try:
+                os.rename(self.sends / f"{message_id}.writing", self.sends / f"{message_id}.{outcome}")
+            except OSError:
+                pass
+        task = self.spec.get("task")
+        if task:
+            try:
+                from . import tasks
+                tasks.settle_send_now(task["project"], task["slug"], message_id, outcome,
+                                      agent_id=self.spec.get("worker_id"), session_id=self.session_id)
+            except Exception as exc:  # noqa: BLE001 — `recover_send` reads the outcome file instead
+                print(f"altitude-driver: Send now outcome not recorded: {exc}", file=sys.stderr, flush=True)
+        self.emit({"type": "altitude.send", "message_id": message_id, "outcome": outcome})
+
+    def run(self) -> int:
+        watcher = threading.Thread(target=self.watch, daemon=True)
+        try:
+            self.start(watcher)
+        finally:
+            with self.lock:
+                self.close()
+            self.child.wait()
+            with self.lock:
+                unconfirmed = self.unsettled()
+            for message_id in unconfirmed:
+                self.settle(message_id, "unconfirmed")
+            self.finished = True
+            if watcher.is_alive():
+                watcher.join()
+        return self.status()
+
+    def status(self) -> int:
+        return self.child.returncode
+
+
+class _ClaudeDriver(_Driver):
+    """Claude reads stream-json input: a message written mid-turn joins the turn at its next tool boundary, and
+    `background_tasks` (Ctrl+B over the wire) moves running commands to the background so that comes promptly.
+    `--replay-user-messages` echoes each accepted line; the input closes after a result with nothing unacknowledged,
+    and Claude then finishes what it has accepted and exits."""
+
+    def __init__(self, spec: dict, env: dict):
+        super().__init__(spec, env)
+        self.waiting: dict[str, str | None] = {}
+        self.ended_at: float | None = None
+
+    def line(self, content: list, message_id: str | None) -> None:
+        identity = str(uuid.uuid4())
+        self.write({"type": "user", "message": {"role": "user", "content": content}, "parent_tool_use_id": None,
+                    "origin": {"kind": "human"}, "uuid": identity, "priority": "next"})
+        self.waiting[identity] = message_id
+
+    def deliver(self, message: dict) -> str | None:
+        """Settled later by its echo."""
+        with self.lock:
+            if self.closed:
+                return "returned"
+            try:
+                self.line([{"type": "text", "text": message["text"]}], message["id"])
+                self.write({"type": "control_request", "request_id": uuid.uuid4().hex,
+                            "request": {"subtype": "background_tasks"}})
+            except OSError:
+                return None if message["id"] in self.waiting.values() else "returned"
+            return None
+
+    def unsettled(self) -> list[str]:
+        pending = [value for value in self.waiting.values() if value]
+        self.waiting.clear()
+        return pending
+
+    def acknowledge(self, identity: str | None) -> None:
+        with self.lock:
+            message_id = self.waiting.pop(identity, None)
+            if self.ended_at is not None and not self.waiting:
+                self.close()
+        if message_id:
+            self.settle(message_id, "delivered")
+
+    def ended(self) -> None:
+        with self.lock:
+            self.ended_at = time.monotonic()
+            # The result proves the first prompt was read, whether or not its echo came first.
+            self.waiting = {key: value for key, value in self.waiting.items() if value}
+            if not self.waiting:
+                self.close()
+
+    def expire(self) -> None:
+        """A written message whose echo never comes cannot hold the job open after its turn."""
+        with self.lock:
+            if self.closed or self.ended_at is None or time.monotonic() - self.ended_at < SEND_ECHO_WAIT:
+                return
+            self.close()
+            late = self.unsettled()
+        for message_id in late:
+            self.settle(message_id, "unconfirmed")
+
+    def start(self, watcher: threading.Thread) -> None:
+        with self.lock:
+            self.line(self.spec["input"], None)
+            if self.sends is None:
+                self.close()  # nothing can join this turn
+        watcher.start()
+        timer = threading.Thread(target=self.tick, daemon=True)
+        timer.start()
+        for raw in self.child.stdout:
+            try:
+                event = json.loads(raw)
+            except ValueError:
+                event = None
+            if not isinstance(event, dict):
+                self.emit(raw)
+                continue
+            kind = event.get("type")
+            if kind == "user" and event.get("isReplay"):
+                self.acknowledge(event.get("uuid"))
+                continue
+            if kind == "control_response":
+                continue
+            if kind == "control_request":
+                # Input stays open, so a request Claude makes of its host is refused rather than left waiting.
+                with self.lock:
+                    if not self.closed:
+                        self.write({"type": "control_response", "response": {
+                            "subtype": "error", "request_id": event.get("request_id"),
+                            "error": "Altitude answers no host requests"}})
+                continue
+            if event.get("session_id"):
+                self.session_id = event["session_id"]
+            self.emit(raw)
+            if kind == "result":
+                self.ended()
+
+    def tick(self) -> None:
+        while not self.finished:
+            self.expire()
+            time.sleep(SEND_POLL)
+
+
+def _camel_keys(value):
+    if isinstance(value, dict):
+        return {re.sub(r"(?<!^)(?=[A-Z])", "_", key).lower(): _camel_keys(item) for key, item in value.items()}
+    return value
+
+
+def _codex_item(item: dict) -> dict | None:
+    """One app-server ThreadItem in the `codex exec --json` form; other kinds are not part of the transcript."""
+    kind = item.get("type")
+    status = re.sub(r"(?<!^)(?=[A-Z])", "_", str(item.get("status") or "")).lower() or None
+    base = {"id": item.get("id"), **({"status": status} if status else {})}
+    if kind == "agentMessage":
+        return {**base, "type": "agent_message", "text": item.get("text") or ""}
+    if kind == "reasoning":
+        return {**base, "type": "reasoning", "text": "\n".join(str(part) for part in item.get("summary") or [])}
+    if kind == "commandExecution":
+        return {**base, "type": "command_execution", "command": item.get("command") or "",
+                "aggregated_output": item.get("aggregatedOutput") or "", "exit_code": item.get("exitCode")}
+    if kind == "fileChange":
+        return {**base, "type": "file_change", "changes": [
+            {"path": change.get("path"), "kind": (change.get("kind") or {}).get("type")
+             if isinstance(change.get("kind"), dict) else change.get("kind")} for change in item.get("changes") or []]}
+    if kind == "mcpToolCall":
+        return {**base, "type": "mcp_tool_call", "server": item.get("server"), "tool": item.get("tool"),
+                "arguments": item.get("arguments"), "result": item.get("result"), "error": item.get("error")}
+    if kind == "webSearch":
+        return {**base, "type": "web_search", "query": item.get("query")}
+    return None
+
+
+class _Refused(RuntimeError):
+    """The Codex server answered a request with an error."""
+
+
+class _Ended(RuntimeError):
+    """The Codex server exited before answering; its status and error output say why."""
+
+
+class _CodexDriver(_Driver):
+    """Codex runs as `codex app-server` for one turn: `turn/steer` adds a message to the running turn without
+    stopping its commands. Every request the server makes of its client is refused, as `codex exec` refuses them."""
+
+    def __init__(self, spec: dict, env: dict):
+        super().__init__(spec, env)
+        self.replies: dict[int, dict] = {}
+        self.arrived = threading.Condition(self.lock)
+        self.ids = iter(range(1, 1 << 62))
+        self.turn: str | None = None
+        self.steers: dict[int, str] = {}
+        self.completed = False
+        self.usage: dict = {}
+        self.model: str | None = None
+        self.announced = False
+        self.done, self.eof = threading.Event(), threading.Event()
+
+    def call(self, method: str, params: dict) -> dict:
+        """Called without the lock; the reader thread delivers the reply."""
+        with self.lock:
+            identity = next(self.ids)
+            self.write({"id": identity, "method": method, "params": params})
+            while identity not in self.replies and not self.eof.is_set():
+                self.arrived.wait(1)
+            reply = self.replies.pop(identity, None)
+        if reply is None:
+            raise _Ended(f"{method}: the Codex server ended before replying")
+        if "error" in reply:
+            raise _Refused(f"{method}: {(reply['error'] or {}).get('message') or reply['error']}")
+        return reply.get("result") or {}
+
+    def deliver(self, message: dict) -> str | None:
+        """Settled by the server's answer where it arrives, so the turn's output after it follows the marker."""
+        with self.lock:
+            if self.closed or not self.turn:
+                return "returned"
+            identity = next(self.ids)
+            try:
+                self.write({"id": identity, "method": "turn/steer", "params": {
+                    "threadId": self.session_id, "expectedTurnId": self.turn, "clientUserMessageId": message["id"],
+                    "input": [{"type": "text", "text": message["text"], "text_elements": []}]}})
+            except OSError:
+                return "returned"
+            self.steers[identity] = message["id"]
+            return None
+
+    def unsettled(self) -> list[str]:
+        """Written, but the server ended before answering."""
+        pending = list(self.steers.values())
+        self.steers.clear()
+        return pending
+
+    def status(self) -> int:
+        """The server exits cleanly once its input closes, so an unfinished turn sets the job's status."""
+        return self.child.returncode or (0 if self.completed else 1)
+
+    def opened(self) -> None:
+        """`thread.started` follows the turn's acceptance of its input, so a launch that sees it knows the prompt
+        reached the engine, as `codex exec` reports only after reading it."""
+        with self.lock:
+            announce, self.announced = not self.announced, True
+        if announce:
+            self.emit({"type": "thread.started", "thread_id": self.session_id,
+                       **({"model": self.model} if self.model else {})})
+
+    def notify(self, method: str, params: dict) -> None:
+        if method == "turn/started":
+            with self.lock:
+                self.turn = (params.get("turn") or {}).get("id") or self.turn
+            self.opened()
+            self.emit({"type": "turn.started"})
+        elif method in ("item/started", "item/completed"):
+            item = _codex_item(params.get("item") or {})
+            if item:
+                self.emit({"type": method.replace("/", "."), "item": item})
+        elif method == "thread/tokenUsage/updated":
+            self.usage = _camel_keys((params.get("tokenUsage") or {}).get("total") or {})
+        elif method == "error" and not params.get("willRetry"):
+            self.emit({"type": "error", "message": (params.get("error") or {}).get("message") or "Codex error"})
+        elif method == "turn/completed":
+            turn = params.get("turn") or {}
+            self.completed = turn.get("status") == "completed"
+            if self.completed:
+                self.emit({"type": "turn.completed", "usage": self.usage})
+            else:
+                error = turn.get("error") or {}
+                self.emit({"type": "turn.failed", "error": {"message": error.get("message") or
+                                                             f"Codex turn {turn.get('status') or 'ended'}"}})
+            with self.lock:
+                self.turn = None
+            self.done.set()
+
+    def read(self) -> None:
+        for raw in self.child.stdout:
+            try:
+                message = json.loads(raw)
+            except ValueError:
+                continue
+            if not isinstance(message, dict):
+                continue
+            if "id" in message and "method" in message:
+                with self.lock:
+                    if not self.closed:
+                        self.write({"id": message["id"], "error": {
+                            "code": -32601, "message": "Altitude answers no client requests"}})
+            elif "id" in message:
+                with self.lock:
+                    steered = self.steers.pop(message["id"], None)
+                    if steered is None:
+                        self.replies[message["id"]] = message
+                if steered:  # a refused steer found no active turn, or another one
+                    self.settle(steered, "returned" if "error" in message else "delivered")
+                with self.lock:
+                    self.arrived.notify_all()
+            elif message.get("method"):
+                self.notify(message["method"], message.get("params") or {})
+        self.eof.set()
+        self.done.set()
+        with self.lock:
+            self.arrived.notify_all()
+
+    def start(self, watcher: threading.Thread) -> None:
+        reader = threading.Thread(target=self.read, daemon=True)
+        reader.start()
+        try:
+            self.call("initialize", {"clientInfo": {"name": "altitude", "version": "1"}})
+            with self.lock:
+                self.write({"method": "initialized"})
+            options = {"model": self.spec.get("model"), "approvalPolicy": "never"}
+            options = {key: value for key, value in options.items() if value}
+            if self.session_id:
+                opened = self.call("thread/resume", {"threadId": self.session_id, **options})
+            else:
+                opened = self.call("thread/start", {"cwd": self.spec.get("cwd"), **options})
+            self.session_id = (opened.get("thread") or {}).get("id") or self.session_id
+            self.model = opened.get("model")
+            started = self.call("turn/start", {"threadId": self.session_id, "input": self.spec["input"]})
+            with self.lock:
+                self.turn = self.turn or (started.get("turn") or {}).get("id")
+            self.opened()
+            watcher.start()
+            self.done.wait()
+        except _Ended:
+            pass
+        except (OSError, RuntimeError) as exc:
+            self.emit({"type": "error", "message": str(exc)})
+        finally:
+            with self.lock:
+                deadline = time.monotonic() + SEND_ECHO_WAIT
+                while self.steers and not self.eof.is_set():
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    self.arrived.wait(remaining)
+                self.close()
+            reader.join()
+
+
+def engine_driver() -> None:
+    """Entry point of every engine job (see `_Driver`). Its input is one JSON line from the launcher: the engine
+    command, its first user turn, the Send now folder, the task it settles and the worker's GitHub token."""
+    spec = json.loads(sys.stdin.readline() or "null")
+    if not isinstance(spec, dict) or spec.get("engine") not in ("claude", "codex"):
+        print("altitude-driver: no launch input; the engine was not started", file=sys.stderr, flush=True)
+        sys.exit(125)
+    env = {key: value for key, value in os.environ.items() if key not in GITHUB_TOKEN_VARIABLES}
+    if spec.get("github_token"):
+        env["GH_TOKEN"] = spec["github_token"]
+    driver = (_ClaudeDriver if spec["engine"] == "claude" else _CodexDriver)(spec, env)
+    sys.exit(driver.run())
 
 
 def github_token(env: dict) -> str:
@@ -616,52 +1046,6 @@ def _feed(stream, data: str) -> None:
         pass  # the child ended without reading; its exit status and output report why
 
 
-def _chat_interrupted(resume: str | None) -> dict:
-    return {"text": "", "session_id": resume or "", "usage": {}, "context_tokens": 0,
-            "cost": 0.0, "turns": 0, "structured": None, "tools": [],
-            "interrupted": True, "error": None, "safe_to_retry": False,
-            "rejection": None, "raw_stdout": "", "raw_stderr": "",
-            "raw_stdout_truncated": False, "raw_stderr_truncated": False}
-
-
-def _watch_chat_interrupt(proc, unit: str, interrupt: threading.Event, finished: threading.Event,
-                          result: dict, env: dict, on_interrupt_error=None) -> None:
-    """Stop only this chat job, retaining serialization until its launcher and descendants finish.
-
-    An absent unit while the launcher is starting is not termination evidence. A failed stop or an
-    unavailable status leaves the turn waiting for natural completion, including its job runtime limit.
-    """
-    while not interrupt.is_set():
-        if finished.wait(0.05):
-            if not interrupt.is_set():
-                return
-    attempted = False
-    notified_error = None
-    while True:
-        try:
-            active = platform.job_active(unit, env)
-            if active and not attempted:
-                attempted = True
-                platform.job_stop(unit, env)
-                continue
-            if active and attempted:
-                result.setdefault("interrupt_error", "Immediate stop unconfirmed; waiting for job termination")
-            if not active and proc.poll() is not None and not platform.job_active(unit, env):
-                result.update(interrupted=True, error=None, safe_to_retry=False)
-                return
-        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
-            result["interrupt_error"] = f"Immediate stop unconfirmed; waiting for job termination: {exc}"
-        error = result.get("interrupt_error")
-        if error and error != notified_error:
-            notified_error = error
-            if on_interrupt_error:
-                try:
-                    on_interrupt_error(error)
-                except Exception:
-                    logger.exception("Could not publish chat interruption status; retaining termination wait")
-        time.sleep(0.25)
-
-
 @config.admitted_provider
 def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: Path | None = None,
                  allowed_tools: str | None = None, tools: str | None = None, permission_mode: str = "auto",
@@ -671,26 +1055,26 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
                  timeout: int = config.L3_TURN_TIMEOUT, restricted: bool = False,
                  add_dirs: tuple[Path, ...] = (), permission_prompts: str | None = None,
                  durable_timeout: bool = False, images: list[dict] | tuple = (),
-                 interrupt: threading.Event | None = None, on_interrupt_error=None) -> dict:
+                 sends: Path | None = None, on_send=None) -> dict:
     """One headless turn. Returns text, session_id, usage, cost, turns, structured (if schema), error, and bounded
     raw_stdout/raw_stderr; `limited` (scope and optional reset) when an allowance is exhausted — the call is not even
-    made while a hold is in force. `interrupt` stops this chat's owned job and preserves partial output;
-    `interrupted` is returned only after termination is confirmed.
+    made while a hold is in force.
+
+    A message placed in `sends` joins the running turn (see `_Driver`); `on_send(message_id, outcome, text)` is called
+    at that point of the turn with the reply streamed since the previous one, and `text` holds only what follows.
 
     `on_start(pid)` is called the moment the child exists. The turn outlives altd, so its pid lets a
     restarted server distinguish an in-flight turn from a dead one."""
-    if interrupt is not None and interrupt.is_set():
-        return _chat_interrupted(resume)
     config.task_effort("claude", effort, role="l3")
-    image_args, prompt = _image_input("claude", prompt, images)
+    content = _engine_input("claude", prompt, images)
     held = usage_hold()
     if held:
         return {"text": "", "session_id": resume or "", "usage": {}, "context_tokens": 0, "cost": 0.0, "turns": 0,
                 "structured": None, "error": f"usage limit: window exhausted until {held}", "tools": [], "limited": _usage_limit(held),
                 "raw_stdout": "", "raw_stderr": "", "raw_stdout_truncated": False, "raw_stderr_truncated": False,
                 "safe_to_retry": True, "rejection": None}
-    cmd = [config.CLAUDE_BIN, "-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
-           "--permission-mode", permission_mode, *image_args]
+    cmd = [config.CLAUDE_BIN, "-p", "--input-format", "stream-json", "--replay-user-messages",
+           "--output-format", "stream-json", "--include-partial-messages", "--verbose", "--permission-mode", permission_mode]
     if permission_prompts:
         cmd += ["--permission-prompts", permission_prompts]
     if restricted:
@@ -720,30 +1104,19 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
         env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
     writable = _claude_writable(Path(cwd), config.ROOT)
     unit = _claude_unit(f"sync-{uuid.uuid4().hex}")
-    if durable_timeout or interrupt is not None:
-        cmd = platform.job_command(unit, cmd, codex_env(env), runtime_max=timeout,
-                                   writable=writable)
+    driver = _driver_command()
+    if durable_timeout or sends is not None:
+        driver = platform.job_command(unit, driver, codex_env(env), runtime_max=timeout, writable=writable)
         env = codex_env(env, retain_user_bus=True)
     else:
-        cmd = platform.confined(cmd, writable)
-    # prompt goes through stdin: --allowedTools is variadic and would swallow a positional prompt
-    if interrupt is not None and interrupt.is_set():
-        return _chat_interrupted(resume)
-    proc = subprocess.Popen(cmd, cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        driver = platform.confined(driver, writable)
+    # prompt goes through the driver's input: --allowedTools is variadic and would swallow a positional prompt
+    proc = subprocess.Popen(driver, cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, env=env)
-    interrupted, finished = {}, threading.Event()
-    watcher = None
-    if interrupt is not None:
-        watcher = threading.Thread(target=_watch_chat_interrupt,
-                                   args=(proc, unit, interrupt, finished, interrupted, env, on_interrupt_error), daemon=True)
-        watcher.start()
     if on_start:
         on_start(proc.pid)
-    try:
-        proc.stdin.write(prompt)
-        proc.stdin.close()
-    except (BrokenPipeError, OSError):
-        pass
+    _feed(proc.stdin, _driver_input({"engine": "claude", "command": cmd, "input": content,
+                                     "sends": str(sends) if sends is not None else None}))
     stdout_capture, stderr_capture = _BoundedRawCapture(), _BoundedRawCapture()
 
     def drain_stderr() -> None:
@@ -752,12 +1125,13 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
 
     drain = threading.Thread(target=drain_stderr, daemon=True)
     drain.start()
-    killer = threading.Timer(timeout, proc.kill) if interrupt is None else None
+    killer = threading.Timer(timeout, proc.kill) if not durable_timeout and sends is None else None
     if killer:
         killer.start()
     out = {"text": "", "session_id": resume or "", "usage": {}, "context_tokens": 0, "cost": 0.0,
            "turns": 0, "structured": None, "error": None, "tools": []}
     parts: list[str] = []
+    split = False
     failure = None
     safe_to_retry, rejected = True, None
     try:
@@ -773,7 +1147,12 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
             if o.get("session_id"):
                 out["session_id"] = o["session_id"]
             typ = o.get("type")
-            if typ == "stream_event":
+            if typ == "altitude.send":
+                if on_send:
+                    on_send(o.get("message_id"), o.get("outcome"), "".join(parts).strip())
+                if o.get("outcome") != "returned":
+                    parts, split = [], True
+            elif typ == "stream_event":
                 delta = (o.get("event") or {}).get("delta") or {}
                 if delta.get("type") == "text_delta" and delta.get("text"):
                     parts.append(delta["text"])
@@ -808,7 +1187,7 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
                     out["structured"] = o["structured_output"]
                 if o.get("is_error"):
                     out["error"] = str(o.get("result") or o.get("error") or "")[:500]
-                elif not parts and o.get("result"):
+                elif not parts and not split and o.get("result"):
                     parts.append(str(o["result"]))
         proc.wait()
     except BaseException as exc:
@@ -817,9 +1196,6 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
     finally:
         if killer:
             killer.cancel()
-        finished.set()
-        if watcher:
-            watcher.join()
         proc.stdout.close()
         drain.join(timeout=2)
         proc.stderr.close()
@@ -840,7 +1216,6 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
     if proc.returncode != 0 and not out["error"]:
         out["error"] = f"claude exit {proc.returncode}: {raw_stderr.strip()[:500]}"
     out.update(safe_to_retry=safe_to_retry, rejection=rejected or rejection("claude", out, model))
-    out.update(interrupted)
     if schema and out["structured"] is None and out["text"]:
         try:
             out["structured"] = json.loads(out["text"])
@@ -967,7 +1342,7 @@ def machine_output(folder: Path, unit: str) -> dict:
 def _codex_paths(job_root: Path, worker_id: str) -> dict[str, Path]:
     root = Path(job_root)
     return {"record": root / f"{worker_id}.json", "stdout": root / f"{worker_id}.stdout.jsonl",
-            "stderr": root / f"{worker_id}.stderr.log"}
+            "stderr": root / f"{worker_id}.stderr.log", "sends": root / f"{worker_id}.sends"}
 
 
 def _codex_parse(text: str) -> list[dict]:
@@ -1792,6 +2167,14 @@ def _worker_events(path: Path, engine: str) -> list[dict]:
             if e.get("type") == "result" else e for e in events]
 
 
+def _turn_activity(event: dict) -> bool:
+    """Whether output is turn activity rather than a report on the session. Claude's background-task and status
+    notices are not, nor is a Send now message the driver returned or could not confirm; a delivered one joins or
+    starts a turn."""
+    kind = event.get("type")
+    return kind not in ("system", "rate_limit_event") and (kind != "altitude.send" or event.get("outcome") == "delivered")
+
+
 def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
     """Read an owned CLI turn; the persisted engine selects its output format."""
     if not worker_id:
@@ -1810,11 +2193,15 @@ def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
             S.write_json(paths["record"], record)
     proc = _codex_processes.get(worker_id)
     process_alive = proc is not None and proc.poll() is None
-    alive = process_alive or platform.job_active(str(record.get("unit") or ""), codex_env(retain_user_bus=True))
+    job_active = process_alive or platform.job_active(str(record.get("unit") or ""), codex_env(retain_user_bus=True))
     if proc is not None and not process_alive:
         _codex_processes.pop(worker_id, None)
     completed = any(event.get("type") == "turn.completed" for event in events)
     failed = next((event for event in reversed(events) if event.get("type") in ("turn.failed", "error")), None)
+    # A failed turn with no activity since ends the worker. The engine can outlive it: Claude waits for a background
+    # command it started, whose completion would only start another turn that fails the same way under a usage limit.
+    latest = next((event.get("type") for event in reversed(events) if _turn_activity(event)), None)
+    alive = job_active and latest != "turn.failed"
     if alive:
         state, status = "working", "busy"
     elif record.get("stopped"):
@@ -1837,7 +2224,7 @@ def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
             "state": state, "status": status, "detail": detail, "usage": _codex_usage(events),
             "detail_at": max((paths[k].stat().st_mtime for k in ("stdout", "stderr") if paths[k].exists()),
                              default=paths["record"].stat().st_mtime),
-            "startedAt": record.get("started_at"), "engine": engine,
+            "startedAt": record.get("started_at"), "engine": engine, "job_active": job_active,
             "resumed": bool(record.get("resume")),
             "input_delivered": record.get("input_delivered") is True,
             "engine_model": next((e["model"] for e in events if e.get("model")), record.get("engine_model")),
@@ -1845,7 +2232,7 @@ def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
     # Auto may retry only a settled rejection with the entire turn proving no assistant/tool activity.
     try:
         stdout = paths["stdout"].read_text(errors="replace")
-        row.update(safe_to_retry=not alive and _safe_output(engine, stdout),
+        row.update(safe_to_retry=not job_active and _safe_output(engine, stdout),
                    rejection=rejection(engine, {"detail": detail, "raw_stdout": stdout}, record.get("launch_model")))
     except OSError:
         row.update(safe_to_retry=False, rejection=None)
@@ -1871,21 +2258,11 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
               f'`{config.PERSONAS / "l1.md"}` before working. Your assigned repository is '
               f'`{cwd.resolve()}`." Then give the task-specific assignment; do not copy the persona '
               'into the brief or rely on inherited owner instructions to select the helper role.\n\n' + prompt)
-    image_args, prompt = _image_input(engine, prompt, images)
     if engine == "claude":
-        # I-20260907-171446: retire daemon jobs bound to this name before launch or resume.
-        for row in claude_agents():
-            if row.get("name") == name and row.get("state") not in ("done", "failed", "stopped"):
-                claude_stop(row["id"])
-    worker_id = uuid.uuid4().hex
-    unit = _codex_unit(worker_id) if engine == "codex" else _claude_unit(worker_id)
-    root = Path(job_root)
-    root.mkdir(parents=True, exist_ok=True)
-    paths = _codex_paths(root, worker_id)
-    if engine == "claude":
-        cmd = [config.CLAUDE_BIN, "-p", "--output-format", "stream-json", "--verbose", "--name", name,
+        cmd = [config.CLAUDE_BIN, "-p", "--input-format", "stream-json", "--replay-user-messages",
+               "--output-format", "stream-json", "--verbose", "--name", name,
                "--permission-mode", "auto", "--allowedTools", "Bash(alt *)",
-               "--settings", str(settings or claude_settings()), *image_args]
+               "--settings", str(settings or claude_settings())]
         if persona:
             cmd += ["--append-system-prompt-file", str(persona)]
         if model:
@@ -1896,26 +2273,34 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
             cmd += ["--resume", resume]
         text = prompt
     elif engine == "codex":
-        cmd = [config.CODEX_BIN, "exec", *(["resume"] if resume else []), *image_args, "--json", "--strict-config",
-               "--skip-git-repo-check", *([] if resume else ["-C", str(cwd)])]
-        if model:
-            cmd += ["-m", model]
+        cmd = [config.CODEX_BIN, "app-server", "--strict-config"]
         if effort is not None:
             cmd += ["-c", f'model_reasoning_effort="{effort}"']
         for setting in codex_sandbox(cwd, extra_roots=_git_dirs(cwd)):
             cmd += ["-c", setting]
-        cmd += [resume, "-"] if resume else ["-"]
         in_container = platform.containerized()
         patch_note = CODEX_CONTAINER_PATCH_NOTE if in_container else CODEX_PATCH_NOTE
         text = ((patch_note + "\n\n" if in_container else "") + prompt) if resume else (
             ((Path(persona).read_text() + "\n\n") if persona else "") + patch_note + "\n\n" + prompt)
     else:
         raise ValueError(f"unknown L2 engine {engine!r}")
+    content = _engine_input(engine, text, images)
+    if engine == "claude":
+        # I-20260907-171446: retire daemon jobs bound to this name before launch or resume, once the input is
+        # valid, so a refused launch stops nothing.
+        for row in claude_agents():
+            if row.get("name") == name and row.get("state") not in ("done", "failed", "stopped"):
+                claude_stop(row["id"])
+    worker_id = uuid.uuid4().hex
+    unit = _codex_unit(worker_id) if engine == "codex" else _claude_unit(worker_id)
+    root = Path(job_root)
+    root.mkdir(parents=True, exist_ok=True)
+    paths = _codex_paths(root, worker_id)
     record = {"id": worker_id, "name": name, "pid": None, "unit": unit, "engine": engine,
               "started_at": datetime.now(timezone.utc).isoformat(),
               "codex_home": str(_codex_home(codex_env(extra_env))),
               "session_id": resume, "cwd": str(cwd), "resume": bool(resume), "stopped": None,
-              "launch_model": model, "launch_effort": effort, "input_delivered": False}
+              "launch_model": model, "launch_effort": effort, "input_delivered": False, "sends": str(paths["sends"])}
     S.write_json(paths["record"], record)
     worker_env = task_tool_env(codex_env(extra_env, retain_user_bus=True), root)
     if engine == "claude" and effort is not None:
@@ -1924,13 +2309,16 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
     try:
         with open(paths["stdout"], "ab", buffering=0) as out, open(paths["stderr"], "ab", buffering=0) as err:
             writable = _claude_writable(Path(cwd), *_worktree_git_dirs(cwd), config.ROOT) if engine == "claude" else None
-            proc = subprocess.Popen(platform.job_command(unit, ["/bin/sh", "-c", GITHUB_INPUT, "altitude-worker", *cmd],
-                                                         job_env, writable=writable), cwd=str(cwd),
-                                    stdin=subprocess.PIPE, stdout=out, stderr=err,
+            proc = subprocess.Popen(platform.job_command(unit, _driver_command(), job_env, writable=writable),
+                                    cwd=str(cwd), stdin=subprocess.PIPE, stdout=out, stderr=err,
                                     env=worker_env, start_new_session=True)
         input_written = False
         try:
-            data = (github_token(worker_env) + "\n" + text).encode("utf-8")
+            task = ({"project": extra_env["ALTITUDE_PROJECT"], "slug": extra_env["ALTITUDE_TASK"]}
+                    if extra_env and extra_env.get("ALTITUDE_PROJECT") and extra_env.get("ALTITUDE_TASK") else None)
+            data = _driver_input({"engine": engine, "command": cmd, "input": content, "cwd": str(cwd),
+                                  "model": model, "resume": resume, "worker_id": worker_id, "task": task,
+                                  "sends": str(paths["sends"]), "github_token": github_token(worker_env)}).encode()
             written = proc.stdin.write(data)
             proc.stdin.close()
             input_written = written == len(data)
@@ -1975,6 +2363,13 @@ def _owned_unit(record: dict, worker_id: str) -> str:
     if not expected or record.get("id") != worker_id or record.get("unit") != expected:
         raise RuntimeError("Worker ownership record is unavailable; stop is unconfirmed")
     return expected
+
+
+def worker_sends(worker_id: str, *, job_root: Path) -> Path | None:
+    """Where Send now hands a running worker a message; None for a worker launched without a driver."""
+    record = S.read_json(_codex_paths(job_root, worker_id)["record"], None)
+    sends = record.get("sends") if isinstance(record, dict) and record.get("id") == worker_id else None
+    return Path(sends) if sends else None
 
 
 def worker_unit(worker_id: str, *, job_root: Path) -> str:
@@ -2110,23 +2505,51 @@ def worker_detail(engine: str, row: dict | None) -> tuple[str, datetime | None]:
 
 
 def worker_live(engine: str, task: dict, *, job_root: Path) -> bool:
+    """Whether anything of the worker still runs, including commands its ended engine left in the job."""
     row = worker(engine, task, job_root=job_root)
-    return bool(row and row.get("state") == "working")
+    return bool(row and (row.get("state") == "working" or row.get("job_active")))
+
+
+def _codex_outcome(events: list[dict], returncode: int, stdout: str, stderr: str, *, text: str,
+                   resume: str | None, model: str | None, metadata: dict) -> dict:
+    tools = [_tool("Bash", (event.get("item") or {}).get("command")) for event in events
+             if event.get("type") == "item.completed"
+             and (event.get("item") or {}).get("type") == "command_execution"]
+    thread = _codex_thread(events)
+    failure = next((_event_error("codex", event) for event in reversed(events)
+                    if event.get("type") == "turn.failed" or
+                    (returncode != 0 and event.get("type") == "error")), None)
+    result = {"text": text.strip(), "returncode": returncode,
+              "usage": _codex_usage(events), "session_id": thread or resume, "reported_session_id": thread,
+              "tools": tools, **metadata,
+              "error": (failure if isinstance(failure, str) else json.dumps(failure))[:500] if failure else
+                       None if returncode == 0 else (stderr or "").strip()[:500],
+              "raw_stdout": stdout or "", "raw_stderr": stderr or "",
+              "raw_stdout_truncated": False, "raw_stderr_truncated": False}
+    result.update(safe_to_retry=_safe_output("codex", stdout or ""), rejection=rejection("codex", result, model))
+    limited = usage_limit_in(result.get("error"))
+    if limited:
+        result["limited"] = limited
+    return result
+
+
+def _agent_messages(events: list[dict]) -> list[str]:
+    return [str((event.get("item") or {}).get("text") or "") for event in events
+            if event.get("type") == "item.completed" and (event.get("item") or {}).get("type") == "agent_message"]
 
 
 @config.admitted_provider
 def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int = 900, effort: str | None = None,
                extra_env: dict | None = None, resume: str | None = None, on_start=None,
-               sandbox_settings: list[str] | None = None, ignore_user_config: bool = False, on_session=None,
-               durable_timeout: bool = False, images: list[dict] | tuple = (),
-               interrupt: threading.Event | None = None, on_interrupt_error=None) -> dict:
+               sandbox_settings: list[str] | None = None, ignore_user_config: bool = True, on_session=None,
+               images: list[dict] | tuple = ()) -> dict:
     """One synchronous Codex turn (L3) in Codex's own workspace-write sandbox, prompt on stdin (verified with
     codex 0.152). `codex exec resume <thread> -` continues the thread. The transient unit is the one workers use,
     so altd's `NoNewPrivileges` hardening never reaches the nested bwrap, and a timeout stops the whole tree.
-    `interrupt` stops this chat's job; partial output and session metadata survive confirmed interruption."""
-    if interrupt is not None and interrupt.is_set():
-        return _chat_interrupted(resume)
-    image_args, prompt = _image_input("codex", prompt, images)
+    Send now stays queued for the next coordinator turn; this invocation has no interrupt channel."""
+    content = _engine_input("codex", prompt, images)
+    prompt = content[0]["text"]
+    image_args = [arg for item in content[1:] for arg in ("--image", item["path"])]
     cmd = [config.CODEX_BIN, "exec", *(["resume"] if resume else []), *image_args, "--json", "--strict-config",
            "--skip-git-repo-check", *([] if resume else ["-C", str(cwd)])]
     if ignore_user_config:
@@ -2140,22 +2563,13 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
     cmd += [resume, "-"] if resume else ["-"]
     unit = _codex_unit(f"sync-{uuid.uuid4().hex}")
     started_at = datetime.now(timezone.utc).isoformat()
-    if interrupt is not None and interrupt.is_set():
-        return _chat_interrupted(resume)
     proc = subprocess.Popen(platform.job_command(unit, cmd, codex_env(extra_env),
-                            **({"runtime_max": timeout} if durable_timeout or interrupt is not None else {})),
+                            runtime_max=timeout),
                             cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, env=codex_env(extra_env, retain_user_bus=True), start_new_session=True)
     # The writer owns stdin, so the polling communicate() below only reads.
     prompt_input, proc.stdin = proc.stdin, None
     threading.Thread(target=_feed, args=(prompt_input, prompt), daemon=True).start()
-    interrupted, finished = {}, threading.Event()
-    watcher = None
-    if interrupt is not None:
-        watcher = threading.Thread(target=_watch_chat_interrupt,
-                                   args=(proc, unit, interrupt, finished, interrupted,
-                                         codex_env(extra_env, retain_user_bus=True), on_interrupt_error), daemon=True)
-        watcher.start()
     if on_start:
         on_start(proc.pid)
     metadata = {}
@@ -2170,11 +2584,10 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
         while True:
             remaining = deadline - time.monotonic()
             try:
-                stdout, stderr = proc.communicate(timeout=0.5 if interrupt is not None else
-                                                  remaining if metadata else min(0.5, remaining))
+                stdout, stderr = proc.communicate(timeout=remaining if metadata else min(0.5, remaining))
                 break
             except subprocess.TimeoutExpired as exc:
-                if interrupt is None and time.monotonic() >= deadline:
+                if time.monotonic() >= deadline:
                     raise
                 observe((exc.output or b"").decode("utf-8", errors="replace"))
     except subprocess.TimeoutExpired:
@@ -2182,35 +2595,11 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
         proc.kill()
         proc.communicate()
         raise
-    finally:
-        finished.set()
-        if watcher:
-            watcher.join()
     if not metadata:
         observe(stdout)
     events = _codex_parse(stdout or "")
-    messages = [str((event.get("item") or {}).get("text") or "") for event in events
-                if event.get("type") == "item.completed" and (event.get("item") or {}).get("type") == "agent_message"]
-    tools = [_tool("Bash", (event.get("item") or {}).get("command")) for event in events
-             if event.get("type") == "item.completed"
-             and (event.get("item") or {}).get("type") == "command_execution"]
-    thread = _codex_thread(events)
-    failure = next((_event_error("codex", event) for event in reversed(events)
-                    if event.get("type") == "turn.failed" or
-                    (proc.returncode != 0 and event.get("type") == "error")), None)
-    result = {"text": (messages[-1] if messages else "").strip(), "returncode": proc.returncode,
-            "usage": _codex_usage(events), "session_id": thread or resume, "reported_session_id": thread,
-            "tools": tools, **metadata,
-            "error": (failure if isinstance(failure, str) else json.dumps(failure))[:500] if failure else
-                     None if proc.returncode == 0 else (stderr or "").strip()[:500],
-            "raw_stdout": stdout or "", "raw_stderr": stderr or "",
-            "raw_stdout_truncated": False, "raw_stderr_truncated": False}
-    result.update(safe_to_retry=_safe_output("codex", stdout or ""), rejection=rejection("codex", result, model))
-    result.update(interrupted)
-    limited = usage_limit_in(result.get("error"))
-    if limited:
-        result["limited"] = limited
-    return result
+    return _codex_outcome(events, proc.returncode, stdout, stderr, text=(_agent_messages(events) or [""])[-1],
+                          resume=resume, model=model, metadata=metadata)
 
 
 def _review_env() -> dict:

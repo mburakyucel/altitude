@@ -48,13 +48,18 @@ class TestForegroundUnits(AltitudeCase):
             return engines.resume_l2("claude", "project/worker-1", "session", "continue", **kw)
         return engines.start_l2("claude", "project/worker-1", "brief", **kw)
 
-    def test_ci_coordinator_timeout_survives_daemon_exit_on_both_engines(self):
-        for engine, execute in (("claude", engines.claude_print), ("codex", engines.codex_exec)):
+    def test_ci_coordinator_and_private_review_timeouts_survive_daemon_exit_on_both_engines(self):
+        """A CI-recheck coordinator turn (Claude; a Codex coordinator turn is always a job) and a private Codex
+        review stop with their unit, not with altd."""
+        for engine, execute, options in (("claude", engines.claude_print, {"durable_timeout": True}),
+                                         ("codex", engines.codex_exec, {})):
             with self.subTest(engine=engine), mock.patch.object(engines.subprocess, "Popen",
                     side_effect=RuntimeError("fixture: execution intercepted")) as popen:
                 with self.assertRaisesRegex(RuntimeError, "intercepted"):
-                    execute("Probe evidence", cwd=self.repo, timeout=37, durable_timeout=True)
+                    execute("Probe evidence", cwd=self.repo, timeout=37, **options)
                 cmd = popen.call_args.args[0]
+                if engine == "codex":
+                    self.assertIn("--ignore-user-config", cmd)
                 self.assertEqual(cmd[0], platform.SYSTEMD_RUN)
                 for flag in ("--property=RuntimeMaxSec=37", "--property=TimeoutStopSec=5",
                              "--property=KillMode=control-group", "--property=SendSIGKILL=yes"):
@@ -85,7 +90,14 @@ class TestForegroundUnits(AltitudeCase):
                     self.assertEqual(child[:2], [platform.ENV_BIN, "-i"])
                     self.assertIn("ALTITUDE_TASK=worker", child)
                     self.assertFalse(any(arg.startswith("DBUS_SESSION_BUS_ADDRESS=") for arg in child))
-                    cli = child[child.index(config.CLAUDE_BIN):]
+                    driver = engines._driver_command()
+                    self.assertEqual(child[-len(driver):], driver)
+                    spec = json.loads(engines._codex_processes[row["id"]].stdin.getvalue())
+                    cli = spec["command"]
+                    self.assertEqual(cli[0], config.CLAUDE_BIN)
+                    self.assertEqual(cli[cli.index("--input-format") + 1], "stream-json")
+                    self.assertIn("--replay-user-messages", cli)
+                    self.assertEqual(spec["sends"], str(engines.worker_sends(row["id"], job_root=self.job_root)))
                     self.assertIn("-p", cli)
                     self.assertEqual(cli[cli.index("--output-format") + 1], "stream-json")
                     self.assertEqual(cli[cli.index("--permission-mode") + 1], "auto")
@@ -99,7 +111,7 @@ class TestForegroundUnits(AltitudeCase):
                         self.assertEqual(cli[cli.index("--model") + 1], model)
                     self.assertIn("DBUS_SESSION_BUS_ADDRESS", popen.call_args.kwargs["env"])
                     self.assertEqual(popen.call_args.kwargs["cwd"], str(self.repo))
-                    prompt = engines._codex_processes[row["id"]].stdin.getvalue().decode()
+                    prompt = spec["input"][0]["text"]
                     self.assertTrue(prompt.endswith("\n\ncontinue" if resume else "\n\nbrief"))
                     self.assertIn(str(config.PERSONAS / "l1.md"), prompt)
 
@@ -109,9 +121,11 @@ import json
 import subprocess
 import sys
 print(json.dumps({"type": "system", "subtype": "init", "session_id": "session"}), flush=True)
-sys.stdin.read()
+sys.stdin.readline()
 arguments = sys.argv[2:]
 allowed = "--allowedTools" in arguments and arguments[arguments.index("--allowedTools") + 1] == "Bash(alt *)"
+assert arguments[arguments.index("--permission-mode") + 1] == "auto"
+assert "--dangerously-skip-permissions" not in arguments
 if allowed:
     reply = subprocess.run([sys.executable, sys.argv[1], "task", "reply", "-"],
                            input="Owner can report through Altitude.", text=True, capture_output=True)
@@ -140,20 +154,22 @@ print(json.dumps({"type": "result", "is_error": error, "result": detail}), flush
                             self.assertIn(str(config.ROOT), specification["writable"])
                         else:
                             child = command[command.index("--") + 1:]
-                            wrapper_index = child.index("/bin/sh")
-                            environment = dict(argument.split("=", 1) for argument in child[2:wrapper_index])
-                            wrapped = child[wrapper_index:]
-                        self.assertEqual(wrapped[:4], ["/bin/sh", "-c", engines.GITHUB_INPUT, "altitude-worker"])
-                        native = wrapped[4:]
-                        self.assertEqual(native[native.index("--permission-mode") + 1], "auto")
-                        self.assertNotIn("--dangerously-skip-permissions", native)
+                            driver_index = len(child) - len(engines._driver_command())
+                            environment = dict(argument.split("=", 1) for argument in child[2:driver_index])
+                            wrapped = child[driver_index:]
+                        self.assertEqual(wrapped, engines._driver_command())
                         self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", environment)
                         options["env"] = environment
-                        process = real_popen([*wrapped[:4], sys.executable, "-c", script, str(ALT), *native[1:]], **options)
+                        process = real_popen(wrapped, **options)
                         processes.append(process)
                         return process
 
+                    engine = self.tmp / "allowance-engine"
+                    engine.write_text(f"#!{sys.executable}\nimport sys\nsys.argv[1:1] = [{str(ALT)!r}]\n{script}")
+                    engine.chmod(0o755)
+
                     with mock.patch.object(platform, "_darwin", return_value=host == "darwin"), \
+                         mock.patch.object(config, "CLAUDE_BIN", str(engine)), \
                          mock.patch.object(engines, "claude_agents", return_value=[]), \
                          mock.patch.object(platform, "job_active", side_effect=lambda *_: processes[-1].poll() is None), \
                          mock.patch.object(engines.subprocess, "Popen", side_effect=popen):
@@ -309,17 +325,11 @@ print(json.dumps({"type": "result", "is_error": error, "result": detail}), flush
 
 
 class TestWorkerTokenInput(AltitudeCase):
-    """A worker's GitHub token arrives on its job's first input line, which the engine never reads. On macOS the
-    engine once read its input file from the beginning and sent the token to its model as prompt text."""
+    """A worker's GitHub token travels in its job's launch input, which only the driver reads; the engine reads its own
+    pipe from the driver and receives the token as GH_TOKEN. On macOS an engine once read its job's input file from
+    the beginning and sent the token to its model as prompt text."""
 
     TOKEN = "fixture-github-token"
-    ENGINE = ("import os, sys\n"
-              "try:  # a file, from its beginning, wherever the position\n"
-              "    data = os.pread(0, 1 << 20, 0)\n"
-              "except OSError:  # a pipe\n"
-              "    data = sys.stdin.buffer.read()\n"
-              "sys.stdout.buffer.write(data)\n"
-              "sys.stderr.write('GH_TOKEN=' + os.environ.get('GH_TOKEN', '') + '\\n')\n")
 
     def setUp(self):
         super().setUp()
@@ -327,11 +337,8 @@ class TestWorkerTokenInput(AltitudeCase):
         self.patch(engines, "_codex_processes", {})
         self.patch(engines, "claude_agents", return_value=[])
         self.patch(platform, "job_active", return_value=True)
-        engine = self.tmp / "engine"
-        engine.write_text(f"#!{sys.executable}\n{self.ENGINE}")
-        engine.chmod(0o755)
-        self.patch(config, "CLAUDE_BIN", str(engine))
-        self.patch(config, "CODEX_BIN", str(engine))
+        self.fake_engines()
+        self.log = self.tmp / "engine.log"
         (self.tmp / "persona.md").write_text("Worker instructions")
         (self.tmp / "settings.json").write_text("{}")
 
@@ -351,27 +358,31 @@ class TestWorkerTokenInput(AltitudeCase):
              mock.patch.object(engines, "codex_sandbox", return_value=[]), \
              mock.patch.object(engines, "_git_dirs", return_value=[]):
             result = engines.start_l2(engine, "project/worker-1", "brief", cwd=self.repo, persona=self.tmp / "persona.md",
-                                      model=None, settings=self.tmp / "settings.json", extra_env={"ALTITUDE_TASK": "worker"},
+                                      model=None, settings=self.tmp / "settings.json",
+                                      extra_env={"ALTITUDE_TASK": "worker", "FAKE_ENGINE_LOG": str(self.log)},
                                       job_root=self.tmp / "jobs")
         self.assertEqual(result["returncode"], 0, result)
         return launches[0][0], launches[0][1].stdin.getvalue()
 
-    def assert_engine_read_only_the_prompt(self, output: bytes, errors: bytes) -> None:
+    def assert_engine_read_only_the_prompt(self, output: bytes) -> None:
         self.assertNotIn(self.TOKEN.encode(), output)
-        self.assertTrue(output.endswith(b"brief"), output[-200:])
-        self.assertIn(f"GH_TOKEN={self.TOKEN}".encode(), errors, "the reader exports the line it took")
+        environment, *read = [json.loads(line) for line in self.log.read_text().splitlines()]
+        self.log.unlink()
+        self.assertEqual(environment["environment"], {"GH_TOKEN": self.TOKEN}, "the driver exports the token")
+        self.assertNotIn(self.TOKEN, json.dumps(read))
+        self.assertIn("brief", json.dumps(read))
 
-    def test_linux_job_engine_reads_only_what_follows_the_token(self):
+    def test_linux_job_engine_reads_only_its_prompt(self):
         for engine in ("claude", "codex"):
             with self.subTest(engine=engine):
                 command, sent = self.launched(engine, "linux")
-                self.assertTrue(sent.startswith(self.TOKEN.encode() + b"\n"))
+                self.assertEqual(json.loads(sent)["github_token"], self.TOKEN)
                 # systemd-run --pipe hands the job its launcher's own input pipe.
                 job = subprocess.run(command[command.index("--") + 1:], input=sent, capture_output=True, timeout=60)
                 self.assertEqual(job.returncode, 0, job.stderr)
-                self.assert_engine_read_only_the_prompt(job.stdout, job.stderr)
+                self.assert_engine_read_only_the_prompt(job.stdout)
 
-    def test_macos_job_engine_reads_only_what_follows_the_token_and_keeps_no_copy(self):
+    def test_macos_job_engine_reads_only_its_prompt_and_keeps_no_copy(self):
         home = self.tmp / "home"
         home.mkdir()
         out, err = self.tmp / "out", self.tmp / "err"
@@ -404,17 +415,15 @@ class TestWorkerTokenInput(AltitudeCase):
                      mock.patch.object(platform.sys, "stdin", mock.Mock(buffer=io.BytesIO(sent))), \
                      mock.patch.object(platform.subprocess, "run", side_effect=launchd):
                     self.assertEqual(platform._launch(dict(spec)), 0, err.read_text())
-                self.assert_engine_read_only_the_prompt(out.read_bytes(), err.read_bytes())
+                self.assert_engine_read_only_the_prompt(out.read_bytes())
                 self.assertIn("status", kept)
                 self.assertNotIn("stdin", kept, "the launcher's copy of the token is removed once read")
 
-    def test_the_reader_starts_no_engine_unless_its_input_is_a_pipe(self):
+    def test_a_job_input_file_never_reaches_the_engine(self):
         command, sent = self.launched("claude", "linux")
         saved = self.tmp / "input"
         saved.write_bytes(sent)
         with saved.open("rb") as stream:
             job = subprocess.run(command[command.index("--") + 1:], stdin=stream, capture_output=True, timeout=60)
-        self.assertEqual(job.returncode, 125)
-        self.assertEqual(job.stdout, b"")
-        self.assertNotIn(b"GH_TOKEN", job.stderr, "the engine never started")
-        self.assertIn(b"input is not a pipe", job.stderr)
+        self.assertEqual(job.returncode, 0, job.stderr)
+        self.assert_engine_read_only_the_prompt(job.stdout)

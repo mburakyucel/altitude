@@ -351,10 +351,65 @@ class TestTrustCheck(AltitudeCase):
         first = server.TRUST.arm("192.0.2.7")
         armed = server.TRUST.probe("192.0.2.7")  # a connection opens under the first check
         second = server.TRUST.arm("192.0.2.7")  # Check again, before that connection's alert arrives
-        server.TRUST.refused(armed)
+        server.TRUST.settled(armed, refused=True)
         self.assertEqual(server.TRUST.probe("192.0.2.7"), second, "the later check still arms new connections")
+        server.TRUST.settled(second, refused=False)
         self.assertEqual(server.TRUST.confirm(first, "192.0.2.7", False), "untrusted")
         self.assertEqual(server.TRUST.confirm(second, "192.0.2.7", True), "trusted")
+
+    def test_a_refusal_is_never_overridden_by_a_pass_on_the_same_check(self):
+        challenge = server.TRUST.arm("192.0.2.7")
+        refusing, accepting = server.TRUST.probe("192.0.2.7"), server.TRUST.probe("192.0.2.7")
+        server.TRUST.settled(refusing, refused=True)
+        server.TRUST.settled(accepting, refused=False)
+        self.assertEqual(server.TRUST.confirm(challenge, "192.0.2.7", True), "untrusted")
+
+    def test_a_pass_waits_for_the_checks_other_handshakes_and_retries_past_its_bound(self):
+        self.patch(server.TRUST, "ARM_SECONDS", .05)
+        challenge = server.TRUST.arm("192.0.2.7")
+        stalled, accepting = server.TRUST.probe("192.0.2.7"), server.TRUST.probe("192.0.2.7")
+        server.TRUST.settled(accepting, refused=False)
+        self.assertEqual(server.TRUST.confirm(challenge, "192.0.2.7", True), "retry", "an open handshake may refuse")
+        server.TRUST.settled(stalled, refused=False)
+        self.assertEqual(server.TRUST.confirm(challenge, "192.0.2.7", True), "trusted")
+
+    def test_a_check_pruned_while_a_pass_waits_is_unknown(self):
+        challenge = server.TRUST.arm("192.0.2.7")
+        stalled, accepting = server.TRUST.probe("192.0.2.7"), server.TRUST.probe("192.0.2.7")
+        server.TRUST.settled(accepting, refused=False)
+        wait_for = server.TRUST._settled.wait_for
+        def crowded(predicate, timeout):
+            self.patch(server.TRUST, "LIMIT", 0)
+            server.TRUST.arm("192.0.2.8")  # another check prunes this one while the pass waits
+            return wait_for(predicate, timeout)
+        self.patch(server.TRUST._settled, "wait_for", crowded)
+        self.patch(server.TRUST, "ARM_SECONDS", .05)
+        self.assertEqual(server.TRUST.confirm(challenge, "192.0.2.7", True), "unknown")
+        self.assertIsNone(server.TRUST.probe("192.0.2.7"), "a pruned check arms nothing again")
+        server.TRUST.settled(stalled, refused=False)
+
+    def test_a_browser_that_refuses_then_ignores_the_error_is_never_trusted(self):
+        # Told to ignore certificate errors, Chromium refuses the second certificate with an alert, then connects
+        # again accepting it. That connection can arrive while the refusal's own thread is still recording it.
+        armed = self.call(self.bypassed, "POST", "/api/trust", {})[1]
+        path = f"/api/trust/{armed['challenge']}"
+        settled, confirm, wait_for = server.TRUST.settled, server.TRUST.confirm, server.TRUST._settled.wait_for
+        recording, probed = threading.Event(), []
+        self.addCleanup(recording.set)
+        def late(challenge, refused):
+            if refused:
+                recording.wait(5)
+            settled(challenge, refused)
+        def waiting(predicate, timeout):  # the refusal is recorded only once the pass waits for it
+            recording.set()
+            return wait_for(predicate, timeout)
+        self.patch(server.TRUST, "settled", late)
+        self.patch(server.TRUST, "confirm", lambda *args: probed.append(args[2]) or confirm(*args))
+        self.patch(server.TRUST._settled, "wait_for", waiting)
+        with self.assertRaises(ssl.SSLCertVerificationError):
+            self.call(self.bypassed, "GET", path)
+        self.assertEqual(self.call(ssl._create_unverified_context(), "GET", path), (200, {"trusted": False}))
+        self.assertEqual(probed, [True], "the reconnect got the second certificate before the refusal was recorded")
 
     def test_an_abandoned_connection_says_nothing_about_trust(self):
         challenge = self.call(self.trusting, "POST", "/api/trust", {})[1]["challenge"]

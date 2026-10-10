@@ -82,8 +82,7 @@ class ContainerWorkflow(AltitudeCase):
     def test_wrong_resume_identity_fails_the_probe_and_stops_the_replacement(self):
         with probe.fixture_engine(self.tmp):
             saved = probe.prepare(self.project, self.tmp / "workflow")
-        wrong = probe.ENGINE.replace("sys.argv[-2] if 'resume' in sys.argv else str(uuid.uuid4())",
-                                     "str(uuid.uuid4())")
+        wrong = probe.ENGINE.replace("params.get('threadId') or str(uuid.uuid4())", "str(uuid.uuid4())")
         with mock.patch.object(probe, "ENGINE", wrong), probe.fixture_engine(self.tmp):
             with self.assertRaisesRegex(dispatch.ResumeFailure, "different .* thread"):
                 probe.resume(self.project, saved)

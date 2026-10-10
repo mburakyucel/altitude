@@ -21,6 +21,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -1011,6 +1012,39 @@ def _checks_outcome(checks: str, pair: dict) -> str:
     return f"checks are {checks!r}" + (f"; {pair['unregistered']}" if checks == "missing" else "")
 
 
+class _SessionEnded(BaseException):
+    """SIGTERM reached a waiting landing: the job holding its owner's session is stopping."""
+
+
+def _ends_with_session(wait_for):
+    """A waiting landing ends with the owner session that started it. A worker's end stops its whole job, which
+    sends this process SIGTERM. The candidate stays published and unmerged, the repository turn is released with
+    the process, and the owner's next turn is told which head is published."""
+    @functools.wraps(wait_for)
+    def run(root, project, slug, pair, *, merge, **kwargs):
+        def ended(signum, frame):
+            raise _SessionEnded
+
+        attempt = S.load_task(project, slug).get("attempt")
+        previous = signal.signal(signal.SIGTERM, ended)
+        restore = signal.SIG_DFL if previous is None else previous
+        try:
+            return wait_for(root, project, slug, pair, merge=merge, **kwargs)
+        except _SessionEnded:
+            signal.signal(signal.SIGTERM, restore)
+            T.notify(project, slug, f"Your `alt land` ended with your previous session while it waited on PR "
+                     f"#{pair['number']}. Head {pair['head_sha']} remains published and unmerged, and the repository "
+                     f"turn is free. Assess that head where a review asks for it, then re-run "
+                     f"`alt land{' --merge' if merge else ''}` when ready.", by="landing", attempt=attempt)
+            raise LandError(f"the owner's session ended while this landing waited; PR #{pair['number']} head "
+                            f"{pair['head_sha']} remains published and unmerged — assess when ready and re-run "
+                            "alt land") from None
+        finally:
+            signal.signal(signal.SIGTERM, restore)
+    return run
+
+
+@_ends_with_session
 def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority, deadline):
     """Wait outside the repository turn for the owner assessment and candidate checks."""
     from . import reviews
