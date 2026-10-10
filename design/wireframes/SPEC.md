@@ -1072,7 +1072,8 @@ the keyboard automatically; touch fields retain their 16px sizing and ordinary u
 page scale (§2.2).
 Switching to Live session cancels unsent dictation and releases the microphone. Explicit voice Send
 continues transcription and submission for its original task while hidden, without refocusing its
-composer; Escape in Live session does not cancel that submitted message.
+composer, also when it finishes after the operator returns; Escape in Live session does not cancel that
+submitted message.
 A refused or uncertain send arriving while Live session is open restores its text
 alongside newer draft edits; an accepted send remains sent. On desktop, closing the panel leaves
 the conversation visible. Navigation itself has no
@@ -1178,7 +1179,8 @@ position preserved; the shared cue and record times in both
 views, a long call without output, reduced motion, an untimed row, unavailable activity and an ended session; queued/unconfirmed/delivered steering;
 direct Live session Stop; stopping with editable draft and racing messages held; stopped; correction
 and capacity wait; continued session with preserved work; blocked question; finished; denied Stop;
-short viewport; voice listening/cancel/dictation/denial/unavailable; input and overlay Escape ownership.
+short viewport; voice listening/cancel/dictation/denial/unavailable; a committed voice Send landing in Live session or
+after returning, with focus left alone; input and overlay Escape ownership.
 Each named state has a screenshot under `web/ui-artifacts/results/l2-progress*`.
 
 #### Terminal

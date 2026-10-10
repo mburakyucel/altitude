@@ -326,50 +326,59 @@ for (const index of [0, 1]) {
   });
 }
 
-test("@phone-only changing views cancels a recording while committed voice Send survives hidden Escape", async ({ page, request }, info) => {
-  const slug = (await (await request.get("/fixture/status")).json()).tasks[0].slug;
-  const walk = walkthrough(page, info);
-  const host = await fixtureHost(page);
-  host.final = "spoken correction";
-  await walk.open(`/projects/atlas/tasks/${slug}`);
-  const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
-  const live = page.getByRole("region", { name: "Live session", exact: true });
-  const field = conversation.getByRole("textbox", { name: "Message the L2", exact: true });
-  const tabs = page.getByRole("navigation", { name: "Task views" });
-  await field.fill("Typed correction.");
-  await conversation.getByRole("button", { name: "Start voice input", exact: true }).click();
-  await expect(conversation.getByRole("button", { name: "Stop voice input", exact: true })).toBeVisible();
-  await tabs.getByRole("link", { name: "Live session", exact: true }).click();
-  await walk.state("01-tab-cancels-unsubmitted-recording", { visible: [live], hidden: [conversation] });
-  await tabs.getByRole("link", { name: "Conversation", exact: true }).click();
-  await expect(conversation.getByRole("button", { name: "Start voice input", exact: true })).toBeVisible();
-  await expect(conversation.getByRole("button", { name: "Stop voice input", exact: true })).toBeHidden();
-  await expect(field).toHaveValue("Typed correction.");
-  await expect(field).not.toBeFocused();
-  expect(host.finals).toBe(0);
-  let release!: () => void;
-  host.holdFinal = new Promise<void>((resolve) => { release = resolve; });
-  await conversation.getByRole("button", { name: "Start voice input", exact: true }).click();
-  await expect(conversation.getByLabel("Recording time")).toHaveText(/0:0[1-9]/);
-  await conversation.getByRole("button", { name: "Send", exact: true }).click();
-  await expect.poll(() => host.finals).toBe(1);
-  try {
+// The transcript of a committed voice Send lands while Live session is open, or after returning.
+for (const lands of ["hidden", "returned"] as const) {
+  test(`@phone-only changing views cancels a recording while committed voice Send survives hidden Escape, landing ${lands}`, async ({ page, request }, info) => {
+    const slug = (await (await request.get("/fixture/status")).json()).tasks[0].slug;
+    const walk = walkthrough(page, info);
+    const host = await fixtureHost(page);
+    host.final = "spoken correction";
+    await walk.open(`/projects/atlas/tasks/${slug}`);
+    const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
+    const live = page.getByRole("region", { name: "Live session", exact: true });
+    const field = conversation.getByRole("textbox", { name: "Message the L2", exact: true });
+    const tabs = page.getByRole("navigation", { name: "Task views" });
+    await field.fill("Typed correction.");
+    await conversation.getByRole("button", { name: "Start voice input", exact: true }).click();
+    await expect(conversation.getByRole("button", { name: "Stop voice input", exact: true })).toBeVisible();
     await tabs.getByRole("link", { name: "Live session", exact: true }).click();
-    await expect(live).toBeVisible();
-    await expect(field).toBeHidden();
-    await page.keyboard.press("Escape");
-    await walk.state("02-submitted-transcription-remains-owned-by-conversation", { visible: [live], hidden: [field] });
-  } finally {
-    release();
-  }
-  await expect(live).toBeVisible();
-  await tabs.getByRole("link", { name: "Conversation", exact: true }).click();
-  await walk.state("03-committed-voice-message-saved", { visible: [field, conversation.getByText("Typed correction. spoken correction", { exact: true }), conversation.getByRole("button", { name: "Start voice input", exact: true })], hidden: [live, conversation.getByRole("button", { name: "Stop voice input", exact: true })] });
-  await expect(field).toHaveValue("");
-  await expect(field).not.toBeFocused();
-  const task = await (await request.get(`/api/task/atlas/${slug}`)).json();
-  expect(task.messages.filter((message: { text: string }) => message.text === "Typed correction. spoken correction")).toHaveLength(1);
-});
+    await walk.state("01-tab-cancels-unsubmitted-recording", { visible: [live], hidden: [conversation] });
+    await tabs.getByRole("link", { name: "Conversation", exact: true }).click();
+    await expect(conversation.getByRole("button", { name: "Start voice input", exact: true })).toBeVisible();
+    await expect(conversation.getByRole("button", { name: "Stop voice input", exact: true })).toBeHidden();
+    await expect(field).toHaveValue("Typed correction.");
+    await expect(field).not.toBeFocused();
+    expect(host.finals).toBe(0);
+    let release!: () => void;
+    host.holdFinal = new Promise<void>((resolve) => { release = resolve; });
+    await conversation.getByRole("button", { name: "Start voice input", exact: true }).click();
+    await expect(conversation.getByLabel("Recording time")).toHaveText(/0:0[1-9]/);
+    await conversation.getByRole("button", { name: "Send", exact: true }).click();
+    await expect.poll(() => host.finals).toBe(1);
+    const saved = async () => (await (await request.get(`/api/task/atlas/${slug}`)).json()).messages
+      .filter((message: { text: string }) => message.text === "Typed correction. spoken correction").length;
+    try {
+      await tabs.getByRole("link", { name: "Live session", exact: true }).click();
+      await expect(live).toBeVisible();
+      await expect(field).toBeHidden();
+      await page.keyboard.press("Escape");
+      await walk.state("02-submitted-transcription-remains-owned-by-conversation", { visible: [live], hidden: [field] });
+      if (lands === "hidden") {
+        release();
+        await expect.poll(saved).toBe(1);
+      }
+      await expect(live).toBeVisible();
+      await tabs.getByRole("link", { name: "Conversation", exact: true }).click();
+      await expect(field).toBeVisible();
+    } finally {
+      release();
+    }
+    await walk.state("03-committed-voice-message-saved", { visible: [field, conversation.getByText("Typed correction. spoken correction", { exact: true }), conversation.getByRole("button", { name: "Start voice input", exact: true })], hidden: [live, conversation.getByRole("button", { name: "Stop voice input", exact: true })] });
+    await expect(field).toHaveValue("");
+    await expect(field).not.toBeFocused();
+    expect(await saved()).toBe(1);
+  });
+}
 
 for (const status of [409, 500, 200]) {
   test(`@phone-only send outcome ${status} survives switching to Live session`, async ({ page, request }, info) => {
