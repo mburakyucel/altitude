@@ -683,7 +683,7 @@ no reservation while waiting for preparation and no automatic retry. L2 and revi
 set expectations for a relatively quick, focused review without a programmatic duration cutoff.
 The command waits without a review deadline; streamed JSON whitespace detects disconnected callers.
 Owner changes, cancellation and caller disconnect stop the run. Planned activation waits for in-flight
-reviews to return their results; review admission shares the restart fence. Capacity contention refuses
+reviews to return their results; new review runs wait while activation is pending. Capacity contention refuses
 `run` and leaves the accepted request waiting for the reviewer, shown as such, until a later explicit run. Unexpected restart reconciliation cancels an
 orphaned invocation rather than leaving it running without a result consumer.
 The engine checks service inspection before launch. Its cleanup stops the independent reviewer unit
@@ -1211,7 +1211,7 @@ storage so a worker cannot turn it back on) stops running runs and refuses new o
 admitting a run, altd stops abandoned runs, retains their logs and results, records them as interrupted
 and removes their scratch files. Failed evidence delivery retains the original area and keeps the
 runner closed for recovery. Validation holds the shared restart fence through its bounded execution,
-evidence recording and cleanup, and refuses admission once restart is requested. On a Mac,
+evidence recording and cleanup, and refuses admission while activation is pending. On a Mac,
 `--simulator` adds a disposable iOS Simulator iPhone (`altitude/simulator.py`): altd creates it in a
 private device set in the run's area and removes it afterwards, and the run, which stays refused the
 Simulator service, reaches only that phone's Safari pages through altd's filtering relay, and two fixed native

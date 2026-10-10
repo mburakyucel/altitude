@@ -222,7 +222,8 @@ class TestReviews(AltitudeCase):
         for fail in (False, True):
             with self.subTest(fail=fail):
                 def during_run(prompt, **kwargs):
-                    self.assertIn("adversarial review in flight", server.restart_waiting_for(check_activity=False))
+                    self.assertIn(f"adversarial review for {self.project}/{self.slug}",
+                                  server.restart_waiting_for(check_activity=False))
                     with mock.patch.object(server, "_request_restart_unit") as restart:
                         with self.assertRaises(server.RestartBusy):
                             server.restart_service()
@@ -235,7 +236,7 @@ class TestReviews(AltitudeCase):
                 requested = self.request(previous=previous[-1]["id"] if previous else None)
                 result = self.run_review(requested)
                 self.assertEqual(result["state"], "failed" if fail else "completed")
-                self.assertNotIn("adversarial review in flight", server.restart_waiting_for(check_activity=False))
+                self.assertEqual(server.restart_waiting_for(check_activity=False), [])
                 if not fail:
                     self.assess(result)
 
@@ -256,12 +257,23 @@ class TestReviews(AltitudeCase):
         requested = self.request()
         for exclusive in (False, True):
             with self.subTest(exclusive=exclusive):
-                with config.restart_lock(exclusive=exclusive), mock.patch.object(config, "restart_in_progress", return_value=not exclusive):
+                with config.restart_lock(exclusive=exclusive), mock.patch.object(config, "activation_pending", return_value=not exclusive):
                     with self.assertRaisesRegex(T.TransitionError, "activating an update"):
                         self.run_review(requested)
                 self.assertEqual(S.load_task(self.project, self.slug)["reviews"][-1]["state"], "requested")
         self.engine.assert_not_called()
         self.assertEqual(self.run_review(requested)["state"], "completed")
+
+    def test_pending_activation_holds_new_review_runs_until_restart_or_failure(self):
+        flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
+        requested = self.request()
+        S.write_json(flag, {"since": S.now(), "head": "merged", "files": ["altitude/reviews.py"]})
+        with self.assertRaisesRegex(T.TransitionError, "activating an update"):
+            self.run_review(requested)
+        self.assertEqual(S.load_task(self.project, self.slug)["reviews"][-1]["state"], "requested")
+        self.engine.assert_not_called()
+        S.write_json(flag, {**S.read_json(flag), "failed": S.now()})
+        self.assertEqual(self.run_review(requested)["state"], "completed", "a failed activation lifts the hold")
 
     def test_owner_attempt_and_original_source_are_required(self):
         with self.assertRaises(T.TransitionError):

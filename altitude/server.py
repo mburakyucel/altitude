@@ -2670,12 +2670,13 @@ def restart_waiting_for(*, check_activity: bool = True) -> list[str]:
     waiting = [f"{p}/{t['slug']}" for p in projects for t in S.list_tasks(p)
                if t.get("dispatching") or t.get("resume_claim")]
     waiting += [f"{p} L3" for p in projects if l3.busy(p)]
-    if reviews.busy():
-        waiting.append("adversarial review in flight")
-    if check_activity:
+    waiting += [f"adversarial review for {task}" for task in reviews.running()]
+    if held := validation.holder():
+        waiting.append(f"validation run for {held}")
+    if check_activity and not waiting:
         with config.restart_lock(exclusive=True) as quiet:
             if not quiet:
-                waiting.append("dispatch, L3 turn, validation or report verification in flight")
+                waiting.append("dispatch, L3 turn or report verification in flight")
     return waiting
 
 

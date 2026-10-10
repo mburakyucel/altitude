@@ -1373,7 +1373,9 @@ re-running `alt land`. A merged change
 to Altitude's backend, launch source or served web bundle inputs activates at a narrow quiet point: no dispatch
 marker or resume claim, L3 turn, adversarial review, validation run, or report verification in flight.
 Validation holds through bounded execution, evidence recording and cleanup. Running and blocked workers themselves do not
-hold activation, and new dispatches continue while activation is pending. The regular thirty-second
+hold activation, and new dispatches continue while activation is pending. New validation runs and adversarial
+review runs are refused from the moment activation is pending until the restart (or a failed activation), so
+in-flight work drains to the quiet point within one validation run. The regular thirty-second
 tick discovers merged changes independently of worker completion. Dispatch, resume, L3 turns
 and report verification wait only from the restart unit request until the replacement daemon is
 ready; a failing restart unit releases the window at once with its reason, and the ten-minute restart
@@ -1383,7 +1385,7 @@ returning Stop or bootstrapping the replacement, with a 45-second removal limit.
 remain in their own jobs. Failed activation restores an available prior web bundle and verifies the
 recovery service's API/UI health from a new process; its error retains both activation failure and
 recovery outcome. An absent prior bundle is explicit, and no recovery is attempted without one.
-Validation also refuses new runs during that window. Unexpected daemon exit or host
+Unexpected daemon exit or host
 reboot leaves an interrupted validation record and retained log/results at startup; failed evidence
 delivery keeps the original run area for recovery.
 The web update notice is dismissible per browser for the pending update and failure identity.
