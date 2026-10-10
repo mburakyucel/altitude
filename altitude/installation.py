@@ -497,17 +497,20 @@ def _gh_signed_in() -> bool:
         return False
 
 
-def _gh_lacks() -> list[str]:
-    """The pull request fields `alt land` reads that this GitHub CLI does not offer. Given `--json` alone, its parser
-    lists the fields it offers, with no repository, sign-in or network request; distribution packages such as
-    Ubuntu 24.04's gh 2.45 can sign in and open pull requests but lack baseRefOid, so landing fails (#350)."""
+def _gh_lacks() -> list[str] | None:
+    """The pull request fields `alt land` reads that this GitHub CLI does not offer, or None when it lists none, as a
+    failing gh does. Given `--json` alone, its parser lists the fields it offers, with no repository, sign-in or network
+    request; distribution packages such as Ubuntu 24.04's gh 2.45 can sign in and open pull requests but lack
+    baseRefOid, so landing fails (#350)."""
     from .land import PR_FIELDS
     try:
         listed = subprocess.run(["gh", "pr", "view", "--json"], capture_output=True, text=True, timeout=15)
-        offered = set((listed.stdout + listed.stderr).split())
     except (OSError, subprocess.SubprocessError):
-        offered = set()
-    return [field for field in PR_FIELDS.split(",") if field not in offered]
+        return None
+    output = listed.stdout + listed.stderr
+    if "comma-separated fields" not in output:
+        return None
+    return [field for field in PR_FIELDS.split(",") if field not in output.split()]
 
 
 #: Why a GitHub CLI lacking `_gh_lacks()` fields cannot serve tasks.
@@ -576,8 +579,10 @@ def doctor() -> dict:
         checks.append({"name": "user service", "state": "unavailable", "detail": str(exc)})
     if shutil.which("gh"):
         lacks = _gh_lacks()
-        checks.append({"name": "GitHub CLI pull request fields", "state": "unavailable" if lacks else "tested",
-                       "detail": f"{_GH_TOO_OLD.format(', '.join(lacks))} Install the current release: "
+        checks.append({"name": "GitHub CLI pull request fields",
+                       "state": "unknown" if lacks is None else "unavailable" if lacks else "tested",
+                       "detail": "gh pr view --json listed no fields; run it to see why." if lacks is None
+                       else f"{_GH_TOO_OLD.format(', '.join(lacks))} Install the current release: "
                        f"{platform.install_command('gh')}" if lacks else "Offers every field alt land reads."})
     authenticated = _gh_signed_in()
     checks.append({"name": "GitHub authentication", "state": "tested" if authenticated else "unknown",

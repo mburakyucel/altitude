@@ -114,11 +114,11 @@ class TestIncidentReports(OnboardingCase):
 
 
 class TestPrerequisites(OnboardingCase):
-    def items(self, *, gh: bool, signed: dict, installed: dict, git: bool = True, lacks: tuple = ()) -> dict:
+    def items(self, *, gh: bool, signed: dict, installed: dict, git: bool = True, lacks: tuple | None = ()) -> dict:
         which = {"gh": "/fixture/gh", "git": "/fixture/git" if git else None}
         with mock.patch.object(installation.shutil, "which", side_effect=lambda name: which.get(name)), \
              mock.patch.object(installation, "_gh_signed_in", return_value=gh), \
-             mock.patch.object(installation, "_gh_lacks", return_value=list(lacks)), \
+             mock.patch.object(installation, "_gh_lacks", return_value=None if lacks is None else list(lacks)), \
              mock.patch.object(engines, "installation",
                                side_effect=lambda e: {"available": None if installed[e] else False, "why": ""}), \
              mock.patch.object(engines, "sign_in", side_effect=lambda e: {"signed_in": signed[e],
@@ -196,11 +196,13 @@ class TestPrerequisites(OnboardingCase):
             script.chmod(0o755)
             with self.subTest(offered=len(offered)), mock.patch.dict(os.environ, {"PATH": str(bin_dir)}):
                 self.assertEqual(installation._gh_lacks(), expected)
-        with mock.patch.dict(os.environ, {"PATH": str(self.tmp / "empty")}):
-            self.assertEqual(installation._gh_lacks(), fields, "a GitHub CLI that cannot list fields lands nothing")
+        script.write_text("#!/bin/sh\necho 'failed to read configuration: invalid config file' >&2\nexit 1\n")
+        for path in (bin_dir, self.tmp / "empty"):
+            with self.subTest(path=path.name), mock.patch.dict(os.environ, {"PATH": str(path)}):
+                self.assertIsNone(installation._gh_lacks(), "a GitHub CLI that lists no fields proves nothing")
 
     def test_doctor_reports_whether_the_github_cli_can_land(self):
-        for lacks, state in (([], "tested"), (["baseRefOid", "closingIssuesReferences"], "unavailable")):
+        for lacks, state in (([], "tested"), (["baseRefOid", "closingIssuesReferences"], "unavailable"), (None, "unknown")):
             with self.subTest(state=state), \
                     mock.patch.object(installation.shutil, "which", side_effect=lambda name, **_: f"/fixture/{name}"), \
                     mock.patch.object(installation, "_gh_lacks", return_value=lacks), \
@@ -213,6 +215,11 @@ class TestPrerequisites(OnboardingCase):
             if lacks:
                 self.assertIn("lacks baseRefOid, closingIssuesReferences", checks["GitHub CLI pull request fields"]["detail"])
                 self.assertIn(platform.install_command("gh"), checks["GitHub CLI pull request fields"]["detail"])
+
+    def test_a_github_cli_that_lists_no_fields_falls_back_to_its_sign_in_check(self):
+        items = self.items(gh=False, lacks=None, signed={"claude": True, "codex": True},
+                           installed={"claude": True, "codex": True})
+        self.assertEqual((items["github"]["label"], items["github"]["command"]), ("GitHub CLI signed in", "gh auth login"))
 
     def test_one_signed_in_agent_is_enough_and_others_become_optional(self):
         items = self.items(gh=True, signed={"claude": True, "codex": False}, installed={"claude": True, "codex": False})

@@ -33,6 +33,7 @@ def configure(*, expected_error=lambda _message: False):
     # First run's prerequisites: the installed engine is signed in and the GitHub CLI is not.
     engines.sign_in = lambda engine: {"signed_in": engine == config.ENGINES[0], "command": engines.SIGN_IN[engine][1]}
     installation._gh_signed_in = lambda: False
+    installation._gh_lacks = lambda: []
     engines.image_capability = lambda _engine: {"available": True, "why": "deterministic image fixture"}
     # The browser runs beside the harness, which may itself run inside an Altitude worker unit; the agent
     # check's own behaviour is covered in tests/test_terminal.py.
