@@ -16,8 +16,8 @@ import { L3ModelButton } from "../components/Models";
 import type { ImageSubmission } from "../components/ImageDraft";
 import { MessageImages, PendingImages } from "../components/MessageImages";
 import type { ImagePreview } from "../components/MessageImages";
-import { SystemGroup, SystemLine, subjectOf } from "../components/SystemLine";
-import { TaskCard } from "../components/TaskCard";
+import { SystemGroup, SystemLine, notable, subjectOf } from "../components/SystemLine";
+import { TaskCards } from "../components/TaskCard";
 import { ChoiceError, CreateTask } from "../components/Choice";
 import type { ChoiceState } from "../components/Choice";
 import type { SystemTurn } from "../components/SystemLine";
@@ -92,6 +92,9 @@ function systemTurn(turn: Turn, project: string, activeId: string | null): Syste
     fyi: turn.fyi,
     headsUp: turn.fyi && (turn.trigger === "project-message-error" || (turn.trigger === "fyi" && turn.user?.heads_up === true)),
     projectMessage: row?.project_message,
+    // A failed turn's error row names what it created before failing.
+    created: (turn.assistant ?? turn.error)?.tasks ?? [],
+    issues: (turn.assistant ?? turn.error)?.issues ?? [],
   };
 }
 
@@ -100,7 +103,7 @@ type Item =
   | { kind: "system"; turn: SystemTurn }
   | { kind: "group"; turns: SystemTurn[]; at: string | null };
 
-/** Chat, selected L3 heads-ups and active turns split runs of routine system events (SPEC.md §4.1). */
+/** Chat, selected L3 heads-ups, notable turns and active turns split runs of routine system events (SPEC.md §4.1). */
 export function itemsOf(turns: Turn[], project: string, activeId: string | null): Item[] {
   const items: Item[] = [];
   let run: SystemTurn[] = [];
@@ -118,7 +121,7 @@ export function itemsOf(turns: Turn[], project: string, activeId: string | null)
       continue;
     }
     const system = systemTurn(turn, project, activeId);
-    if (system.inProgress || system.headsUp || system.projectMessage) {
+    if (system.inProgress || system.headsUp || system.projectMessage || notable(system)) {
       flush();
       items.push({ kind: "system", turn: system });
     } else run.push(system);
@@ -147,18 +150,6 @@ interface Local {
   /** Exchanges this turn completed before a Send now message joined it, shown until the history has them. */
   delivery?: ChatMessage["delivery"];
   earlier?: { turnId: string | null; text: string; reply: string; delivery?: ChatMessage["delivery"] }[];
-}
-
-/** A task the turn created, under the reply: the link slice 3 grows into the §3.5 card. */
-/** The task cards under a reply that created tasks (SPEC.md §3.5, §5.2 note 4). */
-function TurnTasks({ project, slugs, titles }: { project: string; slugs: string[]; titles: Map<string, TaskRow> }) {
-  return (
-    <div className="turn-tasks">
-      {slugs.map((slug) => (
-        <TaskCard key={slug} project={project} task={titles.get(slug) ?? { slug }} />
-      ))}
-    </div>
-  );
 }
 
 function Skeleton() {
@@ -213,13 +204,6 @@ export default function Conversation({
     for (const row of [...(project.data?.tasks ?? []), ...(project.data?.archive ?? [])]) map.set(row.slug, row);
     return map;
   }, [project.data]);
-  const titles = useMemo(() => {
-    const map = new Map<string, string>();
-    tasks.forEach((row, slug) => {
-      if (row.title) map.set(slug, row.title);
-    });
-    return map;
-  }, [tasks]);
 
   const turns = useMemo(() => turnsOf(view?.history ?? []), [view?.history]);
   const items = useMemo(() => itemsOf(turns, name, activeId), [turns, name, activeId]);
@@ -380,9 +364,9 @@ export default function Conversation({
     if (item.kind === "chat" && earlier.some((segment) => segment.turnId === item.turn.id)) continue;
     divide(itemAt(item));
     if (item.kind === "group") {
-      rows.push(<SystemGroup key={item.turns[0]?.id ?? item.at ?? "group"} turns={item.turns} project={name} titles={titles} />);
+      rows.push(<SystemGroup key={item.turns[0]?.id ?? item.at ?? "group"} turns={item.turns} project={name} tasks={tasks} />);
     } else if (item.kind === "system") {
-      rows.push(<SystemLine key={item.turn.id} turn={item.turn} project={name} titles={titles} />);
+      rows.push(<SystemLine key={item.turn.id} turn={item.turn} project={name} tasks={tasks} />);
     } else {
       const { turn } = item;
       const pressed = Boolean(turn.user?.offer_turn && offering.has(turn.user.offer_turn));
@@ -397,7 +381,7 @@ export default function Conversation({
           {turn.user && !pressed ? <Bubble text={turn.user.text} at={turn.user.at} state={keptRow ? keptRow.sending ? "sending" : "queued" : turn.user.delivery?.state} images={<MessageImages project={name} images={turn.user.images} />} /> : null}
           {turn.assistant ? silent ? null : (
             <Reply text={turn.assistant.text} at={turn.assistant.at} role="assistant">
-              {turn.assistant.tasks?.length ? <TurnTasks project={name} slugs={turn.assistant.tasks} titles={tasks} /> : null}
+              {turn.assistant.tasks?.length ? <TaskCards project={name} slugs={turn.assistant.tasks} tasks={tasks} /> : null}
               {offer ? (
                 <CreateTask title={turn.assistant.offer!} state={offer} error={refused} onPress={() => void pressCreateTask(turn.id)}
                   onRemove={pressRow && !pressRow.turn_id ? () => dequeue.mutate(pressRow.id) : undefined} removing={dequeue.isPending} />
@@ -430,7 +414,7 @@ export default function Conversation({
         key={view.active.id}
         turn={{ id: view.active.id, trigger: view.active.trigger, at: view.active.started_at, prompt: "", reply: null, error: null, inProgress: true, slug: null, fyi: false, headsUp: false }}
         project={name}
-        titles={titles}
+        tasks={tasks}
       />,
     );
   }
@@ -509,7 +493,7 @@ export default function Conversation({
               {listed.map((row) => (
                 <li key={row.id} className="queued-row">
                   {row.project_message ? (
-                    <SystemLine project={name} titles={titles} turn={{ id: row.id, at: row.at ?? null,
+                    <SystemLine project={name} tasks={tasks} turn={{ id: row.id, at: row.at ?? null,
                       trigger: "project-message", prompt: row.text, reply: null, error: null,
                       inProgress: false, slug: null, fyi: true, headsUp: false, projectMessage: row.project_message }} />
                   ) : !row.trigger || row.trigger === "chat" ? (
@@ -517,7 +501,7 @@ export default function Conversation({
                       side={row.sending || row.turn_id ? undefined : <RemoveMessage message={row.text} removing={dequeue.isPending && dequeue.variables === row.id}
                         disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending} onClick={() => dequeue.mutate(row.id)} />} />
                   ) : (
-                    <SystemLine project={name} titles={titles} turn={{ id: row.id, at: row.at ?? null,
+                    <SystemLine project={name} tasks={tasks} turn={{ id: row.id, at: row.at ?? null,
                       trigger: row.trigger ?? "system", prompt: row.text, reply: null, error: null, inProgress: false,
                       slug: subjectOf(row, name), fyi: false, headsUp: false, queued: true }} />
                   )}

@@ -23,9 +23,10 @@ from . import config, engines, images as image_store, platform, route, state as 
 
 _locks: dict[str, threading.Lock] = {}
 _active: dict[str, dict] = {}
-#: Slugs of the tasks each running turn created through the daemon's `alt task new`, by turn id; the
-#: turn's assistant row carries them as `tasks` (SPEC.md §5.2 note 4) and the entry goes with the turn.
-_created: dict[str, list[str]] = {}
+#: What each running turn created through the daemon's verbs, by turn id: `tasks` (slugs from `alt task new`) and
+#: `issues` (title and URL from `alt issue new` and `alt incident new`). The turn's assistant row carries them
+#: (SPEC.md §4.1, §5.2 note 4) and the entry goes with the turn.
+_created: dict[str, dict[str, list]] = {}
 #: The task title each running chat turn offered through `alt task offer`, by turn id; the assistant row
 #: carries it as `offer` and the page shows Create task under that reply (SPEC.md §3.3).
 _offers: dict[str, str] = {}
@@ -722,23 +723,33 @@ def reading_blocks(project: str) -> set[str]:
     return slugs
 
 
-def note_task(project: str, slug: str) -> bool:
-    """Record that the project's running L3 turn created `slug`; false when no turn is running (a task
-    created from the CLI outside a turn belongs to no chat row)."""
+def note_created(project: str, kind: str, value: str | dict) -> bool:
+    """Record that the project's running L3 turn created a task (`kind` "tasks", its slug) or filed an issue
+    ("issues", its title and URL); false when no turn is running (work created from the CLI outside a turn belongs to no
+    chat row)."""
     with _lifecycle_guard(project):
         turn = _active.get(project)
         if not turn:
             return False
-        _created.setdefault(turn["id"], []).append(slug)
+        _created.setdefault(turn["id"], {}).setdefault(kind, []).append(value)
         return True
 
 
 def _created_meta(project: str, turn_id: str) -> dict:
-    """The `tasks` field for the assistant row of `turn_id`, taken once, or its `offer` when it created none."""
+    """The `tasks` and `issues` fields for the assistant row of `turn_id`, taken once, or its `offer` when it
+    created no task."""
     with _lifecycle_guard(project):
-        slugs = _created.pop(turn_id, None)
         offer = _offers.pop(turn_id, None)
-    return {"tasks": slugs} if slugs else {"offer": offer} if offer else {}
+        created = _created.pop(turn_id, None) or {}
+    return {**created, **({"offer": offer} if offer and not created.get("tasks") else {})}
+
+
+def _created_only(project: str, turn_id: str) -> dict:
+    """The `tasks` and `issues` fields for an error row of `turn_id`. Every error row a failed turn writes carries
+    them, so work it created before failing stays visible whichever row the page reads (SPEC.md §4.1); the
+    record goes with the turn."""
+    with _lifecycle_guard(project):
+        return {kind: list(values) for kind, values in (_created.get(turn_id) or {}).items()}
 
 
 def chat_state(project: str, limit: int = 60) -> dict:
@@ -785,7 +796,8 @@ def _publish_active_turn(project: str, trigger: str, claim=None, slug: str | Non
     try:
         yield turn
     except Exception as exc:
-        chat_log(project, "error", f"L3 turn failed: {exc}", trigger=trigger, turn_id=turn["id"], **_slug_meta(slug))
+        chat_log(project, "error", f"L3 turn failed: {exc}", trigger=trigger, turn_id=turn["id"],
+                 **_created_only(project, turn["id"]), **_slug_meta(slug))
         raise
     finally:
         with lifecycle_guard:
@@ -1201,7 +1213,7 @@ def _split_turn(project: str, active_turn: dict, message_id: str, text: str, *, 
         created = _created.pop(previous, None)
         if text:
             chat_log(project, "assistant", text, trigger="chat", engine=engine, turn_id=previous,
-                     **({"tasks": created} if created else {}), **_slug_meta(active_turn.get("slug")))
+                     **(created or {}), **_slug_meta(active_turn.get("slug")))
         elif created:
             _created[following] = created
         chat_log(project, "user", row["text"], trigger="chat", engine=engine, turn_id=following,
@@ -1631,14 +1643,15 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                         row.get("turn_id") == turn_id and row.get("role") == "error"
                         for row in chat_history(project, None)):
                     chat_log(project, "error", res["error"], trigger=trigger, turn_id=active_turn["id"],
-                             **_slug_meta(slug))
+                             **_created_only(project, active_turn["id"]), **_slug_meta(slug))
                 return res
             pinned = config.pinned_option("l3", config.project(project), engine=requested, model=model)
             if keeps and res.get("safe_to_retry") and (image_message or pinned):
                 return kept(res)
             if image_message or pinned or not res.get("safe_to_retry"):
                 chat_log(project, "error", res.get("error") or "Provider unavailable; check authentication/model access.",
-                         trigger=trigger, engine=choice["engine"], turn_id=active_turn["id"], **_slug_meta(slug))
+                         trigger=trigger, engine=choice["engine"], turn_id=active_turn["id"],
+                         **_created_only(project, active_turn["id"]), **_slug_meta(slug))
                 return {**res, "undelivered": bool(res.get("safe_to_retry"))}
             tried.append(route.option_key(choice))
             choice = _select(project, requested, model=model, excluded=tried)
@@ -1649,7 +1662,8 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                 "undelivered": True}
         if keeps:
             return kept(held)
-        chat_log(project, "error", why, trigger=trigger, turn_id=turn_id, **_slug_meta(slug))
+        chat_log(project, "error", why, trigger=trigger, turn_id=turn_id, **_created_only(project, turn_id),
+                 **_slug_meta(slug))
         return held
 
 
@@ -1732,7 +1746,7 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
             return res
         if res.get("error") and not res.get("session_id"):
             chat_log(project, "error", res["error"], trigger=trigger, engine="claude", turn_id=turn_id,
-                     tools=_tool_log(res.get("tools") or []),
+                     tools=_tool_log(res.get("tools") or []), **_created_only(project, turn_id),
                      **_slug_meta(slug))
             res["turn_id"] = turn_id
             return res
@@ -1831,7 +1845,8 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, a
             _save_session(inf, session, "codex", reported_sid, pct, fresh, 0.0, usage, choice)
             save_info(project, inf)
         chat_log(project, "error", f"codex L3 turn failed: {out['error']}", trigger=trigger,
-                 engine="codex", turn_id=turn_id, tools=_tool_log(out["tools"]), **_slug_meta(slug))
+                 engine="codex", turn_id=turn_id, tools=_tool_log(out["tools"]), **_created_only(project, turn_id),
+                 **_slug_meta(slug))
         return out
     if out["session_id"]:
         _save_session(inf, session, "codex", out["session_id"], pct, fresh, 0.0, usage, choice)

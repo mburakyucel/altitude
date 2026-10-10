@@ -2144,6 +2144,15 @@ button.choice-button::after { content: ""; position: absolute; left: -1px; right
 .sys-card-body {
   color: var(--text-primary);
 }
+/* The issues a notable turn filed (§4.1), under "L3 created" with its task cards. */
+.sys-card-issues {
+  margin: 8px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0;
+  list-style: none;
+}
 .sys-card-body .session-prose {
   gap: 8px;
 }

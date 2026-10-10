@@ -740,6 +740,8 @@ export const ChatMessageSchema = z
     slug: z.string().nullish(),
     /** On the assistant row of a turn that created tasks: their slugs (SPEC.md §5.2 note 4). */
     tasks: z.array(z.string()).nullish(),
+    /** On the assistant row of a turn that filed GitHub issues: their titles and links (SPEC.md §4.1). */
+    issues: z.array(z.object({ title: z.string(), url: z.string() })).nullish(),
     /** On an assistant row: the task title its reply offers under Create task (SPEC.md §3.3). */
     offer: z.string().nullish(),
     /** On a user row: the turn whose Create task this message pressed. */
