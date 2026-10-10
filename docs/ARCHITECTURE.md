@@ -1983,8 +1983,8 @@ way to create a task from the web: the L3 turn creates it through `alt task new`
 the slug on that turn's assistant row (`tasks: [slug]`), which the conversation renders as a task card
 under the reply. When L3 is unsure whether the operator wants work started, its chat turn runs
 `alt task offer '<title>'` instead of asking; altd keeps the title on that reply's assistant row
-(`offer`) when the turn created no task, and the conversation shows Create task with the title under
-the latest such reply (spec §3.3). A press posts `{project, offer_turn}` to `POST /api/chat`, and altd
+(`offer`) when the turn created no task, and the conversation draws the Create task button with the
+title under the latest such reply (spec §3.3); the reply text carries no Create task wording of its own. A press posts `{project, offer_turn}` to `POST /api/chat`, and altd
 queues the operator's ordinary chat message `Create task: <title>` carrying `offer_turn`; the conversation
 shows that message, queued or in history, as the state of the button rather than as a message. altd accepts
 the press only while that reply is the latest human-facing row and no operator message waits in the

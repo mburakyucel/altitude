@@ -1025,9 +1025,10 @@ Repository changes use `alt land --message <message> [--merge]`. Project, incide
 and installation commands remain available through `bin/alt --help` and the relevant subcommand
 help.
 
-L3's `alt task offer '<title>'`, during a chat turn, ends its reply with Create task and that title for
-the operator (up to 100 characters on one line) instead of a question such as "Shall I queue a task?".
-A reply that creates a task carries the task card instead. A press arrives as the operator's
+L3's `alt task offer '<title>'`, during a chat turn, records a task title (up to 100 characters on one
+line) on that turn's reply instead of a question such as "Shall I queue a task?". The conversation draws
+the Create task button with that title under the reply; the reply text itself never contains "Create task"
+or the title. A reply that creates a task carries the task card instead. A press arrives as the operator's
 chat message `Create task: <title>`, which the conversation shows on the button rather than as a message; the `alt task new` that turn runs is bound to the offering reply,
 and a second creation for the same reply is refused, so the turn creates the task from the reply and the
 conversation without asking again. [Conversations](ARCHITECTURE.md#conversations-and-navigation)
