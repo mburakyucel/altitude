@@ -117,6 +117,8 @@ function posted(fetchMock: ReturnType<typeof vi.fn>, path: string, nth = 0) {
 }
 
 const conversation = () => screen.findByRole("region", { name: "Conversation" });
+/** Every text send carries its own send id, the hex form the server stores. */
+const sendId = expect.stringMatching(/^[0-9a-f]{32}$/);
 afterEach(() => vi.useRealTimers());
 
 describe("queued L3 Send now", () => {
@@ -479,6 +481,33 @@ describe.each([390, 1440])("project switching at %ipx", (width) => {
     expect(fetchMock.mock.calls.filter(([url, init]) => url === "/api/chat" && init?.method === "POST")).toHaveLength(1);
   });
 
+  it("an unconfirmed image replay keeps its Retry through leaving the project, without holding the composer", async () => {
+    const outcomes: (() => Response)[] = [() => { throw new TypeError("Connection interrupted"); }, () => jsonResponse({ error: "no L3 for this project" }, 409)];
+    const { chats } = projectChats(() => outcomes.shift()!());
+    chats["alpha-project"]!.history.push(
+      { role: "user", text: "Image sample", turn_id: "failed-image", trigger: "chat", images: [
+        { id: "sample-image", name: "sample.png", mime_type: "image/png", size: 10, width: 1, height: 1, source_message_id: "original-image" },
+      ] },
+      { role: "error", text: "Fixture answer failed", turn_id: "failed-image", trigger: "chat" },
+    );
+    setViewport(width);
+    const { user, router } = renderApp({ route: "/projects/alpha-project" });
+    const failed = await screen.findByText(/^L3 could not answer this turn\./);
+    await user.click(within(failed).getByRole("button", { name: "Retry" }));
+    await screen.findByText("Could not confirm send.", { exact: false });
+    expect(field("alpha")).toBeEnabled();
+    await act(() => router.navigate("/projects/beta-project"));
+    await screen.findByText("beta-project history");
+    await act(() => router.navigate("/projects/alpha-project"));
+    const uncertain = (await screen.findByText("Could not confirm send.", { exact: false })).closest("p")!;
+    expect(field("alpha")).toBeEnabled();
+    // The same submission again; the server refuses it, which settles the send.
+    await user.click(within(uncertain).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.queryByText("Could not confirm send.", { exact: false })).toBeNull());
+    expect(outcomes).toHaveLength(0);
+    expect(field("alpha")).toBeEnabled();
+  });
+
   it("prevents an earlier read replacing a late queue receipt while its conversation is unmounted", async () => {
     let receipt!: (response: Response) => void;
     let stale!: (response: Response) => void;
@@ -640,7 +669,7 @@ describe.each([390, 1440])("project switching at %ipx", (width) => {
       expect(field("beta")).toHaveValue("Beta draft survives");
       expect(screen.queryByRole("alert")).toBeNull();
       expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
-      expect(posted(fetchMock, "/api/chat")).toEqual({ project: "alpha-project", text: "Alpha pending request" });
+      expect(posted(fetchMock, "/api/chat")).toEqual({ project: "alpha-project", text: "Alpha pending request", request_id: sendId });
     } finally {
       await act(async () => { release(jsonResponse({ error: "refused" }, 503)); });
     }
@@ -686,8 +715,8 @@ describe.each([390, 1440])("project switching at %ipx", (width) => {
       await finish(first === "alpha" ? "beta" : "alpha");
       await screen.findByText("beta-project complete");
       expect(screen.queryByText("alpha-project complete")).toBeNull();
-      expect(posted(fetchMock, "/api/chat", 0)).toEqual({ project: "alpha-project", text: "Alpha prompt" });
-      expect(posted(fetchMock, "/api/chat", 1)).toEqual({ project: "beta-project", text: "Beta prompt" });
+      expect(posted(fetchMock, "/api/chat", 0)).toEqual({ project: "alpha-project", text: "Alpha prompt", request_id: sendId });
+      expect(posted(fetchMock, "/api/chat", 1)).toEqual({ project: "beta-project", text: "Beta prompt", request_id: sendId });
       await act(() => router.navigate("/projects/alpha-project"));
       await screen.findByText("alpha-project complete");
       expect(screen.getAllByText("Alpha prompt")).toHaveLength(1);
@@ -733,7 +762,7 @@ describe.each([390, 1440])("project switching at %ipx", (width) => {
       expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
       await act(() => router.navigate("/projects/alpha-project"));
       await user.click(await screen.findByRole("button", { name: "Retry" }));
-      await waitFor(() => expect(posted(fetchMock, "/api/chat", 1)).toEqual({ project: "alpha-project", text: "Alpha fails" }));
+      await waitFor(() => expect(posted(fetchMock, "/api/chat", 1)).toEqual({ project: "alpha-project", text: "Alpha fails", request_id: sendId }));
     } finally {
       await act(async () => { reply.close(); });
     }
@@ -1052,7 +1081,7 @@ describe("Conversation", () => {
     expect(await within(region).findByText("Ship it")).toHaveClass("bubble");
     expect(field).toHaveValue("");
     await within(region).findByText("Sure.");
-    expect(posted(fetchMock, "/api/chat")).toEqual({ project: "altitude", text: "Ship it" });
+    expect(posted(fetchMock, "/api/chat")).toEqual({ project: "altitude", text: "Ship it", request_id: sendId });
     // The poll after the stream carries the turn's rows: one bubble and one reply, never two.
     await waitFor(() => expect(within(region).getAllByText("Ship it")).toHaveLength(1));
     expect(within(region).getAllByText("Sure.")).toHaveLength(1);
@@ -1062,7 +1091,8 @@ describe("Conversation", () => {
   it("a Send now message the streamed turn takes in ends the reply so far and the reply continues under it", async () => {
     const reply = liveReply();
     const stored = [...history];
-    mockFetch({ chatFn: () => jsonResponse({ ...chatView, history: stored }), post: () => reply.response });
+    let requestId = "";
+    mockFetch({ chatFn: () => jsonResponse({ ...chatView, history: stored }), post: (body) => { requestId = (body as { request_id: string }).request_id; return reply.response; } });
     const { user, queryClient } = renderApp({ route: "/projects/altitude" });
     const region = await conversation();
     await user.type(screen.getByLabelText("Message L3 about altitude"), "Keep working");
@@ -1078,11 +1108,19 @@ describe("Conversation", () => {
       const joined = within(region).getByText("Deliver this next");
       expect(earlier.compareDocumentPosition(joined) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       expect(within(region).getByText("Keep working")).toBeInTheDocument();
-      await act(async () => reply.frame({ t: "Read: Deliver this next." }));
-      expect(await within(region).findByText("Read: Deliver this next.")).toBeInTheDocument();
+      // A read between the split and the end holds the send's own row and first answer: the exchange
+      // still streaming stays on screen.
       stored.push(
-        { at: ago(0), role: "user", text: "Keep working", trigger: "chat", turn_id: "first" },
+        { at: ago(0), role: "user", text: "Keep working", trigger: "chat", turn_id: "first", request_id: requestId } as never,
         { at: ago(0), role: "assistant", text: "Checking the current work.", trigger: "chat", turn_id: "first" },
+      );
+      await act(() => queryClient.invalidateQueries({ queryKey: ["chat", "altitude"] }));
+      await act(async () => reply.frame({ t: "Read: " }));
+      expect(await within(region).findByText("Read:")).toBeInTheDocument();
+      await act(async () => reply.frame({ t: "Deliver this next." }));
+      expect(await within(region).findByText("Read: Deliver this next.")).toBeInTheDocument();
+      expect(within(region).getAllByText("Deliver this next")).toHaveLength(1);
+      stored.push(
         { at: ago(0), role: "user", text: "Deliver this next", trigger: "chat", turn_id: "second" },
         { at: ago(0), role: "assistant", text: "Read: Deliver this next.", trigger: "chat", turn_id: "second" },
       );
@@ -1117,17 +1155,118 @@ describe("Conversation", () => {
     expect(within(row).queryByRole("status", { name: "Sending" })).toBeNull();
     expect(within(region).getByRole("status", { name: "L3 is answering" })).toBeInTheDocument();
 
-    await act(async () => { reply.frame({ t: "Held." }); reply.frame({ done: { turn_id: "c9" } }); reply.close(); });
+    await act(async () => { reply.frame({ t: "Held." }); });
     await within(region).findByText("Held.");
+    // The server stores the turn before its final line; the read that line starts replaces the local copy.
     stored.push(
       { at: ago(0), role: "user", text: "Hold the line", trigger: "chat", turn_id: "c9" },
       { at: ago(0), role: "assistant", text: "Held.", trigger: "chat", engine: "alpha", turn_id: "c9" },
     );
-    await act(() => queryClient.invalidateQueries({ queryKey: ["chat", "altitude"] }));
+    await act(async () => { reply.frame({ done: { turn_id: "c9" } }); reply.close(); });
     await waitFor(() => expect(region.querySelector("[data-local]")).toBeNull());
     expect(within(region).getAllByText("Hold the line")).toHaveLength(1);
     expect(within(region).getAllByText("Held.")).toHaveLength(1);
     expect(region.querySelector("[data-pending]")).toBeNull();
+  });
+
+  it.each(["before", "after"])("keeps a sent message and its streaming reply through Work and back on the phone, %s acceptance", async (moment) => {
+    const reply = liveReply();
+    const turn = { id: "tab-turn", started_at: ago(0), trigger: "chat" };
+    let saved = false;
+    // The server stores the message as its turn starts; the idle poll that ran before Send does not show it.
+    mockFetch({ chatFn: () => jsonResponse(saved ? { ...chatView, active: turn, busy: true, history: [...history, { at: ago(0), role: "user", text: "Check the sample", trigger: "chat", turn_id: turn.id }] } : chatView), post: () => reply.response });
+    setViewport(390);
+    const { user, router } = renderApp({ route: "/projects/altitude" });
+    try {
+      let region = await conversation();
+      await within(region).findByText("Created one task for it.");
+      await user.type(screen.getByLabelText("Message L3 about altitude"), "Check the sample");
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      if (moment === "after") {
+        saved = true;
+        await act(async () => { reply.frame({ turn }); reply.frame({ t: "Looking at" }); });
+        await within(region).findByText("Looking at");
+      }
+      await act(() => router.navigate("/projects/altitude?tab=work"));
+      await screen.findByRole("region", { name: "Work" });
+      await act(() => router.navigate("/projects/altitude"));
+      region = await conversation();
+      expect(within(region).getByText("Check the sample")).toBeInTheDocument();
+      if (moment === "before") {
+        expect(within(region).getByText("Check the sample").closest(".msg-row")).toHaveAttribute("data-pending");
+        saved = true;
+        await act(async () => { reply.frame({ turn }); reply.frame({ t: "Looking at" }); });
+      }
+      await act(async () => reply.frame({ t: " it now." }));
+      expect(await within(region).findByText("Looking at it now.")).toBeInTheDocument();
+      expect(within(region).getAllByText("Check the sample")).toHaveLength(1);
+    } finally { await act(async () => reply.close()); }
+  });
+
+  it("shows each of two identical sends once through early reads, the Work tab, queueing and delivery", async () => {
+    const reply = liveReply();
+    let receipt!: (response: Response) => void;
+    const lateReceipt = new Promise<Response>((resolve) => { receipt = resolve; });
+    const turn = { id: "same-1", started_at: ago(0), trigger: "chat" };
+    const server = { ...chatView, history: [...history], queued: [] as unknown[], active: null as unknown, busy: false };
+    const ids: string[] = [];
+    mockFetch({
+      chatFn: () => jsonResponse(structuredClone(server)),
+      post: (body) => {
+        const { text, request_id } = body as { text: string; request_id: string };
+        ids.push(request_id);
+        if (ids.length === 1) {
+          // The server stores the message as its turn starts, before the stream names the turn.
+          server.history.push({ at: ago(0), role: "user", text, trigger: "chat", turn_id: turn.id, request_id } as never);
+          Object.assign(server, { active: turn, busy: true });
+          return reply.response;
+        }
+        server.queued.push({ id: request_id, at: ago(0), text, trigger: "chat", role: "user" });
+        return lateReceipt;
+      },
+    });
+    setViewport(390);
+    const { user, router, queryClient } = renderApp({ route: "/projects/altitude" });
+    const count = async (n: number) => {
+      const region = await conversation();
+      await waitFor(() => expect(within(region).getAllByText("Same words")).toHaveLength(n));
+    };
+    try {
+      await within(await conversation()).findByText("Created one task for it.");
+      await user.type(screen.getByLabelText("Message L3 about altitude"), "Same words");
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      await act(() => queryClient.invalidateQueries({ queryKey: ["chat", "altitude"] }));
+      await count(1);
+      await act(() => router.navigate("/projects/altitude?tab=work"));
+      await screen.findByRole("region", { name: "Work" });
+      await act(() => router.navigate("/projects/altitude"));
+      await count(1);
+      await user.type(screen.getByLabelText("Message L3 about altitude"), "Same words");
+      await user.click(screen.getByRole("button", { name: "Queue" }));
+      await act(() => queryClient.invalidateQueries({ queryKey: ["chat", "altitude"] }));
+      await within(await conversation()).findByRole("list", { name: "Queued messages" });
+      await count(2);
+      // The streamed turn ends; its stored answer replaces the streamed copy.
+      server.history.push({ at: ago(0), role: "assistant", text: "First answer", trigger: "chat", turn_id: turn.id } as never);
+      Object.assign(server, { active: null, busy: false });
+      await act(async () => { reply.frame({ turn }); reply.frame({ t: "First answer" }); reply.frame({ done: { turn_id: turn.id } }); reply.close(); });
+      await waitFor(() => expect(within(screen.getByRole("region", { name: "Conversation" })).getAllByText("First answer")).toHaveLength(1));
+      await count(2);
+      // The queued message runs before its receipt arrives: the stored row names it by its queue id.
+      server.queued = [];
+      server.history.push(
+        { at: ago(0), role: "user", text: "Same words", trigger: "chat", turn_id: "same-2", queue_ids: [ids[1]] } as never,
+        { at: ago(0), role: "assistant", text: "Second answer", trigger: "chat", turn_id: "same-2" } as never,
+      );
+      await act(() => queryClient.invalidateQueries({ queryKey: ["chat", "altitude"] }));
+      await within(await conversation()).findByText("Second answer");
+      await count(2);
+      await act(async () => receipt(jsonResponse({ queued: { id: ids[1], at: ago(0), text: "Same words", trigger: "chat", position: 1 } })));
+      await act(() => queryClient.invalidateQueries({ queryKey: ["chat", "altitude"] }));
+      await count(2);
+      expect(new Set(ids).size).toBe(2);
+      expect(screen.getByRole("region", { name: "Conversation" }).querySelector("[data-local]")).toBeNull();
+    } finally { await act(async () => reply.close()); }
   });
 
   it("refused: the bubble leaves, the draft returns, and the hint reads Not sent. Retry", async () => {
@@ -1174,7 +1313,7 @@ describe("Conversation", () => {
     expect(fetchMock.mock.calls.filter(([url]) => String(url) === "/api/chat")).toHaveLength(1);
   });
 
-  it("keeps an earlier stream callback out of a later pending queue request", async () => {
+  it("keeps each send's stream to its own bubble while a later queue request is pending", async () => {
     const reply = liveReply();
     let release!: (response: Response) => void;
     const waiting = new Promise<Response>((resolve) => { release = resolve; });
@@ -1189,13 +1328,15 @@ describe("Conversation", () => {
     await user.type(field, "Queued request");
     await user.click(screen.getByRole("button", { name: "Queue" }));
     await act(async () => { reply.frame({ t: "Earlier answer" }); });
-    const pending = region.querySelector("[data-local]")!;
+    const [streaming, pending] = region.querySelectorAll("[data-local]");
+    expect(streaming).toHaveTextContent("First request");
+    await waitFor(() => expect(streaming).toHaveTextContent("Earlier answer"));
     expect(pending).toHaveTextContent("Queued request");
     expect(pending).not.toHaveTextContent("Earlier answer");
-    expect(pending.querySelector("[data-pending]")).not.toBeNull();
+    expect(pending!.querySelector("[data-pending]")).not.toBeNull();
     await act(async () => { reply.fail(); });
     expect(pending).toBeInTheDocument();
-    expect(pending.querySelector("[data-pending]")).not.toBeNull();
+    expect(pending!.querySelector("[data-pending]")).not.toBeNull();
     await act(async () => { release(jsonResponse({ queued: { id: "queue-receipt", at: ago(0), text: "Queued request", role: "user", trigger: "chat", position: 1 } })); });
     expect(field).toHaveValue("");
     expect(region.querySelector(".composer-hint[role=alert]")).toBeNull();
@@ -1271,7 +1412,7 @@ describe("Conversation", () => {
     const failed = within(region).getByText(/^L3 could not answer this turn\./);
     expect(failed).toHaveClass("text-muted");
     await user.click(within(failed).getByRole("button", { name: "Retry" }));
-    await waitFor(() => expect(posted(fetchMock, "/api/chat")).toEqual({ project: "altitude", text: "Ship it" }));
+    await waitFor(() => expect(posted(fetchMock, "/api/chat")).toEqual({ project: "altitude", text: "Ship it", request_id: sendId }));
   });
 
   it("opens Models on L3 from the message box and saves a choice for this project", async () => {

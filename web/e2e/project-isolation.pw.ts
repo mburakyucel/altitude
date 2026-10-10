@@ -156,10 +156,14 @@ test("late queue receipts cannot resurrect consumed or explicitly removed text",
     await expect.poll(() => page.evaluate(() => sessionStorage.getItem("altitude.submitted:project/alpha"))).toBeNull();
     await expect(v.queued).toBeHidden();
     await expect(v.field("alpha")).toHaveValue("Newer source draft");
+    // The late receipt shows only as the page's own sent message, never as a queued row or a draft,
+    // until the read it starts says the server no longer has it.
     await walk.state("01-late-receipts-preserve-canonical-history", {
-      visible: [v.text(`${texts[0]} answered.`)], hidden: [v.queued, v.text(texts[1]!)],
+      visible: [v.text(`${texts[0]} answered.`)], hidden: [v.queued],
     });
     heldReads.release();
+    await expect(v.text(texts[1]!)).toBeHidden();
+    await expect(v.text(`${texts[0]} answered.`)).toBeVisible();
     await switchProject(page, info, "beta");
     await expect(v.field("beta")).toHaveValue("Beta independent draft");
     const calls = (await (await request.get(`${service}/fixture/calls`)).json()).calls;

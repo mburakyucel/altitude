@@ -2036,8 +2036,19 @@ a non-Auto pin stays named in the phone header. It pins the project's L3 to one 
 `engines[]` reports it, until set back to Auto; Auto uses project preference tiers, weekly headroom
 within ties and the session continuity rule described above. A chat turn belongs to L3,
 not to the page that started it: when the page leaves mid-stream, the turn finishes and its answer
-lands in the history. The conversation component is keyed by project, like its query cache:
-switching projects clears the pending bubble and local stream. Unsent text lives in the existing
+lands in the history. Each send carries a page-made UUID `request_id`, kept as the stored user row's
+`request_id`, as the queue row's `id` and, once delivered from the queue, in that row's `queue_ids`.
+Until the server shows it, the message and the reply it streams live in a project outbox in the client
+query cache under `chat-outbox` and the project name, one entry per send id, with no timed eviction.
+Leaving the conversation, for the phone's Work tab or another project, keeps the entry, and returning
+shows it. An entry retires when the snapshot rendered lists its queued row or stores its turn's answer
+or error, or when a successful server read that began after the send finished holds the turn its
+stream named: finishing a send cancels reads already in flight, and the page's own cache edits are
+not reads. Once the stream names a turn, that turn alone identifies the exchange, so after Send now
+joins it the send's first answer cannot retire the reply still streaming. An image send whose delivery
+could not be confirmed keeps its Retry without holding the composer. Only the send
+that starts an entry adds it; later callbacks update it only while it exists. Pairing clears it with every
+query, and removing the project drops it with that project's reads. Unsent text lives in the existing
 client query cache under `project-draft` and the project name, without timed eviction, until document
 reload. Every draft change, including manual clearing and send admission, updates that entry.
 Submitted-text recovery
