@@ -1,4 +1,6 @@
 """Small external-worker fixture. Task state, routing, inboxes and Git stay real."""
+from pathlib import Path
+
 from tests.support import engines
 
 
@@ -10,7 +12,7 @@ class FakeL2:
         self.on_resume = None
 
     def install(self, case):
-        for name in ("start_l2", "resume_l2", "worker", "stop_l2_worker", "remove_l2_worker"):
+        for name in ("start_l2", "resume_l2", "worker", "worker_sends", "stop_l2_worker", "remove_l2_worker"):
             case.patch(engines, name, new=getattr(self, name))
 
     def _launch(self, engine, name, prompt, session_id, kwargs):
@@ -39,6 +41,10 @@ class FakeL2:
     def worker(self, engine, task, *, job_root):
         row = self.workers.get(task.get("agent_id"))
         return dict(row) if row else None
+
+    def worker_sends(self, worker_id, *, job_root):
+        """Fixture workers have a driver: Send now writes into this folder and the test settles it."""
+        return Path(job_root) / f"{worker_id}.sends" if worker_id in self.workers else None
 
     def stop_l2_worker(self, engine, worker_id, *, job_root):
         if worker_id in self.workers:

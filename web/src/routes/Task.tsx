@@ -12,7 +12,7 @@ import { ProseTerminal } from "../components/CodeBlock";
 import { requestCommand } from "../data/terminalCommand";
 import { agoText, modelName, when } from "../data/observed";
 import { questionPath, turnLabel } from "../data/decisions";
-import { taskExplanation } from "../data/taskStatus";
+import { stoppedByCoordinator, taskExplanation } from "../data/taskStatus";
 import { holdText } from "../components/TaskCard";
 import { Bubble, Coordination, DayDivider, Reply, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
@@ -171,7 +171,7 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
       : null;
   const hold = str(task["hold_merge"]);
 
-  const label = task.steering?.state === "stopped" ? "Stopped by you" : task.steering?.state === "stopping" ? "Stopping…"
+  const label = task.steering?.state === "stopped" ? stoppedByCoordinator(task) ? "Stopped by coordinator" : "Stopped by you" : task.steering?.state === "stopping" ? "Stopping…"
     : faultKind && state === "blocked" ? "Work interrupted" : turn ?? (replying ? "L2 replying to you"
     : task.steering?.state === "resuming" ? "Waiting to resume" : planned ? "Planned" : held ? "Queued" : state === "blocked"
     ? waitsOnL3 ? "Waiting for coordinator" : "Paused" : state === "running" ? "L2 working" : sentence(state || "unknown"));
@@ -452,7 +452,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
       // A removed message leaves the conversation; its text stays in the record (SPEC.md §3.10).
       rows.push(!REPLIERS.has(message.role) ? <Bubble key={key} text={message.text} at={message.at}
         images={<MessageImages project={project} images={message.images} />}
-        receipt={message.delivery ? message.delivery.send_now_pending ? "Sending now · waiting for the session" : message.delivery.state === "sending" ? "Sending to session · cannot remove" : message.delivery.state === "delivered" ? "Delivered to session" : message.delivery.state === "queued" ?
+        receipt={message.delivery ? message.delivery.send_now_pending ? "Sending now · joining the current turn" : message.delivery.state === "sending" ? "Sending to session · cannot remove" : message.delivery.state === "delivered" ? "Delivered to session" : message.delivery.state === "queued" ?
           ["stopping", "stopped", "stop_unconfirmed"].includes(steering.state) ? "Queued · held until you continue" : task.state === "queued" && !task["dispatched"] ? "Queued · waiting for the L2 to start" : "Queued · waiting for a checkpoint" : "Delivery unconfirmed · cannot remove" : undefined}>
         {message.delivery?.removable || message.delivery?.send_now_pending || (sendNow.isError && sendNow.variables === message.id) || (removal.isError && removal.variables === message.id) ? <div className="queued-actions">
         <SendNow visible={message.delivery?.state === "queued" && Boolean(message.delivery.removable || message.delivery.send_now_pending)} task

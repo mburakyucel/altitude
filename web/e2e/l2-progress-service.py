@@ -48,7 +48,7 @@ def main():
         assert stop_gate.wait(15), "Fixture Stop was not released"
         return fake.stop_l2_worker(engine, worker_id, **kwargs)
 
-    for name in ("start_l2", "worker", "remove_l2_worker"):
+    for name in ("start_l2", "worker", "worker_sends", "remove_l2_worker"):
         setattr(engines, name, getattr(fake, name))
     engines.resume_l2 = resume
     engines.stop_l2_worker = stop
@@ -77,7 +77,8 @@ def main():
         def do_GET(self):
             if self.path == "/fixture/status":
                 return self._json({"calls": fake.calls, "workers": fake.workers,
-                    "tasks": [{"slug": row["slug"], "engine": row["l2_engine"], "pending": T.pending(project, row["slug"]),
+                    "tasks": [{"slug": row["slug"], "engine": row["l2_engine"], "state": row["state"],
+                               "pending": T.pending(project, row["slug"]),
                                "edit": (Path(row["worktree"]) / "kept-edit.txt").read_text()}
                               for row in S.list_tasks(project)]})
             return super().do_GET()
@@ -97,6 +98,10 @@ def main():
                 stop_gate.clear()
             elif mode == "release-stop":
                 stop_gate.set()
+            elif mode == "deliver-send-now":  # what the worker's driver records once the engine accepts it
+                claim = row["send_now"]
+                T.settle_send_now(project, body["slug"], claim["id"], "delivered", agent_id=claim["agent_id"],
+                                  session_id=row.get("session_id"))
             elif mode == "hold-resume":
                 resume_gate.clear()
             elif mode == "release-resume":
