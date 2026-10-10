@@ -2692,5 +2692,6 @@
 .status-mark { display: inline-flex; align-items: center; justify-content: center; vertical-align: middle; }
 .busy-label { position: relative; display: inline-flex; align-items: center; justify-content: center; }
 .busy-label-progress { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+.unavailable-reason { display: block; margin-block-start: 8px; }
 @media (prefers-reduced-motion: reduce) { .status-mark .spinner, .composer-hint .spinner { animation: none; } }
 button[aria-disabled="true"] { opacity: .5; }
