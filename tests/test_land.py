@@ -2252,6 +2252,8 @@ class TestCheckEvidence(AltitudeCase):
             base["branchProtectionRule"] = {"requiredStatusChecks": [
                 {"context": check["name"], "app": None}]} if required else None
             for status, conclusion, expected in cases:
+                if not required and conclusion == "CANCELLED":
+                    expected = "skipped"  # ignored, and nothing else passed
                 with self.subTest(required=required, status=status, conclusion=conclusion):
                     check.update(status=status, conclusion=conclusion)
                     self.assertEqual(self.classify(), expected)
@@ -2516,6 +2518,27 @@ class TestRequiredPrCheck(AltitudeCase):
         self.github_managed_scans()
         self.assertEqual(self.classify(), "pass")
         result = land.land("green check and CodeQL", cwd=self.repo, wait=0, merge=True)
+        self.assertEqual((result["checks"], result["merged"]), ("pass", True))
+
+    def test_nonrequired_runs_without_a_verdict_neither_block_nor_satisfy_the_required_check(self):
+        summary = self.github_managed_scans()[2]
+        summary.update(conclusion="NEUTRAL")  # code-scanning summary completed before its analysis started
+        others = []
+        for conclusion in ("SKIPPED", "CANCELLED"):
+            other = copy.deepcopy(self.required_check)
+            other.update(name=f"optional {conclusion.lower()}", conclusion=conclusion, isRequired=False)
+            other["checkSuite"]["workflowRun"]["file"]["path"] = ".github/workflows/optional.yml"
+            others.append(other)
+        self.contexts().update(self.connection([*self.contexts()["nodes"], *others]))
+        for bucket, conclusion in (("fail", "FAILURE"), ("skipped", "NEUTRAL"), ("fail", "CANCELLED")):
+            with self.subTest(required=conclusion):
+                self.required_check.update(conclusion=conclusion)
+                self.assertEqual(self.classify(), bucket)
+                self.assertFalse(land.land("required check not green", cwd=self.repo, wait=0, merge=True)["merged"])
+        self.assert_not_merged()
+        self.required_check.update(conclusion="SUCCESS")
+        self.assertEqual(self.classify(), "pass")
+        result = land.land("green check beside unfinished optional runs", cwd=self.repo, wait=0, merge=True)
         self.assertEqual((result["checks"], result["merged"]), ("pass", True))
 
     def test_failing_or_pending_github_managed_scan_blocks(self):
