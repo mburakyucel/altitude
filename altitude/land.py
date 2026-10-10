@@ -688,7 +688,9 @@ def _checks_evidence(root: Path, pair: dict) -> str:
             observed.append(f"{name} {(status or 'without conclusion').lower()}" + ("" if is_gate or check["isRequired"] else " (not required)"))
             if is_gate and status == "SUCCESS":
                 gate_passed = True
-            if is_run and status == "SKIPPED" and check["isRequired"] is False and not is_gate:
+            # A nonrequired run that did not run to a verdict (CodeQL's summary ends NEUTRAL when it
+            # completes before its analysis starts) neither blocks nor satisfies the gate.
+            if is_run and status in {"SKIPPED", "NEUTRAL", "CANCELLED"} and check["isRequired"] is False and not is_gate:
                 continue
             states.add(status)
             if status == "SUCCESS":
