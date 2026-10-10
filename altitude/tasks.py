@@ -2708,7 +2708,8 @@ def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, 
                 parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
                 if parsed.tzinfo is None:
                     raise ValueError("approval evidence needs timezone-aware timestamps")
-                return parsed
+                # Hold events keep whole seconds, as in `approved_pr`: an approval must come in a later second.
+                return parsed.replace(microsecond=0)
             events = [json.loads(line) for line in (S.task_dir(project, slug) / "events.log").read_text().splitlines()
                       if line.strip()]  # a corrupt later hold must not disappear from authorization evidence
             hold = next((event for event in reversed(events)
