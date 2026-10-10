@@ -26,6 +26,9 @@ class TestL2FaultRaces(AltitudeCase):
         return S.load_task(self.project, task["slug"])
 
     def finish(self, task, *, failed=False):
+        """A clean exit here is the message-only turn after its one nudge (#787), so it is a dead worker."""
+        current = S.load_task(self.project, task["slug"])
+        S.save_task(self.project, {**current, "nudged": True})
         self.engine.workers[task["agent_id"]].update(state="failed" if failed else "done", status="exited",
                                                     detail="fixture engine failure" if failed else "")
         return next(row for row in dispatch.poll(self.project) if row["task"]["slug"] == task["slug"])
