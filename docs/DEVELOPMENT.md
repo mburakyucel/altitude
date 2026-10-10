@@ -1016,14 +1016,15 @@ host name resolves to the guest's loopback, where the account serves the release
 throwaway certificate authority that only this test's `curl` trusts. A download altered by one byte
 must be refused with nothing installed; the unaltered one must install a healthy service, which is
 then uninstalled. The `update` phase installs the baseline while the account's server answers for
-GitHub's release list and release downloads: the release host and its `api.` host resolve to the
+GitHub's release lookup and release downloads: the release host and its `api.` host resolve to the
 guest's loopback, and the account's user manager gives the service and its update job the throwaway
-authority as `SSL_CERT_FILE`. The listing initially names the baseline and an ignored draft, then
-publishes the candidate. The daemon must install it automatically with no browser terminal open,
+authority as `SSL_CERT_FILE`. A release-candidate baseline reads a listing that initially names the
+baseline and an ignored draft; a stable baseline reads GitHub's latest release. The server then
+publishes the candidate. The baseline's daemon must install it automatically with no browser terminal open,
 record success and serve the candidate's healthy version with a new PID. The harness then turns
 automatic updates off and publishes a newer synthetic release; a paired app **Update** request
-installs it explicitly. Each update downloads only its archive and checksum. Both baseline and
-candidate carry this behavior, so the phase needs same-source versions. The hosts
+installs it explicitly. Each update downloads only its archive and checksum. The baseline must have
+automatic updates (`v0.1.2` or later). The hosts
 entries and unprivileged-port setting these phases need are restored afterwards. The `public-install`
 and `public-update` phases need a guest that reaches GitHub and two published releases, the candidate
 being the one `releases/latest` names. `public-install` runs setup's command for `releases/latest`
@@ -1053,12 +1054,14 @@ make installation-vm RESULTS=/tmp/altitude-vm SOURCE=origin/main
 `BASELINE=<tag>` makes a published release the baseline: the runner downloads every asset the
 release lists anonymously, checks each against the release's `SHA256SUMS` and the archive's declared
 version and commit against the tag on GitHub, and builds only the candidate from `SOURCE`,
-under the next minor version so the update is never a downgrade. Every phase then installs the
-published files, `install.sh` included, and updates from them to the candidate. The guest stays
+under the next minor version on the baseline's release channel, so the update is never a downgrade
+and the baseline follows it. Every phase then installs the published files, `install.sh` included,
+and updates from them to the candidate; in the `update` phase the published release's own daemon
+installs the candidate automatically. The guest stays
 offline, so the published files run exactly, but its own anonymous download from GitHub does not:
 
 ```sh
-make installation-vm RESULTS=/tmp/altitude-vm SOURCE=origin/main BASELINE=v0.1.0-rc.2
+make installation-vm RESULTS=/tmp/altitude-vm SOURCE=origin/main BASELINE=v0.1.2
 ```
 
 `RECOVERY=1` with a published `BASELINE` runs only the `recovery` phase: the published release's
