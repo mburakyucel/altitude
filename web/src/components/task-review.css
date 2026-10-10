@@ -54,9 +54,17 @@
   .review-finding-title { flex-direction: column; gap: 2px; }
   .review-finding-body { margin-left: 0; }
 }
-/* A proposal or merge question's review status: the icon leads, the words follow (SPEC.md §3.8.3). */
-.question-review { display: flex; align-items: flex-start; gap: 6px; width: fit-content; max-width: 100%; overflow-wrap: anywhere; }
-.question-review .review-icon, .question-review .review-icon svg { width: 16px; height: 16px; margin-top: 1px; }
-p.question-review { margin: 0; color: var(--text-muted); }
-a.question-review > span:last-child { text-decoration: underline; text-underline-offset: 2px; }
-.shell[data-phone] a.question-review { min-height: 44px; align-items: center; }
+/* A proposal or merge question's review in its own small box, like a task card (SPEC.md §3.8.3): icon, name, state, chevron. */
+.question-review {
+  display: flex; align-items: center; gap: 10px; box-sizing: border-box; width: 100%; max-width: 480px; min-height: 44px;
+  margin: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card);
+  color: var(--text-primary); text-decoration: none;
+}
+a.question-review:hover, a.question-review:focus-visible { border-color: var(--text-muted); }
+/* No review is not a place to go: a dashed outline, no chevron. */
+p.question-review { border-style: dashed; background: none; }
+.question-review .review-icon, .question-review .review-icon svg { flex: none; width: 16px; height: 16px; }
+.question-review-body { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
+.question-review-name { font-size: 14px; font-weight: 600; }
+.question-review-state { font-size: 13px; color: var(--text-muted); overflow-wrap: anywhere; }
+.question-review-go { flex: none; color: var(--text-muted); }

@@ -10,7 +10,7 @@ import { setSelectedProject } from "../shell/scope";
 import { Choice, deliveryChoice } from "./Choice";
 import type { ChoiceState } from "./Choice";
 import { InlineProse, Prose, ProseScope, QuestionProse } from "./Prose";
-import { ReviewStatus } from "./TaskReview";
+import { ReviewStatus, reviewLine } from "./TaskReview";
 import { keepForVisit, useVisitMemory } from "./visitMemory";
 
 type Draft = { option?: string; text?: string };
@@ -25,18 +25,19 @@ function recommendedKey(question: Decision) {
   return question.recommended_key ?? (!question.options && question.recommendation?.text ? "recommended" : null);
 }
 
-/** A proposal or merge question's review status (SPEC.md §3.8.3), opening its review card in the task conversation. */
+/** A proposal or merge question's review in its own small box (SPEC.md §3.8.3), opening its review card in the task conversation. */
 function ReviewLink({ decision, from }: { decision: Decision; from?: "needs" | "project" }) {
   const location = useLocation();
   const review = decision.review;
   if (!review) return null;
-  if (!review.id) return <p className="text-meta question-review"><ReviewStatus review={review} /></p>;
-  return <Link className="text-meta question-review" to={`/projects/${decision.project}/tasks/${decision.slug}?${new URLSearchParams({ review: review.id })}`}
+  if (!review.id) return <p className="question-review"><ReviewStatus review={review} opens={false} /></p>;
+  const { name, state } = reviewLine(review);
+  return <Link className="question-review" aria-label={`${name} · ${state}`} to={`/projects/${decision.project}/tasks/${decision.slug}?${new URLSearchParams({ review: review.id })}`}
     state={from ? { from, tab: from === "needs" ? "needs" : "work" } : location.state} onClick={(event) => {
       if (!plainClick(event)) return;
       setSelectedProject(decision.project);
       keepForVisit(location.key, "origin", { project: decision.project, slug: decision.slug, id: decision.id, revision: decision.revision } satisfies QuestionOrigin);
-    }}><ReviewStatus review={review} /></Link>;
+    }}><ReviewStatus review={review} opens /></Link>;
 }
 
 type QuestionProps = {

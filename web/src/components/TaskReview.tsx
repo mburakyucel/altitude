@@ -255,7 +255,7 @@ export function ReviewCard({ review, task, controls, target, onRead }: { review:
 export type ReviewLine = NonNullable<Decision["review"]>;
 
 /** A proposal or merge question's review in a few words (SPEC.md §3.8.3); it warns only when the review is missing, unresolved or of an earlier version. */
-export function reviewLine(review: ReviewLine): { tone: Tone; text: string } {
+export function reviewLine(review: ReviewLine): { tone: Tone; name: string; state: string } {
   const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
   const [tone, state]: [Tone, string] = review.state === "none" ? ["warn", "not done"]
     : review.state === "requested" ? ["wait", "requested"]
@@ -266,16 +266,23 @@ export function reviewLine(review: ReviewLine): { tone: Tone; text: string } {
     : review.open ? ["warn", `done, ${count(review.open, "open finding")}`]
     : review.findings ? ["ok", `done, ${count(review.findings, "finding")} resolved`]
     : ["ok", "done, no findings"];
-  return review.earlier && review.state !== "none" ? { tone: tone === "ok" ? "warn" : tone, text: `${NAME[review.subject]} · ${state} · earlier version` }
-    : { tone, text: `${NAME[review.subject]} · ${state}` };
+  return review.earlier && review.state !== "none" ? { tone: tone === "ok" ? "warn" : tone, name: NAME[review.subject], state: `${state} · earlier version` }
+    : { tone, name: NAME[review.subject], state };
 }
 
-/** The line's icon and words; the question card makes it a link when there is a review to open. */
-export function ReviewStatus({ review }: { review: ReviewLine }) {
-  const { tone, text } = reviewLine(review);
+/** The review's own small box: icon, name, state, and a chevron when it opens the review card. */
+export function ReviewStatus({ review, opens }: { review: ReviewLine; opens: boolean }) {
+  const { tone, name, state } = reviewLine(review);
   return <>
     <span className={`review-icon review-icon-${tone}`} aria-hidden><svg viewBox="0 0 24 24">{ICON[tone]}</svg></span>
-    <span>{text}</span>
+    <span className="question-review-body">
+      <span className="question-review-name">{name}</span>
+      <span className="visually-hidden"> · </span>
+      <span className="question-review-state">{state}</span>
+    </span>
+    {opens ? <svg className="question-review-go" aria-hidden viewBox="0 0 20 20" width="16" height="16">
+      <path d="M8 5l5 5-5 5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg> : null}
   </>;
 }
 

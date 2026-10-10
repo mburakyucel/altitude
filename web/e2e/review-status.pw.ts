@@ -42,11 +42,14 @@ test("Needs you shows each proposal and merge review and Back returns to its car
     hidden: [header.getByRole("link", { name: /^Proposal review/ }), region.locator(".question-review")],
   });
 
-  // The longest line wraps under its words and keeps a full-size tap target on a phone.
+  // Each review is its own bordered box inside the card: a full-size target with a chevron when it opens the review.
   const box = (await longest.boundingBox())!;
-  expect(box.height).toBeGreaterThanOrEqual(info.project.name === "phone" ? 44 : 16);
+  expect(box.height).toBeGreaterThanOrEqual(44);
   expect(box.x + box.width).toBeLessThanOrEqual((await notes.boundingBox())!.x + (await notes.boundingBox())!.width);
-  await expect(longest.locator("span").last()).toHaveCSS("text-decoration-line", "underline");
+  await expect(longest).toHaveCSS("border-top-style", "solid");
+  await expect(longest.locator(".question-review-go")).toBeVisible();
+  await expect(header.locator(".question-review")).toHaveCSS("border-top-style", "dashed");
+  await expect(header.locator(".question-review-go")).toHaveCount(0);
   await longest.scrollIntoViewIfNeeded();
   await walk.state("01b-longest-line-and-no-line", { visible: [longest, header.getByText("Proposal review · not done", { exact: true })], hidden: [region.locator(".question-review")] });
   await page.locator(".needs-page").evaluate((node) => { node.scrollTop = 0; });
