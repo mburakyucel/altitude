@@ -5,7 +5,7 @@ import { Link, NavLink, useLocation, useMatch, useNavigate, useParams } from "re
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { ApiError, imageSendRefused, removeL2Message, sendL2Message, taskAction, useOverview, useTask, useSendNow } from "../data/api";
-import { SendNow } from "../components/SendNow";
+import { SendNow, SendNowError } from "../components/SendNow";
 import type { Decision, L2MessageInput, Overview, TaskMessage, TaskView } from "../data/api";
 import { InlineProse, ProseScope } from "../components/Prose";
 import { ProseTerminal } from "../components/CodeBlock";
@@ -14,7 +14,7 @@ import { agoText, modelName, when } from "../data/observed";
 import { questionPath, turnLabel } from "../data/decisions";
 import { stoppedByCoordinator, taskExplanation } from "../data/taskStatus";
 import { holdText } from "../components/TaskCard";
-import { Bubble, Coordination, DayDivider, Reply, dayLabel } from "../components/Bubbles";
+import { Bubble, Coordination, DayDivider, RemoveMessage, Reply, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
 import { TaskActivity } from "../components/TaskActivity";
 import { Stamp } from "../components/Stamp";
@@ -298,6 +298,10 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["task", project, task.slug] }),
   });
   const sendNow = useSendNow(project, task.slug);
+  // Queued messages share one Send now, under the last of them (SPEC.md §3.10).
+  const waiting = messages.filter((row) => row.delivery?.state === "queued" && (row.delivery.removable || row.delivery.send_now_pending));
+  const lastWaiting = waiting.at(-1);
+  const sendingNow = sendNow.isPending || waiting.some((row) => row.delivery?.send_now_pending);
   const anchorKey = `${questionVisit}:${questionId ?? returned?.id ?? ""}:${revision ?? returned?.revision ?? ""}`;
   const updateQuestionVisibility = useCallback((node: HTMLDivElement) => {
     const anchor = current && anchors.current.get(`${current.id}:${current.revision}`);
@@ -400,6 +404,8 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   const restoreAccess = () => { setDenied(false); setAccessRefresh((value) => value + 1); refresh(); };
   let lastDay = "";
   messages.forEach((message, index) => {
+    // A removed message leaves the conversation; its record keeps the original (SPEC.md §3.10).
+    if (message.delivery?.state === "removed") return;
     const question = questions.find((q) => q.anchor_id === message.id);
     const atGroup = Boolean(group?.anchor_id && group.anchor_id === message.id);
     // The current group occupies one stable discussion anchor. Old revisions retain their receipts.
@@ -448,21 +454,19 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
       }
     } else if (!question && message.role === "system") {
       rows.push(<p key={key} className="text-meta text-muted"><InlineProse text={message.text} /></p>);
-    } else if (!question && message.delivery?.state !== "removed") {
-      // A removed message leaves the conversation; its text stays in the record (SPEC.md §3.10).
+    } else if (!question) {
       rows.push(!REPLIERS.has(message.role) ? <Bubble key={key} text={message.text} at={message.at}
         images={<MessageImages project={project} images={message.images} />}
-        receipt={message.delivery ? message.delivery.send_now_pending ? "Sending now · joining the current turn" : message.delivery.state === "sending" ? "Sending to session · cannot remove" : message.delivery.state === "delivered" ? "Delivered to session" : message.delivery.state === "queued" ?
-          ["stopping", "stopped", "stop_unconfirmed"].includes(steering.state) ? "Queued · held until you continue" : task.state === "queued" && !task["dispatched"] ? "Queued · waiting for the L2 to start" : "Queued · waiting for a checkpoint" : "Delivery unconfirmed · cannot remove" : undefined}>
-        {message.delivery?.removable || message.delivery?.send_now_pending || (sendNow.isError && sendNow.variables === message.id) || (removal.isError && removal.variables === message.id) ? <div className="queued-actions">
-        <SendNow visible={message.delivery?.state === "queued" && Boolean(message.delivery.removable || message.delivery.send_now_pending)} task
-          pending={Boolean(message.delivery?.send_now_pending || (sendNow.isPending && sendNow.variables === message.id))}
-          disabled={readOnly || checking || denied || removal.isPending || sendNow.isPending || !message.delivery?.send_now}
-          reason={message.delivery?.send_now_reason} error={sendNow.variables === message.id ? sendNow.error : null} onClick={() => sendNow.mutate(message.id)} />
-        {message.delivery?.removable ? <button type="button" className="link" disabled={readOnly || checking || denied || removal.isPending || sendNow.isPending || message.delivery.send_now_pending}
-          onClick={() => removal.mutate(message.id)}>{removal.isPending && removal.variables === message.id ? "Removing…" : "Remove"}</button> : null}
-        {removal.isError && removal.variables === message.id ? <span role="alert">{removal.error instanceof ApiError && [401, 403].includes(removal.error.status) ? "You do not have permission to remove this message." : removal.error instanceof ApiError && removal.error.status === 409 ? removal.error.message : "Removal unconfirmed. Check this message’s status before trying again."}</span> : null}
+        state={message.delivery?.state === "delivered" ? undefined : message.delivery?.state}
+        side={message.delivery?.removable ? <RemoveMessage removing={removal.isPending && removal.variables === message.id}
+          disabled={readOnly || checking || denied || removal.isPending || sendNow.isPending || Boolean(message.delivery.send_now_pending)} onClick={() => removal.mutate(message.id)} /> : undefined}>
+        {message.id === lastWaiting?.id ? <div className="queued-actions">
+          <SendNow task pending={sendingNow}
+            disabled={readOnly || checking || denied || removal.isPending || sendNow.isPending || !message.delivery?.send_now}
+            reason={waiting.find((row) => row.delivery?.send_now_pending)?.delivery?.send_now_reason ?? message.delivery?.send_now_reason}
+            onClick={() => sendNow.mutate(message.id)} />
         </div> : null}
+        {removal.isError && removal.variables === message.id ? <span role="alert">{removal.error instanceof ApiError && [401, 403].includes(removal.error.status) ? "You do not have permission to remove this message." : removal.error instanceof ApiError && removal.error.status === 409 ? removal.error.message : "Removal unconfirmed. Check this message’s status before trying again."}</span> : null}
       </Bubble> :
         message.role === "l3" ? <Coordination key={key} text={message.text} summary={message.summary} at={message.at} images={message.images?.length} onOpen={() => { following.current = false; }}><MessageImages project={project} images={message.images} /></Coordination>
         : <Reply key={key} text={message.text} at={message.at} role={message.role}><MessageImages project={project} images={message.images} /><CaptureLink project={project} slug={task.slug} message={message} /></Reply>);
@@ -472,10 +476,11 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     // The stored row keeps this key, so acceptance settles the same bubble in place (SPEC.md §3.6 Sending).
     const day = dayLabel(Date.now());
     if (day !== lastDay) rows.push(<DayDivider key={`day-${day}`} label={day} />);
-    rows.push(<Bubble key={pending.id} text={pending.text} at={new Date().toISOString()} pending receipt="Sending…" images={<PendingImages images={pending.images} />} />);
+    rows.push(<Bubble key={pending.id} text={pending.text} at={new Date().toISOString()} state="pending" images={<PendingImages images={pending.images} />} />);
   }
   return (
     <section className="convo" aria-label="Task conversation">
+      <p className="sr-only" role="status">{removal.isSuccess ? "Message removed" : ""}</p>
       {(readOnly || denied) ? <p className="conversation-notice" role="alert">
         {denied ? "You cannot send messages or answers here." : "Showing saved conversation. Refresh before replying or deciding."}{" "}
         <button className="link" onClick={restoreAccess}>Refresh</button>
@@ -495,6 +500,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         <div className="convo-col">
           {messages.length === 0 && !pending ? <p className="convo-empty text-muted">{facts.finished ? "No messages on this task." : "No messages yet."}</p> : null}
           {rows}
+          {sendNow.isError ? <SendNowError error={sendNow.error} /> : null}
           {task.review?.history.filter((review) => shownReviews.has(review.id) && !messages.some((message) => message.review_id === review.id)).map((review) => <ReviewCard key={review.id} review={review} task={task} controls={reviewControls} target={reviewId === review.id} onRead={() => { following.current = false; }} />)}
           <ReviewFeedback controls={reviewControls} />
           {live && group ? <div className="conversation-question" data-turn={turn.length ? "operator" : "l2"} tabIndex={-1} ref={(node) => {

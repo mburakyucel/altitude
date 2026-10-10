@@ -139,7 +139,7 @@ describe("queued L3 Send now", () => {
     expect(answer).toBeVisible();
     expect(screen.queryByText(/L3 could not answer this turn/)).toBeNull();
   });
-  it.each([390, 1440])("does not count information as a runnable queue position at %i", async (width) => {
+  it.each([390, 1440])("lists queued requests in order as bubbles with one Send now under the last, at %i", async (width) => {
     setViewport(width);
     mockFetch({ chat: { ...chatView, queued: [
       { id: "information", text: "Diagnostic", trigger: "project-message", role: "system",
@@ -149,9 +149,14 @@ describe("queued L3 Send now", () => {
       { id: "second", text: "Second ordinary request", trigger: "chat" },
     ] } });
     renderApp({ route: "/projects/altitude" });
-    await screen.findByText("Queued · runs next");
-    expect(screen.getByText("Queued · 2 in line")).toBeVisible();
-    expect(screen.queryByText("Queued · 3 in line")).toBeNull();
+    const queue = await screen.findByRole("list", { name: "Queued messages" });
+    const rows = within(queue).getAllByRole("listitem");
+    expect(rows.map((row) => row.querySelector(".bubble")?.textContent ?? null)).toEqual([null, "First ordinary request", "Second ordinary request"]);
+    expect(rows.map((row) => within(row).queryAllByRole("button", { name: "Remove" }).length)).toEqual([0, 1, 1]);
+    const sendNow = screen.getByRole("button", { name: "Send now" });
+    expect(rows.at(-1)!.compareDocumentPosition(sendNow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(rows.slice(1).every((row) => within(row).getByText("Queued").className === "sr-only")).toBe(true);
+    expect(rows.slice(1).some((row) => /in line|runs next/.test(row.textContent ?? ""))).toBe(false);
   });
   it.each([390, 1440])("keeps information exchanges separate and read-only at %i", async (width) => {
     setViewport(width);
@@ -188,13 +193,22 @@ describe("queued L3 Send now", () => {
     let view: ChatView = { ...chatView, send_now_reason: "No engine is available", queued: [{ id: "q-now", text: "Remove before claim", trigger: "chat", send_now: true, send_now_reason: "Runs next after system work" }] };
     const fetchMock = mockFetch({ chatFn: () => jsonResponse(view) });
     const { user } = renderApp({ route: "/projects/altitude" });
-    expect(await screen.findByRole("button", { name: "Sending now…" })).toBeDisabled();
-    expect(screen.getByText("No engine is available")).toBeVisible();
+    const pending = await screen.findByRole("button", { name: "Sending now" });
+    expect(pending).toHaveAttribute("aria-disabled", "true");
+    expect(pending).toHaveAccessibleDescription("No engine is available");
+    expect(screen.getByText("No engine is available")).toHaveClass("sr-only");
+    await user.click(pending);
+    expect(screen.getByText("No engine is available")).not.toHaveClass("sr-only");
+    expect(posted(fetchMock, "/api/chat/send-now")).toBeNull();
     const remove = screen.getByRole("button", { name: "Remove" });
     expect(remove).toBeEnabled();
+    const removalStatus = document.querySelector('p.sr-only[role="status"]');
+    expect(removalStatus).toBeEmptyDOMElement();
     view = { ...view, queued: [] };
     await user.click(remove);
     await waitFor(() => expect(screen.queryByText("Remove before claim")).toBeNull());
+    expect(screen.getByText("Message removed")).toHaveAttribute("role", "status");
+    expect(screen.getByText("Message removed")).toBe(removalStatus);
     expect(posted(fetchMock, "/api/chat/remove")).toEqual({ project: "altitude", id: "q-now" });
   });
 
@@ -204,12 +218,14 @@ describe("queued L3 Send now", () => {
     const fetchMock = mockFetch({ chatFn: () => jsonResponse(view), sendNow: () => new Promise((resolve) => { release = resolve; }) });
     const { user } = renderApp({ route: "/projects/altitude" });
     await user.click(await screen.findByRole("button", { name: "Send now" }));
-    expect(screen.getByRole("button", { name: "Sending now…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Sending now" })).toHaveAttribute("aria-busy", "true");
     expect(screen.getByRole("button", { name: "Remove" })).toBeDisabled();
     expect(screen.getByText("Do this first").closest(".queued-row")).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "Sending now" }));
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/chat/send-now"))).toHaveLength(1);
     view = { ...view, queued: [], history: [...history, { role: "user", text: "Do this first", trigger: "chat", turn_id: "next" }] };
     await act(async () => release(jsonResponse({ ok: true })));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Sending now…" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Sending now" })).toBeNull());
     expect(screen.getAllByText("Do this first")).toHaveLength(1);
     expect(posted(fetchMock, "/api/chat/send-now")).toEqual({ project: "altitude", id: "q-now" });
   });
@@ -236,9 +252,9 @@ describe("queued L3 Send now", () => {
       return node as HTMLElement;
     });
     await waitFor(() => expect(screen.getAllByText("Are you there?")).toHaveLength(1));
-    expect(within(turn).getByText("Queued · runs next")).toBeVisible();
-    expect(within(turn).getByRole("button", { name: "Send now" })).toBeDisabled();
-    expect(within(turn).getByText("No engine is available. The message stays queued.")).toBeVisible();
+    expect(within(turn).getByText("Queued")).toHaveClass("sr-only");
+    expect(screen.getByRole("button", { name: "Send now" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: "Send now" })).toHaveAccessibleDescription("No engine is available. The message stays queued.");
     expect(within(turn).queryByRole("button", { name: "Remove" })).toBeNull();
     expect(screen.queryByText(/could not answer/)).toBeNull();
     expect(screen.queryByText(/engine hold|unavailable:/)).toBeNull();
@@ -258,18 +274,23 @@ describe("queued L3 Send now", () => {
     renderApp({ route: "/projects/altitude" });
     const list = await screen.findByRole("list", { name: "Queued messages" });
     expect(within(list).getByText("Earlier kept question")).toBeVisible();
-    expect(within(list).getByText("Queued · runs next")).toBeVisible();
-    expect(within(list).getByRole("button", { name: "Send now" })).toBeDisabled();
+    expect(within(list).getByText("Queued")).toHaveClass("sr-only");
+    expect(screen.getByRole("button", { name: "Send now" })).toHaveAttribute("aria-disabled", "true");
     expect(within(list).queryByRole("button", { name: "Remove" })).toBeNull();
   });
 
   it("explains unavailable delivery without offering system rows an action", async () => {
-    mockFetch({ chat: { ...chatView, send_now_reason: "No engine is available", queued: [
+    const fetchMock = mockFetch({ chat: { ...chatView, send_now_reason: "No engine is available", queued: [
       { id: "chat", text: "Wait for capacity", trigger: "chat" }, { id: "system", text: "System work", trigger: "restart" },
     ] } });
-    renderApp({ route: "/projects/altitude" });
-    expect(await screen.findByRole("button", { name: "Send now" })).toBeDisabled();
-    expect(screen.getByText("No engine is available")).toBeVisible();
+    const { user } = renderApp({ route: "/projects/altitude" });
+    const button = await screen.findByRole("button", { name: "Send now" });
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(button).toHaveAccessibleDescription("No engine is available");
+    expect(screen.getByText("No engine is available")).toHaveClass("sr-only");
+    await user.click(button);
+    expect(screen.getByText("No engine is available")).not.toHaveClass("sr-only");
+    expect(posted(fetchMock, "/api/chat/send-now")).toBeNull();
     expect(screen.getAllByRole("button", { name: "Send now" })).toHaveLength(1);
   });
 });
@@ -404,9 +425,9 @@ describe.each([390, 1440])("project switching at %ipx", (width) => {
     failReads = false;
     await user.click(screen.getByRole("button", { name: /^Retry$/ }));
     const queue = await screen.findByRole("list", { name: "Queued messages" });
-    expect(within(queue).getAllByRole("listitem").map((row) => row.textContent)).toEqual([
-      "First acceptedQueued · runs nextSend nowRemove", "Second acceptedQueued · 2 in lineSend nowRemove",
-    ]);
+    expect(within(queue).getAllByRole("listitem").map((row) => row.querySelector(".bubble")?.textContent)).toEqual(["First accepted", "Second accepted"]);
+    expect(within(queue).getAllByRole("button", { name: "Remove" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Send now" })).toHaveLength(1);
     expect(field("alpha")).toHaveValue("Newer source draft");
     expect(fetchMock.mock.calls.filter(([url, init]) => url === "/api/chat" && init?.method === "POST")).toHaveLength(2);
   });
@@ -1130,7 +1151,7 @@ describe("Conversation", () => {
     ] } });
     renderApp({ route: "/projects/altitude" });
     const region = await conversation();
-    expect(within(region).getByText("Delivery unconfirmed", { exact: true })).toBeInTheDocument();
+    expect(within(region).getByText("Unconfirmed", { exact: true })).toBeInTheDocument();
     expect(within(region).getAllByText("Possibly read")).toHaveLength(1);
     expect(within(region).queryByRole("button", { name: "Retry" })).toBeNull();
   });

@@ -4,13 +4,13 @@ import { Link, useLocation, useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { ApiError, imageSendRefused, sendCreateTask, sendImageChat, streamChat, useChatDequeue, useSendNow } from "../data/api";
-import { SendNow } from "../components/SendNow";
+import { SendNow, SendNowError } from "../components/SendNow";
 import type { ChatMessage, ChatSent, ChatView, ProjectView, QueuedMessage, TaskRow } from "../data/api";
 import { ProseScope } from "../components/Prose";
 import { ProseTerminal } from "../components/CodeBlock";
 import { requestCommand } from "../data/terminalCommand";
 import { when } from "../data/observed";
-import { Bubble, DayDivider, Reply, Typing, dayLabel } from "../components/Bubbles";
+import { Bubble, DayDivider, RemoveMessage, Reply, Typing, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
 import { L3ModelButton } from "../components/Models";
 import type { ImageSubmission } from "../components/ImageDraft";
@@ -333,19 +333,14 @@ export default function Conversation({
 
   const neverStarted = project.isSuccess && !project.data.l3?.session_id && view && view.history.length === 0 && !view.active;
   const queued = view?.queued ?? [];
-  const queuePositions = new Map(queued.filter(row => row.trigger !== "project-message").map((row, index) => [row.id, index]));
   // A kept message is already in the conversation: its queued state shows under its own bubble, or in the list
   // when that bubble is older than the loaded history.
   const shown = new Set(turns.map((turn) => turn.id));
   const kept = new Map(queued.flatMap((row) => row.turn_id && shown.has(row.turn_id) ? [[row.turn_id, row] as const] : []));
   const waiting = queued.filter((row) => !row.turn_id || !shown.has(row.turn_id));
-  const queuedStatus = (row: QueuedMessage) => <span className="queued-status text-muted">{row.send_now ? "Sending now" : queuePositions.get(row.id) === 0 ? "Queued · runs next" : `Queued · ${(queuePositions.get(row.id) ?? 0) + 1} in line`}</span>;
-  const sendNowFor = (row: QueuedMessage) => (
-    <SendNow visible pending={Boolean(row.send_now || (sendNow.isPending && sendNow.variables === row.id))}
-      disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending || Boolean(view?.send_now_reason)}
-      reason={view?.send_now_reason || (row.send_now ? row.send_now_reason : null)}
-      error={sendNow.variables === row.id ? sendNow.error : null} onClick={() => sendNow.mutate(row.id)} />
-  );
+  const operatorQueue = queued.filter((row) => !row.project_message && (!row.trigger || row.trigger === "chat"));
+  const lastWaiting = operatorQueue.at(-1);
+  const sendingNow = sendNow.isPending || operatorQueue.some((row) => row.send_now);
   const busy = Boolean(view?.busy || view?.active || (local && !local.done));
   const empty = Boolean(view && view.history.length === 0 && !view.active && !local && queued.length === 0);
   // Only the latest reply offers Create task, while nothing of the operator's waits or runs after it.
@@ -398,7 +393,7 @@ export default function Conversation({
       const keptRow = kept.get(turn.id);
       rows.push(
         <div key={turn.id} className="turn" data-turn={turn.id} data-joined={silent || undefined}>
-          {turn.user && !pressed ? <Bubble text={turn.user.text} at={turn.user.at} receipt={turn.user.delivery?.state === "unconfirmed" ? "Delivery unconfirmed" : undefined} images={<MessageImages project={name} images={turn.user.images} />} /> : null}
+          {turn.user && !pressed ? <Bubble text={turn.user.text} at={turn.user.at} state={keptRow ? keptRow.sending ? "sending" : "queued" : turn.user.delivery?.state === "unconfirmed" ? "unconfirmed" : undefined} images={<MessageImages project={name} images={turn.user.images} />} /> : null}
           {turn.assistant ? silent ? null : (
             <Reply text={turn.assistant.text} at={turn.assistant.at} role="assistant">
               {turn.assistant.tasks?.length ? <TurnTasks project={name} slugs={turn.assistant.tasks} titles={tasks} /> : null}
@@ -419,12 +414,7 @@ export default function Conversation({
               ) : null}
               {pressError && pressError.turnId === turn.user?.offer_turn ? <> <CreateTaskError message={pressError.message} /></> : null}
             </p>
-          ) : keptRow && !pressed ? (
-            <div className="queued-row" data-kept>
-              {queuedStatus(keptRow)}
-              <div className="queued-actions">{sendNowFor(keptRow)}</div>
-            </div>
-          ) : item.inProgress ? (
+          ) : !keptRow && item.inProgress ? (
             <Typing />
           ) : null}
         </div>,
@@ -448,14 +438,14 @@ export default function Conversation({
     for (const segment of earlier) {
       rows.push(
         <div key={`local-${segment.turnId}`} className="turn" data-local>
-          <Bubble text={segment.text} at={new Date().toISOString()} receipt={segment.delivery?.state === "unconfirmed" ? "Delivery unconfirmed" : undefined} />
+          <Bubble text={segment.text} at={new Date().toISOString()} state={segment.delivery?.state === "unconfirmed" ? "unconfirmed" : undefined} />
           {segment.reply ? <Reply text={segment.reply} role="assistant" /> : null}
         </div>,
       );
     }
     rows.push(
       <div key="local" className="turn" data-local>
-        <Bubble text={local.text} at={new Date().toISOString()} receipt={local.delivery?.state === "unconfirmed" ? "Delivery unconfirmed" : undefined} pending={!local.accepted} images={<PendingImages images={local.images} />} />
+        <Bubble text={local.text} at={new Date().toISOString()} state={!local.accepted ? "pending" : local.delivery?.state === "unconfirmed" ? "unconfirmed" : undefined} images={<PendingImages images={local.images} />} />
         {local.replay ? <p className={`turn-failed ${local.error || local.uncertain ? "text-danger" : "text-muted"}`} role={local.error || local.uncertain ? "alert" : "status"}>
           {local.error ? `Not sent. ${local.error}` : local.uncertain ? "Could not confirm send." : "Sending images…"}{" "}
           {local.error || local.uncertain ? <button type="button" className="link" onClick={() => void send(local.text, undefined, local.error ? { ...local.replay!, request_id: crypto.randomUUID() } : local.replay).catch(() => undefined)}>Retry</button> : null}
@@ -514,19 +504,22 @@ export default function Conversation({
                     <SystemLine project={name} titles={titles} turn={{ id: row.id, at: row.at ?? null,
                       trigger: "project-message", prompt: row.text, reply: null, error: null,
                       inProgress: false, slug: null, fyi: true, headsUp: false, projectMessage: row.project_message }} />
-                  ) : <div className="queued-text"><span>{row.text}</span><MessageImages project={name} images={row.images} />{queuedStatus(row)}</div>}
-                  {!row.trigger || row.trigger === "chat" ? (
-                    <div className="queued-actions">
-                    {sendNowFor(row)}
-                    {row.sending || row.turn_id ? null : <button type="button" className="link" disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending} onClick={() => dequeue.mutate(row.id)}>
-                      {dequeue.isPending && dequeue.variables === row.id ? "Removing…" : "Remove"}
-                    </button>}
-                    </div>
-                  ) : null}
+                  ) : !row.trigger || row.trigger === "chat" ? (
+                    <Bubble text={row.text} at={row.at} state={row.sending ? "sending" : "queued"} images={<MessageImages project={name} images={row.images} />}
+                      side={row.sending || row.turn_id ? undefined : <RemoveMessage removing={dequeue.isPending && dequeue.variables === row.id}
+                        disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending} onClick={() => dequeue.mutate(row.id)} />} />
+                  ) : <p className="queued-text text-meta text-muted">{row.text}</p>}
                 </li>
               ))}
             </ul>
           ) : null}
+          {lastWaiting ? <div className="queued-actions">
+            <SendNow pending={sendingNow} disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending}
+              reason={view?.send_now_reason || operatorQueue.find((row) => row.send_now)?.send_now_reason}
+              onClick={() => sendNow.mutate(lastWaiting.id)} />
+          </div> : null}
+          {sendNow.isError ? <SendNowError error={sendNow.error} /> : null}
+          <p className="sr-only" role="status">{dequeue.isSuccess ? "Message removed" : ""}</p>
         </div>
       </div>
       <div className="convo-dock">

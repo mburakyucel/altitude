@@ -111,7 +111,7 @@ metadata, and excludes only that ID from pending input. Original text stays in c
 the message leaves the task conversation, and CLI history/search retain an explicit removal marker. Removed text
 cannot serve as a new decision source. Quick choices and messages
 already cited by recorded decisions remain intact. Removal changes no Stop, question, fault or resume
-request. Claimed messages say Sending to session and cannot be removed; a launch attempt retains
+request. Claimed messages show a sending ring and cannot be removed; a launch attempt retains
 per-message uncertainty through failed-launch recovery. A released prelaunch claim becomes removable
 again. Successful input handoff and matching session initialization record delivery for the exact
 bound batch; native hook attachments can independently prove delivery.
@@ -2087,9 +2087,11 @@ tab preserves the source conversation and draft. This feature introduces no prov
 ### Message delivery and voice
 
 A message sent while L3 is busy is queued, never refused: the composer stays open, the send control
-keeps its arrow, the header names the active work, and the message shows as a muted queued row with
-its run order, **Send now** and **Remove** until
-its turn starts, when the row becomes the turn's bubble and typing indicator. Queue claim writes the
+keeps its arrow, the header names the active work, and the message shows as an outlined queued bubble
+with a quiet × (**Remove**), followed by one **Send now** for the operator queue. Busy controls
+show a spinner in place; unavailable controls reveal their reason on press. Removed messages leave
+the conversation and announce removal accessibly. When a turn starts the row becomes its bubble
+and typing indicator. Queue claim writes the
 user history row and publishes the active record under the same lifecycle guard used by the API's
 history/queue/active snapshot. Routing precedes claim; failed history admission restores the waiting
 queue. The claimed turn reuses its admission and route choice, so the text stays visible through
@@ -2107,7 +2109,7 @@ queue as an accepted Send now group, then kept messages in send order, then the 
 any text chat row of their conversation, and while one waits for its retry time only Send now rows run, so
 no message overtakes it. The claim logs only the rows not yet in history: kept rows alone publish the last
 one's turn id without logging again, so the reply lands beneath it, and kept rows with newer rows run under
-a new turn id that the newer bubbles end with. The page shows a kept message's queued status under its own bubble rather
+a new turn id that the newer bubbles end with. The page shows a kept message as an outlined bubble at its historical position rather
 than in the queued list. Send now on any member promotes the whole group, kept row included, for boundary
 delivery; a kept row never joins a running turn natively. A refused group retains all original queue
 identities through subsequent retries, so its own bubbles are excluded from historical context and its
@@ -2117,13 +2119,13 @@ instructions arrive once; a direct turn's kept message has its turn id as its qu
 stopping its work. The selected row identifies the group, not a message to move ahead of its neighbours.
 Messages arriving after the claim remain queued. The Codex coordinator keeps its isolated
 `codex exec --ignore-user-config` invocation: its group runs next after the current turn, with
-**Runs next after this turn** on the queued rows. Claude project chat supports native delivery:
+the waiting reason available on demand. Claude project chat supports native delivery:
 `engines.engine_driver` holds stream-json input open and supplies the group as a user line, with
 running commands moved to the background. The request writes the group into the turn's `sends` folder; the driver claims
 it by renaming and records the outcome as the file's final name. Once the engine confirms it, the reply so
 far becomes that turn's answer, each message joins the history under its own turn id, and the rest of the reply
 streams beneath them. Each message retains its own visible row and receipt. The claimed rows show
-**Sending into the current turn** without **Remove** until then. Retries reuse the claim or the individual
+a sending ring without **Remove** until then. Retries reuse the claim or the individual
 history receipts, and only one group is sent at a time.
 
 Historical assistant rows marked `interrupted` retain their partial reply, possibly empty.
@@ -2137,7 +2139,7 @@ overtakes an image in that group. System turns keep their existing boundary to
 preserve notification, CI and report delivery. System queue rows cannot be promoted or removed. After a
 turn, and at the next drain after a restart, each sent row settles from its outcome file: a message the
 engine may have read is recorded once in the history and never runs again; one it never read runs next.
-Each history row retains its delivery outcome; an uncertain acknowledgement displays **Delivery unconfirmed**
+Each history row retains its delivery outcome; an uncertain acknowledgement displays an amber **!** and **Unconfirmed**
 after settlement and reload.
 No available engine, a restart in progress or a launch pause explains why it cannot be sent. There is
 no timer or automatic hard interruption; task-chat Stop remains the explicit control that ends work.

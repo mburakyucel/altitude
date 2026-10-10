@@ -89,17 +89,36 @@ export function MessageRow({
   );
 }
 
-/** The operator's message: a right-aligned bubble (`--bubble`, `--radius-bubble`, 15px); a small ring
- * beside a pending one is the progress cue until the server acknowledges it. */
-export function Bubble({ text, at, pending = false, receipt, images, children }: { text: string; at?: string | null; pending?: boolean; receipt?: string; images?: ReactNode; children?: ReactNode }) {
+/** Where the operator's message stands; a delivered or ordinary message has none. */
+export type BubbleState = "pending" | "sending" | "queued" | "unconfirmed";
+
+/**
+ * The operator's message: a right-aligned bubble (`--bubble`, `--radius-bubble`, 15px). Its shape says where it
+ * stands (SPEC.md §3.6, §3.10): a ring in the gutter while sending, at 60% until the server acknowledges it; an
+ * outline while queued; a warning mark and one word when delivery is unconfirmed. Queued bubbles have no time
+ * yet. `side` is a quiet control in the same gutter, such as a queued message's remove.
+ */
+export function Bubble({ text, at, state, images, side, children }: { text: string; at?: string | null; state?: BubbleState; images?: ReactNode; side?: ReactNode; children?: ReactNode }) {
+  const unconfirmed = state === "unconfirmed";
   return (
-    <MessageRow at={at} mine pending={pending}>
-      <div className="bubble">{pending ? <span className="spinner bubble-sending" role="status" aria-label="Sending" /> : null}{text}{images}</div>
-      {receipt || children ? <div className="message-delivery text-meta text-muted">
-        {receipt ? <span>{receipt}</span> : null}{children}
+    <MessageRow at={state === "queued" ? null : at} mine pending={state === "pending"}>
+      <div className="bubble" data-state={state}>
+        {state === "pending" || state === "sending" ? <span className="spinner bubble-mark" role="status" aria-label="Sending" />
+          : unconfirmed ? <span className="bubble-mark bubble-warning" aria-hidden="true">!</span> : side}
+        {text}{images}
+      </div>
+      {state === "queued" ? <span className="sr-only">Queued</span> : null}
+      {unconfirmed || children ? <div className="message-delivery text-meta text-muted">
+        {unconfirmed ? <span className="bubble-warning-text">Unconfirmed</span> : null}{children}
       </div> : null}
     </MessageRow>
   );
+}
+
+/** The small × beside a queued bubble: it removes that one message and spins in place while removing. */
+export function RemoveMessage({ removing, disabled, onClick }: { removing: boolean; disabled: boolean; onClick: () => void }) {
+  return <button type="button" className="bubble-mark bubble-remove" aria-label={removing ? "Removing" : "Remove"} aria-busy={removing || undefined}
+    disabled={disabled || removing} onClick={onClick}>{removing ? <span className="spinner" aria-hidden="true" /> : <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>}</button>;
 }
 
 /** A reply: left-aligned prose, no bubble. */

@@ -44,7 +44,7 @@ test("planned work accepts a brief update, releases through capacity, and auto-r
   await conversation.getByRole("button", { name: "Send", exact: true }).click();
   expect((await receipt).ok()).toBe(true);
   await expect(field).toHaveValue("");
-  await walk.state("03-message-saved-still-planned", { visible: [notice, conversation.getByText(update, { exact: true }), conversation.getByText("Queued · waiting for the L2 to start", { exact: true })], hidden: [conversation.locator(".msg-row[data-pending]")] });
+  await walk.state("03-message-saved-still-planned", { visible: [notice, conversation.getByText(update, { exact: true }), conversation.getByText("Queued", { exact: true })], hidden: [conversation.locator(".msg-row[data-pending]")] });
   expect(await readTask(request)).toMatchObject({ state: "queued", attempt: 0, worktree: null, planned_wait: { reason } });
   let evidence = await (await request.get("/fixture/status")).json();
   expect(evidence.calls).toHaveLength(1);
