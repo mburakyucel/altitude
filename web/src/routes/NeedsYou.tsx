@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useOverview } from "../data/api";
 import type { Decision } from "../data/api";
 import { DecisionCard } from "../components/DecisionCard";
+import type { PreviewOrigin } from "../components/DecisionCard";
+import { useVisitReturn } from "../components/visitMemory";
 import { DecisionAlertToggle } from "../data/alerts";
 import { attentionSummary, decisionGroups } from "../data/decisions";
 import { useSelectedProject } from "../shell/scope";
@@ -30,6 +32,17 @@ export default function NeedsYou() {
     if (!next.delete(project)) next.add(project);
     return next;
   });
+  // Back from a preview opened here brings its card into view once.
+  const origin = useVisitReturn<PreviewOrigin>("preview");
+  const list = useRef<HTMLDivElement>(null);
+  const returned = useRef(false);
+  useEffect(() => {
+    if (!origin || returned.current) return;
+    const card = list.current?.querySelector(`[data-question-id="${CSS.escape(origin.id ?? "")}"][data-question-revision="${origin.revision}"]`);
+    if (!card) return;
+    card.scrollIntoView({ block: "center" });
+    returned.current = true;
+  }, [origin, overview.data]);
 
   return (
     <div className="page needs-page">
@@ -58,7 +71,7 @@ export default function NeedsYou() {
         <p className="text-muted">Nothing needs you.</p>
       ) : (
         <>
-          <div className="needs-list" aria-label="Decisions">
+          <div className="needs-list" aria-label="Decisions" ref={list}>
             {projectOrder(overview.data!.queue, selected).map((project) => {
               const items = overview.data!.queue.filter((decision) => decision.project === project);
               const open = !collapsed.has(project);

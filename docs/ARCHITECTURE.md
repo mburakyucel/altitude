@@ -2658,12 +2658,20 @@ The conversation's offscreen-question jump reaches that question, where its prev
 Within a group it follows an open member with a preview, then another open member, including after
 partial answers. It uses that question's exact URL, never an earlier proposal's capture. Work reaches the same
 question through its task row. Preview headings use the captured title to distinguish a proposal
-from an implementation review. Opening a separate tab preserves the originating route and draft.
-`/projects/<project>/tasks/<slug>/design/<question>/<revision>` opens in a browser tab with the saved
-screenshots, full-size image links, explanation and **Back to question**, which returns to
-the exact captured question revision. Both **Back to question** and **Open current question**
-replace the preview's history entry, so the task's Back control opens the owning project conversation.
-Browser Back/Forward follows the remaining history; the originating tab and its draft stay intact.
+from an implementation review.
+`/projects/<project>/tasks/<slug>/design/<question>/<revision>` opens in the same tab with the saved
+screenshots, full-size image links (a new tab, for native zoom) and explanation. Its Back control (the
+phone header's, or the page's own on desktop) steps back through the router's history while its entry
+index is above zero, so it matches browser Back and returns to the conversation or Needs you it came
+from. At index zero (a pasted link, a new tab, a message link's own document) it replaces the preview with
+the exact captured question revision; **Open current question** likewise replaces it, so the task's Back
+then opens the owning project conversation. Pages keep what the operator leaves behind in
+`visitMemory.ts`: unsent answers (keyed by project, task, question and revision), the task's unsent
+message, and the question whose preview was opened. It lives in tab memory only, under the router's
+history entry key, and returns on each Back/Forward to that same entry; the task conversation then jumps to
+that question and Needs you scrolls its card into view. Answers whose revision is no longer open and
+operator-facing are dropped, and sends keep the server's revision fence. Reloading, closing the tab or
+pairing again clears it.
 The preview reads
 `GET /api/design/<project>/<slug>/<question>/<revision>`; image bytes use
 `/design/<project>/tasks/<slug>/<question>/<revision>/<content-hash>.png` (or `.jpg`). These reads

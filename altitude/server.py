@@ -1468,12 +1468,11 @@ class Handler(BaseHTTPRequestHandler):
                 T.require_design(project, slug, question)
                 latest = next(q for q in reversed(task["questions"]) if q["id"] == identity)
                 base = f"/projects/{quote(project, safe='')}/tasks/{slug}"
-                question_url = f"{base}?question={identity}&revision={revision}"
                 superseded = latest["revision"] != revision
                 prefix = f"/design/{quote(project, safe='')}/tasks/{slug}/{identity}/{revision}"
                 return self._json({"title": design["title"], "revision": revision, "text": design["text"],
                     "images": [{"title": img["title"], "url": f"{prefix}/{img['name']}"} for img in design["images"]],
-                    "question_url": question_url, "superseded": superseded,
+                    "superseded": superseded,
                     "current_question_url": f"{base}?question={identity}&revision={latest['revision']}" if superseded else None})
         except (T.TransitionError, OSError, ValueError, KeyError, TypeError):
             if asset is not None:

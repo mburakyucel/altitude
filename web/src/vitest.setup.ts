@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, configure } from "@testing-library/react";
 import { afterEach, beforeEach, vi } from "vitest";
 import { HostCapture } from "./components/hostCapture";
+import { forgetVisits } from "./components/visitMemory";
 import { presetVoiceBackend } from "./components/voiceBackend";
 import { punctuationFixture } from "./components/voiceTest";
 
@@ -31,6 +32,8 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  // Every memory router starts at the same entry key; what a test's pages kept must not reach the next test.
+  forgetVisits();
   // A capture left sending must not hold one of the page's two slots for the next test.
   HostCapture.retained.forEach((capture) => capture.cancel());
   localStorage.clear();

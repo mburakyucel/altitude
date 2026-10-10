@@ -834,9 +834,13 @@ question. When the open question is offscreen, use its floating question jump, t
 Question navigation follows an open group member with an attachment before another open member,
 including after partial answers. Work's task row opens the exact owning question.
 Links open `/projects/:name/tasks/:slug/design/:questionId/:revision`
-in another browser tab, leaving the original route and draft intact. Closing it returns to that view.
+in the same tab. Back (the browser's, the phone header's, or the page's own **← Back** on desktop) returns
+to the place it was opened from: the task conversation with that question in view, or Needs you with
+that card in view. Unsent answers and the task's unsent message are still in place on return. With no
+app history behind the preview (a pasted link or a new tab), Back opens its exact question; the task's
+Back then opens the project conversation, never the preview again.
 The page shows the captured title (identifying proposal or implementation review),
-named screenshots with **Full size** links, captured text and **Back to question**. Earlier proposal
+named screenshots with **Full size** links and captured text. Earlier proposal
 attachments remain with their historical questions. Screenshot links open the fixed image in a browser tab for
 native zoom. There is no added conversation, approval control or permanent task banner.
 
@@ -844,13 +848,13 @@ Each version contains explicitly selected PNG/JPEG screenshots and text. HTML si
 as captured states; active HTML is never embedded. Changing the working files does not change the
 saved version. A replacement advances the existing question revision, and the prior preview is
 labelled **Earlier preview** with **Open current question**. Question revisions fence identity and
-answers, not displayed proposal numbering. **Back to question** still targets the
+answers, not displayed proposal numbering. Back with no app history targets the
 exact version inspected. Viewing, opening a full-size screenshot and sending a follow-up leave the
 question unanswered. The existing decision controls record approval; merge holds remain unchanged.
 
 Phone and desktop states are walked in `web/e2e/task-design.pw.ts`: no design means no link;
 **Loading preview…** gives way to content; missing, changed, denied or failed reads show **Design
-unavailable**, **Retry** and **Back to question**, with saved content hidden. An image starts at
+unavailable**, **Retry** and Back, with saved content hidden. An image starts at
 **Loading screenshot…**; a failed image hides its preview and full-size control and shows
 **Screenshot unavailable** with **Retry screenshot**. Recovery removes the error/loading text.
 Earlier versions retain their original text and screenshots. Existing conversation listening and
