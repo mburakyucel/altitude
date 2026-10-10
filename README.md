@@ -70,9 +70,9 @@ One engine is enough, and each integration is
 
 Altitude runs for one person on a Linux x86_64 machine with a systemd user manager or a Mac with
 Apple silicon on macOS 15 or newer. You need Python 3.12+, Git, OpenSSL (on a Mac, Homebrew's
-`openssl@3`), an authenticated GitHub CLI and one authenticated coding CLI. Agent work uses your
-coding account's allowance and normal charges. A [Linux container deployment](docs/CONTAINERS.md)
-is under validation.
+`openssl@3`), an authenticated GitHub CLI 2.72 or newer ([setup](docs/SETUP.md)) and one authenticated
+coding CLI. Agent work uses your coding account's allowance and normal charges. A
+[Linux container deployment](docs/CONTAINERS.md) is under validation.
 
 1. Install the latest release as the account that will use Altitude:
 

@@ -1895,10 +1895,11 @@ Monitor. `/projects` and `/chat/<name>` redirect to the project
 page, and with no managed project every project route shows First run: the steps name, what the
 agents need, incident reports and projects, held in `?step=`, each skippable and a Settings row
 afterwards. What the agents need reads `GET /api/prerequisites`, `installation.prerequisites()`: the
-doctor's GitHub CLI check, each engine's local sign-in status through the engine seam
-(`engines.sign_in`) and Git, as met, unmet with the terminal command to run (the install command from
-`platform.INSTALL` or `engines.INSTALL` for a missing tool, else its sign-in command), or optional once one
-engine is signed in. The projects step lists the folders under the projects folder
+doctor's GitHub CLI checks (the pull request fields `alt land` reads, from the list `gh pr view --json` prints
+without a repository, sign-in or network request, then sign-in), each engine's local sign-in status through the
+engine seam (`engines.sign_in`) and Git, as met, unmet with the terminal command to run (the install command from
+`platform.install_command` or `engines.install_command` for a missing tool or a GitHub CLI too old to land, else
+its sign-in command), or optional once one engine is signed in. The projects step lists the folders under the projects folder
 (`config.project_roots()`: the machine setting `projects_folder`, else `ALTITUDE_ROOTS`), changes
 that folder in place and starts L3 for one or all of them through `POST /api/project/add`, in order,
 staying up until L3's first reply or the error row that stands in for it. At 1024px and wider the rail is 260px and the work
