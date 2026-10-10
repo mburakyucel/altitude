@@ -47,5 +47,5 @@ test("coordinator notices read as one line each, queued or handled, never as the
     visible: [page.getByText(/Use the bounded validation scope/).first()],
     hidden: [block],
   });
-  await expect(page).toHaveURL(/\/projects\/atlas\/decisions\//);
+  await expect(page).toHaveURL(/\/projects\/atlas\/tasks\/choose-validation-scope\?question=/);
 });
