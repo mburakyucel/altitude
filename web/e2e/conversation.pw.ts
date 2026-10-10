@@ -165,8 +165,8 @@ test("real rows: bubbles, prose, day dividers, the time in the gutter, folded an
       await list.getByRole("button", { name: "Show", exact: true }).first().click();
       await article.scrollIntoViewIfNeeded();
     },
-    visible: [article, article.getByText("What altd sent L3"), article.getByText("L3 replied"), article.getByRole("button", { name: "Hide", exact: true })],
-    hidden: [],
+    visible: [article, article.getByText("L3 replied"), article.getByRole("button", { name: "Hide", exact: true })],
+    hidden: [article.getByText("What altd sent L3")],
   });
   await walk.state("05-card-hidden", {
     action: () => article.getByRole("button", { name: "Hide", exact: true }).click(),

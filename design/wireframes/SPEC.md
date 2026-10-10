@@ -420,16 +420,26 @@ or a run of them (§4.1). The dot is `--text-muted` for reports, restarts, and F
 for `incident`, `system-recovery`, and fault triggers. A failed turn of another trigger keeps the
 muted dot; its line carries the failure.
 
-Expanded: a card in the column with a header ("Report landed · <task title> · 09:14", **Hide**),
-"What altd sent L3" as label/value rows when the prompt has structured fields (verdict, problems,
-signals, PRs, spend) and as preformatted text otherwise, "L3 replied" with the full reply, and links:
+What altd sends L3 is written for L3: its ids, revisions, authority notes and instructions never
+appear in the conversation. Expanded: a card in the column with a header ("Report landed · <task
+title> · 09:14", **Hide**), "What altd sent L3" as label/value rows only when the prompt has
+structured fields (verdict, problems, signals, PRs, spend), "L3 replied" with the full reply, and links:
 **Open task**, **Full report** (the task's report view), **Digest** when the reply recorded one.
 The structured prompt's Task field supplies Open task and is omitted from the label/value rows.
 A group expands to a list of its turns, each with its own Show.
 
 States: folded; expanded; in progress ("L3 is handling a landed report for <task>", no Show yet);
 grouped (N turns); failed turn (the line reads "L3 could not handle <what>"; Show reveals the
-prompt and the error).
+error); queued (below).
+
+A queued notice, one altd has written for L3 that has not run yet (block, report, fault, restart, CI
+recheck, terminal, upstream issue, owner message or any other trigger), is the same line in the queued rows (§4.2)
+with an outlined dot in its tone and no Show: **<kind> · <task title> · <need>**. The need is the first
+sentence of the task's open Needs you question, as plain words of at most 90 characters, or a report's
+verdict; a notice with neither reads kind and task alone, and one without a task reads its kind. The line
+ends with **Needs you**, opening that question, while the task has one, else **Open task**. A long title
+wraps; it is never cut. `web/e2e/system-rows.pw.ts` walks queued, handled, card and Needs you states
+on phone and desktop.
 
 A selected L3 heads-up uses this same compact line, wrapping its full one- or two-sentence text
 on phone and desktop. It stays outside routine groups (§4.1). No separate badge, dismiss control,
@@ -814,18 +824,22 @@ its line below states the reach honestly: a device the browser's push service ca
 Altitude closed, and says that away from your network the alert names nothing; a device that cannot be
 woken alerts only while Altitude is open, which on a phone means while it is on screen. While a push
 service refuses Altitude's alerts, the line names that service and the reason it gave, says its device
-alerts only while Altitude is open and offers turning alerts off and on there to subscribe it again; the
+gets no alerts and offers turning alerts off and on there to subscribe it again; the
 line returns to the reach once a push gets through. An unavailable alert control looks disabled and exposes the browser limitation or permission recovery instructions as its accessible description and on press. Every state
 leaves Needs you, its cards and all typing untouched.
 
 Each newly published operator question alerts once, titled with the project and carrying the task name
 only — never question, conversation or incident text. Activating it opens that decision in the running
 app. Faults, stopped tasks, reviews and completed work stay in Needs you without an alert. A grouped
-ask alerts once. A decision already on screen, in Needs you or its owning task, is recorded without
-alerting. Refreshing, reconnecting, polling and other tasks' activity repeat nothing, and turning the
-switch on never announces what is already waiting. A question shows in Needs you at once but alerts
-only once L3 has had its turn and it is still open (or 15 minutes after it was asked), and an alert
-whose decision is answered, withdrawn or superseded disappears from every device untouched.
+ask alerts once. On a device without push, a decision already on screen, in Needs you or its owning task,
+is recorded without alerting; a device push wakes gets the alert without sound while Altitude is on screen.
+Refreshing, reconnecting, polling and other tasks' activity repeat nothing, and turning the switch on never
+announces what is already waiting. A question shows in Needs you at once but alerts only once L3 has had
+its turn and the owner has stopped with it still open (or an hour after it was asked). No alert is ever a
+bare "Altitude": out of reach it reads **A decision needs you** / *Altitude is out of reach, so this alert
+can't name it.*, and a decision settled just before the device read it shows **No decision needs you now**.
+An alert whose decision is answered, withdrawn or superseded closes when Altitude is next open on that
+device or the next alert arrives.
 
 ### 3.9 Open the owning L2 question
 
