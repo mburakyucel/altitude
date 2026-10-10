@@ -1212,7 +1212,7 @@ lives in `~/.cache/altitude-installation-vm/macos`: the helper, the release buil
 26.6.2) and per-run clones (about 1 GiB at most), deleted after each phase, also after a failure or a
 stop. One guest runs at a time, and the runner stops whenever less than 10 GiB of disk would stay
 free. Building the images takes about fifteen minutes after the restore image's download. On an
-unloaded Mac `fresh` and `prerequisites` take under half a minute each, `lifecycle` about three
+unloaded Mac `fresh` and `prerequisites` take under half a minute each, `lifecycle` about five
 minutes and `login` just over one; the release build adds about one. `installation_macos_vm.py clean` deletes everything in its folder.
 
 Virtual machines cannot start inside a task's sandbox or a [macOS validation
