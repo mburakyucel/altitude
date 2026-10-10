@@ -53,13 +53,14 @@ export const test = base.extend<{ altitude: Service; service: string; scenario: 
     await use(request);
     await request.dispose();
   },
-  // Chromium strands a request issued while Playwright disables request interception after a page's
-  // last route expires or is removed (the voice Send with image lost its POST under parallel runs).
-  // This never-matching route keeps interception on for the whole test; Playwright continues
-  // unmatched requests itself, without calling a test handler.
+  // Walkthroughs never wait on the internet: a request beyond loopback fails at once (a stalled third-party
+  // stylesheet once held a reload's load event past the test limit). The route also keeps interception on
+  // for the whole test, because Chromium strands a request issued while Playwright disables interception
+  // after a page's last route expires or is removed (the voice Send with image lost its POST under
+  // parallel runs). Playwright continues loopback requests itself, without calling a test handler.
   context: async ({ context, altitude, paired }, use) => {
     if (paired) await context.addCookies([{ name: "altitude_device", value: altitude.device, url: altitude.url }]);
-    await context.route("altitude-e2e:keep-interception", () => undefined);
+    await context.route(/^https?:\/\/(?!127\.0\.0\.1[:/])/, route => route.abort());
     await use(context);
   },
 });

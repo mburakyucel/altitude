@@ -7,6 +7,10 @@ test.use({ serviceScript: "live-loading-service.py", single: true });
 const transcriptMode = (url: URL, mode: string) => url.pathname.startsWith("/api/transcript/") &&
   (url.searchParams.get("mode") || "initial") === mode;
 
+// A reconciliation spans pages; its last one publishes the reconciled window.
+const reconciliation = (page: Page) => page.waitForResponse(async (reply) =>
+  transcriptMode(new URL(reply.url()), "reconcile") && !(await reply.json()).more);
+
 async function fixture(request: APIRequestContext, count = 100) {
   const status = await (await request.get("/fixture/status")).json();
   const task = status.tasks.find((row: { count: number }) => row.count === count);
@@ -142,7 +146,7 @@ test("Pause during a pending tail refresh preserves the visible reading window",
     await pending;
     await live.getByRole("button", { name: "Pause", exact: true }).click();
     const anchor = await readingAnchor(body);
-    const reconciled = page.waitForResponse((reply) => transcriptMode(new URL(reply.url()), "reconcile"));
+    const reconciled = reconciliation(page);
     release();
     await reconciled;
     await expect(live.getByText(burst.latest, { exact: false })).toBeAttached();
@@ -393,7 +397,11 @@ test("live transport error and server index reset reconcile an older reader with
   const body = live.locator(".live-body");
   await page.goto(task.path);
   await expect(live.getByText(task.latest, { exact: false })).toBeVisible();
-  await upward(page, body);
+  await body.evaluate((node) => {
+    // A refresh committing before the native scroll event must not pin a following reader back down.
+    node.scrollTop = 0;
+    window.dispatchEvent(new Event("online"));
+  });
   await expect(live.getByText("Beginning of session", { exact: true })).toBeAttached();
   const call = live.locator("details.session-tool").first();
   await call.locator("summary").click();
@@ -409,7 +417,7 @@ test("live transport error and server index reset reconcile an older reader with
   await walk.state("reconnect-01-retained-history-disconnected", { visible: [live.getByRole("button", { name: "Follow", exact: true })], hidden: [] });
   fail = false;
   await task.control("reset-index");
-  const reconciled = page.waitForResponse((response) => transcriptMode(new URL(response.url()), "reconcile"));
+  const reconciled = reconciliation(page);
   // Reconnection itself must preserve an older reader. Clicking the offscreen footer would
   // deliberately scroll that reader to the Retry control before the request even starts.
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
