@@ -1,7 +1,7 @@
 """A worker ends with its engine's failed turn, even while a command it started keeps its job running.
 
-Real fixture engine processes, worker records, polling and finished-worker handling; only the service manager is
-a process-group fixture, so a job stays active exactly while any process it started still runs."""
+Real engine drivers running fixture engine processes, worker records, polling and finished-worker handling; only the
+service manager is a process-group fixture, so a job stays active exactly while any process it started still runs."""
 import os
 import signal
 import sys
@@ -15,9 +15,11 @@ from altitude import config, dispatch, engines, platform, server, state as S
 LIMIT = "You've hit your session limit · resets 8pm (America/Los_Angeles)"
 ENGINE = r'''
 import json, os, subprocess, sys
-sys.stdin.read()
+prompt = json.loads(sys.stdin.readline())  # The driver's first stream-json line, echoed as accepted.
 print(json.dumps({"type": "system", "subtype": "init", "session_id": "session"}), flush=True)
-command = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
+print(json.dumps({"type": "user", "isReplay": True, "uuid": prompt["uuid"], "message": prompt["message"]}), flush=True)
+command = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"],
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
 open(os.environ["FIXTURE_COMMAND"], "w").write(str(command.pid))
 result = os.environ["FIXTURE_RESULT"]
 print(json.dumps({"type": "result", "subtype": "success", "is_error": result != "success",
@@ -141,6 +143,20 @@ class TestWorkerEnd(AltitudeCase):
                 self.assertFalse(_running(command), "the command the worker left running ends with it")
                 self.assertFalse(engines.worker_live("claude", saved, job_root=job_root))
                 self.command.unlink()
+
+    def test_send_now_returned_after_a_failed_turn_is_not_activity(self):
+        task, job_root = self.launch("returned", engine_ends=False, result=LIMIT)
+        engines.send_into_turn(engines.worker_sends(task["agent_id"], job_root=job_root), "message", "Carry on")
+        stdout = job_root / f"{task['agent_id']}.stdout.jsonl"
+        deadline = time.monotonic() + 30
+        while '"altitude.send"' not in stdout.read_text():
+            self.assertLess(time.monotonic(), deadline, "the driver never returned the message")
+            time.sleep(.05)
+        self.assertIn('"outcome": "returned"', stdout.read_text())
+        self.assertEqual(engines.worker("claude", task, job_root=job_root)["state"], "failed")
+        self.reconcile()
+        self.assertEqual(S.load_task(self.project, "returned")["state"], "blocked")
+        self.assertFalse(engines.worker_live("claude", task, job_root=job_root))
 
     def keeps_running(self, slug, result, *, recovers=False):
         task, job_root = self.launch(slug, engine_ends=False, result=result, recovers=recovers)

@@ -1355,8 +1355,9 @@ A worker ends when its engine exits or when its output's latest activity is a fa
 stays active. An engine can stay alive after a failed turn while a background command it started runs: it waits
 for that command and then starts another turn, which fails the same way under a usage limit. Polling therefore
 stops the job of a worker whose latest turn failed, with no activity since, before handling its end, so that worker's usage limit, capacity, rejection or fault path runs as it does
-after a clean exit, and its commands end with it. A successful turn waiting on its own background work keeps
-running. Resume, handoff and cleanup treat a worker as live while anything still runs in its job.
+after a clean exit, and its commands end with it. Background-task and status notices are not activity, nor is a
+Send now message the driver returns or cannot confirm; a delivered one joins or starts a turn. A successful turn
+waiting on its own background work keeps running. Resume, handoff and cleanup treat a worker as live while anything still runs in its job.
 An `alt land` waiting on checks or owner assessment ends with that job: on SIGTERM it leaves the
 candidate published and unmerged, the process releases the repository turn, and the owner's
 next turn receives an automatic notice naming the PR and the published head to assess before

@@ -2167,8 +2167,12 @@ def _worker_events(path: Path, engine: str) -> list[dict]:
             if e.get("type") == "result" else e for e in events]
 
 
-#: Output that reports on the session without being turn activity: Claude's background-task and status notices.
-PASSIVE_EVENTS = ("system", "rate_limit_event")
+def _turn_activity(event: dict) -> bool:
+    """Whether output is turn activity rather than a report on the session. Claude's background-task and status
+    notices are not, nor is a Send now message the driver returned or could not confirm; a delivered one joins or
+    starts a turn."""
+    kind = event.get("type")
+    return kind not in ("system", "rate_limit_event") and (kind != "altitude.send" or event.get("outcome") == "delivered")
 
 
 def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
@@ -2196,7 +2200,7 @@ def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
     failed = next((event for event in reversed(events) if event.get("type") in ("turn.failed", "error")), None)
     # A failed turn with no activity since ends the worker. The engine can outlive it: Claude waits for a background
     # command it started, whose completion would only start another turn that fails the same way under a usage limit.
-    latest = next((event.get("type") for event in reversed(events) if event.get("type") not in PASSIVE_EVENTS), None)
+    latest = next((event.get("type") for event in reversed(events) if _turn_activity(event)), None)
     alive = job_active and latest != "turn.failed"
     if alive:
         state, status = "working", "busy"

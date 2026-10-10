@@ -1610,7 +1610,7 @@ coalition, so stopping a worker takes all its descendants. A worker ends when it
 its latest turn fails with no activity since; an active job alone is not a live worker. An engine can stay
 alive after a failed turn while a background command it started runs, so polling stops the job of a worker
 whose latest turn failed: whatever it left running ends with it, and the ordinary limit, capacity or fault path follows.
-A successful turn that waits on its own background work keeps running. An exited or
+A Send now message returned after that turn is not activity. A successful turn that waits on its own background work keeps running. An exited or
 missing worker on a running task requires a report written since its latest launch or resume
 or an explicit completion; without one it blocks with a system fault and incident. An explicit
 question block remains waiting after worker exit and needs no completion report. Dispatch continues
