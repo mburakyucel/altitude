@@ -481,6 +481,33 @@ describe.each([390, 1440])("project switching at %ipx", (width) => {
     expect(fetchMock.mock.calls.filter(([url, init]) => url === "/api/chat" && init?.method === "POST")).toHaveLength(1);
   });
 
+  it("an unconfirmed image replay keeps its Retry through leaving the project, without holding the composer", async () => {
+    const outcomes: (() => Response)[] = [() => { throw new TypeError("Connection interrupted"); }, () => jsonResponse({ error: "no L3 for this project" }, 409)];
+    const { chats } = projectChats(() => outcomes.shift()!());
+    chats["alpha-project"]!.history.push(
+      { role: "user", text: "Image sample", turn_id: "failed-image", trigger: "chat", images: [
+        { id: "sample-image", name: "sample.png", mime_type: "image/png", size: 10, width: 1, height: 1, source_message_id: "original-image" },
+      ] },
+      { role: "error", text: "Fixture answer failed", turn_id: "failed-image", trigger: "chat" },
+    );
+    setViewport(width);
+    const { user, router } = renderApp({ route: "/projects/alpha-project" });
+    const failed = await screen.findByText(/^L3 could not answer this turn\./);
+    await user.click(within(failed).getByRole("button", { name: "Retry" }));
+    await screen.findByText("Could not confirm send.", { exact: false });
+    expect(field("alpha")).toBeEnabled();
+    await act(() => router.navigate("/projects/beta-project"));
+    await screen.findByText("beta-project history");
+    await act(() => router.navigate("/projects/alpha-project"));
+    const uncertain = (await screen.findByText("Could not confirm send.", { exact: false })).closest("p")!;
+    expect(field("alpha")).toBeEnabled();
+    // The same submission again; the server refuses it, which settles the send.
+    await user.click(within(uncertain).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.queryByText("Could not confirm send.", { exact: false })).toBeNull());
+    expect(outcomes).toHaveLength(0);
+    expect(field("alpha")).toBeEnabled();
+  });
+
   it("prevents an earlier read replacing a late queue receipt while its conversation is unmounted", async () => {
     let receipt!: (response: Response) => void;
     let stale!: (response: Response) => void;
@@ -1064,7 +1091,8 @@ describe("Conversation", () => {
   it("a Send now message the streamed turn takes in ends the reply so far and the reply continues under it", async () => {
     const reply = liveReply();
     const stored = [...history];
-    mockFetch({ chatFn: () => jsonResponse({ ...chatView, history: stored }), post: () => reply.response });
+    let requestId = "";
+    mockFetch({ chatFn: () => jsonResponse({ ...chatView, history: stored }), post: (body) => { requestId = (body as { request_id: string }).request_id; return reply.response; } });
     const { user, queryClient } = renderApp({ route: "/projects/altitude" });
     const region = await conversation();
     await user.type(screen.getByLabelText("Message L3 about altitude"), "Keep working");
@@ -1080,11 +1108,19 @@ describe("Conversation", () => {
       const joined = within(region).getByText("Deliver this next");
       expect(earlier.compareDocumentPosition(joined) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       expect(within(region).getByText("Keep working")).toBeInTheDocument();
-      await act(async () => reply.frame({ t: "Read: Deliver this next." }));
-      expect(await within(region).findByText("Read: Deliver this next.")).toBeInTheDocument();
+      // A read between the split and the end holds the send's own row and first answer: the exchange
+      // still streaming stays on screen.
       stored.push(
-        { at: ago(0), role: "user", text: "Keep working", trigger: "chat", turn_id: "first" },
+        { at: ago(0), role: "user", text: "Keep working", trigger: "chat", turn_id: "first", request_id: requestId } as never,
         { at: ago(0), role: "assistant", text: "Checking the current work.", trigger: "chat", turn_id: "first" },
+      );
+      await act(() => queryClient.invalidateQueries({ queryKey: ["chat", "altitude"] }));
+      await act(async () => reply.frame({ t: "Read: " }));
+      expect(await within(region).findByText("Read:")).toBeInTheDocument();
+      await act(async () => reply.frame({ t: "Deliver this next." }));
+      expect(await within(region).findByText("Read: Deliver this next.")).toBeInTheDocument();
+      expect(within(region).getAllByText("Deliver this next")).toHaveLength(1);
+      stored.push(
         { at: ago(0), role: "user", text: "Deliver this next", trigger: "chat", turn_id: "second" },
         { at: ago(0), role: "assistant", text: "Read: Deliver this next.", trigger: "chat", turn_id: "second" },
       );

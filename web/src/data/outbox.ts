@@ -111,20 +111,31 @@ export function dropOutgoing(client: QueryClient, project: string, ids: Set<stri
 
 /**
  * Whether the server's record has taken over an entry, judged on the snapshot the page renders: its
- * queued row is listed, its turn's answer or error is stored, or it finished before this read began.
+ * queued row is listed, its turn's answer or error is stored, or it finished before this read began
+ * and the read holds the turn its stream named.
  */
 export function retired(entry: Outgoing, view: ChatView | undefined, read: number): boolean {
   if (!view) return false;
-  if (entry.done && entry.settledAt !== undefined && read > entry.settledAt) return true;
+  if (entry.done && entry.settledAt !== undefined && read > entry.settledAt
+    && (!entry.turnId || view.history.some((row) => row.turn_id === entry.turnId))) return true;
   if (view.queued?.some((row) => row.id === entry.id || row.id === entry.queueId)) return true;
   const turns = new Set(view.history.filter((row) => carries(row, entry)).map((row) => row.turn_id));
   return view.history.some((row) => (row.role === "assistant" || row.role === "error") && row.turn_id && turns.has(row.turn_id));
 }
 
-/** A stored row is this entry's: it carries the send id, or it belongs to the turn the stream named. */
+/**
+ * A stored row is this entry's: it belongs to the turn the stream named or, before the stream names one,
+ * it carries the send id. After Send now joins the turn, the turn id alone names the current exchange.
+ */
 export function carries(row: ChatMessage, entry: Outgoing): boolean {
+  if (entry.turnId) return row.turn_id === entry.turnId;
   return row.request_id === entry.id || Boolean(row.queue_ids?.includes(entry.id))
-    || Boolean(entry.queueId && row.queue_ids?.includes(entry.queueId)) || Boolean(entry.turnId && row.turn_id === entry.turnId);
+    || Boolean(entry.queueId && row.queue_ids?.includes(entry.queueId));
+}
+
+/** Still waiting on its request: a finished send or an unconfirmed image send no longer holds anything. */
+export function inFlight(entry: Outgoing): boolean {
+  return !entry.done && !entry.uncertain;
 }
 
 /** The project's entries and the read count, re-rendering with both the conversation's reads and the entries. */

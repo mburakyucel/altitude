@@ -10,7 +10,7 @@ import { ProseScope } from "../components/Prose";
 import { ProseTerminal } from "../components/CodeBlock";
 import { requestCommand } from "../data/terminalCommand";
 import { when } from "../data/observed";
-import { carries, readOf, retired, settleOutgoing, startOutgoing, updateOutgoing, dropOutgoing, useOutbox } from "../data/outbox";
+import { carries, inFlight, readOf, retired, settleOutgoing, startOutgoing, updateOutgoing, dropOutgoing, useOutbox } from "../data/outbox";
 import type { Outgoing } from "../data/outbox";
 import { Bubble, DayDivider, RemoveMessage, Reply, Typing, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
@@ -377,7 +377,7 @@ export default function Conversation({
               {turn.user?.offer_turn ? (
                 <button type="button" className="link" disabled={Boolean(press)} onClick={() => void pressCreateTask(turn.user!.offer_turn!)}>Retry</button>
               ) : turn.user ? (
-                <button type="button" className="link" disabled={pending.some((entry) => !entry.done)} onClick={() => void send(turn.user!.text, undefined, turn.user!.images?.length ? { request_id: crypto.randomUUID(), image_ids: turn.user!.images.map((image) => image.id), previews: [] } : undefined).catch(() => undefined)}>
+                <button type="button" className="link" disabled={pending.some(inFlight)} onClick={() => void send(turn.user!.text, undefined, turn.user!.images?.length ? { request_id: crypto.randomUUID(), image_ids: turn.user!.images.map((image) => image.id), previews: [] } : undefined).catch(() => undefined)}>
                   Retry
                 </button>
               ) : null}
@@ -507,7 +507,7 @@ export default function Conversation({
           onChange={setDraft}
           onSubmit={send}
           imageScope={{ project: name, engine: view?.engine }}
-          disabled={pending.some((entry) => entry.replay && !entry.done)}
+          disabled={pending.some((entry) => entry.replay && inFlight(entry))}
           placeholder={`Message L3 about ${name}`}
           ariaLabel={`Message L3 about ${name}`}
           busy={busy}

@@ -76,6 +76,31 @@ describe("project outbox", () => {
     expect(retired(finished, after, readOf(client, after))).toBe(true);
   });
 
+  it("keeps a finished stream's entry until a later read holds the turn it named", async () => {
+    const client = new QueryClient();
+    startOutgoing(client, "sample", entry("a", { accepted: true, turnId: "t1" }));
+    await settleOutgoing(client, "sample", "a", (current) => ({ ...current, reply: "Answered" }));
+    const without = await fetchView(client, empty);
+    expect(retired(entries(client)[0]!, without, readOf(client, without))).toBe(false);
+    const stored = await fetchView(client, { ...empty, history: [{ role: "user", text: "Sample", turn_id: "t1" }] } as ChatView);
+    expect(retired(entries(client)[0]!, stored, readOf(client, stored))).toBe(true);
+  });
+
+  it("follows the current exchange after Send now joins the turn, not the send's first answer", () => {
+    // The stream named t2 for the joined messages; the send's own row and answer belong to t1.
+    const joined = entry("a1", { accepted: true, turnId: "t2", earlier: [{ turnId: "t1", text: "Sample", reply: "First" }] });
+    const view = (history: ChatView["history"]) => ({ ...empty, history }) as ChatView;
+    const first = [
+      { role: "user", text: "Sample", turn_id: "t1", request_id: "a1" },
+      { role: "assistant", text: "First", turn_id: "t1" },
+    ] as ChatView["history"];
+    expect(retired(joined, view(first), 0)).toBe(false);
+    expect(retired(joined, view([...first,
+      { role: "user", text: "Joined", turn_id: "t2", queue_ids: ["b2"] },
+      { role: "assistant", text: "Second", turn_id: "t2" },
+    ] as ChatView["history"]), 0)).toBe(true);
+  });
+
   it("retires an unfinished entry when its queued row or its turn's answer is in the snapshot", () => {
     const pending = entry("a1", { accepted: true, turnId: "t1" });
     const view = (change: Partial<ChatView>) => ({ ...empty, ...change }) as ChatView;

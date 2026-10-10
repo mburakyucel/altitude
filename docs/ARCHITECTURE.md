@@ -2030,8 +2030,11 @@ Until the server shows it, the message and the reply it streams live in a projec
 query cache under `chat-outbox` and the project name, one entry per send id, with no timed eviction.
 Leaving the conversation, for the phone's Work tab or another project, keeps the entry, and returning
 shows it. An entry retires when the snapshot rendered lists its queued row or stores its turn's answer
-or error, or when a successful server read that began after the send finished arrives: finishing a
-send cancels reads already in flight, and the page's own cache edits are not reads. Only the send
+or error, or when a successful server read that began after the send finished holds the turn its
+stream named: finishing a send cancels reads already in flight, and the page's own cache edits are
+not reads. Once the stream names a turn, that turn alone identifies the exchange, so after Send now
+joins it the send's first answer cannot retire the reply still streaming. An image send whose delivery
+could not be confirmed keeps its Retry without holding the composer. Only the send
 that starts an entry adds it; later callbacks update it only while it exists. Pairing clears it with every
 query, and removing the project drops it with that project's reads. Unsent text lives in the existing
 client query cache under `project-draft` and the project name, without timed eviction, until document
