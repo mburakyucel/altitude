@@ -394,7 +394,7 @@ export default function Conversation({
       const keptRow = kept.get(turn.id);
       rows.push(
         <div key={turn.id} className="turn" data-turn={turn.id} data-joined={silent || undefined}>
-          {turn.user && !pressed ? <Bubble text={turn.user.text} at={turn.user.at} state={keptRow ? keptRow.sending ? "sending" : "queued" : turn.user.delivery?.state === "unconfirmed" ? "unconfirmed" : undefined} images={<MessageImages project={name} images={turn.user.images} />} /> : null}
+          {turn.user && !pressed ? <Bubble text={turn.user.text} at={turn.user.at} state={keptRow ? keptRow.sending ? "sending" : "queued" : turn.user.delivery?.state} images={<MessageImages project={name} images={turn.user.images} />} /> : null}
           {turn.assistant ? silent ? null : (
             <Reply text={turn.assistant.text} at={turn.assistant.at} role="assistant">
               {turn.assistant.tasks?.length ? <TurnTasks project={name} slugs={turn.assistant.tasks} titles={tasks} /> : null}
@@ -439,14 +439,14 @@ export default function Conversation({
     for (const segment of earlier) {
       rows.push(
         <div key={`local-${segment.turnId}`} className="turn" data-local>
-          <Bubble text={segment.text} at={new Date().toISOString()} state={segment.delivery?.state === "unconfirmed" ? "unconfirmed" : undefined} />
+          <Bubble text={segment.text} at={new Date().toISOString()} state={segment.delivery?.state} />
           {segment.reply ? <Reply text={segment.reply} role="assistant" /> : null}
         </div>,
       );
     }
     rows.push(
       <div key="local" className="turn" data-local>
-        <Bubble text={local.text} at={new Date().toISOString()} state={!local.accepted ? "pending" : local.delivery?.state === "unconfirmed" ? "unconfirmed" : undefined} images={<PendingImages images={local.images} />} />
+        <Bubble text={local.text} at={new Date().toISOString()} state={!local.accepted ? "pending" : local.delivery?.state} images={<PendingImages images={local.images} />} />
         {local.replay ? <p className={`turn-failed ${local.error || local.uncertain ? "text-danger" : "text-muted"}`} role={local.error || local.uncertain ? "alert" : "status"}>
           {local.error ? `Not sent. ${local.error}` : local.uncertain ? "Could not confirm send." : "Sending images…"}{" "}
           {local.error || local.uncertain ? <button type="button" className="link" onClick={() => void send(local.text, undefined, local.error ? { ...local.replay!, request_id: crypto.randomUUID() } : local.replay).catch(() => undefined)}>Retry</button> : null}

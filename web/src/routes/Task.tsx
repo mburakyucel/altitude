@@ -457,7 +457,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     } else if (!question) {
       rows.push(!REPLIERS.has(message.role) ? <Bubble key={key} text={message.text} at={message.at}
         images={<MessageImages project={project} images={message.images} />}
-        state={message.delivery?.state === "delivered" ? undefined : message.delivery?.state}
+        state={message.delivery?.state}
         side={message.delivery?.removable ? <RemoveMessage removing={removal.isPending && removal.variables === message.id}
           disabled={readOnly || checking || denied || removal.isPending || sendNow.isPending || Boolean(message.delivery.send_now_pending)} onClick={() => removal.mutate(message.id)} /> : undefined}>
         {message.id === lastWaiting?.id ? <div className="queued-actions">

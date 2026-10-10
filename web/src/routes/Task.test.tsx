@@ -140,6 +140,7 @@ describe("queued L2 Send now", () => {
     await screen.findByText("Fixture refusal");
     await act(async () => { queryClient.setQueryData(["task", "altitude", "fix-timer"], { ...record, messages: [{ ...message, delivery: { state: "delivered", removable: false } }] }); });
     await waitFor(() => expect(screen.queryByText("Fixture refusal")).toBeNull());
+    expect(screen.getByText("Delivered", { exact: true })).toHaveClass("sr-only");
   });
   it("keeps the queued message through interruption until canonical delivery and sends its identity once", async () => {
     let release!: (response: Response) => void;

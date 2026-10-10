@@ -1109,7 +1109,7 @@ the claim. Quick-choice receipts and messages used by recorded decisions keep th
 A pressed × spins until success removes its bubble and announces removal. Original text stays in
 the record. A claimed message has a sending ring and no ×; a delivered message is a plain filled
 bubble. Uncertain handoff shows an amber **!** and **Unconfirmed**. Screen readers hear queued and
-sending states. A prelaunch failure restores queued controls; failed actions retain an inline reason.
+sending states, and confirmed receipts retain screen-reader-only “Delivered”. A prelaunch failure restores queued controls; failed actions retain an inline reason.
 Saved or loading reads disable actions. Pending Send now holds a spinner in place and ignores
 repeated delivery requests. Unavailable Send now looks unavailable and reveals the server's reason
 on press. The server receipt establishes delivery; the UI never moves messages optimistically.

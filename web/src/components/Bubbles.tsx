@@ -89,8 +89,8 @@ export function MessageRow({
   );
 }
 
-/** Where the operator's message stands; a delivered or ordinary message has none. */
-export type BubbleState = "pending" | "sending" | "queued" | "unconfirmed";
+/** Where the operator's message stands; ordinary messages have no delivery receipt. */
+export type BubbleState = "pending" | "sending" | "queued" | "delivered" | "unconfirmed";
 
 /**
  * The operator's message: a right-aligned bubble (`--bubble`, `--radius-bubble`, 15px). Its shape says where it
@@ -102,12 +102,13 @@ export function Bubble({ text, at, state, images, side, children }: { text: stri
   const unconfirmed = state === "unconfirmed";
   return (
     <MessageRow at={state === "queued" ? null : at} mine pending={state === "pending"}>
-      <div className="bubble" data-state={state}>
+      <div className="bubble" data-state={state === "delivered" ? undefined : state}>
         {state === "pending" || state === "sending" ? <span className="spinner bubble-mark" role="status" aria-label="Sending" />
           : unconfirmed ? <span className="bubble-mark bubble-warning" aria-hidden="true">!</span> : side}
         {text}{images}
       </div>
       {state === "queued" ? <span className="sr-only">Queued</span> : null}
+      {state === "delivered" ? <span className="sr-only">Delivered</span> : null}
       {unconfirmed || children ? <div className="message-delivery text-meta text-muted">
         {unconfirmed ? <span className="bubble-warning-text">Unconfirmed</span> : null}{children}
       </div> : null}
