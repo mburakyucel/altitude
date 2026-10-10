@@ -5,9 +5,10 @@ from datetime import datetime, timedelta, timezone
 
 from . import config, dispatch, l3, route, state as S, tasks as T
 
-# L3 reads a block notification in about a minute (95% within five), and an owner it answers resumes to
-# resolve the question; a decision still waiting after this alerts even while either of them stalls.
-ALERT_HOLD = timedelta(minutes=15)
+# L3 reads a block notification in about a minute, and half an hour when its queue is busy; an owner it answers
+# resumes to resolve or revise the question. A decision still waiting after this alerts even while either of them
+# stalls, so an L3 that cannot run never hides one.
+ALERT_HOLD = timedelta(hours=1)
 
 def queue() -> list[dict]:
     """Every decision on the operator's turn, oldest first. Needs you shows each at once; one whose task is
