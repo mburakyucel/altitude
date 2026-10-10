@@ -461,7 +461,8 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         first = self.start('first', wait=20)
         self.assessment_wait(first)
         second = self.start('second')
-        self.waiting(second)
+        self.checked('second')  # The first owner's assessment does not hold the merge turn.
+        self.assertTrue(first[0].is_alive())
         os.killpg(first[0].pid, signal.SIGTERM)
         self.assertIn("owner's session ended", self.finish(first)['error'])
         self.assertEqual(self.calls('first', ['pr', 'merge']), [])
