@@ -12,7 +12,7 @@ import { ProseTerminal } from "../components/CodeBlock";
 import { requestCommand } from "../data/terminalCommand";
 import { agoText, modelName, when } from "../data/observed";
 import { questionPath, turnLabel } from "../data/decisions";
-import { taskExplanation } from "../data/taskStatus";
+import { stoppedByCoordinator, taskExplanation } from "../data/taskStatus";
 import { holdText } from "../components/TaskCard";
 import { Bubble, Coordination, DayDivider, Reply, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
@@ -169,7 +169,7 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
       : null;
   const hold = str(task["hold_merge"]);
 
-  const label = task.steering?.state === "stopped" ? "Stopped by you" : task.steering?.state === "stopping" ? "Stopping…"
+  const label = task.steering?.state === "stopped" ? stoppedByCoordinator(task) ? "Stopped by coordinator" : "Stopped by you" : task.steering?.state === "stopping" ? "Stopping…"
     : faultKind && state === "blocked" ? "Work interrupted" : turn ?? (replying ? "L2 replying to you"
     : task.steering?.state === "resuming" ? "Waiting to resume" : planned ? "Planned" : held ? "Queued" : state === "blocked"
     ? waitsOnL3 ? "Waiting for coordinator" : "Paused" : state === "running" ? "L2 working" : sentence(state || "unknown"));

@@ -406,10 +406,10 @@ def send_now_unavailable(project: str, task: dict) -> str | None:
     request = task.get("daemon_request") or {}
     if task.get("fault"):
         return "The owner is faulted; verified recovery must resume it first."
-    if task.get("waiting_on"):
-        return "The owner is waiting for an answer. Reply to its question first."
     if task.get("stop_id"):
         return "The owner is stopped or stopping. Continue its session first."
+    if task.get("waiting_on"):
+        return "The owner is waiting for an answer. Reply to its question first."
     if task.get("state") != "running":
         return "Send now needs a running owner."
     if task.get("send_now"):
@@ -1274,7 +1274,10 @@ def _bind_resume_worker(project: str, slug: str, task: dict, claim: dict, worker
 def stop(project: str, slug: str, *, by: str = config.OPERATOR_ACTOR, reason: str | None = None,
          daemon_request_id: str | None = None, expected_agent_id: object = T._UNSET,
          expected_session_id: object = T._UNSET) -> dict:
-    """End this worker; an explicit continuation releases its held inbox into the saved session."""
+    """End this worker; an explicit continuation releases its held inbox into the saved session.
+
+    A Stop is state, not a question. L3's Stop waits on L3 and leaves its reason as an L3 note in the conversation;
+    the operator's Stop is theirs to continue."""
     reason = str(reason or f"stopped by {by}").strip()
     task = S.load_task(project, slug)
     active_request = task.get("daemon_request") or {}
@@ -1300,6 +1303,7 @@ def stop(project: str, slug: str, *, by: str = config.OPERATOR_ACTOR, reason: st
             T._supersede_resume(task)
             task.update(stop_id=daemon_request_id or uuid.uuid4().hex, blocked_reason=reason, block_actor=by)
             S.save_task(project, task)
+    T.record_stop(project, slug, task["stop_id"], by, reason)
     from . import reviews
     reviews.cancel_attached(project, slug, "Owner stopped")
     if task.get("agent_id"):
