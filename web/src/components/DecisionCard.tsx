@@ -13,6 +13,8 @@ import { keepForVisit, useVisitMemory } from "./visitMemory";
 type Option = { key: string; label: string; text: string };
 type Draft = { option?: string; text?: string };
 const draftKey = (q: Decision) => `${q.project}:${q.slug}:${q.id}:${q.revision}`;
+/** Who closed a question; any actor other than the agents and Altitude is the operator. */
+const closedBy = (by: string) => by === "l2" || by === "l3" ? by.toUpperCase() : by === "altd" ? "Altitude" : "You";
 /** The question whose preview was opened from a history entry, so returning there brings it into view. */
 export type PreviewOrigin = Pick<Decision, "project" | "slug" | "id" | "revision">;
 function optionsFor(question: Decision): Option[] {
@@ -131,7 +133,7 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
       {!resolved && !question.response && question.audience === "l3" ? <p className="text-meta text-muted">L3 is handling this</p> : null}
       {resolved ? <div className="decision-receipt" role="status">
         {!withdrawn ? <b>{question.resolution?.disposition === "answered" ? "Decision recorded" : "Question closed"}</b> : null}
-        {question.resolution ? <><p><InlineProse text={question.resolution.text} /></p><span className="text-meta text-muted" title={exactTime(question.resolution.at)}>{question.resolution.by} · {ageText(question.resolution.at)}</span></> : null}
+        {question.resolution ? <><p><InlineProse text={question.resolution.text} /></p><span className="text-meta text-muted" title={exactTime(question.resolution.at)}>{closedBy(question.resolution.by)} · {ageText(question.resolution.at)}</span></> : null}
       </div> : null}
       {!resolved && question.response ? <div className="decision-receipt" role="status">
         <b>Sent to L2</b><p><InlineProse text={question.response.text} /></p>

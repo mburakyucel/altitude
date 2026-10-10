@@ -2445,13 +2445,15 @@ def block_status(project: str, task: dict) -> tuple[str, str]:
     if number:
         waits.append(f"review PR #{number}")
     if waits:
-        return f"waiting-{OPERATOR_MESSAGE_ROLE}", f"{name}'s turn · " + " · ".join(waits)
+        return "waiting-operator", f"{name}'s turn · " + " · ".join(waits)
     if task.get("handed_back") and (task.get("state") == "running" or task.get("resume_after")):
         return "replying", f"L2 replying to {name}"
     who = task.get("waiting_on")
     approved = f" · PR #{number} approved" if stopped and (number := approved_pr(project, task)) else ""
-    if who in (OPERATOR_MESSAGE_ROLE, "l3"):
-        return f"waiting-{who}", f"waiting on {name if who == OPERATOR_MESSAGE_ROLE else 'L3'}{approved}"
+    if who == OPERATOR_MESSAGE_ROLE:
+        return "waiting-operator", f"waiting on {name}{approved}"
+    if who == "l3":
+        return "waiting-l3", f"waiting on L3{approved}"
     return "paused", f"paused{approved}"
 
 

@@ -254,7 +254,7 @@ test("owner records delegated L3 authority while operator decisions and independ
   const card = questionCard(page, lease);
   await recorded(card);
   await walk.state("03-task-receipt-retains-l3-attribution", {
-    visible: [card.getByText(/^l3 ·/), questionCard(page, policy).getByText(policy.question, { exact: true })],
+    visible: [card.getByText(/^L3 ·/), questionCard(page, policy).getByText(policy.question, { exact: true })],
     hidden: [card.getByRole("button")],
   });
   await walk.open("/");

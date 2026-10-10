@@ -819,7 +819,9 @@ characters; empty clears it) and `POST /api/incident-reports` for `incident_repo
 stores `false`, publishing off; a repository is normalized to `owner/name` and saved only after
 `gh repo view` in the signed-in GitHub CLI sees it). The operator seam is `config.operator_name()`:
 the saved name, else `ALTITUDE_OPERATOR`, else Git's global `user.name` read once, else none, where
-screens say “you” and records use `config.operator_label()`.
+screens say “you” and records use `config.operator_label()`. Task records, messages, events and queue
+rows store the operator's authority identity as the fixed token `config.OPERATOR_ACTOR`, independent of
+the name; CLI text, queue wait kinds (`waiting-operator`) and screens render it through the label.
 
 Settings take effect without a PR, service restart or free task slot. Lowering the cap preserves
 running workers; launches wait until the machine running count falls below it. Reset removes the

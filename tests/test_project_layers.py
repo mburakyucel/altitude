@@ -58,9 +58,7 @@ HOST_BASELINE = {
 }
 
 #: Occurrences of the operator's name per file, across the layers a reader meets.
-OPERATOR_BASELINE = {
-    "web/src/routes/Task.test.tsx": 1,
-}
+OPERATOR_BASELINE = {}
 
 #: Altitude-only rule files and rules that a global persona must never name.
 PROJECT_RULES = (
