@@ -2827,8 +2827,9 @@ preserves a paused reader's visible row while reconnecting. Source writes during
 fingerprint stale so the next poll includes them without failing the current bounded read.
 Project/task/engine/session/attempt/mode define viewer isolation. Same-attempt worker resumes
 refresh the projection without resetting reading position. Before a render changes the transcript,
-a paused viewer captures native scrolling whose event has not arrived yet; that position and its
-upward-history intent survive the refresh. Access and generation are checked
+the viewer captures native scrolling whose event has not arrived yet: a paused reader's scroll, or a
+following reader's upward scroll, which stops following. That position and its upward-history
+intent survive the refresh. Access and generation are checked
 before and after reads. Transcript state never authorizes task actions.
 
 Only the mounted viewer retains loaded rows and reading state; navigation, generation changes and
