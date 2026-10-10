@@ -525,6 +525,8 @@ def main(argv=None) -> None:
             sys.exit("alt task validate: only the current L2 runs validation, and only for its own task")
         if not args.command:
             ap.error("alt task validate: give the command after --")
+        from altitude import platform
+        platform.end_with_parent()   # a cancelled launcher ends this client, which stops its run
     terminal_read = c == "task" and args.tcmd == "terminal"
     if terminal_read:
         args.slug = args.slug or os.environ.get("ALTITUDE_TASK")
