@@ -173,7 +173,10 @@ test.describe("L3 Send now", () => {
       "Keep the first instruction.", "Then the second instruction.", "Finally the third instruction.",
     ]);
     expect(after.history.find((row: { text: string }) => row.text === "Keep the first instruction.").turn_id).toBe(keptId);
-    expect((await (await request.get("/fixture/status")).json()).calls.map((row: { text: string }) => row.text)).toEqual([combined]);
+    const calls = (await (await request.get("/fixture/status")).json()).calls;
+    expect(calls).toHaveLength(1);
+    expect(calls[0].prompt.endsWith(combined)).toBe(true);
+    for (const text of combined.split("\n\n")) expect(calls[0].prompt.split(text)).toHaveLength(2);
     await page.reload();
     await expect(convo.getByText("Keep the first instruction.", { exact: true })).toHaveCount(1);
     await expect(action).toHaveCount(0);

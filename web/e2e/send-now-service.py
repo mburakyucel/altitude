@@ -34,7 +34,7 @@ def main():
             # The provider refuses before any output, as a spent usage window does.
             return {"text": "", "session_id": "", "error": "Fixture usage window exhausted.", "tools": [], "safe_to_retry": True,
                     "limited": {"scope": "engine", "why": "Fixture usage window exhausted.", "until": "2999-01-01T00:00:00+00:00"}}
-        calls.append({"text": text, "resume": options.get("resume")})
+        calls.append({"text": text, "prompt": _prompt, "resume": options.get("resume")})
         if options.get("on_start"):
             options["on_start"](None)
         if text == "Fixture system work":
