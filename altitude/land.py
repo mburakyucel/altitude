@@ -16,6 +16,7 @@ a missing or logged-out `gh` ends the run with the worktree untouched, nothing s
 from __future__ import annotations
 import contextlib
 import fcntl
+import functools
 import json
 import os
 import re
