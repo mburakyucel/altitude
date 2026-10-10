@@ -468,7 +468,7 @@ class TestNotificationAndAuthority(IncidentIssueCase):
             server.issue_write(PROJECT, "new", "token=abcdefghijklmnop", actor="l3", title="leak")
         with self.assertRaisesRegex(ValueError, "not available to an L2"):
             server.issue_write(PROJECT, "new", "x", actor="l2", title="t")
-        with self.assertRaisesRegex(ValueError, "only new, comment, and close"):
+        with self.assertRaisesRegex(ValueError, "only new, comment, label, and close"):
             server.issue_write(PROJECT, "upstream", "x", actor="l3", title="t")
         url = server.issue_write(PROJECT, "new", "plain report", actor="l3", title="local", labels=["bug"])
         self.assertEqual(url, "https://github.com/fictional/atlas/issues/101")
