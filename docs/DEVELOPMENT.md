@@ -433,9 +433,9 @@ alt task validate -- python3 -m unittest tests.test_container_workflow tests.tes
   before the record: a run whose cleanup does not finish ends as `cleanup failed`, with the first entry
   that stayed and why, and keeps its area. The runner's own files in the area (the run's identity,
   delivery receipt, log and exit status) sit outside the candidate's folders and go after the record.
-  Activation waits through execution, evidence recording and cleanup; validation admission shares
-  the restart fence and refuses runs once restart is requested. A request waiting for the machine
-  does not hold activation.
+  Activation waits through execution, evidence recording and cleanup; validation admission refuses
+  runs while activation is pending, including a request already waiting for the machine, so the
+  quiet point opens after the run in flight. A request waiting for the machine does not hold activation.
 - **Record.** Each run is recorded on its task like a [machine run](CLI.md#operator-grant), with
   purpose `validation`, the command, commit and tree, the host's OS and architecture, what isolated it
   (the image tag, or `seatbelt:` and the profile's digest), exit, how it ended and any cleanup failure.

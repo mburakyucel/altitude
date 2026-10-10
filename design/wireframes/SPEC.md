@@ -1333,8 +1333,9 @@ Monitor says "Merged changes to <what changed> are waiting to activate.", naming
 web app, both, or Altitude, with file count and age (exact time on hover). The next line says
 "Altitude restarts at the next quiet moment." and appends "Waiting for <list>." when needed.
 
-The quiet point has no dispatch or resume claim, L3 turn, adversarial review, or report verification in flight; running
-workers do not hold activation. **Restart** appears when the waiting list is empty and no restart
+The quiet point has no dispatch or resume claim, L3 turn, adversarial review, validation run, or report verification in
+flight; running workers do not hold activation. The waiting list names claimed tasks, `<project> L3`, and the task of
+each adversarial review or validation run. **Restart** appears when the waiting list is empty and no restart
 is under way. Pressing it or receiving a recorded restart request removes the button and changes
 the line to "Altitude is restarting…". A failed activation reads "Automatic activation did not
 complete; L3 has the fault." The notice leaves when the new process answers without a pending

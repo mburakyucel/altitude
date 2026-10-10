@@ -475,13 +475,39 @@ class TestValidationRunner(ClientStop, RunnerCase):
 
     def test_restart_request_fences_validation_admission_without_leaving_a_run(self):
         with config.restart_lock(exclusive=True):
-            self.assertIn("restarting", self.validate(["true"], status=400)["error"])
+            self.assertIn("activating merged changes", self.validate(["true"], status=400)["error"])
         flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
         S.write_json(flag, {"requested_at": S.now(), "unit": "restart"})
-        self.assertIn("restarting", self.validate(["true"], status=400)["error"])
+        self.assertIn("activating merged changes", self.validate(["true"], status=400)["error"])
         self.assertFalse(self.runner.exists())
+        S.write_json(flag, {"requested_at": S.now(), "unit": "restart", "failed": S.now()})
+        self.assertEqual(self.validate(["true"])["exit"], 0, "a failed activation lifts the fence")
         flag.unlink()
         self.assertEqual(self.validate(["true"])["exit"], 0)
+
+    def test_back_to_back_runs_cannot_starve_a_pending_activation(self):
+        """A run waiting its turn behind an admitted one was admitted the moment the slot freed, ahead of the
+        thirty-second tick, so a busy line held the quiet point closed for hours. Pending activation now turns
+        new runs away; the admitted one finishes and the next tick restarts."""
+        flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
+        release, holder, answers = self.holding()
+        queued = self.send(["true"], lines=False)
+        wait_for(lambda: validation.LINE._queue, "the next run to wait its turn")
+        S.write_json(flag, {"since": S.now(), "head": "merged", "files": ["altitude/dispatch.py"]})
+        with mock.patch.object(server, "_request_restart_unit", return_value={"ok": True, "unit": "restart"}) as restart:
+            self.assertEqual(server.restart_status()["waiting_for"], [f"validation run for {self.project}/{self.slug}"])
+            server.auto_restart()
+            restart.assert_not_called()
+            release.touch()
+            holder.join()
+            self.assertEqual(answers[0]["exit"], 0)
+            response = queued.getresponse()
+            self.assertEqual(response.status, 400)
+            self.assertIn("activating merged changes", json.loads(response.read())["error"])
+            self.assertEqual(len(self.rows()), 1, "the waiting request never ran")
+            self.assertEqual(server.restart_status()["waiting_for"], [])
+            server.auto_restart()
+            restart.assert_called_once()
 
     def test_only_the_tasks_own_worker_may_run_its_validation(self):
         self.owner.return_value = False

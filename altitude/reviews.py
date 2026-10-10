@@ -95,10 +95,10 @@ def active_count():
                for task in S.list_tasks(project, include_archive=True) for r in task.get("reviews", []))
 
 
-def busy():
-    """A daemon-bound review must return its result before planned activation."""
+def running() -> list[str]:
+    """The tasks whose daemon-bound reviews must return their results before planned activation."""
     with _inflight_lock:
-        return bool(_inflight)
+        return sorted({f"{project}/{slug}" for project, slug, _ in _inflight})
 
 
 def _capacity(task):
@@ -490,7 +490,7 @@ def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None,
         raise T.TransitionError("Selected review context must be a list of original message IDs.")
     key = (project, slug, review_id)
     with config.restart_lock() as quiet, dispatch.launch_lock(), S.project_lock(project):
-        if not quiet or config.restart_in_progress():
+        if not quiet or config.activation_pending():  # in-flight reviews finish; new ones wait for the restart
             raise T.TransitionError("Altitude is activating an update. Run the accepted review after activation.")
         task = _load(project, slug)
         _owner(task, actor, expected_attempt, required=True)

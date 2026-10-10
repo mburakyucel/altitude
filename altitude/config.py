@@ -498,6 +498,17 @@ def restart_in_progress() -> bool:
     return bool(pending.get("requested_at") and not pending.get("failed"))
 
 
+def activation_pending() -> bool:
+    """Merged changes await activation, requested or not. Long admissions (validation and review runs) wait from
+    here, so in-flight work drains to the quiet point instead of being replaced by new work; a failure lifts it."""
+    from . import platform
+    if platform.containerized() or RELEASE is not None:
+        return restart_in_progress()
+    from . import state as S
+    pending = S.read_json(MONITOR_DIR / "restart-pending.json", {}) or {}
+    return bool(pending) and not pending.get("failed")
+
+
 def ensure_root() -> None:
     for d in (ROOT, MONITOR_DIR, ROOT / "hooks"):
         d.mkdir(parents=True, exist_ok=True)

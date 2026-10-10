@@ -190,7 +190,8 @@ follow the proposal, security and UX checkpoints above.
 Altitude restarts itself at the next narrow quiet point after a merged change to its own code (no
 dispatch or resume claim, adversarial review, validation run, report verification, or L3 turn in flight;
 validation holds through its bounded execution and evidence recording; running workers themselves do not hold it).
-New dispatches continue while activation is pending and wait only during the requested restart window.
+New dispatches continue while activation is pending and wait only during the requested restart window;
+new validation and review runs wait from the moment activation is pending.
 Do not start, stop, mask, unmask, or restart the service as part of ordinary work. A lifecycle action by hand requires
 separate explicit authorization and post-change health verification; a recorded operator grant whose purpose
 names the service is that authorization for its owner, and every command under it is recorded on the task.
