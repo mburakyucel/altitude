@@ -831,7 +831,6 @@ class TestLand(AltitudeCase):
         self.assertIn(reason, message)
         self.assertIn("--merge --approval <message-id>", message)
         self.assertEqual(commands, [
-            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
             ["git", "rev-parse", "--show-toplevel"],
             ["git", "rev-parse", "--git-dir"],
             ["git", "symbolic-ref", "-q", "HEAD"],

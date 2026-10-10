@@ -1253,12 +1253,18 @@ CI verifies that it tests the exact commit and, for a pull request, that GitHub'
 the event's base and head as parents, that the head includes that base and that the tested merge
 tree equals the head tree. Landing requires the specific successful PR
 job on the current head, verifies that current main is an ancestor of that head, and serializes
-publication, CI waiting and merge for `--merge` invocations sharing the repository's common Git
-directory. Nonmerging publication never takes that turn.
-For reviewed merging candidates, CI and explicit owner reassessment share one bounded wait while
-the same process retains the repository turn. `tests/test_land_contention.py` drives real competing
-landing processes, Git and fixture reviewers through main integration, in-turn assessment, fresh
-required checks (one pending for more than ten minutes on a scaled landing clock), timeout,
+only the final confirm-and-merge across Altitude owners; publication and CI waits run side by side.
+For reviewed merging candidates, CI and explicit owner reassessment share one bounded wait outside
+the repository turn. When another merge moves main first, the same invocation integrates it and waits
+for the new head's fresh check. Concurrent worktrees can race to update a remote-tracking ref;
+landing repeats that specific failed fetch once and requires a successful fresh fetch, sharing
+dispatch's collision classification. Other fetch failures still refuse delivery.
+Landing fetches only the requested branches, without tags, and reports a collision retry.
+`tests/test_fetch_concurrency.py` forces this race during a real Git transfer.
+`tests/test_land_contention.py` drives real competing
+landing processes, Git and fixture reviewers: a green candidate on current main merging while
+another owner's check is pending (for more than ten minutes on a scaled landing clock), main moving
+during a check or an assessment, concurrent nonmerging publications, timeout,
 termination, ownership loss and material-edit refusal. Proposal followed by implementation review
 reports both stale assessments together; messages during admission, hosted CI or local validation
 require explicit assessment in the same landing invocation. Invalid dispositions

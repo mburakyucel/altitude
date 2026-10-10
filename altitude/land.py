@@ -30,7 +30,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, dispatch, github_intake, state as S, tasks as T
+from . import config, dispatch, git_policy, github_intake, state as S, tasks as T
 
 CHECK_POLL_SECONDS = 15
 #: #480: GitHub's PR view lags the landing's own push briefly; the head is re-read within this bound.
@@ -38,9 +38,8 @@ PR_VIEW_SETTLE_SECONDS = 30
 PR_VIEW_POLL_SECONDS = 2
 LOCAL_TEST_TIMEOUT = 1800
 DEFAULT_TEST_CMD = "make test"
-#: Bounds both admission to the repository turn and, by default, the CI and owner-assessment wait inside it,
-#: so a merging candidate keeps its turn through its fresh required check, including those of heads that
-#: integrate a moved base; `--wait` only shortens the latter.
+#: Bounds admission to the repository turn and, by default, the CI and owner-assessment wait before it,
+#: including fresh checks after main moves; `--wait` only shortens the latter.
 LAND_WAIT_TIMEOUT = 3600
 
 
@@ -52,10 +51,17 @@ class BaseMoved(LandError):
     """A fresh read proves that only the base moved: the PR, its head and both branch names still match the pin."""
 
 
+class _Reassess(Exception):
+    """Leave the merge turn before waiting for a renewed owner assessment."""
+
+
 def _run(args: list[str], cwd: Path, timeout: int = 120) -> subprocess.CompletedProcess:
     """Every git/gh invocation funnels through here so tests can drive the whole pipeline offline."""
     try:
         env = config.subprocess_env()
+        if args[:2] == ["git", "fetch"]:
+            env["LC_ALL"] = "C"  # The shared, narrow collision classifier reads Git's diagnostic.
+            args = [*args[:2], "--no-tags", *args[2:]]
         if args[0] == "gh":
             # #252: neither GH_REPO nor gh's preferred upstream may select a different adoption target.
             env.pop("GH_REPO", None)
@@ -71,7 +77,13 @@ def _run(args: list[str], cwd: Path, timeout: int = 120) -> subprocess.Completed
 
 
 def _git(root: Path, *args: str, timeout: int = 120) -> subprocess.CompletedProcess:
-    return _run(["git", *args], root, timeout=timeout)
+    result = _run(["git", *args], root, timeout=timeout)
+    if args[0] == "fetch":
+        ref = args[-1].split(":")[-1].removeprefix("refs/remotes/origin/")
+        if git_policy.fetch_ref_collision(result, ref):
+            _note(f"another worktree updated origin/{ref} during fetch; retrying once")
+            result = _run(["git", *args], root, timeout=timeout)
+    return result
 
 
 def _need(p: subprocess.CompletedProcess, what: str) -> str:
@@ -444,7 +456,7 @@ def _merged_retry(root: Path, project: str, slug: str, task: dict, authority: di
     _note(f"PR #{pr['number']} already merged — nothing to push")
     return {"pr": pr["number"], "url": pr.get("url"), "checks": "merged",
             "merged": True, "branch": branch, "commit": None, "head": None,
-            "lease": lease, "staged": [], "hold": task.get("hold_merge"), "replaced": [], "local_tests": None}
+            "lease": lease, "staged": [], "hold": task.get("hold_merge"), "replaced": [], "local_tests": None, "waited": 0}
 
 
 def _merged_head_evidence(root: Path, delivered: dict, pr: dict, base: str) -> dict:
@@ -1035,7 +1047,7 @@ def _ends_with_session(wait_for):
 
 @_ends_with_session
 def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority, deadline):
-    """Keep the repository turn while the owner assesses an integrated head and CI runs."""
+    """Wait outside the repository turn for the owner assessment and candidate checks."""
     from . import reviews
     notified, announced = None, None
     actor = authority.get("actor") if authority is not None else os.environ.get("ALTITUDE_ACTOR")
@@ -1061,7 +1073,7 @@ def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority, de
         notice = str(stale) if stale else None
         if stale and notice != notified:
             _note(f"waiting for owner assessment on head {pair['head_sha']} "
-                  f"and base {pair['base_sha']}; keeping the repository turn with "
+                  f"and base {pair['base_sha']}, with "
                   f"{max(0, round(deadline - time.monotonic()))}s remaining in --wait. "
                   "Keep this command running in a background/tool session and collect its result. "
                   f"Cancel landing if code needs edits.\n{stale}")
@@ -1082,38 +1094,33 @@ def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority, de
         time.sleep(min(CHECK_POLL_SECONDS, max(deadline - time.monotonic(), 0)))
 
 
-def _repository_turn(function):
-    """#433: siblings must not advance the base while a merging landing validates its candidate, and a local
-    suite runs one at a time on this machine (I-20260923-062538). Publication without --merge never waits.
-    Other installations and external writers do not share this process-owned turn."""
-    @functools.wraps(function)
-    def run(message, **kwargs):
-        root = Path(kwargs.get("cwd") or Path.cwd())
-        if kwargs.get("dry_run") or not kwargs.get("merge"):
-            return {**function(message, **kwargs), "waited": 0}
-        common = _need(_git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "Git directory")
-        with open(Path(common) / "altitude-land.lock", "a") as lock:
-            started = time.monotonic()
-            waiting = False
-            while True:
-                try:
-                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except BlockingIOError:
-                    if not waiting:
-                        _note(f"waiting for another landing in this repository (up to {LAND_WAIT_TIMEOUT} seconds)")
-                        waiting = True
-                    if time.monotonic() >= started + LAND_WAIT_TIMEOUT:
-                        raise LandError("landing wait timed out; no candidate selected — re-run alt land when ready")
-                    time.sleep(1)
-            waited = round(time.monotonic() - started) if waiting else 0
-            if waiting:
-                _note(f"landing turn acquired after {waited} seconds; refreshing ownership, base and candidate checks")
-            return {**function(message, **kwargs), "waited": waited}
-    return run
+@contextlib.contextmanager
+def _repository_turn(root: Path):
+    """#433: merges in one repository confirm their candidate and merge one at a time. The turn covers only
+    that final step (with a local candidate suite, which runs on this machine); CI waits stay outside it.
+    Yields the seconds spent waiting for it. External runner executions do not share this process-owned turn."""
+    common = _need(_git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "Git directory")
+    with open(Path(common) / "altitude-land.lock", "a") as lock:
+        started = time.monotonic()
+        waiting = False
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if not waiting:
+                    _note(f"waiting for another merge in this repository (up to {LAND_WAIT_TIMEOUT} seconds)")
+                    waiting = True
+                if time.monotonic() >= started + LAND_WAIT_TIMEOUT:
+                    raise LandError("landing wait timed out; the candidate remains published and unmerged — "
+                                    "re-run alt land when ready")
+                time.sleep(1)
+        waited = round(time.monotonic() - started) if waiting else 0
+        if waiting:
+            _note(f"landing turn acquired after {waited} seconds; confirming the candidate is still current")
+        yield waited
 
 
-@_repository_turn
 def land(message: str, *, project: str | None = None, pr_title: str | None = None, pr_body_file: str | None = None,
          merge: bool = False, wait: int | None = None, base: str = "main",
          dry_run: bool = False, test_cmd: str = DEFAULT_TEST_CMD, cwd: Path | None = None,
@@ -1205,7 +1212,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         return {"pr": None, "url": None, "checks": "dry-run", "merged": False, "branch": branch,
                 "commit": None, "head": None, "lease": lease, "staged": changed, "hold": hold_merge,
                 "replaced": [], "local_tests": None, "dry_run": True, "adopted_pr": adoption,
-                "prospective": prospective}
+                "prospective": prospective, "waited": 0}
     if not adoption:
         pr = _pr_view(root, branch)
         if pr:
@@ -1257,8 +1264,8 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             commit = _need(_git(root, "rev-parse", "HEAD"), "rebased commit")
         if _git(root, "diff", "--quiet", f"origin/{base}", "HEAD").returncode == 0:
             return _merged_retry(root, project, slug, task, authority, branch, base, continued_pr, lease, closes_issues)
-    replaced, deadline = [], None
-    while True:  # A base that moves while this landing holds its turn is integrated, published and checked again.
+    replaced, deadline, waited = [], None, 0
+    while True:  # A moved base gets a fresh publication and check outside the merge turn.
         try:
             with S.project_lock(project):
                 _require_delivery_owner(project, slug, task, S.load_task(project, slug), authority,
@@ -1288,9 +1295,6 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             if merge and pair["base_sha"] != publishing_base:
                 # An outside merge between integration and pinning must also get a fresh integrated head.
                 _assert_pair_current(root, {**pair, "base_sha": publishing_base})
-            checks = _wait_for_candidate(root, project, slug, pair, merge=merge, wait=wait,
-                                         authority=authority, deadline=deadline)
-            _require_closing_issues(root, number, closes_issues)
             merged, local_tests = pr.get("state") == "MERGED", None
             def check_before_merge():
                 current_pr = _pr_view(root, str(number)) or {}
@@ -1316,52 +1320,59 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             @contextlib.contextmanager
             def before_merge():
                 from . import reviews
-                while True:
-                    with reviews.merge_lock(project, slug):
-                        current, current_pr = check_before_merge()
+                with reviews.merge_lock(project, slug):
+                    current, current_pr = check_before_merge()
+                    _assert_pair_current(root, pair)
+                    try:
+                        reviews.require_merge(project, slug, pair)
+                    except reviews.AssessmentRequired as exc:
+                        raise _Reassess() from exc
+                    except T.TransitionError as exc:
                         _assert_pair_current(root, pair)
+                        raise LandError(str(exc)) from exc
+                    if current.get("hold_merge"):
                         try:
-                            reviews.require_merge(project, slug, pair)
-                        except reviews.AssessmentRequired:
-                            pass  # Release the assessment lock before waiting on the owner.
+                            T.apply_merge_approval(project, slug, approval, current_pr, head=pair["head_sha"], actor="l2",
+                                                   reason="owner applied the operator's task-chat approval")
                         except T.TransitionError as exc:
                             raise LandError(str(exc)) from exc
-                        else:
-                            if current.get("hold_merge"):
-                                try:
-                                    T.apply_merge_approval(project, slug, approval, current_pr, head=pair["head_sha"], actor="l2",
-                                                           reason="owner applied the operator's task-chat approval")
-                                except T.TransitionError as exc:
-                                    raise LandError(str(exc)) from exc
-                            yield
-                            with S.project_lock(project):
-                                current = S.load_task(project, slug)
-                                current["review_merged_head"] = pair["head_sha"]
-                                for review in reviews._current_reviews(current):
-                                    review["merged_head"] = pair["head_sha"]
-                                S.save_task(project, current)
-                            return
-                    final_checks = _wait_for_candidate(root, project, slug, pair, merge=True, wait=wait,
-                                                       authority=authority, deadline=deadline)
-                    if final_checks != checks:
-                        raise LandError(f"PR checks changed from {checks} to {final_checks} during owner assessment")
+                    yield
+                    with S.project_lock(project):
+                        current = S.load_task(project, slug)
+                        current["review_merged_head"] = pair["head_sha"]
+                        for review in reviews._current_reviews(current):
+                            review["merged_head"] = pair["head_sha"]
+                        S.save_task(project, current)
 
-            if merge and not merged:
-                if checks == "none-configured":
-                    merged, local_tests = _merge_on_local_suite(
-                        root, pair, test_cmd, before_merge=before_merge, delete_branch=not adoption)
-                elif checks == "pass":
-                    checks = _checks_value(root, number, pair)
-                    if checks == "pass":
-                        with before_merge():
-                            merged = _merge_pair(root, pair, delete_branch=not adoption)
-                        if pair["required_pr_check"]:
-                            commit_sha = ((_pr_view(root, str(number)) or {}).get("mergeCommit") or {}).get("oid")
-                            if not commit_sha or _need(_git(root, "rev-parse", f"{commit_sha}^{{tree}}"),
-                                                       "merged tree") != pair["tree"]:
-                                raise LandError("merged tree does not match the tested PR tree; report delivery for recovery")
-                else:
-                    _note(f"not merging: {_checks_outcome(checks, pair)}")
+            while True:
+                checks = _wait_for_candidate(root, project, slug, pair, merge=merge, wait=wait,
+                                             authority=authority, deadline=deadline)
+                _require_closing_issues(root, number, closes_issues)
+                try:
+                    if merge and not merged and checks in ("pass", "none-configured"):
+                        check_before_merge()  # Refuse lost ownership or holds before admitting a local suite.
+                        with _repository_turn(root) as turn_wait:
+                            waited += turn_wait
+                            _assert_pair_current(root, pair)
+                            if checks == "none-configured":
+                                merged, local_tests = _merge_on_local_suite(
+                                    root, pair, test_cmd, before_merge=before_merge, delete_branch=not adoption)
+                            else:
+                                checks = _checks_value(root, number, pair)
+                                if checks == "pass":
+                                    with before_merge():
+                                        merged = _merge_pair(root, pair, delete_branch=not adoption)
+                                    if pair["required_pr_check"]:
+                                        commit_sha = ((_pr_view(root, str(number)) or {}).get("mergeCommit") or {}).get("oid")
+                                        if not commit_sha or _need(_git(root, "rev-parse", f"{commit_sha}^{{tree}}"),
+                                                                   "merged tree") != pair["tree"]:
+                                            raise LandError("merged tree does not match the tested PR tree; "
+                                                            "report delivery for recovery")
+                    elif merge and not merged:
+                        _note(f"not merging: {_checks_outcome(checks, pair)}")
+                except _Reassess:
+                    continue  # The turn is released before waiting for a renewed assessment.
+                break
         except BaseMoved as exc:
             if not merge or deadline is None or time.monotonic() >= deadline:
                 raise LandError(f"{exc}; the candidate remains published and unmerged — re-run alt land to "
@@ -1373,4 +1384,4 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
 
     return {"pr": number, "url": pr.get("url"), "checks": checks, "merged": merged,
             "branch": branch, "commit": commit, "head": pushed_head, "lease": lease, "staged": staged,
-            "hold": hold_merge, "replaced": replaced, "local_tests": local_tests, "adopted_pr": adoption}
+            "hold": hold_merge, "replaced": replaced, "local_tests": local_tests, "adopted_pr": adoption, "waited": waited}
