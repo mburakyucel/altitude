@@ -189,7 +189,7 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
   const wait = overview?.wip.waiting.find((w) => w.project === project && w.slug === task.slug);
   const explanation = taskExplanation(task, turnRows.find((row) => row.kind === "review"));
   const waiting = state === "queued" || held
-    ? planned ? explanation : wait?.hold ? sentence(holdText(wait.hold, wait.why)) : null : null;
+    ? planned ? explanation : sentence(holdText(wait?.hold, wait?.why ?? (held ? "resume" : "dispatch"))) : null;
 
   return {
     state,

@@ -842,10 +842,15 @@ test("voice: denied and unavailable", { tag: "@chromium" }, async ({ page, reque
   const w = views(insecure, info);
   const insecureWalk = walkthrough(insecure, info);
   await insecureWalk.open(project.path);
+  await expect(w.mic).toHaveAttribute("aria-disabled", "true");
+  await expect(w.main.getByText("Voice needs HTTPS", { exact: true }).locator("..")).toHaveClass("sr-only");
+  await w.mic.focus();
+  await insecure.keyboard.press("Enter");
   await insecureWalk.state("02-unavailable-voice-needs-https-overlay", {
-    visible: [w.main.getByText("Voice needs HTTPS", { exact: true }), w.field, w.send],
-    hidden: [w.mic, w.stop],
+    visible: [w.main.getByText("Voice needs HTTPS", { exact: true }), w.field, w.send, w.mic],
+    hidden: [w.stop],
   });
+  await expect(w.main.getByText("Voice needs HTTPS", { exact: true }).locator("..")).not.toHaveClass("sr-only");
   await insecure.close();
 });
 

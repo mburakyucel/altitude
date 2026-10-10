@@ -319,7 +319,7 @@ test("Work rows retain running questions and partial answers, then keep the task
   await expect(page).toHaveURL(workPath);
   // Stop is the operator's own action: the turn stays with the L2 and the questions stay open.
   await walk.state("03b-stopped-task-retains-questions-and-danger-color", {
-    visible: [row.getByText("You requested a stop; confirmation is in the task.", { exact: true }), badge(2)], hidden: [row.getByText(/Your turn/), work.getByRole("article")],
+    visible: [row.getByText("Stop requested", { exact: true }), badge(2)], hidden: [row.getByText(/Your turn/), work.getByRole("article")],
   });
   await expect(row.locator(".dot")).toHaveAttribute("data-state", "danger");
   await row.click();
@@ -824,8 +824,8 @@ test("grouped choices start unselected, submit only picked answers, and the reco
   await page.reload();
   for (const q of group.questions) await recorded(questionCard(page, q));
   await page.getByRole("button", { name: "Latest messages", exact: true }).click();
-  const resumed = conversation.getByText("Work resumed", { exact: true });
-  await expect(resumed).toBeInViewport();
+  const resumed = conversation.getByRole("status").filter({ hasText: /^Work resumed$/ });
+  await expect(resumed).toHaveClass("sr-only");
   await expect(conversation.locator(".bubble").getByText("Release team", { exact: true })).toBeInViewport();
   await walk.state("review-06-accepted", { visible: [resumed, conversation.getByText("The answers are recorded. I will continue with the rollout.", { exact: true })], hidden: [card.getByRole("button")] });
 });

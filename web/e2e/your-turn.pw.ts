@@ -206,7 +206,7 @@ test("Work rows say whose turn it is", async ({ page }, info) => {
       row("Cache warmup").getByText(/^L2 working/),
       row("Retry policy").getByText("L2 replying to you", { exact: true }),
       row("Repair checkout").getByText("A system problem paused work. Waiting for the coordinator to check the blocker.", { exact: true }),
-      row("Stopped validation").getByText("You requested a stop; confirmation is in the task.", { exact: true }),
+      row("Stopped validation").getByText("Stop requested", { exact: true }),
     ],
     hidden: [row("Cache warmup").getByText(/Your turn/), row("Retry policy").getByText(/Your turn/), work.getByRole("article")],
   });

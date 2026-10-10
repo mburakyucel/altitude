@@ -1851,6 +1851,8 @@ controls disclose their reason on press without invoking the action. Authored bl
 setup instructions and resource/privacy consequences remain visible; task-page descriptions do
 not repeat the state chip or question card. These presentation rules do not change delivery,
 admission, routing or permission decisions.
+The empty Live session panel retains its dispatch or resume explanation. Its waiting state also
+keeps a queued or held task from reading a previous session before work starts or resumes.
 
 altd serves the built app from `web/dist`. `index.html` is uncached, so each open learns the current
 build; Vite names every file under `/assets/` by its content hash, and those files are cached as

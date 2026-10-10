@@ -184,15 +184,15 @@ test("infinite history loads on upward intent, preserves expansion and anchor th
     const callId = await call.evaluate((node) => node.closest<HTMLElement>("[data-transcript-id]")!.dataset.transcriptId);
     await upward(page, body);
     await walk.state("history-01-loading-keeps-content", {
-      visible: [live.getByText("Loading earlier activity…", { exact: true })], hidden: [],
+      visible: [live.getByRole("status", { name: "Loading earlier activity…", exact: true })], hidden: [],
     });
-    await expect(live.getByText("Loading earlier activity…", { exact: true })).toBeInViewport();
+    await expect(live.getByRole("status", { name: "Loading earlier activity…", exact: true })).toBeInViewport();
     const anchor = await readingAnchor(body);
     expect(await live.locator("[data-transcript-id]").count()).toBe(initialIds.length);
     release();
     await walk.state("history-02-error-keeps-content", {
       visible: [live.getByText("Could not load earlier activity.", { exact: false }), live.getByRole("button", { name: "Retry", exact: true })],
-      hidden: [live.getByText("Loading earlier activity…", { exact: true })],
+      hidden: [live.getByRole("status", { name: "Loading earlier activity…", exact: true })],
     });
     await expect(live.getByText("Could not load earlier activity.", { exact: false })).toBeInViewport();
     await expectAnchor(body, anchor);
@@ -287,7 +287,7 @@ test("raw history has unique records and explicit chunked disclosure with local 
       await upward(page, body);
       await loaded;
       await expect.poll(() => raw.locator("[data-transcript-id]").count()).toBeGreaterThan(before);
-      await expect(live.getByText("Loading earlier activity…", { exact: true })).toHaveCount(0);
+      await expect(live.getByRole("status", { name: "Loading earlier activity…", exact: true })).toHaveCount(0);
     }
     await expect(live.getByText("Beginning of session", { exact: true })).toBeAttached();
     const ids = await raw.locator("[data-transcript-id]").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-transcript-id")));
@@ -320,7 +320,7 @@ test("a paused upward scroll survives a refresh before its native scroll event",
       node.scrollTop = 0;
       window.dispatchEvent(new Event("online"));
     });
-    await expect(live.getByText("Loading earlier activity…", { exact: true })).toBeVisible();
+    await expect(live.getByRole("status", { name: "Loading earlier activity…", exact: true })).toBeVisible();
     const anchor = await readingAnchor(body);
     release();
     await history;

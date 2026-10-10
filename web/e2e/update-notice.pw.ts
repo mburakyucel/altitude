@@ -148,7 +148,7 @@ test("Settings shows the version, the command that installs a newer one and the 
 
   state.update = { ...installed, automatic };
   await page.reload();
-  await walk.state("12-settings-up-to-date", { visible: [version.getByText("v0.1.0 · Up to date"), toggle], hidden: [version.getByRole("button", { name: "Copy" })] });
+  await walk.state("12-settings-up-to-date", { visible: [version.getByText("v0.1.0", { exact: true }), toggle], hidden: [version.getByRole("button", { name: "Copy" })] });
   await expect(toggle).toBeChecked();
 
   state.update = { ...available, automatic, automatic_pending: automatic };

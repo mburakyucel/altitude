@@ -185,14 +185,14 @@ test("@phone-only the swipe tracks the finger: reveal, load, settle, spring back
   await touch.move(-155, 0, 200);
   await expect.poll(() => offset(track)).toBe(-195);
   expect(held.length).toBeGreaterThan(0);
-  await walk.state("03-half-way-incoming-loading", { visible: [conversation, live, live.getByLabel("Connecting")], hidden: [latest] });
+  await walk.state("03-half-way-incoming-loading", { visible: [conversation, live, live.getByLabel("Connecting", { exact: true })], hidden: [latest] });
   await touch.lift();
   await expect(page).toHaveURL(`${path}/live`);
   await expect.poll(() => offset(track)).toBe(0);
-  await walk.state("04-release-completes-still-loading", { visible: [live, live.getByLabel("Connecting")], hidden: [conversation] });
+  await walk.state("04-release-completes-still-loading", { visible: [live, live.getByLabel("Connecting", { exact: true })], hidden: [conversation] });
   holding = false;
   for (const route of held) await route.continue();
-  await walk.state("05-content-arrives", { visible: [live, latest], hidden: [conversation, live.getByLabel("Connecting")] });
+  await walk.state("05-content-arrives", { visible: [live, latest], hidden: [conversation, live.getByLabel("Connecting", { exact: true })] });
   await swipe(page, 90, 400, 220);
   await expect(page).toHaveURL(path);
   await expect(conversation).toBeVisible();

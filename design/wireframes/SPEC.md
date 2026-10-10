@@ -77,6 +77,8 @@ In the existing design review and [phone and desktop walkthrough](../../AGENTS.m
   cannot carry the meaning, such as an error's reason. No line restates what the screen already shows.
 - The UI never tells people what they cannot do. Unavailable controls look unavailable; their
   reason appears on demand or on press. Accessible names, busy states and descriptions retain meaning.
+- An empty Live session panel retains its dispatch or resume explanation: there is no activity
+  cue yet, and a held task does not read its previous session until it resumes.
 - Typography, spacing, alignment, colour, and component treatment have a consistent visual finish;
   interaction states and transitions feel complete and polished on phone and desktop.
 

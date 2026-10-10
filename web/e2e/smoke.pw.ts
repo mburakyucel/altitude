@@ -141,7 +141,7 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       await expect(main.getByRole("region", { name: "This project", exact: true })).toHaveCount(0);
       await expect(main.getByRole("button", { name: "New tasks Auto · each project's own defaults", exact: true })).toBeEnabled();
       await expect(main.getByRole("link", { name: /^All projects 1 project · folder / })).toHaveAttribute("href", "/settings/projects");
-      await expect(main.getByText(`${new URL(page.url()).origin} · HTTPS off · view only`, { exact: true })).toBeVisible();
+      await expect(main.getByText(`${new URL(page.url()).origin} · HTTPS off`, { exact: true })).toBeVisible();
       await expect(main.getByRole("radio")).toHaveCount(0);
       await expect(main.getByRole("status", { name: "Loading settings…", exact: true })).toHaveCount(0);
     } else if (route === "/settings/voice") {

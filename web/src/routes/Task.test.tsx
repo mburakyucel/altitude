@@ -534,7 +534,7 @@ describe("Task on desktop", () => {
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
     expect(screen.getByText("Queued")).toBeInTheDocument();
     const panel = screen.getByRole("region", { name: "Live session" });
-    expect(within(panel).queryByText("Waits for dispatch")).toBeNull();
+    expect(within(panel).getByText("Waits for dispatch")).toBeInTheDocument();
     expect(within(panel).queryByRole("button", { name: "Raw events" })).toBeNull();
     expect(screen.getByLabelText("Message the L2")).toBeEnabled();
     expect(screen.queryByText("Delivered when Altitude starts the L2.")).toBeNull();
@@ -578,14 +578,15 @@ describe("Task on desktop", () => {
 
   it("reads a held task as queued, waiting for resume", async () => {
     setViewport(1440);
-    stub(held);
+    const fetchMock = stub(held);
     renderApp({ route });
 
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
     expect(screen.getByText("Queued")).toBeInTheDocument();
     expect(screen.queryByText("Blocked")).toBeNull();
     const panel = screen.getByRole("region", { name: "Live session" });
-    expect(within(panel).queryByText("Waits for resume")).toBeNull();
+    expect(within(panel).getByText("Waits for resume")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/transcript/"))).toBe(false);
     expect(screen.queryByText("Delivered when Altitude resumes the L2.")).toBeNull();
   });
 
