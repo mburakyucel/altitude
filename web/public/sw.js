@@ -68,10 +68,13 @@ async function alertWaiting() {
   }
   if (fresh.length) return;
   // Settled or handed back between the wake and this read, or already announced: the push still shows, truthfully.
-  const settled = !waiting.some((decision) => !decision.held);
-  return self.registration.showNotification(settled ? "No decision needs you now" : "No new decision", {
-    body: settled ? "It was settled before this alert arrived." : "Nothing new since your last alert.",
-    tag: "altitude-nothing-new", data: { url: "/" }, silent: true,
+  const [title, body] = waiting.some((decision) => !decision.held)
+    ? ["No new decision", "Nothing new since your last alert."]
+    : waiting.length
+      ? ["No decision needs you now", "L3 or the task's owner is handling it first."]
+      : ["No decision needs you now", "It was settled before this alert arrived."];
+  return self.registration.showNotification(title, {
+    body, tag: "altitude-nothing-new", data: { url: "/" }, silent: true,
   });
 }
 

@@ -177,7 +177,7 @@ fix on either side takes effect without another step. altd records the refusal a
 service gave in `~/.altitude/push.json`, logs it once as `push to <host> refused with
 <status> <reason>` and logs `push to <host> delivered again` once a push gets through. Until then,
 the line under the alert switch in Needs you names that push service and its reason, and that device
-alerts only while Altitude is open.
+gets no alerts.
 
 - `403 BadJwtToken`: the service rejects the signed sender token, most often its contact address.
   Set `ALTITUDE_PUSH_CONTACT` to a `mailto:` address with a real domain (see [configuration](SETUP.md#configuration-and-limits)).

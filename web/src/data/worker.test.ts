@@ -123,14 +123,20 @@ describe("the service worker's push", () => {
     expect(running.showing()).toEqual(["atlas:run-restore-drill:q-drill", "atlas:rotate-the-signing-key:q-key"]);
   });
 
-  it("never shows a bare banner: a held decision or a review leaves a plain note instead", async () => {
+  it("never shows a bare banner: a settled, held or review-only queue leaves a plain, true note", async () => {
     const running = worker();
-    running.fetched.mockImplementation(queue([{ ...question, alert_held: true },
-      { project: "atlas", slug: "ship-it", title: "Ship it", kind: "review", pr: 12, question: "Review PR #12 before merge" }]));
+    const review = { project: "atlas", slug: "ship-it", title: "Ship it", kind: "review", pr: 12, question: "Review PR #12 before merge" };
+    running.fetched.mockImplementation(queue([review]));
+    await running.push();
+    running.fetched.mockImplementation(queue([{ ...question, alert_held: true }, review]));
     await running.push();
     expect(running.shown).toEqual([{
       title: "No decision needs you now",
       options: { body: "It was settled before this alert arrived.", tag: "altitude-nothing-new", data: { url: "/" }, silent: true },
+    }, {
+      // Handed back to L3 or its owner since the wake: still open, so not called settled.
+      title: "No decision needs you now",
+      options: { body: "L3 or the task's owner is handling it first.", tag: "altitude-nothing-new", data: { url: "/" }, silent: true },
     }]);
     expect(running.shown.map((shown) => shown.title)).not.toContain("Altitude");
 

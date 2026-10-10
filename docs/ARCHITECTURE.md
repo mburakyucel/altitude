@@ -1956,8 +1956,8 @@ lock that publishes the question, so no reader sees the question before L3 is du
 shows in Needs you, is neither alerted nor recorded, and alerts once the task rests, or an hour after it was
 asked (`digest.ALERT_HOLD`) so that an L3 or owner that cannot finish never hides it.
 
-A device that push can wake is alerted by its worker, open page or not; on any other device, or while a push
-service refuses Altitude, the open page alerts, and a decision visible in Needs you or its owning task is
+A device that push can wake is alerted by its worker alone, open page or not, so a decision never shows twice
+there; on any other device the open page alerts, and a decision visible in Needs you or its owning task is
 recorded without one. The recorded keys make refresh, reconnection and polling repeat none, and turning alerts
 on records what already waits for the page and for the worker alike. While alerts are on, an open page closes
 the banners whose key has left the queue, and the generic one, on each overview change, every 30 seconds and

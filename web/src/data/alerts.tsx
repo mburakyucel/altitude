@@ -251,13 +251,11 @@ const CLOSE_RETRY_MS = 30_000;
  * Mounted once by the shell. Published operator questions alert; faults, stopped tasks, reviews and finished
  * work stay in Needs you without one. A decision already on screen is recorded without alerting, and
  * one marked `alert_held` waits, unrecorded, until its task rests. A device push wakes leaves alerting to
- * the service worker, unless a push service is refusing Altitude, so one decision never shows twice.
+ * the service worker, so one decision never shows twice there.
  */
 export function useDecisionAlerts(overview: Overview | undefined, pathname: string): void {
   const state = useAlertState();
   const pushed = useSyncExternalStore(watch, readPushState, () => false);
-  const refusing = useRefusals(state === "on" && pushed, pushed).length > 0;
-  const announces = !pushed || refusing;
   const navigate = useNavigate();
   const asks = (overview?.queue ?? []).filter((decision) => decision.id);
   const signature = asks.map((decision) => `${alertKey(decision)}${decision.alert_held ? " held" : ""}`).join("\n");
@@ -273,14 +271,14 @@ export function useDecisionAlerts(overview: Overview | undefined, pathname: stri
     // Answered decisions drop out, so the record stays the size of the queue.
     writeSeen([...new Set([...(seen ?? []).filter((key) => waiting.has(key)), ...current.keys()])]);
     void closeAnswered(waiting).catch(() => undefined); // a banner left open still opens the queue
-    if (seen === null || !announces) return; // storage lost its record: start again from what is waiting now
+    if (seen === null || pushed) return; // storage lost its record: start again from what is waiting now
     for (const [key, decision] of current) {
       if (seen.includes(key)) continue;
       if (!document.hidden && showsDecision(pathname, decision)) continue;
       // A permission revoked since the last read leaves the decision in Needs you and nothing else.
       void deliver(decision, key).catch(() => announce());
     }
-  }, [state, signature, pathname, announces]);
+  }, [state, signature, pathname, pushed]);
 
   useEffect(() => {
     if (state !== "on") return;
@@ -348,7 +346,7 @@ function useRefusals(on: boolean, pushed: boolean): Refusal[] {
 
 function refusedNote({ host, reason }: Refusal): string {
   return `The push service at ${host} refused Altitude's last alert${reason ? ` (${reason})` : ""}, so that device `
-    + "alerts only while Altitude is open. Turn alerts off and on there to subscribe it again.";
+    + "gets no alerts. Turn alerts off and on there to subscribe it again.";
 }
 
 /** The switch on Needs you (SPEC.md §2.1), set on each device that should alert. */

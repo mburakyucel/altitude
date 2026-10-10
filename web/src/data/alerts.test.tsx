@@ -217,7 +217,7 @@ describe("decision alerts", () => {
 
     expect(await screen.findByText(
       "The push service at push.example refused Altitude's last alert (403 BadJwtToken), so that device "
-      + "alerts only while Altitude is open. Turn alerts off and on there to subscribe it again.",
+      + "gets no alerts. Turn alerts off and on there to subscribe it again.",
     )).toBeVisible();
     expect(screen.queryByText(/even when Altitude is closed/)).toBeNull();
   });
@@ -325,20 +325,6 @@ describe("decision alerts", () => {
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
     await waitFor(() => expect(localStorage.getItem(ALERTS_SEEN_KEY)).toContain("q-drill"));
     expect(browser.shown).not.toHaveBeenCalled();
-    localStorage.removeItem(ALERTS_PUSH_KEY);
-  });
-
-  it("alerts from the open page while a push service refuses Altitude", async () => {
-    const browser = alreadyOn([KEY]);
-    localStorage.setItem(ALERTS_PUSH_KEY, "on");
-    const setQueue = mockFetch([question], PUSH_KEY, false, [{ host: "push.example", reason: "403 BadJwtToken" }]);
-    const { queryClient } = renderApp({ route: "/projects/altitude" });
-    await waitFor(() => expect(localStorage.getItem(ALERTS_SEEN_KEY)).toContain("q-retention"));
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); }); // the refusal is read
-
-    setQueue([question, second]);
-    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
-    await waitFor(() => expect(browser.shown).toHaveBeenCalledTimes(1));
     localStorage.removeItem(ALERTS_PUSH_KEY);
   });
 
