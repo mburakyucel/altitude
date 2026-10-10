@@ -1882,8 +1882,9 @@ text in it from reply sizes; the operator accepted that for these four views on 
 ### Conversations and navigation
 
 The HTML links the approved Climb SVG favicon, a multi-size ICO fallback, the 180px Apple touch
-icon and a web app manifest. The manifest defines the root identity/start URL/scope, standalone
-display and ordinary 192/512px plus maskable 512px icons. Public metadata and icons are served
+icon and a web app manifest. The bundle includes its IBM Plex fonts, so pages make no third-party
+requests and never wait on one to render. The manifest defines the root identity/start URL/scope,
+standalone display and ordinary 192/512px plus maskable 512px icons. Public metadata and icons are served
 uncached by the existing static handler; the alert worker has no fetch handler or offline app
 cache. Native icon copies can outlive a page reload; [operations](OPERATIONS.md#refreshing-home-screen-and-bookmark-icons)
 describes refreshing shortcuts and installed apps.
