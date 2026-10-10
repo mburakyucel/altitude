@@ -3,7 +3,7 @@
 Release notes describe user-visible behavior, compatibility and recovery. The project is an early
 preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is not a published release.
 
-## v0.1.2 — 2026-10-09
+## v0.1.2 — 2026-10-10
 
 Patch release of the early preview, with the same Linux x86_64 and Apple silicon macOS targets
 and known limitations as `v0.1.1`.
@@ -33,6 +33,12 @@ and known limitations as `v0.1.1`.
   opening Altitude on another device.
 - Interrupted coordinator replies remain visible, and removing a queued task message removes
   its bubble without adding narration to the conversation.
+- Send now delivers queued text into a running turn without stopping its work. Messages with
+  images wait for the next turn. Messages sent while no coordinator engine can run stay queued
+  and receive their answers beneath the original message when an engine becomes available.
+- A refused certificate trust check stays refused when the browser reconnects. A worker whose
+  latest turn has failed ends instead of remaining active beside leftover commands; a waiting
+  landing ends with its owner session and leaves its published candidate available to resume.
 
 If an update fails to activate, Altitude restores the previous version. Use `alt recover` from a
 desktop or SSH terminal for interrupted activation, or retry an offered update explicitly after
