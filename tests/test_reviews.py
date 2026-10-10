@@ -1431,9 +1431,15 @@ class TestReviews(AltitudeCase):
         self.assertEqual(changes["state"], "failed")
         self.assertIn("--design-file", changes["error"])
         self.engine.assert_not_called()
-        # The reviewed design is the one the operator's preview shows.
+        # The reviewed design is the one the operator's preview shows; a changed spec makes the review an earlier version.
         question = T.block(self.project, self.slug, "Build the rows as shown?", actor="l2", expected_attempt=1, design=selection)
         self.assertEqual(result["snapshot"]["design"], {"id": question["questions"][-1]["design"]["id"], "title": "Compact rows"})
+        reviewed = lambda: next(r for r in reviews.view(self.project, self.slug)["history"] if r["id"] == result["id"])
+        self.assertFalse(reviewed()["earlier"])
+        (boards / "spec.md").write_text(spec + "Desktop: two lines.\n")
+        T.resume(self.project, self.slug)
+        T.block(self.project, self.slug, "Build the rows as shown?", actor="l2", expected_attempt=1, design=selection)
+        self.assertTrue(reviewed()["earlier"])
 
     def test_missing_proposal_never_invokes_provider_and_retry_preserves_subject(self):
         result = self.run_review(self.request(subject="proposal"))

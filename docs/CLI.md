@@ -1670,7 +1670,8 @@ competes with retained authority. `--design-file` takes the same selection JSON 
 spec becomes `design.md` and the captured context names the screenshots by title. The reviewer reads
 text only, so screenshots are named, not viewed, and the capture records that limitation. The receipt
 keeps the design's identity, which equals the preview's when the same selection is published with
-the design question. A changes review refuses `--design-file`.
+the design question; when the task's latest published design differs, the review shows as covering an
+earlier version. A changes review refuses `--design-file`.
 For image context, supply an L2 textual account and select that message explicitly; the capture
 records that original image bytes are not reviewed. The reviewer cannot run tests.
 The snapshot holds the candidate's ordinary tracked files and the patch from `origin/main`; links and
