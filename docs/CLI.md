@@ -1384,7 +1384,8 @@ CI and owner assessment share a 3600-second bound after publication; `--wait` on
 The wait polls after 15 seconds, doubling to once a minute, and spends one GraphQL read per poll on the
 exact check evidence. Other PR reads use GitHub's REST API. When GitHub refuses a command for the account's
 rate limit, landing prints so and waits a minute. Then, within the same bound, it starts the candidate again
-and repeats every gate before merging. A refusal after the bound leaves the candidate published and unmerged.
+and repeats every gate before merging; when the merge command had already run, it first asks GitHub whether
+the PR merged. A refusal with a minute or less left in the bound leaves the candidate published and unmerged.
 An exhausted deadline leaves the published candidate unmerged, without another integration.
 GitHub registers
 a head's checks one at a time, so a required check absent from the head is waited for within the same

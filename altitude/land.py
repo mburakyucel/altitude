@@ -36,7 +36,7 @@ from . import config, dispatch, git_policy, github_intake, state as S, tasks as 
 CHECK_POLL_SECONDS = 15
 CHECK_POLL_BACKOFF = 4
 #: #814: after GitHub refuses a gh command for the account's rate limit, landing starts its candidate again this
-#: many seconds later, within its deadline.
+#: many seconds later, when that still leaves time in its wait.
 RATE_LIMIT_POLL_SECONDS = 60
 #: #480: GitHub's PR view lags the landing's own push briefly; the head is re-read within this bound.
 PR_VIEW_SETTLE_SECONDS = 30
@@ -515,22 +515,23 @@ def _merged_head_evidence(root: Path, delivered: dict, pr: dict, base: str) -> d
     return {"head": delivered["head"], "merge": merge, "url": pr.get("url")}
 
 
-def _ensure_pr(root: Path, branch: str, base: str, message: str, pr_title: str | None,
-               pr_body_file: str | None, task_ref: str, pr: dict | None) -> dict:
-    """Reuse the branch's PR when one exists (editing it only when asked); otherwise create it. `pr` is the
-    caller's already-fetched view of the branch's PR (`None` = looked, there is none), so the happy path costs
-    one `gh pr view` and the create path reads the PR back exactly once."""
+def _reuse_pr(root: Path, pr: dict, pr_title: str | None, pr_body_file: str | None) -> dict:
+    """Reuse the branch's PR, editing it only when asked. `pr` is the caller's already-fetched view."""
+    _note(f"PR #{pr.get('number')} exists — reusing it")
+    if pr_title or pr_body_file:
+        args = ["gh", "pr", "edit", str(pr.get("number"))]
+        args += ["--title", pr_title] if pr_title else []
+        args += ["--body-file", pr_body_file] if pr_body_file else []
+        e = _run(args, root)
+        if e.returncode != 0:
+            raise LandError(f"gh pr edit: {(e.stderr or '').strip()[-200:]}")
+    return pr
+
+
+def _create_pr(root: Path, branch: str, base: str, message: str, pr_title: str | None,
+               pr_body_file: str | None, task_ref: str) -> str:
+    """Open the branch's PR and return its URL; the caller has looked and found none."""
     title = pr_title or message.splitlines()[0]
-    if pr is not None:
-        _note(f"PR #{pr.get('number')} exists — reusing it")
-        if pr_title or pr_body_file:
-            args = ["gh", "pr", "edit", str(pr.get("number"))]
-            args += ["--title", pr_title] if pr_title else []
-            args += ["--body-file", pr_body_file] if pr_body_file else []
-            e = _run(args, root)
-            if e.returncode != 0:
-                raise LandError(f"gh pr edit: {(e.stderr or '').strip()[-200:]}")
-        return pr
     body_path, tmp = pr_body_file, None
     try:
         if not body_path:
@@ -548,8 +549,12 @@ def _ensure_pr(root: Path, branch: str, base: str, message: str, pr_title: str |
     finally:
         if tmp:
             Path(tmp).unlink(missing_ok=True)
-    # By its printed URL: the branch may also name an earlier closed or merged PR.
-    pr = _pr_view(root, ((c.stdout or "").strip().splitlines() or [branch])[-1])
+    return ((c.stdout or "").strip().splitlines() or [branch])[-1]
+
+
+def _created_pr(root: Path, url: str) -> dict:
+    """Read a created PR back by its printed URL: the branch may also name an earlier closed or merged PR."""
+    pr = _pr_view(root, url)
     if pr is None:
         raise LandError("gh pr create succeeded but the PR cannot be read back")
     _note(f"PR #{pr.get('number')} created")
@@ -952,22 +957,42 @@ def _merge(root: Path, branch: str, number: int, base: str, expected_head: str,
     receipt names no main run: the merged commit's push-triggered run rarely exists yet, and `alt task status`
     resolves it by commit once it does."""
     method = ["--squash", "--delete-branch"] if delete_branch else ["--squash"]
-    try:
-        m = _run(["gh", "pr", "merge", str(number), *method, "--match-head-commit", expected_head], root, timeout=300)
-        error = "" if m.returncode == 0 else ((m.stderr or "") + (m.stdout or "")).strip()
-    except RateLimited as refused:  # the merge itself may have gone through before a later request was refused
-        m, error = refused, str(refused)
+    m = _run(["gh", "pr", "merge", str(number), *method,
+              "--match-head-commit", expected_head], root, timeout=300)
     after = _pull(root, number)
     if after.get("state") != "MERGED":
-        if isinstance(m, RateLimited):
-            raise m
-        raise LandError(f"gh pr merge #{number}: {error[-300:] or 'PR is not merged'}")
-    if error:
-        _note(f"merged, but gh pr merge failed afterwards: {error[-160:]}")
+        raise LandError(f"gh pr merge #{number}: "
+                        f"{((m.stderr or '') + (m.stdout or '')).strip()[-300:] or 'PR is not merged'}")
+    if m.returncode != 0:
+        _note(f"merged, but gh pr merge exited {m.returncode}: {(m.stderr or '').strip()[-160:]}")
+    _fetch_base(root, base)
+    return True
+
+
+def _fetch_base(root: Path, base: str) -> None:
     f = _git(root, "fetch", "origin", base, timeout=120)
     if f.returncode != 0:
         _note(f"git fetch origin {base} failed: {(f.stderr or '').strip()[-160:]}")
-    return True
+
+
+def _record_merged_head(project: str, slug: str, head: str) -> None:
+    """The merged head consumes the task's current reviews."""
+    from . import reviews
+    with S.project_lock(project):
+        current = S.load_task(project, slug)
+        current["review_merged_head"] = head
+        for review in reviews._current_reviews(current):
+            review["merged_head"] = head
+        S.save_task(project, current)
+
+
+def _require_merged_tree(root: Path, pair: dict) -> None:
+    """Where the base requires its PR check, the merge commit carries exactly the tested tree."""
+    if not pair["required_pr_check"]:
+        return
+    commit_sha = (_pull(root, pair["number"]).get("mergeCommit") or {}).get("oid")
+    if not commit_sha or _need(_git(root, "rev-parse", f"{commit_sha}^{{tree}}"), "merged tree") != pair["tree"]:
+        raise LandError("merged tree does not match the tested PR tree; report delivery for recovery")
 
 
 def _merge_pair(root: Path, pair: dict, *, delete_branch: bool) -> bool:
@@ -975,6 +1000,8 @@ def _merge_pair(root: Path, pair: dict, *, delete_branch: bool) -> bool:
     try:
         return _merge(root, pair["branch"], pair["number"], pair["base"], pair["head_sha"],
                       delete_branch=delete_branch)
+    except RateLimited:
+        raise  # the landing confirms with GitHub whether the merge happened before it starts again
     except LandError:
         _assert_pair_current(root, pair)
         raise
@@ -1291,9 +1318,25 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             return _merged_retry(root, project, slug, task, authority, branch, base, continued_pr, lease, closes_issues)
     # One deadline covers every head this landing publishes and every rate-limit refusal it waits out.
     wait = LAND_WAIT_TIMEOUT if wait is None else min(max(wait, 0), LAND_WAIT_TIMEOUT)
-    replaced, deadline, waited = [], time.monotonic() + wait, 0
+    replaced, deadline, waited, created, attempted = [], time.monotonic() + wait, 0, None, None
     while True:  # A moved base or a refusal gets a fresh publication and check outside the merge turn.
         try:
+            if attempted:  # #814: a refusal may have interrupted the merge or its confirmation; GitHub says which
+                after = _pull(root, attempted["number"])
+                if after.get("state") == "MERGED":  # a refusal here asks again; the branch is never republished
+                    pair = attempted
+                    if after.get("headRefOid") != pair["head_sha"]:
+                        raise LandError(f"PR #{pair['number']} merged at head {after.get('headRefOid')}, not the candidate "
+                                        f"{pair['head_sha']}; report delivery for recovery")
+                    from . import reviews
+                    with reviews.merge_lock(project, slug):
+                        _record_merged_head(project, slug, pair["head_sha"])
+                    _fetch_base(root, base)
+                    _require_merged_tree(root, pair)
+                    _note(f"GitHub confirms PR #{pair['number']} merged at head {pair['head_sha']}")
+                    merged = True
+                    break
+                attempted = None
             with S.project_lock(project):
                 _require_delivery_owner(project, slug, task, S.load_task(project, slug), authority,
                                         branch=publish_branch, number=(pr or {}).get("number"))
@@ -1310,7 +1353,11 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                               source_branch=branch if adoption else None)
             pushed_head = _need(_git(root, "rev-parse", f"origin/{publish_branch}"), "cannot capture the pushed PR head")
             _note(f"pushed head {pushed_head}")
-            pr = _ensure_pr(root, publish_branch, base, message, pr_title, pr_body_file, task_ref, pr=pr)
+            if pr is not None:
+                pr = _reuse_pr(root, pr, pr_title, pr_body_file)
+            else:  # #814: a PR whose read-back was refused is read again by its URL, never created twice
+                created = created or _create_pr(root, publish_branch, base, message, pr_title, pr_body_file, task_ref)
+                pr = _created_pr(root, created)
             number = pr.get("number")
             task = _record_delivery(project, slug, task, authority, branch=publish_branch, number=number,
                                     head=pushed_head, base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"))
@@ -1361,12 +1408,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                         except T.TransitionError as exc:
                             raise LandError(str(exc)) from exc
                     yield
-                    with S.project_lock(project):
-                        current = S.load_task(project, slug)
-                        current["review_merged_head"] = pair["head_sha"]
-                        for review in reviews._current_reviews(current):
-                            review["merged_head"] = pair["head_sha"]
-                        S.save_task(project, current)
+                    _record_merged_head(project, slug, pair["head_sha"])
 
             while True:
                 checks = _wait_for_candidate(root, project, slug, pair, merge=merge, wait=wait,
@@ -1375,6 +1417,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                 try:
                     if merge and not merged and checks in ("pass", "none-configured"):
                         check_before_merge()  # Refuse lost ownership or holds before admitting a local suite.
+                        attempted = pair
                         with _repository_turn(root) as turn_wait:
                             waited += turn_wait
                             _assert_pair_current(root, pair)
@@ -1386,12 +1429,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                                 if checks == "pass":
                                     with before_merge():
                                         merged = _merge_pair(root, pair, delete_branch=not adoption)
-                                    if pair["required_pr_check"]:
-                                        commit_sha = (_pull(root, number).get("mergeCommit") or {}).get("oid")
-                                        if not commit_sha or _need(_git(root, "rev-parse", f"{commit_sha}^{{tree}}"),
-                                                                   "merged tree") != pair["tree"]:
-                                            raise LandError("merged tree does not match the tested PR tree; "
-                                                            "report delivery for recovery")
+                                    _require_merged_tree(root, pair)
                     elif merge and not merged:
                         _note(f"not merging: {_checks_outcome(checks, pair)}")
                 except _Reassess:
@@ -1407,11 +1445,11 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
         except RateLimited as exc:
             # #814: the refused command did nothing; every gate is read again once GitHub accepts requests.
             remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise LandError(f"{exc}; the wait is over — re-run alt land once GitHub's limit clears") from exc
-            _note(f"{exc}; starting the candidate again in {min(RATE_LIMIT_POLL_SECONDS, round(remaining))}s, "
-                  f"with {round(remaining)}s left in the wait")
-            time.sleep(min(RATE_LIMIT_POLL_SECONDS, remaining))
+            if remaining <= RATE_LIMIT_POLL_SECONDS:
+                raise LandError(f"{exc}; the wait is over — re-run alt land once GitHub's limit clears"
+                                + (f"; it finds whether PR #{attempted['number']} merged" if attempted else "")) from exc
+            _note(f"{exc}; starting the candidate again in {RATE_LIMIT_POLL_SECONDS}s, with {round(remaining)}s left in the wait")
+            time.sleep(RATE_LIMIT_POLL_SECONDS)
             recorded_tip = pushed_head  # every GitHub request in this loop follows the push
             continue
         break

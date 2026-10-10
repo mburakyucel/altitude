@@ -856,8 +856,81 @@ class TestLand(AltitudeCase):
             clock.sleep.side_effect = lambda seconds: now.__setitem__("seconds", now["seconds"] + seconds)
             with self.assertRaisesRegex(land.LandError, "API rate limit already exceeded.*the wait is over"):
                 land.land("fix: refused", cwd=self.repo, wait=300, merge=True)
-        self.assertEqual(clock.sleep.call_args_list, [mock.call(land.RATE_LIMIT_POLL_SECONDS)] * 5)
+        # A refusal with no more than one poll left ends the landing instead of starting it again at the deadline.
+        self.assertEqual(clock.sleep.call_args_list, [mock.call(land.RATE_LIMIT_POLL_SECONDS)] * 4)
         self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
+
+    def test_refusal_near_the_deadline_ends_without_starting_again(self):
+        self.staged_change()
+        (self.ghdir / "rate_limited.json").write_text(json.dumps({"count": 1, "prefix": "api graphql"}))
+        with mock.patch.object(land, "time", wraps=land.time) as clock:
+            with self.assertRaisesRegex(land.LandError, "the wait is over"):
+                land.land("fix: refused", cwd=self.repo, wait=30, merge=True)
+        clock.sleep.assert_not_called()
+        self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
+
+    def test_refused_read_back_of_a_created_pr_never_creates_it_twice(self):
+        self.staged_change()
+        (self.ghdir / "rate_limited.json").write_text(json.dumps({"count": 1, "prefix": "pr view https://"}))
+        with mock.patch.object(land, "time", wraps=land.time) as clock:
+            clock.sleep.side_effect = lambda _seconds: None
+            result = land.land("fix: created", cwd=self.repo, wait=600, merge=True)
+        self.assertEqual((result["pr"], result["merged"]), (101, True))
+        self.assertEqual(len([a for a in self.gh_log() if a[:2] == ["pr", "create"]]), 1)
+
+    def test_refused_merge_confirmation_is_settled_by_github_without_publishing_again(self):
+        # #814: GitHub merged the candidate, then refused the read that confirms it; the landing asks again and
+        # records the merge instead of publishing the merged branch as a new candidate.
+        self.staged_change()
+
+        def refuse_confirmation(args):
+            if args[:3] == ["gh", "pr", "merge"]:
+                (self.ghdir / "rate_limited.json").write_text(json.dumps({"count": 1, "prefix": "api repos/"}))
+            return None
+
+        commands = self.record_commands(refuse_confirmation)
+        stderr = io.StringIO()
+        with mock.patch.object(land, "time", wraps=land.time) as clock, contextlib.redirect_stderr(stderr):
+            clock.sleep.side_effect = lambda _seconds: None
+            result = land.land("fix: confirmed", cwd=self.repo, wait=600, merge=True)
+        self.assertTrue(result["merged"])
+        self.assertIn("GitHub confirms PR #101 merged", stderr.getvalue())
+        self.assertEqual(len([a for a in commands if a[:3] == ["gh", "pr", "merge"]]), 1)
+        self.assertEqual(len([a for a in commands if a[:2] == ["git", "push"]]), 1)
+        self.assertEqual(S.load_task("demo", "fix-x")["review_merged_head"], result["head"])
+
+    def test_refused_merged_tree_read_is_checked_again_against_the_tested_tree(self):
+        workflow = self.repo / land.config.PR_CHECK_WORKFLOW
+        workflow.parent.mkdir(parents=True)
+        workflow.write_text("on: [pull_request]\njobs:\n  check:\n    runs-on: ubuntu-latest\n")
+        self.git("add", land.config.PR_CHECK_WORKFLOW)
+        self.git("commit", "-q", "-m", "require the PR check")
+        self.git("push", "-q", "origin", "HEAD:main")
+        self.git("fetch", "-q", "origin")
+        (self.ghdir / "merge_git.txt").touch()
+        (self.ghdir / "checks.json").write_text(json.dumps(
+            [{"bucket": "pass", "name": "check", "app": 15368, "workflow": land.config.PR_CHECK_WORKFLOW}]))
+        self.staged_change()
+        reads = {"after_merge": None}
+
+        def refuse_tree_read(args):
+            if args[:3] == ["gh", "pr", "merge"]:
+                reads["after_merge"] = 0
+            elif reads["after_merge"] is not None and pull_read(args[1:]):
+                reads["after_merge"] += 1
+                if reads["after_merge"] in (2, 4):  # the confirmation passes; each tree read is refused once
+                    (self.ghdir / "rate_limited.json").write_text(json.dumps({"count": 1, "prefix": "api repos/"}))
+            return None
+
+        commands = self.record_commands(refuse_tree_read)
+        with mock.patch.object(land, "time", wraps=land.time) as clock:
+            clock.sleep.side_effect = lambda _seconds: None
+            result = land.land("fix: tree", cwd=self.repo, wait=600, merge=True)
+        self.assertTrue(result["merged"])
+        self.assertEqual(len([a for a in commands if a[:3] == ["gh", "pr", "merge"]]), 1)
+        # A refused tree read, then a confirmation and a refused tree read again, then a confirmation and the tree.
+        self.assertEqual(reads["after_merge"], 6)
+        self.assertEqual(len([a for a in commands if a[:2] == ["git", "push"]]), 1)
 
     def test_refused_merge_is_attempted_again_only_after_every_gate_is_read_again(self):
         # #814: a refused merge did nothing; the next attempt re-reads the candidate, its checks and its gates.
@@ -887,7 +960,7 @@ class TestLand(AltitudeCase):
         self.record_commands(retarget)
         with mock.patch.object(land, "time", wraps=land.time) as clock:
             clock.sleep.side_effect = lambda _seconds: None
-            with self.assertRaisesRegex(land.LandError, "base or head moved"):
+            with self.assertRaisesRegex(land.LandError, "targets 'release'"):
                 land.land("fix: retargeted", cwd=self.repo, wait=600, merge=True)
         self.assertEqual(len([a for a in self.gh_log() if a[:2] == ["pr", "merge"]]), 1)
         self.assertNotEqual(json.loads((self.ghdir / "pr.json").read_text())["state"], "MERGED")
@@ -1652,7 +1725,7 @@ class TestLand(AltitudeCase):
         self.assertEqual(self.remote_heads(), ["main"])
 
     def test_create_path_reads_the_pr_back_once(self):
-        pr = land._ensure_pr(self.repo, "worktree-fix-x", "main", "fix: new", None, None, "demo/fix-x", pr=None)
+        pr = land._created_pr(self.repo, land._create_pr(self.repo, "worktree-fix-x", "main", "fix: new", None, None, "demo/fix-x"))
         self.assertEqual(pr["number"], 101)
         # pr=None is "the caller looked and there is no PR", so no view before the create
         self.assertEqual([a[:2] for a in self.gh_log()], [["pr", "create"], ["pr", "view"]])

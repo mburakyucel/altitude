@@ -239,8 +239,11 @@ elif cmd == ("api", "graphql"):
         contexts = [{"__typename": "CheckRun", "name": item.get("name", "fixture-check-" + str(i)),
                      "status": "IN_PROGRESS" if item["bucket"] == "pending" else "COMPLETED",
                      "conclusion": conclusions.get(item["bucket"]), "isRequired": False,
-                     "checkSuite": {"commit": {"oid": head}, "app": {"databaseId": 1, "slug": "fixture-ci"},
-                                    "branch": {"name": body["headRefName"]}, "workflowRun": None,
+                     # An item may name its app and workflow file, as a hosted Actions check does.
+                     "checkSuite": {"commit": {"oid": head}, "app": {"databaseId": item.get("app", 1), "slug": "fixture-ci"},
+                                    "branch": {"name": body["headRefName"]},
+                                    "workflowRun": {"event": "pull_request", "file": {"path": item["workflow"]}}
+                                                   if item.get("workflow") else None,
                                     "matchingPullRequests": connection([{"number": body["number"],
                                         "baseRefName": body["baseRefName"], "headRefName": body["headRefName"]}])}}
                     for i, item in enumerate(checks)]

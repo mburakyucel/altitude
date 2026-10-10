@@ -917,7 +917,9 @@ which has its own quota. When that evidence reports no checks, a REST read of th
 statuses must agree before the local-suite gate applies. GitHub refusing a `gh` command for a rate limit
 is a wait within the same deadline. The refused command did nothing, so a minute later landing starts the
 candidate again outside the turn: it re-reads the PR, checks, ownership, holds and review before any
-merge. Polls hold the task review lock
+merge. A refusal once the merge command has run first asks GitHub whether the PR merged at the candidate
+head; if it did, landing records that merge instead of publishing again. A PR it created is read back by
+its URL, never created twice. A refusal with a minute or less left in the wait ends the landing. Polls hold the task review lock
 only for local review reads; network reads and sleeps leave review requests available. Assessment
 fetches preserve landing's `FETCH_HEAD` receipt. A notice names every stale review and subject with
 the assessed/current values of its changed evidence, so the owner posts explanations together before
