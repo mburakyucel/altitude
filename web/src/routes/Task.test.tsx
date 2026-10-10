@@ -46,7 +46,7 @@ const running = {
   events: [],
   report_json: null,
   messages: [
-    { id: "m-1", at: "2026-08-29T12:01:00Z", role: "burak", text: "Keep the change focused." },
+    { id: "m-1", at: "2026-08-29T12:01:00Z", role: "operator", text: "Keep the change focused." },
     { id: "m-2", at: "2026-08-29T12:02:00Z", role: "l2", text: "I will use one focused PR." },
     { id: "m-3", at: "2026-08-30T09:00:00Z", role: "l3", text: "Answered from the brief." },
   ],

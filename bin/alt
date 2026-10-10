@@ -129,9 +129,14 @@ def _report_text(record: dict) -> str:
     return "\n".join(lines)
 
 
+def _who(actor: str | None) -> str | None:
+    """An actor as text shows it: the operator's stored identity reads as their configured name."""
+    return config.operator_label() if actor == config.OPERATOR_ACTOR else actor
+
+
 def _messages_text(rows: list[dict]) -> str:
-    return "\n".join(f"[{S.age(str(row.get('at') or ''))}] {row.get('role') or '?'}"
-                     f" ({row.get('by') or '?'}, message {row.get('id') or '?'}): "
+    return "\n".join(f"[{S.age(str(row.get('at') or ''))}] {_who(row.get('role')) or '?'}"
+                     f" ({_who(row.get('by')) or '?'}, message {row.get('id') or '?'}): "
                      f"{'[Removed before delivery] ' if row.get('removed_at') else ''}{_one_line(row.get('text') or '')}" for row in rows) or "No messages."
 
 
@@ -143,7 +148,7 @@ def _events_text(rows: list[dict]) -> str:
             detail = f"{row.get('frm') or '?'} → {row.get('to') or '?'}"
         else:
             detail = next((str(row[key]) for key in ("reason", "hold", "note", "title") if row.get(key)), "")
-        by = f" · {row['by']}" if row.get("by") else ""
+        by = f" · {_who(row['by'])}" if row.get("by") else ""
         lines.append(f"[{S.age(str(row.get('at') or ''))}] {kind}" + (f": {_one_line(detail)}" if detail else "") + by)
     return "\n".join(lines) or "No events."
 
@@ -164,7 +169,7 @@ def _search_text(record: dict) -> str:
         lines.append(f"\nMatch: {result['match']}")
         for row in result["context"]:
             lines.append(f"[{row['at'] or 'date unknown'}; {row['date_kind']}] "
-                         f"{row['role']} ({row['by'] or 'author not stored'}) {row['source']}")
+                         f"{_who(row['role'])} ({_who(row['by']) or 'author not stored'}) {row['source']}")
             if row.get("removed_at"):
                 lines.append("[Removed before delivery]")
             lines.append(row["text"])
