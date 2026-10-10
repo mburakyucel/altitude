@@ -191,6 +191,11 @@ assignment and adds only task-specific context, allowed actions, exclusions and 
 The helper reads the persona and repository rules before working; missing instructions go back to
 the parent. L2 verifies the result and retains decisions, publication, lifecycle and final reporting.
 The persona contents are not copied into the owner prompt or repository instruction files.
+The owner never reads or adopts the L1 persona in its own session. Altitude neither adds nor removes
+an engine's native helper tool, so its availability follows the installed engine and its configuration;
+an owner without one does the work directly as the owner. Apart from yielding to waiting operator
+messages, every owner turn ends with a report, completion or block: a turn that ends with only a message
+blocks the task with a system fault, as [engine containment](#engine-containment) describes.
 
 Native discovery and inherited history are not evidence that a helper has loaded its role:
 
