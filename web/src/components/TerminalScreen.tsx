@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { StatusMark } from "./StatusMark";
 import { ApiError, terminalSend, terminalStatus, terminalStream } from "../data/api";
 import type { TerminalStatus } from "../data/api";
 import { useToast } from "../data/Toast";
@@ -355,7 +356,7 @@ export default function TerminalScreen({ project, task, id, keys, intro, reconne
     </div> : null}
     <div className="terminal-frame">
       <div className="terminal-screen" ref={host} />
-      {reconnecting ? <p className="terminal-reconnecting" role="status">Reconnecting…</p> : null}
+      {reconnecting ? <p className="terminal-reconnecting"><StatusMark label="Reconnecting…" /></p> : null}
     </div>
     {keys ? <div className="terminal-keys" role="toolbar" aria-label="Terminal keys">
       {[KEYS[0]!, KEYS[1]!].map((key) => <button key={key.name} type="button" aria-label={key.name}

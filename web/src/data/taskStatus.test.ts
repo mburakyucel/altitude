@@ -70,7 +70,7 @@ describe("task explanations", () => {
   });
 
   it("distinguishes the operator's question from a coordinator prerequisite", () => {
-    expect(taskExplanation({ ...blocked, questions: [question("operator")] })).toMatch(/your answer/i);
+    expect(taskExplanation({ ...blocked, questions: [question("operator")] })).toBeNull();
     const coordinator = taskExplanation({ ...blocked, waiting_on: "l3", questions: [question("l3")] });
     expect(coordinator).toMatch(/coordinator.*approved machine access/i);
     expect(coordinator).not.toMatch(/your answer|your input/i);
@@ -85,31 +85,34 @@ describe("task explanations", () => {
   it("does not ask again after a response or a handback", () => {
     const response = { message_id: "answer", text: "Approved." };
     expect(taskExplanation({ ...blocked, questions: [question("operator", { response })] }))
-      .toMatch(/task owner.*reply/i);
+      .toBeNull();
     const handedBack = { ...blocked, handed_back: "2026-10-07T04:04:00Z", questions: [question("operator")] };
     expect(taskExplanation(handedBack)).not.toMatch(/your answer|your input/i);
     expect(taskExplanation({ ...handedBack, questions: [question("operator", { asked: "2026-10-07T04:05:00Z" })] }))
-      .toMatch(/your answer/i);
+      .toBeNull();
   });
 
   it("does not revive an answered question from an older overview read", () => {
     const decision: Decision = { project: "atlas", slug: blocked.slug, id: "access-question", kind: "asks" };
+    expect(taskExplanation({ ...blocked, questions: [question("operator", { response: { text: "Approved" } })] }, decision, true)).toBe("L2 replying");
     expect(taskExplanation({ ...blocked, questions: [question("operator", { response: { text: "Approved" } })] }, decision))
-      .toMatch(/task owner.*reply/i);
+      .toBeNull();
     expect(taskExplanation({ ...blocked, handed_back: "2026-10-07T04:04:00Z", questions: [question("operator")] }, decision))
-      .not.toMatch(/your answer/i);
+      .not.toBeNull();
   });
 
   it("shows a new overview question before the project read observes it", () => {
     const decision: Decision = { project: "atlas", slug: blocked.slug, id: "new-question", kind: "asks", asked: "2026-10-07T04:05:00Z" };
+    expect(taskExplanation({ ...blocked, questions: [], handed_back: "2026-10-07T04:04:00Z" }, decision, true)).toBe("Needs you");
     expect(taskExplanation({ ...blocked, questions: [], handed_back: "2026-10-07T04:04:00Z" }, decision))
-      .toMatch(/your answer/i);
+      .toBeNull();
   });
 
   it.each([1, 2])("keeps a later re-ask of revision %i visible over an older answered record", (revision) => {
     const decision: Decision = { project: "atlas", slug: blocked.slug, id: "access-question", kind: "asks", revision, asked: "2026-10-07T04:05:00Z" };
     const task = { ...blocked, handed_back: "2026-10-07T04:04:00Z", questions: [question("operator", { revision: 1, response: { text: "Approved" } })] };
-    expect(taskExplanation(task, decision)).toMatch(/your answer/i);
+    expect(taskExplanation(task, decision, true)).toBe("Needs you");
+    expect(taskExplanation(task, decision)).toBeNull();
   });
 
   it("ignores resolved coordinator questions", () => {
@@ -145,8 +148,10 @@ describe("task explanations", () => {
   });
 
   it("distinguishes an ordinary queue from a recorded resume", () => {
-    expect(taskExplanation({ ...blocked, state: "queued" })).toMatch(/start the task/i);
-    expect(taskExplanation({ ...blocked, resume_after: "2026-10-07T05:00:00Z" })).toMatch(/resume the task/i);
+    expect(taskExplanation({ ...blocked, state: "queued" }, undefined, true)).toBe("Queued");
+    expect(taskExplanation({ ...blocked, resume_after: "2026-10-07T05:00:00Z" }, undefined, true)).toBe("Resuming");
+    expect(taskExplanation({ ...blocked, state: "queued" })).toBeNull();
+    expect(taskExplanation({ ...blocked, resume_after: "2026-10-07T05:00:00Z" })).toBeNull();
   });
 
   it("does not claim recovery merely because a fault has a resume time", () => {
@@ -156,33 +161,35 @@ describe("task explanations", () => {
   });
 
   it.each([
-    ["stopping", /waiting for the session to end/i],
+    ["stopping", null],
     ["stop_unconfirmed", /may still be running/i],
-    ["stopped", /Stopped by you/i],
-    ["resuming", /resume the task/i],
+    ["stopped", null],
+    ["resuming", null],
   ] as const)("respects recorded Stop state %s", (state, expected) => {
-    expect(taskExplanation({ ...blocked, stop_id: "stop-request", steering: { state } })).toMatch(expected);
+    const explanation = taskExplanation({ ...blocked, stop_id: "stop-request", steering: { state } });
+    if (expected) expect(explanation).toMatch(expected); else expect(explanation).toBeNull();
   });
 
   it("names the coordinator for its own Stop, queued or executed", () => {
     const queued = { daemon_request: { id: "stop-request", actor: "l3" }, stop_id: "stop-request" };
     expect(taskExplanation({ ...blocked, state: "running", ...queued, steering: { state: "stopping" } }))
-      .toBe("Stopping at the coordinator’s request; waiting for the session to end.");
+      .toBeNull();
     const executed = { ...blocked, stop_id: "stop-request", block_actor: "l3", waiting_on: "l3" };
     expect(taskExplanation({ ...executed, steering: { state: "stopped" } }))
-      .toBe("Stopped by the coordinator; its note is in the conversation.");
-    expect(taskExplanation(executed)).toBe("The coordinator requested a stop; confirmation is in the task.");
+      .toBeNull();
+    expect(taskExplanation(executed)).toBeNull();
     expect(taskExplanation({ ...blocked, stop_id: "stop-request", block_actor: "operator", steering: { state: "stopped" } }))
-      .toBe("Stopped by you; continue when you’re ready.");
+      .toBeNull();
   });
 
   it("describes a Stop awaiting termination even while task state is running", () => {
     expect(taskExplanation({ ...blocked, state: "running", steering: { state: "stopping" }, stop_id: "stop-request" }))
-      .toMatch(/waiting for the session to end/i);
+      .toBeNull();
   });
 
   it("does not infer completed stopping from a request identifier alone", () => {
-    expect(taskExplanation({ ...blocked, stop_id: "stop-request" })).not.toMatch(/Stopped by you/i);
+    expect(taskExplanation({ ...blocked, stop_id: "stop-request" }, undefined, true)).toBe("Stop requested");
+    expect(taskExplanation({ ...blocked, stop_id: "stop-request" })).toBeNull();
   });
 
   it("keeps a merge hold independent from faults, Stop and actual review readiness", () => {
@@ -193,6 +200,6 @@ describe("task explanations", () => {
     expect(taskExplanation({ ...stopped, ...hold })).toBe(taskExplanation(stopped));
     expect(taskExplanation({ ...blocked, ...hold })).not.toMatch(/your review/i);
     const review: Decision = { project: "atlas", slug: blocked.slug, kind: "review", pr: 12 };
-    expect(taskExplanation({ ...blocked, ...hold }, review)).toMatch(/your review before merge/i);
+    expect(taskExplanation({ ...blocked, ...hold }, review)).toBeNull();
   });
 });

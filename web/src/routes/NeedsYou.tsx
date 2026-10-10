@@ -92,9 +92,6 @@ export default function NeedsYou() {
               );
             })}
           </div>
-          <p className="calm text-muted">
-            That is everything. Running work stays in each project. FYIs from L3 appear in that project&apos;s chat.
-          </p>
         </>
       )}
     </div>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent, ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { StatusMark, BusyLabel } from "../components/StatusMark";
 import { checkTrust, pairDevice, readAccess, UNPAIRED_EVENT } from "../data/api";
 import type { Access, Trust } from "../data/api";
 import { forgetVisits } from "../components/visitMemory";
@@ -159,12 +160,10 @@ function PairScreen({ trust, removed, onPaired }: { trust: Trust; removed: boole
       {removed ? <p role="status" className="pair-removed">This device is no longer paired. Pair it again to continue.</p> : null}
       <ol className="pair-steps">
         <Step mark={secure ? "done" : "problem"} title="HTTPS address">
-          {trust.https ? <p className="pair-lead">You opened Altitude’s HTTPS address.</p>
-            : trust.local ? <p className="pair-lead">This is the computer running Altitude.</p>
-                : <p className="pair-lead">This Altitude serves plain HTTP. Pair on the computer running it.</p>}
+          {trust.https || trust.local ? null : <p className="pair-lead">This Altitude serves plain HTTP. Pair on the computer running it.</p>}
         </Step>
         {secure ? <Step mark={trustMark[trusted.status]} title="Trust Altitude’s certificate"
-          aside={<span className="chip pair-pill" data-tone={status.tone}>{status.label}</span>}>
+          aside={<span className="chip pair-pill" data-tone={status.tone}>{trusted.status === "checking" ? <StatusMark label={status.label} /> : trusted.status === "trusted" ? <StatusMark busy={false} label={status.label} /> : status.label}</span>}>
           {trusted.status === "trusted" ? null : trusted.status === "manual" ? <>
             <p className="pair-lead">Altitude can’t check this automatically. Open this address in a new Private tab; if it loads without a warning, tap Continue.</p>
             <button type="button" className="btn btn-primary" onClick={confirm}>Continue</button>
@@ -185,7 +184,7 @@ function PairScreen({ trust, removed, onPaired }: { trust: Trust; removed: boole
             </label>
             {state.status === "failed" ? <p role="alert" className="text-meta text-danger">{state.error}</p> : null}
             <button type="submit" className="btn btn-primary" disabled={state.status === "pairing" || !code}>
-              {state.status === "pairing" ? "Pairing…" : "Pair"}
+              <BusyLabel busy={state.status === "pairing"} label="Pair" working="Pairing…" />
             </button>
             <p className="text-meta text-muted">Each code works once, for 10 minutes. This device stays paired until you remove it in Settings.</p>
           </form>

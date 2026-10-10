@@ -1,5 +1,6 @@
 import { Component, createRef, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { StatusMark } from "../components/StatusMark";
 import { Prose } from "../components/Prose";
 import { ApiError, fetchTranscriptRecord, useTranscript } from "../data/api";
 import type { TaskView, TranscriptEvent } from "../data/api";
@@ -92,7 +93,7 @@ function ToolRow({ event: e, running }: { event: TranscriptEvent; running: boole
           {output}
         </pre>
       ) : (
-        <p className="session-notice">{pending ? "Waiting for output…" : "No output."}</p>
+        <p className="session-notice">{pending ? <StatusMark label="Waiting for output…" /> : "No output."}</p>
       )}
     </details>
   );
@@ -102,7 +103,7 @@ function ToolRow({ event: e, running }: { event: TranscriptEvent; running: boole
 function LiveCue({ activity }: { activity: TaskView["activity"] }) {
   const cue = activityCue(activity, useNow());
   return (
-    <p className="live-activity text-meta text-muted" role="status">
+    <p className="live-activity text-meta text-muted" role="status" aria-label="Activity">
       <CueLine cue={cue} />
     </p>
   );
@@ -189,7 +190,7 @@ function RawRecord({ event, scope, active }: { event: TranscriptEvent; scope: Re
       }}>{open ? "Hide full record" : "Full record"}</button>
       {open ? <div>
         {text ? <pre className="session-out">{text}</pre> : null}
-        {pending ? <p className="session-notice" role="status">Loading record… <button type="button" className="link live-record-control" onClick={cancel}>Cancel</button></p>
+        {pending ? <p className="session-notice"><StatusMark label="Loading record…" /> <button type="button" className="link live-record-control" onClick={cancel}>Cancel</button></p>
           : error ? <p className="session-notice" role="status">Could not read this record. <button type="button" className="link live-record-control" onClick={() => void read()}>Retry</button></p>
           : offset !== null ? <button type="button" className="link live-record-control" onClick={() => void read()}>{text ? "Show more" : "Load record"}</button> : null}
       </div> : null}
@@ -310,7 +311,7 @@ function Connecting() {
       <div className="skeleton h-4 w-3/4" />
       <div className="skeleton h-8 w-full" />
       <div className="skeleton h-8 w-5/6" />
-      <p className="session-notice">Connecting to the session…</p>
+      <p className="session-notice"><StatusMark label="Connecting to the session…" /></p>
     </div>
   );
 }
@@ -358,8 +359,8 @@ function ScopedLiveSession({ project, task, engineLabel, waiting, steering, read
   };
   const transportStatus = transcript.isError && transcript.data
     ? <p className="session-notice" role="status">Could not update the session. <button type="button" className="link live-record-control" onClick={() => void transcript.refetch()}>Retry</button></p>
-    : transcript.reconnecting ? <Separator text="Reconnecting to the session…" />
-    : transcript.catchingUp ? <Separator text="Catching up…" /> : null;
+    : transcript.reconnecting ? <StatusMark label="Reconnecting to the session…" />
+    : transcript.catchingUp ? <StatusMark label="Catching up…" /> : null;
 
   const unavailable = <p className="live-line text-muted">No session file for this attempt</p>;
   let content: ReactNode;
@@ -389,7 +390,7 @@ function ScopedLiveSession({ project, task, engineLabel, waiting, steering, read
     content = (
       <>
         <Conversation events={events} engineLabel={engineLabel} running={running} />
-        {transportStatus ?? (running ? <p className="session-notice">Connecting to the session…</p> : unavailable)}
+        {transportStatus ?? (running ? <p className="session-notice"><StatusMark label="Connecting to the session…" /></p> : unavailable)}
       </>
     );
     tone = running ? "muted" : "off";
@@ -409,7 +410,7 @@ function ScopedLiveSession({ project, task, engineLabel, waiting, steering, read
         ) : (
           <Conversation events={events} engineLabel={engineLabel} running={running} />
         )}
-        {transportStatus ?? <Separator text={footer} tone={running && !paused ? "live" : undefined} />}
+        {transportStatus ?? <span className="sr-only" role="status">{footer}</span>}
         {running && !transcript.isError && !transcript.reconnecting && !transcript.catchingUp ? <LiveCue activity={task.activity} /> : null}
       </>
     );
@@ -446,7 +447,7 @@ function ScopedLiveSession({ project, task, engineLabel, waiting, steering, read
       {steering ? <SteeringNotice steering={steering} /> : null}
       <TranscriptBody key={String(raw)} active={active} following={!paused} onPause={() => setPaused(true)} onOlder={loadOlder}>
         {transcript.data && hasSession ? <div className="live-history-status">
-          {transcript.historyPending ? <span role="status">Loading earlier activity…</span>
+          {transcript.historyPending ? <span><StatusMark label="Loading earlier activity…" /></span>
             : transcript.historyError ? <span role="status">Could not load earlier activity. <button type="button" className="btn btn-ghost live-record-control" onClick={() => void transcript.loadOlder()}>Retry</button></span>
             : !transcript.data.has_earlier ? <span>Beginning of session</span> : null}
         </div> : null}

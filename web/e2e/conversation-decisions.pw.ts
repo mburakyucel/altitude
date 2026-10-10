@@ -328,7 +328,7 @@ test("Work rows retain running questions and partial answers, then keep the task
   await park(request, slug);
   await back.click();
   await walk.state("03c-owner-asks-all-three-again", {
-    visible: [row.getByText(/Your turn · 3 questions/), row.getByText("Waiting for your answer to the task’s question.", { exact: true }), badge(5)], hidden: [work.getByRole("article")],
+    visible: [row.getByText(/Your turn · 3 questions/), row.getByText("Needs you", { exact: true }), badge(5)], hidden: [work.getByRole("article")],
   });
   await primary.getByRole("link", { name: /Needs you/ }).click();
   await list.getByRole("button", { name: "14 days", exact: true }).click();
@@ -348,7 +348,7 @@ test("Work rows retain running questions and partial answers, then keep the task
   const again = await park(request, slug);
   expect(again.questions.filter((q) => q.status === "open").map((q) => q.id)).toEqual([region.id, owner.id]);
   await walk.state("05b-owner-asks-remaining-two-again", {
-    visible: [row.getByText(/Your turn · 2 questions/), row.getByText("Waiting for your answer to the task’s question.", { exact: true }), badge(4)], hidden: [work.getByRole("article")],
+    visible: [row.getByText(/Your turn · 2 questions/), row.getByText("Needs you", { exact: true }), badge(4)], hidden: [work.getByRole("article")],
   });
   await primary.getByRole("link", { name: /Needs you/ }).click();
   await list.getByRole("button", { name: "West", exact: true }).click();
@@ -357,7 +357,7 @@ test("Work rows retain running questions and partial answers, then keep the task
   await park(request, slug);
   await walk.open(workPath);
   await walk.state("06-same-row-last-question", {
-    visible: [row.getByText(/Your turn · 1 question/), row.getByText("Waiting for your answer to the task’s question.", { exact: true }), badge(3)], hidden: [work.getByRole("article")],
+    visible: [row.getByText(/Your turn · 1 question/), row.getByText("Needs you", { exact: true }), badge(3)], hidden: [work.getByRole("article")],
   });
   await row.click();
   await expect(page).toHaveURL(new RegExp(`question=${owner.id}&revision=${owner.revision}$`));
@@ -475,7 +475,7 @@ test("the L3 dilemma ends the chat; a follow-up hands the turn back until it is 
   await expect(conversation.locator(".msg-row").filter({ hasText: "Read-only verification 9: fixture migration remains healthy." }).locator("~ .conversation-question")).toHaveCount(1);
   await expect(conversation.getByText("The new index passes the fixture checks. Keeping the old one preserves instant rollback.", { exact: true })).toHaveCount(1);
   await walk.state("02-question-at-the-end-with-l3-context", {
-    visible: [turnLabel(page).getByText("Your turn · 1 question", { exact: true }), card, card.getByText(question.question, { exact: true }), ...(info.project.name === "phone" ? [] : [page.getByText("Replying hands the turn back to the L2.", { exact: true })]), card.getByRole("button", { name: question.recommendation!.label, exact: true }), page.getByRole("textbox", { name: "Message the L2", exact: true })],
+    visible: [turnLabel(page).getByText("Your turn · 1 question", { exact: true }), card, card.getByText(question.question, { exact: true }), card.getByRole("button", { name: question.recommendation!.label, exact: true }), page.getByRole("textbox", { name: "Message the L2", exact: true })],
     hidden: [page.getByRole("combobox", { name: "Recipient", exact: true }), page.getByPlaceholder("Add a note for the L2 (optional)")],
   });
   // L3's coordination with the L2 stays one folded line until the operator opens it.
@@ -671,7 +671,7 @@ test("a requeued dilemma accepts a durable response and discussion while its nex
   await expect(field).toBeEnabled();
   await expect(accept).toBeEnabled();
   await walk.state("01-requeued-question-still-actionable", {
-    visible: [card, field, accept, page.getByText("Your turn · 1 question", { exact: true }).first(), ...(info.project.name === "phone" ? [] : [conversation.getByText("Delivered when Altitude starts the L2.", { exact: true })])],
+    visible: [card, field, accept, page.getByText("Your turn · 1 question", { exact: true }).first(), ],
     hidden: [page.getByRole("button", { name: "Resume", exact: true }), ...(info.project.name === "phone" ? [conversation.getByText("Delivered when Altitude starts the L2.", { exact: true })] : [])],
   });
   await accept.click();

@@ -6,6 +6,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { ApiError, imageSendRefused, removeL2Message, sendL2Message, taskAction, useOverview, useTask, useSendNow } from "../data/api";
 import { SendNow, SendNowError } from "../components/SendNow";
+import { BusyLabel } from "../components/StatusMark";
 import type { Decision, L2MessageInput, Overview, TaskMessage, TaskView } from "../data/api";
 import { InlineProse, ProseScope } from "../components/Prose";
 import { ProseTerminal } from "../components/CodeBlock";
@@ -94,8 +95,6 @@ interface Facts {
   canStop: boolean;
   canResume: boolean;
   canReject: boolean;
-  /** The composer's hint line for this state. */
-  hint: string;
   /** A held review-ready PR waiting for the operator (#419), and where the PR lives. */
   review: Decision | null;
   repository?: string | null;
@@ -190,7 +189,7 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
   const wait = overview?.wip.waiting.find((w) => w.project === project && w.slug === task.slug);
   const explanation = taskExplanation(task, turnRows.find((row) => row.kind === "review"));
   const waiting = state === "queued" || held
-    ? planned ? explanation : sentence(holdText(wait?.hold, wait?.why ?? (held ? "resume" : "dispatch"))) : null;
+    ? planned ? explanation : wait?.hold ? sentence(holdText(wait.hold, wait.why)) : null : null;
 
   return {
     state,
@@ -210,14 +209,6 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
     canStop: state === "running",
     canResume: (state === "blocked" || task["can_continue"] === true) && (!task.steering || task.steering.state === "idle") && task.question?.status !== "open",
     canReject: ["queued", "running", "blocked", "reported"].includes(state),
-    hint:
-      state === "queued"
-        ? "Delivered when Altitude starts the L2."
-        : state === "running"
-        ? "Reaches the L2 at its next checkpoint."
-        : held
-          ? "Delivered when Altitude resumes the L2."
-          : "Sending resumes the L2 with your message.",
     review: turnRows.find((row) => row.kind === "review") ?? null,
     repository,
   };
@@ -512,9 +503,9 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
             {turn.length || !(handedBack || group.questions.some((q) => q.response)) ? <>
               <p className="conversation-turn">{turn.length ? turnText : "L3 is answering"}</p>
               <QuestionSet key={group.id} decisions={group.questions} group={group} target={target} refreshKey={accessRefresh} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
-            </> : <p className="text-meta text-muted" role="status">{task.state === "queued" ? "Sent · waiting for the L2 to start." : "Sent · the L2 has your reply."}</p>}
-          </div> : (task.question?.status === "resolved" || task.question?.response) && !facts.finished ? <p className="text-meta text-muted" role="status">{task.state === "running" ? "Work resumed" : task.state === "queued" ? "Waiting for the L2 to start" : "Waiting to resume"}</p>
-          : handedBack && !facts.finished && !facts.review ? <p className="text-meta text-muted" role="status">{task.state === "queued" ? "Sent · waiting for the L2 to start." : "Sent · the L2 has your reply."}</p> : null}
+            </> : <p className="sr-only" role="status">{task.state === "queued" ? "Sent · waiting for the L2 to start." : "Sent · the L2 has your reply."}</p>}
+          </div> : (task.question?.status === "resolved" || task.question?.response) && !facts.finished ? <p className="sr-only" role="status">{task.state === "running" ? "Work resumed" : task.state === "queued" ? "Waiting for the L2 to start" : "Waiting to resume"}</p>
+          : handedBack && !facts.finished && !facts.review ? <p className="sr-only" role="status">{task.state === "queued" ? "Sent · waiting for the L2 to start." : "Sent · the L2 has your reply."}</p> : null}
           {facts.review ? <div className="conversation-question" data-turn="operator">
             <p className="conversation-turn">Your turn · review before merge</p>
             <ReviewDecision decision={facts.review} repository={facts.repository} chat disabled={readOnly || checking || denied} />
@@ -536,9 +527,9 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         imageScope={{ project, task: task.slug, engine: str(task["l2_engine"]) || str(task["engine"]) }}
         ariaLabel="Message the L2" placeholder="Message the L2" disabled={readOnly || denied}
         sendDisabled={["stopping", "stop_unconfirmed"].includes(steering.state)}
-        hint={["stopped", "stopping", "stop_unconfirmed"].includes(steering.state) ? "" : task.state !== "queued" && turn.length ? "Replying hands the turn back to the L2." : facts.hint} />
+        hint={task.state === "blocked" && steering.state === "idle" ? "Sending resumes the L2 with your message." : ""} />
         {steering.state === "stopped" ? <p className="text-meta text-muted">Send a correction to continue this session.</p>
-          : ["stopping", "stop_unconfirmed"].includes(steering.state) ? <p className="text-meta text-muted">Keep editing while Stop is confirmed.</p> : null}
+          : null}
       </div> : null}
     </section>
   );
@@ -580,7 +571,7 @@ function ActionButtons({ facts, actions }: { facts: Facts; actions: ReturnType<t
   if (!facts.canStop && !facts.canReject) return null;
   return (
     <>
-      {facts.canResume ? <button type="button" className="btn btn-ghost task-action" disabled={actions.pending} onClick={actions.resume}>{actions.pending ? "Resuming…" : "Resume"}</button> : null}
+      {facts.canResume ? <button type="button" className="btn btn-ghost task-action" disabled={actions.pending} onClick={actions.resume}><BusyLabel busy={actions.pending} label="Resume" working="Resuming…" /></button> : null}
       {facts.canReject ? (
         <button type="button" className="btn btn-ghost task-action" onClick={() => actions.open("reject")}>
           Reject

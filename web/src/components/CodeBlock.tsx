@@ -40,7 +40,7 @@ export function CopyButton({ text, label = "Copy" }: { text: string; label?: str
   };
   return <button type="button" className="btn code-copy" onClick={() => void copy()}>
     {state === "copied" ? <svg aria-hidden viewBox="0 0 20 20" width="16" height="16"><path d="M4.5 10.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg> : COPY_ICON}
-    <span role={state === "idle" ? undefined : "status"}>{state === "copied" ? "Copied" : state === "refused" ? "Couldn't copy" : label}</span>
+    <span className={state === "copied" ? "sr-only" : undefined} role={state === "idle" ? undefined : "status"}>{state === "copied" ? "Copied" : state === "refused" ? "Couldn't copy" : label}</span>
   </button>;
 }
 
@@ -60,9 +60,10 @@ export function CodeBlock({ text, info }: { text: string; info: string }) {
   return <div className="command-block" role="group" aria-label="Command">
     <pre className="session-code">{text}</pre>
     <div className="command-actions">
-      {note ? <span className="command-note">{note}</span> : null}
       <CopyButton text={text} />
+      {note ? <UnavailableAction label="Open in terminal" reason={note} className="btn btn-primary" /> : null}
       {open ? <button type="button" className="btn btn-primary" onClick={() => open(text)}>{TERMINAL_ICON}Open in terminal</button> : null}
     </div>
   </div>;
 }
+import { UnavailableAction } from "./UnavailableAction";

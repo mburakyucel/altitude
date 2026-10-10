@@ -58,7 +58,7 @@ describe("RestartBanner", () => {
     renderApp({ route: "/monitor" });
     await screen.findByText(/Merged changes to the backend are waiting to activate\./);
     expect(screen.getByText(/2 files, landed 2h ago/)).toBeInTheDocument();
-    expect(screen.getByText("Altitude restarts at the next quiet moment.")).toBeInTheDocument();
+    expect(screen.queryByText("Altitude restarts at the next quiet moment.")).toBeNull();
     expect(restartButton()).toBeInTheDocument();
   });
 
@@ -67,7 +67,7 @@ describe("RestartBanner", () => {
     renderApp({ route: "/monitor" });
     await screen.findByText(/Waiting for altitude\/fix-thing, altitude L3\./);
     expect(screen.getByText(/Altitude restarts at the next quiet moment\./)).toBeInTheDocument();
-    expect(restartButton()).toBeNull();
+    expect(restartButton()).toHaveAttribute("aria-disabled", "true");
   });
 
   it("describes web-only and combined activation truthfully", async () => {

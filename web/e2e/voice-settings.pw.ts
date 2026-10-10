@@ -109,26 +109,26 @@ test("Voice settings loading, denied save and retry keep the persisted selection
   });
   try {
     await walk.open("/settings/voice");
-    await walk.state("01-loading-no-default-selected", { visible: [page.getByText("Loading settings…", { exact: true })], hidden: [page.getByRole("radio")] });
+    await walk.state("01-loading-no-default-selected", { visible: [page.getByRole("status", { name: "Loading settings…", exact: true })], hidden: [page.getByRole("radio")] });
     releaseRead();
     await expect(page.getByRole("alert").filter({ hasText: "Could not load settings" })).toBeVisible({ timeout: 15_000 });
-    await walk.state("02-reading-failed-retry", { visible: [page.getByRole("alert").filter({ hasText: "Could not load settings" }), page.getByRole("button", { name: "Retry", exact: true })], hidden: [page.getByRole("radio"), page.getByText("Loading settings…", { exact: true })] });
+    await walk.state("02-reading-failed-retry", { visible: [page.getByRole("alert").filter({ hasText: "Could not load settings" }), page.getByRole("button", { name: "Retry", exact: true })], hidden: [page.getByRole("radio"), page.getByRole("status", { name: "Loading settings…", exact: true })] });
     failRead = false;
     await page.getByRole("button", { name: "Retry", exact: true }).click();
     const browser = page.getByRole("radio", { name: "Browser recognition", exact: true });
     const host = page.getByRole("radio", { name: "This computer", exact: true });
     await expect(host).toBeChecked();
     await browser.click();
-    await walk.state("03-saving-controls-disabled", { visible: [page.getByText("Saving…", { exact: true }), host], hidden: [page.getByRole("alert")] });
+    await walk.state("03-saving-controls-disabled", { visible: [page.getByRole("status", { name: "Saving…", exact: true }), host], hidden: [page.getByRole("alert")] });
     await expect(browser).toBeDisabled();
     await expect(host).toBeDisabled();
     releaseSave();
-    await walk.state("04-denied-keeps-saved-choice", { visible: [page.getByRole("alert").filter({ hasText: "Fixture settings update denied" }), page.getByRole("button", { name: "Retry", exact: true })], hidden: [page.getByText("Saving…", { exact: true })] });
+    await walk.state("04-denied-keeps-saved-choice", { visible: [page.getByRole("alert").filter({ hasText: "Fixture settings update denied" }), page.getByRole("button", { name: "Retry", exact: true })], hidden: [page.getByRole("status", { name: "Saving…", exact: true })] });
     expect((await savedVoice(request)).backend).toBe("host");
     failSave = false;
     await page.getByRole("button", { name: "Retry", exact: true }).click();
     await expect.poll(async () => (await savedVoice(request)).backend).toBe("browser");
-    await walk.state("05-retry-saves-through-real-handler", { visible: [page.getByText("Saved.", { exact: true }), browser], hidden: [page.getByRole("alert")] });
+    await walk.state("05-retry-saves-through-real-handler", { visible: [page.getByRole("status", { name: "Saved.", exact: true }), browser], hidden: [page.getByRole("alert")] });
     await expect(browser).toBeChecked();
   } finally {
     releaseRead();
@@ -154,7 +154,7 @@ test("A choice made from a stale page is refused and Reload settings shows the c
   await walk.state("01-stale-choice-refused", {
     action: () => browser.click(),
     visible: [stale, reload],
-    hidden: [page.getByText("Saved.", { exact: true })],
+    hidden: [page.getByRole("status", { name: "Saved.", exact: true })],
   });
   await expect(page.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
   await walk.state("02-reload-shows-current-choice", {

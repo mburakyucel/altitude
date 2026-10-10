@@ -32,7 +32,7 @@ test("voice Send finishes in its original L2 conversation while viewing L3", asy
   await nav.locator('a[href="/projects/atlas"]').click();
   const projectField = page.getByRole("textbox", { name: "Message L3 about atlas", exact: true });
   await projectField.fill("Unsent project draft.");
-  await walk.state("01-project-draft-while-l2-transcribes", { visible: [projectField], hidden: [conversation, page.getByText("Transcribing…", { exact: true })] });
+  await walk.state("01-project-draft-while-l2-transcribes", { visible: [projectField], hidden: [conversation, page.getByRole("status", { name: "Transcribing…", exact: true })] });
   release();
   const finalText = "Keep retry bounded. Include the failure reason.";
   await expect.poll(async () => (await task()).messages.filter((row: { text: string }) => row.text === finalText).length).toBe(1);
@@ -41,7 +41,7 @@ test("voice Send finishes in its original L2 conversation while viewing L3", asy
   expect([...project.history, ...(project.queued ?? [])].some((row: { text: string }) => row.text === finalText)).toBe(false);
   if (info.project.name === "phone") await nav.getByRole("link", { name: "Work", exact: true }).click();
   await page.locator(`a[href="/projects/atlas/tasks/${slug}"]`).first().click();
-  await walk.state("02-l2-message-delivered-once", { visible: [conversation.getByText(finalText, { exact: true }), field], hidden: [page.getByText("Transcribing…", { exact: true })] });
+  await walk.state("02-l2-message-delivered-once", { visible: [conversation.getByText(finalText, { exact: true }), field], hidden: [page.getByRole("status", { name: "Transcribing…", exact: true })] });
   await expect(field).toHaveValue("");
   expect(host.finals).toBe(1);
   expect(host.opened).toBe(1);

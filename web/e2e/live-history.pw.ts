@@ -250,7 +250,7 @@ test("raw history has unique records and explicit chunked disclosure with local 
   });
   try {
     await row.getByRole("button", { name: "Full record", exact: true }).click();
-    await walk.state("raw-01-local-record-loading", { visible: [row.getByText("Loading record…", { exact: false }), row.getByRole("button", { name: "Cancel", exact: true })], hidden: [] });
+    await walk.state("raw-01-local-record-loading", { visible: [row.getByRole("status", { name: "Loading record…", exact: true }), row.getByRole("button", { name: "Cancel", exact: true })], hidden: [] });
     release();
     await walk.state("raw-02-local-record-error", { visible: [row.getByText("Could not read this record.", { exact: false }), row.getByRole("button", { name: "Retry", exact: true })], hidden: [] });
     state = "ready";
@@ -262,17 +262,17 @@ test("raw history has unique records and explicit chunked disclosure with local 
     state = "hold";
     gate = new Promise<void>((resolve) => { release = resolve; });
     await row.getByRole("button", { name: "Show more", exact: true }).click();
-    await expect(row.getByText("Loading record…", { exact: false })).toBeVisible();
+    await expect(row.getByRole("status", { name: "Loading record…", exact: true })).toBeVisible();
     await row.getByRole("button", { name: "Cancel", exact: true }).click();
     state = "ready";
     release();
-    await walk.state("raw-03-canceled-chunk-keeps-detail", { visible: [row.getByRole("button", { name: "Show more", exact: true })], hidden: [row.getByText("Loading record…", { exact: false })] });
+    await walk.state("raw-03-canceled-chunk-keeps-detail", { visible: [row.getByRole("button", { name: "Show more", exact: true })], hidden: [row.getByRole("status", { name: "Loading record…", exact: true })] });
     await expect(row.locator("div > pre.session-out")).toHaveText(chunks[0]!);
     for (let index = 0; index < 8 && await row.getByRole("button", { name: "Show more", exact: true }).count(); index += 1) {
       chunk = nextChunk();
       await row.getByRole("button", { name: "Show more", exact: true }).click();
       chunks.push((await (await chunk).json()).text);
-      await expect(row.getByText("Loading record…", { exact: false })).toHaveCount(0);
+      await expect(row.getByRole("status", { name: "Loading record…", exact: true })).toHaveCount(0);
     }
     await expect(row.getByRole("button", { name: "Show more", exact: true })).toHaveCount(0);
     expect(chunks.length).toBeGreaterThan(1);

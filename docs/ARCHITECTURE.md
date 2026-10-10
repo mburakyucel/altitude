@@ -1844,6 +1844,14 @@ project instructions file, which both worker personas direct the task owner to r
 
 ### Web delivery
 
+The web app presents routine progress with accessible visual status marks: loading and pending
+actions use spinners, and saved/copied receipts use checks. Action labels retain their footprint
+while pending. Screen-reader names retain the status words. Unavailable terminal, voice and alert
+controls disclose their reason on press without invoking the action. Authored blockers, errors,
+setup instructions and resource/privacy consequences remain visible; task-page descriptions do
+not repeat the state chip or question card. These presentation rules do not change delivery,
+admission, routing or permission decisions.
+
 altd serves the built app from `web/dist`. `index.html` is uncached, so each open learns the current
 build; Vite names every file under `/assets/` by its content hash, and those files are cached as
 immutable. A warm open therefore fetches only the page and its API reads, and a cold open, the first

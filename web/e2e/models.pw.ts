@@ -215,7 +215,7 @@ test("Settings by destination: the menu, the overview groups, every project and 
   await expect(group("Models").getByRole("button", { name: "New tasks Auto · each project's own defaults", exact: true })).toBeEnabled();
   await expect(group("Devices and access").getByRole("link", { name: /^Devices / })).toHaveAttribute("href", "/settings/devices");
   await expect(group("Devices and access").getByRole("switch", { name: /Terminal/ })).toBeVisible();
-  await expect(group("Devices and access").getByText(/ · HTTPS off · view only$/)).toBeVisible();
+  await expect(group("Devices and access").getByText(/ · HTTPS off$/)).toBeVisible();
   await expect(group("Coding agents").getByRole("switch", { name: /Validation runs/ })).toBeVisible();
   await expect(group("Coding agents").getByRole("link", { name: /^Prerequisites / })).toBeVisible();
   await expect(group("Coding agents").getByRole("link", { name: /^Incident reports / })).toBeVisible();
@@ -281,7 +281,7 @@ test.describe("Remove project", () => {
     try {
       await walk.state("03-removing", {
         action: () => sample.getByRole("button", { name: "Remove sample-project", exact: true }).click(),
-        visible: [sample.getByRole("status").filter({ hasText: "Removing… Closing doesn't cancel removal." })],
+        visible: [sample.getByRole("button", { name: "Removing…", exact: true })],
         hidden: [sample.getByRole("alert")],
       });
       await expect(sample.getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();

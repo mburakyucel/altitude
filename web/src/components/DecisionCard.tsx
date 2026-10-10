@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { StatusMark, BusyLabel } from "./StatusMark";
 import { ApiError, sendL2Message, useDecide, useProject } from "../data/api";
 import type { DecideInput, Decision, QuestionAnswer, QuestionGroup } from "../data/api";
 import { useToast } from "../data/Toast";
@@ -114,7 +115,7 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
   };
   // Open questions that are not the operator's (waits on L3) need no summary; their turn line says who answers.
   const summary = open.length ? `${open.length} question${open.length === 1 ? "" : "s"} to answer`
-    : decisions.some((q) => q.response && q.status !== "resolved") ? "Responses sent to L2"
+    : decisions.some((q) => q.response && q.status !== "resolved") ? null
     : decisions.every((q) => q.status === "resolved") ? "Questions closed" : null;
   const render = (question: Decision) => {
     const resolved = question.status === "resolved";
@@ -136,7 +137,7 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
         {question.resolution ? <><p><InlineProse text={question.resolution.text} /></p><span className="text-meta text-muted" title={exactTime(question.resolution.at)}>{closedBy(question.resolution.by)} · {ageText(question.resolution.at)}</span></> : null}
       </div> : null}
       {!resolved && question.response ? <div className="decision-receipt" role="status">
-        <b>Sent to L2</b><p><InlineProse text={question.response.text} /></p>
+        <StatusMark busy={false} announce={false} label="Sent to L2" /><p><InlineProse text={question.response.text} /></p>
         <span className="text-meta text-muted" title={exactTime(question.response.at)}>{ageText(question.response.at)}</span>
       </div> : null}
       {question.design_url ? <Link className="text-meta question-preview" to={question.design_url} onClick={(event) => {
@@ -182,8 +183,8 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
       </details> : null}
       {shown.filter((question) => !earlier.includes(question)).map(render)}
       {open.length ? <div className="question-batch">
-        <button type="button" className="btn btn-primary" disabled={unavailable || !selected.length} onClick={() => submit(selected)}>{decide.isPending ? "Sending…" : selected.length ? `Send ${selected.length} answer${selected.length === 1 ? "" : "s"}` : "Send answers"}</button>
-        <p className="text-meta text-muted">{selected.length ? "Only these answers will be sent. You can answer the rest later." : "Choose an answer or write your own. Follow-up questions are welcome."}</p>
+        <button type="button" className="btn btn-primary" disabled={unavailable || !selected.length} onClick={() => submit(selected)}><BusyLabel busy={decide.isPending} label={selected.length ? `Send ${selected.length} answer${selected.length === 1 ? "" : "s"}` : "Send answers"} working="Sending…" /></button>
+        {selected.length ? <p className="text-meta text-muted">Only these answers will be sent. You can answer the rest later.</p> : null}
       </div> : null}
       {decide.isError ? <p className="text-meta text-danger" role="alert">
         {denied ? "You cannot send answers here. Refresh after access is restored." : stale ? "These questions have changed. Refresh and review the current choices." : "Could not send answers. Your responses are kept here."}{" "}
@@ -216,7 +217,7 @@ export function ReviewDecision({ decision, repository, disabled = false, chat = 
     {decision.detail ? <QuestionProse className="decision-why" text={decision.detail} /> : null}
     {approve.isSuccess ? <p className="text-meta text-muted" role="status">Approval sent · the L2 merges after a final check of the same PR.</p> : <>
       <div className="decision-options" role="group" aria-label="Merge review">
-        <button className="btn btn-primary" type="button" disabled={disabled || denied || approve.isPending} onClick={() => approve.mutate()}>{approve.isPending ? "Sending…" : "Approve merge"}</button>
+        <button className="btn btn-primary" type="button" disabled={disabled || denied || approve.isPending} onClick={() => approve.mutate()}><BusyLabel busy={approve.isPending} label="Approve merge" working="Sending…" /></button>
         {repository && decision.pr != null ? <a className="btn btn-ghost" href={`${repository}/pull/${decision.pr}`} target="_blank" rel="noopener noreferrer">View PR #{decision.pr}</a> : null}
       </div>
       <p className="text-meta text-muted">{chat ? "Or ask below. " : ""}Approving sends your message; nothing merges before the L2 checks the same PR again.</p>

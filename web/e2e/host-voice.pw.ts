@@ -34,7 +34,7 @@ function views(page: Page, info: TestInfo) {
     hint: main.locator(".composer-hint"),
     wave: main.locator(".composer-wave"),
     listening: main.locator('.composer[data-phase="listening"]'),
-    transcribing: main.getByText("Transcribing…", { exact: true }),
+    transcribing: main.getByRole("status", { name: "Transcribing…", exact: true }),
   };
 }
 
@@ -50,13 +50,13 @@ test("host voice: Starting voice, live words, Transcribing, landed; Cancel and S
 
   await walk.state("host-voice-01-starting", {
     action: () => v.mic.click(),
-    visible: [v.stop, v.cancel, v.main.getByText("Starting voice…", { exact: true })],
-    hidden: [v.mic, v.main.getByText("Listening… Stop to add text, or Send.", { exact: true })],
+    visible: [v.stop, v.cancel, v.main.getByRole("status", { name: "Starting voice…", exact: true })],
+    hidden: [v.mic, v.main.getByRole("status", { name: "Listening… Stop to add text, or Send.", exact: true })],
   });
   await walk.state("host-voice-02-listening", {
     action: () => page.evaluate(() => (window as unknown as { fixtureReleaseWorklet(): void }).fixtureReleaseWorklet()),
-    visible: [v.listening, v.wave, v.main.getByText("Listening… Stop to add text, or Send.", { exact: true })],
-    hidden: [v.main.getByText("Starting voice…", { exact: true })],
+    visible: [v.listening, v.wave, v.main.getByRole("status", { name: "Listening… Stop to add text, or Send.", exact: true })],
+    hidden: [v.main.getByRole("status", { name: "Starting voice…", exact: true })],
   });
   await expect(v.field).toHaveValue("Please check the build", { timeout: 5000 });
   await expect(v.field).toHaveAttribute("readonly", "");
@@ -69,7 +69,7 @@ test("host voice: Starting voice, live words, Transcribing, landed; Cancel and S
   await walk.state("host-voice-03-transcribing", {
     action: () => v.stop.click(),
     visible: [v.transcribing],
-    hidden: [v.main.getByText("Listening… Stop to add text, or Send.", { exact: true })],
+    hidden: [v.main.getByRole("status", { name: "Listening… Stop to add text, or Send.", exact: true })],
   });
   await walk.state("host-voice-04-landed", {
     action: async () => { release(); await expect(v.field).toHaveValue(/^Please Heard \d+ chunks\.$/); },
@@ -220,30 +220,37 @@ test("host voice not set up: the mic points to Settings, which sets it up with p
   await expect(page.getByRole("radio", { name: "This computer", exact: true })).toBeChecked();
   await walk.state("host-voice-10-setting-up", {
     action: () => button.click(),
-    visible: [page.getByRole("progressbar", { name: "Voice setup" }), page.getByText("Setting up… 0 MB of 698 MB", { exact: true }),
+    visible: [page.getByRole("progressbar", { name: "Voice setup" }), page.getByRole("status").filter({ hasText: "0 MB of 698 MB" }),
       page.getByRole("button", { name: "Cancel setup", exact: true })],
     hidden: [button],
   });
   host.state = { state: "setting-up", download_bytes: 698435338, done_bytes: 420000000 };
-  await expect(page.getByText("Setting up… 420 MB of 698 MB", { exact: true })).toBeVisible({ timeout: 5000 });
+  await expect(page.getByRole("status").filter({ hasText: "420 MB of 698 MB" })).toBeVisible({ timeout: 5000 });
   host.state = READY;
   await walk.state("host-voice-11-ready", {
-    visible: [page.getByText("Ready on this computer.", { exact: false }), page.getByRole("button", { name: "Remove voice (698 MB)", exact: true })],
+    visible: [page.getByText("While you dictate, the speech process uses about 2 GB of memory.", { exact: true }), page.getByRole("button", { name: "Remove voice (698 MB)", exact: true })],
     hidden: [page.getByRole("progressbar"), page.getByRole("button", { name: "Cancel setup", exact: true })],
   });
   expect(host.requests).toEqual(["setup"]);
 });
 
-test("host voice that cannot run here hides the mic and says why", async ({ page, request }, info) => {
+test("unavailable host voice explains itself on press without starting capture", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
-  await fixtureHost(page, { state: "unavailable", reason: "voice runs on Linux x86_64 only for now" });
+  const host = await fixtureHost(page, { state: "unavailable", reason: "voice runs on Linux x86_64 only for now" });
   await walk.open(project.path);
+  const reason = v.main.getByText("Voice isn't available on this computer: voice runs on Linux x86_64 only for now. Typing works.", { exact: true });
+  await expect(v.mic).toHaveAttribute("aria-disabled", "true");
+  await expect(reason.locator("..")).toHaveClass(/sr-only/);
   await walk.state("host-voice-12-unavailable", {
-    visible: [v.main.getByText("Voice isn't available on this computer: voice runs on Linux x86_64 only for now. Typing works.", { exact: true }), v.field],
-    hidden: [v.mic],
+    visible: [v.mic, v.field], hidden: [],
   });
+  await v.mic.focus();
+  await page.keyboard.press("Enter");
+  await expect(reason.locator("..")).not.toHaveClass(/sr-only/);
+  await walk.state("host-voice-13-reason", { visible: [reason, v.mic, v.field], hidden: [] });
+  expect(host.requests).toEqual([]);
 });
 
 test("host voice through a lost connection: keeps recording, catches up, waits after Stop, then gives up", async ({ page, request }, info) => {
@@ -256,7 +263,7 @@ test("host voice through a lost connection: keeps recording, catches up, waits a
   const lost = v.main.getByText("Connection lost — still recording. Your words will catch up.", { exact: true });
   const catchingUp = v.main.getByText("Catching up…", { exact: true });
   const waiting = v.main.getByText("Waiting for connection…", { exact: true });
-  const listeningHint = v.main.getByText("Listening… Stop to add text, or Send.", { exact: true });
+  const listeningHint = v.main.getByRole("status", { name: "Listening… Stop to add text, or Send.", exact: true });
 
   await v.field.fill("Draft");
   await v.mic.click();
