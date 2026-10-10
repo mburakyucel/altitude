@@ -948,16 +948,15 @@ CLI, and the backend applies the identity, clean-Git, isolation, and merge-polic
 command and effect boundary. Claude hooks add telemetry, coordination delivery and the operator-message notice;
 they are not the backend authority check. Claude launches with images stream the prompt as one user message
 marked as the human's.
-Landings with `--merge` wait up to one hour for a
-repository turn, keeping the owner session alive and reporting seconds waited. The turn serializes
-publication and check waiting; external runner executions do not share it. The admitted command rereads task authority and holds, fetches the
-base, incorporates it into the task branch and validates the fresh PR base/head pair through
-merge. Nonmerging invocations never take the turn. If only main moves, the admitted merging command
+A merging landing fetches the base, incorporates it into the task branch, publishes and waits for that
+head's own checks and owner assessment, keeping the owner session alive. Only the final
+confirm-and-merge takes the repository turn, which waits at most one hour and reports seconds waited;
+external runner executions do not share it. When another merge moves main first, the same command
 integrates it, pushes and waits for fresh checks within its original publication deadline, repeating
 ownership, review, hold, approval and issue-closure gates. Head or PR identity movement refuses;
-adopted PR pushes remain fast-forward only. Task messages and Stop use their ordinary lifecycle
-while it waits. Failure, timeout or process exit releases the turn; a later invocation validates
-the current candidate and checks afresh.
+adopted PR pushes remain fast-forward only. Nonmerging invocations never take the turn. Task messages
+and Stop use their ordinary lifecycle while it waits. Failure, timeout or process exit releases the
+turn; a later invocation validates the current candidate and checks afresh.
 An owner whose branch needs manual conflict reconciliation updates it in the worktree; a conflict
 they cannot resolve goes to L3 through an ordinary `alt task block`, without `--fault`.
 The delivery gate requires Python, web, build and phone/desktop browser checks. Review captures stay
@@ -967,7 +966,8 @@ Owners and helpers run relevant tests during development. This repository's GitH
 `alt land` requires successful CI for the current head and tested tree, without a duplicate
 local full run. The branch includes current main; `--merge` integrates a missing base and waits
 for fresh PR checks on the new head. Final validation and merge are serialized across Altitude
-owners sharing the common Git directory, and the merged tree must equal the tested tree.
+owners sharing the common Git directory, while each candidate's hosted CI runs outside that turn.
+The merged tree must equal the tested tree.
 Other installations do not share the turn; this repository's strict GitHub up-to-date required-check
 rule protects their final merge race. GitHub merges do not enforce Altitude's task holds and review
 protocol. Superseded PR checks are cancelled on a new PR push; main and manual runs are never cancelled.

@@ -8,6 +8,10 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 Patch release of the early preview, with the same Linux x86_64 and Apple silicon macOS targets
 and known limitations as `v0.1.1`.
 
+- `alt land --merge` takes the repository-wide landing turn only to confirm its candidate is still
+  current and merge it, so a PR that is green on current main merges without waiting for other
+  owners' CI runs. When another merge moves main first, the same command integrates it and waits
+  for the new head's fresh check. Landings that do not merge take no turn.
 - Adversarial review is one request and one result. Task details shows a Proposal review and an
   Implementation review box with the latest verdict and a single Request, Review again or Try again
   button; the conversation shows one card per kind with earlier iterations inside it. Requests queue
