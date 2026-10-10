@@ -383,8 +383,11 @@ arrives on such a connection after a full TLS 1.3 handshake. A browser that trus
 any certificate it issued. A browser that clicked past the first certificate's warning, or ignores
 certificate errors, refuses the second with a certificate alert; altd then settles the challenge
 that armed that connection as untrusted, disarms the address and answers on the next connection.
-Three attempts without an answer read Couldn't check: a failed request alone never means
-untrusted. A request on a connection opened before the
+A refusal is final for its challenge. A browser that ignores certificate errors connects again
+accepting the second certificate, possibly before altd has recorded the refusal, so an answer on
+the second certificate first waits up to five seconds for the challenge's other handshakes to end;
+one still open then gets a retry. Three attempts without an answer read Couldn't check: a failed
+request alone never means untrusted. A request on a connection opened before the
 challenge, including a TLS 1.2 or resumed one, gets a retry. altd issues no TLS session tickets,
 so every TLS 1.3 connection presents a certificate. The screen offers the code only once the check
 passes; the server does not yet refuse a pairing on it. With an external certificate, altd holds no
@@ -893,6 +896,9 @@ Missing or unfinished review, head or PR identity movement or ownership loss ref
 No review identity or disposition is automatically transferred.
 The final review/context check precedes recorded approval application, preserving holds on review refusal.
 The process owns the turn: return, exception or termination releases it without daemon recovery.
+A landing waiting on checks or assessment ends with the owner session that started it: the worker's end stops
+its job, and the landing handles that SIGTERM by leaving the candidate published and unmerged and an
+automatic notice for the owner's next turn naming the PR and published head.
 There is no persistent queue or FIFO guarantee. Dry runs and nonmerging invocations never take
 the turn. External Git/GitHub writers, other installations, older landing code, CI runs and
 hand-run suites do not share it. This repository's strict GitHub up-to-date required-check rule
@@ -1603,7 +1609,11 @@ authority or fault state. Every toast has a dismiss control; inline errors and t
 retain their recovery and answer controls. Both engines launch L2 workers in independent jobs outside altd's own;
 running and blocked workers survive activation and are adopted afterwards. Each worker unit and the
 service retain `KillMode=control-group` on Linux, and on macOS Stop takes every member of the job's
-coalition, so stopping a worker takes all its descendants. An exited or
+coalition, so stopping a worker takes all its descendants. A worker ends when its engine exits or
+its latest turn fails with no activity since; an active job alone is not a live worker. An engine can stay
+alive after a failed turn while a background command it started runs, so polling stops the job of a worker
+whose latest turn failed: whatever it left running ends with it, and the ordinary limit, capacity or fault path follows.
+A Send now message returned after that turn is not activity. A successful turn that waits on its own background work keeps running. An exited or
 missing worker on a running task requires a report written since its latest launch or resume
 or an explicit completion; without one it blocks with a system fault and incident. An explicit
 question block remains waiting after worker exit and needs no completion report. Dispatch continues

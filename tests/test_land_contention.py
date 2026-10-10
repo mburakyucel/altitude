@@ -450,6 +450,25 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.release('second')
         self.merged('second', self.finish(second))
 
+    def test_ended_owner_session_ends_assessment_wait_and_tells_its_next_turn(self):
+        # A usage-limited owner's job stopped while its landing waited for an assessment that could not come.
+        self.stale_review()
+        first = self.start('first', wait=20)
+        self.assessment_wait(first)
+        second = self.start('second')
+        self.waiting(second)
+        os.killpg(first[0].pid, signal.SIGTERM)
+        self.assertIn("owner's session ended", self.finish(first)['error'])
+        self.assertEqual(self.calls('first', ['pr', 'merge']), [])
+        head = S.load_task(self.project, 'first')['delivery']['head']
+        self.assertEqual(git('rev-parse', 'worktree-first', cwd=self.remote).strip(), head)
+        notices = [row for row in T.pending(self.project, 'first') if row['by'] == 'landing']
+        self.assertEqual(len(notices), 1)
+        self.assertIn(f'PR #101. Head {head} remains published and unmerged', T.render_inbox(notices))
+        self.assertIn('re-run `alt land --merge`', notices[0]['text'])
+        self.release('second')
+        self.merged('second', self.finish(second))
+
     def test_replaced_owner_during_assessment_releases_turn(self):
         self.stale_review()
         first = self.start('first', wait=20)
