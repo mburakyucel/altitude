@@ -33,7 +33,7 @@ window.WIREFRAME_BOARDS = [
   { label: 'Conversation and report states', desktop: 'ConversationStates.html', desktopSize: { w: 1200, h: 740, name: 'Sheet' } },
   { label: 'Create task: a reply that could become a task', desktop: 'ReplyTask.html', mobile: 'MobileReplyTask.html' },
   { label: 'Create task states', desktop: 'ReplyTaskStates.html', desktopSize: { w: 1200, h: 1280, name: 'Sheet' }, mobile: 'MobileReplyTaskStates.html' },
-  { label: 'Decision selections: states', desktop: 'DecisionChoiceStates.html', desktopSize: { w: 1200, h: 1340, name: 'Sheet' }, mobile: 'MobileDecisionChoiceStates.html' },
+  { label: 'Decision selections: states', desktop: 'DecisionChoiceStates.html', desktopSize: { w: 1200, h: 1560, name: 'Sheet' }, mobile: 'MobileDecisionChoiceStates.html' },
   { label: 'Project lifecycle states', desktop: 'ProjectLifecycleStates.html', desktopSize: { w: 1200, h: 1400, name: 'Sheet' } },
 ];
 

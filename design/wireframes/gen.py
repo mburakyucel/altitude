@@ -1084,20 +1084,23 @@ DECISION_STATES = [
      review_card('<div class="links"><span class="ob busy" style="height:34px">' + I("spin", "i sm") + 'Approve merge</span><span class="btn">View PR #42</span></div>')),
     ("Not sent", "refused or lost: red Retry in place with the reason", review_card('<div class="offer"><button class="ob fail" type="button">' + I("retry", "i sm") + 'Retry</button><span class="err" role="alert" style="flex-basis:auto">Not sent</span><span class="btn">View PR #42</span></div>')),
     ("Approval in the chat", "a check on your side of the chat, with the PR it approves", choice("Approve merge", "sent", "PR #42") + sent_line),
-    ("Waiting for a checkpoint", "the L2 is working: a clock; × removes the approval before it is read", choice("Approve merge", "wait", "PR #42")),
+    ("Waiting for a checkpoint", "saved, not yet read: a clock; × only while Altitude still allows removing it", choice("Approve merge", "wait", "PR #42")),
+    ("Handing over", "the L2's session is taking it: a spinner, no ×", choice("Approve merge", "busy", "PR #42")),
+    ("Delivery unconfirmed", "Altitude cannot confirm the session read it: no check, a short note",
+     '<div class="choice"><button class="ob wait" type="button">' + I("clock", "i sm") + 'Approve merge</button><span class="ot">PR #42 · Delivery unconfirmed</span></div>'),
     ("Quick answer in the chat", "the option you picked, with the question it answers", choice_ask + choice("7 days", "sent", CHOICE_Q) + sent_line),
     ("Decision recorded", "green once the L2 records it", choice("7 days", "done", CHOICE_Q) + '<div class="l3"><p>Keeping the old index for 7 days.</p></div>'),
     ("Several answers sent together", "one pill per pick; a written answer stays your bubble",
      choice("7 days", "sent", CHOICE_Q) + choice("West", "sent", "Where should the backup live?")
      + '<div class="me">Send it to the release team.</div><p class="ot" style="align-self:flex-end;margin:-4px 0 0">Who should receive the rollout report?</p>'),
-    ("Needs you after sending", "the card shows the same pills until it leaves the list",
+    ("Needs you after sending", "saved answers show a clock until the L2 reads them; the card then leaves the list",
      '<div class="l3"><p style="margin:0"><b>Index rollout</b></p><p class="muted" style="margin:0">1 question to answer</p>'
-     '<p style="margin:0">' + CHOICE_Q + '</p>' + choice("7 days", "sent").replace('class="choice"', 'class="choice start"')
+     '<p style="margin:0">' + CHOICE_Q + '</p>' + choice("7 days", "wait").replace('class="choice"', 'class="choice start"').replace('<span class="x" role="button" aria-label="Remove">' + I("x", "i sm") + '</span>', '')
      + '<p style="margin:0">Where should the backup live?</p><div class="links"><span class="btn">West ★</span><span class="btn">East</span><span class="btn">Other…</span></div></div>'),
 ]
 DECISION_STATES = [(label, note, '<div class="flow">' + body + '</div>') for label, note, body in DECISION_STATES]
-state_sheet("DecisionChoiceStates", "Decision selections: states", DECISION_STATES, 1340)
-board("MobileDecisionChoiceStates", 390, 2340, '<div style="padding:20px 16px"><h1 style="font-size:18px;margin:0 0 16px">Decision selections: phone states</h1>'
+state_sheet("DecisionChoiceStates", "Decision selections: states", DECISION_STATES, 1560)
+board("MobileDecisionChoiceStates", 390, 2700, '<div style="padding:20px 16px"><h1 style="font-size:18px;margin:0 0 16px">Decision selections: phone states</h1>'
       + ''.join(state(label, note, '<div class="statebox" style="padding:12px">' + body + '</div>') for label, note, body in DECISION_STATES) + '</div>')
 
 report_content = (
