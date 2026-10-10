@@ -717,7 +717,7 @@ replies and explicit acceptance into the normal inbox. The fresh brief carries t
 dispatch and delivery use the existing paths, and the UI says the message waits for the L2 to start.
 An FYI (`alt fyi [slug] "text"`) is a system row in the project's chat, not a task-state change.
 The writer records explicit L3 selection as `heads_up: true`; these concise lines stay visible
-between routine system groups. Internal calls default to the daemon actor, and automatic, L2 and
+between routine system groups, as do system turns during which L3 created a task or filed an issue. Internal calls default to the daemon actor, and automatic, L2 and
 ambiguous historical FYIs remain eligible for grouping. Selection guidance lives in the
 [L3 persona](../personas/l3.md), with the instruction loading limits described above.
 On start, altd queues one message per project listing its active tasks and unresolved faults; open

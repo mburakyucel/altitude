@@ -326,6 +326,8 @@ def _l3_verb_request(project: str, request: dict) -> dict:
             options = vars(issue_parser().parse_args(args[1:]))
             options.pop("text", None)
             url = issue_write(project, body=stdin, actor="l3", **options)
+            if options["operation"] == "new":
+                l3.note_created(project, "issues", {"title": options["title"], "url": url})
             return {"returncode": 0, "stdout": url + "\n", "stderr": ""}
         env = engines.clean_env()
         env.update({"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": project, "ALTITUDE_HOME": str(config.ROOT)})
@@ -338,8 +340,8 @@ def _l3_verb_request(project: str, request: dict) -> dict:
                                     capture_output=True, text=True, timeout=120)
         except (OSError, subprocess.SubprocessError) as exc:
             return {"returncode": 1, "stdout": "", "stderr": f"alt verb failed: {exc}\n"}
-        if args[:2] == ["task", "new"] and result.returncode == 0:
-            _note_created_task(project, result.stdout or "")
+        if result.returncode == 0:
+            _note_created(project, args, result.stdout or "")
         return {"returncode": result.returncode, "stdout": _l3_bounded(result.stdout or ""),
                 "stderr": _l3_bounded(result.stderr or "")}
     if kind == "service":
@@ -411,15 +413,22 @@ def _l3_gh_api(args: list[str], refuse) -> list[str]:
             *(f"--{name}" for name in ("include", "paginate", "slurp", "silent") if getattr(options, name))]
 
 
-def _note_created_task(project: str, stdout: str) -> None:
-    """Attach the task `alt task new` just printed to the L3 turn that created it, so the turn's assistant
-    chat row names it (`tasks: [slug]`, SPEC.md §5.2 note 4) and the page can show the task under the reply."""
+def _note_created(project: str, args: list[str], stdout: str) -> None:
+    """Attach the task `alt task new` created, or the issue `alt incident new|publish` filed, to the L3 turn that ran
+    it, so the turn's chat row names it (SPEC.md §4.1, §5.2 note 4). Finding an incident's existing issue files none."""
+    if args[:2] not in (["task", "new"], ["incident", "new"], ["incident", "publish"]):
+        return
     try:
-        slug = json.loads(stdout).get("slug")
-    except (ValueError, AttributeError):
-        slug = None
-    if isinstance(slug, str) and slug:
-        l3.note_task(project, slug)
+        printed = json.loads(stdout)
+    except ValueError:
+        return
+    if not isinstance(printed, dict):
+        return
+    if args[0] == "task" and isinstance(printed.get("slug"), str) and printed["slug"]:
+        l3.note_created(project, "tasks", printed["slug"])
+    elif args[0] == "incident" and printed.get("created") is True and isinstance(printed.get("issue"), str):
+        title = next((row.get("title") for row in incidents.index(project) if row.get("id") == printed.get("id")), None)
+        l3.note_created(project, "issues", {"title": title or "Incident", "url": printed["issue"]})
 
 
 def _validate_l3_alt_args(args: list[str]) -> None:
