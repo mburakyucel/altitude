@@ -365,7 +365,9 @@ def _capture(project, task, review, context_ids, proposal_id=None, design=None):
         raise T.TransitionError("Proposal review requires --proposal-message; changes review accepts neither it nor --design-file.")
     # The design preview's own selection gives the reviewer the spec the operator sees; a proposal
     # pointing at a preview the reviewer cannot open left a design review without its design.
-    design = T.capture_design(project, task, design)[0] if design is not None else None
+    design, screens = T.capture_design(project, task, design) if design is not None else (None, {})
+    # The reviewer sees the screenshots as images when its engine's CLI attaches them natively.
+    attach = bool(design) and engines.review_capability(review["engine"]).get("images", False)
     identity, context = _identity(project, task, fetch=True, proposal_id=proposal_id)
     if not proposal and identity["head"] == identity["base"]:
         raise T.TransitionError("No task changes are ready for review. Prepare a committed checkpoint first.")
@@ -407,9 +409,10 @@ def _capture(project, task, review, context_ids, proposal_id=None, design=None):
         context["limitations"] = context.get("limitations", []) + [
             "Paths over 2 MiB in the base or candidate are not captured in source or changes.patch: "
             + ", ".join(f"{path} ({size} bytes)" for path, size in sorted(omitted.items())) + "."]
-    if design:
+    if design and not attach:
         context["limitations"] = context.get("limitations", []) + [
-            "Design screenshots are named, not viewed; design.md is the design under review."]
+            "This reviewer's engine cannot take images, so the design screenshots are named, not viewed; "
+            "design.md is the design under review."]
     # The reviewer receives one copy of each input: the brief embeds the request, and the proposal
     # under review is its own file with its own bound, like changes.patch (I-20260927-193716).
     captured = {k: v for k, v in context.items() if k != "request" or v.strip() not in context["brief"]}
@@ -465,8 +468,14 @@ def _capture(project, task, review, context_ids, proposal_id=None, design=None):
         identity["proposal"] = {k: context["proposal"].get(k) for k in ("id", "at", "text")}
     if design:
         (snapshot / "design.md").write_text(design["text"])
+        if attach:
+            (snapshot / "design").mkdir()
+            for name, data in screens.items():
+                (snapshot / "design" / name).write_bytes(data)
         inputs["design"] = design["id"]
-        identity["design"] = {"id": design["id"], "title": design["title"]}
+        # The receipt names the screenshots the reviewer was given; none when its engine cannot take images.
+        identity["design"] = {"id": design["id"], "title": design["title"], "images": [
+            {"title": image["title"], "file": f"design/{image['name']}"} for image in design["images"] if attach]}
     identity.update(context_ids=[r["id"] for r in context["messages"]], captured_at=S.now(),
                     captured_context_hash=_hash(captured), selected_owner_evidence=context_ids is not None,
                     limitations=context.get("limitations", []),
@@ -480,12 +489,16 @@ def _capture(project, task, review, context_ids, proposal_id=None, design=None):
 def review_prompt(snapshot, focus, subject="changes"):
     rules = engines.repository_rules(snapshot / "source")
     design = (snapshot / "design.md").exists()
+    attached = (snapshot / "design").is_dir()
     inputs = ("proposal.md" + (" and design.md" if design else "")) if subject == "proposal" else "changes.patch"
     return ("You are an L1 reviewer. Read l1.md and " + (str(rules.relative_to(snapshot)) if rules else "the supplied task context") + ", "
               "then context.json and " + inputs + ". Give a relatively quick, focused independent adversarial review. "
               + ("Review the exact proposal in proposal.md, the message context.json names, against captured source and authority. Challenge assumptions, design risks and missing acceptance. A proposal review is not implementation review. "
                  "When the proposal changes what people see or do in a user interface, also review it as a design"
-                 + (", using the design spec in design.md" if design else "") + ": judge it against the repository's design rules "
+                 + (", using the design spec in design.md" if design else "")
+                 + (" and the screenshots attached to this prompt as images, in the order context.json lists them; judge "
+                    "what the pixels show as well as what the spec says, and name the screenshot behind each visual finding"
+                    if attached else "") + ": judge it against the repository's design rules "
                  "and the interaction states it must specify on phone and desktop, name what is unclear or not obviously "
                  "clickable on a phone, and offer up to two alternative directions, each a finding with severity "
                  "\"alternative\" that states its tradeoffs. " if subject == "proposal" else "Review the captured changes against their acceptance. ") +
@@ -576,7 +589,8 @@ def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None,
         prompt = review_prompt(snapshot, review["focus"], review.get("subject", "changes"))
         invoked = True
         result = engines.review(prompt, engine=review["engine"], snapshot=snapshot, runtime=runtime,
-                                model=review["model"], on_start=started, on_wait=waiting)
+                                model=review["model"], images=(identity.get("design") or {}).get("images", []),
+                                on_start=started, on_wait=waiting)
     except (OSError, ValueError, T.TransitionError, subprocess.SubprocessError) as exc:
         saved = _find(_load(project, slug), review_id)
         worker = saved.get("worker")

@@ -1,6 +1,7 @@
 """Captured review adapters: real fixture processes; never live provider or service calls."""
 from tests.support import AltitudeCase
 
+import base64
 import io
 import json
 import os
@@ -98,7 +99,7 @@ class ReviewEngineTests(AltitudeCase):
 
     def test_commands_disable_native_tools_and_user_configuration_for_both_engines(self):
         features = ("shell_tool", "apps", "plugins", "multi_agent", "view_image", "code_mode_host", "skip_host_skill_discovery")
-        self.patch(engines, "_review_native", return_value=(True, features))
+        self.patch(engines, "_review_native", return_value=(True, features, True))
         first = engines._review_command("claude", self.snapshot, self.runtime, "selected")
         for flag in ("--restricted", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands"):
             self.assertIn(flag, first)
@@ -124,6 +125,48 @@ class ReviewEngineTests(AltitudeCase):
             self.assertNotIn("resume", command)
             self.assertNotIn("altitude-l3", " ".join(command))
 
+    def test_design_screenshots_attach_natively_in_order_for_both_engines(self):
+        from tests.test_task_design import JPEG, png
+        (self.snapshot / "design").mkdir()
+        (self.snapshot / "design" / "phone.png").write_bytes(png())
+        (self.snapshot / "design" / "desktop.jpg").write_bytes(JPEG)
+        images = [{"title": "Phone — idle", "file": "design/phone.png"}, {"title": "Desktop — error", "file": "design/desktop.jpg"}]
+        attached = [(image["title"], self.snapshot.resolve() / image["file"]) for image in images]
+        self.patch(engines, "_review_native", return_value=(True, ("code_mode_host",), True))
+        codex = engines._review_command("codex", self.snapshot, self.runtime, None, attached)
+        self.assertEqual([item for item in codex if item.startswith("--image")],
+                         [f"--image={self.snapshot.resolve() / 'design/phone.png'}", f"--image={self.snapshot.resolve() / 'design/desktop.jpg'}"])
+        self.assertEqual(codex[-1], "-", "the prompt still arrives on stdin after the attached images")
+        claude = engines._review_command("claude", self.snapshot, self.runtime, None, attached)
+        self.assertEqual(claude[claude.index("--input-format") + 1], "stream-json")
+        self.assertFalse(any(item.startswith("--image") for item in claude))
+
+        # The reviewer's first turn: Claude's stream-json line titles each image block; Codex reads plain text.
+        received = self.tmp / "stdin.txt"
+        for engine in config.ENGINES:
+            with self.subTest(engine=engine):
+                service = self.fixture()
+                command = self.patch(engines, "_review_command", return_value=["fixture-only"])
+                program = service.return_value[-1].replace("sys.stdin.read()", f"open({str(received)!r}, 'w').write(sys.stdin.read())")
+                if engine == "codex":
+                    stdout = "\n".join(map(json.dumps, [{"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(
+                        {"text": "Fine.", "findings": []})}}]))
+                    program = f"import sys; open({str(received)!r}, 'w').write(sys.stdin.read()); print({stdout!r})"
+                service.return_value = [sys.executable, "-I", "-c", program]
+                result = engines.review("Review the design", engine=engine, snapshot=self.snapshot, runtime=self.runtime, images=images)
+                self.assertIsNone(result["error"])
+                self.assertEqual(command.call_args.args[4], attached)
+                if engine == "codex":
+                    self.assertTrue(received.read_text().endswith("Review the design"))
+                    continue
+                line = json.loads(received.read_text())
+                content = line["message"]["content"]
+                self.assertEqual((line["type"], line["message"]["role"]), ("user", "user"))
+                self.assertTrue(content[0]["text"].endswith("Review the design"))
+                self.assertEqual([item.get("text") for item in content[1::2]], ["Screenshot 1: Phone — idle", "Screenshot 2: Desktop — error"])
+                self.assertEqual([(item["source"]["media_type"], base64.b64decode(item["source"]["data"])) for item in content[2::2]],
+                                 [("image/png", png()), ("image/jpeg", JPEG)])
+
     def test_environment_strips_owner_machine_and_credential_authority(self):
         with patch.dict(os.environ, {"ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": "owner", "ALTITUDE_SESSION_KEY": "key",
                                      "GH_TOKEN": "secret", "ANTHROPIC_API_KEY": "secret", "OPENAI_API_KEY": "secret",
@@ -145,8 +188,12 @@ class ReviewEngineTests(AltitudeCase):
         payload = result if result is not None else {"text": "Needs a fix", "findings": [
             {"severity": "high", "title": "Missing check", "body": "Evidence", "path": "code.py", "line": 2}],
             "limitations": ["Tests were not executed."]}
-        record = {"result": json.dumps(payload) if answer is None else answer, "usage": {"input_tokens": 20}}
-        program = f"import sys; sys.stdin.read(); print({json.dumps(record)!r}); sys.exit({exitcode})"
+        # Claude's stream-json output: session records, then the final result record.
+        stdout = "\n".join(map(json.dumps, [{"type": "system", "subtype": "init"},
+                                            {"type": "assistant", "message": {"content": [{"type": "text", "text": "Reading."}]}},
+                                            {"type": "result", "result": json.dumps(payload) if answer is None else answer,
+                                             "usage": {"input_tokens": 20}}]))
+        program = f"import sys; sys.stdin.read(); print({stdout!r}); sys.exit({exitcode})"
         service = self.patch(platform, "job_command", return_value=[sys.executable, "-I", "-c", program])
         return service
 

@@ -2611,24 +2611,26 @@ def _review_env() -> dict:
 
 
 @lru_cache(maxsize=16)
-def _review_native(engine: str, executable: str, modified: int, size: int) -> tuple[bool, tuple[str, ...]]:
+def _review_native(engine: str, executable: str, modified: int, size: int) -> tuple[bool, tuple[str, ...], bool]:
+    """Whether the installed CLI enforces captured-input review, its Codex features, and whether it attaches images."""
     try:
         result = subprocess.run([executable, *(["exec"] if engine == "codex" else []), "--help"],
                                 capture_output=True, text=True, timeout=5, env=_review_env())
         flags = (("--ignore-user-config", "--ignore-rules", "--strict-config", "--ephemeral") if engine == "codex"
-                 else ("--restricted", "--strict-mcp-config", "--tools", "--permission-prompts"))
+                 else ("--restricted", "--strict-mcp-config", "--tools", "--permission-prompts", "--input-format"))
         if result.returncode or not all(flag in result.stdout for flag in flags):
-            return False, ()
+            return False, (), False
         if engine == "codex":
             features = subprocess.run([executable, "features", "list"], capture_output=True, text=True,
                                       timeout=5, env=_review_env())
             names = tuple(line.split()[0] for line in features.stdout.splitlines() if line.split())
             if features.returncode or not {"shell_tool", "apps", "plugins", "multi_agent", "skip_host_skill_discovery"}.issubset(names):
-                return False, ()
-            return True, names
-        return True, ()
+                return False, (), False
+            return True, names, "--image" in result.stdout
+        # Claude's stream-json input carries image blocks beside the prompt text.
+        return True, (), True
     except (OSError, subprocess.SubprocessError):
-        return False, ()
+        return False, (), False
 
 
 def _executable(engine: str) -> str | None:
@@ -2661,10 +2663,11 @@ def review_capability(engine: str) -> dict:
     try:
         path = Path(shutil.which(str(executable)) or str(executable))
         stat = path.stat()
-        supported, _ = _review_native(engine, str(path), stat.st_mtime_ns, stat.st_size)
+        supported, _, images = _review_native(engine, str(path), stat.st_mtime_ns, stat.st_size)
     except OSError:
-        supported = False
-    return {"available": supported, "why": "Captured-input review is available." if supported else
+        supported = images = False
+    return {"available": supported, "images": supported and images,
+            "why": "Captured-input review is available." if supported else
             "The selected engine cannot enforce captured-input-only review with its installed CLI."}
 
 
@@ -2758,7 +2761,21 @@ def _review_served(runtime: Path) -> Path:
     return runtime / "captured-input.read"
 
 
-def _review_command(engine: str, snapshot: Path, runtime: Path, model: str | None) -> list[str]:
+def _review_input(engine: str, prompt: str, images: list[tuple[str, Path]]) -> str:
+    """The reviewer's first turn: Codex reads the prompt from stdin and attaches images by flag; Claude's
+    stream-json user line carries each screenshot as an image block after its title."""
+    if engine != "claude":
+        return prompt
+    content = [{"type": "text", "text": prompt}]
+    for index, (title, path) in enumerate(images, 1):
+        content += [{"type": "text", "text": f"Screenshot {index}: {title}"},
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png" if path.suffix == ".png" else "image/jpeg",
+                                                 "data": base64.b64encode(path.read_bytes()).decode("ascii")}}]
+    return json.dumps({"type": "user", "message": {"role": "user", "content": content}, "parent_tool_use_id": None}) + "\n"
+
+
+def _review_command(engine: str, snapshot: Path, runtime: Path, model: str | None,
+                    images: list[tuple[str, Path]] = ()) -> list[str]:
     adapter = (f"import sys; sys.path.insert(0, {str(config.SOURCE.resolve())!r}); "
                f"from altitude.engines import review_mcp; review_mcp({str(snapshot)!r}, {str(_review_served(runtime))!r})")
     server = {"command": sys.executable, "args": ["-I", "-c", adapter]}
@@ -2766,14 +2783,14 @@ def _review_command(engine: str, snapshot: Path, runtime: Path, model: str | Non
         # No safe mode: it disables every MCP server, the captured adapter included (I-20260924-080541).
         # Restricted mode ignores user/project/local settings (hooks, plugins), strict MCP configuration
         # admits only the adapter, and "" tools with disabled skills leave captured_input alone.
-        return [config.CLAUDE_BIN, "-p", "--output-format", "json", "--restricted",
+        return [config.CLAUDE_BIN, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--restricted",
                 "--strict-mcp-config", "--mcp-config", json.dumps({"mcpServers": {"captured": server}}),
                 "--tools", "", "--allowedTools", "mcp__captured__captured_input", "--permission-mode", "dontAsk",
                 "--permission-prompts", "none", "--disable-slash-commands", "--no-chrome", "--no-session-persistence",
                 "--settings", "{}", *(["--model", model] if model else [])]
     executable = Path(shutil.which(config.CODEX_BIN) or config.CODEX_BIN)
     stat = executable.stat()
-    _, features = _review_native(engine, str(executable), stat.st_mtime_ns, stat.st_size)
+    _, features, _ = _review_native(engine, str(executable), stat.st_mtime_ns, stat.st_size)
     filesystem = {":root": "deny", ":minimal": "read", str(snapshot): "read", str(runtime): "read"}
     settings = ['default_permissions="captured-review"', 'approval_policy="never"', 'web_search="disabled"',
                 'permissions.captured-review.network.enabled=false', "project_doc_max_bytes=0",
@@ -2789,6 +2806,7 @@ def _review_command(engine: str, snapshot: Path, runtime: Path, model: str | Non
                   for feature in features)]
     return [config.CODEX_BIN, "exec", "--json", "--strict-config", "--ignore-user-config", "--ignore-rules",
             "--ephemeral", "--skip-git-repo-check", "-C", str(runtime), *(["-m", model] if model else []),
+            *(f"--image={path}" for _, path in images),
             *(arg for setting in settings for arg in ("-c", setting)), "-"]
 
 
@@ -2887,8 +2905,7 @@ def _review_result_facts(record: dict) -> dict:
 def _review_stdout_errors(engine: str, stdout: str) -> tuple[str, list[str], dict]:
     """#665: project structured error fields to fixed categories and facts, never provider prose/source."""
     try:
-        records = ([json.loads(stdout)] if engine == "claude" else
-                   [json.loads(line) for line in stdout.splitlines() if line.strip()])
+        records = [json.loads(line) for line in stdout.splitlines() if line.strip()]
         if not all(isinstance(record, dict) for record in records):
             return "malformed", [], {}
     except (ValueError, RecursionError):
@@ -2923,7 +2940,8 @@ def _review_stdout_errors(engine: str, stdout: str) -> tuple[str, list[str], dic
     }
     labels = [label for label, pattern in categories.items()
               if any(re.search(pattern, message, re.I) for message in messages)]
-    facts = _review_result_facts(records[0]) if engine == "claude" and records[0].get("type") == "result" else {}
+    final = next((record for record in reversed(records) if record.get("type") == "result"), None) if engine == "claude" else None
+    facts = _review_result_facts(final) if final else {}
     state = "recognized_error" if labels else "unrecognized_error" if error_seen else "no_structured_error"
     return state, labels, facts
 
@@ -2982,8 +3000,9 @@ def _review_diagnostics(stderr: _BoundedRawCapture, *, exit_status=None, stdout_
 
 @config.admitted_provider
 def review(prompt: str, *, engine: str, snapshot: Path, runtime: Path, model: str | None = None,
-           on_start=None, on_wait=None) -> dict:
-    """One focused review without a duration cutoff; callbacks retain owner/caller cancellation."""
+           images=(), on_start=None, on_wait=None) -> dict:
+    """One focused review without a duration cutoff; callbacks retain owner/caller cancellation.
+    `images` are captured screenshots ({title, file} relative to the snapshot), attached natively in order."""
     out = {"text": "", "error": None, "findings": [], "limitations": [], "usage": {}, "worker": None,
            "termination_confirmed": True}
     capability = review_capability(engine)
@@ -3018,7 +3037,9 @@ def review(prompt: str, *, engine: str, snapshot: Path, runtime: Path, model: st
         finally:
             stream.close()
     try:
-        command = _review_command(engine, snapshot, runtime, model)
+        attached = [(image["title"], snapshot / image["file"]) for image in images]
+        command = _review_command(engine, snapshot, runtime, model, attached)
+        prompt = _review_input(engine, prompt, attached)
         if on_start and on_start(worker) is False:
             return {**out, "error": "Review cancelled before launch."}
         proc = subprocess.Popen(platform.job_command(unit, command, _review_env(),
@@ -3088,7 +3109,8 @@ def review(prompt: str, *, engine: str, snapshot: Path, runtime: Path, model: st
         return failed("Review output exceeded the capture limit.")
     try:
         if engine == "claude":
-            result = json.loads(stdout)
+            result = next((record for record in reversed([json.loads(line) for line in stdout.splitlines() if line.strip()])
+                           if record.get("type") == "result"), {})
             if result.get("is_error"):
                 return failed("The review engine returned an error.")
             text = result.get("result", "")
