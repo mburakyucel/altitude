@@ -704,7 +704,9 @@ is dropped or summarized; beyond the bound capture refuses with the size and whe
 alone exceed it. Proposal capture
 also binds the exact original L2 message and text against the committed head's source tree, even before
 code differs from main. That text is captured once, as `proposal.md` with its own 64 KiB bound, and
-`context.json` names the proposal message and points to the file. Identity and freshness hash the
+`context.json` names the proposal message and points to the file. A UI proposal's design preview
+selection adds its spec as `design.md`, captured by the same checks as the preview, with the screenshots
+named in `context.json` but not viewed; the receipt keeps the design identity the preview shares. Identity and freshness hash the
 logical context, independent of this representation; the input hash covers every captured file. Changes reviews capture the merge-candidate tree and diff; a branch that conflicts with main is
 refused with its conflicted files. Missing proposal input prevents invocation. Image evidence needs a
 textual account and is explicitly outside the text reviewer's coverage.

@@ -1583,7 +1583,11 @@ and is not available to the owner.
 ### Adversarial review
 
 L2 proactively requests independent adversarial review for complex proposals before code and complex
-implementations; simple work stays light by judgment. Task details shows a **Proposal review** and an
+implementations; simple work stays light by judgment. A proposal that changes the UI always gets a
+proposal review, which is also its design review: the reviewer judges the design against the
+repository's design rules and interaction states, names what is unclear or not obviously clickable on
+a phone, and offers up to two alternative directions as findings with severity `alternative`. The
+owner assesses each like any finding and shows the alternatives to the operator, who chooses. Task details shows a **Proposal review** and an
 **Implementation review** box with the latest review's verdict and counts, and one **Request**,
 **Review again** or **Try again** button when a new review can start; the conversation shows one card
 per kind ([design](../design/wireframes/SPEC.md#adversarial-review)). Viewing a review never invokes a
@@ -1627,6 +1631,8 @@ alt task review request --source-message <message-id>
 alt task review run --review-id <id>
 # A proposal review requires the exact original L2 proposal message:
 alt task review run --review-id <proposal-review-id> --proposal-message <message-id>
+# A UI proposal also passes its design preview's selection, giving the reviewer the design spec:
+alt task review run --review-id <proposal-review-id> --proposal-message <message-id> --design-file design/wireframes/review.json
 alt task review assess --review-id <id> --file /tmp/assessment.json
 # Select a deliberately revised proposal when assessing its later version:
 alt task review assess --review-id <proposal-review-id> --proposal-message <revised-message-id> --file /tmp/assessment.json
@@ -1659,7 +1665,12 @@ fails explicitly beyond 256 KiB, naming its size; when authority, corrections an
 the bound, the refusal says selection cannot help and the owner reports a capture fault. A changes review
 that needs an approved proposal selects that L2 message with `--context-message`. A proposal review
 captures the exact proposal text separately as `proposal.md`, bounded to 64 KiB, so the proposal never
-competes with retained authority.
+competes with retained authority. `--design-file` takes the same selection JSON as
+[design previews](#task-design-previews), with the same path, type and size checks: the selection's
+spec becomes `design.md` and the captured context names the screenshots by title. The reviewer reads
+text only, so screenshots are named, not viewed, and the capture records that limitation. The receipt
+keeps the design's identity, which equals the preview's when the same selection is published with
+the design question. A changes review refuses `--design-file`.
 For image context, supply an L2 textual account and select that message explicitly; the capture
 records that original image bytes are not reviewed. The reviewer cannot run tests.
 The snapshot holds the candidate's ordinary tracked files and the patch from `origin/main`; links and
@@ -1734,6 +1745,11 @@ PNG/JPEG screenshots up to 8 MiB each, 32 MiB total. Titles have 1–160 charact
 JSON is at most 64 KiB. Only named files are copied. Symlinks, traversal, special files and unsupported
 types are refused. Use the existing browser harness to capture interactive wireframe states;
 submitted HTML, SVG, JavaScript and CSS are not preview inputs.
+
+The selected `.md`/`.txt` file is the design spec: precise enough to review and build against without
+the screenshots, covering each state, exact text and line formats, links, wrapping and truncation, on
+phone and desktop. Pass the same selection to the [proposal review](#adversarial-review) before
+publishing the question, so the reviewer reads the spec the operator sees.
 
 Inputs may be ignored or untracked: capture does not stage or commit them. Keep review screenshots
 in ignored `design/wireframes/captures/` or `design/wireframes/shots/`; the explicit selection can
