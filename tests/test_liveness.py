@@ -17,7 +17,7 @@ class TestDeadWorker(AltitudeCase):
             with self.subTest(state=state):
                 slug = f"stale-{state or 'absent'}"
                 task = T.new(self.project, slug, "Repair worker lifecycle")
-                task.update(state="running", attempt=1, agent_id="worker", session_id="session",
+                task.update(state="running", attempt=1, agent_id="worker", session_id="session", nudged=True,
                             dispatched="2026-09-07T10:00:00+00:00",
                             worker_started_at="2026-09-07T16:00:00.500000+00:00")
                 S.save_task(self.project, task)
@@ -117,7 +117,7 @@ class TestResumeRebinds(AltitudeCase):
 
     def test_death_fault_tag_cannot_replace_a_newer_escalation(self):
         task = T.new(self.project, "Question during exit handling", "Discuss scope")
-        task.update(state="running", attempt=1, agent_id="worker", session_id="session")
+        task.update(state="running", attempt=1, agent_id="worker", session_id="session", nudged=True)
         S.save_task(self.project, task)
         real_fault = server.incidents.system_fault
 
