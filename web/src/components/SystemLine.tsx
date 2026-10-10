@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import { useProject, useTask } from "../data/api";
+import { questionPath } from "../data/decisions";
 import type { ChatMessage } from "../data/api";
 import { stampText } from "../data/observed";
 import { InlineProse, Prose, ProseProject, ProseRepository, lastParagraph } from "./Prose";
@@ -268,7 +269,7 @@ function QueuedLine({ turn, project, title }: { turn: SystemTurn; project: strin
       <Stamp at={turn.at} className="sys-time" />
       <span className="sys-text">{lineText(turn, title ?? turn.slug, need)}</span>
       {decision ? (
-        <Link className="link" to={`/projects/${project}/decisions/${turn.slug}`}>Needs you</Link>
+        <Link className="link" to={questionPath({ ...decision, project, slug: turn.slug! })}>Needs you</Link>
       ) : turn.slug ? (
         <Link className="link" to={`/projects/${project}/tasks/${turn.slug}`}>Open task</Link>
       ) : null}

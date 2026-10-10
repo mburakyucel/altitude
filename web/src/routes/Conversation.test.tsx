@@ -902,10 +902,11 @@ describe("Conversation", () => {
     const prompt = "Task `fix-timer` blocked and asks: Ship the timer now?\n- 0b5e84d7 revision 1 (authority: operator): "
       + "Ship the timer now, without [PR #12](https://example.test/pull/12)? It ships two fixes.\n\n"
       + "Read `alt task messages fix-timer`. This notification grants no operator authority.";
-    const question = { project: "altitude", slug: "fix-timer", title: "Fix the timer", kind: "asks", status: "open",
+    const question = { project: "altitude", slug: "fix-timer", title: "Fix the timer", kind: "asks", status: "open", id: "q-ship", revision: 2,
       question: "Ship the timer now, without [PR #12](https://example.test/pull/12)? It ships two fixes." };
+    const later = { ...question, id: "q-later", revision: 1, question: "Keep the old timer as well?" };
     mockFetch({
-      project: { ...project, decisions: [question] },
+      project: { ...project, decisions: [question, later] },
       chat: { ...chatView, busy: true, queued: [
         { id: "q-block", at: ago(0), text: prompt, trigger: "block", role: "server", slug: "fix-timer" },
         { id: "q-fault", at: ago(0), text: "System fault [worker:other] in altitude/other: boom\n\nRead the incident.", trigger: "incident", role: "server" },
@@ -916,7 +917,7 @@ describe("Conversation", () => {
     const line = await within(queued).findByText("Block · Fix the timer · Ship the timer now, without PR #12?");
     const row = line.closest(".sys-line") as HTMLElement;
     expect(row).toHaveAttribute("data-queued");
-    expect(within(row).getByRole("link", { name: "Needs you" })).toHaveAttribute("href", "/projects/altitude/decisions/fix-timer");
+    expect(within(row).getByRole("link", { name: "Needs you" })).toHaveAttribute("href", "/projects/altitude/tasks/fix-timer?question=q-ship&revision=2");
     expect(within(queued).getByText("Fault · other").closest(".sys-line")?.querySelector(".sys-dot")).toHaveAttribute("data-tone", "danger");
     expect(within(queued).queryByText(/authority|revision|alt task|grants no/)).toBeNull();
     expect(within(queued).queryByRole("button", { name: "Show" })).toBeNull();
