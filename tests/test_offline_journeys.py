@@ -81,6 +81,20 @@ class TestOfflineJourneys(AltitudeCase):
         self.assertTrue(Path(task["worktree"]).is_relative_to(self.repo / ".claude/worktrees"))
         return task
 
+    def nudged_then_dead(self, slug, item):
+        """#787: a message-only turn resumes the same session once with the nudge; the next one is a dead worker."""
+        server.on_l2_finished(self.project, item)
+        resumed = self.wait_state(slug, "running")
+        self.assertEqual((resumed["session_id"], self.engine.calls[-1]["session_id"]), (item["task"]["session_id"],) * 2)
+        self.assertIn(T.NUDGE, self.engine.calls[-1]["prompt"])
+        self.assertFalse(resumed.get("fault"))
+        self.engine.workers[resumed["agent_id"]].update(state="done", status="exited")
+        died = next(row for row in dispatch.poll(self.project) if row["task"]["slug"] == slug)
+        self.assertTrue(died["died"])
+        server.on_l2_finished(self.project, died)
+        dead = S.load_task(self.project, slug)
+        self.assertEqual((dead["state"], dead["fault"], dead.get("nudged")), ("blocked", "l2-died", None))
+
     def test_delivery_through_http_dispatch_real_git_landing_verified_report_and_archive(self):
         self.delivery()
 
@@ -147,8 +161,7 @@ class TestOfflineJourneys(AltitudeCase):
             self.assertEqual(bool(finished[0].get("died")), continuation == "stale")
             self.assertEqual(len([c for c in self.gh_log() if c[:2] == ["pr", "create"]]), 1)
             if continuation == "stale":
-                server.on_l2_finished(self.project, finished[0])
-                self.assertEqual(S.load_task(self.project, slug)["fault"], "l2-died")
+                self.nudged_then_dead(slug, finished[0])
                 self.assertEqual(S.task_dir(self.project, slug).parent, S.tasks_dir(self.project))
                 return
         server.on_l2_finished(self.project, finished[0])
@@ -231,8 +244,7 @@ class TestOfflineJourneys(AltitudeCase):
                 self.engine.workers[resumed["agent_id"]].update(state="done", status="exited")
                 item = dispatch.poll(self.project)[0]
                 self.assertTrue(item["died"])
-                server.on_l2_finished(self.project, item)
-                self.assertEqual(S.load_task(self.project, slug)["fault"], "l2-died")
+                self.nudged_then_dead(slug, item)
 
     def test_capacity_retry_retains_identity_respects_wip_and_missing_report_never_completes(self):
         task = self.launch(self.queue("Capacity retry"))
@@ -261,7 +273,7 @@ class TestOfflineJourneys(AltitudeCase):
         self.engine.workers[resumed["agent_id"]].update(state="done", status="exited")
         died = dispatch.poll(self.project)[0]
         self.assertTrue(died["died"])
-        server.on_l2_finished(self.project, died)
+        self.nudged_then_dead(task["slug"], died)
         stopped = S.load_task(self.project, task["slug"])
         self.assertEqual((stopped["state"], stopped["fault"]), ("blocked", "l2-died"))
         self.assertEqual(S.task_dir(self.project, task["slug"]).parent, S.tasks_dir(self.project))
