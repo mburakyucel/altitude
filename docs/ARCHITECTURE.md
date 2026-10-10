@@ -2104,12 +2104,15 @@ image-bearing and server-triggered messages keep their own turn, and nothing run
 An operator message whose turn finds no eligible engine, or whose every option refuses before provider
 output, is kept rather than failed. Its user row stays in history under the turn id and no error row is
 written; the queue keeps one chat row carrying that `turn_id`, its text and any images. `l3._keep` orders the
-queue as an accepted Send now group, then kept messages in send order, then the rest, and the claim of a kept
-row publishes the same turn id without logging the message again, so the reply lands beneath it. The
-page shows a kept message's queued status under its own bubble rather than in the queued list.
-A kept message's Send now promotes its original turn for boundary delivery; it is not part of the
-removable native group. A refused group retains all original queue identities through subsequent
-retries, so its own bubbles are excluded from historical context and its instructions arrive once.
+queue as an accepted Send now group, then kept messages in send order, then the rest. Kept rows fold like
+any text chat row of their conversation, and while one waits for its retry time only Send now rows run, so
+no message overtakes it. The claim logs only the rows not yet in history: kept rows alone publish the last
+one's turn id without logging again, so the reply lands beneath it, and kept rows with newer rows run under
+a new turn id that the newer bubbles end with. The page shows a kept message's queued status under its own bubble rather
+than in the queued list. Send now on any member promotes the whole group, kept row included, for boundary
+delivery; a kept row never joins a running turn natively. A refused group retains all original queue
+identities through subsequent retries, so its own bubbles are excluded from historical context and its
+instructions arrive once; a direct turn's kept message has its turn id as its queue identity.
 
 **Send now** promotes the whole queued operator group for that conversation in arrival order, without
 stopping its work. The selected row identifies the group, not a message to move ahead of its neighbours.
