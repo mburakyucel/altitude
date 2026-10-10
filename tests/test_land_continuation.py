@@ -64,7 +64,7 @@ class TestLandContinuation(AltitudeCase):
         self.assertIsNone(self.task()["delivery"]["number"])
         self.assertEqual(self.git("show", "-s", "--format=%P", "HEAD").strip(), self.merge)
         rebased_head = self.git("rev-parse", "HEAD").strip()
-        with mock.patch.object(land, "_ensure_pr", side_effect=land.LandError("interrupted after push")):
+        with mock.patch.object(land, "_create_pr", side_effect=land.LandError("interrupted after push")):
             with self.assertRaisesRegex(land.LandError, "interrupted"):
                 self.land()
         result = self.land()

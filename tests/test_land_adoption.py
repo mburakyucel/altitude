@@ -453,24 +453,24 @@ print('3 passed')
         self.assertNotIn("--delete-branch", merges[0])
 
     def test_hold_set_during_checks_is_reloaded_before_merge(self):
-        original = land._checks_state
+        original = land._checks_evidence
         def hold(*args):
             task = S.load_task("demo", "fix-x")
             task["hold_merge"] = "Late operator hold"
             S.save_task("demo", task)
             return original(*args)
-        with mock.patch.object(land, "_checks_state", side_effect=hold), self.assertRaisesRegex(
+        with mock.patch.object(land, "_checks_evidence", side_effect=hold), self.assertRaisesRegex(
                 land.LandError, "Late operator hold"):
             self.adopt(merge=True)
         self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
 
     def test_retarget_to_same_sha_base_during_checks_refuses_merge(self):
         self.git("push", "-q", "origin", "origin/main:refs/heads/release")
-        original = land._checks_state
+        original = land._checks_evidence
         def retarget(*args):
             self.write_pr(baseRefName="release")
             return original(*args)
-        with mock.patch.object(land, "_checks_state", side_effect=retarget), self.assertRaisesRegex(
+        with mock.patch.object(land, "_checks_evidence", side_effect=retarget), self.assertRaisesRegex(
                 land.LandError, "base or head moved"):
             self.adopt(merge=True)
         self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
@@ -479,7 +479,7 @@ print('3 passed')
         original = land._pr_view
         def observe(root, target):
             pr = original(root, target)
-            if any(a[:2] == ["pr", "checks"] for a in self.gh_log()):
+            if any(a[:2] == ["api", "graphql"] for a in self.gh_log()):
                 task = S.load_task("demo", "fix-x")
                 task["hold_merge"] = "Hold during final observation"
                 S.save_task("demo", task)

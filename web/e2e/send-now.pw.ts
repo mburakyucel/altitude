@@ -13,10 +13,11 @@ test.describe("L2 Send now", () => {
     const convo = page.getByRole("region", { name: "Task conversation", exact: true });
     const field = convo.getByRole("textbox", { name: "Message the L2" });
     const row = (text: string) => convo.locator(".msg-row").filter({ hasText: text });
+    // Send now sits under the last saved queued message, so seeing it under this one means this message is saved.
     const send = async (text: string) => {
       await field.fill(text);
       await convo.getByRole("button", { name: "Send", exact: true }).click();
-      await expect(convo.getByRole("button", { name: "Send now", exact: true })).toBeVisible();
+      await expect(row(text).getByRole("button", { name: "Send now", exact: true })).toBeVisible();
     };
     let releaseRead!: () => void;
     const readGate = new Promise<void>((resolve) => { releaseRead = resolve; });

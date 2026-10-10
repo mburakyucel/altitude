@@ -30,9 +30,14 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, dispatch, git_policy, github_intake, state as S, tasks as T
+from . import config, dispatch, git_policy, github_intake, state as S, tasks as T, verify
 
+#: #814: the check wait polls after this many seconds, doubling up to CHECK_POLL_BACKOFF times it (one minute).
 CHECK_POLL_SECONDS = 15
+CHECK_POLL_BACKOFF = 4
+#: #814: after GitHub refuses a gh command for the account's rate limit, landing starts its candidate again this
+#: many seconds later, when that still leaves time in its wait.
+RATE_LIMIT_POLL_SECONDS = 60
 #: #480: GitHub's PR view lags the landing's own push briefly; the head is re-read within this bound.
 PR_VIEW_SETTLE_SECONDS = 30
 PR_VIEW_POLL_SECONDS = 2
@@ -54,12 +59,25 @@ class BaseMoved(LandError):
     """A fresh read proves that only the base moved: the PR, its head and both branch names still match the pin."""
 
 
+class RateLimited(LandError):
+    """GitHub refused a gh command for the account's rate limit, so the command did nothing (#814)."""
+
+
 class _Reassess(Exception):
     """Leave the merge turn before waiting for a renewed owner assessment."""
 
 
 def _run(args: list[str], cwd: Path, timeout: int = 120) -> subprocess.CompletedProcess:
-    """Every git/gh invocation funnels through here so tests can drive the whole pipeline offline."""
+    """Every git/gh invocation funnels through here so tests can drive the whole pipeline offline. A gh command
+    GitHub refuses for the account's rate limit raises RateLimited, which the landing waits out (#814)."""
+    result = _execute(args, cwd, timeout)
+    output = (result.stderr or "") + (result.stdout or "")
+    if args[0] == "gh" and result.returncode != 0 and verify.rate_limited(output):
+        raise RateLimited(f"GitHub refused {' '.join(args[:3])} for its rate limit: {output.strip()[-200:]}")
+    return result
+
+
+def _execute(args: list[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess:
     try:
         env = config.subprocess_env()
         if args[:2] == ["git", "fetch"]:
@@ -246,6 +264,25 @@ def _pr_view(root: Path, target: str) -> dict | None:
         return json.loads(p.stdout)
     except ValueError as e:
         raise LandError(f"gh pr view {target}: unparseable output") from e
+
+
+def _repository(root: Path, what: str) -> tuple[str, str]:
+    """The GitHub owner and repository of origin, which every API read names explicitly (#252)."""
+    match = github_intake._REMOTE.fullmatch(_need(_git(root, "config", "--get", "remote.origin.url"), "origin URL"))
+    if not match:
+        raise LandError(f"{what} requires a GitHub origin")
+    return match["owner"], match["repo"]
+
+
+def _pull(root: Path, number: int) -> dict:
+    """The PR's state, refs and head through REST, whose quota is separate from the GraphQL budget that
+    landings and workers share (#814). The repeated identity reads use this; `_pr_view` reads review state."""
+    owner, repo = _repository(root, "a PR read")
+    p = _run(["gh", "api", f"repos/{owner}/{repo}/pulls/{number}", "--jq", verify.PULL_JQ], root)
+    try:
+        return json.loads(_need(p, f"GitHub PR #{number}"))
+    except ValueError as e:
+        raise LandError(f"GitHub PR #{number}: unparseable output") from e
 
 
 def _pr_files(root: Path, base: str) -> list[str]:
@@ -478,22 +515,23 @@ def _merged_head_evidence(root: Path, delivered: dict, pr: dict, base: str) -> d
     return {"head": delivered["head"], "merge": merge, "url": pr.get("url")}
 
 
-def _ensure_pr(root: Path, branch: str, base: str, message: str, pr_title: str | None,
-               pr_body_file: str | None, task_ref: str, pr: dict | None) -> dict:
-    """Reuse the branch's PR when one exists (editing it only when asked); otherwise create it. `pr` is the
-    caller's already-fetched view of the branch's PR (`None` = looked, there is none), so the happy path costs
-    one `gh pr view` and the create path reads the PR back exactly once."""
+def _reuse_pr(root: Path, pr: dict, pr_title: str | None, pr_body_file: str | None) -> dict:
+    """Reuse the branch's PR, editing it only when asked. `pr` is the caller's already-fetched view."""
+    _note(f"PR #{pr.get('number')} exists — reusing it")
+    if pr_title or pr_body_file:
+        args = ["gh", "pr", "edit", str(pr.get("number"))]
+        args += ["--title", pr_title] if pr_title else []
+        args += ["--body-file", pr_body_file] if pr_body_file else []
+        e = _run(args, root)
+        if e.returncode != 0:
+            raise LandError(f"gh pr edit: {(e.stderr or '').strip()[-200:]}")
+    return pr
+
+
+def _create_pr(root: Path, branch: str, base: str, message: str, pr_title: str | None,
+               pr_body_file: str | None, task_ref: str) -> str:
+    """Open the branch's PR and return its URL; the caller has looked and found none."""
     title = pr_title or message.splitlines()[0]
-    if pr is not None:
-        _note(f"PR #{pr.get('number')} exists — reusing it")
-        if pr_title or pr_body_file:
-            args = ["gh", "pr", "edit", str(pr.get("number"))]
-            args += ["--title", pr_title] if pr_title else []
-            args += ["--body-file", pr_body_file] if pr_body_file else []
-            e = _run(args, root)
-            if e.returncode != 0:
-                raise LandError(f"gh pr edit: {(e.stderr or '').strip()[-200:]}")
-        return pr
     body_path, tmp = pr_body_file, None
     try:
         if not body_path:
@@ -511,50 +549,37 @@ def _ensure_pr(root: Path, branch: str, base: str, message: str, pr_title: str |
     finally:
         if tmp:
             Path(tmp).unlink(missing_ok=True)
-    # By its printed URL: the branch may also name an earlier closed or merged PR.
-    pr = _pr_view(root, ((c.stdout or "").strip().splitlines() or [branch])[-1])
+    return ((c.stdout or "").strip().splitlines() or [branch])[-1]
+
+
+def _created_pr(root: Path, url: str) -> dict:
+    """Read a created PR back by its printed URL: the branch may also name an earlier closed or merged PR."""
+    pr = _pr_view(root, url)
     if pr is None:
         raise LandError("gh pr create succeeded but the PR cannot be read back")
     _note(f"PR #{pr.get('number')} created")
     return pr
 
 
-def _checks_state(root: Path, number: int) -> str:
-    """One reading of the PR's checks: pass / fail / pending / skipped / none. `gh pr checks` exits non-zero
-    for pending or failing checks, so the JSON body is the verdict, not the exit code. `none` is GitHub
-    reporting no checks at all, which is a different fact from checks that ran and were skipped: only the
-    caller, which knows whether the repository configures CI, can say what it means."""
-    p = _run(["gh", "pr", "checks", str(number), "--json", "bucket"], root)
-    body = (p.stdout or "").strip()
-    if not body:
-        if "no checks" in ((p.stderr or "") + (p.stdout or "")).lower():
-            return "none"
-        raise LandError(f"gh pr checks #{number}: {(p.stderr or '').strip()[-200:] or f'exit {p.returncode}'}")
-    try:
-        buckets = {c.get("bucket") for c in json.loads(body)}
-    except (ValueError, TypeError, AttributeError) as e:
-        raise LandError(f"gh pr checks #{number}: unparseable output") from e
-    unknown = buckets - {"pass", "fail", "pending", "skipping", "cancel"}
-    if unknown:
-        raise LandError(f"gh pr checks #{number}: unrecognised bucket(s) {', '.join(sorted(map(str, unknown)))} — "
-                        "refusing to read them as a pass; this gates --merge")
-    if not buckets:
-        return "none"
-    if buckets & {"fail", "cancel"}:
-        return "fail"
-    if "pending" in buckets:
-        return "pending"
-    # Skips need candidate requiredness; this inventory alone is no merge verdict.
-    return "skipped" if "skipping" in buckets else "pass"
+def _checks_reported(root: Path, pair: dict) -> bool:
+    """Whether GitHub reports any check run or commit status on the pinned head, read through REST. Exact evidence
+    of no checks is believed only while this independent read agrees, so hosted checks never select the local suite."""
+    owner, repo = _repository(root, "a checks read")
+    for endpoint in ("check-runs?per_page=1", "status?per_page=1"):
+        p = _run(["gh", "api", f"repos/{owner}/{repo}/commits/{pair['head_sha']}/{endpoint}", "--jq", ".total_count"],
+                 root)
+        try:
+            if int(_need(p, "GitHub checks on the pinned head")):
+                return True
+        except ValueError as e:
+            raise LandError("GitHub checks on the pinned head: unparseable output") from e
+    return False
 
 
 def _check_query(root: Path, query: str, **variables) -> dict:
-    origin = _need(_git(root, "config", "--get", "remote.origin.url"), "origin URL")
-    match = github_intake._REMOTE.fullmatch(origin)
-    if not match:
-        raise LandError("check evidence requires a GitHub origin")
+    owner, repo = _repository(root, "check evidence")
     args = ["gh", "api", "graphql", "-f", f"query={query}"]
-    for key, value in {"owner": match["owner"], "repo": match["repo"], **variables}.items():
+    for key, value in {"owner": owner, "repo": repo, **variables}.items():
         args += ["-F" if isinstance(value, int) else "-f", f"{key}={value}"]
     try:
         result = json.loads(_need(_run(args, root), "GitHub check evidence"))
@@ -721,7 +746,7 @@ def _snapshot_pair(root: Path, branch: str, number: int, base: str, expected_hea
     """
     deadline, settling = time.monotonic() + PR_VIEW_SETTLE_SECONDS, False
     while True:
-        pr = _pr_view(root, str(number)) or {}
+        pr = _pull(root, number)
         if pr.get("state") != "OPEN":
             raise LandError(f"PR #{number} is not open while its merge candidate is being pinned")
         _require_pr_target(pr, branch, base)
@@ -748,7 +773,7 @@ def _assert_pair_current(root: Path, pair: dict) -> None:
     """Fail unless both origin refs and GitHub's PR still name the pinned pair; BaseMoved when only the base moved."""
     base_sha = _fetch_rev(root, pair["base"])
     head_sha = _fetch_rev(root, pair["branch"])
-    pr = _pr_view(root, str(pair["number"])) or {}
+    pr = _pull(root, pair["number"])
     actual = (head_sha, pr.get("headRefOid"), pr.get("state"), pr.get("baseRefName"), pr.get("headRefName"))
     if actual != (pair["head_sha"], pair["head_sha"], "OPEN", pair["base"], pair["branch"]):
         raise LandError("the PR base or head moved after the merge candidate was pinned — "
@@ -813,11 +838,9 @@ def _prospective(root: Path, base: str, changed: list[str], test_cmd: str) -> di
 def _checks_value(root: Path, number: int, pair: dict) -> str:
     """Read checks only while GitHub and origin still name the pinned PR pair."""
     _assert_pair_current(root, pair)
-    state = _checks_state(root, number)
-    evidence = _checks_evidence(root, pair)
-    if state != "none" and evidence == "none":
+    state = _checks_evidence(root, pair)
+    if state == "none" and _checks_reported(root, pair):
         raise LandError("reported checks have no evidence on the pinned candidate")
-    state = evidence
     _assert_pair_current(root, pair)
     if state != "none":
         return state
@@ -936,16 +959,40 @@ def _merge(root: Path, branch: str, number: int, base: str, expected_head: str,
     method = ["--squash", "--delete-branch"] if delete_branch else ["--squash"]
     m = _run(["gh", "pr", "merge", str(number), *method,
               "--match-head-commit", expected_head], root, timeout=300)
-    after = _pr_view(root, str(number)) or {}
+    after = _pull(root, number)
     if after.get("state") != "MERGED":
         raise LandError(f"gh pr merge #{number}: "
                         f"{((m.stderr or '') + (m.stdout or '')).strip()[-300:] or 'PR is not merged'}")
     if m.returncode != 0:
         _note(f"merged, but gh pr merge exited {m.returncode}: {(m.stderr or '').strip()[-160:]}")
+    _fetch_base(root, base)
+    return True
+
+
+def _fetch_base(root: Path, base: str) -> None:
     f = _git(root, "fetch", "origin", base, timeout=120)
     if f.returncode != 0:
         _note(f"git fetch origin {base} failed: {(f.stderr or '').strip()[-160:]}")
-    return True
+
+
+def _record_merged_head(project: str, slug: str, head: str) -> None:
+    """The merged head consumes the task's current reviews."""
+    from . import reviews
+    with S.project_lock(project):
+        current = S.load_task(project, slug)
+        current["review_merged_head"] = head
+        for review in reviews._current_reviews(current):
+            review["merged_head"] = head
+        S.save_task(project, current)
+
+
+def _require_merged_tree(root: Path, pair: dict) -> None:
+    """Where the base requires its PR check, the merge commit carries exactly the tested tree."""
+    if not pair["required_pr_check"]:
+        return
+    commit_sha = (_pull(root, pair["number"]).get("mergeCommit") or {}).get("oid")
+    if not commit_sha or _need(_git(root, "rev-parse", f"{commit_sha}^{{tree}}"), "merged tree") != pair["tree"]:
+        raise LandError("merged tree does not match the tested PR tree; report delivery for recovery")
 
 
 def _merge_pair(root: Path, pair: dict, *, delete_branch: bool) -> bool:
@@ -953,6 +1000,8 @@ def _merge_pair(root: Path, pair: dict, *, delete_branch: bool) -> bool:
     try:
         return _merge(root, pair["branch"], pair["number"], pair["base"], pair["head_sha"],
                       delete_branch=delete_branch)
+    except RateLimited:
+        raise  # the landing confirms with GitHub whether the merge happened before it starts again
     except LandError:
         _assert_pair_current(root, pair)
         raise
@@ -968,7 +1017,7 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge
         _assert_pair_current(root, pair)
         with _candidate(root, base_sha, head_sha) as path:
             tests = _local_suite(path, test_cmd)
-    except BaseMoved:
+    except (BaseMoved, RateLimited):
         raise
     except LandError as exc:
         _note(f"not merging: {exc}")
@@ -980,18 +1029,18 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge
         return False, tests
     try:
         _assert_pair_current(root, pair)
-    except BaseMoved:
+    except (BaseMoved, RateLimited):
         raise
     except LandError:
         tests["error"] = "the base or the head moved while the merge candidate was under test"
         _note(f"not merging: {tests['error']} — re-run alt land to test and merge the current pair")
         return False, tests
-    after_checks = _checks_state(root, pair["number"])
-    if after_checks == "none":
-        after_checks = _checks_evidence(root, pair)
+    after_checks = _checks_evidence(root, pair)
+    if after_checks == "none" and _checks_reported(root, pair):
+        after_checks = "reported"
     try:
         _assert_pair_current(root, pair)
-    except BaseMoved:
+    except (BaseMoved, RateLimited):
         raise
     except LandError:
         tests["error"] = "the base or the head moved while final checks were being read"
@@ -1051,7 +1100,7 @@ def _ends_with_session(wait_for):
 def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority, deadline):
     """Wait outside the repository turn for the owner assessment and candidate checks."""
     from . import reviews
-    notified, announced = None, None
+    notified, announced, delay = None, None, CHECK_POLL_SECONDS
     actor = authority.get("actor") if authority is not None else os.environ.get("ALTITUDE_ACTOR")
     while True:
         stale = refused = None
@@ -1093,7 +1142,8 @@ def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority, de
                 raise LandError(f"owner assessment wait timed out with {_checks_outcome(checks, pair)}; candidate "
                                 "remains published and unmerged — assess when ready and re-run alt land")
             return checks
-        time.sleep(min(CHECK_POLL_SECONDS, max(deadline - time.monotonic(), 0)))
+        time.sleep(min(delay, max(deadline - time.monotonic(), 0)))
+        delay = min(delay * 2, CHECK_POLL_SECONDS * CHECK_POLL_BACKOFF)
 
 
 @contextlib.contextmanager
@@ -1266,9 +1316,28 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             commit = _need(_git(root, "rev-parse", "HEAD"), "rebased commit")
         if _git(root, "diff", "--quiet", f"origin/{base}", "HEAD").returncode == 0:
             return _merged_retry(root, project, slug, task, authority, branch, base, continued_pr, lease, closes_issues)
-    replaced, deadline, waited = [], None, 0
-    while True:  # A moved base gets a fresh publication and check outside the merge turn.
+    # One deadline covers every head this landing publishes and every rate-limit refusal it waits out.
+    wait = LAND_WAIT_TIMEOUT if wait is None else min(max(wait, 0), LAND_WAIT_TIMEOUT)
+    replaced, deadline, waited, created, attempted = [], time.monotonic() + wait, 0, None, None
+    while True:  # A moved base or a refusal gets a fresh publication and check outside the merge turn.
         try:
+            if attempted:  # #814: a refusal may have interrupted the merge or its confirmation; GitHub says which
+                after = _pull(root, attempted["number"])
+                if after.get("state") == "MERGED":  # a refusal here asks again; the branch is never republished
+                    pair = attempted
+                    _require_pr_target(after, pair["branch"], pair["base"])
+                    if after.get("headRefOid") != pair["head_sha"]:
+                        raise LandError(f"PR #{pair['number']} merged at head {after.get('headRefOid')}, not the candidate "
+                                        f"{pair['head_sha']}; report delivery for recovery")
+                    from . import reviews
+                    with reviews.merge_lock(project, slug):
+                        _record_merged_head(project, slug, pair["head_sha"])
+                    _fetch_base(root, base)
+                    _require_merged_tree(root, pair)
+                    _note(f"GitHub confirms PR #{pair['number']} merged at head {pair['head_sha']}")
+                    merged = True
+                    break
+                attempted = None
             with S.project_lock(project):
                 _require_delivery_owner(project, slug, task, S.load_task(project, slug), authority,
                                         branch=publish_branch, number=(pr or {}).get("number"))
@@ -1285,15 +1354,16 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                               source_branch=branch if adoption else None)
             pushed_head = _need(_git(root, "rev-parse", f"origin/{publish_branch}"), "cannot capture the pushed PR head")
             _note(f"pushed head {pushed_head}")
-            pr = _ensure_pr(root, publish_branch, base, message, pr_title, pr_body_file, task_ref, pr=pr)
+            if pr is not None:
+                pr = _reuse_pr(root, pr, pr_title, pr_body_file)
+            else:  # #814: a PR whose read-back was refused is read again by its URL, never created twice
+                created = created or _create_pr(root, publish_branch, base, message, pr_title, pr_body_file, task_ref)
+                pr = _created_pr(root, created)
             number = pr.get("number")
             task = _record_delivery(project, slug, task, authority, branch=publish_branch, number=number,
                                     head=pushed_head, base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"))
             hold_merge = task.get("hold_merge")
             pair = _snapshot_pair(root, publish_branch, number, base, pushed_head)
-            if deadline is None:  # one wait covers every head this landing publishes
-                wait = LAND_WAIT_TIMEOUT if wait is None else min(max(wait, 0), LAND_WAIT_TIMEOUT)
-                deadline = time.monotonic() + wait
             if merge and pair["base_sha"] != publishing_base:
                 # An outside merge between integration and pinning must also get a fresh integrated head.
                 _assert_pair_current(root, {**pair, "base_sha": publishing_base})
@@ -1339,12 +1409,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                         except T.TransitionError as exc:
                             raise LandError(str(exc)) from exc
                     yield
-                    with S.project_lock(project):
-                        current = S.load_task(project, slug)
-                        current["review_merged_head"] = pair["head_sha"]
-                        for review in reviews._current_reviews(current):
-                            review["merged_head"] = pair["head_sha"]
-                        S.save_task(project, current)
+                    _record_merged_head(project, slug, pair["head_sha"])
 
             while True:
                 checks = _wait_for_candidate(root, project, slug, pair, merge=merge, wait=wait,
@@ -1353,6 +1418,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                 try:
                     if merge and not merged and checks in ("pass", "none-configured"):
                         check_before_merge()  # Refuse lost ownership or holds before admitting a local suite.
+                        attempted = pair
                         with _repository_turn(root) as turn_wait:
                             waited += turn_wait
                             _assert_pair_current(root, pair)
@@ -1364,23 +1430,28 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                                 if checks == "pass":
                                     with before_merge():
                                         merged = _merge_pair(root, pair, delete_branch=not adoption)
-                                    if pair["required_pr_check"]:
-                                        commit_sha = ((_pr_view(root, str(number)) or {}).get("mergeCommit") or {}).get("oid")
-                                        if not commit_sha or _need(_git(root, "rev-parse", f"{commit_sha}^{{tree}}"),
-                                                                   "merged tree") != pair["tree"]:
-                                            raise LandError("merged tree does not match the tested PR tree; "
-                                                            "report delivery for recovery")
+                                    _require_merged_tree(root, pair)
                     elif merge and not merged:
                         _note(f"not merging: {_checks_outcome(checks, pair)}")
                 except _Reassess:
                     continue  # The turn is released before waiting for a renewed assessment.
                 break
         except BaseMoved as exc:
-            if not merge or deadline is None or time.monotonic() >= deadline:
+            if not merge or time.monotonic() >= deadline:
                 raise LandError(f"{exc}; the candidate remains published and unmerged — re-run alt land to "
                                 "integrate it, test and merge one current pair") from exc
             _note(f"{exc}; integrating it and checking the new head within the same wait")
             recorded_tip = pushed_head
+            continue
+        except RateLimited as exc:
+            # #814: the refused command did nothing; every gate is read again once GitHub accepts requests.
+            remaining = deadline - time.monotonic()
+            if remaining <= RATE_LIMIT_POLL_SECONDS:
+                raise LandError(f"{exc}; the wait is over — re-run alt land once GitHub's limit clears"
+                                + (f"; it finds whether PR #{attempted['number']} merged" if attempted else "")) from exc
+            _note(f"{exc}; starting the candidate again in {RATE_LIMIT_POLL_SECONDS}s, with {round(remaining)}s left in the wait")
+            time.sleep(RATE_LIMIT_POLL_SECONDS)
+            recorded_tip = pushed_head  # every GitHub request in this loop follows the push
             continue
         break
 

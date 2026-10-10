@@ -613,9 +613,9 @@ class Platform(unittest.TestCase):
 
     def test_unsupported_platform_and_control_operation_are_refused(self):
         for host, machine, release, supported in (
-                ("linux", "x86_64", "", True), ("darwin", "arm64", "15.0", True), ("darwin", "arm64", "26.6.2", True),
-                ("linux", "aarch64", "", False), ("darwin", "x86_64", "15.0", False), ("darwin", "arm64", "14.7", False),
-                ("win32", "AMD64", "", False)):
+                ("linux", "x86_64", "", True), ("linux", "aarch64", "", True), ("darwin", "arm64", "15.0", True),
+                ("darwin", "arm64", "26.6.2", True), ("darwin", "x86_64", "15.0", True), ("darwin", "arm64", "14.7", False),
+                ("darwin", "x86_64", "14.7", False), ("win32", "AMD64", "", False), ("freebsd14", "amd64", "", False)):
             with self.subTest(host=host, machine=machine, release=release), \
                     mock.patch.object(platform.sys, "platform", host), \
                     mock.patch.object(platform.host_platform, "machine", return_value=machine), \
@@ -623,7 +623,8 @@ class Platform(unittest.TestCase):
                 if supported:
                     platform.require_supported()
                 else:
-                    with self.assertRaisesRegex(RuntimeError, "macOS 15 or newer on Apple silicon"):
+                    with self.assertRaisesRegex(RuntimeError, "^Altitude runs on Linux with a systemd user manager or on "
+                                                              "macOS 15 or newer.$"):
                         platform.require_supported()
         with mock.patch.object(platform, "require_supported"), \
                 self.assertRaisesRegex(ValueError, "Unknown application service operation"):
