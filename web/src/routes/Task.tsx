@@ -249,7 +249,8 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   // URL's question retargets replies.
   const origin = useVisitReturn<QuestionOrigin>("origin");
   const returned = !questionId && origin?.project === project && origin.slug === task.slug
-    ? origin.id ? questions.find((q) => q.id === origin.id && q.revision === origin.revision) : facts.review ?? undefined : undefined;
+    ? origin.id ? [...questions].reverse().find((q) => q.id === origin.id && q.revision === origin.revision) ?? [...questions].reverse().find((q) => q.id === origin.id)
+      : facts.review ?? undefined : undefined;
   const anchor = target ?? returned;
   const open = (group?.questions ?? (task.question ? [task.question] : [])).filter((question) => question.status === "open" && !question.response);
   const current = open.find((question) => question.design_url) ?? open[0];

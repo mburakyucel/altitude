@@ -58,3 +58,5 @@
 .question-review { display: flex; align-items: flex-start; gap: 6px; width: fit-content; max-width: 100%; overflow-wrap: anywhere; }
 .question-review .review-icon, .question-review .review-icon svg { width: 16px; height: 16px; margin-top: 1px; }
 p.question-review { margin: 0; color: var(--text-muted); }
+a.question-review > span:last-child { text-decoration: underline; text-underline-offset: 2px; }
+.shell[data-phone] a.question-review { min-height: 44px; align-items: center; }

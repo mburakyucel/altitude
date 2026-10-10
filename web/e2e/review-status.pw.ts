@@ -31,13 +31,22 @@ test("Needs you shows each proposal and merge review and Back returns to its car
   const header = page.getByRole("article", { name: "Compact header", exact: true });
   const merge = page.getByRole("article", { name: "Keep pagination stable", exact: true });
   const region = page.getByRole("article", { name: "Backup region", exact: true });
+  const notes = page.getByRole("article", { name: "Release notes", exact: true });
+  const longest = notes.getByRole("link", { name: "Implementation review · done, 3 findings pending · earlier version", exact: true });
   await walk.state("01-needs-you-review-lines", {
     visible: [settings.getByRole("link", { name: proposal, exact: true }), settings.locator(".question-review .review-icon-ok"),
       header.getByText("Proposal review · not done", { exact: true }), header.locator(".question-review .review-icon-warn"),
-      merge.getByRole("link", { name: implementation, exact: true }), merge.locator(".question-review .review-icon-warn")],
+      merge.getByRole("link", { name: implementation, exact: true }), merge.locator(".question-review .review-icon-warn"),
+      longest, notes.locator(".question-review .review-icon-warn")],
     // No review means no link; a question that is neither a proposal nor a merge approval has no line.
     hidden: [header.getByRole("link", { name: /^Proposal review/ }), region.locator(".question-review")],
   });
+
+  // The longest line wraps under its words and keeps a full-size tap target on a phone.
+  const box = (await longest.boundingBox())!;
+  expect(box.height).toBeGreaterThanOrEqual(info.project.name === "phone" ? 44 : 16);
+  expect(box.x + box.width).toBeLessThanOrEqual((await notes.boundingBox())!.x + (await notes.boundingBox())!.width);
+  await expect(longest.locator("span").last()).toHaveCSS("text-decoration-line", "underline");
 
   await roundTrip(page, merge.getByRole("link", { name: implementation, exact: true }), "keep-pagin-changes",
     "Expired cursors restart pagination", () => page.goBack());

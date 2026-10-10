@@ -41,10 +41,10 @@ def main():
                         "images": [{"title": "Phone", "path": "design/wireframes/phone.png"}]})
         return slug
 
-    def review(slug, subject, findings, dispositions, *, design=None):
+    def review(slug, subject, findings, dispositions, *, design=None, assessed=True, head=None):
         task = S.load_task("atlas", slug)
-        # The saved review read the task's current commit, so its card covers the current version.
-        head = git("rev-parse", "HEAD", cwd=task["worktree"]).strip()
+        # A saved review reads the task's current commit, so its card covers the current version, unless it names another.
+        head = head or git("rev-parse", "HEAD", cwd=task["worktree"]).strip()
         snapshot = {"head": head, "base": head, "tree": "1" * 40, "context_hash": "2" * 64}
         identity = f"{slug[:10]}-{subject}"
         at = T._conversation_time()
@@ -53,7 +53,7 @@ def main():
             "focus": "", "engine_label": "Second engine", "same_engine": False, "finished_at": at,
             "result": {"text": "The approach holds; the findings below were raised.", "findings": findings, "limitations": []},
             "dispositions": dispositions, "snapshot": {**snapshot, **({"design": {"id": design}} if design else {})},
-            "reconciled": {**snapshot, "reason": "Checked each finding against the saved version.", "at": at},
+            **({"reconciled": {**snapshot, "reason": "Checked each finding against the saved version.", "at": at}} if assessed else {}),
             "message": {"id": identity, "at": at, "role": "system", "by": "l2", "review_id": identity,
                         "text": f"Adversarial {subject} review requested."}})
         S.save_task("atlas", task)
@@ -82,6 +82,19 @@ def main():
         "landed": {"prs": [{"number": 42, "merged": False}], "main_runs": [], "deploy": "not-applicable"},
         "review": [], "blocked": ""})
     T.report("atlas", pagination, {"verdict": "ok", "delivery": row["delivery"], "owner": T.report_owner(row), "prs": [42]})
+
+    # The longest line: a merge question naming the held PR, whose review read an earlier commit and awaits L2.
+    notes, worktree = running("Release notes")
+    T.set_hold_merge("atlas", notes, "Operator review of the published release notes")
+    row = S.load_task("atlas", notes)
+    row.update(delivery={"number": 43, "head": git("rev-parse", "HEAD", cwd=worktree).strip(), "at": S.now()}, prs=[43])
+    S.save_task("atlas", row)
+    review(notes, "changes", [finding("tone", "Headline overstates the fix"), finding("link", "Upgrade link is missing"),
+                              finding("date", "Release date is unset")], [], assessed=False, head="b" * 40)
+    T.block("atlas", notes, "Merge PR #43?", actor="l2", updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE},
+            questions={"questions": [{"question": "Merge PR #43?", "options": [
+                {"key": "approve", "label": "Approve merge", "text": "Approved: merge PR #43."},
+                {"key": "changes", "label": "Request changes", "text": "Hold PR #43 for changes."}], "recommended_key": "approve"}]})
 
     region, _ = running("Backup region")
     T.block("atlas", region, "Where should the backup live?", actor="l2", updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE},

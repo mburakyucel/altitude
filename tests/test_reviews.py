@@ -1330,6 +1330,10 @@ class TestReviews(AltitudeCase):
         self.assertIsNone(T.approved_pr(self.project, task))
         reviews.require_merge(self.project, self.slug, self.pair())
         self.assertEqual(self.engine.call_count, 1)
+        # A later commit makes the question's line and the review card both say "earlier version".
+        self.commit("value.py", "VALUE = 3\n")
+        self.assertTrue(T.decisions(self.project)[0]["review"]["earlier"])
+        self.assertTrue(reviews.view(self.project, self.slug)["subjects"]["changes"]["latest"]["earlier"])
 
     def test_changes_review_leaves_unrelated_open_questions_and_their_authority_intact(self):
         # The one-command VM increment (#587): publication and runner-image decisions stay open while the
@@ -1494,10 +1498,42 @@ class TestReviews(AltitudeCase):
         self.assertEqual(result["snapshot"]["design"], {"id": question["questions"][-1]["design"]["id"], "title": "Compact rows", "images": []})
         reviewed = lambda: next(r for r in reviews.view(self.project, self.slug)["history"] if r["id"] == result["id"])
         self.assertFalse(reviewed()["earlier"])
+        # The design question's review line names the latest proposal review (SPEC.md §3.8.3).
+        self.assertEqual({k: T.question_views(self.project, self.slug)[-1]["review"][k] for k in ("subject", "id", "earlier")},
+                         {"subject": "proposal", "id": plain["id"], "earlier": False})
         (boards / "spec.md").write_text(spec + "Desktop: two lines.\n")
         T.resume(self.project, self.slug)
         T.block(self.project, self.slug, "Build the rows as shown?", actor="l2", expected_attempt=1, design=selection)
         self.assertTrue(reviewed()["earlier"])
+
+    def test_question_review_status_reads_the_saved_reviews(self):
+        # SPEC.md §3.8.3: a kind's latest review and its open findings; with no worktree identity only the design compares.
+        task = {"questions": [{"design": {"id": "d1"}}], "reviews": [
+            {"id": "p1", "subject": "proposal", "state": "completed", "snapshot": {"head": "a" * 40, "design": {"id": "d1"}},
+             "reconciled": {"head": "a" * 40}, "result": {"findings": [{"id": "f1"}, {"id": "f2"}]},
+             "dispositions": [{"finding_id": "f1", "disposition": "open"}, {"finding_id": "f2", "disposition": "fixed"}]},
+            {"id": "c1", "subject": "changes", "state": "running", "snapshot": None}]}
+        self.assertEqual(reviews.status(self.project, task, "proposal"), {"subject": "proposal", "id": "p1", "state": "completed",
+                                                                          "findings": 2, "reconciled": True, "open": 1, "earlier": False})
+        task["questions"].append({"design": {"id": "d2"}})
+        self.assertTrue(reviews.status(self.project, task, "proposal")["earlier"])
+        self.assertEqual({k: reviews.status(self.project, task, "changes")[k] for k in ("id", "state", "earlier")},
+                         {"id": "c1", "state": "running", "earlier": False})
+        self.assertEqual(reviews.status(self.project, {}, "changes"), {"subject": "changes", "id": None, "state": "none"})
+
+    def test_only_open_design_and_held_pr_questions_carry_a_review_line(self):
+        plain = T.block(self.project, self.slug, "Which region?", actor="l2", expected_attempt=1,
+                        updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE})["questions"][-1]
+        self.assertIsNone(T.question_views(self.project, self.slug)[-1]["review"])
+        T.resume(self.project, self.slug)
+        merge = T.block(self.project, self.slug, "Merge PR #42?", actor="l2", expected_attempt=1,
+                        updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE}, questions=self.held_pr_question())["questions"][-1]
+        views = {q["id"]: q for q in T.question_views(self.project, self.slug)}
+        self.assertIsNone(views[plain["id"]]["review"])
+        self.assertEqual(views[merge["id"]]["review"], {"subject": "changes", "id": None, "state": "none"})
+        # A closed question keeps no line: the status describes the review now, not when it was asked.
+        task = S.load_task(self.project, self.slug)
+        self.assertIsNone(T._question_review(self.project, task, {**next(q for q in task["questions"] if q["id"] == merge["id"]), "status": "resolved"}))
 
     def test_missing_proposal_never_invokes_provider_and_retry_preserves_subject(self):
         result = self.run_review(self.request(subject="proposal"))
