@@ -131,7 +131,7 @@ test.describe("L3 Send now", () => {
     expect((await request.post("/fixture/system")).ok()).toBe(true);
     await page.reload();
     await walk.state("l3-13-kept-after-reload-ahead-of-system-work", {
-      visible: [turn.locator('.bubble[data-state="queued"]'), convo.locator(".queued-row").filter({ hasText: "Fixture system work" })],
+      visible: [turn.locator('.bubble[data-state="queued"]'), convo.locator(".queued-row .sys-line[data-queued]").filter({ hasText: "Restart" })],
       hidden: [convo.getByText(/could not answer/)],
     });
     await expect(convo.getByText("Are you there?", { exact: true })).toHaveCount(1);
