@@ -88,8 +88,9 @@ the lightest useful execution shape. Its conversation with the operator is store
 the operator messages it directly without routing through L3. Messages queue on the task and reach the
 worker at its next checkpoint; the operator's own messages reach it only as a user turn, at the next session
 turn. An explicit Stop ends a worker. **Send now** on an inbox-owned operator
-message interrupts current work through the same Stop path and resumes the saved session with that
-message as its next input. The remaining inbox rows retain their order for later checkpoints. Task message writers hold the project
+message hands the queued operator group to the running turn in arrival order, without stopping its
+work (see [message delivery](#message-delivery-and-voice)). Each message keeps its own visible row and
+delivery receipt; messages arriving after the claim wait for a later checkpoint. Task message writers hold the project
 lock and atomically replace each conversation or inbox file, so concurrent readers see complete records.
 Appending a message to a blocked
 task also persists a due `resume_after` request, except non-waking coordinator discussion on a
@@ -399,8 +400,11 @@ arrives on such a connection after a full TLS 1.3 handshake. A browser that trus
 any certificate it issued. A browser that clicked past the first certificate's warning, or ignores
 certificate errors, refuses the second with a certificate alert; altd then settles the challenge
 that armed that connection as untrusted, disarms the address and answers on the next connection.
-Three attempts without an answer read Couldn't check: a failed request alone never means
-untrusted. A request on a connection opened before the
+A refusal is final for its challenge. A browser that ignores certificate errors connects again
+accepting the second certificate, possibly before altd has recorded the refusal, so an answer on
+the second certificate first waits up to five seconds for the challenge's other handshakes to end;
+one still open then gets a retry. Three attempts without an answer read Couldn't check: a failed
+request alone never means untrusted. A request on a connection opened before the
 challenge, including a TLS 1.2 or resumed one, gets a retry. altd issues no TLS session tickets,
 so every TLS 1.3 connection presents a certificate. The screen offers the code only once the check
 passes; the server does not yet refuse a pairing on it. With an external certificate, altd holds no
@@ -652,13 +656,15 @@ retain their exit paths. It creates no job registry, automatic retry or alternat
 Report freshness and delivery verification remain authoritative; native coverage limits are explicit
 in [polling and cleanup](SESSION_LIFECYCLE.md#polling-and-cleanup).
 
-### Cross-engine review
+### Adversarial review
 
 `reviews.py` owns task-bound proposal and changes review records; the task remains owned by L2.
 L2 proactively seeks adversarial review of complex proposals before code and complex implementations,
-using judgment to keep simple work light. L2 requests through the CLI or the operator uses the two
-subject entries in the task menu. Each existing entry opens saved evidence without invoking review;
-reruns are explicit actions in details. A repeated request or source message reuses its receipt.
+using judgment to keep simple work light. L2 requests through the CLI or the operator uses the
+Proposal review and Implementation review boxes in task details. `view` gives each subject's latest
+review and whether a new one can start; viewing never invokes review. Requests queue on any open
+task: a waiting or blocked owner is woken, and a stopped or faulted task keeps the request for its next
+resume. A repeated request or source message reuses its receipt.
 The owner prepares a committed checkpoint, identifies the exact original L2 proposal message for a
 proposal review, and invokes the fixed daemon endpoint. Open questions do not gate either subject: a
 request may continue a question-blocked owner solely for review while preserving every open question and
@@ -667,8 +673,8 @@ owner session or general command transport.
 
 The engine and routing seams prefer an eligible configured option different from the owner, respecting
 project choices and known quota exhaustion. Otherwise they select a separate same-engine invocation
-under the same captured-input/read-only contract, with its fallback reason recorded and shown alongside
-engine/model and account-allowance uncertainty before requesting and in saved evidence. An explicit
+under the same captured-input/read-only contract, the ordinary path, with its fallback reason, engine/model
+and account-allowance uncertainty saved with the review. An explicit
 per-request engine/model selection replaces that preference with a single candidate under the same
 eligibility, quota, rejection and capability checks; it is saved with the request, rechecked at run and
 never substituted, and project defaults are unchanged. No engine switch occurs after launch. Fallback cannot bypass unavailable observation, cancellation or capacity. Admission
@@ -677,8 +683,8 @@ no reservation while waiting for preparation and no automatic retry. L2 and revi
 set expectations for a relatively quick, focused review without a programmatic duration cutoff.
 The command waits without a review deadline; streamed JSON whitespace detects disconnected callers.
 Owner changes, cancellation and caller disconnect stop the run. Planned activation waits for in-flight
-reviews to return their results; review admission shares the restart fence. Capacity contention leaves
-an accepted request pending for a later explicit run. Unexpected restart reconciliation cancels an
+reviews to return their results; review admission shares the restart fence. Capacity contention refuses
+`run` and leaves the accepted request waiting for the reviewer, shown as such, until a later explicit run. Unexpected restart reconciliation cancels an
 orphaned invocation rather than leaving it running without a result consumer.
 The engine checks service inspection before launch. Its cleanup stops the independent reviewer unit
 on interruption, including keyboard interruption and process exit, before reaping the launcher.
@@ -712,7 +718,8 @@ code-mode host, the one native feature left enabled besides skipping host skill 
 JavaScript tool bridge without filesystem, process or network globals, whose patch tool the read-only
 sandbox rejects. Claude loads it from the command-line MCP configuration in restricted mode with no
 built-in tools, no skills and no safe mode, which disables every MCP server. Both are provider
-properties established by recorded reviewer runs, not by the suite. The adapter records the first
+properties established by recorded reviewer runs, not by the suite. The result's `text` is a
+one-sentence verdict the UI shows as the review's summary. The adapter records the first
 content-bearing read in the review runtime; a reviewer that read no content fails with that reason
 instead of completing with no coverage. CLI-internal authentication uses
 the configured account. The reviewer environment keeps only home, login name, path, locale and engine
@@ -725,7 +732,7 @@ diagnostic categories, and a Claude result's allowlisted failure facts (subtype,
 error kind and status) locate failures no category recognizes; stdout transcripts and arbitrary error
 prose are not copied into diagnostics.
 Unknown, malformed, incomplete and truncated stdout remain explicit evidence states.
-The [failure-evidence contract](SESSION_LIFECYCLE.md#cross-engine-review) describes bounds and privacy.
+The [failure-evidence contract](SESSION_LIFECYCLE.md#adversarial-review) describes bounds and privacy.
 Review records retain original findings and separate owner dispositions for each subject. Exact
 source/authority freshness and selected-input hashes are distinct. Changes assessment records the final
 candidate and evidence for every finding; code, base or conversation changes require reassessment.
@@ -906,6 +913,9 @@ Missing or unfinished review, head or PR identity movement or ownership loss ref
 No review identity or disposition is automatically transferred.
 The final review/context check precedes recorded approval application, preserving holds on review refusal.
 The process owns the turn: return, exception or termination releases it without daemon recovery.
+A landing waiting on checks or assessment ends with the owner session that started it: the worker's end stops
+its job, and the landing handles that SIGTERM by leaving the candidate published and unmerged and an
+automatic notice for the owner's next turn naming the PR and published head.
 There is no persistent queue or FIFO guarantee. Dry runs and nonmerging invocations never take
 the turn. External Git/GitHub writers, other installations, older landing code, CI runs and
 hand-run suites do not share it. This repository's strict GitHub up-to-date required-check rule
@@ -1217,9 +1227,9 @@ roots. The session bus and manager runtime directory (including its direct priva
 other runtime-directory paths retain their policy. The generated profile also supplies provider-free
 confinement checks. A task worker on either engine reaches GitHub with the operator's existing GitHub
 CLI sign-in without reaching the keyring that holds it: the launcher, which still reaches the session
-bus, reads the token with `gh auth token`, and the job receives it on the first line of its input,
-which a fixed shell reader exports as `GH_TOKEN` before it starts the engine. The reader starts nothing
-unless its input is a pipe, so the engine reads only what follows the token line. Altitude never puts
+bus, reads the token with `gh auth token`, and the job receives it in its launch input, which only the
+job's engine driver reads. The driver exports it as `GH_TOKEN` to the engine it starts, which reads only
+its own input pipe from the driver. Altitude never puts
 the token among the job's settings (they form its command line) or in a log, and writes it to disk only
 in the macOS launcher's private input copy until the job's supervisor starts. The engine and its tools
 hold it as `GH_TOKEN`, so an engine's own record of its environment (a Codex shell snapshot) can hold it
@@ -1616,7 +1626,11 @@ authority or fault state. Every toast has a dismiss control; inline errors and t
 retain their recovery and answer controls. Both engines launch L2 workers in independent jobs outside altd's own;
 running and blocked workers survive activation and are adopted afterwards. Each worker unit and the
 service retain `KillMode=control-group` on Linux, and on macOS Stop takes every member of the job's
-coalition, so stopping a worker takes all its descendants. An exited or
+coalition, so stopping a worker takes all its descendants. A worker ends when its engine exits or
+its latest turn fails with no activity since; an active job alone is not a live worker. An engine can stay
+alive after a failed turn while a background command it started runs, so polling stops the job of a worker
+whose latest turn failed: whatever it left running ends with it, and the ordinary limit, capacity or fault path follows.
+A Send now message returned after that turn is not activity. A successful turn that waits on its own background work keeps running. An exited or
 missing worker on a running task requires a report written since its latest launch or resume
 or an explicit completion; without one it blocks with a system fault and incident. An explicit
 question block remains waiting after worker exit and needs no completion report. Dispatch continues
@@ -2071,30 +2085,60 @@ messages. Each turn drains it at its own boundary rather than at the next tick: 
 messages for the same conversation fold into one turn in arrival order, each on its own line, while
 image-bearing and server-triggered messages keep their own turn, and nothing runs while a turn holds the project's L3 lock.
 
-**Send now** promotes only the selected operator row and gives it its own next turn. Other queued
-rows keep their relative order and ordinary folding. Admission, removal and claim share the queue's
-writer lock; retries reuse the selected row or its history receipt. An accepted Send now row remains
-removable until claim, including when no engine is available after admission. Removal does not undo
-an interruption already requested. The daemon requests interruption
-of the captured active chat turn through the engine seam, retains partial output and session identity,
-and saves the partial reply, possibly empty, as an assistant row marked `interrupted`. Confirmed
-interruption is not an engine error: the turn is incomplete and never replayed. A fresh session's
-recent-conversation context labels that row interrupted, and `alt l3 search` results and the chat
-audit packet keep the marker.
-Its turn lock remains held until the engine job and
-its descendants have ended. A system turn finishes at its existing boundary to preserve notification,
-CI and report delivery; the promoted row says **Runs next after system work**. System queue rows
-cannot be promoted or removed. No available engine, an active chat still starting, or a launch pause
-explains why delivery cannot start. Pending priority is durable, and a queued row still neither holds nor is lost by a quiet-point
-restart. The browser requests this action by message ID; it never interrupts an engine itself.
+An operator message whose turn finds no eligible engine, or whose every option refuses before provider
+output, is kept rather than failed. Its user row stays in history under the turn id and no error row is
+written; the queue keeps one chat row carrying that `turn_id`, its text and any images. `l3._keep` orders the
+queue as an accepted Send now group, then kept messages in send order, then the rest, and the claim of a kept
+row publishes the same turn id without logging the message again, so the reply lands beneath it. The
+page shows a kept message's queued status under its own bubble rather than in the queued list.
+A kept message's Send now promotes its original turn for boundary delivery; it is not part of the
+removable native group. A refused group retains all original queue identities through subsequent
+retries, so its own bubbles are excluded from historical context and its instructions arrive once.
 
-In the task chat, the same control uses the existing durable Stop and resume operation, fences hook
-pickup before interruption, and delivers only the selected inbox row through the usual resume claim
-and handoff receipt. Like Stop, it cancels attached reviews and does not undo completed external
-effects. Confirmed termination persists a due continuation; later launch holds show waiting to resume,
-with Stop and Reject still available. A new question or fault supersedes the wake. An explicit Stop,
-question wait, fault recovery or unavailable saved-session engine explains the required continuation,
-answer or recovery instead of interrupting. Operator grants and merge holds keep their existing rules.
+**Send now** promotes the whole queued operator group for that conversation in arrival order, without
+stopping its work. The selected row identifies the group, not a message to move ahead of its neighbours.
+Messages arriving after the claim remain queued. The Codex coordinator keeps its isolated
+`codex exec --ignore-user-config` invocation: its group runs next after the current turn, with
+**Runs next after this turn** on the queued rows. Claude project chat supports native delivery:
+`engines.engine_driver` holds stream-json input open and supplies the group as a user line, with
+running commands moved to the background. The request writes the group into the turn's `sends` folder; the driver claims
+it by renaming and records the outcome as the file's final name. Once the engine confirms it, the reply so
+far becomes that turn's answer, each message joins the history under its own turn id, and the rest of the reply
+streams beneath them. Each message retains its own visible row and receipt. The claimed rows show
+**Sending into the current turn** without **Remove** until then. Retries reuse the claim or the individual
+history receipts, and only one group is sent at a time.
+
+Historical assistant rows marked `interrupted` retain their partial reply, possibly empty.
+Fresh-session context, `alt l3 search` results and the chat audit packet keep that marker; those
+incomplete turns are never replayed.
+
+A group the turn can no longer take, because it ended first, returns to the queue front and runs next
+in arrival order. A group containing images, one sent during system work (**Runs next after system work**)
+or while no turn runs (**Runs next**) also waits for next-turn delivery in arrival order; text never
+overtakes an image in that group. System turns keep their existing boundary to
+preserve notification, CI and report delivery. System queue rows cannot be promoted or removed. After a
+turn, and at the next drain after a restart, each sent row settles from its outcome file: a message the
+engine may have read is recorded once in the history and never runs again; one it never read runs next.
+Each history row retains its delivery outcome; an uncertain acknowledgement displays **Delivery unconfirmed**
+after settlement and reload.
+No available engine, a restart in progress or a launch pause explains why it cannot be sent. There is
+no timer or automatic hard interruption; task-chat Stop remains the explicit control that ends work.
+The browser requests Send now by message ID.
+
+In the task chat, the same control claims the queued removable operator group under the project lock,
+records the claim on the task and writes the group in arrival order to the worker's `sends` folder.
+Both task-owner engines use native delivery: stream-json user input with backgrounded commands, or
+`codex app-server` with `turn/steer`, behind the engine seam.
+The worker keeps running; its inbox hook neither announces the claimed messages nor ends the turn for
+them. When the engine confirms the group, the driver records each message's delivery receipt on the
+task itself, so a restart of altd loses nothing, and the rows leave the inbox. Each message retains its
+own conversation row. A group returned at the turn's end stays queued for the next turn. After
+a Stop, a lost job or the end of the task, the claim settles from the outcome file before any later turn
+takes the inbox: a message the worker never read is delivered at the next turn, and one it may have read
+is recorded as unconfirmed and never sent again. Images anywhere in the queued group keep the whole
+group waiting for next-turn delivery in order. A question wait, a fault, a Stop, another owner action,
+another group being sent, or a worker launched before this driver also keeps the group for the next
+turn instead. Operator grants and merge holds keep their existing rules.
 
 The project conversation and the task conversation use one
 composer component, `web/src/components/Composer.tsx`, with no page-specific props.

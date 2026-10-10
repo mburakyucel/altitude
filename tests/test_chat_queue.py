@@ -848,7 +848,7 @@ class TestChatQueue(AltitudeCase):
         self.assertIsNone(view["active"], "a bare busy lock is not an L3 turn the Chat UI may infer")
 
     def test_a_free_l3_still_streams_the_answer(self):
-        self.patch(l3, "turn", new=lambda project, text, *, trigger, on_text, on_start=None: (
+        self.patch(l3, "turn", new=lambda project, text, *, trigger, on_text, on_start=None, on_split=None: (
             on_text("two tasks."), {"session_id": "s1", "engine": "claude", "error": None,
                                     "turn_id": "turn-1"})[1])
         status, payload = self.request("POST", "/api/chat", {"project": self.project, "text": "status?"})
@@ -1167,81 +1167,281 @@ class TestChatQueue(AltitudeCase):
     def deliverable(self):
         return mock.patch.object(l3, "_select", return_value={"engine": "claude", "why": "test"})
 
-    def test_send_now_interrupts_chat_and_delivers_selected_once_before_siblings_on_both_engines(self):
+    @contextlib.contextmanager
+    def native_chat_turn(self):
+        with l3._active_turn(self.project, "chat") as turn:
+            turn["sends"] = l3._sends_root(self.project) / turn["id"]
+            yield turn
+
+    @staticmethod
+    def driver_settles(options, outcome, text):
+        """What the engine driver does with each Send now drop at this point of the turn (`engines._Driver`): claim it
+        by renaming, write it to the engine, then name the outcome and report it with the reply streamed so far.
+        `writing` is a driver that ended mid-write; None leaves the drop unclaimed, as a turn that ends first does."""
+        for drop in sorted(options["sends"].glob("*.json")):
+            if outcome is None:
+                continue
+            message = json.loads(drop.read_text())
+            claimed = drop.rename(drop.with_suffix(".writing"))
+            if outcome != "writing":
+                claimed.rename(drop.with_suffix(f".{outcome}"))
+                options["on_send"](message["id"], outcome, text)
+
+    def test_native_group_excludes_kept_chat_already_in_history(self):
+        kept = l3.queue_message(self.project, "Kept instruction", trigger="chat", role=config.OPERATOR_ACTOR)
+        kept.update(turn_id="kept-turn", retry_at="2099-01-01T00:00:00+00:00")
+        l3._write_queue(l3.queue_path(self.project), [kept])
+        l3.chat_log(self.project, "user", kept["text"], trigger="chat", turn_id=kept["turn_id"])
+        selected = l3.queue_message(self.project, "New instruction", trigger="chat", role=config.OPERATOR_ACTOR)
+        with self.deliverable(), self.native_chat_turn() as turn:
+            l3.send_now(self.project, selected["id"])
+            rows = self.queue_rows()
+            self.assertEqual([row["id"] for row in rows], [selected["id"], kept["id"]])
+            self.assertNotIn("sending", rows[1])
+            self.assertEqual(json.loads((turn["sends"] / f"{selected['id']}.json").read_text())["text"],
+                             selected["text"])
+            self.assertFalse(l3.drop_queued(self.project, kept["id"]))
+
+    def test_kept_chat_send_now_clears_delay_without_native_relogging(self):
+        kept = l3.queue_message(self.project, "Kept instruction", trigger="chat", role=config.OPERATOR_ACTOR)
+        kept.update(turn_id="kept-turn", retry_at="2099-01-01T00:00:00+00:00")
+        l3._write_queue(l3.queue_path(self.project), [kept])
+        l3.chat_log(self.project, "user", kept["text"], trigger="chat", turn_id=kept["turn_id"])
+        later = l3.queue_message(self.project, "Later instruction", trigger="chat", role=config.OPERATOR_ACTOR)
+        with self.deliverable(), self.native_chat_turn() as turn:
+            l3.send_now(self.project, kept["id"])
+            rows = self.queue_rows()
+            self.assertEqual([row["id"] for row in rows], [kept["id"], later["id"]])
+            self.assertTrue(rows[0]["send_now"])
+            self.assertNotIn("retry_at", rows[0])
+            self.assertNotIn("sending", rows[0])
+            self.assertNotIn("send_now", rows[1])
+            self.assertFalse(list(turn["sends"].glob("*.json")))
+            self.assertEqual(sum(row.get("turn_id") == "kept-turn" for row in l3.chat_history(self.project, None)), 1)
+
+    @contextlib.contextmanager
+    def chat_turn_with_send_now(self, engine, outcome):
+        """The operator starts a chat turn from the page, queues three messages and sends the middle one now while the
+        turn runs; the fake engine then settles it with `outcome`. Yields what the page and the records saw, with the
+        engine fakes still in place for the turns that follow."""
+        reached, go = threading.Event(), threading.Event()
+        self.addCleanup(go.set)
+        prompts, called, stream, seen = [], [], [], {}
+        l3.save_info(self.project, {"engine_last": engine, "sessions": {engine: {
+            "session_id": "s1", "context_percent": 12, "confinement_version": l3.L3_CONFINEMENT_VERSION}}})
+        before = len(l3.chat_history(self.project, None))
+
+        def provider(adapter, prompt, **options):
+            prompts.append(prompt)
+            called.append(adapter)
+            options["on_start"](None)
+            if len(prompts) == 1:
+                seen["sends"] = options.get("sends")
+                reached.set()
+                go.wait(10)
+                if seen["sends"]:
+                    self.driver_settles(options, outcome, "Reply so far")
+            return {**self.claude_result("Final reply"), "reported_session_id": "s1"}
+
+        with mock.patch.object(l3, "_select", return_value={"engine": engine, "why": "fixture"}), \
+             mock.patch.object(engines, "claude_print", side_effect=lambda *a, **o: provider("claude", *a, **o)), \
+             mock.patch.object(engines, "codex_exec", side_effect=lambda *a, **o: provider("codex", *a, **o)), \
+             mock.patch.object(engines.platform, "job_stop", side_effect=AssertionError("Send now cannot stop a job")), \
+             mock.patch.object(server, "request_l3_drain"):
+            page = threading.Thread(target=lambda: stream.append(self.request(
+                "POST", "/api/chat", {"project": self.project, "text": "Current instruction"})), daemon=True)
+            page.start()
+            try:
+                self.assertTrue(reached.wait(5))
+                turn = l3.active(self.project)
+                native = engines.coordinator_native_send(engine)
+                self.assertEqual(seen["sends"], l3._sends_root(self.project) / turn["id"] if native else None)
+                older, selected, later = [l3.queue_message(self.project, text, trigger="chat", role=config.OPERATOR_ACTOR)
+                                          for text in ("Older instruction", "Urgent correction", "Later instruction")]
+                body = {"project": self.project, "id": selected["id"]}
+                status, sent = self.post_json("/api/chat/send-now", body)
+                self.assertEqual((status, sent["status"]), (200, "sending"))
+                self.assertEqual(self.post_json("/api/chat/send-now", body)[1]["status"], "sending")
+                rows = self.queue_rows()
+                self.assertEqual([row["id"] for row in rows], [older["id"], selected["id"], later["id"]])
+                if native:
+                    self.assertTrue(all((row["send_now"], row["sending"], row["send_group"])
+                                        == (True, turn["id"], older["id"]) for row in rows))
+                    self.assertEqual(self.chat_view()["queued"][0]["send_now_reason"], "Sending into the current turn")
+                    self.assertEqual([path.name for path in seen["sends"].iterdir()], [f"{older['id']}.json"])
+                    self.assertEqual(json.loads((seen["sends"] / f"{older['id']}.json").read_text()),
+                                     {"id": older["id"], "text": "Older instruction\n\nUrgent correction\n\nLater instruction"})
+                else:
+                    self.assertTrue(all(row["send_now"] and "sending" not in row for row in rows))
+                    self.assertNotIn("sends", turn)
+                    self.assertFalse((l3._sends_root(self.project) / turn["id"]).exists())
+                    self.assertEqual(self.chat_view()["queued"][0]["send_now_reason"], "Runs next after this turn")
+                for member in (older, later):
+                    self.assertEqual(self.post_json("/api/chat/send-now", {"project": self.project,
+                                                                         "id": member["id"]})[1]["status"], "sending")
+                self.assertEqual(called, [engine], "the coordinator turn runs through its engine's streaming adapter")
+                if native:
+                    self.assertEqual(self.post_json("/api/chat/remove", body)[0], 409,
+                                     "a message handed to the running turn cannot be taken back")
+                self.assertIsNone(l3.deliver_queued(self.project), "no second turn while this one runs")
+            finally:
+                go.set()
+                page.join(10)
+            self.assertFalse(page.is_alive())
+            if seen["sends"]:
+                self.assertFalse(seen["sends"].exists(), "the turn's sends folder goes with the turn")
+            status, payload = stream[0]
+            self.assertEqual(status, 200)
+            lines = [json.loads(line) for line in payload.decode().splitlines() if line.startswith("{")]
+            yield {"turn": turn, "lines": lines, "history": l3.chat_history(self.project, None)[before:],
+                   "prompts": prompts, "older": older, "selected": selected, "later": later,
+                   "drain": lambda: l3.deliver_queued(self.project)}
+
+    def assert_delivered_once(self, seen):
+        selected = seen["selected"]
+        admitted = [row for row in l3.chat_history(self.project, None) if selected["id"] in row.get("queue_ids", [])]
+        self.assertEqual(len(admitted), 1, "the message reaches the conversation exactly once")
+        self.assertEqual(self.post_json("/api/chat/send-now", {"project": self.project, "id": selected["id"]})[1]["status"],
+                         "delivered")
+
+    def test_send_now_joins_the_whole_group_to_the_running_chat_turn_once_on_native_engine(self):
+        for engine in filter(engines.coordinator_native_send, config.ENGINES):
+            with self.subTest(engine=engine), self.chat_turn_with_send_now(engine, "delivered") as seen:
+                first, lines = seen["turn"]["id"], seen["lines"]
+                self.assertEqual([next(iter(line)) for line in lines], ["turn", "turn", "turn", "turn", "done"])
+                members = [seen[key] for key in ("older", "selected", "later")]
+                self.assertEqual([line["user"] for line in lines[1:4]], [row["text"] for row in members])
+                receipts = [row["delivery"] for row in seen["history"] if row.get("queue_ids")]
+                self.assertEqual([receipt["state"] for receipt in receipts], ["delivered"] * 3)
+                self.assertTrue(all(receipt["at"] for receipt in receipts))
+                self.assertEqual([line["delivery"] for line in lines[1:4]], receipts)
+                following = [line["turn"]["id"] for line in lines[1:4]]
+                self.assertEqual(len(set([first, *following])), 4)
+                self.assertEqual(lines[4]["done"]["turn_id"], following[-1])
+                self.assertEqual([(row["role"], row["text"], row["turn_id"], row.get("queue_ids"))
+                                  for row in seen["history"]],
+                                 [("user", "Current instruction", first, None),
+                                  ("assistant", "Reply so far", first, None),
+                                  *[("user", row["text"], turn_id, [row["id"]])
+                                    for row, turn_id in zip(members, following)],
+                                  ("assistant", "Final reply", following[-1], None)])
+                self.assertEqual(self.queue_rows(), [])
+                self.assertIsNone(seen["drain"]())
+                self.assertEqual(len(seen["prompts"]), 1, "the delivered group is not rerun as a turn")
+                self.assert_delivered_once(seen)
+
+    def test_send_now_the_engine_may_have_read_is_logged_once_and_never_rerun(self):
+        for engine in filter(engines.coordinator_native_send, config.ENGINES):
+            for outcome in ("unconfirmed", "writing"):
+                with self.subTest(engine=engine, outcome=outcome), self.chat_turn_with_send_now(engine, outcome) as seen:
+                    first, selected = seen["turn"]["id"], seen["selected"]
+                    rows = [(row["role"], row["text"], row.get("queue_ids")) for row in seen["history"]]
+                    users = [("user", seen[key]["text"], [seen[key]["id"]]) for key in ("older", "selected", "later")]
+                    receipts = [row["delivery"] for row in seen["history"] if row.get("queue_ids")]
+                    self.assertEqual([receipt["state"] for receipt in receipts], ["unconfirmed"] * 3)
+                    self.assertTrue(all(receipt["at"] for receipt in receipts))
+                    if outcome == "unconfirmed":  # reported mid-turn: the reply so far ends there, as for delivered
+                        self.assertEqual([line["delivery"] for line in seen["lines"][1:4]], receipts)
+                        self.assertEqual([next(iter(line)) for line in seen["lines"]],
+                                         ["turn", "turn", "turn", "turn", "done"])
+                        self.assertEqual(rows, [("user", "Current instruction", None),
+                                                ("assistant", "Reply so far", None),
+                                                *users,
+                                                ("assistant", "Final reply", None)])
+                    else:  # the turn ended with the drop half-written: it joins the conversation after the reply
+                        self.assertEqual([next(iter(line)) for line in seen["lines"]], ["turn", "done"])
+                        self.assertEqual(rows, [("user", "Current instruction", None),
+                                                ("assistant", "Final reply", None),
+                                                *users])
+                        self.assertEqual(seen["history"][1]["turn_id"], first)
+                        self.assertNotEqual(seen["history"][2]["turn_id"], first)
+                    self.assertEqual(self.queue_rows(), [])
+                    self.assertIsNone(seen["drain"]())
+                    self.assertEqual(len(seen["prompts"]), 1)
+                    self.assert_delivered_once(seen)
+
+    def test_send_now_the_turn_did_not_take_runs_next_once(self):
         for engine in config.ENGINES:
-            with self.subTest(engine=engine):
-                started, interrupted, release = threading.Event(), threading.Event(), threading.Event()
-                self.addCleanup(release.set)
-                prompts, results, events = [], [], []
-                l3.save_info(self.project, {"engine_last": engine, "sessions": {engine: {
-                    "session_id": "s1", "context_percent": 12, "confinement_version": l3.L3_CONFINEMENT_VERSION}}})
+            for outcome in ("returned", None):
+                with self.subTest(engine=engine, outcome=outcome), self.chat_turn_with_send_now(engine, outcome) as seen:
+                    selected = seen["selected"]
+                    self.assertEqual([next(iter(line)) for line in seen["lines"]], ["turn", "done"])
+                    self.assertEqual([(row["role"], row["text"]) for row in seen["history"]],
+                                     [("user", "Current instruction"), ("assistant", "Final reply")])
+                    rows = self.queue_rows()
+                    self.assertEqual([row["id"] for row in rows],
+                                     [seen["older"]["id"], selected["id"], seen["later"]["id"]])
+                    self.assertTrue(rows[0]["send_now"])
+                    self.assertNotIn("sending", rows[0])
+                    self.assertEqual(self.chat_view()["queued"][0]["send_now_reason"], "Runs next")
+                    seen["drain"]()
+                    self.assertTrue(seen["prompts"][1].endswith("Older instruction\n\nUrgent correction\n\nLater instruction"))
+                    self.assertIsNone(seen["drain"]())
+                    self.assertEqual(len(seen["prompts"]), 2)
+                    delivered = [row for row in l3.chat_history(self.project, None)
+                                 if any(seen[key]["id"] in row.get("queue_ids", [])
+                                        for key in ("older", "selected", "later"))]
+                    self.assertEqual([row["text"] for row in delivered],
+                                     [seen[key]["text"] for key in ("older", "selected", "later")])
+                    self.assertEqual(len({row["turn_id"] for row in delivered}), 3)
+                    self.assert_delivered_once(seen)
 
-                def provider(prompt, **kwargs):
-                    prompts.append(prompt)
-                    kwargs["on_start"](None)
-                    events.append(kwargs.get("interrupt"))
-                    result = {**self.claude_result("Saved partial output"), "reported_session_id": "s1"}
-                    if len(prompts) == 1:
-                        started.set()
-                        self.assertTrue(kwargs["interrupt"].wait(5))
-                        interrupted.set()
-                        self.assertTrue(release.wait(5))
-                        result.update(interrupted=True, error=None, safe_to_retry=False,
-                                      context_tokens=0)
-                    return result
+    def test_restart_settles_the_send_now_claim_of_a_turn_that_is_gone(self):
+        for left in ("json", "writing", "delivered", "unconfirmed"):
+            with self.subTest(left=left), self.deliverable():
+                selected = l3.queue_message(self.project, "Urgent correction", trigger="chat", role=config.OPERATOR_ACTOR)
+                sibling = l3.queue_message(self.project, "Later instruction", trigger="chat", role=config.OPERATOR_ACTOR)
+                # The daemon stops mid-turn: the turn never settles its sends.
+                with mock.patch.object(l3, "_settle_sends"), l3.lock(self.project), \
+                     self.native_chat_turn() as turn:
+                    l3.send_now(self.project, selected["id"])
+                sends = l3._sends_root(self.project) / turn["id"]
+                drop = sends / f"{selected['id']}.json"
+                if left != "json":  # its driver had claimed or settled the message before the daemon stopped
+                    drop.rename(drop.with_suffix(f".{left}"))
+                self.assertEqual(self.queue_rows()[0]["sending"], turn["id"])
+                before = len(l3.chat_history(self.project, None))
+                recover, outcomes = engines.recover_send, []
 
-                with mock.patch.object(l3, "_select", return_value={"engine": engine, "why": "fixture"}), \
-                     mock.patch.object(engines, "claude_print", side_effect=provider), \
-                     mock.patch.object(engines, "codex_exec", side_effect=provider), \
-                     mock.patch.object(server, "request_l3_drain"):
-                    worker = threading.Thread(target=lambda: results.append(
-                        server.server_l3_turn(self.project, "Current instruction", trigger="chat")))
-                    worker.start()
-                    try:
-                        self.assertTrue(started.wait(5))
-                        older, selected, later = [l3.queue_message(self.project, text, trigger="chat", role=config.OPERATOR_ACTOR)
-                                                  for text in ("Older instruction", "Urgent correction", "Later instruction")]
-                        body = {"project": self.project, "id": selected["id"]}
-                        self.assertEqual(self.post_json("/api/chat/send-now", body)[0], 200)
-                        self.assertTrue(interrupted.wait(5))
-                        self.assertEqual(self.post_json("/api/chat/send-now", body)[0], 200)
-                        self.assertEqual([row["id"] for row in self.queue_rows()],
-                                         [selected["id"], older["id"], later["id"]])
-                        self.assertEqual(self.chat_view()["queued"][0]["send_now_reason"], "Waiting for current turn to stop")
-                        self.assertIsNone(l3.deliver_queued(self.project), "no second turn before termination")
-                    finally:
-                        release.set()
-                        worker.join(5)
-                    self.assertFalse(worker.is_alive())
-                    self.assertTrue(results[0]["interrupted"])
-                    self.assertEqual(l3.info(self.project)["sessions"][engine]["context_percent"], 12)
-                    stopped = l3.chat_history(self.project)[-1]
-                    self.assertEqual((stopped["role"], stopped["text"], stopped["interrupted"]),
-                                     ("assistant", "Saved partial output", True))
-                    self.assertFalse(results[0]["completed"])
-                    l3.deliver_queued(self.project)
-                    self.assertEqual([row["id"] for row in self.queue_rows()], [older["id"], later["id"]])
-                    self.assertTrue(prompts[1].endswith("Urgent correction"))
-                    self.assertFalse(events[1].is_set(), "the old interruption cannot affect the replacement turn")
-                    self.assertEqual(self.post_json("/api/chat/send-now", body)[1]["status"], "delivered")
-                    l3.deliver_queued(self.project)
-                    self.assertTrue(prompts[2].endswith("Older instruction\n\nLater instruction"))
-                    self.assertIsNone(l3.deliver_queued(self.project))
-                    self.assertEqual(len(prompts), 3)
-                    admitted = [row for row in l3.chat_history(self.project, None)
-                                if selected["id"] in row.get("queue_ids", [])]
-                    self.assertEqual(len(admitted), 1)
+                def recorded(folder, message_id):
+                    outcomes.append((recover(folder, message_id), sorted(path.name for path in folder.iterdir())))
+                    return outcomes[-1][0]
 
-    def test_send_now_preserves_system_turns_and_keeps_system_queue_rows_separate(self):
+                with mock.patch.object(engines, "recover_send", side_effect=recorded), \
+                     mock.patch.object(l3, "turn", return_value={"completed": True}) as execute:
+                    for _ in range(3):
+                        l3.deliver_queued(self.project)
+                history = l3.chat_history(self.project, None)[before:]
+                if left == "json":
+                    self.assertEqual(outcomes, [("returned", [f"{selected['id']}.returned"])] * 2,
+                                     "an unclaimed drop is withdrawn so no live driver can take it later")
+                    self.assertEqual([call.args[1] for call in execute.call_args_list],
+                                     ["Urgent correction\n\nLater instruction"])
+                    self.assertEqual([row.get("queue_ids") for row in history], [[selected["id"]], [sibling["id"]]])
+                else:
+                    outcome = "unconfirmed" if left == "writing" else left
+                    self.assertEqual(outcomes, [(outcome, [f"{selected['id']}.{left}"]) ] * 2)
+                    self.assertEqual(execute.call_count, 0)
+                    self.assertEqual([row["delivery"]["state"] for row in history], [outcome] * 2)
+                    self.assertTrue(all(row["delivery"]["at"] for row in history))
+                    self.assertEqual([(row["role"], row["text"], row.get("queue_ids")) for row in history],
+                                     [("user", "Urgent correction", [selected["id"]]),
+                                      ("user", "Later instruction", [sibling["id"]])])
+                self.assertEqual(self.queue_rows(), [])
+                self.assertFalse(sends.exists())
+
+    def test_send_now_runs_next_when_the_running_turn_cannot_take_it(self):
         for trigger in ("incident", "block", "report-landed", "ci-recheck", "upstream-issue", "restart"):
             with self.subTest(trigger=trigger), self.deliverable(), mock.patch.object(server, "request_l3_drain"):
                 system = l3.queue_message(self.project, "System work", trigger="incident")
                 selected = l3.queue_message(self.project, "Urgent operator input", trigger="chat", role=config.OPERATOR_ACTOR)
                 with l3.lock(self.project), l3._active_turn(self.project, trigger) as turn:
-                    self.assertNotIn(turn["id"], l3._interrupts)
-                    status, _ = self.post_json("/api/chat/send-now", {"project": self.project, "id": selected["id"]})
-                    self.assertEqual(status, 200)
+                    self.assertNotIn("sends", turn)
+                    status, sent = self.post_json("/api/chat/send-now", {"project": self.project, "id": selected["id"]})
+                    self.assertEqual((status, sent["status"]), (200, "sending"))
                     self.assertEqual(l3.active(self.project), turn)
+                    self.assertNotIn("sending", self.queue_rows()[0])
+                    self.assertFalse(l3._sends_root(self.project).exists(), "system work is never written into")
                     self.assertEqual(self.chat_view()["queued"][0]["send_now_reason"], "Runs next after system work")
                     self.assertIsNone(l3.deliver_queued(self.project))
                 with mock.patch.object(l3, "turn", return_value={"completed": True}) as execute:
@@ -1251,19 +1451,159 @@ class TestChatQueue(AltitudeCase):
                     l3.deliver_queued(self.project)
                     self.assertEqual(execute.call_count, 2)
 
-    def test_send_now_refusals_preserve_rows_and_do_not_interrupt(self):
+        from tests.test_images import upload
+        with self.deliverable(), mock.patch.object(server, "request_l3_drain"):
+            pictured = l3.queue_message(self.project, "Look at this", trigger="chat", role=config.OPERATOR_ACTOR,
+                                        uploads=[upload()], request_id="image-request")
+            with l3.lock(self.project), self.native_chat_turn() as turn:
+                status, sent = self.post_json("/api/chat/send-now", {"project": self.project, "id": pictured["id"]})
+                self.assertEqual((status, sent["status"]), (200, "sending"))
+                self.assertNotIn("sending", self.queue_rows()[0])
+                self.assertFalse((l3._sends_root(self.project) / turn["id"]).exists(),
+                                 "an image message is not written into the running turn")
+                self.assertEqual(self.chat_view()["queued"][0]["send_now_reason"], "Runs next after this turn")
+            with mock.patch.object(l3, "turn", return_value={"completed": True}) as execute:
+                l3.deliver_queued(self.project)
+            self.assertEqual(execute.call_args.args[1], "Look at this")
+            self.assertEqual(execute.call_args.kwargs["image_message"]["id"], pictured["id"])
+
+    def test_send_now_refusals_preserve_rows_and_write_nothing_into_the_turn(self):
         with self.deliverable(), mock.patch.object(server, "request_l3_drain"), \
-             l3.lock(self.project), l3._active_turn(self.project, "chat") as turn:
+             l3.lock(self.project), self.native_chat_turn() as turn:
+            sends = turn["sends"]
             selected = l3.queue_message(self.project, "Keep this", trigger="chat", role=config.OPERATOR_ACTOR)
             system = l3.queue_message(self.project, "System work", trigger="incident")
+            other = l3.queue_message(self.project, "And this", trigger="chat", role=config.OPERATOR_ACTOR)
+            rows = self.queue_rows()
             for message_id in (system["id"], "missing"):
                 self.assertEqual(self.post_json("/api/chat/send-now", {"project": self.project, "id": message_id})[0], 409)
-            with mock.patch.object(l3, "_select", return_value={"engine": None, "why": "No eligible engine"}):
-                status, refusal = self.post_json("/api/chat/send-now", {"project": self.project, "id": selected["id"]})
-                self.assertEqual(status, 409)
-                self.assertIn("No engine", refusal["error"])
-            self.assertFalse(l3._interrupts[turn["id"]].is_set())
-            self.assertEqual([row["id"] for row in self.queue_rows()], [selected["id"], system["id"]])
+            for refusal, reason in (
+                    (mock.patch.object(l3, "_select", return_value={"engine": None, "why": "No eligible engine"}),
+                     "No engine"),
+                    (mock.patch.object(config, "is_managed", return_value=False), "no longer managed"),
+                    (mock.patch.object(config, "restart_in_progress", return_value=True), "restarting")):
+                with self.subTest(reason=reason), refusal:
+                    status, answer = self.post_json("/api/chat/send-now", {"project": self.project, "id": selected["id"]})
+                    self.assertEqual(status, 409)
+                    self.assertIn(reason, answer["error"])
+            self.assertEqual(self.queue_rows(), rows)
+            self.assertFalse(sends.exists())
+            self.assertEqual(self.post_json("/api/chat/send-now", {"project": self.project, "id": selected["id"]})[0], 200)
+            status, answer = self.post_json("/api/chat/send-now", {"project": self.project, "id": other["id"]})
+            self.assertEqual((status, answer["status"]), (200, "sending"))
+            late = l3.queue_message(self.project, "Arrived after the group", trigger="chat", role=config.OPERATOR_ACTOR)
+            status, answer = self.post_json("/api/chat/send-now", {"project": self.project, "id": late["id"]})
+            self.assertEqual(status, 409)
+            self.assertIn("Another message is being sent now", answer["error"])
+            self.assertEqual([path.name for path in sends.iterdir()], [f"{selected['id']}.json"])
+            self.assertNotIn("send_now", next(row for row in self.queue_rows() if row["id"] == late["id"]))
+
+    def test_send_now_image_group_keeps_order_and_all_members_ahead_of_system_work(self):
+        from tests.test_images import upload
+        with self.deliverable(), mock.patch.object(server, "request_l3_drain"):
+            system = l3.queue_message(self.project, "System work", trigger="incident")
+            first = l3.queue_message(self.project, "First input", trigger="chat", role=config.OPERATOR_ACTOR)
+            pictured = l3.queue_message(self.project, "Image input", trigger="chat", role=config.OPERATOR_ACTOR,
+                                       uploads=[upload()], request_id="ordered-image-request")
+            last = l3.queue_message(self.project, "Last input", trigger="chat", role=config.OPERATOR_ACTOR)
+            with l3.lock(self.project), self.native_chat_turn() as turn:
+                l3.send_now(self.project, last["id"])
+                rows = self.queue_rows()
+                self.assertEqual([row["id"] for row in rows], [first["id"], pictured["id"], last["id"], system["id"]])
+                self.assertTrue(all(row.get("send_now") for row in rows[:3]))
+                self.assertTrue(all("sending" not in row for row in rows))
+                self.assertFalse(turn["sends"].exists())
+            late = l3.queue_message(self.project, "Later arrival", trigger="chat", role=config.OPERATOR_ACTOR)
+            before = len(l3.chat_history(self.project, None))
+            with mock.patch.object(l3, "turn", return_value={"completed": True}) as execute:
+                for expected in (first, pictured, last, system, late):
+                    l3.deliver_queued(self.project)
+                    self.assertEqual(execute.call_args.args[1], expected["text"])
+                self.assertIsNone(l3.deliver_queued(self.project))
+            history = l3.chat_history(self.project, None)[before:]
+            self.assertEqual([row["text"] for row in history if row["role"] == "user"],
+                             [row["text"] for row in (first, pictured, last, system, late)])
+            self.assertEqual([row["queue_ids"] for row in history if row["role"] == "user"],
+                             [[row["id"]] for row in (first, pictured, last, system, late)])
+
+    def test_send_now_preserves_linked_conversation_boundaries(self):
+        with self.deliverable():
+            other = l3.queue_message(self.project, "Project input", trigger="chat", role=config.OPERATOR_ACTOR)
+            first = l3.queue_message(self.project, "Linked first", trigger="chat", role=config.OPERATOR_ACTOR,
+                                     slug="linked-task")
+            last = l3.queue_message(self.project, "Linked last", trigger="chat", role=config.OPERATOR_ACTOR,
+                                    slug="linked-task")
+            with l3.lock(self.project), self.native_chat_turn() as turn:
+                l3.send_now(self.project, last["id"])
+                self.assertFalse(turn["sends"].exists(), "a different conversation waits for its own turn")
+                self.assertEqual([row["id"] for row in self.queue_rows()], [first["id"], last["id"], other["id"]])
+            with mock.patch.object(l3, "turn", return_value={"completed": True}) as execute:
+                l3.deliver_queued(self.project)
+                execute.assert_called_once_with(self.project, "Linked first\n\nLinked last", trigger="chat", slug="linked-task")
+            self.assertEqual([row["id"] for row in self.queue_rows()], [other["id"]])
+
+    def test_send_now_group_history_failure_restores_all_members_without_partial_bubbles(self):
+        rows = [l3.queue_message(self.project, text, trigger="chat", role=config.OPERATOR_ACTOR)
+                for text in ("First", "Second", "Third")]
+        with self.deliverable():
+            l3.send_now(self.project, rows[-1]["id"])
+            history_path = config.project_dir(self.project) / "chat.jsonl"
+            atomic_write = S.atomic_write
+
+            def fail_history(path, contents, *args, **kwargs):
+                if path == history_path:
+                    self.assertEqual([json.loads(line)["text"] for line in contents.splitlines()],
+                                     [row["text"] for row in rows])
+                    raise OSError("History batch unavailable")
+                return atomic_write(path, contents, *args, **kwargs)
+
+            with mock.patch.object(S, "atomic_write", side_effect=fail_history), \
+                 mock.patch.object(l3, "turn") as execute:
+                with self.assertRaisesRegex(OSError, "History batch unavailable"):
+                    l3.deliver_queued(self.project)
+                execute.assert_not_called()
+            self.assertEqual([row["id"] for row in self.queue_rows()], [row["id"] for row in rows])
+            self.assertEqual(l3.chat_history(self.project, None), [])
+            with mock.patch.object(l3, "turn", return_value={"completed": True}) as execute:
+                l3.deliver_queued(self.project)
+                self.assertIsNone(l3.deliver_queued(self.project))
+                execute.assert_called_once_with(self.project, "First\n\nSecond\n\nThird", trigger="chat")
+            self.assertEqual([row["queue_ids"] for row in l3.chat_history(self.project, None)],
+                             [[row["id"]] for row in rows])
+
+    def test_restart_after_native_member_history_write_does_not_duplicate_its_receipt(self):
+        with self.deliverable():
+            rows = [l3.queue_message(self.project, text, trigger="chat", role=config.OPERATOR_ACTOR)
+                    for text in ("First", "Second")]
+            with mock.patch.object(l3, "_settle_sends"), l3.lock(self.project), \
+                 self.native_chat_turn() as turn:
+                l3.send_now(self.project, rows[-1]["id"])
+                drop = turn["sends"] / f"{rows[0]['id']}.json"
+                drop.rename(drop.with_suffix(".delivered"))
+                with mock.patch.object(l3, "_write_queue", side_effect=OSError("Queue write unavailable")):
+                    with self.assertRaisesRegex(OSError, "Queue write unavailable"):
+                        l3._split_turn(self.project, turn, rows[0]["id"], "", engine=config.ENGINES[0],
+                                       delivery={"state": "delivered", "at": S.now()})
+            with mock.patch.object(l3, "turn") as execute:
+                self.assertIsNone(l3.deliver_queued(self.project))
+                execute.assert_not_called()
+            self.assertEqual([row["queue_ids"] for row in l3.chat_history(self.project, None)],
+                             [[row["id"]] for row in rows])
+            self.assertEqual(self.queue_rows(), [])
+
+            self.assertEqual([row["delivery"]["state"] for row in l3.chat_history(self.project, None)],
+                             ["delivered"] * 2)
+
+    def test_send_now_group_is_not_repeated_in_fresh_session_history(self):
+        rows = [l3.queue_message(self.project, text, trigger="chat", role=config.OPERATOR_ACTOR)
+                for text in ("First unique instruction", "Second unique instruction")]
+        with self.deliverable(), mock.patch.object(engines, "claude_print", return_value=self.claude_result()) as provider:
+            l3.send_now(self.project, rows[-1]["id"])
+            l3.deliver_queued(self.project)
+            provider.assert_called_once()
+            prompt = provider.call_args.args[0]
+            for row in rows:
+                self.assertEqual(prompt.count(row["text"]), 1)
 
     def test_send_now_priority_survives_restart_without_holding_quiet_point(self):
         selected = l3.queue_message(self.project, "Run this first", trigger="chat", role=config.OPERATOR_ACTOR)
@@ -1276,34 +1616,18 @@ class TestChatQueue(AltitudeCase):
             server.drain_l3_queue(self.project)
             execute.assert_called_once_with(self.project, selected["text"], trigger="chat")
 
-    def test_send_now_exposes_stop_uncertainty_only_on_its_captured_turn(self):
-        with self.deliverable(), l3.lock(self.project):
-            with l3._active_turn(self.project, "chat") as first:
-                first["provider_started"] = True
-                options = l3._interrupt_options(self.project, first["id"])
-                selected = l3.queue_message(self.project, "Next input", trigger="chat", role=config.OPERATOR_ACTOR)
-                l3.send_now(self.project, selected["id"])
-                options["on_interrupt_error"]("Immediate stop unconfirmed; waiting for job termination")
-                self.assertIn("stop unconfirmed", l3.chat_state(self.project)["queued"][0]["send_now_reason"])
-            with l3._active_turn(self.project, "chat") as second:
-                options["on_interrupt_error"]("Late status from previous turn")
-                self.assertNotIn("interrupt_error", l3.active(self.project))
-                self.assertFalse(l3._interrupts[second["id"]].is_set())
-
-    def test_send_now_refuses_before_claimed_provider_starts_without_consuming_input(self):
-        first = l3.queue_message(self.project, "First selected", trigger="chat", role=config.OPERATOR_ACTOR)
-        second = l3.queue_message(self.project, "Next selected", trigger="chat", role=config.OPERATOR_ACTOR)
-        def provider(prompt, **options):
-            with self.assertRaisesRegex(ValueError, "starting"):
-                l3.send_now(self.project, second["id"])
-            self.assertFalse(options["interrupt"].is_set())
-            self.assertTrue(prompt.endswith(first["text"]))
-            options["on_start"](None)
-            return self.claude_result()
-        with self.deliverable(), mock.patch.object(engines, "claude_print", side_effect=provider):
-            l3.send_now(self.project, first["id"])
-            l3.deliver_queued(self.project)
-        self.assertEqual([row["id"] for row in self.queue_rows()], [second["id"]])
+    def test_turn_boundary_send_survives_restart_without_a_native_claim(self):
+        with self.chat_turn_with_send_now("codex", None) as seen:
+            queued = self.queue_rows()
+            self.assertTrue(all(row["send_now"] and "sending" not in row for row in queued))
+            self.assertFalse(l3._sends_root(self.project).exists())
+            # Recovery has no native outcome to settle: the original durable rows own delivery.
+            l3._finish_sends(self.project)
+            self.assertEqual(self.queue_rows(), queued)
+            seen["drain"]()
+            self.assertIsNone(seen["drain"]())
+            self.assert_delivered_once(seen)
+            self.assertEqual(len(seen["prompts"]), 2)
 
     def test_send_now_remains_removable_before_claim_when_engine_becomes_unavailable(self):
         row = l3.queue_message(self.project, "Withdraw priority", trigger="chat", role=config.OPERATOR_ACTOR)
@@ -1436,7 +1760,7 @@ class TestChatQueue(AltitudeCase):
         drained = threading.Event()
         calls = []
 
-        def fake_turn(project, text, *, trigger, on_text=None, on_start=None):
+        def fake_turn(project, text, *, trigger, on_text=None, on_start=None, on_split=None):
             calls.append(text)
             if on_text:  # the turn Burak started from the page; he types again while it runs
                 l3.queue_message(project, "while you were busy", trigger="chat", role="burak")

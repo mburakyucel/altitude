@@ -5,7 +5,7 @@ import { walkthrough } from "./walkthrough";
 test.describe("L2 Send now", () => {
   test.use({ serviceScript: "l2-progress-service.py" });
 
-  test("interrupts current work and confirms the selected message without duplication", async ({ page, request }, info) => {
+  test("delivers the queued group into the running turn once, without stopping it", async ({ page, request }, info) => {
     const walk = walkthrough(page, info);
     const status = async () => (await (await request.get("/fixture/status")).json());
     const slug = (await status()).tasks[0].slug;
@@ -26,23 +26,24 @@ test.describe("L2 Send now", () => {
       await walk.state("l2-00-loading", { visible: [page.getByLabel("Loading", { exact: true })], hidden: [page.getByRole("button", { name: "Send now", exact: true })] });
     } finally { releaseRead(); }
     await walk.state("l2-01-empty-queue", { visible: [field], hidden: [convo.getByRole("button", { name: "Send now", exact: true })] });
-    await send("Earlier instruction stays queued.");
+    await send("Earlier instruction joins too.");
     await send("Check this immediately.");
     const selected = row("Check this immediately.");
     const button = selected.getByRole("button", { name: "Send now", exact: true });
-    await walk.state("l2-02-queued-actions", { visible: [button, selected.getByRole("button", { name: "Remove", exact: true }), selected.getByText("Stops work and reviews to deliver now.")], hidden: [] });
+    await walk.state("l2-02-queued-actions", { visible: [button, selected.getByRole("button", { name: "Remove", exact: true }), selected.getByText("Joins the current turn without stopping its work.")], hidden: [] });
     if (info.project.name === "phone") expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44);
-    await control("hold-stop");
-    try {
-      await button.click();
-      await walk.state("l2-03-sending-now", { visible: [selected.getByRole("button", { name: "Sending now…" })], hidden: [selected.getByText("Delivered to session")] });
-      await expect(selected.getByRole("button", { name: "Sending now…" })).toBeDisabled();
-    } finally { await control("release-stop"); }
+    await button.click();
+    await walk.state("l2-03-sending-now", { visible: [selected.getByText("Sending now · joining the current turn")], hidden: [selected.getByText("Delivered to session"), selected.getByRole("button", { name: /^Send(ing)? now/ }), selected.getByRole("button", { name: "Remove", exact: true })] });
+    expect((await status()).tasks[0].state).toBe("running");
+    await control("deliver-send-now");
     await walk.state("l2-04-delivered", { visible: [selected.getByText("Delivered to session")], hidden: [selected.getByRole("button", { name: "Send now", exact: true }), selected.getByRole("button", { name: "Remove", exact: true })] });
-    expect((await status()).calls.filter((call: { prompt?: string }) => call.prompt?.includes("Check this immediately."))).toHaveLength(1);
-    await expect(row("Earlier instruction stays queued.").getByRole("button", { name: "Remove", exact: true })).toBeVisible();
-    await row("Earlier instruction stays queued.").getByRole("button", { name: "Remove", exact: true }).click();
-    await walk.state("l2-05-removed", { visible: [selected], hidden: [row("Earlier instruction stays queued."), convo.getByRole("button", { name: "Send now", exact: true })] });
+    const after = await status();
+    expect(after.tasks[0].state).toBe("running");
+    expect(after.calls.filter((call: { prompt?: string }) => call.prompt?.includes("Check this immediately."))).toHaveLength(0);
+    await expect(row("Earlier instruction joins too.").getByText("Delivered to session")).toBeVisible();
+    await send("Remove this later message.");
+    await row("Remove this later message.").getByRole("button", { name: "Remove", exact: true }).click();
+    await walk.state("l2-05-removed", { visible: [selected], hidden: [row("Remove this later message."), convo.getByRole("button", { name: "Send now", exact: true })] });
     expect((await status()).tasks[0].edit).toContain("An existing edit stays");
   });
 
@@ -93,6 +94,40 @@ test.describe("L3 Send now", () => {
     expect((await status()).calls.map((call: { text: string }) => call.text)).toEqual(["Fixture system work"]);
   });
 
+  test("keeps a message sent while no engine can run and answers it first beneath its bubble", async ({ page, request }, info) => {
+    const walk = walkthrough(page, info);
+    const status = async () => (await (await request.get("/fixture/status")).json());
+    const convo = page.getByRole("region", { name: "Conversation", exact: true });
+    const field = page.getByRole("textbox", { name: "Message L3 about atlas" });
+    const turn = convo.locator(".turn").filter({ hasText: "Are you there?" });
+    expect((await request.post("/fixture/exhausted")).ok()).toBe(true);
+    await walk.open("/projects/atlas");
+    await field.fill("Are you there?");
+    await convo.getByRole("button", { name: "Send", exact: true }).click();
+    await walk.state("l3-12-kept-during-engine-hold", {
+      visible: [turn.getByText("Queued · runs next", { exact: true }), turn.getByRole("button", { name: "Send now", exact: true }),
+        turn.getByText("No engine is available. The message stays queued.", { exact: true })],
+      hidden: [convo.getByText(/could not answer/), convo.getByText(/usage window/), turn.getByRole("button", { name: "Remove", exact: true }),
+        convo.getByRole("list", { name: "Queued messages" })],
+    });
+    await expect(turn.getByRole("button", { name: "Send now", exact: true })).toBeDisabled();
+    expect((await request.post("/fixture/system")).ok()).toBe(true);
+    await page.reload();
+    await walk.state("l3-13-kept-after-reload-ahead-of-system-work", {
+      visible: [turn.getByText("Queued · runs next", { exact: true }), convo.locator(".queued-row").filter({ hasText: "Fixture system work" })],
+      hidden: [convo.getByText(/could not answer/)],
+    });
+    await expect(convo.getByText("Are you there?", { exact: true })).toHaveCount(1);
+    expect((await status()).calls).toEqual([]);
+    expect((await request.post("/fixture/recovered")).ok()).toBe(true);
+    await walk.state("l3-14-reply-beneath-kept-message", {
+      visible: [turn.getByText("Are you there? answered.", { exact: true })],
+      hidden: [turn.getByText("Queued · runs next", { exact: true }), turn.getByRole("button", { name: "Send now", exact: true })],
+    });
+    await expect.poll(async () => (await status()).calls.map((call: { text: string }) => call.text)).toEqual(["Are you there?", "Fixture system work"]);
+    expect((await request.post("/fixture/release")).ok()).toBe(true);
+  });
+
   test("shows Runs next after system work without interrupting the system turn", async ({ page, request }, info) => {
     const walk = walkthrough(page, info);
     const status = async () => (await (await request.get("/fixture/status")).json());
@@ -106,7 +141,7 @@ test.describe("L3 Send now", () => {
     const row = convo.locator(".queued-row").filter({ hasText: "Follow the system work" });
     await walk.state("l3-08-after-system-work", { visible: [row.getByRole("button", { name: "Sending now…" }), row.getByText("Runs next after system work", { exact: true })], hidden: [] });
     expect((await status()).calls).toHaveLength(1);
-    expect((await status()).stopped).toBe(false);
+    expect((await status()).delivered).toEqual([]);
     expect((await request.post("/fixture/release")).ok()).toBe(true);
     await walk.state("l3-09-system-finished-then-delivered", { visible: [convo.getByText("Follow the system work answered.", { exact: true })], hidden: [row] });
     expect((await status()).calls.map((call: { text: string }) => call.text)).toEqual(["Fixture system work", "Follow the system work"]);
@@ -135,7 +170,58 @@ test.describe("L3 Send now", () => {
     await walk.state("l3-07-unavailable", { visible: [button, convo.locator(".queued-row").getByText("Keep the queued text", { exact: true })], hidden: [] });
   });
 
-  test("interrupts a chat turn, delivers the selected row first and keeps one receipt", async ({ page, request }, info) => {
+  test("retains uncertain delivery receipts after settlement and reload", async ({ page, request }, info) => {
+    const walk = walkthrough(page, info);
+    const convo = page.getByRole("region", { name: "Conversation", exact: true });
+    const field = page.getByRole("textbox", { name: "Message L3 about atlas" });
+    const status = async () => (await (await request.get("/fixture/status")).json());
+    expect((await request.post("/fixture/uncertain")).ok()).toBe(true);
+    await walk.open("/projects/atlas");
+    await field.fill("Keep working");
+    await convo.getByRole("button", { name: "Send", exact: true }).click();
+    await expect.poll(async () => (await status()).calls.length).toBe(1);
+    await field.fill("Possibly received");
+    await convo.getByRole("button", { name: /^(Send|Queue)$/ }).click();
+    await convo.getByRole("button", { name: "Send now", exact: true }).click();
+    expect((await request.post("/fixture/deliver")).ok()).toBe(true);
+    await walk.state("l3-15-unconfirmed-receipt", { visible: [convo.getByText("Delivery unconfirmed", { exact: true })], hidden: [convo.locator(".queued-row")] });
+    expect((await request.post("/fixture/release")).ok()).toBe(true);
+    await expect.poll(async () => (await (await request.get("/api/chat/atlas")).json()).active).toBeNull();
+    await page.reload();
+    await walk.state("l3-16-unconfirmed-reloaded", { visible: [convo.getByText("Delivery unconfirmed", { exact: true })], hidden: [convo.locator(".queued-row")] });
+    expect((await status()).calls).toHaveLength(1);
+    await expect(convo.locator(".bubble").filter({ hasText: /^Possibly received$/ })).toHaveCount(1);
+  });
+
+  test("promotes the queued group for a boundary-only coordinator without interrupting", async ({ page, request }, info) => {
+    const walk = walkthrough(page, info);
+    const convo = page.getByRole("region", { name: "Conversation", exact: true });
+    const field = page.getByRole("textbox", { name: "Message L3 about atlas" });
+    const row = (text: string) => convo.locator(".queued-row").filter({ hasText: text });
+    const status = async () => (await (await request.get("/fixture/status")).json());
+    expect((await request.post("/fixture/boundary")).ok()).toBe(true);
+    await walk.open("/projects/atlas");
+    await field.fill("Keep working");
+    await convo.getByRole("button", { name: "Send", exact: true }).click();
+    await expect.poll(async () => (await status()).calls.length).toBe(1);
+    for (const text of ["First queued message", "Second queued message"]) {
+      await field.fill(text);
+      await convo.getByRole("button", { name: /^(Send|Queue)$/ }).click();
+      await expect(row(text)).toBeVisible();
+    }
+    await row("Second queued message").getByRole("button", { name: "Send now", exact: true }).click();
+    await page.reload();
+    await walk.state("l3-13-turn-boundary", { visible: [row("First queued message"), row("Second queued message").getByText("Runs next after this turn", { exact: true })], hidden: [] });
+    expect((await status()).calls).toHaveLength(1);
+    expect((await status()).delivered).toEqual([]);
+    expect((await request.post("/fixture/release")).ok()).toBe(true);
+    await walk.state("l3-14-boundary-delivered", { visible: [convo.getByText("Second queued message answered.", { exact: true })], hidden: [row("First queued message"), row("Second queued message")] });
+    expect((await status()).calls.map((call: { text: string }) => call.text)).toEqual(["Keep working", "First queued message\n\nSecond queued message"]);
+    await expect(convo.locator(".bubble").filter({ hasText: /^First queued message$/ })).toHaveCount(1);
+    await expect(convo.locator(".bubble").filter({ hasText: /^Second queued message$/ })).toHaveCount(1);
+  });
+
+  test("delivers the queued group into the running chat turn and keeps each receipt", async ({ page, request }, info) => {
     const walk = walkthrough(page, info);
     const convo = page.getByRole("region", { name: "Conversation", exact: true });
     const field = page.getByRole("textbox", { name: "Message L3 about atlas" });
@@ -162,40 +248,29 @@ test.describe("L3 Send now", () => {
     await row("Remove this message").getByRole("button", { name: "Remove", exact: true }).click();
     await walk.state("l3-02-removed-and-queued", { visible: [row("Deliver this next").getByRole("button", { name: "Send now", exact: true })], hidden: [row("Remove this message")] });
     await row("Deliver this next").getByRole("button", { name: "Send now", exact: true }).click();
-    await expect.poll(async () => (await status()).stopped).toBe(true);
-    await walk.state("l3-03-sending-now", { visible: [row("Deliver this next").getByRole("button", { name: "Sending now…" })], hidden: [] });
-    await expect(row("Deliver this next").getByRole("button", { name: "Remove", exact: true })).toBeEnabled();
+    await walk.state("l3-03-sending-into-turn", { visible: [row("Deliver this next").getByRole("button", { name: "Sending now…" }), row("Deliver this next").getByText("Sending into the current turn", { exact: true })], hidden: [row("Deliver this next").getByRole("button", { name: "Remove", exact: true })] });
+    expect((await request.post("/fixture/deliver")).ok()).toBe(true);
+    await walk.state("l3-04-joined-turn", { visible: [convo.getByText("Checking the current work.", { exact: true }), convo.locator(".turn").getByText("Deliver this next", { exact: true })], hidden: [row("Deliver this next")] });
+    expect((await status()).delivered).toEqual(["Earlier queued message\n\nDeliver this next"]);
     expect((await request.post("/fixture/release")).ok()).toBe(true);
-    await walk.state("l3-04-delivered", { visible: [convo.getByText("Deliver this next answered.", { exact: true })], hidden: [row("Deliver this next")] });
-    await expect.poll(async () => (await status()).calls.length).toBe(3);
-    expect((await status()).calls.map((call: { text: string }) => call.text)).toEqual(["Keep working", "Deliver this next", "Earlier queued message"]);
+    await walk.state("l3-12-turn-answers-sent-message", { visible: [convo.getByText("Read: Earlier queued message", { exact: true }), convo.getByText("Deliver this next.", { exact: true })], hidden: [row("Deliver this next"), row("Earlier queued message")] });
+    await expect.poll(async () => (await (await request.get("/api/chat/atlas")).json()).active).toBeNull();
+    expect((await status()).calls.map((call: { text: string }) => call.text)).toEqual(["Keep working"]);
     await expect(convo.getByText("Deliver this next", { exact: true })).toHaveCount(1);
+    await expect(convo.getByText("Earlier queued message", { exact: true })).toHaveCount(1);
+    await expect(convo.getByText("Checking the current work.", { exact: true })).toHaveCount(1);
   });
 
-  test("shows an interrupted reply quietly, with and without partial output", async ({ page, request }, info) => {
+  test("shows saved interrupted replies quietly, with and without partial output", async ({ page, request }, info) => {
     const walk = walkthrough(page, info);
     const convo = page.getByRole("region", { name: "Conversation", exact: true });
-    const field = page.getByRole("textbox", { name: "Message L3 about atlas" });
-    const queued = (text: string) => convo.locator(".queued-row").filter({ hasText: text });
-    const status = async () => (await (await request.get("/fixture/status")).json());
-    const interrupt = async (first: string, next: string, calls: number) => {
-      await field.fill(first);
-      await convo.getByRole("button", { name: "Send", exact: true }).click();
-      await expect.poll(async () => (await status()).calls.length).toBe(calls);
-      await field.fill(next);
-      await convo.getByRole("button", { name: /^(Send|Queue)$/ }).click();
-      await queued(next).getByRole("button", { name: "Send now", exact: true }).click();
-      expect((await request.post("/fixture/release")).ok()).toBe(true);
-      await expect(convo.getByText(`${next} answered.`, { exact: true })).toBeVisible();
-    };
+    expect((await request.post("/fixture/interrupted-history")).ok()).toBe(true);
     const turn = (text: string) => convo.locator(".turn").filter({ has: page.locator(".bubble", { hasText: text }) });
     await walk.open("/projects/atlas");
-    await interrupt("Keep working", "Deliver this next", 1);
     await walk.state("l3-07-interrupted-partial", {
       visible: [turn("Keep working").getByText("Two checks failed on the review branch, and the first log", { exact: false })],
       hidden: [convo.getByText(/Interrupted/), convo.locator(".queued-row")],
     });
-    await interrupt("Hold on", "Use the other branch", 3);
     await walk.state("l3-08-interrupted-empty", {
       visible: [turn("Hold on").locator(".bubble"), turn("Use the other branch").getByText("Use the other branch answered.", { exact: true })],
       hidden: [convo.getByText(/Interrupted|could not answer/), convo.locator(".queued-row"), turn("Hold on").locator(".reply")],

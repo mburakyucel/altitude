@@ -9,16 +9,24 @@ from tests.support import AltitudeCase
 from altitude import engines
 
 
+class _Input(io.StringIO):
+    def close(self):  # keep the launch input readable after the adapter closes the pipe
+        pass
+
+
 class FakeProcess:
     pid = 123
     returncode = 0
 
     def __init__(self, stdout="", stderr=""):
-        self.stdin = io.StringIO()
+        self.stdin = _Input()
         self.stdout = io.StringIO(stdout)
         self.stderr = io.StringIO(stderr)
 
     def wait(self):
+        return self.returncode
+
+    def poll(self):
         return self.returncode
 
     def kill(self):

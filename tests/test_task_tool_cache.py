@@ -38,32 +38,46 @@ class TaskToolCache(AltitudeCase):
                 root = S.task_dir(self.project, task["slug"]) / "l2-engine"
                 for resume in (False, True):
                     with self.subTest(host=host, engine=engine, resume=resume):
-                        init = ({"type": "system", "subtype": "init", "session_id": "session"}
-                                if engine == "claude" else {"type": "thread.started", "thread_id": "session"})
-                        end = ({"type": "result", "is_error": True, "result": "fixture failure"}
-                               if engine == "claude" else {"type": "turn.failed", "error": {"message": "fixture failure"}})
-                        script = ("import os, pathlib, sys\n"
-                                  "sys.stdin.read()\n"
-                                  "for key in ('XDG_CACHE_HOME','npm_config_cache','npm_config_store_dir','PIP_CACHE_DIR'):\n"
-                                  " p=pathlib.Path(os.environ[key]); p.mkdir(parents=True,exist_ok=True); (p/'fixture').write_text('ok')\n"
-                                  f"print({json.dumps(init)!r}, flush=True)\n"
-                                  f"print({json.dumps(end)!r}, flush=True)\n")
+                        # The real driver runs an engine that writes every cache, starts its session and fails.
+                        arguments = self.tmp / "engine-arguments.json"
+                        native = self.tmp / "engine"
+                        native.write_text(f"#!{sys.executable}\n" + (
+                            "import json, os, pathlib, sys\n"
+                            f"pathlib.Path({str(arguments)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+                            "for key in ('XDG_CACHE_HOME','npm_config_cache','npm_config_store_dir','PIP_CACHE_DIR'):\n"
+                            " p=pathlib.Path(os.environ[key]); p.mkdir(parents=True,exist_ok=True); (p/'fixture').write_text('ok')\n"
+                            "def out(message):\n"
+                            " print(json.dumps(message), flush=True)\n"
+                            "if sys.argv[1:2] == ['app-server']:\n"
+                            " for raw in sys.stdin:\n"
+                            "  message = json.loads(raw); method = message.get('method')\n"
+                            "  if method == 'initialize': out({'id': message['id'], 'result': {}})\n"
+                            "  elif method in ('thread/start', 'thread/resume'):\n"
+                            "   out({'id': message['id'], 'result': {'thread': {'id': 'session'}}})\n"
+                            "  elif method == 'turn/start':\n"
+                            "   out({'id': message['id'], 'result': {'turn': {'id': 'turn-1'}}})\n"
+                            "   out({'method': 'turn/completed', 'params': {'turn': {'id': 'turn-1', 'status': 'failed',\n"
+                            "        'error': {'message': 'fixture failure'}}}})\n"
+                            "else:\n"
+                            " sys.stdin.readline()\n"
+                            " out({'type': 'system', 'subtype': 'init', 'session_id': 'session'})\n"
+                            " out({'type': 'result', 'is_error': True, 'result': 'fixture failure'})\n"))
+                        native.chmod(0o755)
+                        caches = {}
                         def command(unit, argv, child_env, **kw):
+                            self.assertEqual(argv, engines._driver_command())
                             self.assertEqual(child_env["ALTITUDE_TASK"], task["slug"])
                             self.assertEqual(child_env["COREPACK_HOME"], "/fixture/managers")
                             for key in ("XDG_CACHE_HOME", "npm_config_cache", "npm_config_store_dir", "PIP_CACHE_DIR"):
-                                self.assertTrue(Path(child_env[key]).is_relative_to(root / "tool-cache"))
+                                caches[key] = Path(child_env[key])
+                                self.assertTrue(caches[key].is_relative_to(root / "tool-cache"))
                                 if engine == "claude":
-                                    self.assertTrue(any(Path(child_env[key]).is_relative_to(path) for path in kw["writable"]))
-                                else:
-                                    settings = [argv[n + 1] for n,part in enumerate(argv[:-1]) if part == "-c"]
-                                    policy = tomllib.loads("\n".join(setting for setting in settings if setting.startswith("permissions.")))
-                                    roots = policy["permissions"]["altitude-task"]["workspace_roots"]
-                                    self.assertTrue(any(Path(child_env[key]).is_relative_to(path) for path in roots))
+                                    self.assertTrue(any(caches[key].is_relative_to(path) for path in kw["writable"]))
                             self.assertNotIn("DBUS_SESSION_BUS_ADDRESS", child_env)
-                            return ["/usr/bin/env", "-i", *(f"{k}={v}" for k,v in child_env.items()),
-                                    sys.executable, "-c", script]
+                            return ["/usr/bin/env", "-i", *(f"{k}={v}" for k,v in child_env.items()), *argv]
                         with mock.patch.object(platform.sys, "platform", host), \
+                             mock.patch.object(config, "CLAUDE_BIN", str(native)), \
+                             mock.patch.object(config, "CODEX_BIN", str(native)), \
                              mock.patch.object(platform, "job_command", side_effect=command):
                             result = engines._start_worker(engine, "fixture", "continue", cwd=self.repo,
                                 job_root=root, resume="session" if resume else None,
@@ -76,6 +90,15 @@ class TaskToolCache(AltitudeCase):
                                 process.wait(timeout=5)
                             row = engines.worker(engine, {"agent_id":worker_id}, job_root=root)
                             self.assertEqual((row["sessionId"], row["state"]), ("session", "failed"))
+                        for key, cache in caches.items():
+                            self.assertEqual((cache / "fixture").read_text(), "ok", key)
+                        if engine == "codex":
+                            argv = json.loads(arguments.read_text())
+                            settings = [argv[n + 1] for n,part in enumerate(argv[:-1]) if part == "-c"]
+                            policy = tomllib.loads("\n".join(setting for setting in settings if setting.startswith("permissions.")))
+                            roots = policy["permissions"]["altitude-task"]["workspace_roots"]
+                            for cache in caches.values():
+                                self.assertTrue(any(cache.is_relative_to(path) for path in roots))
 
     def test_archival_removes_only_this_tasks_tool_cache_and_retains_evidence(self):
         self.assertTrue(T.shutil.rmtree.avoids_symlink_attacks)

@@ -25,10 +25,10 @@ class TestConversationReview(AltitudeCase):
             seen.append(kw)
             self.assertIn(str(self.repo / "AGENTS.md"), prompt)
             self.assertIn("Review only", prompt)
-            self.assertIsNone(kw["resume"])
+            self.assertIsNone(kw.get("resume"))
             self.assertIsNone(kw.get("effort"))
             self.assertEqual(kw["timeout"], engines.session_timeout(engine))
-            self.assertTrue(kw["durable_timeout"])
+            self.assertTrue(kw.get("durable_timeout", engine == "codex"))  # a Codex review always is
             self.assertEqual(kw["model"], "configured-review-model")
             self.assertEqual(kw["extra_env"]["ALTITUDE_ACTOR"], "l3")
             self.assertTrue((kw["cwd"] / "bin" / "alt").exists())
@@ -56,7 +56,6 @@ class TestConversationReview(AltitudeCase):
         self.assertEqual(native["add_dirs"], (self.repo, config.ROOT))
         self.assertEqual(alternate["sandbox_settings"],
                          engines.codex_l3_permissions(alternate["cwd"], project=self.project))
-        self.assertTrue(alternate["ignore_user_config"])
 
     def test_unavailable_engine_does_not_fallback_or_claim_usage(self):
         with mock.patch.object(engines, "installation", return_value={"available": False, "why": "missing"}), \

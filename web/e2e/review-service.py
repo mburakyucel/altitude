@@ -41,7 +41,7 @@ def main():
     gate.set()
     choice = {"engine": config.ENGINES[1], "label": "Second engine", "model": "Fixture model",
               "allowance_known": True}
-    route.pick_review = lambda *_args, **_kwargs: choice if mode["available"] else {"engine": None, "why": "A second engine is unavailable."}
+    route.pick_review = lambda *_args, **_kwargs: choice if mode["available"] else {"engine": None, "why": "No reviewer is available."}
 
     def engine_review(_prompt, **kwargs):
         mode["calls"] += 1
@@ -53,7 +53,7 @@ def main():
                 return {"error": "Fixture review gate timed out", "termination_confirmed": True}
             if mode["fail"]:
                 return {"error": "The review engine exited before returning findings.", "termination_confirmed": True}
-            return {"text": "One pagination finding.", "findings": [{"id": "expiry", "severity": "high",
+            return {"text": "Expired cursors restart pagination instead of returning the agreed error.", "findings": [{"id": "expiry", "severity": "high",
                     "title": "Expired cursors restart pagination", "body": "Return the explicit expiration error.",
                     "path": "pagination.py", "line": 1}], "limitations": ["Captured files only; no tests executed."],
                     "termination_confirmed": True, "error": None}

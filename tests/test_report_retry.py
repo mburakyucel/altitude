@@ -173,4 +173,5 @@ class TestReportRetry(AltitudeCase):
         self.assertEqual(self.rows(), [])
         chat = l3.turn(self.project, "Fictional operator question", trigger="chat")
         self.assertIn("engine hold", chat["error"])
-        self.assertEqual([row["role"] for row in self.rows()], ["user", "error"], "human chat still reports the hold")
+        self.assertEqual([row["role"] for row in self.rows()], ["user"], "human chat is kept, not failed")
+        self.assertEqual([row["turn_id"] for row in l3.queued(self.project)], [chat["turn_id"]])

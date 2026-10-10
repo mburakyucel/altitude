@@ -611,15 +611,17 @@ export const ReviewSchema = z.object({
   snapshot: ReviewSnapshotSchema.nullish(),
   reconciled: ReviewSnapshotSchema.extend({ reason: z.string() }).nullish(),
   coverage: z.enum(["current", "earlier", "unknown", "assessed"]),
-  can_withdraw: z.boolean(), can_cancel: z.boolean(), can_retry: z.boolean(), can_review_latest: z.boolean(), can_review_again: z.boolean().default(false),
+  earlier: z.boolean().default(false), waiting: z.enum(["reviewer", "owner", "resume"]).nullish(),
+  cancel_requested: z.boolean().nullish(), withdrawn_by: z.string().nullish(), withdrawal_reason: z.string().nullish(),
+  can_withdraw: z.boolean(), can_cancel: z.boolean(), can_again: z.boolean(),
 }).passthrough();
 export type Review = z.infer<typeof ReviewSchema>;
-const ReviewSubjectSchema = z.object({ available: z.boolean(), why: z.string(), latest: ReviewSchema.nullable() });
+/** `open` counts the open findings of every review of the kind still in the merge gate, earlier ones included. */
+const ReviewSubjectSchema = z.object({ available: z.boolean(), why: z.string(), latest: ReviewSchema.nullable(), open: z.number().default(0) });
+/** A kind appears while a request could start or once it has a review; finished tasks keep only what was reviewed. */
 export const TaskReviewSchema = z.object({
-  available: z.boolean(), why: z.string(), engine_label: z.string().nullable(), model: z.string().nullable(),
-  allowance_known: z.boolean(), latest: ReviewSchema.nullable(), history: z.array(ReviewSchema),
-  same_engine: z.boolean().default(false), fallback_reason: z.string().default(""),
-  subjects: z.object({ proposal: ReviewSubjectSchema, changes: ReviewSubjectSchema }),
+  history: z.array(ReviewSchema),
+  subjects: z.object({ proposal: ReviewSubjectSchema.optional(), changes: ReviewSubjectSchema.optional() }),
 });
 
 export const TaskViewSchema = z
@@ -713,12 +715,15 @@ const ProjectMessageSchema = z.object({
   status: z.enum(["sent", "queued", "supplied", "registration-changed"]),
 });
 
+const ChatDeliverySchema = z.object({ state: z.enum(["delivered", "unconfirmed"]), at: z.string() });
+
 export const ChatMessageSchema = z
   .object({
     at: z.string().nullish(),
     role: z.string(),
     text: z.string(),
     project_message: ProjectMessageSchema.optional(),
+    delivery: ChatDeliverySchema.optional(),
     images: z.array(MessageImageSchema).nullish(),
     trigger: z.string().nullish(),
     /** Explicit L3 selection recorded by tasks.fyi; historical authorship alone is ambiguous. */
@@ -730,7 +735,7 @@ export const ChatMessageSchema = z
     slug: z.string().nullish(),
     /** On the assistant row of a turn that created tasks: their slugs (SPEC.md §5.2 note 4). */
     tasks: z.array(z.string()).nullish(),
-    /** On the assistant row of a chat turn that Send now stopped: its text is the partial reply, possibly empty. */
+    /** Retained interrupted chat history: its text is the partial reply, possibly empty. */
     interrupted: z.boolean().nullish(),
   })
   .passthrough();
@@ -749,8 +754,12 @@ export const QueuedMessageSchema = z
     position: z.number().nullish(),
     send_now: z.boolean().optional(),
     send_now_reason: z.string().nullish(),
+    /** Set while the running turn takes this message in; it can no longer be removed. */
+    sending: z.string().nullish(),
     /** A follow-up on a decision names its task (SPEC.md §5.2 note 6). */
     slug: z.string().nullish(),
+    /** A kept message: already in the conversation under this turn, waiting for an available engine (SPEC.md §4.2). */
+    turn_id: z.string().nullish(),
   })
   .passthrough();
 
@@ -1476,8 +1485,8 @@ export function taskAction(input: TaskActionInput): Promise<unknown> {
   return post("/api/task/action", input);
 }
 
-export type ReviewAction = "request" | "retry" | "rerun" | "cancel" | "withdraw";
-export async function taskReview(input: { project: string; slug: string; action: ReviewAction; subject?: ReviewSubject; request_id?: string; review_id?: string; reason?: string }): Promise<Review> {
+export type ReviewAction = "request" | "cancel" | "withdraw";
+export async function taskReview(input: { project: string; slug: string; action: ReviewAction; subject?: ReviewSubject; request_id?: string; review_id?: string }): Promise<Review> {
   const result = await post<{ review: unknown }>("/api/task/review", input);
   return ReviewSchema.parse(result.review);
 }
@@ -1619,14 +1628,15 @@ export interface ChatStreamHandlers {
   onText: (chunk: string) => void;
   /** The server accepted the message: it is a stored row now, streamed or queued. */
   onAccepted?: () => void;
-  /** The turn's server-side identity, so the page can key its bubble on it while the reply streams. */
-  onTurn?: (turn: ActiveTurn) => void;
+  /** The turn's server-side identity, so the page can key its bubble on it while the reply streams. With `user`, a
+   * Send now message joined the turn: the reply so far is complete and the rest answers `user` under this turn. */
+  onTurn?: (turn: ActiveTurn, user?: string, delivery?: ChatMessage["delivery"]) => void;
 }
 
 /**
  * POST /api/chat and read the reply. A free L3 streams NDJSON: a first {"turn": {...}} names the
- * turn, {"t": "..."} lines feed onText and the final {"done": {...}} comes back (the caller surfaces
- * done.error). A busy L3 answers with a single {"queued": {...}} object instead — the same line
+ * turn, {"t": "..."} lines feed onText, a {"turn": {...}, "user": "..."} line marks a Send now message
+ * the turn took in, and the final {"done": {...}} comes back (the caller surfaces done.error). A busy L3 answers with a single {"queued": {...}} object instead — the same line
  * reader takes both. Conversation polling continues independently. Non-2xx throws ApiError.
  */
 export async function streamChat(
@@ -1650,9 +1660,9 @@ export async function streamChat(
   let done: ChatSent = {};
   const handleLine = (line: string) => {
     if (!line.trim()) return;
-    let parsed: { t?: unknown; done?: ChatDone; queued?: unknown; turn?: unknown };
+    let parsed: { t?: unknown; done?: ChatDone; queued?: unknown; turn?: unknown; user?: unknown; delivery?: unknown };
     try {
-      parsed = JSON.parse(line) as { t?: unknown; done?: ChatDone; queued?: unknown; turn?: unknown };
+      parsed = JSON.parse(line) as { t?: unknown; done?: ChatDone; queued?: unknown; turn?: unknown; user?: unknown };
     } catch {
       return; // tolerate a torn line
     }
@@ -1661,7 +1671,8 @@ export async function streamChat(
       if (turn.success) {
         done = { ...done, turn: turn.data };
         handlers.onAccepted?.();
-        handlers.onTurn?.(turn.data);
+        const delivery = ChatDeliverySchema.safeParse(parsed.delivery);
+        handlers.onTurn?.(turn.data, typeof parsed.user === "string" ? parsed.user : undefined, delivery.success ? delivery.data : undefined);
       }
     }
     if (typeof parsed.t === "string") handlers.onText(parsed.t);

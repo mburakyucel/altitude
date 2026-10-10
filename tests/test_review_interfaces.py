@@ -158,14 +158,14 @@ class TestReviewInterfaces(AltitudeCase):
                 run.assert_called_once_with(self.project, self.slug, "review", actor="l2", expected_attempt=2,
                                             context_ids=["source"], proposal_id=proposal_id, on_wait=mock.ANY)
 
-    def test_http_retry_keeps_previous_identity_and_wake_failure_keeps_receipt(self):
+    def test_http_repeat_names_the_review_it_replaces_and_wake_failure_keeps_receipt(self):
         task = S.load_task(self.project, self.slug)
         task["state"] = "blocked"
         S.save_task(self.project, task)
         with mock.patch.object(reviews, "request", return_value={"id": "new-review"}) as request, \
                 mock.patch.object(server, "request_task_resume", side_effect=OSError("wake unavailable")), \
                 mock.patch.object(server, "log"):
-            status, value = self.post({"project": self.project, "slug": self.slug, "action": "retry",
+            status, value = self.post({"project": self.project, "slug": self.slug, "action": "request",
                                        "request_id": "retry-submission", "review_id": "prior-review"})
         self.assertEqual((status, value), (200, {"ok": True, "review": {"id": "new-review"}}))
         request.assert_called_once_with(self.project, self.slug, actor=T.OPERATOR_MESSAGE_ROLE,

@@ -430,45 +430,50 @@ FYI, Follow-ups, Deviations, Spend, Report notes, and Digest. Report notes and t
 Digest links land at its section. States: loading (a title-shaped skeleton); empty ("No report
 yet."); error ("Could not load the report." and Retry).
 
-#### Cross-engine review in the task conversation
+#### Adversarial review
 
-The existing task menu offers **Review proposal** and **Review changes**, one bordered button per subject.
-An existing request changes its entry to **View proposal review** or **View changes review**, with
-Requested, In progress, Complete, Earlier version, Failed or Cancelled underneath. Opening any existing
-review shows saved status, findings and L2 dispositions in the conversation and never invokes a reviewer,
-including L2-initiated reviews. **Review again**, **Review latest** and **Retry** are explicit actions
-inside details. A new revision requires the previous request to be addressed. A proposal review remains available when changes
-review is requested. No permanent review button, card, tab or separate reviewer conversation appears.
+Task details shows two bordered boxes, **Proposal review** and **Implementation review**, with no
+wrapper around them. Each box shows its latest review: a state icon, "<name> · <state>" (requested by
+you or L2, in progress, stopping, done, didn't finish, skipped), the reviewer's one-sentence verdict,
+counts and **View**. With no review yet it says "Not reviewed yet", or why review is unavailable. One
+button starts the next review when one can start: **Request**, **Review again** after an assessed
+review with nothing open, or **Try again** after one that didn't finish. There is no button while that
+kind is queued, running or has open findings, including an earlier review's. Finished tasks show the boxes without buttons, and hide a
+kind that was never reviewed. The reviewer is a separate invocation; same-engine review is the
+ordinary path, and an alternate engine is used when one is configured.
 
-Before requesting, show the selected engine/model, configured allowance (including unknown), focused
-read-only scope and merge wait. Prefer an eligible alternate engine; otherwise label the separate
-same-engine invocation with its fallback reason, also retained in saved evidence. No duration selector,
-programmatic deadline, automatic retry or engine switch follows launch. Capacity or unavailable
-observation/cancellation cannot be bypassed by fallback.
+Requests queue on any open task whatever L2 is doing. A waiting or blocked L2 is woken; a stopped or
+faulted task is not resumed, and its request waits for the next resume. Requesting closes task
+details and preserves the draft, reading position and listening state.
 
-L2 proactively seeks adversarial review for complex proposals before code and complex implementations;
-simple work stays light by judgment. For proposal review L2 selects the exact original proposal message;
-the operator sees its link and version, with no message-ID form. Missing proposal input is explained
-before invoking a reviewer. Review can continue L2 while an approval question is open solely to prepare,
-run and assess the proposal review; the original question stays open. Captured text and committed source
-define coverage; images require a textual account and remain explicitly outside text review coverage.
-Proposal findings never imply implementation acceptance. Later proposal/source/context changes show their
-coverage and need L2 assessment or a deliberate new review; pending changes requests remain visible.
+The conversation shows one card per kind, at the latest request's anchor; earlier iterations fold
+inside it. The card's sentence reads:
 
-A compact attributed system row tracks requested/running/completed/failed/cancelled/withdrawn state.
-L2 explains useful findings and fixes in ordinary prose. **Review details** reveals original findings,
-L2 dispositions, subject, selected proposal/context IDs and exact checkpoint evidence. It starts folded;
-collapsing removes details. Current coverage, earlier work and later L2 assessment are distinguished even when
-folded. An assessment that leaves findings open adds **N unresolved** to the row and labels each such
-finding **L2 — unresolved**; it never clears the review. No findings never means permission to merge. Failure keeps the request unresolved and exposes
-explicit retry or authorized skip; uncertain termination retains capacity and explains recovery.
+| State | Sentence |
+| --- | --- |
+| Requested by you | Queued. L2 starts it after its current step. / Queued. L2 starts it when it resumes. |
+| Requested by L2 | L2 asked for a review of its proposal (implementation) and starts it shortly. |
+| Waiting for the reviewer slot | Waiting for the reviewer: another review is running on this machine. |
+| In progress | Reviewing the proposal (implementation)…, with **Stop** and "Requested by L2/you". |
+| Didn't finish | The failure, or "Stopped before it finished.", with **Try again**. |
+| Done | The verdict, then counts: "2 findings, both resolved", "3 findings · 2 open, blocks merge", "L2 is responding", "Review 2", "earlier version", "1 open in an earlier review, blocks merge". |
+| Skipped | "Skipped by you" or "Skipped by L2". |
 
-Empty history adds no conversation row. Loading/saving disables repeats. Unavailable explains why in
-the menu; denied/uncertain delivery uses inline feedback and saved-status refresh. Menu dismissal,
-details expansion and request delivery preserve the draft and reading position. Listening and voice
-submission retain the composer journey. `cross-engine-review.pw.ts` walks these states at phone and
-desktop widths; `cross-engine-review-integration.pw.ts` walks real persisted request, alternate-engine
-fixtures, immutable snapshot/result, L2 initiation, failure/retry, unavailable, staleness and dispositions.
+The chevron opens the card: each finding with **Open**, **Fixed**, **Dismissed** or **New**, its
+severity, body, location and L2's answer; what the reviewer did not cover; earlier reviews as one line
+each, which opens to that review's own findings, footer and Skip review, since a review an additional
+review left in the merge gate still blocks merge; and a footer naming the reviewer ("<engine> · same engine as the task" or "alternate engine"),
+**Technical details** and **Skip review**. Technical details shows the model, any fallback reason,
+focus, the captured proposal and the reviewed and assessed checkpoints. Skip review asks for
+confirmation without a reason; the review stops blocking merge and its findings stay visible. **View**
+in task details opens and focuses the card. Open findings block merge; no findings never means
+permission to merge.
+
+Loading and saving disable the buttons. Unavailable explains why in the box; denied and uncertain
+delivery use inline feedback with a saved-status refresh. `adversarial-review.pw.ts` walks these states
+at phone and desktop widths; `adversarial-review-integration.pw.ts` walks real persisted requests,
+same-engine and alternate-engine fixtures, L2 requests, failure and try again, unavailable,
+earlier-version coverage and dispositions.
 
 ### 3.5 Task card (inline and in the work panel)
 
@@ -1059,8 +1064,9 @@ blocked tasks.
 The existing message bubble shows **Queued · waiting for a checkpoint**, **Queued · held until you
 continue**, **Delivered to session** only with handoff evidence, or **Delivery unconfirmed** when
 evidence is missing. Each eligible queued operator bubble has a bordered **Send now** beside **Remove**;
-Send now explains **Stops work and reviews to deliver now.** It requests the
-existing Stop and same-session continuation for that message. Quick-choice receipts and
+Send now explains **Joins the current turn without stopping its work.** It hands the whole queued
+removable operator group to the running turn in arrival order; each message keeps its bubble and
+receipt, and later arrivals remain outside the claim. Quick-choice receipts and
 messages already used by recorded decisions keep their evidence. **Removing…** disables removal until
 the response; success removes only that bubble from the conversation. Original text remains in
 durable evidence. Claim shows **Sending to session ·
@@ -1068,9 +1074,11 @@ cannot remove**, and uncertain handoff shows **Delivery unconfirmed · cannot re
 A prelaunch failure restores the queued controls. A refused removal refreshes delivery and names the
 refusal beside that message; denied and unconfirmed requests show their own inline error. Saved or
 loading reads disable both actions. **Sending now…** disables repeated sends and removal while the
-request or server delivery is pending. The server's receipt establishes delivery; the UI does not move
-the message optimistically. Stopped, question-waiting, faulted or unavailable owners show the server's
-reason beside a disabled Send now. Denied, conflict and unconfirmed requests refresh the row and show
+request is pending; an accepted message shows **Sending now · joining the current turn** with no Remove
+until the turn takes it in (**Delivered to session**) or returns it to the queue. The server's receipt
+establishes delivery; the UI does not move the message optimistically. Stopped, question-waiting,
+faulted or unavailable owners, messages with images and a second message while one is being sent show
+the server's reason beside a disabled Send now. Denied, conflict and unconfirmed requests refresh the row and show
 their inline explanation. Claimed, delivered and removed messages have no Send now control.
 The empty queue has no queued controls; listening and transcription
 keep the existing composer behavior. Removal does not undo a lifecycle request or recorded decision.
@@ -1667,18 +1675,27 @@ Messages sent while L3 is mid-turn queue and run at the next turn boundary in or
 keeps its accent circle with the arrow. Phone names the active work in the header and the run order
 on queued rows; desktop also shows "L3 is mid-turn · runs next" under the field. Queued rows stay
 inside the message area until they run, with bordered **Send now** beside **Remove** while permitted.
-Send now puts that row first, interrupts an active chat at its engine's safe boundary, and runs the
-selected message next. The interrupted reply keeps any partial text as an ordinary reply, with no
-notice: the operator knows they interrupted it. A reply stopped before any text leaves no row, so the
-two operator bubbles sit back to back (8px apart, the first bubble's time beside it).
-System work finishes before the selected message runs. Pending rows say
-**Sending now…**, with **Waiting for current turn to stop** or **Runs next after system work** as
-appropriate; Send now is disabled. Remove is disabled while the HTTP request is pending and remains
-available after acceptance until claim, even when an engine becomes unavailable. Removal does not
-undo an interruption already requested. An unavailable engine, active chat still starting or operator
-wait disables Send now with the server's explanation. Denied, conflict and unconfirmed requests retain the row
+Send now promotes the whole queued operator group in arrival order; each message keeps its bubble
+and receipt, and later arrivals remain outside the claim. A coordinator that delivers at turn boundaries
+shows **Runs next after this turn** while its current chat turn continues. With native delivery, pending
+rows say **Sending now…** with **Sending into the current turn** and no Remove. Once the turn takes them in,
+the reply so far ends, each message appears as its own operator bubble, and the rest of the reply streams
+beneath the group. Historical interrupted replies keep any partial text as an ordinary reply,
+with no notice. An empty interrupted reply leaves no row, so the two operator bubbles sit back to
+back (8px apart, the first bubble's time beside it). A message whose engine acknowledgement is uncertain retains **Delivery unconfirmed**
+under its bubble after settlement and reload; it is never replayed automatically.
+A group with images, one sent during system work (**Runs next after system work**) or while
+no turn runs (**Runs next**) moves first and runs as the next turn; Remove stays available until claim.
+Remove is disabled while the HTTP request is pending. An unavailable engine or operator wait disables
+Send now with the server's explanation. Denied, conflict and unconfirmed requests retain the row
 and show their own inline error after refreshing canonical state. The row becomes its turn bubble
-only when the server admits it; claimed, delivered or removed rows have no queued actions.
+only when the server admits it; claimed, delivered or removed rows have no queued actions. A message
+admitted while no L3 engine can run keeps its bubble with the muted queued status (**Queued · runs
+next**) and Send now beneath it, disabled with the server's explanation; there is no error line and no
+Remove, because it was already sent. It runs before system work once an engine is available, and its
+reply appears beneath the same bubble. A kept message older than the loaded conversation appears in the
+queued rows with the same status and Send now, still without Remove.
+Send now has no timer and never stops running work; task-chat Stop remains the hard stop.
 Both controls have 44px phone targets and wrap with their explanations on narrow screens.
 A running turn shows
 either a system line in progress (§3.4) or, for a `chat` turn, a typing indicator under the

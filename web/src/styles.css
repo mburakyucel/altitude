@@ -1758,7 +1758,7 @@
 .msg-row[data-pending] {
   opacity: 0.6;
 }
-/* A reply Send now stopped before it said anything leaves no row: the operator's two messages sit
+/* A saved interrupted reply with no text leaves no row: the operator's two messages sit
  * back to back, the first one's time beside its bubble (SPEC.md §4.2). */
 .turn[data-joined] > .msg-row[data-mine] {
   flex-direction: row-reverse;

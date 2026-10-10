@@ -212,33 +212,37 @@ duplicating the persona. They do not prove live helper consumption, model compli
 Existing helpers retain their native context; changed instructions reach a new assignment after
 source activation. Live-provider testing remains deferred.
 
-## Cross-engine review
+## Adversarial review
 
 L2 proactively seeks independent adversarial review of complex proposals before code and complex
-implementations, keeping simple work light by judgment. The operator's **Review proposal** and
-**Review changes** task-menu actions create attributed requests and pending owner inbox entries.
-Running owners receive them at the next message checkpoint; a reported owner with an open delivery
-uses the existing continuation path.
-Stopped, faulted, undispatched and finished owners explain why review is unavailable. A proposal
-request can continue an owner with an approval question solely to prepare, run and assess review;
-the question remains open and implementation still needs its approval. Changes review remains
-unavailable while question-blocked. Each subject's existing review opens saved status, findings and
-L2 dispositions without invocation. Review again, Review latest and Retry are explicit detail actions.
+implementations, keeping simple work light by judgment. The operator's **Request**, **Review again**
+and **Try again** buttons in the Proposal review and Implementation review boxes create attributed
+requests and pending owner inbox entries on any open task. Running owners receive them at the next
+message checkpoint. A waiting or blocked owner is woken through the ordinary resume request; a
+reported owner with an open delivery uses the existing continuation path. A stopped or faulted owner is
+not resumed: the request waits, shown as such, and reaches L2 when the task resumes. Undispatched and
+finished tasks explain why review is unavailable. A request can continue an owner with an approval
+question solely to prepare, run and assess review; the question remains open and implementation still
+needs its approval. Viewing a review opens saved status, findings and L2 dispositions without
+invocation.
 
 The owner commits the chosen checkpoint, supplies original context and, for proposals, names the
 exact original L2 proposal message in `alt task review run --proposal-message`. Missing proposal input
 prevents invocation. The service captures immutable inputs and reserves one additional machine
-slot atomically, with one reviewer machine-wide. Capacity contention keeps the accepted request
-pending for a later explicit run. It prefers an eligible alternate engine and otherwise
-uses a separate same-engine invocation under the same read-only contract, unless the request selects
+slot atomically, with one reviewer machine-wide. Capacity contention refuses the run and keeps the
+accepted request waiting for the reviewer until a later explicit run. It prefers an eligible alternate
+engine and otherwise uses a separate same-engine invocation, the ordinary path, under the same
+read-only contract, unless the request selects
 one engine/model, which is rechecked at run and fails rather than being substituted. Engine/model, fallback reason
 and account-allowance uncertainty stay in the request and saved evidence. Fallback never bypasses
 capacity or unavailable observation/cancellation. The synchronous command returns the complete
 result or explicit failure without a review-duration deadline. L2 supplies focused scope and key risks;
-the reviewer returns material findings and coverage gaps without unrelated exploration. L2 observes
+the reviewer returns a one-sentence verdict, material findings and coverage gaps without unrelated
+exploration. L2 observes
 the run and can cancel if it gets stuck or goes off scope. Authorized owner work can continue in
 parallel, but every accepted request prevents merge until L2 records finding dispositions and assesses
-its subject, or the requester is authorized to withdraw. L2 can record a finding as `open` to assess
+its subject, or the requester withdraws it: the operator's Skip review needs no reason, and L2 names
+one for its own request. L2 can record a finding as `open` to assess
 honestly without clearing it; an open finding keeps the review uncleared, merge refused and the
 review unreplaceable until a later assessment fixes or dismisses it with evidence. A proposal request never supersedes a pending
 changes request. L2 replies in normal prose; original results remain in review details. Proposal review
@@ -286,7 +290,7 @@ Evidence survives cancellation, uncertain termination
 and explicit retries in its original review record. Successful review results retain their existing
 contract. Diagnostics neither reconstruct missing historical evidence nor prove reviewer recovery;
 the coordinator still requires verified recovery before an explicit retry.
-See [commands and evidence](CLI.md#cross-engine-review).
+See [commands and evidence](CLI.md#adversarial-review).
 
 ## Fresh dispatch
 
@@ -541,20 +545,21 @@ Quick-choice receipts and messages already used by recorded decisions cannot be 
 does not undo a resume request, Stop, fault or question. Claimed messages say Sending to session and
 cannot be removed. A failure before launch restores removal; an attempted but unconfirmed handoff
 retains Delivery unconfirmed and cannot be removed even when recovery restores the inbox batch.
-**Send now** is available for an inbox-owned operator message while its saved-session owner is running
-and eligible to resume. Admission shares the inbox writer lock and records the existing Stop fence
-before hook pickup can take the row. If pickup already owns it, the action returns its receipt without
-another interruption. The daemon stops the observed worker through the engine seam and resumes the
-same session, attempt, model and worktree with only the selected message; siblings stay in the inbox
-for later checkpoints. The request supplies no synthetic conversation message. Like Stop, Send now
-cancels attached reviews and may interrupt publication; completed effects remain completed.
-The normal handoff retains launch ownership across Stop and resume. Confirmed Stop and the due
-continuation are durable, including across daemon recovery; a later launch hold keeps the message
-waiting to resume without monopolizing the task's operation slot. Stop and Reject remain available.
-New questions and faults supersede the requested wake. Explicitly stopped owners require Continue;
-question waits require an answer; faulted tasks require recovery. Missing sessions or unavailable
-engines explain why Send now is unavailable. Pending delivery, handoff uncertainty and confirmed
-delivery use the existing receipts; no browser action infers delivery from inbox absence.
+**Send now** hands the whole queued removable operator group to the running owner in arrival order.
+It is available while the owner runs through the engine driver and no message in the group has images.
+Under the project lock, the request records a `send_now` claim on the task and writes the group to the
+worker's `sends` folder; it neither stops the worker nor launches another. The driver writes the group
+into the running turn as the operator's next input (see
+[message delivery](ARCHITECTURE.md#message-delivery-and-voice)) and, once the engine confirms it, records
+each message's delivery receipt on the task and removes the claimed rows from the inbox. Each message
+retains its own conversation row. The claimed rows say Sending into the current turn and cannot be
+removed; the inbox hook neither announces them nor ends the turn for them, and only one group is sent
+at a time. Later arrivals wait outside that claim. A group the turn returns at its end stays queued for
+the next turn. Images anywhere in the group keep the whole group queued for next-turn delivery in
+arrival order. A Stop, a lost job, a report or the end of the task settles a remaining claim from the driver's
+outcome file before any later turn takes the inbox, so a message the engine may have read is never
+delivered again. Question waits, faults, Stop, another owner action and workers started before the driver
+explain why Send now is unavailable; the message then waits for the next turn.
 A successful stdin handoff, matching session initialization
 and bound replacement record delivery for that exact batch. A correlated native hook attachment also
 proves handoff; inbox absence or new assistant output does not. Missing evidence says Delivery
@@ -928,7 +933,8 @@ survive; continuation supplies no missing approval. L3 verifies activation and f
 requesting a live handoff, and observes the new running attempt before reporting recovery.
 
 Claude resume uses foreground `claude -p --resume` inside the task's transient unit; Codex resume
-uses `codex exec resume <thread-id> -` with the inbox on stdin from the same task worktree.
+runs `codex app-server` and resumes the thread with the inbox as its next turn, from the same task worktree.
+Both run through the job's engine driver, which keeps the engine's input open for Send now.
 Both engines have one contract: the persona may invoke the scoped Altitude
 CLI, and the backend applies the identity, clean-Git, isolation, and merge-policy checks relevant to each
 command and effect boundary. Claude hooks add telemetry, coordination delivery and the operator-message notice;
@@ -1223,34 +1229,54 @@ Leaving a voice composer releases microphone tracks and cancels recording or Sto
 An explicit voice Send completes for its original project or task despite navigation; pending status
 and any recoverable failure stay in that source conversation. Outstanding microphone permissions and
 transcription results cannot populate a different conversation.
-L3 runs headless, so its only checkpoint is the turn boundary: a message the operator
-sends while a turn is in flight is appended to the project's durable L3 queue and run there, never
-injected into the running turn. The finishing turn drains the queue itself, one turn at a time and in
+An ordinary message the operator sends while an L3 turn is in flight is appended to the project's
+durable L3 queue and waits for the turn boundary. The finishing turn drains the queue itself, one turn at a time and in
 arrival order, batching consecutive chat rows for the same conversation while keeping system turns
 and other conversations separate. Each waiting chat row remains individually removable until claim,
-including after an accepted Send now;
+except while Send now hands it to the running turn;
 messages arriving after that snapshot wait for the next turn. A message queued but not started is not
 a turn in flight, so it neither holds the quiet-point restart nor is lost by one. The queue waits
-while no L3 option is available. A system notification (block, restart, incident or upstream issue) whose
-turn every option refuses before any provider output returns to the front of the queue with its id and
-waits 1, 5, 15, then 60 minutes (`retry_at`) while later messages proceed; it is delivered once L3 is
-available. A turn with provider output is never replayed, and a refused operator message keeps its
-Retry instead. An Auto-selected turn resumes only the chosen provider's session;
+while no L3 option is available. A turn that every option refuses before any provider output keeps its rows.
+A system notification (block, restart, incident or upstream issue) returns to the front of the queue with
+its id. An operator message, sent directly or from the queue, stays in the conversation as its own bubble
+with no error row; the queue keeps it with its `turn_id`, text and images. Kept messages lead the queue in
+send order, behind only an accepted Send now row, and run unfolded under their original turn id, so each
+reply appears beneath its message with trigger `chat`. A kept message offers Send now but not Remove,
+since it was already sent; Send now runs it without waiting for a retry delay. When routing still offers an engine right after the refusal, the kept rows wait
+1, 5, 15, then 60 minutes (`retry_at`) so the drain cannot loop; a waiting notification lets later messages
+proceed, while a waiting operator message lets only a Send now row overtake it. An engine hold already
+stops the drain, so kept rows run as soon as an engine is eligible; a pinned L3 waits for its own engine
+and model. A turn with provider output is never replayed and keeps its Retry. An Auto-selected turn resumes only the chosen provider's session;
 choosing another configured model on that provider retains its conversation.
 
-An operator queue row's **Send now** promotes it ahead of other rows and runs it alone as the next
-turn; the remaining rows retain their relative order and normal folding. The accepted priority stays
-in the queue file until claim, and Remove remains available while the queue owns the row. Removal
-cannot undo an interruption already requested. An active chat still starting explains why Send now
-is unavailable until the engine reports its launch. The daemon sets only the
-captured chat turn's interruption signal; the engine seam stops that invocation's owned job and
-confirms its termination before the L3 lock is released. Partial output and session identity remain:
-the turn's assistant row holds the partial reply, possibly empty, and `interrupted: true`, and the
-conversation shows only that partial text, or nothing when it is empty. That turn is never replayed. Active system
-turns finish normally to preserve their existing notification and report receipts; a promoted row
-says **Runs next after system work**. A stale or repeated request cannot interrupt a replacement
-turn or submit the message twice. Engine unavailability and launch pauses leave the row queued with
-an explanation. The priority marker adds no quiet-point restart hold.
+An operator queue row's **Send now** promotes the whole queued operator group for that conversation in
+arrival order. The selected row identifies the group; later arrivals remain queued. The isolated
+coordinator invocation delivers the group on its next turn, showing **Runs next after this turn**
+while the current chat turn runs. Where the engine supports native project-chat delivery (see
+[message delivery](ARCHITECTURE.md#message-delivery-and-voice)), the request writes the group through
+that turn's `sends` folder. The turn's engine driver writes the group as the operator's next input, and the turn continues
+without stopping. Once the engine confirms it, the reply so far is recorded as the turn's answer, the
+messages are recorded as separate user rows, each with its own turn id, queue id and receipt,
+and the rest of the reply belongs to the last new turn. The claimed rows say **Sending into the current
+turn** and cannot be removed until they settle. A group the turn returns at its end, one containing
+images, one sent during a system turn (**Runs next after system work**) or while no turn runs
+(**Runs next**) moves to the queue front for next-turn delivery in arrival order. Text never overtakes
+an image in the group; the remaining rows retain their relative order and normal folding. Active
+system turns keep their existing boundary to preserve notification and report receipts. After each turn,
+and at the next drain after a restart, a row still marked as sending settles from its outcome file: a
+message the engine may have read is recorded once and never replayed; one it never read runs next.
+An uncertain delivery retains **Delivery unconfirmed** on each message after settlement and reload.
+Repeated requests return the same receipt. Engine unavailability and launch pauses leave the row queued
+with an explanation. The priority marker adds no quiet-point restart hold.
+No timer stops a running command or escalates Send now into a hard interruption. Task-chat Stop
+remains the explicit hard stop.
+A kept message already in history keeps its original turn on Send now and waits for boundary delivery.
+Refused groups preserve their member identities through retries, excluding their own bubbles from
+the historical context supplied with the retry.
+
+Historical interrupted turns retain their partial reply, possibly empty, and `interrupted: true`.
+The conversation shows only that partial text, or no assistant row when it is empty; these turns
+are never replayed.
 
 Every fresh session, whether from first use, reset, context rotation or a confinement policy change,
 receives the project's latest 20 prior human chat messages from either provider, oldest first. A
@@ -1324,7 +1350,18 @@ contract and completion verification. Deterministic fixtures exercise in-flight 
 consumption, steering, resume and explicit exits; they do not establish live-provider compliance.
 
 Claude jobs and Codex processes normalize to the same worker row: worker id, provider session id,
-PID, state, status, detail, and latest usage. Polling follows the persisted `l2_engine`. A merged change
+PID, state, status, detail, latest usage and whether its job is active. Polling follows the persisted `l2_engine`.
+A worker ends when its engine exits or when its output's latest activity is a failed turn, even while its job
+stays active. An engine can stay alive after a failed turn while a background command it started runs: it waits
+for that command and then starts another turn, which fails the same way under a usage limit. Polling therefore
+stops the job of a worker whose latest turn failed, with no activity since, before handling its end, so that worker's usage limit, capacity, rejection or fault path runs as it does
+after a clean exit, and its commands end with it. Background-task and status notices are not activity, nor is a
+Send now message the driver returns or cannot confirm; a delivered one joins or starts a turn. A successful turn
+waiting on its own background work keeps running. Resume, handoff and cleanup treat a worker as live while anything still runs in its job.
+An `alt land` waiting on checks or owner assessment ends with that job: on SIGTERM it leaves the
+candidate published and unmerged, the process releases the repository turn, and the owner's
+next turn receives an automatic notice naming the PR and the published head to assess before
+re-running `alt land`. A merged change
 to Altitude's backend, launch source or served web bundle inputs activates at a narrow quiet point: no dispatch
 marker or resume claim, L3 turn, adversarial review, validation run, or report verification in flight.
 Validation holds through bounded execution, evidence recording and cleanup. Running and blocked workers themselves do not

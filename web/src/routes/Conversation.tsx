@@ -5,7 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { imageSendRefused, sendImageChat, streamChat, useChatDequeue, useSendNow } from "../data/api";
 import { SendNow } from "../components/SendNow";
-import type { ChatMessage, ChatSent, ChatView, ProjectView, TaskRow } from "../data/api";
+import type { ChatMessage, ChatSent, ChatView, ProjectView, QueuedMessage, TaskRow } from "../data/api";
 import { ProseScope } from "../components/Prose";
 import { ProseTerminal } from "../components/CodeBlock";
 import { requestCommand } from "../data/terminalCommand";
@@ -142,6 +142,9 @@ interface Local {
   images?: ImagePreview[];
   uncertain?: boolean;
   replay?: ImageSubmission;
+  /** Exchanges this turn completed before a Send now message joined it, shown until the history has them. */
+  delivery?: ChatMessage["delivery"];
+  earlier?: { turnId: string | null; text: string; reply: string; delivery?: ChatMessage["delivery"] }[];
 }
 
 /** A task the turn created, under the reply: the link slice 3 grows into the §3.5 card. */
@@ -259,7 +262,12 @@ export default function Conversation({
       try {
         result = images ? await sendImageChat(name, text, { request_id: images.request_id, images: images.images, image_ids: images.image_ids }) : await streamChat(name, text, {
           onAccepted: () => { onAccepted?.(); update((cur) => ({ ...cur, accepted: true })); },
-          onTurn: (turn) => update((cur) => ({ ...cur, turnId: turn.id })),
+          onTurn: (turn, user, delivery) => {
+            if (user === undefined) return update((cur) => ({ ...cur, turnId: turn.id }));
+            void queryClient.invalidateQueries({ queryKey: ["chat", name] });
+            update((cur) => ({ ...cur, turnId: turn.id, text: user, reply: "", images: undefined, delivery,
+              earlier: [...(cur.earlier ?? []), { turnId: cur.turnId, text: cur.text, reply: cur.reply, delivery: cur.delivery }] }));
+          },
           onText: (chunk) => update((cur) => ({ ...cur, reply: cur.reply + chunk })),
         });
       } catch (error) {
@@ -289,6 +297,18 @@ export default function Conversation({
   const neverStarted = project.isSuccess && !project.data.l3?.session_id && view && view.history.length === 0 && !view.active;
   const queued = view?.queued ?? [];
   const queuePositions = new Map(queued.filter(row => row.trigger !== "project-message").map((row, index) => [row.id, index]));
+  // A kept message is already in the conversation: its queued state shows under its own bubble, or in the list
+  // when that bubble is older than the loaded history.
+  const shown = new Set(turns.map((turn) => turn.id));
+  const kept = new Map(queued.flatMap((row) => row.turn_id && shown.has(row.turn_id) ? [[row.turn_id, row] as const] : []));
+  const waiting = queued.filter((row) => !row.turn_id || !shown.has(row.turn_id));
+  const queuedStatus = (row: QueuedMessage) => <span className="queued-status text-muted">{row.send_now ? "Sending now" : queuePositions.get(row.id) === 0 ? "Queued · runs next" : `Queued · ${(queuePositions.get(row.id) ?? 0) + 1} in line`}</span>;
+  const sendNowFor = (row: QueuedMessage) => (
+    <SendNow visible pending={Boolean(row.send_now || (sendNow.isPending && sendNow.variables === row.id))}
+      disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending || Boolean(view?.send_now_reason)}
+      reason={view?.send_now_reason || (row.send_now ? row.send_now_reason : null)}
+      error={sendNow.variables === row.id ? sendNow.error : null} onClick={() => sendNow.mutate(row.id)} />
+  );
   const busy = Boolean(view?.busy || view?.active || (local && !local.done));
   const empty = Boolean(view && view.history.length === 0 && !view.active && !local && queued.length === 0);
 
@@ -302,8 +322,11 @@ export default function Conversation({
       lastDay = day;
     }
   };
+  const stored = (id: string | null) => turns.some((turn) => turn.id === id && (turn.assistant || turn.error));
+  const earlier = local?.earlier?.filter((segment) => !stored(segment.turnId)) ?? [];
   for (const item of items) {
     if (item.kind === "chat" && local?.turnId && item.turn.id === local.turnId) continue;
+    if (item.kind === "chat" && earlier.some((segment) => segment.turnId === item.turn.id)) continue;
     divide(itemAt(item));
     if (item.kind === "group") {
       rows.push(<SystemGroup key={item.turns[0]?.id ?? item.at ?? "group"} turns={item.turns} project={name} titles={titles} />);
@@ -311,11 +334,12 @@ export default function Conversation({
       rows.push(<SystemLine key={item.turn.id} turn={item.turn} project={name} titles={titles} />);
     } else {
       const { turn } = item;
-      // Send now stopped this reply before it said anything: the operator's next message follows directly (SPEC.md §4.2).
+      // A saved interrupted reply said nothing: the operator's next message follows directly (SPEC.md §4.2).
       const silent = turn.assistant?.interrupted === true && !turn.assistant.text.trim() && !turn.assistant.tasks?.length;
+      const keptRow = kept.get(turn.id);
       rows.push(
         <div key={turn.id} className="turn" data-turn={turn.id} data-joined={silent || undefined}>
-          {turn.user ? <Bubble text={turn.user.text} at={turn.user.at} images={<MessageImages project={name} images={turn.user.images} />} /> : null}
+          {turn.user ? <Bubble text={turn.user.text} at={turn.user.at} receipt={turn.user.delivery?.state === "unconfirmed" ? "Delivery unconfirmed" : undefined} images={<MessageImages project={name} images={turn.user.images} />} /> : null}
           {turn.assistant ? silent ? null : (
             <Reply text={turn.assistant.text} at={turn.assistant.at} role="assistant">
               {turn.assistant.tasks?.length ? <TurnTasks project={name} slugs={turn.assistant.tasks} titles={tasks} /> : null}
@@ -329,6 +353,11 @@ export default function Conversation({
                 </button>
               ) : null}
             </p>
+          ) : keptRow ? (
+            <div className="queued-row" data-kept>
+              {queuedStatus(keptRow)}
+              <div className="queued-actions">{sendNowFor(keptRow)}</div>
+            </div>
           ) : item.inProgress ? (
             <Typing />
           ) : null}
@@ -350,9 +379,17 @@ export default function Conversation({
   }
   if (local) {
     divide(new Date().toISOString());
+    for (const segment of earlier) {
+      rows.push(
+        <div key={`local-${segment.turnId}`} className="turn" data-local>
+          <Bubble text={segment.text} at={new Date().toISOString()} receipt={segment.delivery?.state === "unconfirmed" ? "Delivery unconfirmed" : undefined} />
+          {segment.reply ? <Reply text={segment.reply} role="assistant" /> : null}
+        </div>,
+      );
+    }
     rows.push(
       <div key="local" className="turn" data-local>
-        <Bubble text={local.text} at={new Date().toISOString()} pending={!local.accepted} images={<PendingImages images={local.images} />} />
+        <Bubble text={local.text} at={new Date().toISOString()} receipt={local.delivery?.state === "unconfirmed" ? "Delivery unconfirmed" : undefined} pending={!local.accepted} images={<PendingImages images={local.images} />} />
         {local.replay ? <p className={`turn-failed ${local.error || local.uncertain ? "text-danger" : "text-muted"}`} role={local.error || local.uncertain ? "alert" : "status"}>
           {local.error ? `Not sent. ${local.error}` : local.uncertain ? "Could not confirm send." : "Sending images…"}{" "}
           {local.error || local.uncertain ? <button type="button" className="link" onClick={() => void send(local.text, undefined, local.error ? { ...local.replay!, request_id: crypto.randomUUID() } : local.replay).catch(() => undefined)}>Retry</button> : null}
@@ -402,24 +439,21 @@ export default function Conversation({
             </p>
           ) : null}
           {rows}
-          {queued.length > 0 ? (
+          {waiting.length > 0 ? (
             <ul className="queued" aria-label="Queued messages">
-              {queued.map((row) => (
+              {waiting.map((row) => (
                 <li key={row.id} className="queued-row">
                   {row.project_message ? (
                     <SystemLine project={name} titles={titles} turn={{ id: row.id, at: row.at ?? null,
                       trigger: "project-message", prompt: row.text, reply: null, error: null,
                       inProgress: false, slug: null, fyi: true, headsUp: false, projectMessage: row.project_message }} />
-                  ) : <div className="queued-text"><span>{row.text}</span><MessageImages project={name} images={row.images} /><span className="queued-status text-muted">{row.send_now ? "Sending now" : queuePositions.get(row.id) === 0 ? "Queued · runs next" : `Queued · ${(queuePositions.get(row.id) ?? 0) + 1} in line`}</span></div>}
+                  ) : <div className="queued-text"><span>{row.text}</span><MessageImages project={name} images={row.images} />{queuedStatus(row)}</div>}
                   {!row.trigger || row.trigger === "chat" ? (
                     <div className="queued-actions">
-                    <SendNow visible pending={Boolean(row.send_now || (sendNow.isPending && sendNow.variables === row.id))}
-                      disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending || Boolean(view?.send_now_reason)}
-                      reason={view?.send_now_reason || (row.send_now ? row.send_now_reason : null)}
-                      error={sendNow.variables === row.id ? sendNow.error : null} onClick={() => sendNow.mutate(row.id)} />
-                    <button type="button" className="link" disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending} onClick={() => dequeue.mutate(row.id)}>
+                    {sendNowFor(row)}
+                    {row.sending || row.turn_id ? null : <button type="button" className="link" disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending} onClick={() => dequeue.mutate(row.id)}>
                       {dequeue.isPending && dequeue.variables === row.id ? "Removing…" : "Remove"}
-                    </button>
+                    </button>}
                     </div>
                   ) : null}
                 </li>
