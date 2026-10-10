@@ -497,18 +497,47 @@ def _gh_signed_in() -> bool:
         return False
 
 
+def _gh_lacks() -> list[str] | None:
+    """The pull request fields `alt land` reads that this GitHub CLI does not offer, or None when it lists none, as a
+    failing gh does. Given `--json` alone, its parser lists the fields it offers, with no repository, sign-in or network
+    request; distribution packages such as Ubuntu 24.04's gh 2.45 can sign in and open pull requests but lack
+    baseRefOid, so landing fails (#350)."""
+    from .land import PR_FIELDS
+    try:
+        listed = subprocess.run(["gh", "pr", "view", "--json"], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    output = listed.stdout + listed.stderr
+    if "comma-separated fields" not in output:
+        return None
+    return [field for field in PR_FIELDS.split(",") if field not in output.split()]
+
+
+#: Why a GitHub CLI lacking `_gh_lacks()` fields cannot serve tasks.
+_GH_TOO_OLD = "Agents land pull requests with GitHub CLI 2.72 or newer; this one lacks {}."
+
+
 def prerequisites() -> list[dict]:
     """What agents need before the first task, in the order First run shows it: each item is met, unmet or optional,
     with the command the operator runs in their own terminal. Nothing here takes a password or token."""
     from . import config, engines, platform
     gh = shutil.which("gh")
-    items = [{"key": "github", "label": "GitHub CLI signed in" if gh else "GitHub CLI not installed",
-              "state": "met" if gh and _gh_signed_in() else "unmet",
-              "detail": "Agents push branches and open pull requests through the GitHub CLI."
-              + ("" if gh else " Install it, then sign in with gh auth login."),
-              "command": "gh auth login" if gh else None if platform.containerized() else platform.INSTALL["gh"]}]
-    if not gh and platform.containerized():
-        items[0]["detail"] = "GitHub CLI is bundled in the image. Replace this incomplete image from the host."
+    lacks = _gh_lacks() if gh else []
+    install = None if platform.containerized() else platform.install_command("gh")
+    if not gh:
+        github = {"label": "GitHub CLI not installed", "state": "unmet", "command": install,
+                  "detail": "Agents push branches and open pull requests through the GitHub CLI. Install it, then sign "
+                  "in with gh auth login."}
+    elif lacks:
+        github = {"label": "GitHub CLI too old", "state": "unmet", "command": install,
+                  "detail": _GH_TOO_OLD.format(", ".join(lacks)) + " Install the current release, then check again."}
+    else:
+        signed = _gh_signed_in()
+        github = {"label": "GitHub CLI signed in", "state": "met" if signed else "unmet", "command": "gh auth login",
+                  "detail": "Agents push branches and open pull requests through the GitHub CLI."}
+    if platform.containerized() and (lacks or not gh):
+        github["detail"] = "GitHub CLI is bundled in the image. Replace this incomplete image from the host."
+    items = [{"key": "github", **github}]
     agents = []
     for engine in config.ENGINES:
         label = config.ENGINE_LABELS[engine]
@@ -529,7 +558,7 @@ def prerequisites() -> list[dict]:
     items += agents
     git = shutil.which("git")
     items.append({"key": "git", "label": "Git installed" if git else "Git not installed", "state": "met" if git else "unmet",
-                  "detail": None if git else "Agents work in Git checkouts.", "command": None if git else platform.INSTALL["git"]})
+                  "detail": None if git else "Agents work in Git checkouts.", "command": None if git else platform.install_command("git")})
     if not git and platform.containerized():
         items[-1].update(detail="Git is bundled in the image. Replace this incomplete image from the host.", command=None)
     return items
@@ -548,6 +577,13 @@ def doctor() -> dict:
         checks.append({"name": "user service", "state": "tested", "detail": native})
     except RuntimeError as exc:
         checks.append({"name": "user service", "state": "unavailable", "detail": str(exc)})
+    if shutil.which("gh"):
+        lacks = _gh_lacks()
+        checks.append({"name": "GitHub CLI pull request fields",
+                       "state": "unknown" if lacks is None else "unavailable" if lacks else "tested",
+                       "detail": "gh pr view --json listed no fields; run it to see why." if lacks is None
+                       else f"{_GH_TOO_OLD.format(', '.join(lacks))} Install the current release: "
+                       f"{platform.install_command('gh')}" if lacks else "Offers every field alt land reads."})
     authenticated = _gh_signed_in()
     checks.append({"name": "GitHub authentication", "state": "tested" if authenticated else "unknown",
                    "detail": "Authentication check passed; repository permissions are checked during project setup."

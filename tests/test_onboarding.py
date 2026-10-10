@@ -1,11 +1,13 @@
 """First run's machine settings (issue #482): the operator's name, incident publication consent and the
 prerequisites the agents need. Fixture engine and GitHub CLIs only."""
 import json
+import os
 import subprocess
+from pathlib import Path
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import config, engines, incidents, installation, platform, server, tasks as T
+from altitude import config, engines, incidents, installation, land, platform, server, tasks as T
 
 
 class OnboardingCase(AltitudeCase):
@@ -112,10 +114,11 @@ class TestIncidentReports(OnboardingCase):
 
 
 class TestPrerequisites(OnboardingCase):
-    def items(self, *, gh: bool, signed: dict, installed: dict, git: bool = True) -> dict:
+    def items(self, *, gh: bool, signed: dict, installed: dict, git: bool = True, lacks: tuple | None = ()) -> dict:
         which = {"gh": "/fixture/gh", "git": "/fixture/git" if git else None}
         with mock.patch.object(installation.shutil, "which", side_effect=lambda name: which.get(name)), \
              mock.patch.object(installation, "_gh_signed_in", return_value=gh), \
+             mock.patch.object(installation, "_gh_lacks", return_value=None if lacks is None else list(lacks)), \
              mock.patch.object(engines, "installation",
                                side_effect=lambda e: {"available": None if installed[e] else False, "why": ""}), \
              mock.patch.object(engines, "sign_in", side_effect=lambda e: {"signed_in": signed[e],
@@ -132,8 +135,91 @@ class TestPrerequisites(OnboardingCase):
              mock.patch.object(engines, "installation", return_value={"available": False, "why": ""}):
             items = {item["key"]: item for item in installation.prerequisites()}
         self.assertEqual({key: (item["state"], item["command"]) for key, item in items.items()},
-                         {"github": ("unmet", platform.INSTALL["gh"]), "git": ("unmet", platform.INSTALL["git"]),
+                         {"github": ("unmet", platform.install_command("gh")), "git": ("unmet", platform.install_command("git")),
                           **{engine: ("unmet", engines.INSTALL[engine]) for engine in config.ENGINES}})
+
+    def test_a_github_cli_that_cannot_land_shows_the_command_that_replaces_it(self):
+        items = self.items(gh=True, lacks=("baseRefOid",), signed={"claude": True, "codex": True},
+                           installed={"claude": True, "codex": True})
+        github = items["github"]
+        self.assertEqual((github["label"], github["state"], github["command"]),
+                         ("GitHub CLI too old", "unmet", platform.install_command("gh")))
+        self.assertIn("2.72 or newer; this one lacks baseRefOid", github["detail"])
+        with mock.patch.object(platform, "containerized", return_value=True):
+            github = self.items(gh=True, lacks=("baseRefOid",), signed={"claude": True, "codex": True},
+                                installed={"claude": True, "codex": True})["github"]
+        self.assertEqual((github["state"], github["command"]), ("unmet", None))
+        self.assertIn("Replace this incomplete image", github["detail"])
+
+    def test_the_install_command_names_a_github_cli_that_can_land_on_each_platform(self):
+        with mock.patch.object(platform.sys, "platform", "darwin"):
+            self.assertEqual((platform.install_command("gh"), platform.install_command("git")),
+                             ("brew install gh", "xcode-select --install"))
+        with mock.patch.object(platform.sys, "platform", "linux"):
+            command = platform.install_command("gh")
+            self.assertEqual(platform.install_command("git"), "sudo apt install git")
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        log = self.tmp / "commands"
+        for name, body in (("sudo", f'echo "sudo $*" >> {log}; [ "$1" = tee ] && cat >> {log}; exit 0'),
+                           ("curl", f'echo "curl $*" >> {log}; [ -n "$FAIL" ] && exit 22; echo key > "$4"')):
+            (bin_dir / name).write_text(f"#!/bin/sh\n{body}\n")
+            (bin_dir / name).chmod(0o755)
+        keyring = "/etc/apt/keyrings/githubcli-archive-keyring.gpg"
+        for fail in ("1", ""):
+            log.unlink(missing_ok=True)
+            run = subprocess.run(["sh", "-c", command], env={"PATH": f"{bin_dir}:/usr/bin:/bin", "FAIL": fail, "TMPDIR": str(self.tmp)},
+                                 capture_output=True, text=True)
+            lines = log.read_text().splitlines()
+            self.assertEqual(lines[0], "curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o "
+                             + lines[0].split()[-1])
+            if fail:
+                self.assertEqual((run.returncode, len(lines)), (22, 1), "a failed download leaves the keyring alone")
+                continue
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertFalse(Path(lines[0].split()[-1]).exists(), "the downloaded key is removed once installed")
+            self.assertEqual(lines[1:], [
+                f"sudo install -D -m 644 {lines[0].split()[-1]} {keyring}",
+                "sudo tee /etc/apt/sources.list.d/github-cli.list",
+                f"deb [signed-by={keyring}] https://cli.github.com/packages stable main",
+                "sudo apt update", "sudo apt install gh"])
+
+    def test_the_landing_fields_come_from_the_github_cli_field_list_without_credentials(self):
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        script = bin_dir / "gh"
+        fields = land.PR_FIELDS.split(",")
+        for offered, expected in ((fields, []), ([f for f in fields if f != "baseRefOid"], ["baseRefOid"])):
+            listing = "\\n  ".join(["Specify one or more comma-separated fields for `--json`:", *offered])
+            script.write_text("#!/bin/sh\n[ \"$*\" = 'pr view --json' ] || exit 9\n"
+                              f"printf '{listing}\\n' >&2\nexit 1\n")
+            script.chmod(0o755)
+            with self.subTest(offered=len(offered)), mock.patch.dict(os.environ, {"PATH": str(bin_dir)}):
+                self.assertEqual(installation._gh_lacks(), expected)
+        script.write_text("#!/bin/sh\necho 'failed to read configuration: invalid config file' >&2\nexit 1\n")
+        for path in (bin_dir, self.tmp / "empty"):
+            with self.subTest(path=path.name), mock.patch.dict(os.environ, {"PATH": str(path)}):
+                self.assertIsNone(installation._gh_lacks(), "a GitHub CLI that lists no fields proves nothing")
+
+    def test_doctor_reports_whether_the_github_cli_can_land(self):
+        for lacks, state in (([], "tested"), (["baseRefOid", "closingIssuesReferences"], "unavailable"), (None, "unknown")):
+            with self.subTest(state=state), \
+                    mock.patch.object(installation.shutil, "which", side_effect=lambda name, **_: f"/fixture/{name}"), \
+                    mock.patch.object(installation, "_gh_lacks", return_value=lacks), \
+                    mock.patch.object(installation, "_gh_signed_in", return_value=False), \
+                    mock.patch.object(platform, "status", side_effect=RuntimeError("no service in tests")), \
+                    mock.patch("altitude.tls.info", side_effect=OSError("fixture: no certificate")):
+                checks = {check["name"]: check for check in installation.doctor()["checks"]}
+            self.assertEqual(checks["gh"]["state"], "configured")
+            self.assertEqual(checks["GitHub CLI pull request fields"]["state"], state)
+            if lacks:
+                self.assertIn("lacks baseRefOid, closingIssuesReferences", checks["GitHub CLI pull request fields"]["detail"])
+                self.assertIn(platform.install_command("gh"), checks["GitHub CLI pull request fields"]["detail"])
+
+    def test_a_github_cli_that_lists_no_fields_falls_back_to_its_sign_in_check(self):
+        items = self.items(gh=False, lacks=None, signed={"claude": True, "codex": True},
+                           installed={"claude": True, "codex": True})
+        self.assertEqual((items["github"]["label"], items["github"]["command"]), ("GitHub CLI signed in", "gh auth login"))
 
     def test_one_signed_in_agent_is_enough_and_others_become_optional(self):
         items = self.items(gh=True, signed={"claude": True, "codex": False}, installed={"claude": True, "codex": False})

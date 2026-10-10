@@ -41,13 +41,27 @@ CONTAINER_STOP_WAIT = 105  # process termination45 + stop-post45 + margin15
 CONTAINER_BUILD_SECONDS = 900  # extraction, build480, inspections60, save60, load60, margin
 #: The LaunchAgent that runs the account's service on macOS; service_label() names the one for the current home.
 LABEL = "dev.altitude.altd"
-#: What First run shows for a missing command-line tool, run in the operator's own terminal.
-INSTALL = ({"gh": "brew install gh", "git": "xcode-select --install"} if sys.platform == "darwin"
-           else {"gh": "sudo apt install gh", "git": "sudo apt install git"})
 
 
 def _darwin() -> bool:
     return sys.platform == "darwin"
+
+
+_GH_APT = "https://cli.github.com/packages"
+
+
+def install_command(tool: str) -> str:
+    """What First run and `alt doctor` show for a missing or outdated `gh` or `git`, run in the operator's own terminal.
+    Homebrew's gh is current; Debian and Ubuntu package one too old for alt land, so Linux adds GitHub's own apt
+    repository, whose `apt install` also upgrades an installed gh. The signing key replaces the keyring, readable by
+    apt, only once its download succeeds."""
+    if _darwin():
+        return {"gh": "brew install gh", "git": "xcode-select --install"}[tool]
+    keyring = "/etc/apt/keyrings/githubcli-archive-keyring.gpg"
+    return {"gh": f'key=$(mktemp) && curl -fsSL {_GH_APT}/githubcli-archive-keyring.gpg -o "$key" && sudo install -D -m 644 '
+                  f'"$key" {keyring} && rm "$key" && echo "deb [signed-by={keyring}] {_GH_APT} stable main" | sudo tee '
+                  "/etc/apt/sources.list.d/github-cli.list >/dev/null && sudo apt update && sudo apt install gh",
+            "git": "sudo apt install git"}[tool]
 
 # Image-owned identity, outside every persistent/writable application volume. Neither an environment
 # variable nor a forwarded connection can select the privileged native deployment paths (issue #543).
