@@ -217,8 +217,8 @@ class TrustCheck:
     `arm` gives every new connection from that address the second certificate (`probe_context`) for
     `ARM_SECONDS`, since a browser may open several and use any of them. The browser's request for its challenge
     passes only on such a connection after a full TLS 1.3 handshake; a browser that refuses the certificate ends
-    the handshake with an alert, which settles the challenge that armed that connection as untrusted. A challenge
-    lasts `CHALLENGE_SECONDS`. `name` is the CA's, which stays fixed while Altitude runs."""
+    the handshake with an alert, which settles the challenge that armed that connection as untrusted for good. A
+    challenge lasts `CHALLENGE_SECONDS`. `name` is the CA's, which stays fixed while Altitude runs."""
     ARM_SECONDS = 5
     CHALLENGE_SECONDS = 60
     LIMIT = 256
@@ -226,7 +226,7 @@ class TrustCheck:
     def __init__(self, context: ssl.SSLContext, name: str):
         import threading
         self.context, self.name = context, name
-        self._lock = threading.Lock()
+        self._settled = threading.Condition()
         self._armed: dict[str, tuple[float, str]] = {}  # address: (until, the challenge that armed it)
         self._challenges: dict[str, dict] = {}
 
@@ -239,46 +239,60 @@ class TrustCheck:
     def arm(self, address: str) -> str:
         import time
         now, challenge = time.monotonic(), secrets.token_urlsafe(18)
-        with self._lock:
+        with self._settled:
             self._prune(now)
             self._armed[address] = (now + self.ARM_SECONDS, challenge)
-            self._challenges[challenge] = {"address": address, "until": now + self.CHALLENGE_SECONDS, "outcome": None}
+            self._challenges[challenge] = {"address": address, "until": now + self.CHALLENGE_SECONDS,
+                                           "outcome": None, "handshakes": 0}
         return challenge
 
     def probe(self, address: str) -> str | None:
         """The challenge arming a new connection from `address`, which then gets the second certificate
-        (`context`), or None."""
+        (`context`), or None. The caller reports how that connection's handshake ended with `settled`."""
         import time
-        with self._lock:
+        with self._settled:
             until, challenge = self._armed.get(address, (0, None))
-            return challenge if until > time.monotonic() else None
+            entry = self._challenges.get(challenge) if until > time.monotonic() else None
+            if entry is None:
+                return None
+            entry["handshakes"] += 1
+            return challenge
 
-    def refused(self, challenge: str) -> None:
-        """A connection armed by `challenge` refused the second certificate: that challenge is untrusted. A later
-        challenge from the same address is not, even when this alert arrives after it armed."""
-        with self._lock:
+    def settled(self, challenge: str, refused: bool) -> None:
+        """A connection armed by `challenge` ended its handshake. One that refused the second certificate makes that
+        challenge untrusted; a later challenge from the same address is not, even when this alert arrives after it
+        armed."""
+        with self._settled:
             entry = self._challenges.get(challenge)
             if entry is None:
                 return
-            if self._armed.get(entry["address"], (0, None))[1] == challenge:
-                del self._armed[entry["address"]]
-            if entry["outcome"] is None:
+            entry["handshakes"] -= 1
+            if refused:
+                if self._armed.get(entry["address"], (0, None))[1] == challenge:
+                    del self._armed[entry["address"]]
                 entry["outcome"] = "untrusted"
+            self._settled.notify_all()
 
     def confirm(self, challenge: str, address: str, probed: bool) -> str:
         """"trusted", "untrusted", "retry" (the request came on a connection opened before arming; the address is
-        armed again) or "unknown"."""
+        armed again) or "unknown". A browser told to ignore certificate errors refuses the second certificate and
+        connects again accepting it, and that connection can arrive before the refusal is recorded, so a pass
+        waits for the challenge's other handshakes to end and never overrides a refusal."""
         import time
-        now = time.monotonic()
-        with self._lock:
+        with self._settled:
             entry = self._challenges.get(challenge)
-            if entry is None or entry["address"] != address or entry["until"] <= now:
+            live = lambda: self._challenges.get(challenge) is entry and entry["until"] > time.monotonic()
+            if entry is None or entry["address"] != address or not live():
                 return "unknown"
             if probed:
                 self._armed.pop(address, None)
-                entry["outcome"] = "trusted"
+                done = self._settled.wait_for(lambda: not entry["handshakes"], self.ARM_SECONDS)
+                if not live():  # pruned or expired while waiting, so its handshakes are no longer counted
+                    return "unknown"
+                if done:
+                    entry["outcome"] = entry["outcome"] or "trusted"
             if entry["outcome"] is None:
-                self._armed[address] = (now + self.ARM_SECONDS, challenge)
+                self._armed[address] = (time.monotonic() + self.ARM_SECONDS, challenge)
                 return "retry"
             return entry["outcome"]
 

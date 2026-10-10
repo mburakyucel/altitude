@@ -403,12 +403,15 @@ export type NewTasks = z.infer<typeof NewTasksSchema>;
 
 /**
  * An installed copy's version and the newer release it follows that its daemon last found (null for a source
- * deployment). `attempt` is an update started from the app that has not reached its version yet.
+ * deployment). `attempt` is an automatic or requested update that has not reached its version yet.
  */
 export const UpdateSchema = z.object({
+  automatic_pending: z.boolean(),
   current: z.string(),
   available: z.object({ version: z.string(), notes: z.string() }).nullish(),
   check: z.boolean(),
+  automatic: z.boolean(),
+  installed: z.object({ version: z.string(), notes: z.string() }).nullable(),
   command: z.string().nullable(),
   managed: z.literal("image").optional(),
   reason: z.string().optional(),
@@ -872,7 +875,7 @@ export async function saveProjectsFolder(path: string): Promise<{ roots: string[
 const MachineSchema = z.object({
   lifecycle: ContainerLifecycleSchema.nullish(),
   operator: z.string().nullish(), incident_repository: z.string().nullish(), altitude_repository: z.string(),
-  terminal: z.boolean().default(false), update_check: z.boolean().default(true),
+  terminal: z.boolean().default(false), update_check: z.boolean().default(true), update_automatic: z.boolean().default(true),
   terminal_unavailable: z.string().nullish(), deployment: z.enum(["native", "container"]).optional(),
   container_shell: z.string().nullish(),
   validation: z.boolean().default(true), validation_unavailable: z.string().nullish(),
@@ -907,6 +910,11 @@ export async function saveValidationAccess(enabled: boolean): Promise<Machine> {
 /** Turn the daemon's twice-daily check for a newer release on or off; off also hides the notice. */
 export async function saveUpdateCheck(enabled: boolean): Promise<Machine & { update: Update | null }> {
   return MachineSchema.extend({ update: UpdateSchema.nullable() }).parse(await post("/api/update-check", { enabled }));
+}
+
+/** Install new releases automatically at a quiet point, or prompt before installing. */
+export async function saveUpdateAutomatic(enabled: boolean): Promise<Machine & { update: Update | null }> {
+  return MachineSchema.extend({ update: UpdateSchema.nullable() }).parse(await post("/api/update-automatic", { enabled }));
 }
 
 /** Install exactly the newer release the notice shows, through the same verified `alt update`. */
@@ -1040,7 +1048,7 @@ export function useTask(project: string, slug: string) {
 const TaskDesignSchema = z.object({
   title: z.string(), revision: z.number(), text: z.string(),
   images: z.array(z.object({ title: z.string(), url: z.string() })),
-  question_url: z.string(), current_question_url: z.string().nullable(), superseded: z.boolean(),
+  current_question_url: z.string().nullable(), superseded: z.boolean(),
 });
 
 export function useTaskDesign(project: string, slug: string, question: string, revision: string) {

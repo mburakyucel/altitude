@@ -849,6 +849,11 @@ class NoticeCase(PublishedReleaseCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
+    def run_detached(self):
+        _, argv, environment = self.detached[-1]
+        with mock.patch.dict(os.environ, {"ALTITUDE_UPDATE_ATTEMPT": environment["ALTITUDE_UPDATE_ATTEMPT"]}):
+            return installation.update(argv[-1])
+
     def offered(self, *releases):
         (config.ROOT / "update.json").unlink(missing_ok=True)
         self.listed(*releases)
@@ -909,12 +914,14 @@ class NewVersionNotice(NoticeCase):
         self.listed("v0.2.0")
         installation.check_for_update()
         self.requests.clear()
-        self.assertEqual(installation.update_notice(), "Altitude v0.2.0 is available: run alt update "
-                         "(notes: https://github.com/example/altitude/releases/tag/v0.2.0)")
+        self.assertEqual(installation.update_notice(), "Altitude v0.2.0 is available: installs when Altitude is next "
+                         "idle; alt update installs it now (notes: https://github.com/example/altitude/releases/tag/v0.2.0)")
         self.assertIsNone(installation.update_notice())
         day_ago = (config.ROOT / "update-notice").stat().st_mtime - 86400
         os.utime(config.ROOT / "update-notice", (day_ago, day_ago))
-        self.assertIsNotNone(installation.update_notice())
+        S.write_json(config.ROOT / "settings.json", {"update_automatic": False})
+        self.assertEqual(installation.update_notice(), "Altitude v0.2.0 is available: run alt update "
+                         "(notes: https://github.com/example/altitude/releases/tag/v0.2.0)")
         self.assertEqual(self.requests, [])
 
     def test_doctor_reports_the_available_release(self):
@@ -938,7 +945,7 @@ class NewVersionNotice(NoticeCase):
         self.assertEqual(status["attempt"]["state"], "running")
         saved = json.loads(self.settings.read_text())
         [(name, argv, environment)] = self.detached
-        self.assertEqual(name, "altitude-update-v0.2.0")
+        self.assertEqual(name, "altitude-update-" + environment["ALTITUDE_UPDATE_ATTEMPT"])
         self.assertEqual(argv, [saved["python"], "-B", str(self.prefix / "current/bin/alt"), "update", "--version", "v0.2.0"])
         self.assertEqual(environment["ALTITUDE_CONFIG"], str(self.settings))
         self.assertNotIn("ALTITUDE_ACTOR", environment)
@@ -950,7 +957,7 @@ class NewVersionNotice(NoticeCase):
         installation.check_for_update()
         installation.request_update("v0.2.0")
         with self.assertRaises(OSError):
-            installation.update("v0.2.0")
+            self.run_detached()
         status = installation.update_status()
         self.assertEqual((status["current"], status["attempt"]["state"]), ("v0.1.0", "failed"))
         # The page gets a fixed sentence; the cause stays in the terminal or the update unit's log.
@@ -958,6 +965,7 @@ class NewVersionNotice(NoticeCase):
         installation.request_update("v0.2.0")
         self.assertEqual(len(self.detached), 2)
         with mock.patch.object(installation.time, "time", return_value=time.time() + 1801):
+            installation.reconcile_update()
             self.assertEqual(installation.update_status()["attempt"], {**installation._update_record()[1]["attempt"],
                              "state": "failed", "error": "Run alt update in a terminal to see why."})
 
@@ -988,10 +996,246 @@ class NewVersionNotice(NoticeCase):
         self.listed("v0.1.1")
         installation.check_for_update()
         installation.request_update("v0.1.1")
-        installation.update("v0.1.1")
+        self.run_detached()
         with mock.patch.object(config, "RELEASE", {"version": "v0.1.1", "repository": "https://github.com/example/altitude"}):
             status = installation.update_status()
         self.assertEqual((status["current"], status["available"], status["attempt"]), ("v0.1.1", None, None))
+
+
+class AutomaticUpdates(NoticeCase):
+    """With automatic updates on (the default), the daemon starts the same verified update the Update button runs,
+    at a quiet point with no terminal open, once per version; new work waits from then until activation ends."""
+
+    def setUp(self):
+        super().setUp()
+        from altitude import server, terminal
+        self.server = server
+        self.terminal_open = mock.patch.object(terminal, "any_open", return_value=False).start()
+        self.busy = mock.patch.object(server, "restart_waiting_for", return_value=[]).start()
+        self.addCleanup(mock.patch.stopall)
+        self.listed("v0.2.0")
+        installation.check_for_update()
+
+    def test_the_quiet_point_starts_the_offered_update_once(self):
+        self.assertEqual(installation.automatic_update(), "v0.2.0")
+        self.server.auto_update()
+        [(name, argv, environment)] = self.detached
+        self.assertEqual(name, "altitude-update-" + environment["ALTITUDE_UPDATE_ATTEMPT"])
+        self.assertEqual(argv[-3:], ["update", "--version", "v0.2.0"])
+        self.assertTrue(installation.update_status()["attempt"]["automatic"])
+        self.server.auto_update()
+        self.assertEqual(len(self.detached), 1, "a running update is not started again")
+        with self.assertRaises(OSError):
+            self.run_detached()   # the download fails; the installed version keeps running
+        self.assertEqual(installation.update_status()["attempt"]["state"], "failed")
+        self.assertIsNone(installation.automatic_update())
+        self.server.auto_update()
+        self.assertEqual(len(self.detached), 1, "a failed version is not tried again on its own")
+        installation.request_update("v0.2.0")   # Try again in the app
+        self.assertEqual(len(self.detached), 2)
+        self.assertFalse(installation.update_status()["attempt"]["automatic"])
+
+    def test_idle_reconciliation_neither_takes_install_lock_nor_rewrites_record(self):
+        path = config.ROOT / "update.json"
+        before = path.stat().st_mtime_ns
+        with mock.patch.object(installation, "_lock", side_effect=AssertionError("idle reconciliation took install lock")):
+            installation.reconcile_update()
+        with installation._changing_update_record():
+            pass
+        self.assertEqual(path.stat().st_mtime_ns, before)
+
+    def test_legacy_manual_update_receipts_clear_admission_without_automatic_notice(self):
+        # v0.1.0/v0.1.1 leave no id or automatic field. The current link, not a new receipt shape,
+        # proves the required manual upgrade finished; an interrupted older attempt still expires.
+        for version, state, expected in (("v0.1.0", "running", "succeeded"),
+                                         ("v0.2.0", "running", "failed"),
+                                         ("v0.2.0", "failed", "failed")):
+            with self.subTest(version=version, state=state):
+                with installation._changing_update_record() as record:
+                    record["attempt"] = {"version": version, "state": state, "started": time.time() - 1801}
+                self.assertEqual(config.restart_in_progress(), state == "running")
+                installation.reconcile_update()
+                self.assertFalse(config.restart_in_progress())
+                self.assertEqual(installation._update_record()[1]["attempt"]["state"], expected)
+                self.assertIsNone(installation.update_status()["installed"])
+
+    def test_work_an_open_terminal_the_switch_or_a_container_defers_it(self):
+        self.busy.return_value = ["atlas L3"]
+        self.server.auto_update()
+        self.busy.return_value = []
+        self.terminal_open.return_value = True
+        self.server.auto_update()
+        self.terminal_open.return_value = False
+        with config.restart_lock():   # a dispatch, review or validation holding the gate
+            self.server.auto_update()
+        S.write_json(config.ROOT / "settings.json", {"update_automatic": False})
+        self.assertFalse(installation.update_status()["automatic"])
+        self.server.auto_update()
+        S.write_json(config.ROOT / "settings.json", {"update_check": False})
+        self.assertFalse(installation.update_status()["automatic"])
+        self.server.auto_update()
+        (config.ROOT / "settings.json").unlink()
+        with mock.patch.object(platform, "containerized", return_value=True):
+            self.server.auto_update()
+        self.assertEqual(self.detached, [])
+        self.server.auto_update()
+        self.assertEqual(len(self.detached), 1)
+
+    def test_an_update_or_recovery_already_running_is_never_joined(self):
+        (self.prefix / "pending.json").write_text("{}")
+        self.server.auto_update()
+        with self.assertRaisesRegex(installation.UpdateRefused, "Another update or recovery"):
+            installation.request_update("v0.2.0")
+        (self.prefix / "pending.json").unlink()
+        with installation._lock(self.prefix):   # `alt update` from a terminal
+            self.server.auto_update()
+        self.assertEqual(self.detached, [])
+        self.assertIsNone(installation.update_status()["attempt"])
+
+    def test_new_work_waits_from_the_request_until_the_update_ends(self):
+        self.assertFalse(config.restart_in_progress())
+        installation.request_update("v0.2.0")
+        self.assertTrue(config.restart_in_progress())
+        with mock.patch.object(installation.time, "time", return_value=time.time() + 1801):
+            with installation._lock(self.prefix):
+                installation.reconcile_update()
+                self.assertTrue(config.restart_in_progress(), "a live update retains ownership regardless of age")
+            installation.reconcile_update()
+        self.assertFalse(config.restart_in_progress())
+
+    def test_an_automatic_update_is_announced_by_the_version_it_installed(self):
+        self.publish("v0.2.0")
+        self.server.auto_update()
+        self.run_detached()
+        with mock.patch.object(config, "RELEASE", {"version": "v0.2.0", "repository": "https://github.com/example/altitude"}):
+            status = installation.update_status()
+            self.assertFalse(config.restart_in_progress())
+        self.assertEqual((status["attempt"], status["installed"]),
+                         (None, {"version": "v0.2.0", "notes": f"{self.RELEASES}/tag/v0.2.0"}))
+
+    def test_detached_child_can_start_before_the_launcher_returns(self):
+        self.publish("v0.2.0")
+
+        def launch(name, argv, environment):
+            with mock.patch.dict(os.environ, {"ALTITUDE_UPDATE_ATTEMPT": environment["ALTITUDE_UPDATE_ATTEMPT"]}):
+                installation.update(argv[-1])
+
+        with mock.patch.object(platform, "detach", side_effect=launch):
+            installation.request_update("v0.2.0", automatic=True)
+        self.assertEqual(os.readlink(self.prefix / "current"), "versions/v0.2.0")
+        self.assertFalse(installation.update_running())
+
+    def test_detached_child_waits_for_a_brief_reconciliation_lock(self):
+        self.publish("v0.2.0")
+        installation.request_update("v0.2.0", automatic=True)
+        waiting = threading.Event()
+        errors = []
+        flock = installation.fcntl.flock
+
+        def observed(fd, operation):
+            if operation == installation.fcntl.LOCK_EX:
+                waiting.set()
+            return flock(fd, operation)
+
+        def child():
+            try:
+                self.run_detached()
+            except Exception as exc:
+                errors.append(exc)
+
+        with installation._lock(self.prefix):
+            with mock.patch.object(installation.fcntl, "flock", side_effect=observed):
+                thread = threading.Thread(target=child)
+                thread.start()
+                started = waiting.wait(5)
+        thread.join(10)
+        self.assertTrue(started)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(os.readlink(self.prefix / "current"), "versions/v0.2.0")
+
+    def test_staged_package_is_not_evidence_the_reserved_release_is_installed(self):
+        installation.request_update("v0.2.0", automatic=True)
+        with mock.patch.object(config, "RELEASE", {"version": "v0.2.0"}), \
+                mock.patch.object(config, "INSTALL_PREFIX", self.tmp / "staged-package"):
+            with installation._lock(self.prefix), self.assertRaises(installation.UpdateRefused):
+                installation._require_no_update(self.prefix)
+        self.assertEqual(installation.update_status()["attempt"]["state"], "running")
+
+    def test_manual_download_owns_the_transaction_and_refuses_automatic_overlap(self):
+        download = self.publish("v0.2.0")
+
+        def get(url, limit):
+            if url == download:
+                self.server.auto_update()
+                self.assertEqual(self.detached, [])
+                with self.assertRaises(installation.UpdateRefused):
+                    installation.request_update("v0.2.0")
+                with mock.patch.object(installation.time, "time", return_value=time.time() + 1801):
+                    installation.reconcile_update()
+                    self.assertTrue(config.restart_in_progress())
+            return self.get(url, limit)
+
+        with mock.patch.object(installation, "_get", side_effect=get):
+            installation.update("v0.2.0")
+        self.assertFalse(config.restart_in_progress())
+
+    def test_reserved_handoff_refuses_manual_update_archive_and_recovery(self):
+        installation.request_update("v0.2.0", automatic=True)
+        archive, digest = self.archive("v0.2.0", edited=True)
+        for operation in (lambda: installation.update("v0.2.0"),
+                          lambda: installation.install(archive, digest, self.prefix),
+                          lambda: installation.recover(self.prefix)):
+            with self.subTest(operation=operation), self.assertRaises(installation.UpdateRefused):
+                operation()
+        self.assertEqual(os.readlink(self.prefix / "current"), "versions/v0.1.0")
+
+    def test_new_offer_never_overlaps_and_a_previously_failed_version_is_not_retried(self):
+        installation.request_update("v0.2.0", automatic=True)
+        with installation._changing_update_record() as record:
+            record["latest"] = {"version": "v0.3.0", "notes": f"{self.RELEASES}/tag/v0.3.0"}
+        self.assertIsNone(installation.automatic_update())
+        with self.assertRaises(installation.UpdateRefused):
+            installation.request_update("v0.3.0", automatic=True)
+        with self.assertRaises(OSError):
+            self.run_detached()
+        installation.request_update("v0.3.0", automatic=True)
+        with self.assertRaises(OSError):
+            self.run_detached()
+        with installation._changing_update_record() as record:
+            record["latest"] = {"version": "v0.2.0", "notes": f"{self.RELEASES}/tag/v0.2.0"}
+        self.assertIsNone(installation.automatic_update())
+        self.assertEqual(len(self.detached), 2)
+        self.assertFalse(installation.update_status()["automatic_pending"])
+        self.assertIn("run alt update", installation.update_notice())
+
+    def test_expired_child_cannot_run_or_finish_a_later_request(self):
+        installation.request_update("v0.2.0")
+        previous = self.detached[-1][2]["ALTITUDE_UPDATE_ATTEMPT"]
+        with mock.patch.object(installation.time, "time", return_value=time.time() + 1801):
+            installation.reconcile_update()
+        installation.request_update("v0.2.0")
+        requests = list(self.requests)
+        with mock.patch.dict(os.environ, {"ALTITUDE_UPDATE_ATTEMPT": previous}):
+            with self.assertRaisesRegex(installation.UpdateRefused, "expired"):
+                installation.update("v0.2.0")
+        installation._finish_attempt(previous, "failed")
+        self.assertEqual(self.requests, requests)
+        self.assertEqual(installation.update_status()["attempt"]["state"], "running")
+
+    def test_interrupted_activation_can_recover_a_running_receipt(self):
+        self.publish("v0.2.0")
+        installation.request_update("v0.2.0", automatic=True)
+        self.failures["stop"] = 1
+        self.probes = [RuntimeError("candidate API unavailable")]
+        with self.assertRaisesRegex(RuntimeError, "recovery is incomplete"):
+            self.run_detached()
+        # A process can disappear before its exception handler marks the request failed.
+        with installation._changing_update_record() as record:
+            record["attempt"]["state"] = "running"
+        recovered = installation.recover(self.prefix)
+        self.assertEqual(recovered["version"], "v0.1.0")
+        self.assertFalse(config.restart_in_progress())
 
 
 class CandidateInstallation(NoticeCase):
@@ -1086,3 +1330,7 @@ class UpdateRequests(NoticeCase):
         self.assertEqual((off["update_check"], off["update"]["available"]), (False, None))
         self.post("/api/update-check", {"enabled": "no"}, status=400)
         self.assertTrue(self.post("/api/update-check", {"enabled": True})["update_check"])
+        self.assertTrue(self.post("/api/update-check", {"enabled": True})["update"]["automatic"])
+        self.assertFalse(self.post("/api/update-automatic", {"enabled": False})["update"]["automatic"])
+        self.post("/api/update-automatic", {"enabled": 1}, status=400)
+        self.assertTrue(self.post("/api/update-automatic", {"enabled": True})["update"]["automatic"])

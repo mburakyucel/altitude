@@ -207,7 +207,8 @@ Restart notices retain unresolved faults and require observed resolution before 
 ## Installed application lifecycle
 
 These are operator lifecycle actions for a packaged installation, not commands for ordinary code
-agents or a source deployment:
+agents or a source deployment. Run lifecycle CLI commands in a desktop or SSH terminal; a browser
+terminal ends when the daemon restarts. Use the app's detached Update action from the browser.
 
 ```sh
 alt doctor
@@ -219,9 +220,28 @@ alt update
 The daemon makes the same lookup at startup and every twelve hours and records what it finds.
 `alt doctor`, Settings › This machine and a notice in the app show a newer release, and an
 `alt` command you run in a terminal prints one line about it at most once a day. The app's
-**Update** button, after a confirm, runs `alt update --version` for exactly the version it shows,
-in a job of its own so the update survives the restart. **Check for new versions** in Settings
-turns the lookup off. Nothing updates on its own.
+**Automatic updates** switch is on by default. The daemon installs the offered release at the
+existing quiet point, with no browser terminal open: dispatch/resume claims, reviews, validation,
+report verification and coordinator turns must finish first. Running task workers keep running.
+Once the update starts, new work and browser terminals wait until it finishes; the page reconnects
+after restart and shows the installed version and release notes. Close browser terminals to allow
+an automatic update; ordinary desktop terminals do not hold it.
+
+Turn **Automatic updates** off in Settings to return to prompting. The **Update** button, after
+confirmation, runs `alt update --version` for exactly the version shown, in an independent job
+that survives the service restart. **Check for new versions** turns off both lookup and automatic
+starts, retaining the automatic preference. Neither switch cancels an update already started.
+Each version gets one automatic attempt. Failure restores the previous installation through
+activation recovery and offers explicit retry; a failed recovery retains its receipt for `alt recover`.
+An abandoned job is marked failed after thirty minutes only when the installation lock is free;
+a slow live update keeps its admission fence. Manual updates and activation share that lock
+through download, verification, activation and recovery, so automatic work cannot overlap them.
+
+Automatic updates first ship in `v0.1.2`. Copies on `v0.1.0` or `v0.1.1` require one manual
+update to reach them. Source deployments and containers keep their existing source/image lifecycle.
+The release lookup remains one anonymous GitHub request every twelve hours; installation also
+downloads the release archive and checksum. Automatic updates trust the same release publisher
+to supply daemon code with repository access; turn them off if each release needs your review.
 
 `alt update` makes one anonymous request to `api.github.com` for the repository the installed
 release was built from and picks the newest release the installation follows. A stable copy follows
@@ -246,7 +266,7 @@ independent task workers are not stopped with the daemon. On a Mac the service i
 `dev.altitude.altd` (an installation under another `HOME` gets a label derived from that home, so it
 never addresses the account's own service): `alt service stop` boots it out until the next login or `alt service start`,
 and `alt service logs` reads `~/Library/Logs/altitude/altd.log`; an in-app update logs to
-`altitude-update-<version>.log` beside it. Projects continue using ordinary checked
+`altitude-update-<attempt>.log` beside it. Projects continue using ordinary checked
 PR delivery; a managed source clone does not update the installed application. Project Git guards
 point at installation-owned `hooks` launchers that run the `current` version, and every dispatch
 and resume repairs and rechecks them, so registered projects dispatch on the updated version

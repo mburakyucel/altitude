@@ -7,7 +7,8 @@ The whole lifecycle runs in one invocation; `reboot-install` and `reboot-verify`
 its check after the VM restarts. `recovery` installs the candidate over a baseline whose installation
 failed, after the documented cleanup. `bootstrap` runs the built install.sh through its public curl | sh command against a release
 server on this machine's loopback, whose name the root wrapper points here. `update` installs the baseline while that server
-answers for GitHub's release list and downloads, and the app's Update request must carry it to the candidate.
+answers for GitHub's release list and downloads, verifies automatic activation of the candidate, then opts out and
+uses the app's Update request for a newer synthetic release.
 `public-install` and `public-update` run docs/SETUP.md's command against GitHub itself (see Lifecycle.public). `mac` runs the whole macOS lifecycle under the throwaway HOME installation_mac.py gives it (see
 MacLifecycle).
 """
@@ -226,8 +227,68 @@ class Lifecycle:
     def install(self, archive: Path, checksum: str):
         self.run("install", "/usr/bin/python3", "-B", self.baseline / "install.py", "--archive", archive, "--sha256", checksum)
 
+    def manual_updates(self):
+        """Opt this disposable installation out before a manual journey can race the daemon."""
+        path = self.home / ".altitude/settings.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        settings = json.loads(path.read_text()) if path.exists() else {}
+        write_json(path, {**settings, "update_automatic": False})
+
+    def record(self) -> dict:
+        return json.loads((self.home / ".altitude/update.json").read_text())
+
+    def advance_check(self, version: str, timeout: float = 75):
+        """Make the daemon's next release check due now, as twelve hours passing would, and wait for VERSION."""
+        path = self.home / ".altitude/update.json"
+        with (path.parent / "update.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            record = json.loads(path.read_text())
+            record["next"] = 0
+            path.with_name("update.json.lane").write_text(json.dumps(record))
+            path.with_name("update.json.lane").replace(path)
+        self.wait_check(version, timeout)
+
+    def wait_check(self, version: str, timeout: float = 75):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                record = self.record()
+                if (record.get("latest") or {}).get("version") == version and record.get("next", 0) > time.time():
+                    return
+            except (OSError, ValueError):
+                pass
+            time.sleep(1)
+        raise AssertionError(f"The daemon's release check did not record {version}")
+
+    def base(self) -> str:
+        return f"https://127.0.0.1:{self.env['ALTITUDE_PORT']}"
+
+    def wait_version(self, version: str, timeout: float = 180):
+        context = ssl.create_default_context(cafile=str(self.tls / "ca.crt"))
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                with urlopen(self.base() + "/api/health", context=context, timeout=5) as response:
+                    if json.load(response).get("version") == version and not (self.prefix / "pending.json").exists():
+                        return
+            except (OSError, ValueError):
+                pass
+            time.sleep(1)
+        raise AssertionError(f"The service did not come back as {version}")
+
+    def wait_attempt(self, version: str, state: str, timeout: float = 240) -> dict:
+        """Wait for the detached updater to finish writing its durable result, beyond daemon health."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            attempt = self.record().get("attempt") or {}
+            if attempt.get("version") == version and attempt.get("state") == state:
+                return attempt
+            time.sleep(1)
+        raise AssertionError(f"The update to {version} did not record {state}")
+
     def exercise(self):
         old, old_sha, package, before, new, new_sha, new_package, after = self.prepare()
+        self.manual_updates()
         self.install(old, old_sha)
         initial = self.healthy("installed", before)
         self.doctor("installed", before)
@@ -419,11 +480,11 @@ class Lifecycle:
         self.result["passed"] = True
 
     def update(self):
-        """An installed copy offered the candidate by GitHub's release list installs it through the app's Update request.
+        """Default automatic installation, then an explicitly manual app update, from the local release server.
 
         The release server answers for api.github.com and github.com, which the root wrapper points at this machine's
         loopback; the account's user manager hands its authority to the service and the update job as SSL_CERT_FILE."""
-        old, old_sha, _, before, new, new_sha, _, after = self.prepare()
+        old, old_sha, _, before, new, new_sha, new_package, after = self.prepare()
         self.result["limits"][0] = ("Same-source versions; GitHub's release list and downloads answered by a server on the guest's "
                                     "loopback, not by GitHub; the Update request is sent as the page sends it, not from a browser")
         address = urlsplit(before["repository"])
@@ -433,10 +494,13 @@ class Lifecycle:
         root = server / "root"
         listing = root / "repos" / repository / "releases"
         listing.parent.mkdir(parents=True)
-        # Newest first, as GitHub lists them: a newer draft that must never be offered, the candidate, the baseline.
-        write_json(listing, [{"tag_name": "v0.99.0", "draft": True, "prerelease": False},
-                             *({"tag_name": release["version"], "draft": False, "prerelease": "-rc." in release["version"]}
-                               for release in (after, before))])
+        def publish(release: dict):
+            # Newest first: a newer draft must never be offered or automatically installed.
+            write_json(listing, [{"tag_name": "v0.99.0", "draft": True, "prerelease": False},
+                                 {"tag_name": release["version"], "draft": False,
+                                  "prerelease": "-rc." in release["version"]}])
+
+        publish(before)
         download = root / repository / "releases/download" / after["version"]
         download.mkdir(parents=True)
         (download / new.name).write_bytes(new.read_bytes())
@@ -445,17 +509,42 @@ class Lifecycle:
         self.run("trust-release-server", "systemctl", "--user", "set-environment", f"SSL_CERT_FILE={server / 'ca.crt'}")
         try:
             self.install(old, old_sha)
-            self.healthy("installed", before)
-            # The daemon looks up releases as it starts.
+            initial = self.healthy("installed", before)
+            self.wait_check(before["version"])
+            status = self.doctor("automatic-default", before)["update"]
+            assert status["automatic"] and status["attempt"] is None, status
+            # No browser terminal is opened anywhere in this journey. The daemon starts this update itself.
+            publish(after)
+            self.advance_check(after["version"])
+            self.wait_version(after["version"], timeout=300)
+            automatic = self.wait_attempt(after["version"], "succeeded")
+            assert automatic["automatic"], automatic
+            updated_health = self.healthy("automatic-updated", after)
+            assert updated_health["pid"] != initial["pid"], "Automatic update did not replace the daemon"
+            status = self.doctor("automatic-updated", after)["update"]
+            assert status["installed"] == {"version": after["version"],
+                                           "notes": f"{after['repository']}/releases/tag/{after['version']}"}, status
+            write_json(self.results / "automatic-update-record.json", self.record())
+
+            # Keep the explicit Update button journey, with automatic updates opted out before publication.
+            self.manual_updates()
+            manual_version = following(after["version"])
+            manual_download = root / repository / "releases/download" / manual_version
+            manual_download.mkdir(parents=True)
+            manual_archive, manual = synthetic_archive(new_package, manual_download / f"altitude-{manual_version}.tar.gz",
+                                                        manual_version)
+            (manual_download / (manual_archive.name + ".sha256")).write_text(digest(manual_archive) + "\n")
+            self.result["artifacts"].append({"kind": "synthetic", "version": manual_version,
+                                             "sha256": digest(manual_archive), "commit": manual["commit"],
+                                             "change": "version relabelled"})
+            publish(manual)
+            self.advance_check(manual_version)
             record = self.home / ".altitude/update.json"
-            deadline = time.monotonic() + 120
-            while not (record.is_file() and "latest" in json.loads(record.read_text() or "{}")):
-                assert time.monotonic() < deadline, "The daemon recorded no release lookup"
-                time.sleep(1)
             write_json(self.results / "offered-update-record.json", json.loads(record.read_text()))
             offered = json.loads(self.run("offered-doctor", self.alt, "doctor"))
             write_json(self.results / "offered-doctor.json", offered)
-            assert offered["update"]["available"]["version"] == after["version"], offered["update"]
+            assert offered["update"]["available"]["version"] == manual_version, offered["update"]
+            assert not offered["update"]["automatic"], offered["update"]
             # The page's own requests: pair, read the overview, then Update for exactly the version it shows.
             base = f"https://127.0.0.1:{self.env['ALTITUDE_PORT']}"
             context = ssl.create_default_context(cafile=str(self.tls / "ca.crt"))
@@ -472,34 +561,31 @@ class Lifecycle:
             cookie = headers["Set-Cookie"].split(";")[0]
             _, overview = page("/api/overview")
             write_json(self.results / "offered-overview-update.json", overview["update"])
-            assert overview["update"]["available"]["version"] == after["version"], overview["update"]
-            _, started = page("/api/update", {"version": after["version"]})
+            assert overview["update"]["available"]["version"] == manual_version, overview["update"]
+            _, started = page("/api/update", {"version": manual_version})
             write_json(self.results / "update-request.json", started)
             assert started["update"]["attempt"]["state"] == "running", started
-            deadline = time.monotonic() + 300
-            while True:
-                assert time.monotonic() < deadline, "The update did not activate the candidate"
-                try:
-                    with urlopen(base + "/api/health", context=context, timeout=10) as response:
-                        if json.load(response)["version"] == after["version"]:
-                            break
-                except OSError:
-                    pass  # the service is restarting
-                time.sleep(1)
-            self.healthy("updated", after)
+            self.wait_version(manual_version, timeout=300)
+            self.wait_attempt(manual_version, "succeeded")
+            manual_health = self.healthy("updated", manual)
+            assert manual_health["pid"] != updated_health["pid"], "Manual update did not replace the daemon"
             updated = json.loads(self.run("updated-doctor", self.alt, "doctor"))
             write_json(self.results / "updated-doctor.json", updated)
             assert updated["update"]["available"] is None and updated["update"]["attempt"] is None, updated["update"]
             write_json(self.results / "updated-update-record.json", json.loads(record.read_text()))
-            self.run("update-unit-journal", "journalctl", "--user", "--no-pager", "-u", f"altitude-update-{after['version']}")
+            self.run("update-unit-journal", "journalctl", "--user", "--no-pager", "-u",
+                     f"altitude-update-{started['update']['attempt']['id']}")
         finally:
             httpd.shutdown()
             self.run("untrust-release-server", "systemctl", "--user", "unset-environment", "SSL_CERT_FILE")
             write_json(self.results / "update-requests.json", requests)
         assert sum(f"GET /repos/{repository}/releases?per_page=30 " in line for line in requests) >= 1, requests
         downloads = [line for line in requests if "/releases/download/" in line]
-        assert len(downloads) == 2 and all(f"GET /{repository}/releases/download/{after['version']}/{new.name}" in line
-                                           for line in downloads), requests
+        expected_downloads = [f"GET /{repository}/releases/download/{version}/{name}{suffix} "
+                              for version, name in ((after["version"], new.name), (manual_version, manual_archive.name))
+                              for suffix in ("", ".sha256")]
+        assert len(downloads) == 4 and all(any(expected in line for line in downloads)
+                                          for expected in expected_downloads), requests
         self.uninstall({})
         self.result["passed"] = True
 
@@ -511,6 +597,7 @@ class Lifecycle:
         lookup must offer the candidate in alt doctor and the terminal's notice, alt update must install it from GitHub
         keeping settings, TLS identity and data, and an update whose startup fails must restore it."""
         old, old_sha, _, before, new, new_sha, new_package, after = self.prepare()
+        self.manual_updates()
         self.result["limits"][:2] = [
             "Published releases through GitHub's own downloads and release lookup; the engines are fixtures named by "
             "their documented executable settings, and the harness picks the port",
@@ -644,8 +731,9 @@ class MacLifecycle(Lifecycle):
     """The macOS lifecycle under a throwaway HOME of the running account, as installation_mac.py launches it.
 
     install.sh installs a built release through its public curl | sh command; the installed daemon's own release check
-    finds each newer synthetic release; alt update and the app's Update button (a detached launchd job) activate one; a
-    release whose startup exits is rolled back; uninstall keeps configuration, TLS identity and fictional data. GitHub's
+    automatically installs the first newer synthetic release; after opting out, alt update and the app's Update button
+    activate later releases. An automatic release whose startup exits is rolled back and not retried on subsequent
+    checks; uninstall keeps configuration, TLS identity and fictional data. GitHub's
     addresses are answered by ReleaseServer. launchd's domain is the account's own, so the installation's LaunchAgent
     label is derived from its HOME (platform.service_label) and the account's service is never addressed."""
 
@@ -707,10 +795,10 @@ class MacLifecycle(Lifecycle):
         return archive, checksum, package, release
 
     def versions(self, package: Path, release: dict) -> dict:
-        """Built baseline, then the next stable patch releases from its package: two healthy ones and one whose startup
+        """Built baseline, then the next stable patch releases from its package: three healthy ones and one whose startup
         exits."""
         made = {}
-        for offset, failing in ((1, False), (2, False), (3, True)):
+        for offset, failing in ((1, False), (2, False), (3, False), (4, True)):
             version = re.sub(r"\.(\d+)$", lambda match: f".{int(match[1]) + offset}", release["version"])
             folder = self.home / f"release-{version}"
             folder.mkdir()
@@ -723,34 +811,6 @@ class MacLifecycle(Lifecycle):
                                              "sha256": digest(archive), "commit": made_release["commit"],
                                              "change": "version relabelled" + ("; bin/alt records its daemon invocation then exits" if failing else "")})
         return made
-
-    def record(self) -> dict:
-        return json.loads((self.home / ".altitude/update.json").read_text())
-
-    def advance_check(self, version: str, timeout: float = 75):
-        """Make the daemon's next release check due now, as twelve hours passing would, and wait for it to record VERSION."""
-        path = self.home / ".altitude/update.json"
-        with (path.parent / "update.lock").open("a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            record = json.loads(path.read_text())
-            record["next"] = 0
-            path.with_name("update.json.lane").write_text(json.dumps(record))
-            path.with_name("update.json.lane").replace(path)
-        self.wait_check(version, timeout)
-
-    def wait_check(self, version: str, timeout: float = 75):
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            try:
-                if ((self.record().get("latest") or {}).get("version") == version and self.record().get("next", 0) > time.time()):
-                    return
-            except (OSError, ValueError):
-                pass
-            time.sleep(1)
-        raise AssertionError(f"The daemon's release check did not record {version}")
-
-    def base(self) -> str:
-        return f"https://127.0.0.1:{self.env['ALTITUDE_PORT']}"
 
     def request(self, path: str, body: dict | None = None):
         """The page's own request as a paired device sends it."""
@@ -812,23 +872,10 @@ class MacLifecycle(Lifecycle):
         assert proc.returncode == 0, f"{label}: exit {proc.returncode}"
         return text
 
-    def wait_version(self, version: str, timeout: float = 180):
-        context = ssl.create_default_context(cafile=str(self.tls / "ca.crt"))
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            try:
-                with urlopen(self.base() + "/api/health", context=context, timeout=5) as response:
-                    if json.load(response).get("version") == version and not (self.prefix / "pending.json").exists():
-                        return
-            except (OSError, ValueError):
-                pass
-            time.sleep(1)
-        raise AssertionError(f"The service did not come back as {version}")
-
     def mac(self):
         archive, checksum, package, before = self.prepare()
         made = self.versions(package, before)
-        second, third, broken = list(made)
+        automatic_version, second, third, broken = list(made)
         repository = re.search(r"^REPOSITORY='https://github\.com/([^']+)'$", (self.baseline / "install.sh").read_text(), re.M)
         self.repository = repository.group(1)
         server = ReleaseServer(self.release_authority(*ReleaseServer.HOSTS), self.repository)
@@ -870,14 +917,31 @@ class MacLifecycle(Lifecycle):
 
             self.wait_check(before["version"])
             self.pair()
-            self.offered("current", None)
+            status = self.offered("current", None)
+            assert status["automatic"], status
+
+            # Default-on, with no browser terminal and no /api/update request: the daemon owns installation.
+            server.publish(made[automatic_version]["folder"], automatic_version)
+            self.advance_check(automatic_version)
+            self.wait_version(automatic_version)
+            attempt = self.wait_attempt(automatic_version, "succeeded")
+            assert attempt["automatic"], attempt
+            automatically_updated = self.healthy("automatic-updated", made[automatic_version]["release"])
+            assert automatically_updated["pid"] != initial["pid"], "Automatic update did not replace the daemon"
+            status = self.offered("automatic-updated", None)
+            assert status["installed"] == {"version": automatic_version,
+                                           "notes": f"https://github.com/{self.repository}/releases/tag/{automatic_version}"}, status
+            write_json(self.results / "automatic-update-record.json", self.record())
+
+            saved_preference = self.request("/api/update-automatic", {"enabled": False})
+            assert not saved_preference["update_automatic"] and not saved_preference["update"]["automatic"], saved_preference
 
             server.publish(made[second]["folder"], second)
             self.advance_check(second)
             self.offered("detected", second)
             self.run("update", self.alt, "update", timeout=240)
             updated = self.healthy("updated", made[second]["release"])
-            assert updated["pid"] != initial["pid"], "Update did not replace the daemon"
+            assert updated["pid"] != automatically_updated["pid"], "Update did not replace the daemon"
             self.doctor("updated", made[second]["release"])
             self.offered("updated", None)
 
@@ -888,27 +952,43 @@ class MacLifecycle(Lifecycle):
             write_json(self.results / "button-requested.json", requested)
             assert requested["attempt"]["version"] == third and requested["attempt"]["state"] == "running", requested
             self.wait_version(third)
+            self.wait_attempt(third, "succeeded")
             button = self.healthy("button-updated", made[third]["release"])
             assert button["pid"] != updated["pid"], "The Update button did not replace the daemon"
             self.doctor("button-updated", made[third]["release"])
-            job = f"dev.altitude.job.altitude-update-{third}"
+            job = f"dev.altitude.job.altitude-update-{requested['attempt']['id']}"
             deadline = time.monotonic() + 60
             while self.launchd(job) and time.monotonic() < deadline:
                 time.sleep(1)
             assert self.launchd(job) is None, f"{job} is still loaded"
-            log = self.home / f"Library/Logs/altitude/altitude-update-{third}.log"
+            log = self.home / f"Library/Logs/altitude/altitude-update-{requested['attempt']['id']}.log"
             shutil.copyfile(log, self.results / "button-update-job.log")
             assert f'"version": "{third}"' in log.read_text(), "The detached update recorded no result"
             self.offered("button-updated", None)
 
+            saved_preference = self.request("/api/update-automatic", {"enabled": True})
+            assert saved_preference["update_automatic"] and saved_preference["update"]["automatic"], saved_preference
             server.publish(made[broken]["folder"], broken)
             self.advance_check(broken)
-            failure = self.run("failed-update", self.alt, "update", success=False, timeout=240)
-            assert "previous installation restored" in failure, failure
+            failed = self.wait_attempt(broken, "failed")
+            assert failed["automatic"], failed
+            self.wait_version(third)
             marker = json.loads((self.results / "failed-startup.json").read_text())
             assert marker["argv"] == ["serve"] and marker["version"] == broken and marker["pid"] > 0
             self.healthy("recovered", made[third]["release"])
             self.doctor("recovered", made[third]["release"])
+            downloads = [request for request in server.requests if f"/releases/download/{broken}/" in request.get("path", "")]
+            assert len(downloads) == 2, downloads
+            # Force two subsequent daemon checks. A persisted failed automatic attempt remains the same attempt,
+            # including its identity, and neither check downloads that release again.
+            for _ in range(2):
+                self.advance_check(broken)
+                assert self.record()["attempt"] == failed, self.record()
+            assert [request for request in server.requests if f"/releases/download/{broken}/" in request.get("path", "")] == downloads
+            status = self.request("/api/overview")["update"]
+            assert status["attempt"]["state"] == "failed" and status["available"]["version"] == broken, status
+            write_json(self.results / "automatic-failure-no-repeat.json", {"update": status, "record": self.record(),
+                                                                          "downloads": downloads})
             assert (self.prefix / "versions" / broken).is_dir()
             assert all(digest(path) == value for path, value in retained.items()), "Update/recovery changed retained data"
         finally:

@@ -4,7 +4,7 @@ import { Link, useLocation, useNavigate } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import FolderBrowser from "../components/FolderBrowser";
 import { Command, IncidentReportsForm, NameForm, PrerequisiteList } from "../components/Onboarding";
-import { ApiError, type Machine, changeHostVoice, closePhoneShare, makePairingCode, openPhoneShare, readVoiceSettings, revokeDevice, saveProjectsFolder, saveTerminalAccess, saveUpdateCheck, saveValidationAccess, saveVoiceSettings, useDevices, useMachine, useOverview, useProjectDefaults } from "../data/api";
+import { ApiError, type Machine, changeHostVoice, closePhoneShare, makePairingCode, openPhoneShare, readVoiceSettings, revokeDevice, saveProjectsFolder, saveTerminalAccess, saveUpdateAutomatic, saveUpdateCheck, saveValidationAccess, saveVoiceSettings, startUpdate, useDevices, useMachine, useOverview, useProjectDefaults } from "../data/api";
 import type { Certificate, Device, Overview, PairingCode, PhoneShare, ProjectDefaults, Update } from "../data/api";
 import { ModelsDialog, choiceLabel, closedLabel } from "../components/Models";
 import { managedProjects } from "../shell/projects";
@@ -446,14 +446,14 @@ function QRCode({ rows, label }: { rows: string[]; label: string }) {
   </svg>;
 }
 
-/** An installed copy's version, any newer release, the command that installs it and the check's switch. */
+/** An installed copy's version, retry and check/automatic preferences. */
 function VersionRows({ update }: { update: Update }) {
   const client = useQueryClient();
   const [save, setSave] = useState<{ status: "idle" | "saving" } | { status: "failed"; error: Error }>({ status: "idle" });
-  const change = async (on: boolean) => {
+  const change = async (on: boolean, automatic = false) => {
     setSave({ status: "saving" });
     try {
-      const { update: status, ...machine } = await saveUpdateCheck(on);
+      const { update: status, ...machine } = await (automatic ? saveUpdateAutomatic(on) : saveUpdateCheck(on));
       client.setQueryData(["machine"], machine);
       client.setQueryData<Overview>(["overview"], (overview) => overview && { ...overview, update: status });
       setSave({ status: "idle" });
@@ -462,6 +462,17 @@ function VersionRows({ update }: { update: Update }) {
     }
   };
   const available = update.available;
+  const failed = update.attempt?.state === "failed" && update.attempt.version === available?.version ? update.attempt : null;
+  const retry = async () => {
+    setSave({ status: "saving" });
+    try {
+      const status = await startUpdate(failed!.version);
+      client.setQueryData<Overview>(["overview"], (overview) => overview && { ...overview, update: status });
+      setSave({ status: "idle" });
+    } catch (error) {
+      setSave({ status: "failed", error: error as Error });
+    }
+  };
   if (update.managed === "image") return <div className="settings-row settings-version">
     <span><strong>Version</strong>{" "}<small>{update.current} · {update.reason}</small></span>
   </div>;
@@ -470,15 +481,28 @@ function VersionRows({ update }: { update: Update }) {
       <span><strong>Version</strong>{" "}<small>{update.current}{available ? <> · {available.version} is available · <a href={available.notes} target="_blank" rel="noreferrer">What’s new</a></> : update.check && update.checked ? " · Up to date" : ""}</small></span>
       {available && update.command ? <Command text={update.command} /> : null}
     </div>
+    {failed ? <div className="settings-row">
+      <span>The update to {failed.version} did not finish. {failed.error} Altitude {update.current} keeps running.</span>
+      <button type="button" className="btn" disabled={save.status === "saving"} onClick={() => void retry()}>Try again</button>
+    </div> : null}
     <div className="settings-row settings-switch-row">
       <label htmlFor="update-check-switch">
         <strong>Check for new versions</strong>{" "}
-        <small>Twice a day Altitude asks GitHub for the latest release. Nothing else is sent, and nothing installs without you.</small>
-        {save.status === "failed" ? <small role="alert" className="text-danger">{save.error.message}</small> : null}
+        <small>Twice a day Altitude asks GitHub for the latest release. Nothing else is sent. Turning this off also stops automatic updates.</small>
       </label>
       <input id="update-check-switch" type="checkbox" role="switch" className="settings-switch" checked={update.check}
         disabled={save.status === "saving"} onChange={(event) => void change(event.target.checked)} />
     </div>
+    <div className="settings-row settings-switch-row">
+      <label htmlFor="update-automatic-switch">
+        <strong>Automatic updates</strong>{" "}
+        <small>Install new versions at the next quiet point, when no browser terminal is open. Turn this off to be asked before installing.</small>
+      </label>
+      <input id="update-automatic-switch" type="checkbox" role="switch" className="settings-switch" checked={update.automatic}
+        disabled={!update.check || save.status === "saving"} onChange={(event) => void change(event.target.checked, true)} />
+    </div>
+    {save.status === "saving" ? <p role="status">Saving…</p> : null}
+    {save.status === "failed" ? <p role="alert" className="text-danger">{save.error.message}</p> : null}
   </>;
 }
 

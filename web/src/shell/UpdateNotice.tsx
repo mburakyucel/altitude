@@ -6,7 +6,7 @@ import type { Overview, Update } from "../data/api";
 const DISMISSED = "altitude.update.dismissed";
 
 /**
- * An installed copy's newer release: what's new, and Update after a confirm. The daemon runs the same
+ * An installed copy's pending release, installation result, or Update after a confirm. The daemon runs the same
  * verified `alt update` for exactly this version; Altitude restarts into it or restores the running one.
  * Dismissing hides this version (or this failure) until a newer one appears.
  */
@@ -27,8 +27,9 @@ export function UpdateNotice({ update }: { update: Update | null | undefined }) 
   const available = update?.available;
   const running = attempt?.state === "running" ? attempt.version : null;
   const failed = attempt?.state === "failed" && attempt.version === available?.version ? attempt : null;
-  const key = available ? `${available.version}${failed ? ":failed" : ""}` : null;
-  if (!update || (!running && (!available || dismissed === key))) return null;
+  const installed = !available ? update?.installed : null;
+  const key = available ? `${available.version}${failed ? ":failed" : ""}` : installed ? `${installed.version}:installed` : null;
+  if (!update || (!running && (!key || dismissed === key))) return null;
   const dismiss = <button type="button" className="btn btn-ghost" aria-label="Dismiss new version notice" onClick={() => {
     setDismissed(key);
     try { localStorage.setItem(DISMISSED, key ?? ""); } catch { /* Dismiss for this page when browser storage is unavailable. */ }
@@ -36,6 +37,20 @@ export function UpdateNotice({ update }: { update: Update | null | undefined }) 
 
   if (running) return <div className="restart-banner update-notice" role="status" aria-label="New version">
     <p className="restart-banner-summary">Installing Altitude {running}… Altitude restarts when it is ready.</p>
+  </div>;
+
+  if (installed) return <div className="restart-banner update-notice" role="status" aria-label="New version">
+    <p className="restart-banner-summary">Updated to {installed.version}.{" "}
+      <a href={installed.notes} target="_blank" rel="noreferrer">What’s new</a>
+    </p>
+    {dismiss}
+  </div>;
+
+  if (update.automatic_pending && !failed) return <div className="restart-banner update-notice" role="status" aria-label="New version">
+    <p className="restart-banner-summary">Altitude {available!.version} will install automatically at the next quiet point, when no browser terminal is open.{" "}
+      <a href={available!.notes} target="_blank" rel="noreferrer">What’s new</a>
+    </p>
+    {dismiss}
   </div>;
 
   const version = available!.version;

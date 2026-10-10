@@ -297,7 +297,7 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
     def test_reviewed_waiter_reassesses_integrated_head_without_losing_turn(self):
         self.ship_check_workflow()
         self.reviewed('second', proposal=True)
-        T.set_hold_merge(self.project, 'second', 'Operator approval of this delivery')
+        self.hold_a_second_ago(self.project, 'second', 'Operator approval of this delivery')
         approval = T.message(self.project, 'second', T.OPERATOR_MESSAGE_ROLE, 'Merge the reviewed delivery after checks.')
         self.assess('second')
         self.assess('second', review_id='proposal-second')
@@ -353,7 +353,7 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
             self.ship_check_workflow()
         slug = 'first'
         self.reviewed(slug)
-        T.set_hold_merge(self.project, slug, 'Operator approval required')
+        self.hold_a_second_ago(self.project, slug, 'Operator approval required')
         approval = T.message(self.project, slug, T.OPERATOR_MESSAGE_ROLE, 'Merge after checks.')
         self.assess(slug)
         call = self.start(slug, required_check=hosted, wait=20, approval=approval['id'])
@@ -447,6 +447,25 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         first[0].join(5)
         self.assertEqual(first[0].exitcode, -signal.SIGKILL)
         self.assertEqual(self.calls('first', ['pr', 'merge']), [])
+        self.release('second')
+        self.merged('second', self.finish(second))
+
+    def test_ended_owner_session_ends_assessment_wait_and_tells_its_next_turn(self):
+        # A usage-limited owner's job stopped while its landing waited for an assessment that could not come.
+        self.stale_review()
+        first = self.start('first', wait=20)
+        self.assessment_wait(first)
+        second = self.start('second')
+        self.waiting(second)
+        os.killpg(first[0].pid, signal.SIGTERM)
+        self.assertIn("owner's session ended", self.finish(first)['error'])
+        self.assertEqual(self.calls('first', ['pr', 'merge']), [])
+        head = S.load_task(self.project, 'first')['delivery']['head']
+        self.assertEqual(git('rev-parse', 'worktree-first', cwd=self.remote).strip(), head)
+        notices = [row for row in T.pending(self.project, 'first') if row['by'] == 'landing']
+        self.assertEqual(len(notices), 1)
+        self.assertIn(f'PR #101. Head {head} remains published and unmerged', T.render_inbox(notices))
+        self.assertIn('re-run `alt land --merge`', notices[0]['text'])
         self.release('second')
         self.merged('second', self.finish(second))
 

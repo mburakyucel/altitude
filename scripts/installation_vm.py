@@ -13,8 +13,9 @@ the harness prerequisites and is then unplugged; the other is restricted to the 
 forward, so during the tests the guest reaches neither the internet nor this host's services.
 After the lifecycle passes, another disposable account installs through the built install.sh from a
 release server inside the guest. Without --baseline-release, a third installs the baseline while that server
-answers for GitHub's release list and downloads, and the app's Update request must install the candidate it
-offers. Then another installs the baseline, the VM restarts and the harness checks that the service came back
+answers for GitHub's release list and downloads: the daemon installs the candidate automatically, then an
+explicit opt-out and app Update request install a newer synthetic release. Another installs the baseline,
+the VM restarts and the harness checks that the service came back
 on its own before removing it. --recovery instead runs only the
 recovery phase: the published baseline's installation must fail, and after the documented cleanup the
 candidate installed over it must start and keep its settings, TLS identity and data.

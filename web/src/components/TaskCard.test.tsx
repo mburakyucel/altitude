@@ -25,6 +25,11 @@ describe("blocked task card facts", () => {
       .toEqual({ dot: "danger", meta: "steering" in evidence ? "Stopped by you; continue when you’re ready." : "You requested a stop; confirmation is in the task." });
   });
 
+  it("shows the coordinator's Stop as Altitude's wait, not the operator's", () => {
+    expect(taskCardFacts({ ...blocked, stop_id: "l3-stop", block_actor: "l3", waiting_on: "l3", steering: { state: "stopped" } }, undefined, "atlas"))
+      .toEqual({ dot: "running", meta: "Stopped by the coordinator; its note is in the conversation." });
+  });
+
   it("recognizes a stopped decision and preserves fault priority", () => {
     expect(taskCardFacts(blocked, undefined, "atlas", { ...question, kind: "stopped" }))
       .toEqual({ dot: "danger", meta: "You requested a stop; confirmation is in the task." });

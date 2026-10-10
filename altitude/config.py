@@ -490,7 +490,9 @@ def restart_in_progress() -> bool:
     if platform.containerized():
         return False  # Image replacement owns activation; stale native receipts cannot fence admission.
     if RELEASE is not None:
-        return (INSTALL_PREFIX / "pending.json").exists()
+        from . import installation
+        # From the request on, as for a source restart: new work cannot claim the quiet point activation waits for.
+        return (INSTALL_PREFIX / "pending.json").exists() or installation.update_running()
     from . import state as S
     pending = S.read_json(MONITOR_DIR / "restart-pending.json", {}) or {}
     return bool(pending.get("requested_at") and not pending.get("failed"))
