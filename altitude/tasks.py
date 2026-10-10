@@ -1414,7 +1414,7 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
                 raise TransitionError("design publication requires the current L2 and one question")
             captured, files = _capture_design(project, task, design)
         _supersede_resume(task)
-        nudged = task.pop("nudged", None)  # any block, like a report, ends the run of message-only turns
+        nudged = task.pop("nudged", None)  # an owner block, a Stop or a fault, like a report, ends the nudge
         task.update(updates or {})
         if resume_pending:
             # #302: select the final-turn inbox under the same lock as the block; a later Send
@@ -1434,6 +1434,8 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
                 for name in ("conversation.jsonl", "inbox.jsonl"):
                     _append_jsonl(S.task_dir(project, slug) / name, row)
                 task.update(resume_after=S.now(), resume_request=row["id"], nudged=True)
+            if nudged and task.get("resume_after"):
+                task["nudged"] = True  # steering that continues the session does not earn another nudge
         task.pop("turn_released", None)
         task["blocked_reason"] = reason
         task["block_actor"] = actor

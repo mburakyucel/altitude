@@ -382,6 +382,17 @@ class TestL2Steering(AltitudeCase):
                 self.assertEqual(self.engine.calls[-1]["prompt"], T.render_inbox([words]))
                 self.assertEqual(self.nudges(task), [])
 
+                # After a nudge, steering continues the session but does not earn a second nudge.
+                self.assertEqual(self.exit_turn(task), [])
+                dispatch.resume(self.project, task["slug"])
+                later = self.send(task, "Also keep the old tests.")
+                self.assertEqual(self.exit_turn(task), [])
+                self.assertTrue(S.load_task(self.project, task["slug"])["nudged"])
+                dispatch.resume(self.project, task["slug"])
+                self.assertEqual(self.engine.calls[-1]["prompt"], T.render_inbox([later]))
+                self.assertEqual([call.args[0] for call in self.exit_turn(task)], ["l2-died"])
+                self.assertEqual(len(self.nudges(task)), 1)
+
     def test_owner_block_or_report_after_the_nudge_clears_it(self):
         for engine in config.ENGINES:
             for finish in ("block", "report"):
