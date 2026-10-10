@@ -166,7 +166,7 @@ def _design_hash(value: dict) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=True).encode()).hexdigest()
 
 
-def _capture_design(project: str, task: dict, selection: dict) -> tuple[dict, dict[str, bytes]]:
+def capture_design(project: str, task: dict, selection: dict) -> tuple[dict, dict[str, bytes]]:
     """Capture exactly the owner's named screens and explanation; no recursive directory publication."""
     if not isinstance(selection, dict) or set(selection) != {"title", "proposal", "images"}:
         raise TransitionError("design JSON requires title, proposal and images")
@@ -1408,7 +1408,7 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
                     or (questions is not None and len(_validate_questions(questions)) != 1)
                     or (updates or {}).get("fault") or task.get("fault")):
                 raise TransitionError("design publication requires the current L2 and one question")
-            captured, files = _capture_design(project, task, design)
+            captured, files = capture_design(project, task, design)
         _supersede_resume(task)
         task.update(updates or {})
         if resume_pending:

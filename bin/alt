@@ -61,6 +61,17 @@ def _question_input(args, reason: str | None) -> tuple[dict | None, str]:
     return payload, reason.strip()
 
 
+def _design_selection(path: str, command: str) -> dict:
+    try:
+        with open(path, "rb") as stream:
+            data = stream.read(T.DESIGN_TEXT_LIMIT + 1)
+        if len(data) > T.DESIGN_TEXT_LIMIT:
+            raise ValueError("design selection exceeds 64 KiB")
+        return json.loads(data)
+    except (OSError, ValueError) as exc:
+        sys.exit(f"{command} --design-file: {exc}")
+
+
 def _stdin_or_file(args) -> str:
     if getattr(args, "file", None):
         return sys.stdin.read() if args.file == "-" else Path(args.file).read_text()
@@ -418,6 +429,7 @@ def main(argv=None) -> None:
             rv.add_argument("--review-id", required=True)
             if action == "run":
                 rv.add_argument("--proposal-message", help="exact original L2 proposal message to review")
+                rv.add_argument("--design-file", help="proposal review: the design preview's selection JSON, giving the reviewer its spec")
                 rv.add_argument("--context-message", action="append", help="original task context message; repeat as needed")
             elif action == "assess":
                 rv.add_argument("--proposal-message", help="revised original L2 proposal message being assessed")
@@ -534,7 +546,8 @@ def main(argv=None) -> None:
         import urllib.request
         body = "" if setup_command or machine_run or validation_run or review_run or terminal_read or sys.stdin.isatty() and (closing_pr or args.operation == "close") else sys.stdin.read()
         payload = {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"],
-                   "review_id": args.review_id, "context_ids": args.context_message, "proposal_id": args.proposal_message} if review_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"]} if terminal_read else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "request": uuid.uuid4().hex} if machine_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "kvm": args.kvm, "publish": args.publish, "simulator": args.simulator, "capture": args.capture} if validation_run else {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
+                   "review_id": args.review_id, "context_ids": args.context_message, "proposal_id": args.proposal_message,
+                   **({"design": _design_selection(args.design_file, "alt task review run")} if args.design_file else {})} if review_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"]} if terminal_read else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "request": uuid.uuid4().hex} if machine_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "kvm": args.kvm, "publish": args.publish, "simulator": args.simulator, "capture": args.capture} if validation_run else {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
                    "project": _project(args), "operation": args.operation, "body": body,
                    **{key: getattr(args, key) for key in ("title", "labels", "number", "reason") if hasattr(args, key)}}
         # An option left unset sends nothing, so a checkout awaiting activation keeps working against the older
@@ -742,14 +755,7 @@ def main(argv=None) -> None:
                         or p != os.environ.get("ALTITUDE_PROJECT") or not os.environ.get("ALTITUDE_ATTEMPT")
                         or args.fault or (questions is not None and len(questions["questions"]) != 1)):
                     sys.exit("alt task block --design-file: only the current L2's own project/task and one question")
-                try:
-                    with open(args.design_file, "rb") as stream:
-                        data = stream.read(T.DESIGN_TEXT_LIMIT + 1)
-                    if len(data) > T.DESIGN_TEXT_LIMIT:
-                        raise ValueError("design selection exceeds 64 KiB")
-                    design = json.loads(data)
-                except (OSError, ValueError) as exc:
-                    sys.exit(f"alt task block --design-file: {exc}")
+                design = _design_selection(args.design_file, "alt task block")
             if args.fault and questions is not None:
                 sys.exit("alt task block: --fault needs --reason, not questions JSON")
             if ACTOR == "l2":

@@ -210,8 +210,12 @@ def _project_review(review, task, identity):
     # "Earlier version" names new content (commits or a revised proposal); a moved main or conversation is
     # L2's routine reassessment before landing, which require_merge still enforces.
     saved = assessed or snapshot
+    # A design question published with another design than the review read also makes it an earlier version.
+    published = next((q["design"]["id"] for q in reversed(task.get("questions", [])) if q.get("design")), None)
+    reviewed = (snapshot.get("design") or {}).get("id")
     row.update(coverage=coverage, unresolved=_unresolved(review),
-               earlier=bool(identity and saved and any(saved.get(k) != identity.get(k) for k in ("head", "proposal_id", "proposal_hash"))),
+               earlier=bool(identity and saved and any(saved.get(k) != identity.get(k) for k in ("head", "proposal_id", "proposal_hash")))
+                       or bool(reviewed and published and reviewed != published),
                can_withdraw=mutable and review["state"] not in ("withdrawn", "running"),
                can_cancel=mutable and review["state"] == "running" and not review.get("cancel_requested"),
                can_again=_open(task) and review == latest and finished and not _unresolved(review))
@@ -355,10 +359,13 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
         return _project_review(row, task, None)
 
 
-def _capture(project, task, review, context_ids, proposal_id=None):
+def _capture(project, task, review, context_ids, proposal_id=None, design=None):
     proposal = review.get("subject", "changes") == "proposal"
-    if proposal and not proposal_id or not proposal and proposal_id:
-        raise T.TransitionError("Proposal review requires --proposal-message; changes review does not accept it.")
+    if proposal and not proposal_id or not proposal and (proposal_id or design is not None):
+        raise T.TransitionError("Proposal review requires --proposal-message; changes review accepts neither it nor --design-file.")
+    # The design preview's own selection gives the reviewer the spec the operator sees; a proposal
+    # pointing at a preview the reviewer cannot open left a design review without its design.
+    design = T.capture_design(project, task, design)[0] if design is not None else None
     identity, context = _identity(project, task, fetch=True, proposal_id=proposal_id)
     if not proposal and identity["head"] == identity["base"]:
         raise T.TransitionError("No task changes are ready for review. Prepare a committed checkpoint first.")
@@ -400,6 +407,9 @@ def _capture(project, task, review, context_ids, proposal_id=None):
         context["limitations"] = context.get("limitations", []) + [
             "Paths over 2 MiB in the base or candidate are not captured in source or changes.patch: "
             + ", ".join(f"{path} ({size} bytes)" for path, size in sorted(omitted.items())) + "."]
+    if design:
+        context["limitations"] = context.get("limitations", []) + [
+            "Design screenshots are named, not viewed; design.md is the design under review."]
     # The reviewer receives one copy of each input: the brief embeds the request, and the proposal
     # under review is its own file with its own bound, like changes.patch (I-20260927-193716).
     captured = {k: v for k, v in context.items() if k != "request" or v.strip() not in context["brief"]}
@@ -409,6 +419,9 @@ def _capture(project, task, review, context_ids, proposal_id=None):
         captured["proposal"] = {"id": proposal_id, "at": context["proposal"]["at"], "file": "proposal.md"}
         captured["messages"] = [{**{k: v for k, v in r.items() if k != "text"}, "text_file": "proposal.md"}
                                 if r["id"] == proposal_id else r for r in context["messages"]]
+    if design:
+        captured["design"] = {"title": design["title"], "file": "design.md",
+                              "screenshots": [image["title"] for image in design["images"]]}
     text = json.dumps(captured, ensure_ascii=False, indent=2)
     if len(text.encode()) > CONTEXT_LIMIT:
         # Authority, corrections and decisions are never dropped, so only optional L2 evidence can shrink it.
@@ -450,6 +463,10 @@ def _capture(project, task, review, context_ids, proposal_id=None):
         (snapshot / "proposal.md").write_bytes(proposal_text)
         inputs["proposal"] = hashlib.sha256(proposal_text).hexdigest()
         identity["proposal"] = {k: context["proposal"].get(k) for k in ("id", "at", "text")}
+    if design:
+        (snapshot / "design.md").write_text(design["text"])
+        inputs["design"] = design["id"]
+        identity["design"] = {"id": design["id"], "title": design["title"]}
     identity.update(context_ids=[r["id"] for r in context["messages"]], captured_at=S.now(),
                     captured_context_hash=_hash(captured), selected_owner_evidence=context_ids is not None,
                     limitations=context.get("limitations", []),
@@ -462,9 +479,16 @@ def _capture(project, task, review, context_ids, proposal_id=None):
 
 def review_prompt(snapshot, focus, subject="changes"):
     rules = engines.repository_rules(snapshot / "source")
+    design = (snapshot / "design.md").exists()
+    inputs = ("proposal.md" + (" and design.md" if design else "")) if subject == "proposal" else "changes.patch"
     return ("You are an L1 reviewer. Read l1.md and " + (str(rules.relative_to(snapshot)) if rules else "the supplied task context") + ", "
-              "then context.json and " + ("proposal.md" if subject == "proposal" else "changes.patch") + ". Give a relatively quick, focused independent adversarial review. "
-              + ("Review the exact proposal in proposal.md, the message context.json names, against captured source and authority. Challenge assumptions, design risks and missing acceptance. A proposal review is not implementation review. " if subject == "proposal" else "Review the captured changes against their acceptance. ") +
+              "then context.json and " + inputs + ". Give a relatively quick, focused independent adversarial review. "
+              + ("Review the exact proposal in proposal.md, the message context.json names, against captured source and authority. Challenge assumptions, design risks and missing acceptance. A proposal review is not implementation review. "
+                 "When the proposal changes what people see or do in a user interface, also review it as a design"
+                 + (", using the design spec in design.md" if design else "") + ": judge it against the repository's design rules "
+                 "and the interaction states it must specify on phone and desktop, name what is unclear or not obviously "
+                 "clickable on a phone, and offer up to two alternative directions, each a finding with severity "
+                 "\"alternative\" that states its tradeoffs. " if subject == "proposal" else "Review the captured changes against their acceptance. ") +
               "Start with the brief, decisions, diff and requested focus. Check the main correctness, regression, "
               "security and acceptance risks; follow affected callers and tests when needed to substantiate a finding. "
               "Avoid unrelated exploration, cosmetic suggestions and repeated passes without new evidence. "
@@ -476,15 +500,15 @@ def review_prompt(snapshot, focus, subject="changes"):
               "No findings is not merge approval. Focus: " + focus)
 
 
-def run(project, slug, review_id, *, actor, expected_attempt, context_ids=None, proposal_id=None, on_wait=None):
+def run(project, slug, review_id, *, actor, expected_attempt, context_ids=None, proposal_id=None, design=None, on_wait=None):
     with config.provider_admission() as held:
         if held:
             raise T.TransitionError(held)
         return _run(project, slug, review_id, actor=actor, expected_attempt=expected_attempt,
-                    context_ids=context_ids, proposal_id=proposal_id, on_wait=on_wait)
+                    context_ids=context_ids, proposal_id=proposal_id, design=design, on_wait=on_wait)
 
 
-def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None, proposal_id=None, on_wait=None):
+def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None, proposal_id=None, design=None, on_wait=None):
     from . import dispatch, route
     if context_ids is not None and (not isinstance(context_ids, list) or any(not isinstance(item, str) for item in context_ids)):
         raise T.TransitionError("Selected review context must be a list of original message IDs.")
@@ -520,7 +544,7 @@ def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None,
     result = None
     invoked = False
     try:
-        identity, snapshot, runtime = _capture(project, task, review, context_ids, proposal_id)
+        identity, snapshot, runtime = _capture(project, task, review, context_ids, proposal_id, design)
         with S.project_lock(project):
             current = _load(project, slug)
             live = _find(current, review_id)

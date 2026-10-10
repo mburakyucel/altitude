@@ -2230,7 +2230,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             review = reviews.run(body["project"], body["slug"], body["review_id"], actor="l2",
                                  expected_attempt=int(body["attempt"]), context_ids=body.get("context_ids"),
-                                 proposal_id=body.get("proposal_id"),
+                                 proposal_id=body.get("proposal_id"), design=body.get("design"),
                                  on_wait=heartbeat)
             result, code = {"ok": True, "review": review}, 200
         except (T.TransitionError, ValueError, KeyError) as exc:
@@ -2275,7 +2275,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._validation_post(o)
             if parts == ["api", "task", "review", "run"]:
                 try:
-                    if o.keys() - {"project", "slug", "attempt", "review_id", "context_ids", "proposal_id"}:
+                    if o.keys() - {"project", "slug", "attempt", "review_id", "context_ids", "proposal_id", "design"}:
                         raise ValueError("Unsupported review execution fields.")
                     if not isinstance(o.get("attempt"), (str, int)) or isinstance(o["attempt"], bool):
                         raise ValueError("The current L2 attempt is required.")
