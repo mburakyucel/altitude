@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router";
-import { useTask } from "../data/api";
+import { useProject, useTask } from "../data/api";
+import { questionPath } from "../data/decisions";
 import type { ChatMessage } from "../data/api";
 import { stampText } from "../data/observed";
 import { InlineProse, Prose, ProseProject, ProseRepository, lastParagraph } from "./Prose";
@@ -9,7 +10,8 @@ import { Stamp } from "./Stamp";
 /*
  * The system line (SPEC.md §3.4, §4.1): every chat row whose trigger is not "chat" is a system turn,
  * folded to one centred line with a dot, its recorded time, the reply's last paragraph, and Show. A run of them folds to
- * one line naming the count; selected heads-ups stay separate. Expanded cards keep full text and links.
+ * one line naming the count; selected heads-ups stay separate. What altd sends L3 is written for L3: the operator sees
+ * its structured fields at most, never its prose, so a waiting notice reads from the records (kind, task, question).
  */
 
 /** One system turn as the conversation reads it from the chat rows. */
@@ -28,6 +30,8 @@ export interface SystemTurn {
   slug: string | null;
   fyi: boolean;
   headsUp: boolean;
+  /** Waiting in L3's queue: no reply yet, so the line names the notice instead. */
+  queued?: boolean;
   projectMessage?: ChatMessage["project_message"];
 }
 
@@ -57,6 +61,12 @@ export function handling(trigger: string, task?: string | null): string {
       return `an FYI${on}`;
     case "terminal":
       return "a terminal notice";
+    case "ci-recheck":
+      return `a CI recheck${on}`;
+    case "upstream-issue":
+      return "an upstream issue";
+    case "owner-message":
+      return `an owner's message${on}`;
     default:
       return `a system event${on}`;
   }
@@ -85,6 +95,12 @@ export function kindLabel(trigger: string): string {
       return "FYI";
     case "terminal":
       return "Terminal";
+    case "ci-recheck":
+      return "CI recheck";
+    case "upstream-issue":
+      return "Upstream issue";
+    case "owner-message":
+      return "Owner message";
     default:
       return "System event";
   }
@@ -129,8 +145,15 @@ export function fieldsOf(prompt: string): { label: string; value: string }[] | n
   return rows.length >= 3 ? rows : null;
 }
 
-/** The folded line's text (SPEC.md §4.1). */
-export function lineText(turn: SystemTurn, task: string | null): string {
+/** A question's first sentence as plain words, for a folded line: link targets and code marks dropped. */
+export function firstSentence(text: string, limit = 90): string {
+  const plain = text.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/`/g, "").replace(/\s+/g, " ").trim();
+  const first = plain.split(/(?<=[.?!])\s/, 1)[0] ?? "";
+  return first.length <= limit ? first : `${first.slice(0, limit - 1).trimEnd()}…`;
+}
+
+/** The folded line's text (SPEC.md §4.1). A queued notice reads kind · task · what it needs, never its prompt. */
+export function lineText(turn: SystemTurn, task: string | null, need: string | null = null): string {
   if (turn.projectMessage) {
     const message = turn.projectMessage;
     const state = message.status === "sent" ? "Sent" : message.status === "queued" ? "Queued · next ordinary turn"
@@ -139,6 +162,10 @@ export function lineText(turn: SystemTurn, task: string | null): string {
   }
   if (turn.headsUp) return turn.prompt;
   if (turn.fyi) return lastParagraph(turn.prompt) || turn.prompt;
+  if (turn.queued) {
+    const verdict = fieldsOf(turn.prompt)?.find((row) => row.label === "Verdict")?.value;
+    return [kindLabel(turn.trigger), task, need ? firstSentence(need) : verdict].filter(Boolean).join(" · ");
+  }
   if (turn.inProgress) return `L3 is handling ${handling(turn.trigger, task)}`;
   if (turn.reply) return lastParagraph(turn.reply) || `L3 handled ${handling(turn.trigger, task)}`;
   return `L3 could not handle ${handling(turn.trigger, task)}`;
@@ -194,19 +221,19 @@ function SystemCard({
         </div>
       ) : (
         <>
-          <p className="sys-card-label">What altd sent L3</p>
           {fields ? (
-            <dl className="sys-card-fields">
-              {fields.map((row) => (
-                <div key={row.label}>
-                  <dt>{row.label}</dt>
-                  <dd><InlineProse text={row.value} /></dd>
-                </div>
-              ))}
-            </dl>
-          ) : (
-            <pre className="sys-card-pre">{turn.prompt}</pre>
-          )}
+            <>
+              <p className="sys-card-label">What altd sent L3</p>
+              <dl className="sys-card-fields">
+                {fields.map((row) => (
+                  <div key={row.label}>
+                    <dt>{row.label}</dt>
+                    <dd><InlineProse text={row.value} /></dd>
+                  </div>
+                ))}
+              </dl>
+            </>
+          ) : null}
           {turn.reply ? (
             <>
               <p className="sys-card-label">L3 replied</p>
@@ -235,6 +262,25 @@ function SystemCard({
   );
 }
 
+/** A queued notice's line: its kind, task and question, with the decision or the task one tap away. */
+function QueuedLine({ turn, project, title }: { turn: SystemTurn; project: string; title: string | null }) {
+  const decisions = useProject(project).data?.decisions;
+  const decision = turn.slug ? decisions?.find((row) => row.slug === turn.slug) : undefined;
+  const need = decision ? decision.question || decision.detail || null : null;
+  return (
+    <div className="sys-line" data-turn={turn.id} data-queued>
+      <Dot trigger={turn.trigger} />
+      <Stamp at={turn.at} className="sys-time" />
+      <span className="sys-text">{lineText(turn, title ?? turn.slug, need)}</span>
+      {decision ? (
+        <Link className="link" to={questionPath({ ...decision, project, slug: turn.slug! })}>Needs you</Link>
+      ) : turn.slug ? (
+        <Link className="link" to={`/projects/${project}/tasks/${turn.slug}`}>Open task</Link>
+      ) : null}
+    </div>
+  );
+}
+
 /** One system turn: the folded line, or the card. An in-progress turn has no Show yet. */
 export function SystemLine({
   turn,
@@ -247,6 +293,7 @@ export function SystemLine({
 }) {
   const [open, setOpen] = useState(false);
   const title = turn.slug ? (titles.get(turn.slug) ?? null) : null;
+  if (turn.queued) return <QueuedLine turn={turn} project={project} title={title} />;
   if (open) return <SystemCard turn={turn} project={project} title={title} onHide={() => setOpen(false)} />;
   const text = lineText(turn, title ?? turn.slug);
   return (

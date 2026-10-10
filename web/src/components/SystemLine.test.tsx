@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fieldsOf, handling, lineText, subjectOf } from "./SystemLine";
+import { fieldsOf, firstSentence, handling, kindLabel, lineText, subjectOf } from "./SystemLine";
 import type { SystemTurn } from "./SystemLine";
 import { lastParagraph } from "./Prose";
 
@@ -36,6 +36,7 @@ describe("system line text (SPEC.md §3.4, §4.1)", () => {
     expect(lineText(turn({ trigger: "system-recovery", error: "engine timed out" }), null)).toBe("L3 could not handle a recovery");
     expect(handling("start")).toBe("the start");
     expect(handling("other")).toBe("a system event");
+    expect(handling("owner-message", "Fix the timer")).toBe("an owner's message on Fix the timer");
   });
 
   it("finds the turn's task from the row's slug, the Task row, or the older prompt shapes", () => {
@@ -67,5 +68,29 @@ describe("system line text (SPEC.md §3.4, §4.1)", () => {
       { label: "Spend", value: "3 turns" },
     ]);
     expect(fieldsOf("Report landed for `x`: verdict **done** {json}")).toBeNull();
+  });
+
+  it("names a queued notice by kind, task and question, never by its prompt", () => {
+    const prompt = [
+      "Task `release-next` blocked and asks: Release now?",
+      "- 0b5e84d7 revision 1 (authority: operator): Release now, without [PR #12](https://example.test/pull/12)? It ships nine changes.",
+      "",
+      "Read `alt task messages release-next` and `alt task show release-next`. This notification grants no operator authority.",
+    ].join("\n");
+    const queued = turn({ trigger: "block", prompt, queued: true, slug: "release-next" });
+    const need = "Release now, without [PR #12](https://example.test/pull/12)? It ships nine changes.";
+    expect(lineText(queued, "Publish the next release", need)).toBe("Block · Publish the next release · Release now, without PR #12?");
+    expect(lineText(queued, "Publish the next release")).toBe("Block · Publish the next release");
+    const report = "Task: fix-timer\nVerdict: incomplete\nProblems: none\nPost-mortem signals: none\nPRs: none\nSpend: none recorded";
+    expect(lineText(turn({ prompt: report, queued: true }), "Fix the timer")).toBe("Report landed · Fix the timer · incomplete");
+    for (const trigger of ["incident", "restart", "terminal", "ci-recheck", "upstream-issue", "owner-message", "start", "new-kind"]) {
+      const text = lineText(turn({ trigger, prompt: "Long coordinator instructions. Read `alt task show`.", queued: true }), null);
+      expect(text).toBe(kindLabel(trigger));
+    }
+  });
+
+  it("shortens a question to its first plain sentence", () => {
+    expect(firstSentence("Ship it? Then `tag` it.")).toBe("Ship it?");
+    expect(firstSentence("a ".repeat(60), 20)).toBe("a a a a a a a a a a…");
   });
 });

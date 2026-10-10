@@ -406,16 +406,26 @@ or a run of them (§4.1). The dot is `--text-muted` for reports, restarts, and F
 for `incident`, `system-recovery`, and fault triggers. A failed turn of another trigger keeps the
 muted dot; its line carries the failure.
 
-Expanded: a card in the column with a header ("Report landed · <task title> · 09:14", **Hide**),
-"What altd sent L3" as label/value rows when the prompt has structured fields (verdict, problems,
-signals, PRs, spend) and as preformatted text otherwise, "L3 replied" with the full reply, and links:
+What altd sends L3 is written for L3: its ids, revisions, authority notes and instructions never
+appear in the conversation. Expanded: a card in the column with a header ("Report landed · <task
+title> · 09:14", **Hide**), "What altd sent L3" as label/value rows only when the prompt has
+structured fields (verdict, problems, signals, PRs, spend), "L3 replied" with the full reply, and links:
 **Open task**, **Full report** (the task's report view), **Digest** when the reply recorded one.
 The structured prompt's Task field supplies Open task and is omitted from the label/value rows.
 A group expands to a list of its turns, each with its own Show.
 
 States: folded; expanded; in progress ("L3 is handling a landed report for <task>", no Show yet);
 grouped (N turns); failed turn (the line reads "L3 could not handle <what>"; Show reveals the
-prompt and the error).
+error); queued (below).
+
+A queued notice, one altd has written for L3 that has not run yet (block, report, fault, restart, CI
+recheck, terminal, upstream issue, owner message or any other trigger), is the same line in the queued rows (§4.2)
+with an outlined dot in its tone and no Show: **<kind> · <task title> · <need>**. The need is the first
+sentence of the task's open Needs you question, as plain words of at most 90 characters, or a report's
+verdict; a notice with neither reads kind and task alone, and one without a task reads its kind. The line
+ends with **Needs you**, opening that question, while the task has one, else **Open task**. A long title
+wraps; it is never cut. `web/e2e/system-rows.pw.ts` walks queued, handled, card and Needs you states
+on phone and desktop.
 
 A selected L3 heads-up uses this same compact line, wrapping its full one- or two-sentence text
 on phone and desktop. It stays outside routine groups (§4.1). No separate badge, dismiss control,

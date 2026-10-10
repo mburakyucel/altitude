@@ -64,10 +64,11 @@ def main():
         T.escalate(project, decision["slug"], "Which validation scope? Option A: Keep the bounded scope. "
                    "Option B: Expand the scope. I recommend A.")
 
-    def turn(prompt, reply, turn_id, *, trigger="chat", tasks=()):
-        l3.chat_log(project, "user", prompt, trigger=trigger, turn_id=turn_id, engine=config.ENGINES[0])
+    def turn(prompt, reply, turn_id, *, trigger="chat", tasks=(), slug=None):
+        meta = {"slug": slug} if slug else {}
+        l3.chat_log(project, "user", prompt, trigger=trigger, turn_id=turn_id, engine=config.ENGINES[0], **meta)
         l3.chat_log(project, "assistant", reply, trigger=trigger, turn_id=turn_id,
-                    engine=config.ENGINES[0], tasks=list(tasks))
+                    engine=config.ENGINES[0], tasks=list(tasks), **meta)
 
     turn("Keep the search contract stable.", "Two bounded tasks cover the migration.", "fixture-chat-1",
          tasks=(running["slug"], queued["slug"]))
@@ -109,6 +110,23 @@ def main():
                             trigger="fyi", by="l3")
                 T.fyi(project, running["slug"], "Routine owner progress.", actor="l2")
                 return self._json(row)
+            if self.path == "/fixture/queued-notices":
+                # Coordinator notices as altd writes them: a handled block in history, then a block, a report and a
+                # fault still waiting in L3's queue. Their prompts carry ids and instructions the chat never shows.
+                slug = decision["slug"]
+                T.escalate(project, slug, "Use the bounded validation scope, without [PR #12](https://example.test/pull/12)? "
+                           "It covers the saved migration paths; the wider scope can follow in the next patch.")
+                prompt = T.block_question(S.load_task(project, slug))
+                turn(prompt, "Asked for the validation scope; the owner keeps the bounded plan meanwhile.",
+                     "queued-notices-handled", trigger="block", slug=slug)
+                turn("Anything else waiting?", "Only the validation scope question.", "queued-notices-chat")
+                with S.project_lock(project):
+                    l3.queue_locked(project, prompt, trigger="block", slug=slug)
+                    l3.queue_locked(project, server.report_fields(completed["slug"], {"verdict": "incomplete"}),
+                                    trigger="report-landed")
+                    l3.queue_locked(project, f"System fault [worker:{running['slug']}] in {project}/{running['slug']}: "
+                                    "fixture worker stopped\n\nRead the incident and recover the task.", trigger="incident")
+                return self._json({"slug": slug, "prompt": prompt})
             return super().do_POST()
 
         def do_GET(self):
