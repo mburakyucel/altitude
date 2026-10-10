@@ -1130,6 +1130,40 @@ describe("Conversation", () => {
     expect(region.querySelector("[data-pending]")).toBeNull();
   });
 
+  it.each(["before", "after"])("keeps a sent message and its streaming reply through Work and back on the phone, %s acceptance", async (moment) => {
+    const reply = liveReply();
+    const turn = { id: "tab-turn", started_at: ago(0), trigger: "chat" };
+    let saved = false;
+    // The server stores the message as its turn starts; the idle poll that ran before Send does not show it.
+    mockFetch({ chatFn: () => jsonResponse(saved ? { ...chatView, active: turn, busy: true, history: [...history, { at: ago(0), role: "user", text: "Check the sample", trigger: "chat", turn_id: turn.id }] } : chatView), post: () => reply.response });
+    setViewport(390);
+    const { user, router } = renderApp({ route: "/projects/altitude" });
+    try {
+      let region = await conversation();
+      await within(region).findByText("Created one task for it.");
+      await user.type(screen.getByLabelText("Message L3 about altitude"), "Check the sample");
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      if (moment === "after") {
+        saved = true;
+        await act(async () => { reply.frame({ turn }); reply.frame({ t: "Looking at" }); });
+        await within(region).findByText("Looking at");
+      }
+      await act(() => router.navigate("/projects/altitude?tab=work"));
+      await screen.findByRole("region", { name: "Work" });
+      await act(() => router.navigate("/projects/altitude"));
+      region = await conversation();
+      expect(within(region).getByText("Check the sample")).toBeInTheDocument();
+      if (moment === "before") {
+        expect(within(region).getByText("Check the sample").closest(".msg-row")).toHaveAttribute("data-pending");
+        saved = true;
+        await act(async () => { reply.frame({ turn }); reply.frame({ t: "Looking at" }); });
+      }
+      await act(async () => reply.frame({ t: " it now." }));
+      expect(await within(region).findByText("Looking at it now.")).toBeInTheDocument();
+      expect(within(region).getAllByText("Check the sample")).toHaveLength(1);
+    } finally { await act(async () => reply.close()); }
+  });
+
   it("refused: the bubble leaves, the draft returns, and the hint reads Not sent. Retry", async () => {
     mockFetch({ post: () => jsonResponse({ error: "no L3 for this project" }, 409) });
     const { user } = renderApp({ route: "/projects/altitude" });
