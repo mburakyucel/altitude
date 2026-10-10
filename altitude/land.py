@@ -35,10 +35,9 @@ from . import config, dispatch, git_policy, github_intake, state as S, tasks as 
 #: #814: the check wait polls after this many seconds, doubling up to CHECK_POLL_BACKOFF times it (one minute).
 CHECK_POLL_SECONDS = 15
 CHECK_POLL_BACKOFF = 4
-#: #814: a gh command GitHub refuses for the account's rate limit runs again at this interval. GitHub's limits
-#: reset within the hour, so refusals that outlast RATE_LIMIT_WAIT_SECONDS end the landing.
+#: #814: after GitHub refuses a gh command for the account's rate limit, landing starts its candidate again this
+#: many seconds later, within its deadline.
 RATE_LIMIT_POLL_SECONDS = 60
-RATE_LIMIT_WAIT_SECONDS = 3600
 #: #480: GitHub's PR view lags the landing's own push briefly; the head is re-read within this bound.
 PR_VIEW_SETTLE_SECONDS = 30
 PR_VIEW_POLL_SECONDS = 2
@@ -60,27 +59,22 @@ class BaseMoved(LandError):
     """A fresh read proves that only the base moved: the PR, its head and both branch names still match the pin."""
 
 
+class RateLimited(LandError):
+    """GitHub refused a gh command for the account's rate limit, so the command did nothing (#814)."""
+
+
 class _Reassess(Exception):
     """Leave the merge turn before waiting for a renewed owner assessment."""
 
 
 def _run(args: list[str], cwd: Path, timeout: int = 120) -> subprocess.CompletedProcess:
     """Every git/gh invocation funnels through here so tests can drive the whole pipeline offline. A gh command
-    GitHub refuses for the account's rate limit waits for the limit to clear and runs again (#814): the refusal
-    did nothing, and it is a wait, not a landing failure."""
-    refused = None
-    while True:
-        result = _execute(args, cwd, timeout)
-        if (args[0] != "gh" or result.returncode == 0
-                or not verify.rate_limited((result.stderr or "") + (result.stdout or ""))):
-            return result
-        if refused is None:
-            refused = time.monotonic()
-            _note(f"GitHub refused {' '.join(args[:3])} for its rate limit; retrying every "
-                  f"{RATE_LIMIT_POLL_SECONDS} seconds for up to {RATE_LIMIT_WAIT_SECONDS} seconds")
-        if time.monotonic() - refused >= RATE_LIMIT_WAIT_SECONDS:
-            return result
-        time.sleep(RATE_LIMIT_POLL_SECONDS)
+    GitHub refuses for the account's rate limit raises RateLimited, which the landing waits out (#814)."""
+    result = _execute(args, cwd, timeout)
+    output = (result.stderr or "") + (result.stdout or "")
+    if args[0] == "gh" and result.returncode != 0 and verify.rate_limited(output):
+        raise RateLimited(f"GitHub refused {' '.join(args[:3])} for its rate limit: {output.strip()[-200:]}")
+    return result
 
 
 def _execute(args: list[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess:
@@ -958,14 +952,18 @@ def _merge(root: Path, branch: str, number: int, base: str, expected_head: str,
     receipt names no main run: the merged commit's push-triggered run rarely exists yet, and `alt task status`
     resolves it by commit once it does."""
     method = ["--squash", "--delete-branch"] if delete_branch else ["--squash"]
-    m = _run(["gh", "pr", "merge", str(number), *method,
-              "--match-head-commit", expected_head], root, timeout=300)
+    try:
+        m = _run(["gh", "pr", "merge", str(number), *method, "--match-head-commit", expected_head], root, timeout=300)
+        error = "" if m.returncode == 0 else ((m.stderr or "") + (m.stdout or "")).strip()
+    except RateLimited as refused:  # the merge itself may have gone through before a later request was refused
+        m, error = refused, str(refused)
     after = _pull(root, number)
     if after.get("state") != "MERGED":
-        raise LandError(f"gh pr merge #{number}: "
-                        f"{((m.stderr or '') + (m.stdout or '')).strip()[-300:] or 'PR is not merged'}")
-    if m.returncode != 0:
-        _note(f"merged, but gh pr merge exited {m.returncode}: {(m.stderr or '').strip()[-160:]}")
+        if isinstance(m, RateLimited):
+            raise m
+        raise LandError(f"gh pr merge #{number}: {error[-300:] or 'PR is not merged'}")
+    if error:
+        _note(f"merged, but gh pr merge failed afterwards: {error[-160:]}")
     f = _git(root, "fetch", "origin", base, timeout=120)
     if f.returncode != 0:
         _note(f"git fetch origin {base} failed: {(f.stderr or '').strip()[-160:]}")
@@ -992,7 +990,7 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge
         _assert_pair_current(root, pair)
         with _candidate(root, base_sha, head_sha) as path:
             tests = _local_suite(path, test_cmd)
-    except BaseMoved:
+    except (BaseMoved, RateLimited):
         raise
     except LandError as exc:
         _note(f"not merging: {exc}")
@@ -1004,7 +1002,7 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge
         return False, tests
     try:
         _assert_pair_current(root, pair)
-    except BaseMoved:
+    except (BaseMoved, RateLimited):
         raise
     except LandError:
         tests["error"] = "the base or the head moved while the merge candidate was under test"
@@ -1015,7 +1013,7 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge
         after_checks = "reported"
     try:
         _assert_pair_current(root, pair)
-    except BaseMoved:
+    except (BaseMoved, RateLimited):
         raise
     except LandError:
         tests["error"] = "the base or the head moved while final checks were being read"
@@ -1291,8 +1289,10 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
             commit = _need(_git(root, "rev-parse", "HEAD"), "rebased commit")
         if _git(root, "diff", "--quiet", f"origin/{base}", "HEAD").returncode == 0:
             return _merged_retry(root, project, slug, task, authority, branch, base, continued_pr, lease, closes_issues)
-    replaced, deadline, waited = [], None, 0
-    while True:  # A moved base gets a fresh publication and check outside the merge turn.
+    # One deadline covers every head this landing publishes and every rate-limit refusal it waits out.
+    wait = LAND_WAIT_TIMEOUT if wait is None else min(max(wait, 0), LAND_WAIT_TIMEOUT)
+    replaced, deadline, waited = [], time.monotonic() + wait, 0
+    while True:  # A moved base or a refusal gets a fresh publication and check outside the merge turn.
         try:
             with S.project_lock(project):
                 _require_delivery_owner(project, slug, task, S.load_task(project, slug), authority,
@@ -1316,9 +1316,6 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                                     head=pushed_head, base=_need(_git(root, "rev-parse", f"origin/{base}"), "base"))
             hold_merge = task.get("hold_merge")
             pair = _snapshot_pair(root, publish_branch, number, base, pushed_head)
-            if deadline is None:  # one wait covers every head this landing publishes
-                wait = LAND_WAIT_TIMEOUT if wait is None else min(max(wait, 0), LAND_WAIT_TIMEOUT)
-                deadline = time.monotonic() + wait
             if merge and pair["base_sha"] != publishing_base:
                 # An outside merge between integration and pinning must also get a fresh integrated head.
                 _assert_pair_current(root, {**pair, "base_sha": publishing_base})
@@ -1401,11 +1398,21 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                     continue  # The turn is released before waiting for a renewed assessment.
                 break
         except BaseMoved as exc:
-            if not merge or deadline is None or time.monotonic() >= deadline:
+            if not merge or time.monotonic() >= deadline:
                 raise LandError(f"{exc}; the candidate remains published and unmerged — re-run alt land to "
                                 "integrate it, test and merge one current pair") from exc
             _note(f"{exc}; integrating it and checking the new head within the same wait")
             recorded_tip = pushed_head
+            continue
+        except RateLimited as exc:
+            # #814: the refused command did nothing; every gate is read again once GitHub accepts requests.
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise LandError(f"{exc}; the wait is over — re-run alt land once GitHub's limit clears") from exc
+            _note(f"{exc}; starting the candidate again in {min(RATE_LIMIT_POLL_SECONDS, round(remaining))}s, "
+                  f"with {round(remaining)}s left in the wait")
+            time.sleep(min(RATE_LIMIT_POLL_SECONDS, remaining))
+            recorded_tip = pushed_head  # every GitHub request in this loop follows the push
             continue
         break
 

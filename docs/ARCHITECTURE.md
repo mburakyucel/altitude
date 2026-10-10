@@ -915,7 +915,9 @@ landings, workers and coordinator share one hourly GitHub GraphQL budget, so lan
 check evidence through GraphQL, once per poll. The PR's state, refs and head come from GitHub's REST API,
 which has its own quota. When that evidence reports no checks, a REST read of the head's check runs and
 statuses must agree before the local-suite gate applies. GitHub refusing a `gh` command for a rate limit
-is a wait: landing retries it every minute for up to an hour and continues where it was. Polls hold the task review lock
+is a wait within the same deadline. The refused command did nothing, so a minute later landing starts the
+candidate again outside the turn: it re-reads the PR, checks, ownership, holds and review before any
+merge. Polls hold the task review lock
 only for local review reads; network reads and sleeps leave review requests available. Assessment
 fetches preserve landing's `FETCH_HEAD` receipt. A notice names every stale review and subject with
 the assessed/current values of its changed evidence, so the owner posts explanations together before

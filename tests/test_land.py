@@ -841,23 +841,56 @@ class TestLand(AltitudeCase):
         stderr = io.StringIO()
         with mock.patch.object(land, "time", wraps=land.time) as clock, contextlib.redirect_stderr(stderr):
             clock.sleep.side_effect = lambda _seconds: None
-            result = land.land("fix: refused", cwd=self.repo, wait=0, merge=True)
+            result = land.land("fix: refused", cwd=self.repo, wait=600, merge=True)
         self.assertEqual((result["checks"], result["merged"]), ("pass", True))
         self.assertEqual(clock.sleep.call_args_list, [mock.call(land.RATE_LIMIT_POLL_SECONDS)] * 2)
-        self.assertEqual(stderr.getvalue().count("for its rate limit"), 1)
+        self.assertEqual(stderr.getvalue().count("for its rate limit"), 2)
         self.assertEqual(len([a for a in self.gh_log() if a[:2] == ["api", "graphql"]]), 4)
 
-    def test_rate_limit_refusals_that_outlast_the_hour_end_the_landing_unmerged(self):
+    def test_rate_limit_refusals_that_outlast_the_wait_end_the_landing_unmerged(self):
         self.staged_change()
         (self.ghdir / "rate_limited.json").write_text(json.dumps({"count": 10 ** 6, "prefix": "api graphql"}))
         now = {"seconds": 0.0}
         with mock.patch.object(land, "time", wraps=land.time) as clock:
             clock.monotonic.side_effect = lambda: now["seconds"]
             clock.sleep.side_effect = lambda seconds: now.__setitem__("seconds", now["seconds"] + seconds)
-            with self.assertRaisesRegex(land.LandError, "API rate limit already exceeded"):
-                land.land("fix: refused", cwd=self.repo, wait=0, merge=True)
-        self.assertEqual(clock.sleep.call_count, land.RATE_LIMIT_WAIT_SECONDS // land.RATE_LIMIT_POLL_SECONDS)
+            with self.assertRaisesRegex(land.LandError, "API rate limit already exceeded.*the wait is over"):
+                land.land("fix: refused", cwd=self.repo, wait=300, merge=True)
+        self.assertEqual(clock.sleep.call_args_list, [mock.call(land.RATE_LIMIT_POLL_SECONDS)] * 5)
         self.assertFalse(any(a[:2] == ["pr", "merge"] for a in self.gh_log()))
+
+    def test_refused_merge_is_attempted_again_only_after_every_gate_is_read_again(self):
+        # #814: a refused merge did nothing; the next attempt re-reads the candidate, its checks and its gates.
+        self.staged_change()
+        (self.ghdir / "rate_limited.json").write_text(json.dumps({"count": 1, "prefix": "pr merge"}))
+        with mock.patch.object(land, "time", wraps=land.time) as clock:
+            clock.sleep.side_effect = lambda _seconds: None
+            result = land.land("fix: merge refused", cwd=self.repo, wait=600, merge=True)
+        self.assertTrue(result["merged"])
+        calls = [a[:2] for a in self.gh_log()]
+        merges = [i for i, call in enumerate(calls) if call == ["pr", "merge"]]
+        self.assertEqual(len(merges), 2)
+        self.assertIn(["api", "graphql"], calls[merges[0]:merges[1]])
+        self.assertIn(["pr", "view"], calls[merges[0]:merges[1]])
+
+    def test_pr_retargeted_while_its_merge_was_refused_is_not_merged(self):
+        self.staged_change()
+        self.git("push", "-q", "origin", "origin/main:refs/heads/release")
+        (self.ghdir / "rate_limited.json").write_text(json.dumps({"count": 1, "prefix": "pr merge"}))
+
+        def retarget(args):
+            if args[:3] == ["gh", "pr", "merge"]:
+                pr = json.loads((self.ghdir / "pr.json").read_text())
+                (self.ghdir / "pr.json").write_text(json.dumps({**pr, "baseRefName": "release"}))
+            return None
+
+        self.record_commands(retarget)
+        with mock.patch.object(land, "time", wraps=land.time) as clock:
+            clock.sleep.side_effect = lambda _seconds: None
+            with self.assertRaisesRegex(land.LandError, "base or head moved"):
+                land.land("fix: retargeted", cwd=self.repo, wait=600, merge=True)
+        self.assertEqual(len([a for a in self.gh_log() if a[:2] == ["pr", "merge"]]), 1)
+        self.assertNotEqual(json.loads((self.ghdir / "pr.json").read_text())["state"], "MERGED")
 
     def test_wait_zero_reports_pending_without_waiting(self):
         self.staged_change()

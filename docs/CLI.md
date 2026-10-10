@@ -1382,8 +1382,9 @@ Run one landing command per task worktree; collect or cancel an existing command
 The repository turn does not serialize publication in the same worktree.
 CI and owner assessment share a 3600-second bound after publication; `--wait` only shortens it.
 The wait polls after 15 seconds, doubling to once a minute, and spends one GraphQL read per poll on the
-exact check evidence. Other PR reads use GitHub's REST API. When GitHub refuses a read for the account's
-rate limit, landing prints so once, retries every minute for up to an hour and then continues.
+exact check evidence. Other PR reads use GitHub's REST API. When GitHub refuses a command for the account's
+rate limit, landing prints so and waits a minute. Then, within the same bound, it starts the candidate again
+and repeats every gate before merging. A refusal after the bound leaves the candidate published and unmerged.
 An exhausted deadline leaves the published candidate unmerged, without another integration.
 GitHub registers
 a head's checks one at a time, so a required check absent from the head is waited for within the same
