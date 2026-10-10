@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useSearchParams } from "react-router";
+import { StatusMark } from "../components/StatusMark";
 import { ApiError, useSetup, useSetupAction } from "../data/api";
 import type { Setup } from "../data/api";
 import { Overlay } from "../shell/Overlay";
@@ -101,7 +102,7 @@ export function ProjectSetup({ name }: { name: string }) {
           <p>{refused ? "Request refused. No action was accepted." : stale ? "Confirmation lost. Reconnect to check whether the action completed." : awaitingObservation ? "Confirmation lost. Checking the existing operation before retrying." : "Confirmation was lost. The current setup results are shown below."}</p>
           <p className="text-meta">{action.error.message}</p>
         </div> : null}
-        {action.isPending ? <p className="text-meta text-muted" role="status">Sending request…</p> : null}
+        {action.isPending ? <p className="text-meta text-muted"><StatusMark label="Sending request…" /></p> : null}
         {setup.isPending ? <div aria-label="Loading setup" className="setup-loading"><div className="skeleton h-10" /><div className="skeleton h-10" /><div className="skeleton h-10" /></div> : null}
         {data?.error ? <p className="setup-notice" role="alert">{data.error}</p> : null}
         {data && steps.length === 0 ? <p className="text-muted">No setup results yet. Check again to inspect this project.</p> : null}

@@ -320,19 +320,25 @@ describe("decision alerts", () => {
   });
 
   it("keeps Needs you usable when permission is denied or the browser cannot alert", async () => {
-    alertingBrowser("denied", "denied");
+    const browser = alertingBrowser("denied", "denied");
     mockFetch([question]);
-    const { unmount } = renderApp({ route: "/" });
+    const { unmount, user } = renderApp({ route: "/" });
     expect(await screen.findByRole("article", { name: "Choose backup retention" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Alert me about new decisions" })).toBeDisabled();
-    expect(screen.getByText(/blocked in this browser's settings/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Alert me about new decisions" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByText(/blocked in this browser's settings/)).toHaveClass("sr-only");
+    await user.click(screen.getByRole("button", { name: "Alert me about new decisions" }));
+    expect(screen.getByText(/blocked in this browser's settings/)).not.toHaveClass("sr-only");
+    expect(browser.request).not.toHaveBeenCalled();
     unmount();
 
     Reflect.deleteProperty(navigator, "serviceWorker");
     renderApp({ route: "/" });
     expect(await screen.findByRole("article", { name: "Choose backup retention" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Alert me about new decisions" })).toBeDisabled();
-    expect(screen.getByText("This browser cannot show alerts.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Alert me about new decisions" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByText("This browser cannot show alerts.")).toHaveClass("sr-only");
+    await user.click(screen.getByRole("button", { name: "Alert me about new decisions" }));
+    expect(screen.getByText("This browser cannot show alerts.")).not.toHaveClass("sr-only");
+    expect(browser.request).not.toHaveBeenCalled();
   });
 
   it("stops alerting and gives up its push subscription when the switch goes off", async () => {

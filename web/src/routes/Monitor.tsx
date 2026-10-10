@@ -1,3 +1,4 @@
+import { StatusMark } from "../components/StatusMark";
 import { useMonitor, useOverview } from "../data/api";
 import type { EngineReadout, MonitorSeat, RoutingRow, Session } from "../data/api";
 import { TokenUsage } from "../components/TokenUsage";
@@ -195,7 +196,7 @@ function SeatCard({ seat, label }: { seat: Seat; label: string }) {
       <div className="monitor-row">
         <h3 className="monitor-seat-name">{label}</h3>
         {seat.plan ? <span className="chip">{capitalize(seat.plan)}</span> : null}
-        {seat.stale ? <span className="chip chip-stale">Stale</span> : null}
+        {seat.stale ? <span className="sr-only">Stale</span> : null}
         {figures ? (
           <span className="monitor-age" title={exactTime(seat.at)}>
             {readingAge(seat.at)}
@@ -285,7 +286,7 @@ function SessionRow({ session, label, engines }: { session: Session; label: (eng
         <b className="monitor-session-title" title={title}>
           {title}
         </b>
-        {stale ? <span className="chip chip-stale">Stale</span> : null}
+        {stale ? <span className="sr-only">Stale</span> : null}
         {observed ? (
           <span className="monitor-age" title={exactTime(session.at)}>
             {observed}
@@ -327,7 +328,7 @@ export default function Monitor() {
       {phone ? <NewTasksButton overview={overview.data} wide /> : null}
       <section className="monitor-section" aria-labelledby="monitor-update">
         <h2 id="monitor-update" className="monitor-head">Altitude update</h2>
-        {overview.isPending ? <p role="status">Loading update status…</p> : overview.isError ?
+        {overview.isPending ? <p><StatusMark label="Loading update status…" /></p> : overview.isError ?
           <p className="text-danger">Could not read update status. <button type="button" className="link" onClick={() => overview.refetch()}>Retry</button></p> :
           overview.data.restart ? <RestartDetails key={JSON.stringify([overview.data.restart.head, overview.data.restart.since])} restart={overview.data.restart} /> :
           <p className="monitor-muted">No update pending.</p>}

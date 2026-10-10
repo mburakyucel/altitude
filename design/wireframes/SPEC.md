@@ -83,6 +83,18 @@ In the existing design review and [phone and desktop walkthrough](../../AGENTS.m
 Apply these expectations with the specified component states (§3) and existing accessibility
 requirements, including accessible control names, minimum targets, and contrast (§6).
 
+Routine loading uses a compact spinner; a pending action replaces its label in place without
+changing its width. Saved and copied receipts use a check. Accessible status names retain the
+words, and reduced motion keeps the progress mark static. Primary task state names, authored
+blockers, failures, setup instructions and resource/privacy consequences remain readable.
+Decision dispositions, approval consequences and quantitative reading ages also stay readable;
+a generic check or dim cue cannot distinguish their meanings. Live regions are not marked busy;
+busy action containers and existing parent status regions retain their own accessible names.
+Unavailable terminal, voice and alert controls reveal their reason on press and expose it as an
+accessible description; pressing them never performs the unavailable action. Task pages omit
+sentences repeating their state chip, question card or composer. Live session follow state uses
+its existing control and a quiet dot; recorded historical boundaries stay readable.
+
 ## 2. Information architecture
 
 The container recovery notice uses the shell's existing status-banner treatment on phone and
@@ -665,7 +677,7 @@ tell L3: “use Opus at Max for this”." The L3 tab names the project's own L3 
 | --- | --- |
 | Loading | The closed control is disabled; an opened tab says Loading models…. |
 | Read failed | "Could not load models" with Retry. |
-| Saving | **Use** reads Saving…; choices and the other tab are locked. |
+| Saving | **Use** holds its width and shows a spinner with accessible name Saving…; choices and the other tab are locked. |
 | Save failed | The server's reason and Retry on the tab that saved; In use keeps the earlier value. |
 | Changed elsewhere | "Changed in another window." with Reload, which drops the draft and shows the current value. A save compares against the value the draft started from, so a refresh while editing does not hide another window's change. |
 | Unavailable | The closed control reads "Fable unavailable · Auto meanwhile"; the tab names the reason. |
@@ -779,8 +791,7 @@ the owner's checkpoint; the owner considers an earlier answer with later guidanc
 The recommendation body and response controls are the same component as the open question at the
 end of the chat. Loading uses a skeleton with no inferred count; empty Needs you says
 **Nothing needs you.** A read failure offers Retry. Cached failure keeps saved cards with an explicit
-refresh notice and disabled sending. During submission, the control says **Sending…** and cannot be
-repeated. Sending anything hands the turn back: the task's card leaves Needs you and the badge drops,
+refresh notice and disabled sending. During submission, a spinner replaces the label in place; its accessible name is **Sending…** and repeat submission is disabled. Sending anything hands the turn back: the task's card leaves Needs you and the badge drops,
 though every question stays open in the record. A brief **Sent to L2** receipt links to chat. When
 the owner parks again, still-needed questions return labelled **asked again**; a revised question
 is new. This records delivery, not agreement:
@@ -802,8 +813,7 @@ Altitude closed, and says that away from your network the alert names nothing; a
 woken alerts only while Altitude is open, which on a phone means while it is on screen. While a push
 service refuses Altitude's alerts, the line names that service and the reason it gave, says its device
 alerts only while Altitude is open and offers turning alerts off and on there to subscribe it again; the
-line returns to the reach once a push gets through. A browser that cannot show notifications disables the switch and says so;
-refused permission says the browser's settings block alerts and how to allow them again. Every state
+line returns to the reach once a push gets through. An unavailable alert control looks disabled and exposes the browser limitation or permission recovery instructions as its accessible description and on press. Every state
 leaves Needs you, its cards and all typing untouched.
 
 Each newly published operator question alerts once, titled with the project and carrying the task name
@@ -1130,14 +1140,14 @@ Edit for a file change. Short tool names share a fixed label column; the "$" tak
 width, so the command starts right after it. The hint reads "N lines", "running · 4 min" (time since the call while the
 worker runs; "running…" when the call is untimed), "error", or "no output"; write rows
 carry no diff counts. **Raw events** toggles the transcript to the raw list; its hover title states
-the server's redaction rule. There is no transcript search field. Footer states are "Following live
+the server's redaction rule. There is no transcript search field. Accessible footer states are "Following live
 · new steps appear at the bottom", "Paused · Follow to catch up", "Session paused until the task
 resumes", or "Session ended"; scrolling up pauses following, and Follow returns to the newest output.
 The panel starts with recent activity. Scrolling upward near the top loads older rows into the same
 transcript, preserving the first visible row and its pixel offset. There is no paging toolbar.
 An upward wheel, touch or keyboard gesture also loads history when the recent content is shorter
 than the panel. A completed page needs fresh upward intent; opening the panel does not cascade
-through history. A muted **Loading earlier activity…** line appears above existing rows. Failure
+through history. A spinner named **Loading earlier activity…** appears above existing rows. Failure
 keeps the transcript and shows **Could not load earlier activity.** with a 44px Retry control there.
 The exhausted top says **Beginning of session**. Neither history status nor updates move focus.
 
@@ -1361,18 +1371,17 @@ identity shows a new notice; an unchanged or cleared failure does not repeat one
 storage is unavailable, Close still hides it for the mounted page.
 
 Monitor says "Merged changes to <what changed> are waiting to activate.", naming the backend,
-web app, both, or Altitude, with file count and age (exact time on hover). The next line says
-"Altitude restarts at the next quiet moment." and appends "Waiting for <list>." when needed.
+web app, both, or Altitude, with file count and age (exact time on hover). An unavailable **Restart** reveals the quiet-point rule and waiting list on press, with an accessible description.
 
 The quiet point has no dispatch or resume claim, L3 turn, adversarial review, validation run, or report verification in
 flight; running workers do not hold activation. The waiting list names claimed tasks, `<project> L3`, and the task of
-each adversarial review or validation run. **Restart** appears when the waiting list is empty and no restart
-is under way. Pressing it or receiving a recorded restart request removes the button and changes
-the line to "Altitude is restarting…". A failed activation reads "Automatic activation did not
-complete; L3 has the fault." The notice leaves when the new process answers without a pending
+each adversarial review or validation run. **Restart** is actionable when the waiting list is empty and no restart
+is under way. Pressing it or receiving a recorded restart request replaces the button with a spinner
+named "Altitude is restarting…". A failed activation reads "Automatic activation did not
+complete; L3 has the fault." Its waiting list stays visible as the retry's blocker. The notice leaves when the new process answers without a pending
 restart. Data: `GET /api/overview` `restart`; the button requests `POST /api/restart`.
 
-Update status loads independently of Monitor readings, with **Loading update status…**, a read
+Update status loads independently of Monitor readings, with a spinner named **Loading update status…**, a read
 error with Retry, or **No update pending.** Request errors remain beside the action. Details wrap
 and use normal page scrolling on both viewports. Pending, waiting, restarting, activation failure,
 request denial, loading, read error, empty, dismissed and new-event states are walked on phone
@@ -1484,12 +1493,11 @@ One bordered **Voice input** row shows the saved backend and a chevron.
 Its whole area opens `/settings/voice`; no backend options or credentials occupy the overview.
 The **Projects folder** row shows the current folder and opens `/settings/projects-folder`: an
 explanation that First run offers the folders directly inside it, the current value and the §3.12
-folder browser with **Use "<folder>"** (Home allowed). Saving shows Saving…, then Saved. with the
-new folder; a failure shows the server explanation and Retry. First run reads the change at once.
+folder browser with **Use "<folder>"** (Home allowed). Saving shows a spinner, then a check named Saved.; a failure shows the server explanation and Retry. First run reads the change at once.
 **Prerequisites** opens `/settings/prerequisites`; **Incident reports** shows "Published to
 <repository>" or "Kept on this computer" and opens `/settings/incident-reports`. Each page is the
 First run step's content with **Save** in place of the step buttons (Prerequisites has **Check
-again** only) and shows Saved. after a save.
+again** only) and shows a check named Saved. after a save.
 A **Devices** row shows how many devices are paired and opens `/settings/devices`: a list of paired
 browsers, each with its name ("Safari on iPhone", "Home Screen app on iPhone", "Chrome on Mac"), a
 **This device** badge beside the current one, and "Paired <date> · last used <date>". **Remove** asks
@@ -1541,11 +1549,9 @@ it off closes every open terminal.
 A **Validation runs** switch row (on after install) follows it and says "Agents test installs,
 containers and browsers in throwaway containers on this computer, and each run is recorded on its task.
 Turning this off stops a running one." It saves like Terminal; turning it off stops the running run and
-refuses new ones. Where the runner is unavailable the switch is off and disabled and the copy reads "Not
-available here: <reason>." `web/e2e/validation-switch.pw.ts` walks on, off, a refused change and
+refuses new ones. Where Terminal or the validation runner is unavailable the switch looks off and disabled; its accessible description and a press reveal "Not available here: <reason>." `web/e2e/validation-switch.pw.ts` walks on, off, a refused change and
 unavailable at both widths.
-An installed copy adds a **Version** row: the installed version, then "· Up to date" after a check,
-or "· <version> is available · What’s new" with the copyable `alt update` command. A **Check for
+An installed copy adds a **Version** row: the installed version, with "· <version> is available · What’s new" with the copyable `alt update` command. A **Check for
 new versions** switch (on after install) says "Twice a day Altitude asks GitHub for the latest
 release. Nothing else is sent. Turning this off also stops automatic updates." An **Automatic
 updates** switch (on after install) says "Install new versions at the next quiet point, when no
@@ -1566,16 +1572,16 @@ while setting up, a progress bar, "Setting up… X MB of Y MB" and **Cancel setu
 on this computer. While you dictate, the speech process uses about 2 GB of memory." and **Remove voice
 (698 MB)**; a failed setup shows its reason with **Retry**; an outdated runtime asks for an update with
 the same button; the model's credit line (NVIDIA Parakeet TDT 0.6B v2, CC-BY-4.0) stays visible. When
-this computer cannot run it, the choice is disabled and says why. A successful save updates only the
+this computer cannot run it, the choice is disabled and **Set up voice** reveals why on press, with an accessible description. A successful save updates only the
 next capture; a recording keeps the selection it started with and stops when it changes.
 
 | State | What appears and what actions do |
 | --- | --- |
-| Loading | Loading settings…; no selected default or editable controls. |
+| Loading | A spinner named Loading settings…; no selected default or editable controls. |
 | Read failed | Could not load settings and Retry; typing elsewhere is unaffected. |
-| Saved browser | Chosen radio, Saved. |
-| Saved host | Chosen radio, Saved. and the setup panel in its current state; while setting up, progress refreshes every second. The overview reads This computer, with " · not set up" until ready. |
-| Saving | Saving… and disabled choices until the request answers. |
+| Saved browser | Chosen radio and a check named Saved. |
+| Saved host | Chosen radio, a check named Saved. and the setup panel in its current state; while setting up, progress refreshes every second. The overview reads This computer, with " · not set up" until ready. |
+| Saving | A spinner named Saving… and disabled choices until the request answers. |
 | Failed/denied save | Server explanation and Retry; the saved choice is preserved. A choice changed elsewhere offers Reload settings. |
 
 The project page `/settings/projects/<name>` has a labelled **Settings** back button, the line
@@ -1583,7 +1589,7 @@ The project page `/settings/projects/<name>` has a labelled **Settings** back bu
 sections, in the order a choice is applied:
 
 - **L3**: the closed L3 choice ("Fable · Low", "Auto", or "Fable unavailable · Auto meanwhile" with
-  the reason), "Until you choose Auto" or "Project routing and defaults", and what L3's last reply
+  the reason), and what L3's last reply
   reported ("L3 has not replied yet" before one). **Back to Auto** while a choice is saved, and
   **Change…**, which opens the Models dialog on its L3 tab.
 - **Auto defaults**: one row per role and engine ("Tasks · Codex", "L3 · Claude") with **Model** and
@@ -1620,10 +1626,10 @@ and has focus; Escape, × and the scrim cancel. The red **Remove <name>** sends 
 
 | Project page state | What appears and what actions do |
 | --- | --- |
-| Loading | Loading settings…; the Project section is usable. |
+| Loading | A spinner named Loading settings…; the Project section is usable. |
 | Read failed | Could not load settings and Retry; the Project section is usable. |
-| Saving | That field or select is disabled with Saving…; other fields stay editable. |
-| Saved | That field shows the persisted value and Saved. |
+| Saving | That field or select is disabled with a spinner named Saving…; other fields stay editable. |
+| Saved | That field shows the persisted value and a check named Saved. |
 | Failed/denied save | Server explanation and Retry save; the field keeps the saved value. |
 
 Maintained boards: Settings/MobileSettings, VoiceSettings/MobileVoiceSettings and SettingsStates.
@@ -1666,13 +1672,13 @@ attention). The code never rides in a URL. Pairing opens the route the browser a
 | --- | --- |
 | Loading | The mark alone while Altitude answers whether this browser is paired. |
 | Unreachable | "Could not reach Altitude." and Retry. |
-| Local | ✓ This is the computer running Altitude, ✓ Trusted, and the Pair item. |
+| Local | Completed step marks, a check named Trusted, and the Pair item. |
 | Plain HTTP | ! with the plain-HTTP sentence; no other items. |
 | Not trusted yet | ○ with the device's instructions, its reason ("Not trusted yet. The usual missing step is the switch in Certificate Trust Settings." on iPhone/iPad, "…Install the certificate as a CA certificate." on Android, "…Import the certificate as a trusted authority, then restart the browser." elsewhere) and **Check again**; no Pair item. |
-| Checking | A spinner, the Checking… pill and a disabled **Check again**. |
+| Checking | A spinner named Checking… and a disabled **Check again**. |
 | Couldn't check | ! and "Couldn't check." with **Check again**, never phrased as untrusted. |
 | External certificate | ○ with the Private tab sentence and **Continue**. |
-| Trusted | ✓ Trusted, instructions collapsed, the Pair item with an empty field; Pair disabled. |
+| Trusted | A check named Trusted, instructions collapsed, the Pair item with an empty field; Pair disabled. |
 | Typing | The field owns the dash: it keeps letters and digits, uppercased, up to eight, and shows `ABCD-` once four are typed. A typed dash or space is ignored; deleting the dash deletes the fourth character. A pasted `abcd 2345` or `ABCD-2345` shows `ABCD-2345`. An edit inside the code keeps the caret at the edit. |
 | Pairing | Pairing… and a disabled field and button. |
 | Wrong code | "That code is not right. N tries left." under the field; typing clears it. |

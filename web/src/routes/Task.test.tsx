@@ -424,7 +424,7 @@ describe("Task on desktop", () => {
     expect(days[0]).toMatch(/Aug 29$/);
     expect(days[1]).toMatch(/Aug 30$/);
     expect(screen.getByLabelText("Message the L2")).toHaveAttribute("placeholder", "Message the L2");
-    expect(screen.getByText("Reaches the L2 at its next checkpoint.")).toBeInTheDocument();
+    expect(screen.queryByText("Reaches the L2 at its next checkpoint.")).toBeNull();
 
     const panel = screen.getByRole("region", { name: "Live session" });
     expect(await within(panel).findByText("Reading the timer code")).toBeInTheDocument();
@@ -534,10 +534,10 @@ describe("Task on desktop", () => {
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
     expect(screen.getByText("Queued")).toBeInTheDocument();
     const panel = screen.getByRole("region", { name: "Live session" });
-    expect(await within(panel).findByText("Waits for dispatch")).toBeInTheDocument();
+    expect(within(panel).queryByText("Waits for dispatch")).toBeNull();
     expect(within(panel).queryByRole("button", { name: "Raw events" })).toBeNull();
     expect(screen.getByLabelText("Message the L2")).toBeEnabled();
-    expect(screen.getByText("Delivered when Altitude starts the L2.")).toBeInTheDocument();
+    expect(screen.queryByText("Delivered when Altitude starts the L2.")).toBeNull();
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/transcript/"))).toBe(false);
   });
 
@@ -585,8 +585,8 @@ describe("Task on desktop", () => {
     expect(screen.getByText("Queued")).toBeInTheDocument();
     expect(screen.queryByText("Blocked")).toBeNull();
     const panel = screen.getByRole("region", { name: "Live session" });
-    expect(within(panel).getByText("Waits for resume")).toBeInTheDocument();
-    expect(screen.getByText("Delivered when Altitude resumes the L2.")).toBeInTheDocument();
+    expect(within(panel).queryByText("Waits for resume")).toBeNull();
+    expect(screen.queryByText("Delivered when Altitude resumes the L2.")).toBeNull();
   });
 
   it("puts the open question at the end of the conversation as the operator's turn", async () => {
@@ -605,9 +605,9 @@ describe("Task on desktop", () => {
     expect(turn.previousElementSibling).toHaveTextContent("L3 messaged the L2");
     expect(convo.querySelectorAll(".conversation-question")).toHaveLength(1);
     expect(screen.getAllByText("Your turn · 1 question")).toHaveLength(2);
-    expect(document.querySelector(".task-explanation")).toHaveTextContent("Waiting for your answer to the task’s question.");
+    expect(document.querySelector(".task-explanation")).toBeNull();
     expect(screen.getByLabelText("Message the L2")).toBeInTheDocument();
-    expect(screen.getByText("Replying hands the turn back to the L2.")).toBeInTheDocument();
+    expect(screen.queryByText("Replying hands the turn back to the L2.")).toBeNull();
   });
 
   it("labels a question the L2 asks again after a hand-back", async () => {

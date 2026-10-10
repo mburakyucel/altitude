@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { useLocation, useMatch, useNavigate, useParams, useSearchParams } from "react-router";
 import type { UseQueryResult } from "@tanstack/react-query";
+import { BusyLabel } from "../components/StatusMark";
 import { useChat, useL3Reset, useL3Start, useOverview, useProject } from "../data/api";
 import type { ChatView, Decision, EngineReadout, Overview, ProjectView, TaskRow } from "../data/api";
 import { agoText } from "../data/observed";
@@ -219,7 +220,7 @@ function HeaderMenu({ name, designViewer, starting }: { name: string; designView
     };
   }, [open, close]);
 
-  const confirmRow = (question: string, detail: string, label: string, onConfirm: () => void) => (
+  const confirmRow = (question: string, detail: string, label: ReactNode, onConfirm: () => void) => (
     <div className="menu-confirm" role="group" aria-label={question}>
       <span className="text-meta">{question}</span>
       {detail ? <p className="text-meta text-muted">{detail}</p> : null}
@@ -245,7 +246,7 @@ function HeaderMenu({ name, designViewer, starting }: { name: string; designView
             confirmRow(
               "Reset the L3 conversation?",
               "L3 starts a fresh session on its next turn. Saved history stays available.",
-              reset.isPending ? "Resetting…" : "Reset",
+              <BusyLabel busy={reset.isPending} label="Reset" working="Resetting…" />,
               () => reset.mutate(undefined, { onSuccess: completed, onError: failed }),
             )
           ) : (
@@ -325,7 +326,7 @@ function ProjectHeader({
   const compactStatus = project.isError ? "Could not read project" : neverStarted ? "L3 · Not started"
     : !chat.data ? "L3 · Loading…" : chat.data.active ? chat.data.active.trigger === "chat" ? "L3 · Answering" : `L3 · Handling ${handling(chat.data.active.trigger)}` : chat.data.busy ? "L3 · Busy" : "L3 · Ready";
   const startButton = neverStarted ? <button type="button" className="btn btn-primary" disabled={start.isPending} onClick={() => start.mutate()}>
-    {start.isPending ? "Starting…" : "Start L3"}
+    <BusyLabel busy={start.isPending} label="Start L3" working="Starting…" />
   </button> : null;
   const menu = <HeaderMenu key={name} name={name} designViewer={project.data?.design_viewer ?? ""} starting={start.isPending} />;
 

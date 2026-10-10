@@ -37,7 +37,7 @@ test("Settings holds project models and effort; the menu reaches them and the dr
   const l2Group = main.getByRole("group", { name: `Tasks · ${l2First.label}`, exact: true });
   const section = (name: string) => main.getByRole("region", { name, exact: true });
   /** Each field reports its own save, so a group can show two statuses at once. */
-  const saved = (label: string) => l3First.locator(".default-field", { has: page.getByLabel(label) }).getByText("Saved.");
+  const saved = (label: string) => l3First.locator(".default-field", { has: page.getByLabel(label) }).getByRole("status", { name: "Saved.", exact: true });
 
   await walk.open(project.path);
   await draft.fill("Keep my project draft");
@@ -67,7 +67,7 @@ test("Settings holds project models and effort; the menu reaches them and the dr
   const choice = first!.effort.choices.at(-1)!;
   await walk.state("04-l3-effort-saved", {
     action: () => l3First.getByLabel("Effort").selectOption(choice.value),
-    visible: [saved("Effort")], hidden: [l3Second.getByText("Saved."), l2Group.getByText("Saved.")],
+    visible: [saved("Effort")], hidden: [l3Second.getByRole("status", { name: "Saved.", exact: true }), l2Group.getByRole("status", { name: "Saved.", exact: true })],
   });
   await l3First.getByLabel("Model").fill("fixture-model");
   await walk.state("05-model-saved-on-enter", {
@@ -112,7 +112,7 @@ test("the L3 choice and L3 routing save from Settings, read back and return to A
   const dialog = page.getByRole("dialog", { name: `Models · L3 · ${project.name} only`, exact: true });
   const back = l3.getByRole("button", { name: "Back to Auto", exact: true });
   await walk.open(`/settings/projects/${encodeURIComponent(project.name)}`);
-  await walk.state("01-auto", { visible: [l3.getByText("Auto", { exact: true }), l3.getByText(/^Project routing and defaults/), routing], hidden: [back, dialog] });
+  await walk.state("01-auto", { visible: [l3.getByText("Auto", { exact: true }), l3.getByRole("button", { name: "Change…", exact: true }), routing], hidden: [back, dialog] });
   await expect(routing).toHaveValue("");
   await expect(routing.locator("option")).toHaveText(["Auto", ...initial.engines.map((e) => `Only ${e.label}`)]);
 
@@ -123,7 +123,7 @@ test("the L3 choice and L3 routing save from Settings, read back and return to A
   await dialog.getByRole("radio", { name: new RegExp(`^${model.label}`) }).check();
   await walk.state("03-l3-choice-saved", {
     action: () => dialog.getByRole("button", { name: `Use for L3 in ${project.name}`, exact: true }).click(),
-    visible: [l3.getByText(model.label, { exact: true }), l3.getByText(/^Until you choose Auto/), back], hidden: [dialog],
+    visible: [l3.getByText(model.label, { exact: true }), back], hidden: [dialog],
   });
   expect((await defaults(request, project.name)).l3_choice).toEqual({ engine: model.engine, model: model.model });
   await page.reload();
@@ -170,12 +170,12 @@ test("Tasks routing Prefer and Only save, survive reload, leave L3 alone and res
     await expect(select.locator("option")).toHaveText(["Auto", ...engines.map((e) => `Prefer ${e.label}`), ...engines.map((e) => `Only ${e.label}`)]);
     await walk.state("02-preferred-saved", {
       action: () => select.selectOption(`prefer:${preferred.value}`),
-      visible: [select], hidden: [card.getByRole("alert"), card.getByText("Saving…")],
+      visible: [select], hidden: [card.getByRole("alert"), card.getByRole("status", { name: "Saving…", exact: true })],
     });
     await expect.poll(async () => (await defaults(request, project.name)).l2_preference).toBe(preferred.value);
     await page.reload();
     await card.scrollIntoViewIfNeeded();
-    await walk.state("03-persisted-after-reload", { visible: [select], hidden: [card.getByText("Saving…")] });
+    await walk.state("03-persisted-after-reload", { visible: [select], hidden: [card.getByRole("status", { name: "Saving…", exact: true })] });
     await expect(select).toHaveValue(`prefer:${preferred.value}`);
     await expect(l3).toHaveValue("");
     expect((await defaults(request, project.name)).l3_engine).toBeNull();
@@ -191,18 +191,18 @@ test("Tasks routing Prefer and Only save, survive reload, leave L3 alone and res
     deny = true;
     await select.selectOption("");
     await expect(select).toBeDisabled();
-    await walk.state("04-saving", { visible: [card.getByText("Saving…")], hidden: [] });
+    await walk.state("04-saving", { visible: [card.getByRole("status", { name: "Saving…", exact: true })], hidden: [] });
     release();
     await walk.state("05-denied-keeps-saved", {
       visible: [card.getByRole("alert").filter({ hasText: "Changing settings is denied." })],
-      hidden: [card.getByText("Saving…")],
+      hidden: [card.getByRole("status", { name: "Saving…", exact: true })],
     });
     await expect(select).toHaveValue(`only:${preferred.value}`);
     expect((await defaults(request, project.name)).l2_engine).toBe(preferred.value);
     deny = false;
     await walk.state("06-auto-restored", {
       action: () => select.selectOption(""),
-      visible: [select], hidden: [card.getByRole("alert"), card.getByText("Saving…")],
+      visible: [select], hidden: [card.getByRole("alert"), card.getByRole("status", { name: "Saving…", exact: true })],
     });
     await expect(select).toHaveValue("");
     await expect.poll(async () => {
@@ -227,7 +227,7 @@ test("a routing change made elsewhere is refused and the page shows the current 
   expect((await request.post("/api/defaults", { data: { project: project.name, setting: "l3_engine", value: elsewhere!.value } })).ok()).toBe(true);
   await walk.state("01-changed-elsewhere", {
     action: () => select.selectOption(`only:${here!.value}`),
-    visible: [card.getByRole("alert").filter({ hasText: "Changed in another window. The page shows the current routing." })], hidden: [card.getByText("Saving…")],
+    visible: [card.getByRole("alert").filter({ hasText: "Changed in another window. The page shows the current routing." })], hidden: [card.getByRole("status", { name: "Saving…", exact: true })],
   });
   expect((await defaults(request, project.name)).l3_engine).toBe(elsewhere!.value);
   await expect(select).toHaveValue(`only:${elsewhere!.value}`);
@@ -248,11 +248,11 @@ test("project settings loading and read failure can retry; the project section s
   });
   try {
     await walk.open(`/settings/projects/${encodeURIComponent(project.name)}`);
-    await walk.state("01-loading", { visible: [main.getByText("Loading settings…")], hidden: [main.getByLabel("Effort").first()] });
+    await walk.state("01-loading", { visible: [main.getByRole("status", { name: "Loading settings…", exact: true })], hidden: [main.getByLabel("Effort").first()] });
     release();
     await walk.state("02-read-error", {
       visible: [main.getByText("Could not load settings."), main.getByRole("button", { name: "Retry", exact: true }), remove],
-      hidden: [main.getByText("Loading settings…"), main.getByLabel("Effort").first(), main.getByRole("region", { name: "Routing", exact: true })],
+      hidden: [main.getByRole("status", { name: "Loading settings…", exact: true }), main.getByLabel("Effort").first(), main.getByRole("region", { name: "Routing", exact: true })],
     });
     fail = false;
     await walk.state("03-recovered", {
@@ -281,11 +281,11 @@ test("saving disables the field and a denied write keeps the saved value", async
     await walk.open(`/settings/projects/${encodeURIComponent(project.name)}`);
     await effort.selectOption("native");
     await expect(effort).toBeDisabled();
-    await walk.state("01-saving", { visible: [group.getByText("Saving…")], hidden: [] });
+    await walk.state("01-saving", { visible: [group.getByRole("status", { name: "Saving…", exact: true })], hidden: [] });
     release();
     await walk.state("02-denied", {
       visible: [group.getByText("Changing settings is denied."), group.getByRole("button", { name: "Retry save" })],
-      hidden: [group.getByText("Saving…")],
+      hidden: [group.getByRole("status", { name: "Saving…", exact: true })],
     });
     await expect(effort).toBeEnabled();
     await expect(effort).toHaveValue("");
@@ -293,7 +293,7 @@ test("saving disables the field and a denied write keeps the saved value", async
     deny = false;
     await walk.state("03-retry-saved", {
       action: () => group.getByRole("button", { name: "Retry save" }).click(),
-      visible: [group.getByText("Saved.")], hidden: [group.getByRole("alert")],
+      visible: [group.getByRole("status", { name: "Saved.", exact: true })], hidden: [group.getByRole("alert")],
     });
     await expect(effort).toHaveValue("native");
     expect(values(await defaults(request, project.name))[engine.effort.setting]).toBe("native");

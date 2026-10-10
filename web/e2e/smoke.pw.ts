@@ -143,7 +143,7 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       await expect(main.getByRole("link", { name: /^All projects 1 project · folder / })).toHaveAttribute("href", "/settings/projects");
       await expect(main.getByText(`${new URL(page.url()).origin} · HTTPS off · view only`, { exact: true })).toBeVisible();
       await expect(main.getByRole("radio")).toHaveCount(0);
-      await expect(main.getByText("Loading settings…", { exact: true })).toHaveCount(0);
+      await expect(main.getByRole("status", { name: "Loading settings…", exact: true })).toHaveCount(0);
     } else if (route === "/settings/voice") {
       await expect(main.getByRole("heading", { name: "Voice input", exact: true })).toBeVisible();
       await expect(main.getByRole("radio", { name: "This computer", exact: true })).toBeChecked();
@@ -153,7 +153,7 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       const host = (await (await request.get("/api/voice")).json()).host;
       if (host.state === "unavailable") await expect(main.getByText(`Not available on this computer: ${host.reason}.`, { exact: true })).toBeVisible();
       else if (host.state === "absent") await expect(main.getByRole("button", { name: "Set up voice", exact: true })).toBeEnabled();
-      await expect(main.getByText("Loading settings…", { exact: true })).toHaveCount(0);
+      await expect(main.getByRole("status", { name: "Loading settings…", exact: true })).toHaveCount(0);
     } else if (route === "/settings/projects") {
       await expect(main.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
       await expect(main.getByRole("link", { name: project.name, exact: true })).toHaveAttribute("href", `/settings/projects/${project.name}`);
@@ -191,7 +191,7 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       await expect(main.getByRole("combobox", { name: "L3 routing" })).toHaveValue("");
       await expect(main.getByRole("button", { name: "Remove…", exact: true })).toBeEnabled();
       await expect(main.getByRole("link", { name: "‹ Settings", exact: true })).toHaveAttribute("href", "/settings");
-      await expect(main.getByText("Loading settings…", { exact: true })).toHaveCount(0);
+      await expect(main.getByRole("status", { name: "Loading settings…", exact: true })).toHaveCount(0);
     } else if (route.startsWith("/projects") || route.startsWith("/chat")) {
       await expect(page).toHaveURL(new RegExp(`${project.path}(\\?tab=work)?$`));
       await expect(main.getByRole("button", { name: "More actions" })).toBeVisible();

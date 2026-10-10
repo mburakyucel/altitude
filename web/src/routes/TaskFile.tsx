@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useParams, useSearchParams } from "react-router";
 import { z } from "zod";
+import { StatusMark } from "../components/StatusMark";
 import { api, ApiError } from "../data/api";
 import { Prose } from "../components/Prose";
 import "./task-file.css";
@@ -41,10 +42,10 @@ function FileReader({ project, path }: { project: string; path: string }) {
       {data && data.current_path !== data.path ? <p className="task-file-path">Current location: {data.current_path}</p> : null}
       {path ? <div className="task-file-actions">
         <button className="link" onClick={() => void copyPath()}>Copy path</button>
-        {copy ? <span role="status" className="text-meta text-muted">{copy}</span> : null}
+        {copy === "Path copied." ? <StatusMark busy={false} label={copy} /> : copy ? <span role="status" className="text-meta text-muted">{copy}</span> : null}
       </div> : null}
     </header>
-    {loading ? <p role="status" className="text-muted">Loading file…</p> : file.isError ? <section role="alert" className="task-file-unavailable">
+    {loading ? <p className="text-muted"><StatusMark label="Loading file…" /></p> : file.isError ? <section role="alert" className="task-file-unavailable">
       <h2>File unavailable</h2>
       <p className="text-muted">{denied ? "This file cannot be opened here. Only supported text documents in this project's task folders are available." : file.error instanceof ApiError ? file.error.message : "The file could not be loaded. Check your connection and try again."}</p>
       <button className="link" onClick={() => void file.refetch()}>Retry</button>

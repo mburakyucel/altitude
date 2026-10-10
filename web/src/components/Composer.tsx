@@ -925,7 +925,7 @@ export default function Composer({
   const transcribing = phase === "transcribing";
   const remaining = MAX_RECORDING_MS - elapsed;
   const canSend = !disabled && !sendDisabled && !admission && !images.checking && (!images.selected.length || images.capability?.available) && (phase === "listening" || (phase === "idle" && (value.trim().length > 0 || images.selected.length > 0)));
-  const micShown = !unavailable;
+  const [showVoiceReason, setShowVoiceReason] = useState(false);
   const micDisabled = disabled || transcribing || Boolean(admission);
 
   let hintText: ReactNode = hint ?? null;
@@ -991,7 +991,7 @@ export default function Composer({
   } else if (unavailable === "unrecognized") {
     hintText = "This browser has no speech recognition. Typing works.";
   } else if (voice?.backend === "host" && (unavailable === "host" || setupNeeded)) {
-    hintRole = setupNeeded ? "status" : undefined;
+    hintRole = voice.host.state === "failed" ? "alert" : setupNeeded ? "status" : undefined;
     hintText = hostVoiceHint(voice);
   } else {
     routineHint = true;
@@ -1006,9 +1006,11 @@ export default function Composer({
     hintText = <>{hintText} Recovery could not be updated. Keep this tab open to retain your latest text.</>;
   }
 
+  const quietProgress = (transcribing || listening || admission === "sending") && connection !== "lost" && !recoveryUnavailable;
+  const hiddenReason = ["insecure", "unrecognized", "host"].includes(unavailable ?? "") && !showVoiceReason && !hintRole && !recoveryUnavailable;
   const feedback = hintText ? (
-    <p id={hintId} className={`composer-hint ${hintTone === "danger" ? "text-danger" : "text-muted"}`} data-routine={routineHint || undefined} role={hintRole}>
-      {phase !== "idle" ? <span className="spinner" aria-hidden="true" /> : null}{hintText}
+    <p id={hintId} className={hiddenReason ? "sr-only" : `composer-hint ${hintTone === "danger" ? "text-danger" : "text-muted"}`} data-routine={routineHint || undefined} role={hintRole} aria-label={hintRole === "status" && typeof hintText === "string" ? hintText : undefined}>
+      {phase !== "idle" || admission === "sending" ? <span className="spinner" aria-hidden="true" /> : null}<span className={quietProgress ? "sr-only" : undefined}>{hintText}</span>
     </p>
   ) : null;
 
@@ -1072,7 +1074,7 @@ export default function Composer({
           ) : (
             <span className="composer-spacer" />
           )}
-          {micShown ? (
+          {unavailable !== "unsupported" && unavailable !== "pending" ? (
             <button
               type="button"
               ref={mic}
@@ -1080,7 +1082,9 @@ export default function Composer({
               aria-label={listening ? "Stop voice input" : "Start voice input"}
               aria-keyshortcuts="Control+M Meta+M"
               disabled={micDisabled && !listening}
-              onClick={toggleMic}
+              aria-disabled={unavailable ? true : undefined}
+              aria-describedby={unavailable ? hintId : undefined}
+              onClick={unavailable ? () => setShowVoiceReason(!showVoiceReason) : toggleMic}
             >
               {listening ? <StopIcon /> : <MicIcon />}
             </button>

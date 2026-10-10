@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { StatusMark } from "./StatusMark";
 import type { MessageImage } from "../data/api";
 
 export interface ImagePreview { name: string; url: string }
@@ -69,7 +70,7 @@ function StoredImage({ project, image }: { project: string; image: MessageImage 
     </button> : <div className="message-image-placeholder">
       <span className="message-image-name">{image.name}</span>
       {error ? <><span role="alert">{error}</span><button type="button" className="link" onClick={() => setAttempt((value) => value + 1)}>Retry image {image.name}</button></>
-        : <span role="status">Loading image…</span>}
+        : <span><StatusMark label="Loading image…" /></span>}
     </div>}
   </div>;
 }

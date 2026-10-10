@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { useNavigate } from "react-router";
 import type { Decision, Overview } from "./api";
 import { questionPath } from "./decisions";
@@ -320,6 +320,8 @@ export function DecisionAlertToggle({ pending }: { pending: Decision[] }) {
   const pushed = useSyncExternalStore(watch, readPushState, () => false);
   const [refusal] = useRefusals(state === "on", pushed);
   const [asking, setAsking] = useState(false);
+  const [showReason, setShowReason] = useState(false);
+  const reasonId = useId();
   const on = state === "on";
   const settled = state === "unsupported" || state === "blocked";
 
@@ -329,8 +331,11 @@ export function DecisionAlertToggle({ pending }: { pending: Decision[] }) {
         type="button"
         className="link"
         aria-pressed={settled ? undefined : on}
-        disabled={settled || asking}
+        disabled={asking}
+        aria-disabled={settled || undefined}
+        aria-describedby={reasonId}
         onClick={() => {
+          if (settled) { setShowReason(!showReason); return; }
           if (on) return disableAlerts();
           setAsking(true);
           // A worker that fails to register leaves the switch off, ready to try again.
@@ -339,7 +344,7 @@ export function DecisionAlertToggle({ pending }: { pending: Decision[] }) {
       >
         {on ? "Alerts on" : "Alert me about new decisions"}
       </button>{" "}
-      <span>{refusal ? refusedNote(refusal) : state === "on" && pushed ? PUSHED : NOTE[state]}</span>
+      <span id={reasonId} className={settled && !showReason && !refusal ? "sr-only" : undefined}>{refusal ? refusedNote(refusal) : state === "on" && pushed ? PUSHED : NOTE[state]}</span>
     </p>
   );
 }

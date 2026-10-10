@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { BusyLabel } from "./StatusMark";
 import { ApiError, taskAction } from "../data/api";
 import type { TaskView } from "../data/api";
 
@@ -55,7 +56,7 @@ export function SteeringControls({ steering, disabled = false, escape = false }:
   return <button type="button" className="btn task-steering" disabled={pending || (!checking && disabled)}
     onClick={checking ? () => void steering.recheck() : state === "stopped" ? steering.resume : steering.stop}
     aria-keyshortcuts={escape && state === "running" ? "Escape" : undefined}>
-    {checking ? "Check status" : state === "stopped" ? "Continue" : state === "stopping" ? "Stopping…" : state === "resuming" ? "Resuming…" : "Stop"}
+    <BusyLabel busy={pending} label={checking ? "Check status" : state === "stopped" || state === "resuming" ? "Continue" : "Stop"} working={state === "resuming" ? "Resuming…" : "Stopping…"} />
     {escape && state === "running" && !checking ? <kbd aria-hidden>Esc</kbd> : null}
   </button>;
 }

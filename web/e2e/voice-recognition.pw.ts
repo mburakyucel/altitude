@@ -41,7 +41,7 @@ function views(page: Page, info: TestInfo) {
     hint: main.locator(".composer-hint"),
     wave: main.locator(".composer-wave"),
     timer: main.getByLabel("Recording time", { exact: true }),
-    transcribing: main.getByText("Transcribing…", { exact: true }),
+    transcribing: main.getByRole("status", { name: "Transcribing…", exact: true }),
     // Stop shows while the microphone opens; the recognizer exists once the composer is listening.
     listening: main.locator('.composer[data-phase="listening"]'),
     bubble: (text: string) => main.getByRole("region", { name: "Conversation", exact: true }).locator(".bubble", { hasText: text }),
@@ -212,7 +212,7 @@ test("voice diagnostics: opt-in report distinguishes suspended restart and exclu
   });
   await walk.state("diagnostics-04b-copied", {
     action: () => page.getByRole("button", { name: "Copy report", exact: true }).click(),
-    visible: [report, page.getByText("Copied. Paste it into the task conversation.", { exact: true })],
+    visible: [report, page.getByRole("status", { name: "Copied. Paste it into the task conversation.", exact: true })],
     hidden: [page.getByText("Could not copy. Select and copy the report above.", { exact: true })],
   });
   expect(await page.evaluate(() => (window as unknown as { copiedReport: string }).copiedReport)).toBe(text);
@@ -580,7 +580,7 @@ test.describe("recognizer text as heard", () => {
     });
     await expect(v.field).toHaveValue("Typed draft");
     await expect(v.field).toBeEditable();
-    const opening = v.main.getByText("Opening microphone…", { exact: true });
+    const opening = v.main.getByRole("status", { name: "Opening microphone…", exact: true });
     await walk.state("08-restart-waits-for-the-cancelled-recognizer", {
       action: () => v.mic.click(),
       visible: [opening, v.field],

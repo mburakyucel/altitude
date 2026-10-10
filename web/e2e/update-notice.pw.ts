@@ -181,7 +181,7 @@ test("Settings shows the version, the command that installs a newer one and the 
   saveGate = new Promise<void>((resolve) => { releaseSave = resolve; });
   try {
     await walk.state("13d-automatic-saving", {
-      action: () => autoToggle.click(), visible: [page.getByText("Saving…", { exact: true })], hidden: [],
+      action: () => autoToggle.click(), visible: [page.getByRole("status", { name: "Saving…", exact: true })], hidden: [],
     });
     await expect(autoToggle).toBeDisabled();
     await expect(toggle).toBeDisabled();

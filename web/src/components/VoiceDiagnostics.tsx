@@ -1,4 +1,5 @@
 import { useState, useSyncExternalStore } from "react";
+import { StatusMark } from "./StatusMark";
 import { clearVoiceDiagnostics, startVoiceDiagnostics, stopVoiceDiagnostics, subscribeVoiceDiagnostics, voiceDiagnosticReport, voiceDiagnosticsActive } from "./voiceTrace";
 
 export default function VoiceDiagnostics() {
@@ -15,7 +16,7 @@ export default function VoiceDiagnostics() {
       <button type="button" className="btn" onClick={() => { stopVoiceDiagnostics(); setReport(voiceDiagnosticReport()); setCopied(""); }}>View report</button>
       <button type="button" className="btn" onClick={() => { clearVoiceDiagnostics(); setReport(""); setCopied("Cleared."); }}>Clear report</button>
     </div>
-    {active ? <p role="status" className="text-meta">Collecting on this device. Return here after reproducing.</p> : null}
+    {active ? <StatusMark label="Collecting on this device" /> : null}
     {report ? <>
       <label>Voice diagnostic report<textarea readOnly rows={8} value={report} /></label>
       <button type="button" className="btn" onClick={() => {
@@ -23,6 +24,6 @@ export default function VoiceDiagnostics() {
         if (!navigator.clipboard) setCopied("Could not copy. Select and copy the report above.");
       }}>Copy report</button>
     </> : null}
-    {copied ? <p role="status" className="text-meta">{copied}</p> : null}
+    {copied ? copied.startsWith("Could not") ? <p role="status" className="text-meta">{copied}</p> : <StatusMark label={copied} busy={false} /> : null}
   </details>;
 }

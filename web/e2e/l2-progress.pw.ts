@@ -276,7 +276,7 @@ for (const index of [0, 1]) {
     const preview = convo.getByRole("region", { name: "L2 activity" });
     const cueDot = preview.locator(".cue-line .dot");
     const live = page.getByRole("region", { name: "Live session", exact: true });
-    const liveCue = live.getByRole("status");
+    const liveCue = live.getByRole("status", { name: "Activity" });
     const toLive = async () => { if (phone) await page.getByRole("link", { name: "Live session", exact: true }).click(); };
     const toConversation = async () => { if (phone) await page.getByRole("link", { name: "Conversation", exact: true }).click(); };
     const animation = (locator: typeof cueDot) => locator.evaluate((node) => getComputedStyle(node).animationName);

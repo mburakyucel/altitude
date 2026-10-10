@@ -226,19 +226,19 @@ for (const scope of ["project", "task"] as const) {
     host.final = "Please fix the overlap.";
     await start.click(); await expect(stop).toBeVisible(); await expect(v.listening).toBeVisible();
     await expect(v.field).toHaveValue(`${caption} Keep this edit. check the build`, { timeout: 5000 });
-    await walk.state("03-transcribing-with-image", { action: () => stop.click(), visible: [v.strip, page.getByText("Transcribing…", { exact: true })], hidden: [v.add, stop] });
+    await walk.state("03-transcribing-with-image", { action: () => stop.click(), visible: [v.strip, page.getByRole("status", { name: "Transcribing…", exact: true })], hidden: [v.add, stop] });
     await expect(v.field).toBeVisible();
     await expect(v.field).not.toBeEditable();
     release();
     await expect(v.field).toHaveValue(`${caption} Keep this edit. Please fix the overlap.`);
-    await walk.state("04-transcript-in-draft-only", { visible: [v.strip, v.add, start], hidden: [page.getByText("Transcribing…", { exact: true }), page.getByText("Please fix the overlap.", { exact: true })] });
+    await walk.state("04-transcript-in-draft-only", { visible: [v.strip, v.add, start], hidden: [page.getByRole("status", { name: "Transcribing…", exact: true }), page.getByText("Please fix the overlap.", { exact: true })] });
     host.final = "  ";
     await start.click(); await expect(stop).toBeVisible(); await expect(v.listening).toBeVisible(); await expect(v.field).toHaveValue(/ check/, { timeout: 5000 }); await v.send.click();
     await expect(start).toBeEnabled(); await expect(v.strip).toBeVisible();
     await expect(v.preview).toHaveCount(0);
     host.final = "And keep search working.";
     await start.click(); await expect(stop).toBeVisible(); await expect(v.listening).toBeVisible(); await expect(v.field).toHaveValue(/ check/, { timeout: 5000 }); await v.send.click();
-    await walk.state("05-voice-send-clears-image-and-draft", { visible: [v.preview, start], hidden: [v.strip, page.getByText("Transcribing…", { exact: true })] });
+    await walk.state("05-voice-send-clears-image-and-draft", { visible: [v.preview, start], hidden: [v.strip, page.getByRole("status", { name: "Transcribing…", exact: true })] });
     await expect(v.field).toHaveValue("");
     await page.evaluate(() => { Object.defineProperty(navigator.mediaDevices, "getUserMedia", { configurable: true, value: async () => { throw new DOMException("denied", "NotAllowedError"); } }); });
     await walk.state("06-microphone-denied", { action: () => start.click(), visible: [page.getByText("Microphone blocked in the browser. Typing works.", { exact: true }), v.add], hidden: [v.strip] });
@@ -301,13 +301,13 @@ for (const scope of ["project", "task"] as const) {
     const destinationField = page.getByRole("textbox", { name: `Message L3 about ${destination}`, exact: true });
     await destinationField.fill("Independent destination draft");
     await walk.state("01-destination-draft-during-image-transcription", {
-      visible: [destinationField], hidden: [page.getByText("Transcribing…", { exact: true }), v.strip, v.preview],
+      visible: [destinationField], hidden: [page.getByRole("status", { name: "Transcribing…", exact: true }), v.strip, v.preview],
     });
     await returnToSource();
     await expect(v.field).toHaveValue(caption);
     await expect(v.field).not.toBeEditable();
     await walk.state("02-source-pending-image-voice-send", {
-      visible: [v.field, page.getByText("Transcribing…", { exact: true }), v.composer.getByRole("button", { name: "Cancel voice input" })], hidden: [],
+      visible: [v.field, page.getByRole("status", { name: "Transcribing…", exact: true }), v.composer.getByRole("button", { name: "Cancel voice input" })], hidden: [],
     });
     await leave();
     release();
@@ -326,7 +326,7 @@ for (const scope of ["project", "task"] as const) {
     expect([...destinationView.history, ...(destinationView.queued ?? [])].some((row: { text: string; images?: unknown[] }) => row.text === finalText || row.images?.length)).toBe(false);
     await returnToSource();
     await walk.state("03-original-image-and-caption-sent-once", {
-      visible: [v.preview], hidden: [v.strip, page.getByText("Transcribing…", { exact: true })],
+      visible: [v.preview], hidden: [v.strip, page.getByRole("status", { name: "Transcribing…", exact: true })],
     });
     await expect(v.field).toHaveValue("");
     expect(submitted).toHaveLength(1);
