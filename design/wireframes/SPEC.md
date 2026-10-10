@@ -431,6 +431,17 @@ A selected L3 heads-up uses this same compact line, wrapping its full one- or tw
 on phone and desktop. It stays outside routine groups (§4.1). No separate badge, dismiss control,
 timer or notification surface appears.
 
+A notable turn, a system turn during which L3 created a task or filed a GitHub issue (§4.1), uses the
+same compact line outside routine groups: a dot, the time, the reply's last paragraph, which names what
+happened and the task or issue it produced in one or two plain sentences, then one link and **Show**.
+The link is **Open task** (that task's page) when the turn created exactly one task, else **Open issue**
+(the issue on GitHub, a new tab) when it filed exactly one issue and created no task; with several, the
+line has no link and the card lists them. The text wraps in full on phone and desktop; it is never cut.
+Its card is the ordinary system card, with the tasks the turn created as task cards (§3.5) under "L3
+replied" and each filed issue as a link named by its title; the footer's **Open task** still opens the
+task the turn was about. The dot keeps its trigger's tone. It is information, never a question: no
+Needs you entry, badge or notification.
+
 | Heads-up state or action | What appears and disappears |
 | --- | --- |
 | Empty history | Conversation empty text; no heads-up or background group. |
@@ -439,11 +450,14 @@ timer or notification surface appears.
 | Show on heads-up | The line becomes its FYI card with full text, Hide and Open task when linked; routine groups stay folded. |
 | Hide on heads-up | The card and its task link leave; the compact heads-up returns. |
 | Show/Hide on routine group | Routine evidence appears/disappears; the selected heads-up remains outside it. |
+| Notable turn between routine turns | Its line, with Open task or Open issue and Show, splits the routine run; each side folds and counts only its own turns, and a single routine turn reads as its own plain line. |
+| Show on notable turn | The line becomes its card: L3's full reply, the created task's card or the filed issue's titled link, and the footer links; routine groups stay folded. Hide restores the line. |
+| Open task on notable turn | The created task's page opens; Back returns to the conversation. |
 | Conversation read fails | Error and Retry appear; any cached heads-up remains. A successful Retry removes the error. |
 | Listening or microphone denied | Composer states in §3.6; the heads-up remains unchanged and requests no permission. |
 
-`web/e2e/heads-up.pw.ts` walks the heads-up states, task navigation and scroll preservation at both
-viewports; `conversation.pw.ts` covers the unchanged listening/denied composer states.
+`web/e2e/heads-up.pw.ts` walks the heads-up and notable-turn states, task navigation and scroll
+preservation at both viewports; `conversation.pw.ts` covers the unchanged listening/denied composer states.
 
 Coordinator information messages use separate system lines outside routine groups: **sender →
 recipient · summary · Sent/Incoming**, plus **Show**. Sent acknowledges inbox acceptance; pending
@@ -1753,8 +1767,11 @@ text is the last paragraph of the turn's assistant row; while no assistant row e
 block on <task>", "a fault on <task>", "the restart"). An active turn stays outside the group so
 its current handling line remains visible. A selected L3 FYI (`trigger == "fyi"`, `role == "system"`,
 `heads_up == true`) also stays visible as its full concise text, splitting the routine runs around it.
-Consecutive completed routine system turns with no chat, active turn or selected heads-up between
-them collapse to one line: "L3 handled N system events between your messages", expanding to the list.
+So does a notable turn, one whose assistant row names tasks it created (`tasks`) or issues it filed
+(`issues`, §3.4); altd records both from the verbs L3 ran during the turn, so L3 need not remember to
+announce it. A turn that only resumed, messaged or answered stays routine.
+Consecutive completed routine system turns with no chat, active turn, selected heads-up or notable
+turn between them collapse to one line: "L3 handled N system events between your messages", expanding to the list.
 Other FYIs are ordinary system lines (`trigger == "fyi"`, `role == "system"`, no reply), eligible
 for grouping, including automatic fault details and historical rows without explicit selection. A
 clean report closes without an L3 turn and produces no line; the task simply moves to Done this
@@ -1875,8 +1892,9 @@ the working rules (the design decision of 2026-09-05).
    heads_up}`. Internal calls default to the daemon actor; explicit L3 calls through `alt fyi`
    record selection as `heads_up: true`. Ambiguous historical authorship does not imply selection.
    There is no project inbox file or `fyis` field in the digest or overview.
-4. **Turns name the tasks they created.** The assistant chat row of a turn that created a task
-   carries `tasks: [slug]`, written by the server when the turn's task creation lands.
+4. **Turns name what they created.** The assistant chat row of a turn that created a task carries
+   `tasks: [slug]`, written by the server when the turn's task creation lands; one that filed GitHub
+   issues through `alt issue new` or `alt incident new` carries `issues: [{title, url}]`.
 5. **Dilemmas have durable identity.** Task `questions` contains ID/revision, message anchor,
    question/options/recommendation, source/audience and resolution. `question_group` projects up to
    three open members plus closed history, its revision and stable anchor. Task `question`, history and Needs you
