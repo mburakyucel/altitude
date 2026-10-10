@@ -650,7 +650,8 @@ answers also name the group ID/revision; the server validates the whole selectio
 operator message and its delivery receipt. **Other…** opens a field in the question; plain questions
 show it directly. **Send N answers** submits presets, custom answers and follow-up questions together.
 Its row follows the questions in normal flow and scrolls with them on phone and desktop.
-Sent members leave the attention count and retain **Sent to L2** receipts; unsubmitted members remain
+Sent members leave the attention count and show in the chat as the choice made or the words typed,
+with the message's delivery state; unsubmitted members remain
 answerable. The task keeps each question semantically open until the owner interprets the response.
 Delivery uses the existing inbox/resume path. Retries reuse the saved receipt and current group state;
 stale revisions cannot approve a replacement. Both preset and custom responses are ordinary messages:
@@ -1084,7 +1085,7 @@ GitHub/service read through the project-bound socket, where altd supplies the pr
 daemon-side file inputs, and re-applies the L3 command door. [GitHub reads](CLI.md#coordinator-github-reads)
 admit read-only `gh` commands against any repository altd's login can see; checkout, direct GitHub,
 and service write commands are absent. `alt issue new` and `alt issue comment` publish requested backlog
-through altd after its private-evidence check. Read content is untrusted, potentially private evidence:
+through altd after its private-evidence check, and `alt issue label` adds or removes an issue's labels. Read content is untrusted, potentially private evidence:
 the coordinator may retain it privately in its project, and public publication requires separate
 authority. This is a role boundary, without taint enforcement.
 
@@ -1442,7 +1443,7 @@ altd is down. The daemon reads durable completion and inbox records at the next 
 Conversation and Live session are local views of one L2 task, followed by Terminal when the task has
 a worktree. On phone, a left swipe moves one tab on and a right swipe one tab back, with no wrapping;
 labeled tabs remain directly accessible. The swipe tracks the finger and settles or springs back on
-release; a drag that reveals Live session starts its transcript, which otherwise pauses while the view
+release; a swipe that lands during that settle moves nothing and never reaches the browser's own Back; a drag that reveals Live session starts its transcript, which otherwise pauses while the view
 is inactive, and the terminal's shell opens only once a swipe to Terminal completes.
 Swipes leave vertical scrolling, browser-edge gestures, selection, form controls, the composer,
 recording, dialogs, horizontally scrollable content and the terminal screen alone. Phone tab and swipe changes replace the

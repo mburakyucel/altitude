@@ -391,7 +391,7 @@ form, dialog or second copy of the reply.
 | L3 could not answer | Danger outline, retry icon, "Retry": it sends the same press and never makes a second task. No failed-turn line. |
 | Answered another way | Any message the operator sends or queues, typed, spoken or with images, retires the offer. A stale window's press is refused with "The conversation has moved on, so this was not sent." |
 
-A press runs as its own L3 turn, never folded into typed messages queued with it. Once its reply has left
+Decision selections (§3.8.2) use the same pill. A press runs as its own L3 turn, never folded into typed messages queued with it. Once its reply has left
 the loaded history, a press reads as its message, with the ordinary queue controls or failed-turn Retry.
 
 `web/e2e/create-task.pw.ts` walks these states at both widths against a disposable service running the
@@ -406,16 +406,26 @@ or a run of them (§4.1). The dot is `--text-muted` for reports, restarts, and F
 for `incident`, `system-recovery`, and fault triggers. A failed turn of another trigger keeps the
 muted dot; its line carries the failure.
 
-Expanded: a card in the column with a header ("Report landed · <task title> · 09:14", **Hide**),
-"What altd sent L3" as label/value rows when the prompt has structured fields (verdict, problems,
-signals, PRs, spend) and as preformatted text otherwise, "L3 replied" with the full reply, and links:
+What altd sends L3 is written for L3: its ids, revisions, authority notes and instructions never
+appear in the conversation. Expanded: a card in the column with a header ("Report landed · <task
+title> · 09:14", **Hide**), "What altd sent L3" as label/value rows only when the prompt has
+structured fields (verdict, problems, signals, PRs, spend), "L3 replied" with the full reply, and links:
 **Open task**, **Full report** (the task's report view), **Digest** when the reply recorded one.
 The structured prompt's Task field supplies Open task and is omitted from the label/value rows.
 A group expands to a list of its turns, each with its own Show.
 
 States: folded; expanded; in progress ("L3 is handling a landed report for <task>", no Show yet);
 grouped (N turns); failed turn (the line reads "L3 could not handle <what>"; Show reveals the
-prompt and the error).
+error); queued (below).
+
+A queued notice, one altd has written for L3 that has not run yet (block, report, fault, restart, CI
+recheck, terminal, upstream issue, owner message or any other trigger), is the same line in the queued rows (§4.2)
+with an outlined dot in its tone and no Show: **<kind> · <task title> · <need>**. The need is the first
+sentence of the task's open Needs you question, as plain words of at most 90 characters, or a report's
+verdict; a notice with neither reads kind and task alone, and one without a task reads its kind. The line
+ends with **Needs you**, opening that question, while the task has one, else **Open task**. A long title
+wraps; it is never cut. `web/e2e/system-rows.pw.ts` walks queued, handled, card and Needs you states
+on phone and desktop.
 
 A selected L3 heads-up uses this same compact line, wrapping its full one- or two-sentence text
 on phone and desktop. It stays outside routine groups (§4.1). No separate badge, dismiss control,
@@ -779,9 +789,10 @@ the owner's checkpoint; the owner considers an earlier answer with later guidanc
 The recommendation body and response controls are the same component as the open question at the
 end of the chat. Loading uses a skeleton with no inferred count; empty Needs you says
 **Nothing needs you.** A read failure offers Retry. Cached failure keeps saved cards with an explicit
-refresh notice and disabled sending. During submission, the control says **Sending…** and cannot be
-repeated. Sending anything hands the turn back: the task's card leaves Needs you and the badge drops,
-though every question stays open in the record. A brief **Sent to L2** receipt links to chat. When
+refresh notice and disabled sending. During submission, **Send N answers** keeps its label with a
+spinner and cannot be repeated. Sending anything hands the turn back: the task's card leaves Needs you
+and the badge drops, though every question stays open in the record. The chat shows each answer as
+§3.8.2 describes. When
 the owner parks again, still-needed questions return labelled **asked again**; a revised question
 is new. This records delivery, not agreement:
 the L2 interprets presets and typed responses alike, records clear decisions, and discusses follow-ups.
@@ -801,7 +812,7 @@ its line below states the reach honestly: a device the browser's push service ca
 Altitude closed, and says that away from your network the alert names nothing; a device that cannot be
 woken alerts only while Altitude is open, which on a phone means while it is on screen. While a push
 service refuses Altitude's alerts, the line names that service and the reason it gave, says its device
-alerts only while Altitude is open and offers turning alerts off and on there to subscribe it again; the
+gets no alerts and offers turning alerts off and on there to subscribe it again; the
 line returns to the reach once a push gets through. A browser that cannot show notifications disables the switch and says so;
 refused permission says the browser's settings block alerts and how to allow them again. Every state
 leaves Needs you, its cards and all typing untouched.
@@ -809,11 +820,54 @@ leaves Needs you, its cards and all typing untouched.
 Each newly published operator question alerts once, titled with the project and carrying the task name
 only — never question, conversation or incident text. Activating it opens that decision in the running
 app. Faults, stopped tasks, reviews and completed work stay in Needs you without an alert. A grouped
-ask alerts once. A decision already on screen, in Needs you or its owning task, is recorded without
-alerting. Refreshing, reconnecting, polling and other tasks' activity repeat nothing, and turning the
-switch on never announces what is already waiting. A question shows in Needs you at once but alerts
-only once L3 has had its turn and it is still open (or 15 minutes after it was asked), and an alert
-whose decision is answered, withdrawn or superseded disappears from every device untouched.
+ask alerts once. On a device without push, a decision already on screen, in Needs you or its owning task,
+is recorded without alerting; a device push wakes gets the alert without sound while Altitude is on screen.
+Refreshing, reconnecting, polling and other tasks' activity repeat nothing, and turning the switch on never
+announces what is already waiting. A question shows in Needs you at once but alerts only once L3 has had
+its turn and the owner has stopped with it still open (or an hour after it was asked). No alert is ever a
+bare "Altitude": out of reach it reads **A decision needs you** / *Altitude is out of reach, so this alert
+can't name it.*, and a decision settled just before the device read it shows **No decision needs you now**.
+An alert whose decision is answered, withdrawn or superseded closes when Altitude is next open on that
+device or the next alert arrives.
+
+#### 3.8.2 Decision selections
+
+A press on a decision shows as the action it took, in the Create task pill (§3.3), never as a message
+the operator typed (boards `DecisionChoiceStates`, `MobileDecisionChoiceStates`). The record is the
+same: each press saves the operator message it always saved, and the owner cites that message.
+
+In the conversation, a quick answer or an approval sits on the operator's side as a pill with the
+option's own label ("7 days", "Approve merge") and, beneath it in 13px muted text, the question it
+answers or the PR it approves. Answers sent together show one pill each. An **Other…** answer keeps a
+bubble with its words and its question beneath; a typed reply, with or without question context, and
+any message with images keep their ordinary bubble. A pill follows its message's delivery record and
+claims no more than Altitude observed:
+
+| State | The pill |
+| --- | --- |
+| Waiting for the L2 | Clock. While Altitude can still remove the message (an approval queued for a checkpoint), × (Remove, 44px target) sits inside the pill and **Send now** below it; a quick answer is never removable. |
+| Sending to session | Spinner while the L2's session takes the message. |
+| Sent | Grey check once the session has the message. |
+| Delivery unconfirmed | Clock with **Delivery unconfirmed** beneath; no check and no ×. |
+| Decision recorded | Green fill and check once the owner records a decision citing this message. |
+
+A message is a quick answer when a question's saved response names it and the response text equals one
+of that question's options; an **Other…** answer worded exactly like an option shows as that option.
+A message is an approval when its text is exactly the one the merge check accepts ("Approved: merge PR
+#N.", optionally with "at" and a short head), so those words typed in the composer show as the action
+too. Both come from the saved conversation, so a reload, another device and a mixed batch look the same.
+
+On a card, in Needs you and the chat, **Approve merge** is the primary pill and changes in place: accent
+fill and a spinner while sending, keeping focus and ignoring presses; then a clock while the message
+waits for the L2. A refused or failed send turns it into a red **Retry** with **Not sent**
+(`role=alert`), and a denied write disables it with "You cannot approve here." **View PR #N** and the
+hint stay beside it. Saving hands the turn back and the card leaves Needs you. Where a card stays in
+view with a saved answer (the owning chat after re-parking, or a member answered in another window),
+an option shows its pill and a typed answer its words under its delivery state, until the owner
+records the decision.
+
+`web/e2e/decision-selections.pw.ts` walks these states at both widths against real question, review
+and delivery records, with a refused send as a browser overlay.
 
 ### 3.9 Open the owning L2 question
 
@@ -1029,7 +1083,7 @@ the conversation's lower corner without reducing its viewport. View preview stay
 and Needs you; View question stays in task details, useful from Live session. A held review-ready PR whose owner has stopped
 (#419) shows **Your turn · review before merge** at the end of the chat and in Needs you:
 **Approve merge** sends the operator's own message "Approved: merge PR #N." and the L2 merges
-with it after fresh checks of the current head (the chat then shows "Sent · the L2 has your reply."); **View PR #N** opens it; asking below discusses it. A later,
+with it after fresh checks of the current head (the press shows as its pill, §3.8.2, and the chat then shows "Sent · the L2 has your reply."); **View PR #N** opens it; asking below discusses it. A later,
 unrelated question never hides that review; an open operator question that links or names the PR
 supplies its single response surface, with quick options or a freeform field. The separate card stays
 away until the owner resolves the question, including while a submitted response waits for interpretation.
@@ -1046,7 +1100,9 @@ finger and the neighbouring view is on screen beside it, proportionally to the d
 stays in place. Release past half the width, or a fling of at least 0.4 px/ms in the drag's direction,
 completes the switch with a short settle; otherwise, including a fling back toward the start, the
 track springs back. Left moves one tab on (Conversation → Live session → Terminal); right moves one
-tab back; past either end the track gives a little with rubber-band resistance and never switches. Under
+tab back; past either end the track gives a little with rubber-band resistance and never switches. A
+swipe that lands while the track still settles moves nothing until it lifts, and the browser's own
+horizontal swipe never takes it Back. Under
 reduced motion nothing moves with the finger and a release past the same thresholds switches at once.
 Accessible labeled tabs remain the direct alternative. Swipes do not start from the composer or form
 controls, and leave browser-edge Back, text selection, recording, dialogs, horizontally scrollable
@@ -1102,7 +1158,7 @@ for another blocked task. Confirmed Stop reads **Send a correction to continue t
 refused or unconfirmed send uses the shared composer states in §3.6, preserving newer draft edits.
 Accepted messages stay sent through wake or refresh errors. The composer appears for running and
 blocked tasks.
-Queued operator messages form a group of outlined bubbles, 6px apart, each with a quiet ×
+Queued operator messages form a group of outlined bubbles, 6px apart (a decision selection shows its delivery on its pill instead, §3.8.2), each with a quiet ×
 (**Remove**) in the gutter. One bordered **Send now** follows the group. Its accessible description is
 **Joins the current turn without stopping its work.** It hands the queued removable operator group
 to the running turn in arrival order; each message retains its receipt and later arrivals stay outside

@@ -219,6 +219,9 @@ The change-stream outage fixture reports its captured shutdown targets; connecti
 erase them from the count before the response reaches the browser assertion.
 The lost-queue-receipt test waits for the initial streamed reply before installing its overlay,
 so the intended queued request is the only send it interrupts.
+The live-loading measurement waits for the service to finish the transcript read its navigation
+abandoned before measuring the task switch, so that read neither shares the next phase's CPU nor
+outlives the test.
 The reattachment walkthrough forces an overlapping browser overview read while registration fails.
 It releases the read after the error appears and keeps its route handler until teardown; removing
 the last page route also continues held requests, so their callbacks cannot continue them again.
@@ -256,10 +259,10 @@ tasks/history for route and component walkthroughs. Project-isolation and projec
 services exercise real streaming/queue/history and removal/reattachment; task-lifecycle specs
 exercise real message/decision effects. Fixture providers replace external calls at the engine
 boundary. HTTP overlays are reserved for named loading, transport failure and presentation states;
-an intercepted success response alone is not evidence of a backend transition. Request
-interception stays on for each test's browser context, so an overlay that expires or is removed
-while the app sends its next request cannot strand that request in Chromium; `route-overlays.pw.ts`
-guards this.
+an intercepted success response alone is not evidence of a backend transition. Each test's browser
+context fails any request beyond loopback at once, so no walkthrough waits on the internet. That
+route also keeps request interception on, so an overlay that expires or is removed while the app
+sends its next request cannot strand that request in Chromium; `route-overlays.pw.ts` guards this.
 
 Loading walkthroughs scope assertions to their owning region; the Send now case holds independent
 Conversation and Work reads together so both loading states are present on desktop.
@@ -873,6 +876,38 @@ Two observed engine differences matter when reading voice results: this WebKit b
 request starts `suspended` in WebKit but `running` in Chromium. Both are engine observations, not
 iOS results.
 
+### Pending device verification
+
+Each Altitude installation runs from its own machine and records; GitHub issues are what they share.
+Native behavior that only the other installation can confirm stays on the change's own issue as a
+checklist, labeled for the installation that owes it:
+
+| Label | Owed by | Covers |
+| --- | --- | --- |
+| `verify:macos` | The Mac installation | launchd services and jobs, Seatbelt confinement, installation and updates on macOS, the container deployment on a Mac, a physical iPhone |
+| `verify:linux` | The Linux installation | systemd services, Linux confinement, installation and updates on Linux, the Linux container deployment |
+
+Browser and UI behavior relies on the required CI (Chromium on both viewports) and the
+[emulated iPhone lane](#device-evidence), so it gets no label. The owner's PR references the issue
+without a closing keyword and lists each check: what to run, the evidence that counts and what stays
+unproven until then. Its coordinator comments the checklist on the issue, filing one when the change
+has none, and adds the label:
+
+```sh
+alt issue label 225 --add verify:macos
+```
+
+The owing installation's coordinator lists its open items when the operator asks:
+
+```sh
+gh issue list --label verify:macos --state open
+```
+
+On the operator's go it starts a task for them and comments the task's evidence on the issue. Once no
+check remains it removes the label (`alt issue label 225 --remove verify:macos`) and closes the issue
+as completed when nothing else is open in it; an umbrella such as #225 keeps its remaining scope. A
+failed check stays open on the issue with its evidence until a fix is verified.
+
 ## Coverage and limits
 
 Review evidence by user journey and failure mode. Full suites are required; a line-coverage number
@@ -1016,14 +1051,15 @@ host name resolves to the guest's loopback, where the account serves the release
 throwaway certificate authority that only this test's `curl` trusts. A download altered by one byte
 must be refused with nothing installed; the unaltered one must install a healthy service, which is
 then uninstalled. The `update` phase installs the baseline while the account's server answers for
-GitHub's release list and release downloads: the release host and its `api.` host resolve to the
+GitHub's release lookup and release downloads: the release host and its `api.` host resolve to the
 guest's loopback, and the account's user manager gives the service and its update job the throwaway
-authority as `SSL_CERT_FILE`. The listing initially names the baseline and an ignored draft, then
-publishes the candidate. The daemon must install it automatically with no browser terminal open,
+authority as `SSL_CERT_FILE`. A release-candidate baseline reads a listing that initially names the
+baseline and an ignored draft; a stable baseline reads GitHub's latest release. The server then
+publishes the candidate. The baseline's daemon must install it automatically with no browser terminal open,
 record success and serve the candidate's healthy version with a new PID. The harness then turns
 automatic updates off and publishes a newer synthetic release; a paired app **Update** request
-installs it explicitly. Each update downloads only its archive and checksum. Both baseline and
-candidate carry this behavior, so the phase needs same-source versions. The hosts
+installs it explicitly. Each update downloads only its archive and checksum. The baseline must have
+automatic updates (`v0.1.2` or later). The hosts
 entries and unprivileged-port setting these phases need are restored afterwards. The `public-install`
 and `public-update` phases need a guest that reaches GitHub and two published releases, the candidate
 being the one `releases/latest` names. `public-install` runs setup's command for `releases/latest`
@@ -1053,12 +1089,14 @@ make installation-vm RESULTS=/tmp/altitude-vm SOURCE=origin/main
 `BASELINE=<tag>` makes a published release the baseline: the runner downloads every asset the
 release lists anonymously, checks each against the release's `SHA256SUMS` and the archive's declared
 version and commit against the tag on GitHub, and builds only the candidate from `SOURCE`,
-under the next minor version so the update is never a downgrade. Every phase then installs the
-published files, `install.sh` included, and updates from them to the candidate. The guest stays
+under the next minor version on the baseline's release channel, so the update is never a downgrade
+and the baseline follows it. Every phase then installs the published files, `install.sh` included,
+and updates from them to the candidate; in the `update` phase the published release's own daemon
+installs the candidate automatically. The guest stays
 offline, so the published files run exactly, but its own anonymous download from GitHub does not:
 
 ```sh
-make installation-vm RESULTS=/tmp/altitude-vm SOURCE=origin/main BASELINE=v0.1.0-rc.2
+make installation-vm RESULTS=/tmp/altitude-vm SOURCE=origin/main BASELINE=v0.1.2
 ```
 
 `RECOVERY=1` with a published `BASELINE` runs only the `recovery` phase: the published release's

@@ -608,7 +608,9 @@ test("a submitted answer survives a lost response without duplicate messages, an
   await walk.state("01-acceptance-clears-list-on-refresh", { visible: [page.getByRole("heading", { name: "Needs you", exact: true })], hidden: [card] });
   await walk.open(atQuestion(slug, question));
   const historical = questionCard(page, question);
-  const answer = page.getByRole("region", { name: "Task conversation", exact: true }).locator(".bubble").filter({ hasText: question.recommendation!.text });
+  // The accepted recommendation shows as the option pressed, with the question it answers (SPEC.md §3.8.2).
+  const answer = page.getByRole("region", { name: "Task conversation", exact: true }).locator(".choice-mine")
+    .filter({ hasText: question.recommendation!.label! }).filter({ hasText: question.question });
   await handedBack(page, historical);
   await walk.state("02-stale-link-shows-sent-answer-no-old-action", { visible: [answer], hidden: [historical, page.getByRole("button", { name: question.recommendation!.label, exact: true })] });
   await walk.open(`/projects/atlas/decisions/${slug}`);
@@ -1053,7 +1055,7 @@ test("a pending PR question is the single review surface through response pickup
   expect(reparked).toMatchObject({ id: initial.id, revision: initial.revision, response: submitted.response });
   await page.reload();
   await walk.state("held-03-submitted-freeform-keeps-receipt-and-independent-choice", {
-    visible: [card.getByText("Sent to L2", { exact: true }), west],
+    visible: [card.getByRole("status").filter({ hasText: "Use Order summary as the checkout heading." }), west],
     hidden: [card.getByRole("textbox"), approve],
   });
   expect((await queue(request)).filter((row) => row.slug === slug)).toHaveLength(1);
@@ -1100,6 +1102,7 @@ test("closed members fold behind the open question, and questions reworded into 
   const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
   const live = conversation.locator(".conversation-question[data-turn]");
   const earlier = live.getByText("2 earlier questions", { exact: true });
+  const withdrawn = live.getByText("Question withdrawn", { exact: true });
   expect((await queue(request)).filter((row) => row.slug === slug)).toHaveLength(1);
   await walk.open("/");
   await walk.state("waits-01-needs-you-shows-only-the-operator-question", {
@@ -1110,11 +1113,13 @@ test("closed members fold behind the open question, and questions reworded into 
   await walk.state("waits-02-chat-leads-with-the-open-question", {
     visible: [turnLabel(page).filter({ hasText: "Your turn · 1 question" }), earlier, live.getByRole("button", { name: /^7 days/ }),
       live.getByText("One week covers the rollout.", { exact: true }), live.getByText("L3 is handling this", { exact: true })],
-    hidden: [live.getByText(region, { exact: true }), live.getByText("Decision recorded", { exact: true }), live.getByText("Question withdrawn", { exact: true })],
+    hidden: [live.getByText(region, { exact: true }), live.getByText("Decision recorded", { exact: true })],
   });
+  // Playwright's WebKit toBeHidden skips checkVisibility() and treats a <summary> inside another closed <details> as shown.
+  expect(await withdrawn.evaluate((summary) => summary.checkVisibility())).toBe(false);
   await earlier.click();
   await walk.state("waits-03-earlier-questions-stay-reachable", {
-    visible: [live.getByText(region, { exact: true }), live.getByText("Decision recorded", { exact: true }), live.getByText("Question withdrawn", { exact: true })],
+    visible: [live.getByText(region, { exact: true }), live.getByText("Decision recorded", { exact: true }), withdrawn],
     hidden: [],
   });
   const reworded = await request.post("/fixture/waits-reworded", { data: { slug } });

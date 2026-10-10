@@ -18,8 +18,8 @@ import { MessageImages, PendingImages } from "../components/MessageImages";
 import type { ImagePreview } from "../components/MessageImages";
 import { SystemGroup, SystemLine, subjectOf } from "../components/SystemLine";
 import { TaskCard } from "../components/TaskCard";
-import { CreateTask, CreateTaskError } from "../components/CreateTask";
-import type { CreateTaskState } from "../components/CreateTask";
+import { ChoiceError, CreateTask } from "../components/Choice";
+import type { ChoiceState } from "../components/Choice";
 import type { SystemTurn } from "../components/SystemLine";
 
 /*
@@ -354,7 +354,7 @@ export default function Conversation({
   const offering = new Set(turns.filter((turn) => turn.assistant?.offer).map((turn) => turn.id));
   const pressTurns = new Map(turns.filter((turn) => turn.user?.offer_turn).map((turn) => [turn.user!.offer_turn!, turn]));
   const queuedPresses = new Map(queued.filter((row) => row.offer_turn).map((row) => [row.offer_turn!, row]));
-  const createTaskState = (turn: Turn): CreateTaskState | null => {
+  const createTaskState = (turn: Turn): ChoiceState | null => {
     if (press === turn.id) return "busy";
     if (queuedPresses.has(turn.id)) return "wait";
     const answer = pressTurns.get(turn.id);
@@ -401,7 +401,7 @@ export default function Conversation({
               {offer ? (
                 <CreateTask title={turn.assistant.offer!} state={offer} error={refused} onPress={() => void pressCreateTask(turn.id)}
                   onRemove={pressRow && !pressRow.turn_id ? () => dequeue.mutate(pressRow.id) : undefined} removing={dequeue.isPending} />
-              ) : refused ? <CreateTaskError message={refused} /> : null}
+              ) : refused ? <ChoiceError message={refused} /> : null}
             </Reply>
           ) : turn.error && !pressed ? (
             <p className="turn-failed text-muted">
@@ -413,7 +413,7 @@ export default function Conversation({
                   Retry
                 </button>
               ) : null}
-              {pressError && pressError.turnId === turn.user?.offer_turn ? <> <CreateTaskError message={pressError.message} /></> : null}
+              {pressError && pressError.turnId === turn.user?.offer_turn ? <> <ChoiceError message={pressError.message} /></> : null}
             </p>
           ) : !keptRow && item.inProgress ? (
             <Typing />
@@ -516,7 +516,11 @@ export default function Conversation({
                     <Bubble text={row.text} at={row.at} state={row.sending ? "sending" : "queued"} images={<MessageImages project={name} images={row.images} />}
                       side={row.sending || row.turn_id ? undefined : <RemoveMessage message={row.text} removing={dequeue.isPending && dequeue.variables === row.id}
                         disabled={chat.isError || chat.isPending || dequeue.isPending || sendNow.isPending} onClick={() => dequeue.mutate(row.id)} />} />
-                  ) : <p className="queued-text text-meta text-muted">{row.text}</p>}
+                  ) : (
+                    <SystemLine project={name} titles={titles} turn={{ id: row.id, at: row.at ?? null,
+                      trigger: row.trigger ?? "system", prompt: row.text, reply: null, error: null, inProgress: false,
+                      slug: subjectOf(row, name), fyi: false, headsUp: false, queued: true }} />
+                  )}
                   {row.id === lastWaiting?.id ? queueAction : null}
                 </li>
               ))}

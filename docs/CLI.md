@@ -402,20 +402,23 @@ still requires that origin before a local parent can be fetched.
 ```text
 alt issue new --title <title> [--label <label>] -
 alt issue comment <number> -
+alt issue label <number> [--add <label>] [--remove <label>]
 alt issue close <number> --reason completed|not-planned
 ```
 
 L3 and the operator use these verbs through altd; L2 cannot mutate issues directly. L3 files requested
 backlog, maintains authorized increment breakdowns, and closes issues for requested closure or verified
-completion of authorized delivery, without another routine request. This does not authorize unrelated
-autonomous backlog cleanup.
+completion of authorized delivery, without another routine request. Where project rules track
+[pending device verification](DEVELOPMENT.md#pending-device-verification), L3 also adds and removes its
+labels and comments its checks and evidence. This does not authorize unrelated autonomous backlog cleanup.
 The repository comes from the selected project's checkout origin; issue numbers must be positive
 integers, and URLs or repository overrides are refused. The L3 socket fixes the project.
 
 New and comment read their public body from stdin; titles, labels, and bodies must exclude home paths
 and private incident evidence; recognizable credentials and tokens are rejected too. Close requires `--reason completed` for finished work or
 `--reason not-planned` for work the operator decides not to pursue. Altd maps the latter to GitHub's
-`not planned` reason. Close accepts no stdin body, title, labels, or comment option; a separately
+`not planned` reason. Label adds or removes existing repository labels with repeatable `--add` and
+`--remove` and accepts no body. Close accepts no stdin body, title, labels, or comment option; a separately
 requested public explanation uses `alt issue comment` and its existing evidence check. No other issue
 mutations or direct `gh` writes are enabled; the daemon itself publishes [incident issues](#incident-issues).
 
@@ -1297,7 +1300,8 @@ The worker handoff names the pending question ID/revision and each task message 
 judges the reply in context: discuss a follow-up, clarify genuine uncertainty, or record a clear
 decision and continue. No special approval phrase or extra confirmation is required.
 The question UI sends presets and **Other…** text through the same conversational handoff, including
-plain questions with no recommendations. **Sent to L2** means a response is saved; the owner still
+plain questions with no recommendations. A saved response shows as the choice made or the words
+typed; the owner still
 judges its meaning and uses `resolve` for an actual decision. Submitted members leave the attention
 count. To explicitly ask a responded member again, include its ID in `--questions-file`; publication
 creates a new revision and restores its answer field even when wording is unchanged. Ordinary
