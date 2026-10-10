@@ -117,6 +117,7 @@ class TestPrerequisites(OnboardingCase):
     def items(self, *, gh: bool, signed: dict, installed: dict, git: bool = True, lacks: tuple | None = ()) -> dict:
         which = {"gh": "/fixture/gh", "git": "/fixture/git" if git else None}
         with mock.patch.object(installation.shutil, "which", side_effect=lambda name: which.get(name)), \
+             mock.patch.object(platform, "package_manager", return_value="apt"), \
              mock.patch.object(installation, "_gh_signed_in", return_value=gh), \
              mock.patch.object(installation, "_gh_lacks", return_value=None if lacks is None else list(lacks)), \
              mock.patch.object(engines, "installation",
@@ -132,11 +133,12 @@ class TestPrerequisites(OnboardingCase):
 
     def test_a_missing_tool_shows_the_command_that_installs_it(self):
         with mock.patch.object(installation.shutil, "which", return_value=None), \
+             mock.patch.object(platform, "package_manager", return_value="apt"), \
              mock.patch.object(engines, "installation", return_value={"available": False, "why": ""}):
             items = {item["key"]: item for item in installation.prerequisites()}
+            commands = {"github": ("unmet", platform.install_command("gh")), "git": ("unmet", platform.install_command("git"))}
         self.assertEqual({key: (item["state"], item["command"]) for key, item in items.items()},
-                         {"github": ("unmet", platform.install_command("gh")), "git": ("unmet", platform.install_command("git")),
-                          **{engine: ("unmet", engines.INSTALL[engine]) for engine in config.ENGINES}})
+                         {**commands, **{engine: ("unmet", engines.INSTALL[engine]) for engine in config.ENGINES}})
 
     def test_a_github_cli_that_cannot_land_shows_the_command_that_replaces_it(self):
         items = self.items(gh=True, lacks=("baseRefOid",), signed={"claude": True, "codex": True},
@@ -156,8 +158,14 @@ class TestPrerequisites(OnboardingCase):
             self.assertEqual((platform.install_command("gh"), platform.install_command("git")),
                              ("brew install gh", "xcode-select --install"))
         with mock.patch.object(platform.sys, "platform", "linux"):
-            command = platform.install_command("gh")
-            self.assertEqual(platform.install_command("git"), "sudo apt install git")
+            for manager, git in (("apt", "sudo apt install git"), ("dnf", "sudo dnf install git"),
+                                 ("pacman", "sudo pacman -S git"), ("zypper", "sudo zypper install git"), (None, None)):
+                with self.subTest(manager=manager), mock.patch.object(platform, "package_manager", return_value=manager):
+                    self.assertEqual(platform.install_command("git"), git)
+                    if manager in ("pacman", None):
+                        self.assertEqual(platform.install_command("gh"), manager and "sudo pacman -S github-cli")
+                    else:
+                        self.assertNotIn("apt" if manager != "apt" else "dnf", platform.install_command("gh"))
         bin_dir = self.tmp / "bin"
         bin_dir.mkdir()
         log = self.tmp / "commands"
@@ -166,23 +174,51 @@ class TestPrerequisites(OnboardingCase):
             (bin_dir / name).write_text(f"#!/bin/sh\n{body}\n")
             (bin_dir / name).chmod(0o755)
         keyring = "/etc/apt/keyrings/githubcli-archive-keyring.gpg"
-        for fail in ("1", ""):
-            log.unlink(missing_ok=True)
-            run = subprocess.run(["sh", "-c", command], env={"PATH": f"{bin_dir}:/usr/bin:/bin", "FAIL": fail, "TMPDIR": str(self.tmp)},
-                                 capture_output=True, text=True)
-            lines = log.read_text().splitlines()
-            self.assertEqual(lines[0], "curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o "
-                             + lines[0].split()[-1])
-            if fail:
-                self.assertEqual((run.returncode, len(lines)), (22, 1), "a failed download leaves the keyring alone")
-                continue
-            self.assertEqual(run.returncode, 0, run.stderr)
-            self.assertFalse(Path(lines[0].split()[-1]).exists(), "the downloaded key is removed once installed")
-            self.assertEqual(lines[1:], [
-                f"sudo install -D -m 644 {lines[0].split()[-1]} {keyring}",
-                "sudo tee /etc/apt/sources.list.d/github-cli.list",
+        expected = {
+            "apt": ("githubcli-archive-keyring.gpg", lambda download: [
+                f"sudo install -D -m 644 {download} {keyring}", "sudo tee /etc/apt/sources.list.d/github-cli.list",
                 f"deb [signed-by={keyring}] https://cli.github.com/packages stable main",
-                "sudo apt update", "sudo apt install gh"])
+                "sudo apt update", "sudo apt install gh"]),
+            "dnf": ("rpm/gh-cli.repo", lambda download: [
+                f"sudo install -D -m 644 {download} /etc/yum.repos.d/gh-cli.repo", "sudo dnf install gh",
+                "sudo dnf upgrade gh"]),
+            "zypper": ("rpm/gh-cli.repo", lambda download: [
+                f"sudo install -D -m 644 {download} /etc/zypp/repos.d/gh-cli.repo", "sudo zypper install --from gh-cli gh"])}
+        for manager, (source, steps) in expected.items():
+            with mock.patch.object(platform.sys, "platform", "linux"), \
+                    mock.patch.object(platform, "package_manager", return_value=manager):
+                command = platform.install_command("gh")
+            for fail in ("1", ""):
+                with self.subTest(manager=manager, fail=bool(fail)):
+                    log.unlink(missing_ok=True)
+                    run = subprocess.run(["sh", "-c", command], capture_output=True, text=True,
+                                         env={"PATH": f"{bin_dir}:/usr/bin:/bin", "FAIL": fail, "TMPDIR": str(self.tmp)})
+                    lines = log.read_text().splitlines()
+                    download = lines[0].split()[-1]
+                    self.assertEqual(lines[0], f"curl -fsSL https://cli.github.com/packages/{source} -o {download}")
+                    if fail:
+                        self.assertEqual((run.returncode, len(lines)), (22, 1), "a failed download changes nothing")
+                        continue
+                    self.assertEqual(run.returncode, 0, run.stderr)
+                    self.assertFalse(Path(download).exists(), "the download is removed once installed")
+                    self.assertEqual(lines[1:], steps(download))
+
+    def test_the_package_manager_is_the_first_one_this_system_has(self):
+        for present, manager in ((("apt-get", "brew"), "apt"), (("dnf",), "dnf"), (("pacman",), "pacman"),
+                                 (("zypper",), "zypper"), (("brew",), None), ((), None)):
+            with self.subTest(present=present), \
+                    mock.patch.object(platform.shutil, "which", side_effect=lambda name: name in present or None):
+                self.assertEqual(platform.package_manager(), manager)
+
+    def test_without_a_known_package_manager_first_run_names_each_tools_own_page(self):
+        with mock.patch.object(platform.sys, "platform", "linux"), \
+                mock.patch.object(platform, "package_manager", return_value=None), \
+                mock.patch.object(installation.shutil, "which", return_value=None), \
+                mock.patch.object(engines, "installation", return_value={"available": False, "why": ""}):
+            items = {item["key"]: item for item in installation.prerequisites()}
+        self.assertEqual((items["github"]["command"], items["git"]["command"]), (None, None))
+        self.assertIn("Install it (https://github.com/cli/cli#installation), then sign in", items["github"]["detail"])
+        self.assertEqual(items["git"]["detail"], "Agents work in Git checkouts. Install it (https://git-scm.com/downloads/linux).")
 
     def test_the_landing_fields_come_from_the_github_cli_field_list_without_credentials(self):
         bin_dir = self.tmp / "bin"

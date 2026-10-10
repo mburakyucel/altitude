@@ -9,9 +9,11 @@ After container replacement, the browser explains that new AI work is paused and
 Continue command. It retains messages and setup requests until that action; an ordinary restart
 of the same container retains its previous admission. See [container recovery](CONTAINERS.md#lifecycle-and-recovery).
 
-Altitude targets one operator on a Linux x86_64 machine with a systemd user manager, or on a Mac with
-Apple silicon running macOS 15 or newer. The release archive includes the CLI, daemon and built UI;
-Ubuntu 24.04 is the initial validation target. The macOS runtime is implemented and its native
+Altitude targets one operator on Linux with a systemd user manager, or on macOS 15 or newer. The
+release archive includes the CLI, daemon and built UI and has no architecture-specific parts. Releases
+are validated on Ubuntu 24.04 x86_64 and Apple silicon Macs. Other distributions are expected to work;
+on another architecture, such as Linux on ARM or an Intel Mac, the installer notes that the host is
+not yet validated. The macOS runtime is implemented and its native
 acceptance on a spare account is pending ([roadmap](ROADMAP.md#native-macos-runtime)); Windows and
 genuine clean-machine/provider acceptance are not established.
 
@@ -34,8 +36,8 @@ See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](D
 - Linux with a working systemd **user** manager (`systemctl --user status`) and support for the
   selected engine's sandbox. Both task integrations launch through transient user units, even
   with a foreground Altitude server. Ubuntu 24.04/Python 3.12 is the CI environment; a broader
-  compatibility matrix is not established.
-- Or macOS 15 or newer on Apple silicon, with the account logged in (the screen may stay locked).
+  compatibility matrix is not established. [Host voice](OPERATIONS.md#host-voice) needs x86_64.
+- Or macOS 15 or newer, with the account logged in (the screen may stay locked).
   The service is a LaunchAgent of your login and needs no administrator rights; it starts at login,
   so a Mac that restarts waits for one login, and running before any login is a later increment.
   Put Homebrew's `openssl@3` ahead of `/usr/bin` on PATH (`brew install openssl@3`): macOS's own
@@ -47,8 +49,10 @@ See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](D
   `alt land` reads pull request fields (`baseRefOid`, `closingIssuesReferences`) that older GitHub CLI
   releases lack; Debian and Ubuntu package such a release, which signs in and opens pull requests but
   fails at the first landing. On Linux, install GitHub CLI from
-  [GitHub's own package repository](https://github.com/cli/cli/blob/trunk/docs/install_linux.md); on a
-  Mac, Homebrew's `gh` is current.
+  [GitHub's own package repository](https://github.com/cli/cli/blob/trunk/docs/install_linux.md)
+  (Arch's `github-cli` is current); on a Mac, Homebrew's `gh` is current. First run and `alt doctor`
+  show the command for this system's package manager (apt, dnf, pacman or zypper), or the tool's own
+  installation page when they find none of those.
 - Access to this repository and to a GitHub project you can fetch, push and open PRs in.
   Authenticate GitHub CLI, verify `gh auth status`, and configure Git name/email and your
   SSH or HTTPS Git credentials. For HTTPS with GitHub CLI credentials, run `gh auth setup-git`
@@ -66,8 +70,8 @@ See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](D
 
 ## Install the application
 
-On Linux x86_64 with Python 3.12 or newer and a systemd user manager, or on macOS 15 or newer on
-Apple silicon with Python 3.12, Homebrew's OpenSSL 3 and a logged-in desktop session, one command
+On Linux with Python 3.12 or newer and a systemd user manager, or on macOS 15 or newer with
+Python 3.12, Homebrew's OpenSSL 3 and a logged-in desktop session, one command
 installs the latest published release as the account that will use Altitude:
 
 ```sh
@@ -95,9 +99,11 @@ systemctl --user daemon-reload
 ```
 
 `install.sh` belongs to one published release. It checks the machine first and stops with the fix
-when something is missing: Linux x86_64 or a Mac with Apple silicon, not root, Python 3.12 or newer,
-`curl`, a SHA-256 tool and `openssl`; on Linux `systemctl --user`, on a Mac macOS 15 or newer,
-OpenSSL 3 ahead of macOS's LibreSSL on PATH and launchd's domain of the logged-in desktop session.
+when something is missing: Linux or macOS, not root, Python 3.12 or newer, `curl`, a SHA-256 tool
+and `openssl`; on Linux `systemctl --user`, on a Mac macOS 15 or newer, OpenSSL 3 ahead of macOS's
+LibreSSL on PATH and launchd's domain of the logged-in desktop session. A fix names the command for
+the package manager it finds (apt, dnf, pacman, zypper or Homebrew). On a host other than Linux
+x86_64 or an Apple silicon Mac it installs and prints one line saying the host is not yet validated.
 Releases before `v0.1.0` stop on a Mac before downloading anything. It then downloads that release's archive and `install.py`, checks
 each against the SHA-256 written into the script when the release was built, runs
 `install.py --archive … --sha256 …` and prints the address, the certificate fingerprint and the next

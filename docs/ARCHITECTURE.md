@@ -278,8 +278,8 @@ updates retain the saved environment.
 `platform.py` is the platform seam: it owns the generated per-user daemon service, the jobs that run
 workers, reviews, machine commands, updates and restarts, their status and stop, resource limits, and the
 process and socket facts behind worker identity, terminal Stop and the terminal's agent check. On Linux
-x86_64 the service is a systemd user unit and each job a transient user unit whose cgroup holds every
-descendant. On macOS 15 or newer on Apple silicon the service is a LaunchAgent in the user's `gui` domain
+the service is a systemd user unit and each job a transient user unit whose cgroup holds every
+descendant. On macOS 15 or newer the service is a LaunchAgent in the user's `gui` domain
 (`~/Library/LaunchAgents/dev.altitude.altd.plist`, logging to `~/Library/Logs/altitude/`), and each job
 is its own launchd job, so its processes share a kernel coalition that no `setsid`, double fork or
 cleared environment leaves. The job's program is a supervisor outside any sandbox: it runs the command,
@@ -463,7 +463,7 @@ browser paired, and returns to it on any 401.
 Everything above the platform seam is the same on both hosts. These are the behaviors that differ;
 `platform.py` owns each one, and the sections named in the last column describe it.
 
-| Area | Linux x86_64 | macOS 15+ on Apple silicon | Where |
+| Area | Linux | macOS 15+ | Where |
 | --- | --- | --- | --- |
 | Service | systemd user unit; restarts on failure; runs while the user manager runs | LaunchAgent in the `gui` domain; restarts on failure; starts at login, runs with the screen locked, stops at logout (running before login is a later increment) | Setup, Operations |
 | Service logs | the user journal | `~/Library/Logs/altitude/`, also for detached jobs such as updates | Operations |
@@ -476,10 +476,10 @@ Everything above the platform seam is the same on both hosts. These are the beha
 | Terminal Close | the shell is a transient unit; stopping it hangs up its cgroup | the shell is a launchd job; stopping it hangs up its coalition | Operator terminal |
 | Terminal agent check | `/proc/net/tcp` and cgroups | this user's processes' sockets (libproc) and job coalitions | Operator terminal |
 | Image conversion memory cap | `RLIMIT_AS` | a watcher that kills the converter past its memory footprint | above |
-| Native libraries, tools | system packages (apt) | Homebrew; `openssl` must be OpenSSL 3, not macOS's LibreSSL | Setup |
+| Native libraries, tools | system packages (apt, dnf, pacman or zypper) | Homebrew; `openssl` must be OpenSSL 3, not macOS's LibreSSL | Setup |
 | Temporary directory in jobs | `/tmp` | the user's own `$TMPDIR` | above |
 | Source-checkout deployment | systemd unit (`make install-service`) for the checkout at `~/Projects/altitude` on `main`; address, PATH and branch by drop-in; TLS drop-in; self-restart | LaunchAgent (`make install-service`) for the checkout wherever it is, taking the address, PATH and checked-out branch from the installing command; self-restart through the seam; TLS drop-in refused with an explicit message | Setup, Operations |
-| Installer checks | x86_64, not root, Python 3.12+, `curl`, a SHA-256 tool, `openssl`, `systemctl --user` | Apple silicon, macOS 15+, not root, Python 3.12+, `curl`, a SHA-256 tool, OpenSSL 3 ahead of LibreSSL on PATH, launchd's domain of the logged-in desktop session; on both hosts each missing item stops with its fix before anything downloads | Setup |
+| Installer checks | not root, Python 3.12+, `curl`, a SHA-256 tool, `openssl`, `systemctl --user` | macOS 15+, not root, Python 3.12+, `curl`, a SHA-256 tool, OpenSSL 3 ahead of LibreSSL on PATH, launchd's domain of the logged-in desktop session; on both hosts each missing item stops with its fix, for the package manager found, before anything downloads, and a host other than Linux x86_64 or Apple silicon installs with one line saying it is not yet validated | Setup |
 | Installed service | `~/.config/systemd/user/altitude.service`, enabled and started | `~/Library/LaunchAgents/dev.altitude.altd.plist`, bootstrapped into the `gui` domain; its definition sets `HOME`, and an installation under another `HOME` gets a label derived from that home | Setup, Operations |
 | Update from the app | `alt update --version` in a transient user unit; its output is in the user journal | `alt update --version` as the launchd job `dev.altitude.job.altitude-update-<version>`, logging to `~/Library/Logs/altitude/altitude-update-<version>.log` | Operations |
 | Failed update, interrupted activation | the previous version is restored and its unit restarted; `alt recover` (or `install.py --recover`) finishes an interrupted one | the same, restarting the LaunchAgent | Setup, Operations |
