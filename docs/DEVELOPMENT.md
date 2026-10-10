@@ -411,9 +411,15 @@ alt task validate -- python3 -m unittest tests.test_container_workflow tests.tes
   order, for up to 70 minutes (one run's hour and its cleanup, the client's budget); after that it is
   refused with what still holds the machine. While it waits, `alt task validate` prints the task whose
   run holds the machine, when that run's limit ends and how many requests are ahead. Every check is
-  repeated at admission. altd watches each request's connection: a client that stops, is interrupted
-  or loses its connection leaves the line, or, once admitted, has its run stopped at once and recorded
-  as `stopped`, which frees the machine for the next request.
+  repeated at admission. altd checks each request's connection every two seconds: a client that stops,
+  is interrupted or loses its connection leaves the line, or, once admitted, has its run stopped and
+  recorded as `stopped`. Stopping ends the run's processes (on Linux, SIGTERM and SIGKILL five seconds
+  later), and cleanup follows, so the machine is usually free for the next request within a few seconds. The
+  client ends when the process that started it ends, because an engine can cancel a command yet leave
+  the command itself running and connected. A newer request from the same task replaces that task's
+  earlier request the same way: a waiting one leaves the line, and an admitted run is stopped and
+  recorded as `replaced`, naming when the newer request arrived. An owner that cancelled a run can
+  therefore start its corrected command at once.
 - **Machine runs.** Commands under an operator grant (`alt task run`) wait in a line of their own,
   apart from this slot: at most a quarter of the computer's cores run at once (at least one; two on
   an 8-core Mac), and `alt machine show` reports the number as `machine_runs`. A command beyond
