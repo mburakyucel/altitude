@@ -92,6 +92,35 @@ class TestQueuedNotifications(AltitudeCase):
         self.assertIsNone(l3.deliver_queued(self.project))
         self.assertEqual(self.turns("assistant"), 1, "an open question still arrives once")
 
+    def test_an_owner_reply_to_l3_is_delivered_as_one_turn_and_other_replies_and_reparks_queue_nothing(self):
+        slug = self.ask("Mirror order", "Which mirror goes first?")["slug"]
+        l3.deliver_queued(self.project)
+        T.resume(self.project, slug)
+        T.message(self.project, slug, "l2", "Still measuring the mirrors.", expected_attempt=1)
+        T.block(self.project, slug, "Which mirror goes first?", actor="l2", expected_attempt=1,
+                updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE}, tell_l3=True)
+        self.assertEqual(self.queue(), [], "an ordinary reply and an unchanged re-parked question tell L3 nothing")
+
+        reply = T.message(self.project, slug, "l2", "The east mirror needs its own task.", expected_attempt=1,
+                          to_l3=True)
+
+        [notice] = self.queue()
+        self.assertEqual((notice["trigger"], notice["slug"], reply["queued_for_l3"]), ("owner-message", slug, notice["id"]))
+        self.assertIn("The east mirror needs its own task.", notice["text"])
+        self.assertIn(reply["id"], notice["text"])
+        self.assertIn("grants no operator authority", notice["text"])
+        self.assertEqual(T.task_messages(self.project, slug)[-1]["queued_for_l3"], notice["id"])
+        with self.assertRaisesRegex(T.TransitionError, "Only the owner"):
+            T.message(self.project, slug, "l3", "Noted.", to_l3=True)
+
+        l3.deliver_queued(self.project)
+
+        self.assertEqual(self.queue(), [])
+        self.assertEqual(self.prompts[-1].count("The east mirror needs its own task."), 1)
+        [row] = [row for row in l3.chat_history(self.project, None)
+                 if row["role"] == "user" and row["trigger"] == "owner-message"]
+        self.assertEqual(row["slug"], slug)
+
     def dropped(self) -> list[tuple]:
         return [(event["message_id"], event["slug"]) for event in S.read_project_log(self.project, limit=0)
                 if event["kind"] == "l3-notice-dropped"]
