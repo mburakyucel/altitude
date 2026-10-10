@@ -52,6 +52,8 @@ test("Needs you shows each proposal and merge review and Back returns to its car
   await expect(header.locator(".question-review-go")).toHaveCount(0);
   await longest.scrollIntoViewIfNeeded();
   await walk.state("01b-longest-line-and-no-line", { visible: [longest, header.getByText("Proposal review · not done", { exact: true })], hidden: [region.locator(".question-review")] });
+  await header.locator(".question-review").scrollIntoViewIfNeeded();
+  await walk.state("01c-no-review", { visible: [header.getByText("not done", { exact: true })], hidden: [header.getByRole("link", { name: /^Proposal review/ })] });
   await page.locator(".needs-page").evaluate((node) => { node.scrollTop = 0; });
 
   await roundTrip(page, merge.getByRole("link", { name: implementation, exact: true }), "keep-pagin-changes",
