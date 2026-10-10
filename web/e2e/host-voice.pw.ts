@@ -242,13 +242,13 @@ test("unavailable host voice explains itself on press without starting capture",
   await walk.open(project.path);
   const reason = v.main.getByText("Voice isn't available on this computer: voice runs on Linux x86_64 only for now. Typing works.", { exact: true });
   await expect(v.mic).toHaveAttribute("aria-disabled", "true");
-  await expect(reason).toHaveClass(/sr-only/);
+  await expect(reason.locator("..")).toHaveClass(/sr-only/);
   await walk.state("host-voice-12-unavailable", {
     visible: [v.mic, v.field], hidden: [],
   });
   await v.mic.focus();
   await page.keyboard.press("Enter");
-  await expect(reason).not.toHaveClass(/sr-only/);
+  await expect(reason.locator("..")).not.toHaveClass(/sr-only/);
   await walk.state("host-voice-13-reason", { visible: [reason, v.mic, v.field], hidden: [] });
   expect(host.requests).toEqual([]);
 });
