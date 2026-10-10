@@ -507,7 +507,8 @@ export default function Composer({
         failure.current = saved.failure;
         setSendFailure(saved.failure);
         setRecoveryUnavailable(unavailable);
-        if (id === undefined || focusAfterSend.current.delete(id)) focusField(saved.text.length);
+        // A reload's recovery has no Send; a Cancel made in view takes focus whatever the Send's claim.
+        if (id === undefined || focusAfterSend.current.delete(id) || focusAfterCancel.current) focusField(saved.text.length);
       },
     };
     recoveryViews.set(conversation, view);

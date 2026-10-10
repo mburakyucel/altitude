@@ -1756,14 +1756,20 @@ describe("Composer", () => {
     }
   });
 
-  it("browser recognition: the X on a voice Send restores the draft and focuses the microphone, not the field", async () => {
+  it.each([false, true])("browser recognition: the X on a voice Send restores the draft and focuses the microphone, not the field (after a view change: %s)", async (returned) => {
     installVoiceBrowser({ backend: "browser" });
     const onSubmit = vi.fn();
-    const { user, field } = mount({ initial: "Keep", onSubmit });
+    const { user, field, rerender } = mount({ initial: "Keep", onSubmit });
     await user.click(screen.getByRole("button", { name: "Start voice input" }));
     await waitFor(() => expect(FakeSpeechRecognition.instances).toHaveLength(1));
     FakeSpeechRecognition.instances[0]!.answersStop = false;
     await user.click(screen.getByRole("button", { name: "Send" }));
+    if (returned) {
+      // Returning ends the Send's own focus claim; the Cancel made in view still takes focus.
+      rerender(<Harness initial="Keep" onSubmit={onSubmit} active={false} />);
+      await act(async () => undefined);
+      rerender(<Harness initial="Keep" onSubmit={onSubmit} active />);
+    }
     await user.click(screen.getByRole("button", { name: "Cancel voice input" }));
     await waitFor(() => expect(field).toHaveValue("Keep"));
     await waitFor(() => expect(screen.getByRole("button", { name: "Start voice input" })).toHaveFocus());
