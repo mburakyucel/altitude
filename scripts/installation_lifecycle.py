@@ -939,6 +939,10 @@ class MacLifecycle(Lifecycle):
             server.publish(made[second]["folder"], second)
             self.advance_check(second)
             self.offered("detected", second)
+            # Off, the daemon offers the release and waits for confirmation: same daemon, no new attempt.
+            waiting = self.healthy("waiting", made[automatic_version]["release"])
+            assert waiting["pid"] == automatically_updated["pid"], "The daemon restarted with automatic updates off"
+            assert self.record()["attempt"]["id"] == attempt["id"], self.record()
             self.run("update", self.alt, "update", timeout=240)
             updated = self.healthy("updated", made[second]["release"])
             assert updated["pid"] != automatically_updated["pid"], "Update did not replace the daemon"

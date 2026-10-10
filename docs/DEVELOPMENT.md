@@ -787,7 +787,7 @@ blocks automating it.
 | --- | --- | --- | --- | --- |
 | Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration, systemd unit-file parsing (`systemd-analyze verify`, without systemd running) and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, native macOS, container deployment | In use |
 | Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run), in a task through the [validation runner](#validation-runner)) | Fresh install, user-service start, update, failed-update recovery, service start after a restart, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`) and an installation over a failed one (`RECOVERY`); with `PUBLIC`, setup's command and the installed daemon's update lookup and `alt update` against GitHub itself, on Ubuntu 24.04 x86_64 | Login/logout, a physical machine, the app's Update button from a published release, storage migration (no application state is created), other distributions | In use |
-| Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under an [operator grant](CLI.md#operator-grant)) | The built `install.sh` through its public command in fresh macOS 26 arm64 guests with automatic login and no network: its refusals with their documented fixes for missing Python, OpenSSL 3 not first on PATH and an account with no desktop session; the [macOS installation lane](#macos-installation-lane)'s lifecycle under a throwaway HOME; and the account's own installation, its HTTPS health and `alt doctor`, its LaunchAgent started again by the automatic login after a restart, and uninstall | A physical second Mac, other macOS versions, logout/login without a restart, browser/device CA trust, the guest's own download from GitHub, the real check and notice schedule, the app's rendered notice, a release candidate's lookup | In use on Apple silicon |
+| Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under an [operator grant](CLI.md#operator-grant)) | The built `install.sh` through its public command in fresh macOS 26 arm64 guests with automatic login and no network: its refusals with their documented fixes for missing Python, OpenSSL 3 not first on PATH and an account with no desktop session; the [macOS installation lane](#macos-installation-lane)'s lifecycle under a throwaway HOME, including automatic updates, the automatic-updates-off confirmation and recovery from a failed automatic update; and the account's own installation, its HTTPS health and `alt doctor`, its LaunchAgent started again by the automatic login after a restart, and uninstall | A physical second Mac, other macOS versions, logout/login without a restart, browser/device CA trust, the guest's own download from GitHub, the real check and notice schedule, the app's rendered notice, a release candidate's lookup, an update from a published release to a later published one | In use on Apple silicon |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Validation container | `alt task validate -- COMMAND` ([validation runner](#validation-runner)); `make browser-sandbox` | A committed candidate's command in a disposable rootless Podman container, including nested rootless containers and Playwright's Chromium with its own sandbox | Running Altitude itself in a container, other hosts' kernels or Podman versions, native macOS | In use on Linux x86_64 |
 | macOS validation run | `alt task validate -- COMMAND` on a Mac ([macOS validation runs](#macos-validation-runs)) | A committed candidate's command on macOS under the validation profile, with fictional state and fixture engines: the Python suites and application journeys with local-process jobs | Native launchd jobs and worker confinement, browsers with their own sandbox, installation, provider compatibility | Implemented; native acceptance is recorded on the delivering PR |
@@ -1128,7 +1128,8 @@ it and the installation keeps them, so no request reaches GitHub. It then:
 - publishes `v0.0.2`; the daemon installs it automatically with no browser terminal open, and
   the overview reports its successful automatic installation;
 - turns automatic updates off, publishes `v0.0.3`, checks its overview, terminal notice and
-  doctor offer, and installs it with `alt update`;
+  doctor offer while the same daemon keeps running `v0.0.2` with no new attempt, and installs it
+  with `alt update`;
 - publishes `v0.0.4`; a paired device's Update button starts the detached
   `dev.altitude.job.altitude-update-…` launchd job, which activates it and is removed;
 - turns automatic updates on and publishes `v0.0.5`, whose startup exits; automatic activation
@@ -1191,8 +1192,10 @@ shell trusts, with `github.com` resolving to the loopback.
   account's launchd jobs, unchanged.
 - `lifecycle`: with the documented fix and GitHub CLI in place, the guest's account runs the
   [macOS installation lane](#macos-installation-lane)'s `mac` phase under a throwaway HOME, as
-  `installation_mac.py` does: install, update detection and notice, `alt update`, the Update button,
-  failed-update recovery and uninstall. When it fails, launchd's record of the job, the guest's
+  `installation_mac.py` does: install, the daemon's automatic installation of a newer release with
+  no browser terminal open and the overview reporting it, update detection and notice with automatic
+  updates off and the release waiting for confirmation, `alt update`, the Update button, recovery from
+  an automatic update whose startup exits and uninstall. When it fails, launchd's record of the job, the guest's
   busiest processes, a sample of the service's process and its open files are kept.
 - `login`: the account installs through the public command into its own home. Its LaunchAgent
   `dev.altitude.altd` must run from `~/Library/LaunchAgents`, answer HTTPS health with the release's
