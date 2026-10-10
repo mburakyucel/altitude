@@ -132,7 +132,7 @@ const terminalRunning = { state: "running", id: "t1", enabled: true, folder: "/f
 
 describe("queued L2 Send now", () => {
   it("clears a failed Send now alert when its queued message is delivered", async () => {
-    const message = { id: "first", role: "operator", text: "First steer", delivery: { state: "queued", removable: true, send_now: true } };
+    const message = { id: "first", role: "operator", text: "First steer", delivery: { state: "queued", at: null, removable: true, send_now: true } };
     const record = { ...running, messages: [message] };
     stub(record, { sendNow: () => jsonResponse({ error: "Fixture refusal" }, 409) });
     const { user, queryClient } = renderApp({ route: "/projects/altitude/tasks/fix-timer" });

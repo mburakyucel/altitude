@@ -131,7 +131,7 @@ describe("queued L3 Send now", () => {
     await waitFor(() => expect(screen.queryByText("Fixture refusal")).toBeNull());
     view = { ...view, queued: [
       { id: "claimed", text: "Claimed instruction", trigger: "chat", send_now: true, sending: "turn" },
-      ...view.queued,
+      ...(view.queued ?? []),
     ] };
     await act(async () => { queryClient.setQueryData(["chat", "altitude"], view); });
     const busy = await screen.findByRole("button", { name: "Sending now" });
