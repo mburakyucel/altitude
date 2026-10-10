@@ -1,6 +1,7 @@
 """verify-report: the L2 says done; check it against GitHub and the files before L3 hears about it."""
 from __future__ import annotations
 import json
+import re
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -10,6 +11,25 @@ from . import config, engines, state as S
 
 class VerifierFault(RuntimeError):
     """The verifier's own tooling failed (gh, network), not the L2's work."""
+
+
+class RateLimited(VerifierFault):
+    """GitHub refused the read for the account's rate limit: a wait, not a fault (#814)."""
+
+
+#: gh's wording when GitHub refuses a request for a primary or secondary rate limit.
+_RATE_LIMIT = re.compile(r"rate limit (already )?exceeded|exceeded a secondary rate limit", re.I)
+#: GitHub's REST pull request projected onto the GraphQL field names the readers share. REST has its own
+#: quota, separate from the GraphQL budget that landings and workers share (#814). An open PR's
+#: merge_commit_sha is GitHub's test merge, so it is a merge commit only once the PR merged.
+PULL_JQ = ('{number, url: .html_url, state: (if .merged_at then "MERGED" elif .state == "closed" then "CLOSED" '
+           'else "OPEN" end), baseRefName: .base.ref, headRefName: .head.ref, headRefOid: .head.sha, '
+           'mergedAt: .merged_at, mergeCommit: (if .merged_at then {oid: .merge_commit_sha} else null end)}')
+
+
+def rate_limited(output: str) -> bool:
+    """Whether a failed gh command's output is GitHub refusing it for a rate limit."""
+    return bool(_RATE_LIMIT.search(output or ""))
 
 
 OPEN_FINDINGS = "open finding on an unblocked report"
@@ -27,6 +47,8 @@ def gh(args: list[str], cwd: Path) -> dict | list | None:
         raise VerifierFault(f"gh {' '.join(args[:3])}: {e}") from e
     if p.returncode != 0:
         err = (p.stderr or "").strip()
+        if rate_limited(err):
+            raise RateLimited(f"gh {' '.join(args[:3])}: {err[-300:]}")
         if "Could not resolve" in err or "no pull requests found" in err.lower() or "not found" in err.lower():
             return None  # a legitimately missing object, not a tooling failure
         raise VerifierFault(f"gh {' '.join(args[:3])} exit {p.returncode}: {err[-300:]}")
@@ -41,6 +63,8 @@ def verify(project: str, slug: str) -> dict:
     owner = T.report_owner(S.load_task(project, slug))
     try:
         return {**_verify(project, slug), "owner": owner}
+    except RateLimited as e:  # the next tick verifies again
+        return {"verdict": "rate-limited", "problems": [str(e)], "signals": [], "spend": {}, "prs": [], "report": None}
     except VerifierFault as e:
         from . import incidents
         incidents.system_fault("verifier", str(e), project=project, task=slug, expected_owner=owner)
@@ -82,7 +106,7 @@ def _verify(project: str, slug: str) -> dict:
             out["problems"].append("report predates the current delivery; refresh report.json")
     for pr in landed.get("prs") or []:
         n = pr.get("number")
-        info = gh(["pr", "view", str(n), "--json", "number,state,mergedAt,mergeCommit,headRefName,headRefOid"], repo) if n else None
+        info = gh(["api", f"repos/{{owner}}/{{repo}}/pulls/{n}", "--jq", PULL_JQ], repo) if n else None
         if info is None:
             out["problems"].append(f"PR #{n}: cannot read from GitHub")
             continue

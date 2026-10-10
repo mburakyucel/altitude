@@ -910,7 +910,12 @@ refuses; adopted PR pushes remain fast-forward only.
 For a completed review whose assessment is stale, the current L2's merging invocation waits while the
 owner explicitly reassesses the pinned candidate through the existing review command.
 CI and assessment share one deadline, an hour after publication unless `--wait` shortens it, across
-fresh checks after main moves. Polls hold the task review lock
+fresh checks after main moves. The wait polls after 15 seconds, doubling to once a minute. The account's
+landings, workers and coordinator share one hourly GitHub GraphQL budget, so landing reads only the exact
+check evidence through GraphQL, once per poll. The PR's state, refs and head come from GitHub's REST API,
+which has its own quota. When that evidence reports no checks, a REST read of the head's check runs and
+statuses must agree before the local-suite gate applies. GitHub refusing a `gh` command for a rate limit
+is a wait: landing retries it every minute for up to an hour and continues where it was. Polls hold the task review lock
 only for local review reads; network reads and sleeps leave review requests available. Assessment
 fetches preserve landing's `FETCH_HEAD` receipt. A notice names every stale review and subject with
 the assessed/current values of its changed evidence, so the owner posts explanations together before
@@ -988,7 +993,9 @@ The ordinary operator composer and resume admission retain their open-PR require
 
 `report_after` marks follow-up work, and verification carries its owner identity, worker start and
 block identity. Messages arriving at report handoff invalidate completion evidence; pending inbox
-messages return to the ordinary resume path. Report application, verifier faults, stranded-report
+messages return to the ordinary resume path. The verifier reads each reported PR through GitHub's REST
+API. If GitHub refuses that read for a rate limit, the task stays as it is and the next tick verifies again,
+without a verifier fault. Report application, verifier faults, stranded-report
 recovery, automatic completion and report-turn receipts reject superseded work. A report that needs
 L3 waits, with no turn or chat row, while routing has no available L3 option; the stranded-report scan
 delivers it once one is. A report turn that runs and fails leaves `l3_handled` unset and retries after

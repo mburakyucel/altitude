@@ -30,9 +30,15 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, dispatch, git_policy, github_intake, state as S, tasks as T
+from . import config, dispatch, git_policy, github_intake, state as S, tasks as T, verify
 
+#: #814: the check wait polls after this many seconds, doubling up to CHECK_POLL_BACKOFF times it (one minute).
 CHECK_POLL_SECONDS = 15
+CHECK_POLL_BACKOFF = 4
+#: #814: a gh command GitHub refuses for the account's rate limit runs again at this interval. GitHub's limits
+#: reset within the hour, so refusals that outlast RATE_LIMIT_WAIT_SECONDS end the landing.
+RATE_LIMIT_POLL_SECONDS = 60
+RATE_LIMIT_WAIT_SECONDS = 3600
 #: #480: GitHub's PR view lags the landing's own push briefly; the head is re-read within this bound.
 PR_VIEW_SETTLE_SECONDS = 30
 PR_VIEW_POLL_SECONDS = 2
@@ -59,7 +65,25 @@ class _Reassess(Exception):
 
 
 def _run(args: list[str], cwd: Path, timeout: int = 120) -> subprocess.CompletedProcess:
-    """Every git/gh invocation funnels through here so tests can drive the whole pipeline offline."""
+    """Every git/gh invocation funnels through here so tests can drive the whole pipeline offline. A gh command
+    GitHub refuses for the account's rate limit waits for the limit to clear and runs again (#814): the refusal
+    did nothing, and it is a wait, not a landing failure."""
+    refused = None
+    while True:
+        result = _execute(args, cwd, timeout)
+        if (args[0] != "gh" or result.returncode == 0
+                or not verify.rate_limited((result.stderr or "") + (result.stdout or ""))):
+            return result
+        if refused is None:
+            refused = time.monotonic()
+            _note(f"GitHub refused {' '.join(args[:3])} for its rate limit; retrying every "
+                  f"{RATE_LIMIT_POLL_SECONDS} seconds for up to {RATE_LIMIT_WAIT_SECONDS} seconds")
+        if time.monotonic() - refused >= RATE_LIMIT_WAIT_SECONDS:
+            return result
+        time.sleep(RATE_LIMIT_POLL_SECONDS)
+
+
+def _execute(args: list[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess:
     try:
         env = config.subprocess_env()
         if args[:2] == ["git", "fetch"]:
@@ -246,6 +270,25 @@ def _pr_view(root: Path, target: str) -> dict | None:
         return json.loads(p.stdout)
     except ValueError as e:
         raise LandError(f"gh pr view {target}: unparseable output") from e
+
+
+def _repository(root: Path, what: str) -> tuple[str, str]:
+    """The GitHub owner and repository of origin, which every API read names explicitly (#252)."""
+    match = github_intake._REMOTE.fullmatch(_need(_git(root, "config", "--get", "remote.origin.url"), "origin URL"))
+    if not match:
+        raise LandError(f"{what} requires a GitHub origin")
+    return match["owner"], match["repo"]
+
+
+def _pull(root: Path, number: int) -> dict:
+    """The PR's state, refs and head through REST, whose quota is separate from the GraphQL budget that
+    landings and workers share (#814). The repeated identity reads use this; `_pr_view` reads review state."""
+    owner, repo = _repository(root, "a PR read")
+    p = _run(["gh", "api", f"repos/{owner}/{repo}/pulls/{number}", "--jq", verify.PULL_JQ], root)
+    try:
+        return json.loads(_need(p, f"GitHub PR #{number}"))
+    except ValueError as e:
+        raise LandError(f"GitHub PR #{number}: unparseable output") from e
 
 
 def _pr_files(root: Path, base: str) -> list[str]:
@@ -519,42 +562,25 @@ def _ensure_pr(root: Path, branch: str, base: str, message: str, pr_title: str |
     return pr
 
 
-def _checks_state(root: Path, number: int) -> str:
-    """One reading of the PR's checks: pass / fail / pending / skipped / none. `gh pr checks` exits non-zero
-    for pending or failing checks, so the JSON body is the verdict, not the exit code. `none` is GitHub
-    reporting no checks at all, which is a different fact from checks that ran and were skipped: only the
-    caller, which knows whether the repository configures CI, can say what it means."""
-    p = _run(["gh", "pr", "checks", str(number), "--json", "bucket"], root)
-    body = (p.stdout or "").strip()
-    if not body:
-        if "no checks" in ((p.stderr or "") + (p.stdout or "")).lower():
-            return "none"
-        raise LandError(f"gh pr checks #{number}: {(p.stderr or '').strip()[-200:] or f'exit {p.returncode}'}")
-    try:
-        buckets = {c.get("bucket") for c in json.loads(body)}
-    except (ValueError, TypeError, AttributeError) as e:
-        raise LandError(f"gh pr checks #{number}: unparseable output") from e
-    unknown = buckets - {"pass", "fail", "pending", "skipping", "cancel"}
-    if unknown:
-        raise LandError(f"gh pr checks #{number}: unrecognised bucket(s) {', '.join(sorted(map(str, unknown)))} — "
-                        "refusing to read them as a pass; this gates --merge")
-    if not buckets:
-        return "none"
-    if buckets & {"fail", "cancel"}:
-        return "fail"
-    if "pending" in buckets:
-        return "pending"
-    # Skips need candidate requiredness; this inventory alone is no merge verdict.
-    return "skipped" if "skipping" in buckets else "pass"
+def _checks_reported(root: Path, pair: dict) -> bool:
+    """Whether GitHub reports any check run or commit status on the pinned head, read through REST. Exact evidence
+    of no checks is believed only while this independent read agrees, so hosted checks never select the local suite."""
+    owner, repo = _repository(root, "a checks read")
+    for endpoint in ("check-runs?per_page=1", "status?per_page=1"):
+        p = _run(["gh", "api", f"repos/{owner}/{repo}/commits/{pair['head_sha']}/{endpoint}", "--jq", ".total_count"],
+                 root)
+        try:
+            if int(_need(p, "GitHub checks on the pinned head")):
+                return True
+        except ValueError as e:
+            raise LandError("GitHub checks on the pinned head: unparseable output") from e
+    return False
 
 
 def _check_query(root: Path, query: str, **variables) -> dict:
-    origin = _need(_git(root, "config", "--get", "remote.origin.url"), "origin URL")
-    match = github_intake._REMOTE.fullmatch(origin)
-    if not match:
-        raise LandError("check evidence requires a GitHub origin")
+    owner, repo = _repository(root, "check evidence")
     args = ["gh", "api", "graphql", "-f", f"query={query}"]
-    for key, value in {"owner": match["owner"], "repo": match["repo"], **variables}.items():
+    for key, value in {"owner": owner, "repo": repo, **variables}.items():
         args += ["-F" if isinstance(value, int) else "-f", f"{key}={value}"]
     try:
         result = json.loads(_need(_run(args, root), "GitHub check evidence"))
@@ -721,7 +747,7 @@ def _snapshot_pair(root: Path, branch: str, number: int, base: str, expected_hea
     """
     deadline, settling = time.monotonic() + PR_VIEW_SETTLE_SECONDS, False
     while True:
-        pr = _pr_view(root, str(number)) or {}
+        pr = _pull(root, number)
         if pr.get("state") != "OPEN":
             raise LandError(f"PR #{number} is not open while its merge candidate is being pinned")
         _require_pr_target(pr, branch, base)
@@ -748,7 +774,7 @@ def _assert_pair_current(root: Path, pair: dict) -> None:
     """Fail unless both origin refs and GitHub's PR still name the pinned pair; BaseMoved when only the base moved."""
     base_sha = _fetch_rev(root, pair["base"])
     head_sha = _fetch_rev(root, pair["branch"])
-    pr = _pr_view(root, str(pair["number"])) or {}
+    pr = _pull(root, pair["number"])
     actual = (head_sha, pr.get("headRefOid"), pr.get("state"), pr.get("baseRefName"), pr.get("headRefName"))
     if actual != (pair["head_sha"], pair["head_sha"], "OPEN", pair["base"], pair["branch"]):
         raise LandError("the PR base or head moved after the merge candidate was pinned — "
@@ -813,11 +839,9 @@ def _prospective(root: Path, base: str, changed: list[str], test_cmd: str) -> di
 def _checks_value(root: Path, number: int, pair: dict) -> str:
     """Read checks only while GitHub and origin still name the pinned PR pair."""
     _assert_pair_current(root, pair)
-    state = _checks_state(root, number)
-    evidence = _checks_evidence(root, pair)
-    if state != "none" and evidence == "none":
+    state = _checks_evidence(root, pair)
+    if state == "none" and _checks_reported(root, pair):
         raise LandError("reported checks have no evidence on the pinned candidate")
-    state = evidence
     _assert_pair_current(root, pair)
     if state != "none":
         return state
@@ -936,7 +960,7 @@ def _merge(root: Path, branch: str, number: int, base: str, expected_head: str,
     method = ["--squash", "--delete-branch"] if delete_branch else ["--squash"]
     m = _run(["gh", "pr", "merge", str(number), *method,
               "--match-head-commit", expected_head], root, timeout=300)
-    after = _pr_view(root, str(number)) or {}
+    after = _pull(root, number)
     if after.get("state") != "MERGED":
         raise LandError(f"gh pr merge #{number}: "
                         f"{((m.stderr or '') + (m.stdout or '')).strip()[-300:] or 'PR is not merged'}")
@@ -986,9 +1010,9 @@ def _merge_on_local_suite(root: Path, pair: dict, test_cmd: str, *, before_merge
         tests["error"] = "the base or the head moved while the merge candidate was under test"
         _note(f"not merging: {tests['error']} — re-run alt land to test and merge the current pair")
         return False, tests
-    after_checks = _checks_state(root, pair["number"])
-    if after_checks == "none":
-        after_checks = _checks_evidence(root, pair)
+    after_checks = _checks_evidence(root, pair)
+    if after_checks == "none" and _checks_reported(root, pair):
+        after_checks = "reported"
     try:
         _assert_pair_current(root, pair)
     except BaseMoved:
@@ -1051,7 +1075,7 @@ def _ends_with_session(wait_for):
 def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority, deadline):
     """Wait outside the repository turn for the owner assessment and candidate checks."""
     from . import reviews
-    notified, announced = None, None
+    notified, announced, delay = None, None, CHECK_POLL_SECONDS
     actor = authority.get("actor") if authority is not None else os.environ.get("ALTITUDE_ACTOR")
     while True:
         stale = refused = None
@@ -1093,7 +1117,8 @@ def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority, de
                 raise LandError(f"owner assessment wait timed out with {_checks_outcome(checks, pair)}; candidate "
                                 "remains published and unmerged — assess when ready and re-run alt land")
             return checks
-        time.sleep(min(CHECK_POLL_SECONDS, max(deadline - time.monotonic(), 0)))
+        time.sleep(min(delay, max(deadline - time.monotonic(), 0)))
+        delay = min(delay * 2, CHECK_POLL_SECONDS * CHECK_POLL_BACKOFF)
 
 
 @contextlib.contextmanager
@@ -1365,7 +1390,7 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                                     with before_merge():
                                         merged = _merge_pair(root, pair, delete_branch=not adoption)
                                     if pair["required_pr_check"]:
-                                        commit_sha = ((_pr_view(root, str(number)) or {}).get("mergeCommit") or {}).get("oid")
+                                        commit_sha = (_pull(root, number).get("mergeCommit") or {}).get("oid")
                                         if not commit_sha or _need(_git(root, "rev-parse", f"{commit_sha}^{{tree}}"),
                                                                    "merged tree") != pair["tree"]:
                                             raise LandError("merged tree does not match the tested PR tree; "
