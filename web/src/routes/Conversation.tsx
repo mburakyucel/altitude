@@ -10,12 +10,13 @@ import { ProseScope } from "../components/Prose";
 import { ProseTerminal } from "../components/CodeBlock";
 import { requestCommand } from "../data/terminalCommand";
 import { when } from "../data/observed";
+import { carries, inFlight, readOf, retired, settleOutgoing, startOutgoing, updateOutgoing, dropOutgoing, useOutbox } from "../data/outbox";
+import type { Outgoing } from "../data/outbox";
 import { Bubble, DayDivider, RemoveMessage, Reply, Typing, dayLabel } from "../components/Bubbles";
 import Composer from "../components/Composer";
 import { L3ModelButton } from "../components/Models";
 import type { ImageSubmission } from "../components/ImageDraft";
 import { MessageImages, PendingImages } from "../components/MessageImages";
-import type { ImagePreview } from "../components/MessageImages";
 import { SystemGroup, SystemLine, notable, subjectOf } from "../components/SystemLine";
 import { TaskCards } from "../components/TaskCard";
 import { ChoiceError, CreateTask } from "../components/Choice";
@@ -25,7 +26,8 @@ import type { SystemTurn } from "../components/SystemLine";
 /*
  * The project conversation (SPEC.md §3.3, §3.4, §4.1, §4.2): one column, newest last, operator bubbles
  * right, L3 prose left, non-chat turns as compact lines with routine runs grouped. GET /api/chat is the
- * authority for what ran, what runs, and what waits; the page keeps only the turn it is streaming.
+ * authority for what ran, what runs, and what waits; the project's outbox holds only the messages it has not
+ * shown yet, with the replies they stream, whether or not this view is open.
  */
 
 interface Turn {
@@ -134,24 +136,6 @@ function itemAt(item: Item): string | null {
   return item.kind === "group" ? item.at : item.turn.at;
 }
 
-/** The turn the page is streaming: its bubble first, then the reply as it arrives (SPEC.md §4.2). */
-interface Local {
-  request: symbol;
-  text: string;
-  reply: string;
-  accepted: boolean;
-  turnId: string | null;
-  error: string | null;
-  done: boolean;
-  queueId?: string;
-  images?: ImagePreview[];
-  uncertain?: boolean;
-  replay?: ImageSubmission;
-  /** Exchanges this turn completed before a Send now message joined it, shown until the history has them. */
-  delivery?: ChatMessage["delivery"];
-  earlier?: { turnId: string | null; text: string; reply: string; delivery?: ChatMessage["delivery"] }[];
-}
-
 function Skeleton() {
   return (
     <div className="convo-skeleton" aria-label="Loading">
@@ -181,7 +165,9 @@ export default function Conversation({
     queryClient.setQueryData(["project-draft", name], text);
     updateDraft(text);
   }, [name, queryClient]);
-  const [local, setLocal] = useState<Local | null>(null);
+  const outbox = useOutbox(name);
+  // Sends from this view. Another view's uncertain image send leaves with its composer, whose remount recovers the caption.
+  const mine = useRef(new Set<string>());
   // A Create task press (SPEC.md §3.3): the reply being pressed while it saves, a reason it was not sent, the spoken receipt.
   const [press, setPress] = useState<string | null>(null);
   const [pressError, setPressError] = useState<{ turnId: string; message: string } | null>(null);
@@ -208,24 +194,16 @@ export default function Conversation({
   const turns = useMemo(() => turnsOf(view?.history ?? []), [view?.history]);
   const items = useMemo(() => itemsOf(turns, name, activeId), [turns, name, activeId]);
 
-  // The server's rows for the streamed turn replace the local copy once a poll shows them.
+  // The server's record takes over an entry on the snapshot this view renders, so a bubble never leaves before
+  // its stored copy arrives; the effect then drops it from the outbox.
+  const read = readOf(queryClient, view);
+  const gone = useCallback((entry: Outgoing) => retired(entry, view, read)
+    || Boolean(entry.uncertain && !entry.replay && !mine.current.has(entry.id)), [view, read]);
+  const pending = useMemo(() => outbox.filter((entry) => !gone(entry)), [outbox, gone]);
   useEffect(() => {
-    if (!local) return;
-    const stored = turns.find((turn) => turn.id === local.turnId);
-    const queued = local.queueId && view?.queued?.some((row) => row.id === local.queueId);
-    const submitted = local.queueId && view?.history.some((row) => row.request_id === local.queueId);
-    if (stored?.assistant || stored?.error || queued || submitted || (local.done && stored)) {
-      setLocal((current) => current?.request === local.request ? null : current);
-    }
-  }, [local, turns, view]);
-
-  // Only a successful server read can retire a receipt whose current queue/history state was
-  // unknown. Engine selection and mutation rollback also write this cache; those are not reads.
-  useEffect(() => queryClient.getQueryCache().subscribe((event) => {
-    if (event.query.queryKey[0] !== "chat" || event.query.queryKey[1] !== name || event.type !== "updated"
-      || event.action.type !== "success" || event.action.manual) return;
-    setLocal((current) => current?.done && !current.turnId ? null : current);
-  }), [name, queryClient]);
+    const ids = new Set(outbox.filter(gone).map((entry) => entry.id));
+    if (ids.size) dropOutgoing(queryClient, name, ids);
+  }, [outbox, gone, name, queryClient]);
 
   // Stay at the bottom while the operator is there: new rows, a streamed reply growing, a card or
   // group opening, a title arriving for a line, the fonts landing. Scrolling up releases the follow.
@@ -246,9 +224,11 @@ export default function Conversation({
     async (text: string, onAccepted?: () => void, images?: ImageSubmission) => {
       following.current = true;
       setPressError(null);
-      const request = Symbol();
-      const update = (change: (current: Local) => Local | null) => setLocal((current) => current?.request === request ? change(current) : current);
-      setLocal({ request, text, reply: "", accepted: false, turnId: null, error: null, done: false, images: images?.previews, replay: images?.image_ids ? images : undefined });
+      // The send id the server keeps on the stored row or queue row; an image Retry keeps its submission's.
+      const id = (images?.request_id ?? crypto.randomUUID()).replaceAll("-", "");
+      mine.current.add(id);
+      const update = (change: (current: Outgoing) => Outgoing | null) => updateOutgoing(queryClient, name, id, change);
+      startOutgoing(queryClient, name, { id, text, reply: "", accepted: false, turnId: null, error: null, done: false, images: images?.previews, replay: images?.image_ids ? images : undefined });
       let result: ChatSent;
       try {
         result = images ? await sendImageChat(name, text, { request_id: images.request_id, images: images.images, image_ids: images.image_ids }) : await streamChat(name, text, {
@@ -260,24 +240,23 @@ export default function Conversation({
               earlier: [...(cur.earlier ?? []), { turnId: cur.turnId, text: cur.text, reply: cur.reply, delivery: cur.delivery }] }));
           },
           onText: (chunk) => update((cur) => ({ ...cur, reply: cur.reply + chunk })),
-        });
+        }, { request_id: id });
       } catch (error) {
         // Refused: the bubble leaves and the composer brings the draft back with "Not sent. Retry."
         if (images && !imageSendRefused(error)) update((cur) => ({ ...cur, uncertain: true }));
-        else if (images?.image_ids) update((cur) => ({ ...cur, done: true, error: error instanceof Error ? error.message : "Could not resend images." }));
+        else if (images?.image_ids) await settleOutgoing(queryClient, name, id, (cur) => ({ ...cur, error: error instanceof Error ? error.message : "Could not resend images." }));
         else update(() => null);
         void queryClient.invalidateQueries({ queryKey: ["chat", name] });
         throw error;
       }
       onAccepted?.();
       if (result.queued) {
-        await queryClient.cancelQueries({ queryKey: ["chat", name] });
         // A receipt proves acceptance, not that the row still waits: it may already have run or
         // been removed. Only a fresh canonical snapshot can project its current state.
-        update((cur) => ({ ...cur, accepted: true, done: true, replay: undefined, queueId: result.queued!.id }));
+        await settleOutgoing(queryClient, name, id, (cur) => ({ ...cur, accepted: true, replay: undefined, queueId: result.queued!.id }));
       } else if (images) update(() => null);
       else {
-        update((cur) => ({ ...cur, done: true, error: result.error ?? null, turnId: cur.turnId ?? result.turn_id ?? null }));
+        await settleOutgoing(queryClient, name, id, (cur) => ({ ...cur, error: result.error ?? null, turnId: cur.turnId ?? result.turn_id ?? null }));
       }
       void queryClient.invalidateQueries({ queryKey: ["chat", name], refetchType: "all" });
       void queryClient.invalidateQueries({ queryKey: ["project", name] });
@@ -326,11 +305,11 @@ export default function Conversation({
   const actionable = operatorQueue.filter((row) => !row.offer_turn);
   const lastWaiting = actionable.filter((row) => row.send_now).at(-1) ?? actionable.at(-1);
   const sendingNow = sendNow.isPending || operatorQueue.some((row) => row.send_now);
-  const busy = Boolean(view?.busy || view?.active || (local && !local.done));
-  const empty = Boolean(view && view.history.length === 0 && !view.active && !local && queued.length === 0);
+  const busy = Boolean(view?.busy || view?.active || pending.some((entry) => !entry.done));
+  const empty = Boolean(view && view.history.length === 0 && !view.active && pending.length === 0 && queued.length === 0);
   // Only the latest reply offers Create task, while nothing of the operator's waits or runs after it.
   const lastChat = [...turns].reverse().find((turn) => turn.trigger === "chat");
-  const offerTurn = lastChat?.assistant?.offer && !lastChat.assistant.tasks?.length && !local
+  const offerTurn = lastChat?.assistant?.offer && !lastChat.assistant.tasks?.length && pending.length === 0
     && !queued.some((row) => !row.project_message && (!row.trigger || row.trigger === "chat"))
     && !(view?.active?.trigger === "chat" && view.active.id !== lastChat.id) ? lastChat : null;
   // A press is a turn or queued row naming the reply it answers; the latest one says where Create task stands.
@@ -358,10 +337,15 @@ export default function Conversation({
     }
   };
   const stored = (id: string | null) => turns.some((turn) => turn.id === id && (turn.assistant || turn.error));
-  const earlier = local?.earlier?.filter((segment) => !stored(segment.turnId)) ?? [];
+  // While an entry shows a message and its reply, the server's unfinished copy of that turn stays hidden.
+  const shadowed = new Set<string>();
+  for (const entry of pending) {
+    const related = [entry.turnId, ...(entry.earlier ?? []).map((segment) => segment.turnId),
+      ...(view?.history ?? []).filter((row) => carries(row, entry)).map((row) => row.turn_id ?? null)];
+    for (const id of related) if (id && !stored(id)) shadowed.add(id);
+  }
   for (const item of items) {
-    if (item.kind === "chat" && local?.turnId && item.turn.id === local.turnId) continue;
-    if (item.kind === "chat" && earlier.some((segment) => segment.turnId === item.turn.id)) continue;
+    if (item.kind === "chat" && shadowed.has(item.turn.id)) continue;
     divide(itemAt(item));
     if (item.kind === "group") {
       rows.push(<SystemGroup key={item.turns[0]?.id ?? item.at ?? "group"} turns={item.turns} project={name} tasks={tasks} />);
@@ -393,7 +377,7 @@ export default function Conversation({
               {turn.user?.offer_turn ? (
                 <button type="button" className="link" disabled={Boolean(press)} onClick={() => void pressCreateTask(turn.user!.offer_turn!)}>Retry</button>
               ) : turn.user ? (
-                <button type="button" className="link" disabled={Boolean(local && !local.done)} onClick={() => void send(turn.user!.text, undefined, turn.user!.images?.length ? { request_id: crypto.randomUUID(), image_ids: turn.user!.images.map((image) => image.id), previews: [] } : undefined).catch(() => undefined)}>
+                <button type="button" className="link" disabled={pending.some(inFlight)} onClick={() => void send(turn.user!.text, undefined, turn.user!.images?.length ? { request_id: crypto.randomUUID(), image_ids: turn.user!.images.map((image) => image.id), previews: [] } : undefined).catch(() => undefined)}>
                   Retry
                 </button>
               ) : null}
@@ -406,7 +390,7 @@ export default function Conversation({
       );
     }
   }
-  if (view?.active && !turns.some((turn) => turn.id === view.active!.id) && view.active.trigger !== "chat" && !local) {
+  if (view?.active && !turns.some((turn) => turn.id === view.active!.id) && view.active.trigger !== "chat" && pending.length === 0) {
     // The turn started before its rows reached the log: the line says what L3 is handling meanwhile.
     divide(view.active.started_at);
     rows.push(
@@ -418,32 +402,34 @@ export default function Conversation({
       />,
     );
   }
-  if (local) {
+  for (const entry of pending) {
     divide(new Date().toISOString());
-    for (const segment of earlier) {
+    for (const segment of entry.earlier ?? []) {
+      if (stored(segment.turnId)) continue;
       rows.push(
-        <div key={`local-${segment.turnId}`} className="turn" data-local>
+        <div key={`local-${entry.id}-${segment.turnId}`} className="turn" data-local>
           <Bubble text={segment.text} at={new Date().toISOString()} state={segment.delivery?.state} />
           {segment.reply ? <Reply text={segment.reply} role="assistant" /> : null}
         </div>,
       );
     }
     rows.push(
-      <div key="local" className="turn" data-local>
-        <Bubble text={local.text} at={new Date().toISOString()} state={!local.accepted ? "pending" : local.delivery?.state} images={<PendingImages images={local.images} />} />
-        {local.replay ? <p className={`turn-failed ${local.error || local.uncertain ? "text-danger" : "text-muted"}`} role={local.error || local.uncertain ? "alert" : "status"}>
-          {local.error ? `Not sent. ${local.error}` : local.uncertain ? "Could not confirm send." : "Sending images…"}{" "}
-          {local.error || local.uncertain ? <button type="button" className="link" onClick={() => void send(local.text, undefined, local.error ? { ...local.replay!, request_id: crypto.randomUUID() } : local.replay).catch(() => undefined)}>Retry</button> : null}
-        </p> : local.reply ? (
-          <Reply text={local.reply} role="assistant" />
-        ) : local.done && local.error ? (
+      <div key={`local-${entry.id}`} className="turn" data-local>
+        <Bubble text={entry.text} at={new Date().toISOString()} state={!entry.accepted ? "pending" : entry.delivery?.state} images={<PendingImages images={entry.images} />} />
+        {entry.replay ? <p className={`turn-failed ${entry.error || entry.uncertain ? "text-danger" : "text-muted"}`} role={entry.error || entry.uncertain ? "alert" : "status"}>
+          {entry.error ? `Not sent. ${entry.error}` : entry.uncertain ? "Could not confirm send." : "Sending images…"}{" "}
+          {entry.error || entry.uncertain ? <button type="button" className="link" onClick={() => void send(entry.text, undefined, entry.error ? { ...entry.replay!, request_id: crypto.randomUUID() } : entry.replay).catch(() => undefined)}>Retry</button> : null}
+        </p> : entry.reply ? (
+          <Reply text={entry.reply} role="assistant" />
+        ) : entry.done && entry.error ? (
+          // The server's answer for this very turn; the first read after it brings the stored turn and its Retry.
           <p className="turn-failed text-muted">
             L3 could not answer this turn.{" "}
-            <button type="button" className="link" onClick={() => void send(local.text)}>
+            <button type="button" className="link" onClick={() => void send(entry.text)}>
               Retry
             </button>
           </p>
-        ) : local.accepted && !local.done ? (
+        ) : entry.accepted && !entry.done ? (
           <Typing />
         ) : null}
       </div>,
@@ -521,7 +507,7 @@ export default function Conversation({
           onChange={setDraft}
           onSubmit={send}
           imageScope={{ project: name, engine: view?.engine }}
-          disabled={Boolean(local?.replay && !local.done)}
+          disabled={pending.some((entry) => entry.replay && inFlight(entry))}
           placeholder={`Message L3 about ${name}`}
           ariaLabel={`Message L3 about ${name}`}
           busy={busy}
