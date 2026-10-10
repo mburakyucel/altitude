@@ -48,13 +48,13 @@ def write_json(path: Path, value) -> None:
 
 
 def following(version: str) -> str:
-    """The next release candidate after VERSION, so an update to it is never a downgrade."""
+    """The next release after VERSION on its channel, so an update to it is never a downgrade and VERSION follows it."""
     match = re.fullmatch(r"(v0\.\d+\.\d+)(?:-rc\.(\d+))?", version)
     base, candidate = match.group(1), match.group(2)
     if candidate:
         return f"{base}-rc.{int(candidate) + 1}"
     minor, patch = base[3:].split(".")
-    return f"v0.{minor}.{int(patch) + 1}-rc.1"
+    return f"v0.{minor}.{int(patch) + 1}"
 
 
 def failed_archive(package: Path, output: Path) -> tuple[Path, dict]:
@@ -485,20 +485,25 @@ class Lifecycle:
         The release server answers for api.github.com and github.com, which the root wrapper points at this machine's
         loopback; the account's user manager hands its authority to the service and the update job as SSL_CERT_FILE."""
         old, old_sha, _, before, new, new_sha, new_package, after = self.prepare()
-        self.result["limits"][0] = ("Same-source versions; GitHub's release list and downloads answered by a server on the guest's "
+        published = self.expected["baseline"] != self.expected["candidate"]
+        self.result["limits"][0] = (("Published-release baseline's own update code" if published else "Same-source versions")
+                                    + "; GitHub's release lookup and downloads answered by a server on the guest's "
                                     "loopback, not by GitHub; the Update request is sent as the page sends it, not from a browser")
         address = urlsplit(before["repository"])
         assert address.scheme == "https" and address.hostname == "github.com", address
         repository = address.path.strip("/")
         server = self.release_authority("api.github.com", "github.com")
         root = server / "root"
-        listing = root / "repos" / repository / "releases"
-        listing.parent.mkdir(parents=True)
+        # A release candidate reads the release list, a stable release only GitHub's latest. The synthetic releases
+        # stay on the baseline's channel (next_minor, following), so each daemon in this journey follows the next one.
+        candidates = "-rc." in before["version"]
+        lookup = "releases?per_page=30" if candidates else "releases/latest"
+        served = root / "repos" / repository / lookup.split("?")[0]
+        served.parent.mkdir(parents=True)
         def publish(release: dict):
+            latest = {"tag_name": release["version"], "draft": False, "prerelease": candidates}
             # Newest first: a newer draft must never be offered or automatically installed.
-            write_json(listing, [{"tag_name": "v0.99.0", "draft": True, "prerelease": False},
-                                 {"tag_name": release["version"], "draft": False,
-                                  "prerelease": "-rc." in release["version"]}])
+            write_json(served, [{"tag_name": "v0.99.0", "draft": True, "prerelease": False}, latest] if candidates else latest)
 
         publish(before)
         download = root / repository / "releases/download" / after["version"]
@@ -579,7 +584,7 @@ class Lifecycle:
             httpd.shutdown()
             self.run("untrust-release-server", "systemctl", "--user", "unset-environment", "SSL_CERT_FILE")
             write_json(self.results / "update-requests.json", requests)
-        assert sum(f"GET /repos/{repository}/releases?per_page=30 " in line for line in requests) >= 1, requests
+        assert sum(f"GET /repos/{repository}/{lookup} " in line for line in requests) >= 1, requests
         downloads = [line for line in requests if "/releases/download/" in line]
         expected_downloads = [f"GET /{repository}/releases/download/{version}/{name}{suffix} "
                               for version, name in ((after["version"], new.name), (manual_version, manual_archive.name))
