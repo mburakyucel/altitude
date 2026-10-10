@@ -36,6 +36,9 @@ CHECK_POLL_SECONDS = 15
 #: #480: GitHub's PR view lags the landing's own push briefly; the head is re-read within this bound.
 PR_VIEW_SETTLE_SECONDS = 30
 PR_VIEW_POLL_SECONDS = 2
+#: The pull request fields every landing reads; GitHub CLI before 2.72 lacks some (`alt doctor` checks them).
+PR_FIELDS = ("number,url,state,baseRefName,baseRefOid,headRefName,headRefOid,isCrossRepository,isDraft,reviewDecision,"
+             "closingIssuesReferences,mergeCommit")
 LOCAL_TEST_TIMEOUT = 1800
 DEFAULT_TEST_CMD = "make test"
 #: Bounds admission to the repository turn and, by default, the CI and owner-assessment wait before it,
@@ -233,8 +236,7 @@ def _push(root: Path, branch: str, recorded_tip: str | None,
 
 
 def _pr_view(root: Path, target: str) -> dict | None:
-    p = _run(["gh", "pr", "view", target, "--json",
-              "number,url,state,baseRefName,baseRefOid,headRefName,headRefOid,isCrossRepository,isDraft,reviewDecision,closingIssuesReferences,mergeCommit"], root)
+    p = _run(["gh", "pr", "view", target, "--json", PR_FIELDS], root)
     if p.returncode != 0:
         err = ((p.stderr or "") + (p.stdout or "")).strip()
         if "no pull requests found" in err.lower():

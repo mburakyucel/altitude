@@ -928,6 +928,7 @@ class NewVersionNotice(NoticeCase):
         self.listed("v0.2.0")
         installation.check_for_update()
         with mock.patch.object(installation, "_gh_signed_in", return_value=False), \
+                mock.patch.object(installation, "_gh_lacks", return_value=[]), \
                 mock.patch.object(tls, "info", side_effect=OSError("fixture: no certificate")):
             self.assertEqual(installation.doctor()["update"]["available"]["version"], "v0.2.0")
 

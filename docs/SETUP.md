@@ -42,8 +42,13 @@ See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](D
   LibreSSL cannot check a certificate's host name. Python 3.12 comes from `brew install python@3.12`
   or python.org, Git from the Xcode command line tools. Each task job runs as its own launchd job,
   also with a foreground Altitude server.
-- Python 3.12 or newer, Git, GitHub CLI (`gh`) and OpenSSL on PATH. The archive needs no Node,
+- Python 3.12 or newer, Git, GitHub CLI (`gh`) 2.72 or newer and OpenSSL on PATH. The archive needs no Node,
   package manager, application source checkout or UI build. The backend uses Python's standard library.
+  `alt land` reads pull request fields (`baseRefOid`, `closingIssuesReferences`) that older GitHub CLI
+  releases lack; Debian and Ubuntu package such a release, which signs in and opens pull requests but
+  fails at the first landing. On Linux, install GitHub CLI from
+  [GitHub's own package repository](https://github.com/cli/cli/blob/trunk/docs/install_linux.md); on a
+  Mac, Homebrew's `gh` is current.
 - Access to this repository and to a GitHub project you can fetch, push and open PRs in.
   Authenticate GitHub CLI, verify `gh auth status`, and configure Git name/email and your
   SSH or HTTPS Git credentials. For HTTPS with GitHub CLI credentials, run `gh auth setup-git`
@@ -139,7 +144,9 @@ CA fingerprint. It refuses an existing customized service or conflicting `alt` l
 An initial custom `--prefix` must be empty and must not end in whitespace or a backslash; updates
 retain customized hook launchers and refuse to overwrite them. Resolve the named ownership conflict before retrying.
 `alt doctor` distinguishes configured executable paths, tested local checks and unknown access.
-It checks GitHub authentication without a provider request; repository permissions, model access
+It checks GitHub authentication without a provider request, and whether the installed GitHub CLI
+offers the pull request fields `alt land` reads from the list its own parser prints, with no
+repository, sign-in or network request; repository permissions, model access
 and each browser's certificate trust remain separately unverified. Follow its actionable failures.
 One engine suffices; optional voice, GPU and telemetry do not block typing.
 
@@ -597,7 +604,7 @@ without saving, keep their place in the URL across reloads and are each a row in
 | Step | What it writes |
 | --- | --- |
 | **Your name**, filled in from `ALTITUDE_OPERATOR` or Git's global `user.name` | `operator_name` in `$ALTITUDE_HOME/settings.json`. Screens, agent prompts and incident sanitization use it; clearing it returns to the environment value or Git's name, and with neither, screens say “you”. |
-| **What the agents need**: the GitHub CLI and a coding agent signed in, Git installed | Nothing. Each unmet check shows the command to run in a terminal on this computer, the install command for a missing tool or the sign-in command (`gh auth login`, the agent's own) for an installed one, with **Copy** and **Check again**. One signed-in agent is enough; the others read as optional. The browser never asks for a password or token. |
+| **What the agents need**: the GitHub CLI and a coding agent signed in, Git installed | Nothing. Each unmet check shows the command to run in a terminal on this computer, the install command for a missing tool or a GitHub CLI too old to land pull requests, or the sign-in command (`gh auth login`, the agent's own) for an installed one, with **Copy** and **Check again**. One signed-in agent is enough; the others read as optional. The browser never asks for a password or token. |
 | **Report Altitude’s own faults?**, off by default | `incident_repository`: off keeps incidents on this computer; on stores the repository, Altitude's own filled in or a fork you name, after the signed-in GitHub CLI confirms it can see it. |
 | **Voice** | Saves the speech backend when selected and starts host voice setup where available. Host voice is unavailable in a container; browser recognition remains an option in supported browsers. Skipping does not block project setup. |
 | **Add your projects** | `projects_folder` when **Change…** picks another folder, and one registration per **Add project** or **Add all**. Only the folders directly inside the projects folder are listed; nothing is created, cloned or scanned. Adding opens the project's Setup and ends First run. |
