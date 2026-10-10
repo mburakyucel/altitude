@@ -137,7 +137,8 @@ def _who(actor: str | None) -> str | None:
 def _messages_text(rows: list[dict]) -> str:
     return "\n".join(f"[{S.age(str(row.get('at') or ''))}] {_who(row.get('role')) or '?'}"
                      f" ({_who(row.get('by')) or '?'}, message {row.get('id') or '?'}): "
-                     f"{'[Removed before delivery] ' if row.get('removed_at') else ''}{_one_line(row.get('text') or '')}" for row in rows) or "No messages."
+                     f"{'[Removed before delivery] ' if row.get('removed_at') else ''}"
+                     f"{'[Queued for L3] ' if row.get('queued_for_l3') else ''}{_one_line(row.get('text') or '')}" for row in rows) or "No messages."
 
 
 def _events_text(rows: list[dict]) -> str:
@@ -397,6 +398,7 @@ def main(argv=None) -> None:
     rp = ts.add_parser("reply", help="current L2: append a human-readable reply to this task's conversation")
     rp.add_argument("text", nargs="*", metavar="[slug] text|-", help="optionally led by this task's slug, as in the sibling verbs; - or nothing reads stdin"); rp.add_argument("--file")
     rp.add_argument("--capture", type=int, metavar="RUN", help="attach this validation run's captures; the reply links to them")
+    rp.add_argument("--to", choices=("l3",), help="l3: also queue the reply as one L3 turn about this task")
     review = ts.add_parser("review", help="request, run and assess an adversarial review of the owned task")
     review_actions = review.add_subparsers(dest="review_action", required=True)
     for action in ("status", "request", "run", "assess", "cancel", "withdraw"):
@@ -862,7 +864,7 @@ def main(argv=None) -> None:
                 sys.exit("alt task reply: give one text or -, optionally after this task's slug")
             args.text = words[0] if words else "-"
             out(T.message(p, slug, "l2", _stdin_or_file(args), by="l2", expected_attempt=int(attempt),
-                          capture_run=args.capture))
+                          capture_run=args.capture, to_l3=args.to == "l3"))
         elif tc in ("show", "status"):
             from altitude import status
             slug = args.slug or os.environ.get("ALTITUDE_TASK")
