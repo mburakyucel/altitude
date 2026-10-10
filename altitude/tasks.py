@@ -34,6 +34,9 @@ class TransitionError(Exception):
 
 
 TASK_MESSAGE_ROLES = (config.OPERATOR_ACTOR, "l2", "l3")
+NUDGE = ("Your last turn ended with only a message, without `alt task block`, a report or completion. "
+         "Continue from where you stopped and end this turn with one of them. If this turn also ends with "
+         "only a message, Altitude treats the worker as dead and raises a fault.")
 SUMMARY_LIMIT = 100  # one folded conversation row on a phone
 OPERATOR_MESSAGE_ROLE = TASK_MESSAGE_ROLES[0]
 _UNSET = object()
@@ -700,7 +703,7 @@ def task_messages(project: str, slug: str, limit: int | None = None) -> list[dic
         if receipt.get("state") == "removed":
             row["removed_at"] = receipt["at"]
     rows.sort(key=lambda row: row["at"])
-    if any(row.get("role") not in TASK_MESSAGE_ROLES for row in rows):
+    if any(row.get("role") not in (*TASK_MESSAGE_ROLES, "system") for row in rows):
         raise ValueError(f"corrupt task conversation of {project}/{slug}: invalid role")
     rows.extend(review["message"] for review in task.get("reviews", []))
     rows.sort(key=lambda row: row["at"])
@@ -1372,6 +1375,7 @@ def report(project: str, slug: str, verified: dict, actor: str = "altd", *,
         _take_turn(task)
         verified = {**verified, "attempt": task["attempt"]}
         task["verified"] = verified
+        task.pop("nudged", None)
         _clear_block(project, task)
         if verified.get("prs"):
             task["prs"] = sorted(set(task.get("prs", []) + list(verified["prs"])))
@@ -1410,6 +1414,7 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
                 raise TransitionError("design publication requires the current L2 and one question")
             captured, files = _capture_design(project, task, design)
         _supersede_resume(task)
+        nudged = task.pop("nudged", None)  # an owner block, a Stop or a fault, like a report, ends the nudge
         task.update(updates or {})
         if resume_pending:
             # #302: select the final-turn inbox under the same lock as the block; a later Send
@@ -1421,6 +1426,16 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
             elif task.get("turn_released") and task["turn_released"] == task.get("agent_id"):
                 reason = "The turn ended for a message that was then removed; the session continues."
                 task["resume_after"] = S.now()
+            elif not nudged:
+                # #787: a turn that ends with only a message gets one nudge before it counts as a dead worker.
+                reason = "The turn ended with only a message; Altitude resumes the session once to ask for a block or report."
+                row = {"id": uuid.uuid4().hex, "at": _conversation_time(), "role": "system", "by": "altitude",
+                       "text": NUDGE, "resume": True, "wake": False}
+                for name in ("conversation.jsonl", "inbox.jsonl"):
+                    _append_jsonl(S.task_dir(project, slug) / name, row)
+                task.update(resume_after=S.now(), resume_request=row["id"], nudged=True)
+            if nudged and task.get("resume_after"):
+                task["nudged"] = True  # steering that continues the session does not earn another nudge
         task.pop("turn_released", None)
         task["blocked_reason"] = reason
         task["block_actor"] = actor
@@ -1487,6 +1502,7 @@ def requeue(project: str, slug: str, actor: str = "altd", *, engine: str | None 
             raise TransitionError(f"{slug}: has an L2 worker; resume it instead")
         usage.capture(project, task)
         task.pop("verified", None)  # A fresh attempt must establish its own current verification.
+        task.pop("nudged", None)  # and its session gets its own nudge
         task.update({"agent_id": None, "session_id": None, "l2_engine": engine, "engine_model": None,
                      "next_engine": engine or task.get("next_engine"), "routing": None})
         _clear_block(project, task)
