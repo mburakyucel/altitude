@@ -1919,6 +1919,17 @@ class TestChatQueue(AltitudeCase):
         self.assertEqual(failed["role"], "error")
         self.assertEqual(S.load_task(self.project, failed["tasks"][0])["title"], "Retry the stalled backfill")
 
+        # A rejection the provider handler logs, followed by the turn's own final error: both rows carry it.
+        with mock.patch.object(l3.route, "note_rejection"):
+            rejected = run("block", (["task", "new", "--title", "Rerun the rejected check", "-"], "Fictional."),
+                           result={**self.claude_result(""), "error": "provider rejected the request",
+                                   "session_id": "", "rejection": "fixture", "safe_to_retry": False})
+        rows = [row for row in self.chat_view()["history"] if row.get("turn_id") == rejected["turn_id"]]
+        errors = [row for row in rows if row["role"] == "error"]
+        self.assertGreaterEqual(len(errors), 2)
+        self.assertEqual({tuple(row.get("tasks") or ()) for row in errors}, {tuple(rejected["tasks"])})
+        self.assertEqual(S.load_task(self.project, rejected["tasks"][0])["title"], "Rerun the rejected check")
+
         routine = run("report-landed")
         self.assertEqual(routine["text"], "Handled.")
         self.assertNotIn("tasks", routine)

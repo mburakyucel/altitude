@@ -740,15 +740,16 @@ def _created_meta(project: str, turn_id: str) -> dict:
     created no task."""
     with _lifecycle_guard(project):
         offer = _offers.pop(turn_id, None)
-    created = _created_only(project, turn_id)
+        created = _created.pop(turn_id, None) or {}
     return {**created, **({"offer": offer} if offer and not created.get("tasks") else {})}
 
 
 def _created_only(project: str, turn_id: str) -> dict:
-    """The `tasks` and `issues` fields, taken once. A failed turn's error row carries them too, so work it created
-    before failing stays visible (SPEC.md §4.1)."""
+    """The `tasks` and `issues` fields for an error row of `turn_id`. Every error row a failed turn writes carries
+    them, so work it created before failing stays visible whichever row the page reads (SPEC.md §4.1); the
+    record goes with the turn."""
     with _lifecycle_guard(project):
-        return _created.pop(turn_id, None) or {}
+        return {kind: list(values) for kind, values in (_created.get(turn_id) or {}).items()}
 
 
 def chat_state(project: str, limit: int = 60) -> dict:
@@ -1661,7 +1662,8 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                 "undelivered": True}
         if keeps:
             return kept(held)
-        chat_log(project, "error", why, trigger=trigger, turn_id=turn_id, **_slug_meta(slug))
+        chat_log(project, "error", why, trigger=trigger, turn_id=turn_id, **_created_only(project, turn_id),
+                 **_slug_meta(slug))
         return held
 
 
