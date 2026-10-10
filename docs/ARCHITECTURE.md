@@ -117,7 +117,9 @@ again. Successful input handoff and matching session initialization record deliv
 bound batch; native hook attachments can independently prove delivery.
 Inbox absence alone stays unconfirmed. Reading an inbox concurrently consumed by a resume sees an
 empty queue, without turning that absence into delivery proof. A clean worker turn with queued steering resumes the saved
-session, as does a clean exit after the hook ended the turn for operator messages that were then removed,
+session, as does a clean exit after the hook ended the turn for operator messages that were then removed.
+A clean exit with only a message and nothing queued resumes once with a system nudge to block or report;
+the next consecutive one is a dead-worker fault,
 while engine failures and explicit question blocks retain their existing recovery paths.
 No-code completion checks for accepted steering under the same task lock as archival. A pending
 message keeps the saved owner session available for continuation instead of finalizing its earlier result.
