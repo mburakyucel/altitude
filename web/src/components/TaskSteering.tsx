@@ -64,7 +64,7 @@ export function SteeringControls({ steering, disabled = false, escape = false }:
 export function SteeringNotice({ steering }: { steering: Steering }) {
   const text = steering.state === "stop_unconfirmed" ? `Stop unconfirmed · ${steering.error || "The worker may still be running."}`
     : steering.error || (steering.state === "resuming" ? "Waiting to resume" : "");
-  return text ? <p className="task-line" role={steering.error ? "alert" : "status"}>
+  return text ? <p className={steering.state === "resuming" && !steering.error ? "sr-only" : "task-line"} role={steering.error ? "alert" : "status"}>
     {text}
   </p> : null;
 }

@@ -198,7 +198,7 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
     chips: [{ text: label }, ...(selection.chip ? [{ text: selection.chip }] : []), ...(prChip ? [prChip] : []), ...(hold ? [{ text: "Merge held", tone: "held" as const }] : [])],
     sub,
     waiting,
-    explanation: !faultKind && (state === "queued" || held) ? waiting : explanation,
+    explanation: !faultKind && (state === "queued" || held) ? planned || wait?.hold ? waiting : null : explanation,
     blockReason: state === "blocked" ? reason : "",
     queueReason: state === "queued" || held ? wait?.hold ?? "" : "",
     holdReason: hold,

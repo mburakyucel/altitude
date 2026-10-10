@@ -586,6 +586,7 @@ describe("Task on desktop", () => {
     expect(screen.queryByText("Blocked")).toBeNull();
     const panel = screen.getByRole("region", { name: "Live session" });
     expect(within(panel).getByText("Waits for resume")).toBeInTheDocument();
+    expect(screen.getAllByText("Waits for resume")).toHaveLength(1);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/transcript/"))).toBe(false);
     expect(screen.queryByText("Delivered when Altitude resumes the L2.")).toBeNull();
   });
