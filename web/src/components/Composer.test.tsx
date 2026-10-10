@@ -655,6 +655,33 @@ describe("Composer", () => {
     expect(field).not.toHaveFocus();
   });
 
+  it.each([["accepted", false], ["refused", false], ["accepted", true], ["refused", true]])("a send %s after a view change (stayed in view: %s) focuses the field only for a Send made in view", async (outcome, stayed) => {
+    const pending: Array<(refuse: boolean) => void> = [];
+    const onSubmit = vi.fn(() => new Promise<void>((resolve, reject) => {
+      pending.push((refuse) => (refuse ? reject(new ApiError(409, "Refused")) : resolve()));
+    }));
+    const { user, field, rerender } = mount({ onSubmit });
+    await user.type(field, "first");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    if (!stayed) {
+      rerender(<Harness onSubmit={onSubmit} active={false} />);
+      await act(async () => undefined);
+      rerender(<Harness onSubmit={onSubmit} active />);
+    }
+    // A second Send made after returning keeps its own claim and cannot lend it to the first.
+    await user.type(field, "second");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    act(() => field.blur());
+    await act(async () => pending[0]!(outcome === "refused"));
+    await settle();
+    if (outcome === "refused") expect(field).toHaveValue("first");
+    if (stayed) await waitFor(() => expect(field).toHaveFocus());
+    else expect(field).not.toHaveFocus();
+    act(() => field.blur());
+    await act(async () => pending[1]!(false));
+    await waitFor(() => expect(field).toHaveFocus());
+  });
+
   it("Cancel before the last words releases that microphone and isolates a restarted recording", async () => {
     const { track } = installVoiceBrowser();
     const server = hostVoice("", "old recording");
