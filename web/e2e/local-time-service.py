@@ -24,9 +24,9 @@ def main():
     S.regen_state_md("alpha")
 
     task = tasks.new("alpha", "Time task", "Fictional saved conversation.")
+    tasks.block("alpha", task["slug"], "Saved walkthrough task.", actor="l2", updates={"waiting_on": "l3"})
     tasks._conversation_time = lambda: REPLY_AT
     tasks.message("alpha", task["slug"], "l2", "Checks pass as of 23:40Z.")
-    tasks.block("alpha", task["slug"], "Saved walkthrough task.", actor="l2", updates={"waiting_on": "l3"})
     serve()
 
 
