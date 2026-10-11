@@ -1458,7 +1458,7 @@ describe("Task on the phone", () => {
     expect(fresh).toHaveValue("");
     await user.type(fresh, "Typed since");
     await act(async () => finish(status === 409 ? jsonResponse({ error: "Send failed" }, 409)
-      : jsonResponse({ ok: true, message: { id: "m-late", at: new Date().toISOString(), role: "burak", text: "Sent before pairing again" } })));
+      : jsonResponse({ ok: true, message: { id: "m-late", at: new Date().toISOString(), role: "operator", text: "Sent before pairing again" } })));
     if (status === 409) {
       // No message shows the refusal, so its words return to the field at once, ahead of what was typed since.
       await waitFor(() => expect(fresh).toHaveValue("Sent before pairing again\nTyped since"));
