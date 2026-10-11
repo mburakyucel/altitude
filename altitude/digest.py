@@ -14,28 +14,18 @@ def queue() -> list[dict]:
     """Every decision on the operator's turn, oldest first. Needs you shows each at once; one whose task is
     still moving (L3 reading its block notification, or its owner running, queued or due to resume) carries
     `alert_held` and wakes no device until the task rests or ALERT_HOLD passes, so a member L3 settles
-    never alerts.
-
-    Each question carries `alert_key`, the one identity altd's wake, the page and the service worker alert
-    on: its question group, since the operator's latest message on that task. A rewording, an escalation or
-    a member L3 settles keeps the key; a decision asked again after the operator replied gets a new one, so
-    it alerts again even when the reply and the new ask fall between two reads."""
+    never alerts."""
     items = []
     since = datetime.now(timezone.utc) - ALERT_HOLD
     for p in config.load_projects():
         rows = T.decisions(p)
         # Read after the decisions: a block publishes its question and queues L3's notification under one
         # lock, which reading_blocks waits for, so no question it published is seen at rest.
-        tasks = {t["slug"]: t for t in S.list_tasks(p)}
-        moving = l3.reading_blocks(p) | {slug for slug, t in tasks.items()
+        moving = l3.reading_blocks(p) | {t["slug"] for t in S.list_tasks(p)
                                          if t["state"] in ("running", "queued") or t.get("resume_after")}
         for row in rows:
             if row["slug"] in moving and row.get("asked") and datetime.fromisoformat(row["asked"]) > since:
                 row["alert_held"] = True
-            if row.get("id"):
-                replied = (tasks.get(row["slug"]) or {}).get("replied")
-                key = [p, row["slug"], row.get("group_id") or row["id"]]
-                row["alert_key"] = ":".join([*key, replied] if replied else key)
             items.append(row)
     items.sort(key=lambda i: i.get("asked") or "")
     return items

@@ -623,7 +623,9 @@ class ConversationDecisions(AltitudeCase):
                 for field in ("id", "revision", "anchor_id", "recommendation", "audience", "asked_by", "status"):
                     self.assertEqual(after[field], before[field], field)
                 self.assertEqual(S.load_task(self.project, self.slug)["waiting_on"], T.OPERATOR_MESSAGE_ROLE)
-                self.assertEqual(T.decisions(self.project), [after])
+                replied = S.load_task(self.project, self.slug)["replied"]
+                asked_again = f"{self.project}:{self.slug}:{after.get('group_id') or after['id']}:{replied}"
+                self.assertEqual(T.decisions(self.project), [{**after, "alert_key": asked_again}])
                 self.assertFalse(l3.queue_path(self.project).exists(), "parking an operator dilemma does not queue L3 again")
         T.resume(self.project, self.slug)
         changed = T.block(self.project, self.slug, before["detail"], actor="l2", updates={"waiting_on": "l3"},

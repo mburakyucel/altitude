@@ -15,6 +15,7 @@ import subprocess
 import threading
 import unittest
 import urllib.request
+from unittest import mock
 
 from tests.support import AltitudeCase
 from datetime import timedelta
@@ -162,6 +163,19 @@ class TestPush(AltitudeCase):
         push.notify()
         push.notify()
         self.assertEqual(len(self.service.requests), 2)
+
+    def test_a_reply_arriving_while_the_queue_is_read_never_renames_the_question_it_hands_back(self):
+        task = self.decision("Choose backup retention", "How long should backups stay?")
+        views = T.question_views
+
+        def reply_meanwhile(project, slug):
+            T.message(self.project, slug, T.OPERATOR_MESSAGE_ROLE, "Why not keep them forever?")
+            return views(project, slug)
+
+        with mock.patch.object(T, "question_views", reply_meanwhile):
+            [row] = digest.queue()
+        self.assertTrue(S.load_task(self.project, task["slug"])["replied"])
+        self.assertEqual(row["alert_key"], f"{self.project}:{task['slug']}:{row['group_id']}")
 
     def test_a_device_hears_nothing_about_the_decisions_that_were_already_waiting(self):
         self.decision("Choose backup retention", "How long should backups stay?")

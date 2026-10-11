@@ -2542,12 +2542,21 @@ def review_row(project: str, task: dict) -> dict | None:
 
 
 def decisions(project: str) -> list[dict]:
-    """Questions and held reviews on the operator's turn, and explicit operator blocks; a pause needs no answer."""
+    """Questions and held reviews on the operator's turn, and explicit operator blocks; a pause needs no answer.
+
+    Each question carries `alert_key`, the one identity altd's wake, the page and the service worker alert
+    on: its question group, since the operator's latest message on that task. A rewording, an escalation or
+    a member L3 settles keeps the key; a decision asked again after the operator replied gets a new one, so
+    it alerts again even when the reply and the new ask fall between two reads. The key comes from the task
+    record that put the question on the operator's turn, so a reply arriving meanwhile never lends its time
+    to a question it handed back."""
     rows = []
     for task in S.list_tasks(project):
         questions = question_views(project, task["slug"])
         turn = {(q["id"], q["revision"]) for q in operator_questions(task)}
-        rows.extend(q for q in questions if (q["id"], q["revision"]) in turn)
+        replied = [task["replied"]] if task.get("replied") else []
+        rows.extend({**q, "alert_key": ":".join([project, task["slug"], q.get("group_id") or q["id"], *replied])}
+                    for q in questions if (q["id"], q["revision"]) in turn)
         if review := review_row(project, task):
             rows.append(review)
         if (not questions and task["state"] == "blocked" and not task.get("resume_after")
