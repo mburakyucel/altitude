@@ -196,7 +196,7 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
     state,
     label,
     dot,
-    chips: [{ text: label }, ...(selection.chip ? [{ text: selection.chip }] : []), ...(prChip ? [prChip] : []), ...(hold ? [{ text: "Merge held", tone: "held" as const }] : [])],
+    chips: [{ text: label, tone: dot === "danger" ? "danger" as const : undefined }, ...(selection.chip ? [{ text: selection.chip }] : []), ...(prChip ? [prChip] : []), ...(hold ? [{ text: "Merge held", tone: "held" as const }] : [])],
     sub,
     waiting,
     explanation: !faultKind && (state === "queued" || held) ? planned || wait?.hold ? waiting : null : explanation,
@@ -258,6 +258,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   const turn = open.filter((question) => question.audience !== "l3" && (!handedBack || (question.asked ?? "") > handedBack));
   const count = `Your turn · ${turn.length} question${turn.length === 1 ? "" : "s"}`;
   const turnText = turn.some((question) => question.asked_again) ? `${count} · asked again` : count;
+  const answering = live && !turn.length && !(handedBack || group?.questions.some((q) => q.response));
   const scroller = useRef<HTMLDivElement>(null);
   const viewportHeight = useRef(0);
   const anchors = useRef(new Map<string, HTMLDivElement>());
@@ -530,13 +531,13 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
           {sendNow.isError && waiting.some((row) => row.id === sendNow.variables) ? <SendNowError error={sendNow.error} /> : null}
           {task.review?.history.filter((review) => shownReviews.has(review.id) && !messages.some((message) => message.review_id === review.id)).map((review) => <ReviewCard key={review.id} review={review} task={task} controls={reviewControls} target={reviewId === review.id} onRead={() => { following.current = false; }} />)}
           <ReviewFeedback controls={reviewControls} />
-          {live && group ? <div className={turn.length || !(handedBack || group.questions.some((q) => q.response)) ? "conversation-question" : "sr-only"} data-turn={turn.length ? "operator" : "l2"} tabIndex={-1} ref={(node) => {
+          {live && group ? <div className={turn.length || answering ? "conversation-question" : "sr-only"} data-turn={turn.length ? "operator" : "l2"} tabIndex={-1} ref={(node) => {
             group.questions.forEach((q) => {
               const id = `${q.id}:${q.revision}`;
               if (node) anchors.current.set(id, node); else anchors.current.delete(id);
             });
           }}>
-            {turn.length || !(handedBack || group.questions.some((q) => q.response)) ? <>
+            {turn.length || answering ? <>
               <p className="conversation-turn">{turn.length ? turnText : "L3 is answering"}</p>
               <QuestionSet key={group.id} decisions={group.questions} group={group} target={target} refreshKey={accessRefresh} deliveries={deliveries} chat disabled={readOnly || checking || denied || facts.finished} onDenied={() => setDenied(true)} onRefresh={restoreAccess} />
             </> : <p className="sr-only" role="status">{task.state === "queued" ? "Sent · waiting for the L2 to start." : "Sent · the L2 has your reply."}</p>}
@@ -546,6 +547,10 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
             <p className="conversation-turn">Your turn · review before merge</p>
             <ReviewDecision decision={facts.review} repository={facts.repository} chat disabled={readOnly || checking || denied} />
           </div> : null}
+          {/* What the task waits on ends the chat, after any card, under the header's state; L3's open question already says it (SPEC.md §3.10). */}
+          {facts.explanation && !(answering && !task["fault"]) ? <p className="conversation-status" data-tone={task["fault"] ? "danger" : undefined} role="status">
+            <span className="dot" data-state={facts.dot} aria-hidden />{facts.explanation}
+          </p> : null}
           {(task.events?.length ?? 0) > 0 ? <details className="conversation-activity"><summary>Activity &amp; evidence</summary>
             <Link to={`/projects/${project}/tasks/${task.slug}/live${location.search}`} state={location.state} replace>Open live session</Link>
             {task.events?.slice(-20).map((event, i) => <p key={i} className="text-meta text-muted"><Stamp at={event["at"]} className="event-time" /> · <InlineProse text={str(event["reason"]) || str(event["text"]) || str(event["kind"])} /></p>)}
@@ -740,13 +745,16 @@ function TaskPage({
   const base = `/projects/${project}/tasks/${task.slug}`;
   const title = task.title || task.slug;
   const detailsButton = <button type="button" className="icon-btn" aria-label="Task details" aria-haspopup="dialog" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(true)}>⋯</button>;
-  const statusNotice = facts.explanation ? <p className={`task-line task-explanation${task["fault"] ? " task-fault text-danger" : ""}`} role="status">{facts.explanation}</p> : null;
   const details = detailsOpen ? <Overlay label="Task details" side={phone ? "bottom" : "right"} onClose={closeDetails}>
     <div className="task-details">
       <div className="task-details-heading"><h2>Task details</h2><button type="button" className="icon-btn" aria-label="Close task details" onClick={closeDetails}>×</button></div>
       <p className="task-details-title">{title}</p>
       {facts.sub ? <p className="task-sub">{facts.sub}</p> : null}
       <Chips chips={facts.chips} />
+      {/* The complete reasons come first: the page shows only the state and a short excerpt (SPEC.md §3.10). */}
+      {facts.blockReason ? <section><h3>{facts.label}</h3><p>{facts.blockReason}</p></section> : null}
+      {facts.queueReason ? <section><h3>Start condition</h3><p>{facts.queueReason}</p></section> : null}
+      {facts.holdReason ? <section><h3>Merge held</h3><p>{facts.holdReason}</p></section> : null}
       <ReviewBoxes task={task} controls={reviewControls} view={(id) => {
         closeDetails();
         const search = new URLSearchParams(location.search);
@@ -759,9 +767,6 @@ function TaskPage({
         <dl className="task-model">{facts.selection.rows.map(([term, value]) => <div key={term}><dt>{term}</dt><dd>{value}</dd></div>)}</dl>
         <p className="text-meta text-muted">{facts.selection.note}</p>
       </section> : null}
-      {facts.blockReason ? <section><h3>{facts.label}</h3><p>{facts.blockReason}</p></section> : null}
-      {facts.queueReason ? <section><h3>Start condition</h3><p>{facts.queueReason}</p></section> : null}
-      {facts.holdReason ? <section><h3>Merge held</h3><p>{facts.holdReason}</p></section> : null}
       {decision ? <Link className="btn" to={questionPath(decision)} state={location.state} replace onClick={() => { setQuestionVisit((visit) => visit + 1); closeDetails(); }}>View question</Link> : null}
       {phone ? <>
         <div className="task-actions"><ActionButtons facts={facts} actions={actions} /></div>
@@ -831,10 +836,9 @@ function TaskPage({
     return (
       <>
       <PhoneHeader overview={overview} onTitleClick={() => setDetailsOpen(true)} titleExpanded={detailsOpen} status={
-        <span className="task-state-line" role="status"><span className="dot" data-state={facts.dot} aria-hidden /><span>{facts.label}</span>{facts.holdReason ? <span data-tone="held"> · Merge held</span> : null}</span>
+        <span className="task-state-line" role="status"><span className="dot" data-state={facts.dot} aria-hidden /><span data-tone={facts.dot === "danger" ? "danger" : undefined}>{facts.label}</span>{facts.holdReason ? <span data-tone="held"> · Merge held</span> : null}</span>
       }>{control}</PhoneHeader>
       <div className="task-page" data-phone>
-        {statusNotice}
         <SteeringNotice steering={steering} />
         {!detailsOpen ? resumeError : null}
         {!detailsOpen && actions.error && actions.confirm ? <p className="task-line text-danger" role="alert">Could not {actions.confirm} the task. <button type="button" className="link" onClick={() => setDetailsOpen(true)}>Retry</button></p> : null}
@@ -884,7 +888,6 @@ function TaskPage({
         <SteeringNotice steering={steering} />
         <ConfirmRow actions={actions} />
         {resumeError}
-        {statusNotice}
       </header>
       <div className="task-body">
         <div className="task-main">{conversation}</div>

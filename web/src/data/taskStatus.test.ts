@@ -65,14 +65,18 @@ describe("task explanations", () => {
     expect(task.blocked_reason).toBe("Private diagnostic log 123456789abcdef012345");
   });
 
-  it("states when no cause is recorded", () => {
-    expect(taskExplanation(blocked)).toMatch(/no reason.*recorded/i);
+  it("states when no cause is recorded on rows, and leaves the page to its state", () => {
+    expect(taskExplanation(blocked, undefined, true)).toMatch(/no reason.*recorded/i);
+    expect(taskExplanation(blocked)).toBeNull();
+    expect(taskExplanation({ ...blocked, blocked_reason: "Paused for the release window." })).toBe("Paused for the release window.");
   });
 
   it("distinguishes the operator's question from a coordinator prerequisite", () => {
     expect(taskExplanation({ ...blocked, questions: [question("operator")] })).toBeNull();
-    const coordinator = taskExplanation({ ...blocked, waiting_on: "l3", questions: [question("l3")] });
+    const coordinator = taskExplanation({ ...blocked, waiting_on: "l3", questions: [question("l3")] }, undefined, true);
     expect(coordinator).toMatch(/coordinator.*approved machine access/i);
+    // The page's header already names the state, so the page says only the reason.
+    expect(taskExplanation({ ...blocked, waiting_on: "l3", questions: [question("l3")] })).toMatch(/^Arrange approved machine access/);
     expect(coordinator).not.toMatch(/your answer|your input/i);
   });
 
@@ -87,7 +91,7 @@ describe("task explanations", () => {
     expect(taskExplanation({ ...blocked, questions: [question("operator", { response })] }))
       .toBeNull();
     const handedBack = { ...blocked, handed_back: "2026-10-07T04:04:00Z", questions: [question("operator")] };
-    expect(taskExplanation(handedBack)).not.toMatch(/your answer|your input/i);
+    expect(taskExplanation(handedBack, undefined, true)).not.toMatch(/your answer|your input/i);
     expect(taskExplanation({ ...handedBack, questions: [question("operator", { asked: "2026-10-07T04:05:00Z" })] }))
       .toBeNull();
   });
@@ -97,7 +101,7 @@ describe("task explanations", () => {
     expect(taskExplanation({ ...blocked, questions: [question("operator", { response: { text: "Approved" } })] }, decision, true)).toBe("L2 replying");
     expect(taskExplanation({ ...blocked, questions: [question("operator", { response: { text: "Approved" } })] }, decision))
       .toBeNull();
-    expect(taskExplanation({ ...blocked, handed_back: "2026-10-07T04:04:00Z", questions: [question("operator")] }, decision))
+    expect(taskExplanation({ ...blocked, handed_back: "2026-10-07T04:04:00Z", questions: [question("operator")] }, decision, true))
       .not.toBeNull();
   });
 
@@ -126,7 +130,7 @@ describe("task explanations", () => {
   });
 
   it("keeps an unanswered prerequisite visible after another question is answered", () => {
-    expect(taskExplanation({ ...blocked, questions: [question("operator", { response: { text: "Approved" } }), question("l3")] }))
+    expect(taskExplanation({ ...blocked, questions: [question("operator", { response: { text: "Approved" } }), question("l3")] }, undefined, true))
       .toMatch(/Waiting for the coordinator: Arrange approved machine access/);
   });
 
@@ -166,8 +170,10 @@ describe("task explanations", () => {
     ["stopped", null],
     ["resuming", null],
   ] as const)("respects recorded Stop state %s", (state, expected) => {
-    const explanation = taskExplanation({ ...blocked, stop_id: "stop-request", steering: { state } });
-    if (expected) expect(explanation).toMatch(expected); else expect(explanation).toBeNull();
+    const task = { ...blocked, stop_id: "stop-request", steering: { state } };
+    if (expected) expect(taskExplanation(task, undefined, true)).toMatch(expected);
+    // The task page's steering notice and controls carry Stop states.
+    expect(taskExplanation(task)).toBeNull();
   });
 
   it("names the coordinator for its own Stop, queued or executed", () => {
@@ -198,7 +204,7 @@ describe("task explanations", () => {
     expect(taskExplanation({ ...fault, ...hold })).toBe(taskExplanation(fault));
     const stopped = { ...blocked, steering: { state: "stopped" }, stop_id: "stop-request" };
     expect(taskExplanation({ ...stopped, ...hold })).toBe(taskExplanation(stopped));
-    expect(taskExplanation({ ...blocked, ...hold })).not.toMatch(/your review/i);
+    expect(taskExplanation({ ...blocked, ...hold }, undefined, true)).not.toMatch(/your review/i);
     const review: Decision = { project: "atlas", slug: blocked.slug, kind: "review", pr: 12 };
     expect(taskExplanation({ ...blocked, ...hold }, review)).toBeNull();
   });

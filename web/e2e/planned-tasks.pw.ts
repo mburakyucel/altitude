@@ -36,7 +36,7 @@ test("planned work accepts a brief update, releases through capacity, and auto-r
   await plannedRow.click();
   const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
   const field = page.getByRole("textbox", { name: "Message the L2", exact: true });
-  const notice = page.locator(".task-explanation").getByText(`Waiting for ${reason}.`, { exact: true });
+  const notice = page.locator(".conversation-status").getByText(`Waiting for ${reason}.`, { exact: true });
   await walk.state("02-planned-empty-conversation", { visible: [field, notice, conversation.getByText("No messages yet.", { exact: true })], hidden: [conversation.getByRole("button", { name: /^Stop/ })] });
   const update = "Keep pagination tokens compatible after the index migration.";
   await field.fill(update);
@@ -107,7 +107,7 @@ test("planned-message denial retains the draft and restores sending after access
   await expect(field).toHaveValue(text);
   await conversation.getByRole("button", { name: "Send", exact: true }).click();
   await expect(field).toHaveValue("");
-  await walk.state("03-saved-after-access-restored", { visible: [conversation.getByText(text, { exact: true }), page.locator(".task-explanation").getByText(`Waiting for ${reason}.`, { exact: true })], hidden: [denial] });
+  await walk.state("03-saved-after-access-restored", { visible: [conversation.getByText(text, { exact: true }), page.locator(".conversation-status").getByText(`Waiting for ${reason}.`, { exact: true })], hidden: [denial] });
   expect((await readTask(request)).planned_wait).toMatchObject({ reason });
 });
 
