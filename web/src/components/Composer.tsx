@@ -532,6 +532,22 @@ export default function Composer({
     });
   }, []);
 
+  // Typing, dictation and a message's words put back by Edit or Copy to draft are one edit of the draft.
+  const editDraft = useCallback((text: string) => {
+    draft.current = text;
+    onChange(text);
+    try {
+      const saved = readSubmitted(conversation);
+      if (saved.failure || saved.text) {
+        saved.text = saved.failure === "unconfirmed" ? text : "";
+        if (saved.failure !== "unconfirmed") saved.failure = null;
+        saveSubmitted(conversation, saved);
+      }
+      setRecoveryUnavailable(false);
+    } catch { setRecoveryUnavailable(true); }
+    if (failure.current !== "unconfirmed") { failure.current = null; setSendFailure(null); }
+  }, [conversation, onChange]);
+
   useEffect(() => {
     // Copies that no live send owns and no message shows return to the field: on mount (a reload, a remount, pairing
     // again) and when a send fails after its message is gone (pairing again cleared it while the request was out).
@@ -567,8 +583,7 @@ export default function Composer({
       paste: (text: string, previews?: ImagePreview[]) => {
         if (previews?.length && !imageDraft.current.restore(previews)) return false;
         const next = [text, draft.current].filter(Boolean).join("\n");
-        draft.current = next;
-        onChange(next);
+        editDraft(next);
         focusField(next.length);
         return true;
       },
@@ -593,22 +608,7 @@ export default function Composer({
         if (readSubmitted(conversation).text) { draft.current = ""; onChange(""); }
       } catch { /* keep the parent draft */ }
     };
-  }, [conversation, focusField, onChange]);
-
-  const editDraft = useCallback((text: string) => {
-    draft.current = text;
-    onChange(text);
-    try {
-      const saved = readSubmitted(conversation);
-      if (saved.failure || saved.text) {
-        saved.text = saved.failure === "unconfirmed" ? text : "";
-        if (saved.failure !== "unconfirmed") saved.failure = null;
-        saveSubmitted(conversation, saved);
-      }
-      setRecoveryUnavailable(false);
-    } catch { setRecoveryUnavailable(true); }
-    if (failure.current !== "unconfirmed") { failure.current = null; setSendFailure(null); }
-  }, [conversation, onChange]);
+  }, [conversation, editDraft, focusField, onChange]);
 
   const releaseStream = useCallback((released: MediaStream | null) => {
     released?.getTracks().forEach((track) => track.stop());

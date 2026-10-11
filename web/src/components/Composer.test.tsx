@@ -3,7 +3,7 @@ import { render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode, useState } from "react";
 import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import Composer, { combineDraft, formatTimer, markSubmitted } from "./Composer";
+import Composer, { combineDraft, formatTimer, markSubmitted, returnToComposer } from "./Composer";
 import type { ComposerProps } from "./Composer";
 import { ApiError } from "../data/api";
 import type { HostVoiceOptions } from "./voiceTest";
@@ -211,6 +211,27 @@ describe("Composer", () => {
     } finally { vi.useRealTimers(); }
     await user.type(field, " editing works");
     expect(field).toHaveValue("Keep this editing works");
+  });
+
+  it.each([409, 500])("words a message puts back into recovered text (failure %i) stay through leaving and returning", async (status) => {
+    const { onSubmit, settles, shows, forget } = conversationSend();
+    const user = userEvent.setup();
+    render(<Switcher onSubmit={onSubmit} shows={shows} />);
+    const field = () => screen.getByLabelText("Message L3 about altitude");
+    await user.type(field(), "Recovered words");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await act(async () => settles[0]!(status === 409 ? new ApiError(409, "Refused") : new TypeError("Lost receipt")));
+    // A reload brings the unsent words back as a draft; then Edit on another message puts its words ahead of them.
+    forget();
+    await user.click(screen.getByRole("button", { name: "Switch view" }));
+    await user.click(screen.getByRole("button", { name: "Switch view" }));
+    expect(field()).toHaveValue("Recovered words");
+    act(() => { expect(returnToComposer("project/altitude", "Edited message")).toBe(true); });
+    expect(field()).toHaveValue("Edited message\nRecovered words");
+    await user.click(screen.getByRole("button", { name: "Switch view" }));
+    await user.click(screen.getByRole("button", { name: "Switch view" }));
+    expect(field()).toHaveValue("Edited message\nRecovered words");
+    expect(onSubmit).toHaveBeenCalledOnce();
   });
 
   it.each([true, false])("a late failure leaves the remounted composer's newer draft alone while its message shows it; once the message is gone, the words return at once ahead of it (shown: %s)", async (shown) => {
