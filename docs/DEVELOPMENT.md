@@ -222,6 +222,9 @@ so the intended queued request is the only send it interrupts.
 The live-loading measurement waits for the service to finish the transcript read its navigation
 abandoned before measuring the task switch, so that read neither shares the next phase's CPU nor
 outlives the test.
+The phone swipe walkthrough touches a view only once its switch has committed. A completed swipe
+commits its view together with its URL; a tab click commits in a transition, so the walkthrough
+waits for the previous view to leave, because Playwright counts a view beside the screen as visible.
 The reattachment walkthrough forces an overlapping browser overview read while registration fails.
 It releases the read after the error appears and keeps its route handler until teardown; removing
 the last page route also continues held requests, so their callbacks cannot continue them again.

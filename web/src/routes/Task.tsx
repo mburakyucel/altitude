@@ -852,8 +852,10 @@ function TaskPage({
   // The phone's views in their tab order: a swipe moves one step and never wraps (SPEC.md §3.10).
   const paths = terminalOffered ? ["", "/live", "/terminal"] : ["", "/live"];
   const view = terminalRoute ? 2 : liveRoute ? 1 : 0;
+  // A completed swipe already shows its view, so the switch commits with its URL rather than in a transition:
+  // a touch on that view never reaches the previous view's handlers, which would drop it.
   const swipe = useTaskSwipe(phone && !detailsOpen && !voiceOwnsEscape, view, paths.length, (next) => {
-    void navigate(`${base}${paths[next]}${location.search}`, { replace: true, state: location.state });
+    void navigate(`${base}${paths[next]}${location.search}`, { replace: true, state: location.state, flushSync: true });
   });
   // The phone tab row stays above the sliding views; the terminal on screen places its × there.
   const [tabSlot, setTabSlot] = useState<HTMLDivElement | null>(null);
