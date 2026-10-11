@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import { render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode, useState } from "react";
@@ -484,9 +484,14 @@ describe("Composer", () => {
     expect(field()).toHaveValue("Removed project's words");
     await user.click(screen.getByRole("button", { name: "Switch view" }));
     if (failing === "deleting") {
+      // A task of the project that this page never opened has its own record too.
+      sessionStorage.setItem(`altitude.submitted:task/removed-${failing}/unopened`, JSON.stringify({ pending: {}, text: "Unopened task's words", failure: "unconfirmed" }));
       const storage = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => { throw new Error("Delete denied"); });
       try { forgetRecovery(`removed-${failing}`); } finally { storage.mockRestore(); }
       await user.click(screen.getByRole("button", { name: "Switch view" }));
+      expect(field()).toHaveValue("");
+      cleanup();
+      render(<Switcher conversation={`task/removed-${failing}/unopened`} />);
       expect(field()).toHaveValue("");
       return;
     }

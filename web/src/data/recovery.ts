@@ -25,20 +25,28 @@ export const heldFields = new Map<string, string>();
 export const liveSubmissions = new Set<string>();
 
 /**
- * Removing a project drops its conversations' recovery: the stored records, this document's copies (left empty for
- * the bytes they matched, so a record storage failed to delete stays empty here) and its sends' claims on their copies.
+ * Removing a project drops its conversations' recovery: the stored records, its sends' claims on their copies, and
+ * this document's copies, each left empty for the bytes it matched so a record storage fails to delete reads as
+ * empty here.
  */
 export function forgetRecovery(project: string) {
   const ours = (conversation: string) => conversation === `project/${project}` || conversation.startsWith(`task/${project}/`);
+  const forget = (conversation: string, stored: string | null | undefined) =>
+    documentRecovery.set(conversation, { stored, value: { pending: {}, text: "", failure: null }, unwritten: false });
   for (const [conversation, copy] of documentRecovery) {
     if (!ours(conversation)) continue;
     for (const id of Object.keys(copy.value.pending)) liveSubmissions.delete(id);
-    documentRecovery.set(conversation, { stored: copy.stored, value: { pending: {}, text: "", failure: null }, unwritten: false });
+    forget(conversation, copy.stored);
   }
   for (const conversation of [...heldFields.keys()]) if (ours(conversation)) heldFields.delete(conversation);
-  try {
-    for (const key of Object.keys(sessionStorage)) {
-      if (key.startsWith(recoveryKey("")) && ours(key.slice(recoveryKey("").length))) sessionStorage.removeItem(key);
-    }
-  } catch { /* browser storage is unavailable: this document's copies are already empty */ }
+  let keys: string[];
+  try { keys = Object.keys(sessionStorage); } catch { return; /* browser storage is unavailable: it holds nothing to read */ }
+  for (const key of keys) {
+    const conversation = key.slice(recoveryKey("").length);
+    if (!key.startsWith(recoveryKey("")) || !ours(conversation)) continue;
+    try {
+      forget(conversation, sessionStorage.getItem(key));
+      sessionStorage.removeItem(key);
+    } catch { /* the record stays in storage; this document reads it as empty */ }
+  }
 }
