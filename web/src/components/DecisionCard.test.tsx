@@ -95,8 +95,8 @@ describe("review status on proposal and merge questions (SPEC.md §3.8.3)", () =
     ["done and reconciled", { ...done, findings: 2 }, "done, 2 findings resolved", "ok"],
     ["done and reconciled, of an earlier version", { ...done, findings: 1, earlier: true }, "done, 1 finding resolved · earlier version", "warn"],
     ["didn't finish", { id: "r1", state: "failed" }, "didn’t finish", "warn"],
-    ["skipped by L2, with its reason", { id: "r1", state: "withdrawn", skipped_by: "l2", reason: "One-line copy change." }, "skipped by L2 · One-line copy change.", "none"],
-    ["skipped by you", { id: "r1", state: "withdrawn", skipped_by: "operator" }, "skipped by you", "none"],
+    ["skipped by L2, with its reason", { id: "r1", state: "withdrawn", skipped_by: "l2", reason: "One-line copy change." }, "skipped by L2 · One-line copy change.", "skip"],
+    ["skipped by you", { id: "r1", state: "withdrawn", skipped_by: "operator" }, "skipped by you", "skip"],
   ];
   it.each(states)("a design question's proposal review: %s", (_name, review, text, tone) => {
     const { container } = mount(<QuestionSet decisions={[{ ...design, review: DecisionSchema.shape.review.parse({ subject: "proposal", ...review }) }]} from="needs" />);

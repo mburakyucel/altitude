@@ -7,9 +7,10 @@ import "./task-review.css";
 
 const NAME: Record<ReviewSubject, string> = { proposal: "Proposal review", changes: "Implementation review" };
 const SUBJECTS = ["proposal", "changes"] as const;
-type Tone = "none" | "wait" | "run" | "ok" | "warn" | "bad";
+type Tone = "none" | "skip" | "wait" | "run" | "ok" | "warn" | "bad";
 const ICON: Record<Tone, React.ReactNode> = {
   none: <circle cx="12" cy="12" r="8.5" strokeDasharray="2.5 3" />,
+  skip: <><circle cx="12" cy="12" r="8.5" strokeDasharray="2.5 3" /><path d="M8.5 12h7" /></>,
   wait: <><circle cx="12" cy="12" r="8.5" /><path d="M12 8v4l2.5 2" /></>,
   run: <path d="M12 3.5a8.5 8.5 0 1 1-8.5 8.5" />,
   ok: <><circle cx="12" cy="12" r="8.5" /><path d="M8.5 12.2l2.4 2.4 4.6-5" /></>,
@@ -21,7 +22,7 @@ const who = (role: string | null | undefined) => role === "l2" ? "L2" : "you";
 function tone(review: Review): Tone {
   switch (review.state) {
     case "requested": return "wait";
-    case "withdrawn": return "none";
+    case "withdrawn": return "skip";
     case "running": return "run";
     case "failed": case "cancelled": return "bad";
     case "completed": return !review.reconciled ? (review.result?.findings.length ? "warn" : "ok") : review.unresolved.length ? "warn" : "ok";
@@ -262,7 +263,7 @@ export function reviewLine(review: ReviewLine): { tone: Tone; name: string; stat
     : review.state === "requested" ? ["wait", "requested"]
     : review.state === "running" ? ["run", "in progress"]
     // A skip is a recorded choice, shown calmly with its reason; only a missing review warns.
-    : review.state === "withdrawn" ? ["none", review.skipped_by === "l2" ? ["skipped by L2", review.reason].filter(Boolean).join(" · ") : "skipped by you"]
+    : review.state === "withdrawn" ? ["skip", review.skipped_by === "l2" ? ["skipped by L2", review.reason].filter(Boolean).join(" · ") : "skipped by you"]
     : review.state !== "completed" ? ["warn", "didn’t finish"]
     : !review.reconciled && review.findings ? ["warn", `done, ${count(review.findings, "finding")} pending`]
     : review.open ? ["warn", `done, ${count(review.open, "open finding")}`]

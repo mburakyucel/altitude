@@ -58,7 +58,7 @@ test("Needs you shows each proposal and merge review and Back returns to its car
   const queue = page.getByRole("article", { name: "Queue per project", exact: true });
   const skipped = queue.getByRole("link", { name: "Proposal review · skipped by L2 · Small, reversible change.", exact: true });
   await skipped.scrollIntoViewIfNeeded();
-  await expect(skipped.locator(".review-icon-none")).toBeVisible();
+  await expect(skipped.locator(".review-icon-skip")).toBeVisible();
   await walk.state("01d-skipped-by-owner", { visible: [skipped], hidden: [queue.locator(".question-preview")] });
   await roundTrip(page, skipped, await skipped.getAttribute("href").then((href) => new URLSearchParams(href!.split("?")[1]).get("review")!),
     "Small, reversible change.", () => page.goBack());

@@ -924,8 +924,8 @@ Its accessible name is "<name> · <state>". The state reads the latest review of
 | Done, findings still open in a current review | done, N open findings | amber ! |
 | Done, every finding fixed or dismissed | done, N findings resolved | green check |
 | Failed or stopped | didn’t finish | amber ! |
-| Skipped by L2 as not needed | skipped by L2 · <its reason> | grey dashed circle |
-| Skipped by the operator | skipped by you | grey dashed circle |
+| Skipped by L2 as not needed | skipped by L2 · <its reason> | grey dashed circle with a dash |
+| Skipped by the operator | skipped by you | grey dashed circle with a dash |
 | Any of these covering an earlier version | the state, then " · earlier version" | amber ! |
 
 "Earlier version" is the review card's own comparison (§3.4), so the box and the card agree. The box
