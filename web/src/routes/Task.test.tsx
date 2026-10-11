@@ -1491,6 +1491,33 @@ describe("Task on the phone", () => {
     expect(document.querySelector(".composer-hint[role=alert]")).toHaveTextContent(status === 409 ? "Not sent." : "Could not confirm delivery.");
   });
 
+  it("recovered words edited from another visit to the task come back as edited with Back, once", async () => {
+    setViewport(390);
+    let finish!: (response: Response) => void;
+    stub(running, { message: () => new Promise<Response>((resolve) => { finish = resolve; }) });
+    const { user, queryClient, router } = renderApp({ route });
+    await user.type(await screen.findByLabelText("Message the L2"), "First words");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await act(async () => { await router.navigate("/settings"); });
+    act(() => queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "access" }));
+    await act(async () => { await router.navigate(route); });
+    await act(async () => finish(jsonResponse({ error: "Response lost" }, 500)));
+    await waitFor(() => expect(screen.getByLabelText("Message the L2")).toHaveValue("First words"));
+    // A second visit to the same task, in a new history entry, edits the recovered words.
+    await act(async () => { await router.navigate("/settings"); });
+    await act(async () => { await router.navigate(route); });
+    const second = await screen.findByLabelText("Message the L2");
+    expect(second).toHaveValue("First words");
+    await user.type(second, ", edited");
+    await act(async () => { await router.navigate("/settings"); });
+    // Back to the first visit: its remembered draft is older than the recovered words, which come back as edited.
+    await act(async () => { await router.navigate(-1); });
+    await act(async () => { await router.navigate(-1); });
+    await act(async () => { await router.navigate(-1); });
+    await waitFor(() => expect(screen.getByLabelText("Message the L2")).toHaveValue("First words, edited"));
+    expect(document.querySelector(".composer-hint[role=alert]")).toHaveTextContent("Could not confirm delivery.");
+  });
+
   it("does not restore an earlier task's failed send into the destination task", async () => {
     setViewport(390);
     let finish!: (response: Response) => void;

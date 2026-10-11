@@ -559,21 +559,20 @@ export default function Composer({
         // or resending; the cautious hint wins unless every copy was refused.
         const orphaned = Object.entries(saved.pending).filter(([id]) => !liveSubmissions.has(id) && !showing.current?.(id));
         if (live && !orphaned.length) return;
+        if (!orphaned.length && !saved.text && saved.failure !== "transcription" && saved.failure !== "unreached") return;
+        // Stored recovery text is the whole field as last edited anywhere in this tab (every edit keeps it), so it
+        // stands for the field over a draft a page remembered for Back; a live field is already current.
+        const field = live ? draft.current : saved.text || draft.current;
         if (orphaned.length) {
           const refused = new Set(saved.refused ?? []);
-          saved.text = [...orphaned.map(([, text]) => text), live ? "" : saved.text].filter(Boolean).join("\n");
           saved.failure = saved.failure === "unconfirmed" || orphaned.some(([id]) => !refused.has(id)) ? "unconfirmed" : "refused";
           for (const [id] of orphaned) { delete saved.pending[id]; refused.delete(id); }
           saved.refused = refused.size ? [...refused] : undefined;
         }
-        if (saved.text || saved.failure === "transcription" || saved.failure === "unreached") {
-          // Leaving moved the recovered words to storage, but a page's Back memory may also have kept them: the
-          // same words return once.
-          if (saved.text !== draft.current) saved.text = [saved.text, draft.current].filter(Boolean).join("\n");
-          view.restore(saved);
-          try { saveSubmitted(conversation, saved); setRecoveryUnavailable(false); }
-          catch { setRecoveryUnavailable(true); }
-        }
+        saved.text = [...orphaned.map(([, text]) => text), field].filter(Boolean).join("\n");
+        view.restore(saved);
+        try { saveSubmitted(conversation, saved); setRecoveryUnavailable(false); }
+        catch { setRecoveryUnavailable(true); }
         // A live failure its message shows needs nothing from storage; only a mount says recovery is unavailable.
       } catch { if (!live) setVoiceFailure("Message recovery is unavailable in this browser."); }
     };
