@@ -19,7 +19,7 @@ const draftKey = (q: Decision) => `${q.project}:${q.slug}:${q.id}:${q.revision}`
 const closedBy = (by: string) => by === "l2" || by === "l3" ? by.toUpperCase() : by === "altd" ? "Altitude" : "You";
 /** The question whose preview or review was opened from a history entry, so returning there brings it into view;
  * no id is the task's merge review card. */
-export type QuestionOrigin = Pick<Decision, "project" | "slug" | "id" | "revision">;
+export type QuestionOrigin = Pick<Decision, "project" | "slug" | "id">;
 const plainClick = (event: React.MouseEvent) => event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
 function recommendedKey(question: Decision) {
   return question.recommended_key ?? (!question.options && question.recommendation?.text ? "recommended" : null);
@@ -36,7 +36,7 @@ function ReviewLink({ decision, from }: { decision: Decision; from?: "needs" | "
     state={from ? { from, tab: from === "needs" ? "needs" : "work" } : location.state} onClick={(event) => {
       if (!plainClick(event)) return;
       setSelectedProject(decision.project);
-      keepForVisit(location.key, "origin", { project: decision.project, slug: decision.slug, id: decision.id, revision: decision.revision } satisfies QuestionOrigin);
+      keepForVisit(location.key, "origin", { project: decision.project, slug: decision.slug, id: decision.id } satisfies QuestionOrigin);
     }}><ReviewStatus review={review} opens /></Link>;
 }
 
@@ -164,7 +164,7 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
       {!resolved && question.response ? <Receipt response={question.response} picked={options.find((option) => option.text === question.response!.text)?.label}
         delivery={deliveries?.[question.response.message_id]} /> : null}
       {question.design_url ? <Link className="text-meta question-preview" to={question.design_url} onClick={(event) => {
-        if (plainClick(event)) keepForVisit(location.key, "origin", { project: question.project, slug: question.slug, id: question.id, revision: question.revision } satisfies QuestionOrigin);
+        if (plainClick(event)) keepForVisit(location.key, "origin", { project: question.project, slug: question.slug, id: question.id } satisfies QuestionOrigin);
       }}>View preview · {question.design_title}</Link> : null}
       <ReviewLink decision={question} from={chat ? undefined : from} />
       {(resolved && !withdrawn || question.response) && question.recommendation?.text ? <details className="question-context"><summary>Earlier recommendation</summary>{recommendation}</details> : recommendation}

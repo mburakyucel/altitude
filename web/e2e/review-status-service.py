@@ -102,7 +102,23 @@ def main():
                 {"key": "west", "label": "West", "text": "Use the west region."},
                 {"key": "east", "label": "East", "text": "Use the east region."}], "recommended_key": "west"}]})
 
-    serve(server.Handler)
+    revisions = iter(range(2, 100))
+
+    class Handler(server.Handler):
+        def do_POST(self):
+            # The owner revises the settings question while the operator reads its review.
+            if self.path == "/fixture/revise-settings":
+                n = next(revisions)
+                T.resume("atlas", settings)
+                T.block("atlas", settings, f"Build settings layout revision {n} as shown?", actor="l2", expected_attempt=1,
+                        updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE}, recommendation="Use the revised layout.",
+                        recommendation_label="Use this design",
+                        design={"title": f"Settings layout revision {n}", "proposal": "design/wireframes/proposal.md",
+                                "images": [{"title": "Phone", "path": "design/wireframes/phone.png"}]})
+                return self._json({"ok": True})
+            return super().do_POST()
+
+    serve(Handler)
 
 
 if __name__ == "__main__":

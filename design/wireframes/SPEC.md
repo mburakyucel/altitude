@@ -930,10 +930,10 @@ Its accessible name is "<name> · <state>". The state reads the latest review of
 never requests a review and has no ids. It opens `/projects/:name/tasks/:slug?review=<id>`, which
 scrolls to the review card, opens and focuses it, adding one history entry. Back (browser, phone header
 or desktop crumb) returns to Needs you with that card in view, or to the conversation with the question
-or merge card in view and focused; a revised question returns to its latest revision, and an answered
-one leaves the page where it was. Modified clicks open the review without recording a return.
+or merge card in view and focused; a question revised meanwhile returns at its latest revision, and a
+card that has left Needs you, or a merge card that has gone, leaves the page where it was. Modified clicks open the review without recording a return.
 `web/e2e/review-status.pw.ts` walks Needs you and the conversation at both widths: resolved, open,
-the longest state, no review and no box, each review and Back.
+the longest state, no review and no box, each review and Back, and Back after a revision.
 
 ### 3.9 Open the owning L2 question
 

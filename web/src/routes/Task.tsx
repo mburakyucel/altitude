@@ -245,11 +245,11 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   const group = task.question_group;
   const inGroup = (question: Decision) => group?.questions.some((q) => q.id === question.id && q.revision === question.revision);
   const target = questionId ? [...questions].reverse().find((q) => q.id === questionId && (revision == null || String(q.revision) === revision)) : undefined;
-  // Back from a preview or review opened on this entry returns to its question or merge review card; only the
+  // Back from a preview or review opened on this entry returns to its question's latest revision or the merge review card; only the
   // URL's question retargets replies.
   const origin = useVisitReturn<QuestionOrigin>("origin");
   const returned = !questionId && origin?.project === project && origin.slug === task.slug
-    ? origin.id ? [...questions].reverse().find((q) => q.id === origin.id && q.revision === origin.revision) ?? [...questions].reverse().find((q) => q.id === origin.id)
+    ? origin.id ? [...questions].reverse().find((q) => q.id === origin.id)
       : facts.review ?? undefined : undefined;
   const anchor = target ?? returned;
   const open = (group?.questions ?? (task.question ? [task.question] : [])).filter((question) => question.status === "open" && !question.response);

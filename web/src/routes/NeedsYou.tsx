@@ -32,13 +32,13 @@ export default function NeedsYou() {
     if (!next.delete(project)) next.add(project);
     return next;
   });
-  // Back from a preview or review opened here brings its card into view once.
+  // Back from a preview or review opened here brings its card, at its current revision, into view once.
   const origin = useVisitReturn<QuestionOrigin>("origin");
   const list = useRef<HTMLDivElement>(null);
   const returned = useRef(false);
   useEffect(() => {
     if (!origin || returned.current) return;
-    const card = list.current?.querySelector(origin.id ? `[data-question-id="${CSS.escape(origin.id)}"][data-question-revision="${origin.revision}"]`
+    const card = list.current?.querySelector(origin.id ? `[data-question-id="${CSS.escape(origin.id)}"]`
       : `[data-review-task="${CSS.escape(`${origin.project}/${origin.slug}`)}"]`);
     if (!card) return;
     card.scrollIntoView({ block: "center" });

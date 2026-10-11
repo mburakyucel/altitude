@@ -91,3 +91,18 @@ test("a question's review line in its conversation opens the review card and Bac
     () => page.getByRole("button", { name: "Back", exact: true }).filter({ visible: true }).first().click());
   await expect(line).toBeInViewport();
 });
+
+test("Back after the question is revised while its review is open returns to the latest revision", async ({ page, request }, info) => {
+  const walk = walkthrough(page, info);
+  for (const [state, path, revision] of [["needs-you", "/", 2], ["conversation", "/projects/atlas/tasks/settings-layout", 3]] as const) {
+    await walk.open(path);
+    const scope = path === "/" ? page.getByRole("article", { name: "Settings layout", exact: true }) : conversation(page).locator(".conversation-question").last();
+    await scope.getByRole("link", { name: /^Proposal review/ }).click();
+    await expect(page.locator("#review-settings-l-proposal")).toBeVisible();
+    expect((await request.post("/fixture/revise-settings")).ok()).toBe(true);
+    await page.goBack();
+    const latest = page.getByText(`Build settings layout revision ${revision} as shown?`, { exact: true });
+    await expect(latest).toBeInViewport();
+    await walk.state(`08-${state}-back-to-revised-question`, { visible: [latest], hidden: [] });
+  }
+});
