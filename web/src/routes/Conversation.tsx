@@ -88,6 +88,7 @@ function systemTurn(turn: Turn, project: string, activeId: string | null): Syste
     at: turn.at,
     prompt: turn.user?.text ?? "",
     reply: turn.assistant?.text ?? null,
+    replyAt: (turn.assistant ?? turn.error)?.at ?? null,
     error: turn.error?.text ?? null,
     inProgress: !turn.assistant && !turn.error && turn.id === activeId,
     slug: row && !row.project_message ? subjectOf(row, project) : null,

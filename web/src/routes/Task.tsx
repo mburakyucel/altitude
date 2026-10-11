@@ -756,8 +756,8 @@ function TaskPage({
       <Chips chips={facts.chips} />
       {/* The complete reasons come first: the page shows only the state and a short excerpt (SPEC.md §3.10). */}
       {facts.blockReason ? <section><h3>{facts.label}</h3><p>{localTimes(facts.blockReason)}</p></section> : null}
-      {facts.queueReason ? <section><h3>Start condition</h3><p>{facts.queueReason}</p></section> : null}
-      {facts.holdReason ? <section><h3>Merge held</h3><p>{facts.holdReason}</p></section> : null}
+      {facts.queueReason ? <section><h3>Start condition</h3><p>{localTimes(facts.queueReason)}</p></section> : null}
+      {facts.holdReason ? <section><h3>Merge held</h3><p>{localTimes(facts.holdReason)}</p></section> : null}
       <ReviewBoxes task={task} controls={reviewControls} view={(id) => {
         closeDetails();
         const search = new URLSearchParams(location.search);

@@ -1961,10 +1961,10 @@ this one; a day divider reads "Today", "Yesterday", "Thu, Oct 8"; a date alone r
 The exact time ("Oct 10, 2026, 4:58:42 PM PDT") appears on hover or in the expanded card.
 
 Agent and system text keeps its own words, with written UTC times shown in local time outside code
-spans, code blocks, links and paths, at the writer's precision. A dated time (an ISO instant with `Z`
+spans, code blocks, links and paths, never adding a date the writer left out. A dated time (an ISO instant with `Z`
 or an offset, a date and UTC clock, a month day and UTC clock such as "Oct 10, 23:58Z") reads as a
 clock on the local day of the text's own recorded time and dated otherwise, with the exact time on
-hover. A UTC clock ("23:58Z", "23:58 UTC", "23:58 GMT") or range ("07:20–07:45 UTC", "07:20/07:45
+hover, seconds included. A UTC clock ("23:58Z", "23:58 UTC", "23:58 GMT") or range ("07:20–07:45 UTC", "07:20/07:45
 UTC") stays a clock with no date, its hover the clock with the zone ("3:58:00 PM PST"); its offset is
 the one at the occurrence nearest the text's own time, and a range's end is the first after its start.
 A list of clocks sharing one zone ("18:43, 19:05 UTC"), a clock without a zone, a zone name such as

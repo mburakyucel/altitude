@@ -168,6 +168,12 @@ describe("written times", () => {
     expect(destinations()).toEqual([]);
   });
 
+  it("leaves a relative path that contains a timestamp as written", () => {
+    const { container } = render(<Prose text="Saved to logs/2026-10-10T23:58Z.txt at 23:58Z." />);
+    expect(container.textContent).toContain("logs/2026-10-10T23:58Z.txt");
+    expect(container.querySelectorAll("time.prose-time")).toHaveLength(1);
+  });
+
   it("converts times in compact prose too", () => {
     const { container } = render(<InlineProse text="since 2026-10-10T23:58Z" />);
     expect(container.querySelector("time.prose-time")).toHaveAttribute("datetime", "2026-10-10T23:58:00.000Z");

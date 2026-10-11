@@ -135,19 +135,19 @@ const UTC = String.raw`\s?(?:Z|UTC|GMT)`;
 /**
  * A written UTC time in prose: an ISO 8601 instant with Z or an offset; a date, clock and UTC; a month
  * day, clock and UTC; a UTC clock, or two joined by "–", "-" or "/". A clock glued to a word ("at04:10Z")
- * still counts. A clock inside a longer number (a fingerprint, host:port, file:12:34), without a zone,
+ * still counts. A clock inside a longer number (a fingerprint, host:port, file:12:34) or a path, without a zone,
  * or ending a longer list of clocks that share the zone ("18:43, 19:05 UTC") does not, so a phrase is
  * never shown half converted.
  */
 const TIME = new RegExp(
-  String.raw`(?<![\d:.])(?:(\d{4})-(\d{2})-(\d{2})[T ]${CLOCK}(?:(Z|[+-]\d{2}:?\d{2})(?:\s?UTC)?|${UTC})` +
+  String.raw`(?<![\d:./\\])(?:(\d{4})-(\d{2})-(\d{2})[T ]${CLOCK}(?:(Z|[+-]\d{2}:?\d{2})(?:\s?UTC)?|${UTC})` +
   String.raw`|\b(${MONTHS.join("|")})[a-z]*\.? (\d{1,2}),? ${CLOCK}${UTC}` +
-  String.raw`|${CLOCK}(?:(\s?[–\-/]\s?)${CLOCK})?${UTC})(?![\w:]|[+-]\d)`,
+  String.raw`|(?<!\dT)${CLOCK}(?:(\s?[–\-/]\s?)${CLOCK})?${UTC})(?![\w:]|[+-]\d|\.\w)`,
   "gi",
 );
 
 /** A bare clock and a list separator just before a UTC clock: the zone belongs to the whole list. */
-const LISTED = /(?:^|[^\d:.+\-])\d{1,2}:\d{2}(?::\d{2})?(?:,\s?|\s?[–\-/]\s?|\s(?:and|or|to)\s)$/;
+const LISTED = /(?:^|[^\d:.+\-])\d{1,2}:\d{2}(?::\d{2})?(?:\s*,\s*|\s*[–\-/]\s*|\s+(?:and|or|to)\s+)$/;
 
 /**
  * A written time: where it is, its `<time datetime>` value, and how it reads in the reader's zone. A clock
@@ -175,7 +175,7 @@ export function timeTokens(text: string, anchor = Date.now()): TimeToken[] {
       let at: number;
       if (m[1]) {
         const offset = m[7] && m[7].toUpperCase() !== "Z" ? m[7].replace(/^([+-]\d{2}):?(\d{2})$/, "$1:$2") : "Z";
-        at = Date.parse(`${m[1]}-${m[2]}-${m[3]}T${m[4]!.padStart(2, "0")}:${m[5]}:${m[6] ?? "00"}${offset}`);
+        at = Date.parse(`${m[1]}-${m[2]}-${m[3]}T${m[4]!.padStart(2, "0")}:${m[5]}:${m[6] ?? "00"}${/:\d{2}:\d{2}(\.\d+)/.exec(m[0])?.[1] ?? ""}${offset}`);
       } else {
         if (!valid(m[10], m[11])) continue;
         const month = MONTHS.indexOf(m[8]!.slice(0, 3).toLowerCase());
@@ -186,7 +186,7 @@ export function timeTokens(text: string, anchor = Date.now()): TimeToken[] {
       tokens.push({ index: m.index, text: m[0], at: new Date(at).toISOString(), shown: stamp(at, anchor), exact: exactTime(at / 1000) });
       continue;
     }
-    if (!valid(m[13], m[14]) || (m[16] && !valid(m[17], m[18])) || LISTED.test(text.slice(Math.max(0, m.index - 16), m.index))) continue;
+    if (!valid(m[13], m[14]) || (m[16] && !valid(m[17], m[18])) || LISTED.test(text.slice(Math.max(0, m.index - 24), m.index))) continue;
     const day = new Date(anchor);
     const at = nearest([-DAY, 0, DAY].map((shift) => shift + Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), +m[13]!, +m[14]!, +(m[15] ?? 0))));
     const until = m[16] ? at + ((Date.UTC(1970, 0, 1, +m[17]!, +m[18]!, +(m[19] ?? 0)) - at) % DAY + DAY) % DAY : null;

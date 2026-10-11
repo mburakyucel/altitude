@@ -24,6 +24,8 @@ export interface SystemTurn {
   prompt: string;
   /** L3's reply, once the assistant row exists. */
   reply: string | null;
+  /** When the reply or error row was written, which its written times are read against. */
+  replyAt?: string | null;
   /** The error row's text when the turn failed. */
   error: string | null;
   inProgress: boolean;
@@ -261,7 +263,7 @@ function SystemCard({
             <>
               <p className="sys-card-label">L3 replied</p>
               <div className="sys-card-body">
-                <Prose text={turn.reply} />
+                <ProseAt value={turn.replyAt ?? turn.at}><Prose text={turn.reply} /></ProseAt>
               </div>
             </>
           ) : turn.error ? (
@@ -342,7 +344,7 @@ export function SystemLine({
       <Dot trigger={turn.trigger} />
       <Stamp at={turn.at} className="sys-time" />
       <span className="sys-text">
-        {turn.projectMessage ? text : <ProseAt value={turn.at}><InlineProse text={text} /></ProseAt>}
+        {turn.projectMessage ? text : <ProseAt value={turn.fyi ? turn.at : turn.replyAt ?? turn.at}><InlineProse text={text} /></ProseAt>}
       </span>
       {turn.inProgress ? null : <NewWork turn={turn} project={project} />}
       {turn.inProgress ? null : (

@@ -1,7 +1,7 @@
 import { Component, createRef, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { StatusMark } from "../components/StatusMark";
-import { Prose } from "../components/Prose";
+import { Prose, ProseAt } from "../components/Prose";
 import { ApiError, fetchTranscriptRecord, useTranscript } from "../data/api";
 import type { TaskView, TranscriptEvent } from "../data/api";
 import { SteeringControls, SteeringNotice } from "../components/TaskSteering";
@@ -62,7 +62,7 @@ function Message({ event, engineLabel }: { event: TranscriptEvent; engineLabel: 
         <span>{engineLabel}</span>
         <Stamp className="session-time" at={event.at} />
       </header>
-      <Prose text={event.text} />
+      <ProseAt value={event.at}><Prose text={event.text} /></ProseAt>
     </article>
   );
 }
