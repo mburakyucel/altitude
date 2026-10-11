@@ -2298,7 +2298,7 @@ order ahead of the saved draft, as unconfirmed unless every copy was refused, ev
 contains a similar message; a recovered draft sends wherever a typed one would. A send that fails while no
 message shows it, because pairing again cleared the outbox while its request was out, returns to the field at once. The operator checks
 history before choosing to send. Recovered text and later typed or dictated edits remain recoverable
-while unconfirmed; editing a refused recovery returns it to an ordinary draft. Sending explicitly replaces the recovery with the submitted request. Ordinary unsent
+while unconfirmed; editing a refused recovery, or clearing the field, returns it to an ordinary draft. Sending explicitly replaces the recovery with the submitted request. Ordinary unsent
 project text survives route remounts in client memory; it is not synchronized or stored across reloads.
 Recovered text transfers back to recovery storage on unmount so returning restores it only once.
 Recovery storage is the recovered text's only owner: a task page's Back/Forward memory keeps none of it,

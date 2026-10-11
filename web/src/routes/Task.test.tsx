@@ -1579,6 +1579,27 @@ describe("Task on the phone", () => {
     expect(screen.getByLabelText("Message the L2")).toHaveValue("");
   });
 
+  it("words typed after clearing recovered words come back once with Back", async () => {
+    setViewport(390);
+    let finish!: (response: Response) => void;
+    stub(running, { message: () => new Promise<Response>((resolve) => { finish = resolve; }) });
+    const { user, queryClient, router } = renderApp({ route });
+    await user.type(await screen.findByLabelText("Message the L2"), "First words");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await act(async () => { await router.navigate("/settings"); });
+    act(() => queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "access" }));
+    await act(async () => { await router.navigate(route); });
+    await act(async () => finish(jsonResponse({ error: "Response lost" }, 500)));
+    await waitFor(() => expect(screen.getByLabelText("Message the L2")).toHaveValue("First words"));
+    await user.clear(screen.getByLabelText("Message the L2"));
+    await user.type(screen.getByLabelText("Message the L2"), "New draft");
+    await act(async () => { await router.navigate("/settings"); });
+    await act(async () => { await router.navigate(-1); });
+    await screen.findByRole("heading", { name: "Fix the timer" });
+    expect(screen.getByLabelText("Message the L2")).toHaveValue("New draft");
+    expect(document.querySelector(".composer-hint[role=alert]")).toBeNull();
+  });
+
   it("recovered words edited while their copy cannot be read come back as edited on a new visit to the task", async () => {
     setViewport(390);
     let finish!: (response: Response) => void;

@@ -102,11 +102,13 @@ function saveSubmitted(conversation: string, saved: SubmittedText, beforeSend = 
     throw error;
   }
 }
-// An edit of the field keeps recovered unconfirmed words as typed; any other recovery hint ends with it.
+// An edit of the field keeps recovered unconfirmed words as typed; clearing them, or any other recovery hint, ends
+// with it.
 function editSubmitted(saved: SubmittedText, text: string) {
   if (!saved.failure && !saved.text) return false;
-  saved.text = saved.failure === "unconfirmed" ? text : "";
-  if (saved.failure !== "unconfirmed") saved.failure = null;
+  const kept = saved.failure === "unconfirmed" && text;
+  saved.text = kept ? text : "";
+  if (!kept) saved.failure = null;
   return true;
 }
 // Storage that missed an edit takes that edit once it can be read again, whichever view reads it.
@@ -573,8 +575,7 @@ export default function Composer({
       if (editSubmitted(saved, text)) saveSubmitted(conversation, saved);
       setRecoveryUnavailable(false);
     } catch { setRecoveryUnavailable(true); }
-    if (failure.current !== "unconfirmed") { failure.current = null; setSendFailure(null); }
-    if (failure.current !== "unconfirmed" || !text) heldFields.delete(conversation);
+    if (failure.current !== "unconfirmed" || !text) { failure.current = null; setSendFailure(null); heldFields.delete(conversation); }
   }, [conversation, onChange]);
 
   useEffect(() => {
