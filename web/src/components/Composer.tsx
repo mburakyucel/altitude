@@ -567,7 +567,9 @@ export default function Composer({
           saved.refused = refused.size ? [...refused] : undefined;
         }
         if (saved.text || saved.failure === "transcription" || saved.failure === "unreached") {
-          saved.text = [saved.text, draft.current].filter(Boolean).join("\n");
+          // Leaving moved the recovered words to storage, but a page's Back memory may also have kept them: the
+          // same words return once.
+          if (saved.text !== draft.current) saved.text = [saved.text, draft.current].filter(Boolean).join("\n");
           view.restore(saved);
           try { saveSubmitted(conversation, saved); setRecoveryUnavailable(false); }
           catch { setRecoveryUnavailable(true); }

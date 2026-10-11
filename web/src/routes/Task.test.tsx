@@ -1471,6 +1471,26 @@ describe("Task on the phone", () => {
     expect(screen.queryByText("Sent before pairing again", { selector: ".bubble *, .bubble" })).toBeNull();
   });
 
+  it.each([409, 500])("recovered words (failure %i) come back once with Back after leaving the task", async (status) => {
+    setViewport(390);
+    let finish!: (response: Response) => void;
+    stub(running, { message: () => new Promise<Response>((resolve) => { finish = resolve; }) });
+    const { user, queryClient, router } = renderApp({ route });
+    const field = await screen.findByLabelText("Message the L2");
+    await user.type(field, "Recovered once");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await act(async () => { await router.navigate("/settings"); });
+    act(() => queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "access" }));
+    await act(async () => { await router.navigate(route); });
+    await act(async () => finish(jsonResponse({ error: "Send failed" }, status)));
+    await waitFor(() => expect(screen.getByLabelText("Message the L2")).toHaveValue("Recovered once"));
+    // Leaving moves the recovered words to recovery storage while the task's Back memory also keeps them.
+    await act(async () => { await router.navigate("/settings"); });
+    await act(async () => { await router.navigate(-1); });
+    await waitFor(() => expect(screen.getByLabelText("Message the L2")).toHaveValue("Recovered once"));
+    expect(document.querySelector(".composer-hint[role=alert]")).toHaveTextContent(status === 409 ? "Not sent." : "Could not confirm delivery.");
+  });
+
   it("does not restore an earlier task's failed send into the destination task", async () => {
     setViewport(390);
     let finish!: (response: Response) => void;
