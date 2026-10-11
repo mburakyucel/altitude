@@ -104,7 +104,7 @@ test.describe("L3 Send now", () => {
     expect((await request.post("/fixture/unavailable")).ok()).toBe(true);
     await page.reload();
     await expect(row.getByRole("button", { name: "Remove", exact: true })).toBeEnabled();
-    await walk.state("l3-10-accepted-priority-removable", { visible: [convo.getByRole("button", { name: "Sending now", exact: true }), row.getByRole("button", { name: "Remove", exact: true })], hidden: [] });
+    await walk.state("l3-10-accepted-priority-removable", { visible: [convo.locator(".send-now[data-waiting]"), row.getByRole("button", { name: "Remove", exact: true })], hidden: [] });
     await row.getByRole("button", { name: "Remove", exact: true }).click();
     await walk.state("l3-11-priority-removed-before-claim", { visible: [page.getByRole("textbox", { name: "Message L3 about atlas" })], hidden: [row] });
     expect((await request.post("/fixture/release")).ok()).toBe(true);
@@ -202,8 +202,9 @@ test.describe("L3 Send now", () => {
     await convo.getByRole("button", { name: /^(Send|Queue)$/ }).click();
     await convo.getByRole("button", { name: "Send now", exact: true }).click();
     const row = convo.locator(".queued-row").filter({ hasText: "Follow the system work" });
-    await walk.state("l3-08-after-system-work", { visible: [convo.getByRole("button", { name: "Sending now", exact: true })], hidden: [convo.locator(".send-now-help")] });
-    await convo.getByRole("button", { name: "Sending now", exact: true }).click({ force: true });
+    // The server holds the press: Send now keeps its name and shows a clock.
+    await walk.state("l3-08-after-system-work", { visible: [convo.locator(".send-now[data-waiting]")], hidden: [convo.locator(".send-now-help")] });
+    await convo.getByRole("button", { name: "Send now", exact: true }).click({ force: true });
     await walk.state("l3-08b-reason-on-press", { visible: [convo.getByText("Runs next after system work", { exact: true })], hidden: [] });
     expect((await status()).calls).toHaveLength(1);
     expect((await status()).delivered).toEqual([]);
@@ -276,7 +277,7 @@ test.describe("L3 Send now", () => {
     }
     await convo.getByRole("button", { name: "Send now", exact: true }).click();
     await page.reload();
-    await walk.state("l3-13-turn-boundary", { visible: [row("First queued message"), convo.getByRole("button", { name: "Sending now", exact: true })], hidden: [] });
+    await walk.state("l3-13-turn-boundary", { visible: [row("First queued message"), convo.locator(".send-now[data-waiting]")], hidden: [] });
     expect((await status()).calls).toHaveLength(1);
     expect((await status()).delivered).toEqual([]);
     expect((await request.post("/fixture/release")).ok()).toBe(true);
@@ -313,11 +314,16 @@ test.describe("L3 Send now", () => {
     await row("Remove this message").getByRole("button", { name: "Remove", exact: true }).click();
     await walk.state("l3-02-removed-and-queued", { visible: [convo.getByRole("button", { name: "Send now", exact: true })], hidden: [row("Remove this message")] });
     await convo.getByRole("button", { name: "Send now", exact: true }).click();
-    await walk.state("l3-03-sending-into-turn", { visible: [convo.getByRole("button", { name: "Sending now" }), row("Deliver this next").getByRole("status", { name: "Sending", exact: true })], hidden: [row("Deliver this next").getByRole("button", { name: "Remove", exact: true })] });
+    // The claimed messages are on their way: faded, without Remove, and no Send now is left to press.
+    await walk.state("l3-03-sending-into-turn", {
+      visible: [row("Deliver this next").getByRole("status", { name: "Sending", exact: true })],
+      hidden: [row("Deliver this next").getByRole("button", { name: "Remove", exact: true }), convo.getByRole("button", { name: /^Send(ing)? now$/ })],
+    });
     await field.fill("Later arrival stays queued");
     await convo.getByRole("button", { name: /^(Send|Queue)$/ }).click();
     await walk.state("l3-later-arrival-outside-claim", {
-      visible: [row("Deliver this next").getByRole("button", { name: "Sending now" }), row("Later arrival stays queued").getByRole("button", { name: "Remove", exact: true })],
+      visible: [row("Deliver this next").getByRole("status", { name: "Sending", exact: true }), row("Later arrival stays queued").getByRole("button", { name: "Remove", exact: true }),
+        convo.getByRole("button", { name: "Send now", exact: true })],
       hidden: [row("Later arrival stays queued").getByRole("status", { name: "Sending", exact: true })],
     });
     expect((await request.post("/fixture/deliver")).ok()).toBe(true);

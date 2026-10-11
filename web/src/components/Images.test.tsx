@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { ApiError } from "../data/api";
-import Composer from "./Composer";
+import Composer, { returnToComposer } from "./Composer";
 import type { ComposerProps } from "./Composer";
 import type { ImageSubmission } from "./ImageDraft";
 import { ImageViewerHost, MessageImages } from "./MessageImages";
@@ -154,6 +154,96 @@ describe("image draft admission", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
     expect(onSubmit.mock.calls[1]?.[0]).toBe("Explain this more");
     expect(onSubmit.mock.calls[1]?.[2]?.request_id).not.toBe(onSubmit.mock.calls[0]?.[2]?.request_id);
+  });
+
+  it("where the message shows its own failure, Send hands the images to it and Edit returns them to the picker", async () => {
+    browser();
+    const onSubmit = vi.fn(async (_text: string, _accepted: () => void, _images?: ImageSubmission, _copy?: string) => { throw new ApiError(422, "refused"); });
+    const user = userEvent.setup();
+    render(<Harness conversation="project/edit-images" onSubmit={onSubmit} showsFailures />);
+    await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    await select();
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    const [, , submission, copy] = onSubmit.mock.calls[0]!;
+    expect(copy).toEqual(expect.any(String));
+    expect(screen.queryByLabelText("Selected images")).toBeNull();
+    expect(screen.getByRole("textbox")).toHaveValue("");
+    expect(screen.queryByText("Sending images…")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    await user.type(screen.getByRole("textbox"), "Typed since");
+    await act(async () => returnToComposer("project/edit-images", "Explain this", submission!.previews));
+    expect(screen.getByRole("textbox")).toHaveValue("Explain this\nTyped since");
+    const strip = await screen.findByLabelText("Selected images");
+    expect(strip.querySelectorAll("img")).toHaveLength(1);
+    await waitFor(() => expect(screen.getByRole("textbox")).toHaveFocus());
+  });
+
+  it("where the message shows its own state, the next message sends while images are still on their way", async () => {
+    browser();
+    let accept!: () => void;
+    const onSubmit = vi.fn((_text: string, accepted: () => void, images?: ImageSubmission) =>
+      images ? new Promise<void>((resolve) => { accept = () => { accepted(); resolve(); }; }) : Promise.resolve());
+    const user = userEvent.setup();
+    render(<Harness conversation="project/next-during-images" onSubmit={onSubmit} showsFailures />);
+    await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    await select();
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    await user.type(screen.getByRole("textbox"), "And this next");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
+    expect(onSubmit.mock.calls[1]![0]).toBe("And this next");
+    // Images chosen meanwhile stay when the first message is accepted.
+    await select();
+    await act(async () => accept());
+    expect(screen.getByLabelText("Selected images").querySelectorAll("img")).toHaveLength(1);
+  });
+
+  it("where the message shows its own state, Send hands its images over at once and the next message follows in order", async () => {
+    browser();
+    const onSubmit = vi.fn(async (_text: string, accepted: () => void, _images?: ImageSubmission) => { accepted(); });
+    const user = userEvent.setup();
+    render(<Harness conversation="project/send-order" initial="" onSubmit={onSubmit} showsFailures />);
+    await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    await select();
+    await user.type(screen.getByRole("textbox"), "With the image");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(onSubmit).toHaveBeenCalledOnce();
+    expect(screen.queryByLabelText("Selected images")).toBeNull();
+    await user.type(screen.getByRole("textbox"), "Words only");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(onSubmit.mock.calls.map(([text, , images]) => [text, images?.images?.length])).toEqual([["With the image", 1], ["Words only", undefined]]);
+  });
+
+  it("names an image it cannot read when it is chosen, keeping the others", async () => {
+    browser();
+    const read = FileReader.prototype.readAsDataURL;
+    const spy = vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementation(function (this: FileReader, blob: Blob) {
+      if ((blob as File).name === "broken.png") { setTimeout(() => this.onerror?.(new ProgressEvent("error") as ProgressEvent<FileReader>)); return; }
+      read.call(this, blob);
+    });
+    try {
+      render(<Harness conversation="project/unreadable" />);
+      await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+      await select([image(), new File(["fictional raster"], "broken.png", { type: "image/png" })]);
+      expect(await screen.findByRole("alert")).toHaveTextContent("broken.png could not be read.");
+      expect(screen.getByLabelText("Selected images").querySelectorAll("img")).toHaveLength(1);
+    } finally { spy.mockRestore(); }
+  });
+
+  it("Edit changes nothing when the message's images do not fit beside the picker's, and says why", async () => {
+    browser();
+    render(<Harness conversation="project/full-picker" initial="" showsFailures />);
+    await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    await select([image(), image(), image(), image()]);
+    const preview = { name: "earlier.png", url: "data:image/png;base64,iVBORw0KGgo=" };
+    let returned = true;
+    await act(async () => { returned = returnToComposer("project/full-picker", "Earlier words", [preview]); });
+    expect(returned).toBe(false);
+    expect(screen.getByRole("textbox")).toHaveValue("");
+    expect(screen.getByLabelText("Selected images").querySelectorAll("img")).toHaveLength(4);
+    expect(screen.getByRole("alert")).toHaveTextContent("Up to 4 images per message. Remove an image to add another.");
   });
 
   it("rejects format, count, per-file and aggregate excess without replacing valid selections", async () => {

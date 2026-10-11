@@ -122,12 +122,14 @@ test("queued removal failure and Retry stay inside the usable viewport", async (
   await visualViewport(page, 510);
   if (info.project.name === "phone") await expect(page.locator(".phone-status")).toContainText("L3 · Busy");
   const queued = page.getByRole("list", { name: "Queued messages" });
-  const toast = page.locator(".toast");
-  await walk.state("01-queue-remove-failed-keyboard", { action: () => queued.getByRole("button", { name: "Remove" }).click(), visible: [queued, toast, toast.getByRole("button", { name: "Retry" })], hidden: [] });
-  const box = await toast.boundingBox();
+  // The failure shows on the queued message itself, with its Retry (SPEC.md §4.2).
+  const failure = queued.getByRole("alert").filter({ hasText: "Not removed: queue temporarily unavailable." });
+  const retry = queued.getByRole("button", { name: "Retry", exact: true });
+  await walk.state("01-queue-remove-failed-keyboard", { action: () => queued.getByRole("button", { name: "Remove" }).click(), visible: [queued, failure, retry], hidden: [page.locator(".toast")] });
+  const box = await retry.boundingBox();
   expect(box!.y).toBeGreaterThanOrEqual(0);
   expect(box!.y + box!.height).toBeLessThanOrEqual(info.project.name === "phone" ? 510 : 900);
-  await walk.state("02-queue-remove-retried", { action: () => toast.getByRole("button", { name: "Retry" }).click(), visible: [field], hidden: [queued, toast] });
+  await walk.state("02-queue-remove-retried", { action: () => retry.click(), visible: [field], hidden: [queued, failure] });
   await expect(field).toHaveValue("Keep this draft.");
   expect(attempts).toBe(2);
 });

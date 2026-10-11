@@ -17,6 +17,8 @@ import type { ImagePreview } from "../components/MessageImages";
 export interface Outgoing {
   /** The send id: the stored row's `request_id` or the queue row's `id`. */
   id: string;
+  /** The bubble's identity on screen: its first send id, kept when Retry sends it again under a new one. */
+  row?: string;
   text: string;
   reply: string;
   accepted: boolean;
@@ -27,9 +29,15 @@ export interface Outgoing {
   settledAt?: number;
   queueId?: string;
   images?: ImagePreview[];
-  uncertain?: boolean;
+  /** The images as sent, kept for Retry and Edit until the server accepts the message. */
   replay?: ImageSubmission;
+  /** The composer's recovery copy of this send (Composer.tsx), released once the message needs it no more. */
+  copy?: string;
   delivery?: ChatMessage["delivery"];
+  /** Why the message stands on its own bubble: the server refused it, or nothing confirmed its delivery. */
+  failure?: "refused" | "unconfirmed";
+  /** The refusal's own words. */
+  reason?: string;
   /** Exchanges this turn completed before a Send now message joined it, shown until the history has them. */
   earlier?: { turnId: string | null; text: string; reply: string; delivery?: ChatMessage["delivery"] }[];
 }
@@ -76,22 +84,29 @@ export function readOf(client: QueryClient, view: ChatView | undefined): number 
   return view ? reads(client).of.get(view) ?? 0 : 0;
 }
 
-/** Start an entry, replacing one with the same send id (an image Retry keeps its identity). */
-export function startOutgoing(client: QueryClient, project: string, entry: Outgoing) {
+/**
+ * Start an entry, replacing one with the same send id (an image Retry keeps its identity), or taking the
+ * place of `replaces` (a refused message's Retry, in its position).
+ */
+export function startOutgoing(client: QueryClient, project: string, entry: Outgoing, replaces?: string) {
   reads(client);
-  client.setQueryData<Outgoing[]>(outboxKey(project), (entries = NONE) =>
-    [...entries.filter((current) => current.id !== entry.id), entry]);
+  client.setQueryData<Outgoing[]>(outboxKey(project), (entries = NONE) => {
+    const at = entries.findIndex((current) => current.id === replaces);
+    const rest = entries.filter((current) => current.id !== entry.id && current.id !== replaces);
+    if (at < 0) return [...rest, entry];
+    const replaced = entries[at]!;
+    return [...rest.slice(0, at), { ...entry, row: replaced.row ?? replaced.id }, ...rest.slice(at)];
+  });
 }
 
-/** Change an entry that still exists; `null` removes it. A missing entry stays missing. */
+/** Change an entry that still exists; `null` removes it. A missing entry stays missing. Returns the change. */
 export function updateOutgoing(client: QueryClient, project: string, id: string, change: (current: Outgoing) => Outgoing | null) {
   const entries = client.getQueryData<Outgoing[]>(outboxKey(project));
-  if (!entries?.some((entry) => entry.id === id)) return;
-  client.setQueryData<Outgoing[]>(outboxKey(project), entries.flatMap((entry) => {
-    if (entry.id !== id) return [entry];
-    const next = change(entry);
-    return next ? [next] : [];
-  }));
+  const current = entries?.find((entry) => entry.id === id);
+  if (!entries || !current) return undefined;
+  const next = change(current);
+  client.setQueryData<Outgoing[]>(outboxKey(project), entries.flatMap((entry) => entry !== current ? [entry] : next ? [next] : []));
+  return next;
 }
 
 /** Mark an entry finished. In-flight reads are cancelled first, so only a read started after it can retire it. */
@@ -118,6 +133,8 @@ export function retired(entry: Outgoing, view: ChatView | undefined, read: numbe
   if (entry.done && entry.settledAt !== undefined && read > entry.settledAt
     && (!entry.turnId || view.history.some((row) => row.turn_id === entry.turnId))) return true;
   if (view.queued?.some((row) => row.id === entry.id || row.id === entry.queueId)) return true;
+  // An unconfirmed message turns into the stored one once the server's record shows it.
+  if (entry.failure === "unconfirmed" && view.history.some((row) => carries(row, entry))) return true;
   const turns = new Set(view.history.filter((row) => carries(row, entry)).map((row) => row.turn_id));
   return view.history.some((row) => (row.role === "assistant" || row.role === "error") && row.turn_id && turns.has(row.turn_id));
 }
@@ -132,9 +149,9 @@ export function carries(row: ChatMessage, entry: Outgoing): boolean {
     || Boolean(entry.queueId && row.queue_ids?.includes(entry.queueId));
 }
 
-/** Still waiting on its request: a finished send or an unconfirmed image send no longer holds anything. */
+/** Still waiting on its request: a finished, refused or unconfirmed send no longer holds anything. */
 export function inFlight(entry: Outgoing): boolean {
-  return !entry.done && !entry.uncertain;
+  return !entry.done && !entry.failure;
 }
 
 /**
