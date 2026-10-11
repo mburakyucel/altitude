@@ -906,11 +906,11 @@ box, so whether it was reviewed is visible in Needs you and the conversation wit
 
 | Question | Box |
 | --- | --- |
-| An open question with a design preview | **Proposal review** |
+| An open proposal approval: a question with a design preview, or one its owner marks as a proposal | **Proposal review** |
 | The held PR's **Review before merge** card, or an open operator question naming the held PR | **Implementation review** |
 | Any other question, and a resolved or withdrawn one | none |
 
-The box sits under the **View preview** link or the merge card's detail, above the recommendation. Its
+The box sits under the question, its **View preview** link or the merge card's detail, above the recommendation. Its
 anatomy follows the task card (§3.5): a 16px state icon, the review's name (14px, 600) over its state
 (13px, muted), and a chevron; bordered, card radius, at least 44px tall, full card width up to 480px.
 Its accessible name is "<name> · <state>". The state reads the latest review of that kind:
@@ -923,7 +923,9 @@ Its accessible name is "<name> · <state>". The state reads the latest review of
 | Done, L2 has not answered its findings | done, N findings pending | amber ! |
 | Done, findings still open in a current review | done, N open findings | amber ! |
 | Done, every finding fixed or dismissed | done, N findings resolved | green check |
-| Failed or stopped / skipped | didn’t finish / skipped | amber ! |
+| Failed or stopped | didn’t finish | amber ! |
+| Skipped by L2 as not needed | skipped by L2 · <its reason> | grey dashed circle |
+| Skipped by the operator | skipped by you | grey dashed circle |
 | Any of these covering an earlier version | the state, then " · earlier version" | amber ! |
 
 "Earlier version" is the review card's own comparison (§3.4), so the box and the card agree. The box
@@ -933,7 +935,7 @@ or desktop crumb) returns to Needs you with that card in view, or to the convers
 or merge card in view and focused; a question revised meanwhile returns at its latest revision, and a
 card that has left Needs you, or a merge card that has gone, leaves the page where it was. Modified clicks open the review without recording a return.
 `web/e2e/review-status.pw.ts` walks Needs you and the conversation at both widths: resolved, open,
-the longest state, no review and no box, each review and Back, and Back after a revision.
+the longest state, no review, a skip by the owner and no box, each review and Back, and Back after a revision.
 
 ### 3.9 Open the owning L2 question
 

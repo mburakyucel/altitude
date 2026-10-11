@@ -98,8 +98,10 @@ def _task_review(args, project: str) -> dict:
     if ACTOR == "l2" and not attempt:
         sys.exit("alt task review: ALTITUDE_ATTEMPT is required for the L2")
     options = {"actor": ACTOR, **({"expected_attempt": int(attempt)} if ACTOR == "l2" else {})}
-    if args.review_action in ("run", "assess") and ACTOR != "l2":
-        sys.exit("alt task review: only the current L2 runs or assesses a review")
+    if args.review_action in ("run", "assess", "skip") and ACTOR != "l2":
+        sys.exit("alt task review: only the current L2 runs, assesses or skips a review")
+    if args.review_action == "skip":
+        return reviews.skip(project, slug, subject=args.subject, reason=args.reason, **options)
     if args.review_action == "request":
         return reviews.request(project, slug, request_id=args.request_id or uuid.uuid4().hex,
                                focus=args.focus, source_id=args.source_message, previous=args.previous,
@@ -337,7 +339,8 @@ def main(argv=None) -> None:
             x.add_argument("--questions-file", help="JSON with one to three questions; '-' reads stdin. Shape: "
                            '{"questions":[{"question":"...","options":[{"key":"a","label":"Short action","text":"Chosen approach"}],'
                            '"recommended_key":"a","why":"..."}]}; a plain question omits options and recommended_key; '
-                           'add an existing "id" to revise that member')
+                           'add an existing "id" to revise that member; "review":"proposal" marks a proposal approval '
+                           '(a design preview or a question naming the held PR is recognised without it)')
             x.add_argument("--design-file", help="current L2: JSON selecting this question's screenshots and proposal text")
             x.add_argument("--recommendation"); x.add_argument("--label"); x.add_argument("--why")
             x.add_argument("--fault", action="store_true", help="the environment failed, not a decision: file the incident and tell L3")
@@ -412,8 +415,9 @@ def main(argv=None) -> None:
     rp.add_argument("--to", choices=("l3",), help="l3: also queue the reply as one L3 turn about this task")
     review = ts.add_parser("review", help="request, run and assess an adversarial review of the owned task")
     review_actions = review.add_subparsers(dest="review_action", required=True)
-    for action in ("status", "request", "run", "assess", "cancel", "withdraw"):
-        rv = review_actions.add_parser(action)
+    for action in ("status", "request", "run", "assess", "cancel", "withdraw", "skip"):
+        rv = review_actions.add_parser(action, **({"help": "current L2: record that this kind of review is not needed, and why; "
+                                                    "a question resting on it shows the reason"} if action == "skip" else {}))
         rv.add_argument("slug", nargs="?", help="defaults to ALTITUDE_TASK")
         if action == "request":
             rv.add_argument("--subject", choices=("proposal", "changes"), help="defaults to changes, or the prior request's subject")
@@ -425,6 +429,9 @@ def main(argv=None) -> None:
                             help="another review of the subject that replaces none; current reviews and their open findings keep gating merge")
             rv.add_argument("--engine", choices=config.ENGINES, help="reviewer engine for this request only; never substituted")
             rv.add_argument("--model", help="reviewer model for this request only; never substituted")
+        elif action == "skip":
+            rv.add_argument("--subject", choices=("proposal", "changes"), required=True)
+            rv.add_argument("--reason", required=True, help="why no review is needed, at most 120 characters")
         elif action != "status":
             rv.add_argument("--review-id", required=True)
             if action == "run":

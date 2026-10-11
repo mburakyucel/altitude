@@ -1535,6 +1535,38 @@ class TestReviews(AltitudeCase):
         task = S.load_task(self.project, self.slug)
         self.assertIsNone(T._question_review(self.project, task, {**next(q for q in task["questions"] if q["id"] == merge["id"]), "status": "resolved"}))
 
+    def test_a_marked_proposal_question_carries_the_proposal_review_through_revisions(self):
+        marked = {"questions": [{"question": "Adopt the queue-per-project design?", "review": "proposal", "recommended_key": "go",
+                                 "options": [{"key": "go", "label": "Approve proposal", "text": "Approved: build the queue-per-project design."}]}]}
+        question = T.block(self.project, self.slug, "Adopt the queue-per-project design?", actor="l2", expected_attempt=1,
+                           updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE}, questions=marked)["questions"][-1]
+        self.assertEqual(T.question_views(self.project, self.slug)[-1]["review"], {"subject": "proposal", "id": None, "state": "none"})
+        # A reworded revision without the field stays a proposal approval.
+        T.resume(self.project, self.slug)
+        reworded = {"questions": [{"id": question["id"], "question": "Adopt the queue-per-project design, with limits?"}]}
+        T.block(self.project, self.slug, "Revised", actor="l2", expected_attempt=1, updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE}, questions=reworded)
+        latest = T.question_views(self.project, self.slug)[-1]
+        self.assertEqual((latest["id"], latest["revision"], latest["review"]["subject"]), (question["id"], 2, "proposal"))
+        with self.assertRaises(T.TransitionError):
+            T._validate_questions({"questions": [{"question": "Merge?", "review": "changes"}]})
+
+    def test_owner_skip_records_why_no_review_is_needed_without_changing_the_gate(self):
+        skipped = reviews.skip(self.project, self.slug, actor="l2", subject="proposal", reason="One-line copy change.", expected_attempt=1)
+        self.assertEqual((skipped["state"], skipped["withdrawn_by"], skipped["withdrawal_reason"]), ("withdrawn", "l2", "One-line copy change."))
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual({k: reviews.status(self.project, task, "proposal")[k] for k in ("id", "state", "skipped_by", "reason")},
+                         {"id": skipped["id"], "state": "withdrawn", "skipped_by": "l2", "reason": "One-line copy change."})
+        # A skip shows in the conversation and leaves the kind requestable, like any withdrawn review.
+        self.assertTrue(any(m.get("review_id") == skipped["id"] for m in T.task_messages(self.project, self.slug)))
+        self.assertEqual(self.request(subject="proposal", previous=skipped["id"])["state"], "requested")
+        for kwargs, why in (({"reason": " "}, "empty"), ({"reason": "x" * 121}, "long"), ({"actor": T.OPERATOR_MESSAGE_ROLE}, "operator")):
+            with self.subTest(why), self.assertRaises(T.TransitionError):
+                reviews.skip(self.project, self.slug, **{"actor": "l2", "subject": "changes", "reason": "Small fix.", "expected_attempt": 1, **kwargs})
+        # A recorded review is never replaced by a skip, so its findings stay in the merge gate.
+        self.request()
+        with self.assertRaises(T.TransitionError):
+            reviews.skip(self.project, self.slug, actor="l2", subject="changes", reason="Small fix.", expected_attempt=1)
+
     def test_missing_proposal_never_invokes_provider_and_retry_preserves_subject(self):
         result = self.run_review(self.request(subject="proposal"))
         self.assertEqual(result["state"], "failed")

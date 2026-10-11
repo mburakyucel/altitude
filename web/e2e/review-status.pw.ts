@@ -54,6 +54,15 @@ test("Needs you shows each proposal and merge review and Back returns to its car
   await walk.state("01b-longest-line-and-no-line", { visible: [longest, header.getByText("Proposal review · not done", { exact: true })], hidden: [region.locator(".question-review")] });
   await header.locator(".question-review").scrollIntoViewIfNeeded();
   await walk.state("01c-no-review", { visible: [header.getByText("not done", { exact: true })], hidden: [header.getByRole("link", { name: /^Proposal review/ })] });
+  // A proposal without a design preview, whose review its owner judged unnecessary, says so calmly and opens the record.
+  const queue = page.getByRole("article", { name: "Queue per project", exact: true });
+  const skipped = queue.getByRole("link", { name: "Proposal review · skipped by L2 · Small, reversible change.", exact: true });
+  await skipped.scrollIntoViewIfNeeded();
+  await expect(skipped.locator(".review-icon-none")).toBeVisible();
+  await walk.state("01d-skipped-by-owner", { visible: [skipped], hidden: [queue.locator(".question-preview")] });
+  await roundTrip(page, skipped, await skipped.getAttribute("href").then((href) => new URLSearchParams(href!.split("?")[1]).get("review")!),
+    "Small, reversible change.", () => page.goBack());
+  await expect(skipped).toBeInViewport();
   await page.locator(".needs-page").evaluate((node) => { node.scrollTop = 0; });
 
   await roundTrip(page, merge.getByRole("link", { name: implementation, exact: true }), "keep-pagin-changes",

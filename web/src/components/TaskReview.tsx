@@ -20,7 +20,8 @@ const who = (role: string | null | undefined) => role === "l2" ? "L2" : "you";
 
 function tone(review: Review): Tone {
   switch (review.state) {
-    case "requested": case "withdrawn": return "wait";
+    case "requested": return "wait";
+    case "withdrawn": return "none";
     case "running": return "run";
     case "failed": case "cancelled": return "bad";
     case "completed": return !review.reconciled ? (review.result?.findings.length ? "warn" : "ok") : review.unresolved.length ? "warn" : "ok";
@@ -260,7 +261,8 @@ export function reviewLine(review: ReviewLine): { tone: Tone; name: string; stat
   const [tone, state]: [Tone, string] = review.state === "none" ? ["warn", "not done"]
     : review.state === "requested" ? ["wait", "requested"]
     : review.state === "running" ? ["run", "in progress"]
-    : review.state === "withdrawn" ? ["warn", "skipped"]
+    // A skip is a recorded choice, shown calmly with its reason; only a missing review warns.
+    : review.state === "withdrawn" ? ["none", review.skipped_by === "l2" ? ["skipped by L2", review.reason].filter(Boolean).join(" · ") : "skipped by you"]
     : review.state !== "completed" ? ["warn", "didn’t finish"]
     : !review.reconciled && review.findings ? ["warn", `done, ${count(review.findings, "finding")} pending`]
     : review.open ? ["warn", `done, ${count(review.open, "open finding")}`]

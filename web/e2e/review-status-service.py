@@ -4,7 +4,7 @@ import shutil
 from service_support import configure, serve
 from tests.support import REPO, add_worktree, git, make_repo
 from tests.fakes import FakeL2
-from altitude import config, engines, server, state as S, tasks as T, verify
+from altitude import config, engines, reviews, server, state as S, tasks as T, verify
 
 
 
@@ -95,6 +95,14 @@ def main():
             questions={"questions": [{"question": "Merge PR #43?", "options": [
                 {"key": "approve", "label": "Approve merge", "text": "Approved: merge PR #43."},
                 {"key": "changes", "label": "Request changes", "text": "Hold PR #43 for changes."}], "recommended_key": "approve"}]})
+
+    # A proposal approval without a design preview, marked by its owner, whose review the owner judged unnecessary.
+    queue, _ = running("Queue per project")
+    reviews.skip("atlas", queue, actor="l2", subject="proposal", reason="Small, reversible change.", expected_attempt=1)
+    T.block("atlas", queue, "Adopt one queue per project?", actor="l2", updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE},
+            questions={"questions": [{"question": "Adopt one queue per project?", "review": "proposal", "options": [
+                {"key": "go", "label": "Approve proposal", "text": "Approved: adopt one queue per project."},
+                {"key": "changes", "label": "Request changes", "text": "Keep the shared queue for now."}], "recommended_key": "go"}]})
 
     region, _ = running("Backup region")
     T.block("atlas", region, "Where should the backup live?", actor="l2", updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE},

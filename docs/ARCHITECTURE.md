@@ -2487,11 +2487,12 @@ anchor. `task_view` projects `question_group` with member records, `question` as
 open member (or latest receipt), and individual revision history;
 `GET /api/overview` and the project view project the operator's turn: unresolved operator questions
 asked since the operator last wrote to the task (`handed_back`), plus one `review` row for a held
-delivery whose owner stopped in `blocked` or `reported` (#419). An open design question, the `review` row and
-an open operator question naming the held PR also carry `review` from `reviews.status`: the latest
-proposal or implementation review's id, state, finding and open counts, assessment and earlier-version
-coverage, read from the saved reviews with the review card's own comparison; `state: none` when there
-is none (spec §3.8.3). A held PR that Altitude has observed
+delivery whose owner stopped in `blocked` or `reported` (#419). An open proposal question (marked
+`"review": "proposal"` or carrying a design), the `review` row and an open operator question naming the
+held PR also carry `review` from `reviews.status`: the latest proposal or implementation review's id,
+state, who skipped it and why, finding and open counts, assessment and earlier-version coverage, read
+from the saved reviews with the review card's own comparison; `state: none` when there is none (spec
+§3.8.3). `alt task review skip` records the owner's reason as a withdrawn review that never ran. A held PR that Altitude has observed
 closed without merging asks for no review (#575): an L2 `block` reads the held PR's state from the checkout origin's repository, and a
 `CLOSED` result, like a verified `alt pr close`, appends one `pr-closed` task event. The delivery,
 `prs` history and merge hold stay recorded. A later `delivery` or `pr-adopted` event for that PR, a

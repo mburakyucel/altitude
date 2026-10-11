@@ -312,6 +312,7 @@ export const DecisionSchema = z
       state: z.enum(["none", "requested", "running", "completed", "failed", "cancelled", "withdrawn"]),
       findings: z.number().default(0), open: z.number().default(0),
       reconciled: z.boolean().default(false), earlier: z.boolean().default(false),
+      skipped_by: z.enum(["l2", "operator"]).nullish(), reason: z.string().default(""),
     }).nullish(),
   })
   .passthrough();

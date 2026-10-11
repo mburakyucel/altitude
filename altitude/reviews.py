@@ -9,6 +9,7 @@ import json
 import re
 import subprocess
 import threading
+import uuid
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
@@ -275,12 +276,14 @@ def view(project, slug):
 
 
 def status(project, task, subject):
-    """A proposal or merge question's one-line review status (SPEC.md §3.8.3): the kind's latest review, its open
-    findings and whether it covers an earlier version, exactly as the task's review card shows them."""
+    """A proposal or merge question's review status (SPEC.md §3.8.3): the kind's latest review, who skipped it and why,
+    its open findings and whether it covers an earlier version, exactly as the task's review card shows them."""
     latest = next((r for r in reversed(task.get("reviews", [])) if r.get("subject", "changes") == subject), None)
     if not latest:
         return {"subject": subject, "id": None, "state": "none"}
-    return {"subject": subject, "id": latest["id"], "state": latest["state"],
+    skipped = {"skipped_by": "l2" if latest.get("withdrawn_by") == "l2" else "operator",
+               "reason": latest.get("withdrawal_reason", "") if latest.get("withdrawn_by") == "l2" else ""} if latest["state"] == "withdrawn" else {}
+    return {"subject": subject, "id": latest["id"], "state": latest["state"], **skipped,
             "findings": len((latest.get("result") or {}).get("findings", [])), "reconciled": bool(latest.get("reconciled")),
             "open": _open_findings(task, subject),
             "earlier": _earlier(latest, task, _current_identity(project, task, _proposal_of(latest)))}
@@ -719,6 +722,32 @@ def withdraw(project, slug, review_id, *, actor, reason="", expected_attempt=Non
         review.update(state="withdrawn", withdrawn_by=actor, withdrawal_reason=reason.strip() or "Skipped by the operator.", finished_at=S.now())
         S.save_task(project, task)
         return _project_review(review, task, None)
+
+
+def skip(project, slug, *, actor, subject, reason, expected_attempt=None):
+    """The owner records that it judged a review of this kind unnecessary, so the question resting on it says why
+    (SPEC.md §3.8.3). It is a withdrawn review that never ran: the merge gate and later requests treat it as one."""
+    if subject not in ("proposal", "changes"):
+        raise T.TransitionError("Skip a proposal or changes review.")
+    if not isinstance(reason, str) or not reason.strip() or len(reason.strip()) > 120:
+        raise T.TransitionError("Say in at most 120 characters why no review is needed.")
+    with merge_lock(project, slug), S.project_lock(project):
+        task = _load(project, slug)
+        _owner(task, actor, expected_attempt, required=True)
+        if not _open(task):
+            raise T.TransitionError("Finished review history is read-only.")
+        latest = next((r for r in reversed(task.get("reviews", [])) if r.get("subject", "changes") == subject), None)
+        if latest and latest["state"] != "withdrawn":
+            raise T.TransitionError(f"A {subject} review is already recorded; withdraw a waiting one with its own reason instead.")
+        at, identity = T._conversation_time(), uuid.uuid4().hex
+        row = {"id": identity, "requested_at": at, "requested_by": actor, "subject": subject, "state": "withdrawn",
+               "focus": "", "withdrawn_by": actor, "withdrawal_reason": reason.strip(), "finished_at": S.now(),
+               "message": {"id": identity, "at": at, "role": "system", "by": actor, "review_id": identity,
+                           "text": f"{'Proposal' if subject == 'proposal' else 'Implementation'} review skipped: {reason.strip()}"}}
+        task.setdefault("reviews", []).append(row)
+        S.save_task(project, task)
+        S.append_event(project, slug, "review-skipped", review_id=identity, by=actor)
+        return _project_review(row, task, None)
 
 
 def require_merge(project, slug, pair):
