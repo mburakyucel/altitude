@@ -111,7 +111,7 @@ metadata, and excludes only that ID from pending input. Original text stays in c
 the message leaves the task conversation, and CLI history/search retain an explicit removal marker. Removed text
 cannot serve as a new decision source. Quick choices and messages
 already cited by recorded decisions remain intact. Removal changes no Stop, question, fault or resume
-request. Claimed messages show a sending ring and cannot be removed; a launch attempt retains
+request. Claimed messages show faded and cannot be removed; a launch attempt retains
 per-message uncertainty through failed-launch recovery. A released prelaunch claim becomes removable
 again. Successful input handoff and matching session initialization record delivery for the exact
 bound batch; native hook attachments can independently prove delivery.
@@ -2062,8 +2062,11 @@ shows it. An entry retires when the snapshot rendered lists its queued row or st
 or error, or when a successful server read that began after the send finished holds the turn its
 stream named: finishing a send cancels reads already in flight, and the page's own cache edits are
 not reads. Once the stream names a turn, that turn alone identifies the exchange, so after Send now
-joins it the send's first answer cannot retire the reply still streaming. An image send whose delivery
-could not be confirmed keeps its Retry without holding the composer. Only the send
+joins it the send's first answer cannot retire the reply still streaming. A refused or unconfirmed send
+keeps its entry as the message's own failure, with no activity held: Retry replaces it under a new send
+id, Edit drops it and returns its words to the composer, and an unconfirmed entry retires once a read
+lists its send id. Until acceptance an entry also keeps the images as sent (for Retry and Edit) and the id
+of its composer recovery copy, which it releases once accepted, edited or retired. Only the send
 that starts an entry adds it; later callbacks update it only while it exists. Pairing clears it with every
 query, and removing the project drops it with that project's reads. Unsent text lives in the existing
 client query cache under `project-draft` and the project name, without timed eviction, until document
@@ -2196,7 +2199,7 @@ running commands moved to the background. The request writes the group into the 
 it by renaming and records the outcome as the file's final name. Once the engine confirms it, the reply so
 far becomes that turn's answer, each message joins the history under its own turn id, and the rest of the reply
 streams beneath them. Each message retains its own visible row and receipt. The claimed rows show
-a sending ring without **Remove** until then. Retries reuse the claim or the individual
+faded without **Remove** until then. Retries reuse the claim or the individual
 history receipts, and only one group is sent at a time.
 
 Historical assistant rows marked `interrupted` retain their partial reply, possibly empty.
@@ -2240,16 +2243,16 @@ inventing an assistant failure. Each local stream callback belongs to its own se
 stream cannot alter a later queue request. A canonical assistant or error row for that turn replaces
 its local stream even while the response remains open. A queue receipt establishes acceptance;
 the source conversation refreshes its canonical snapshot even after navigation, rather than adding
-the receipt back to the queue. The current send's accepted local preview remains until a successful
-read or an identity-matched queue/history row owns its display. Local cache edits do not count as
-reads. Navigation or a subsequent send replaces that local preview; accepted messages reconstruct
-from the server on the next successful read. Failed reads show the conversation read error, whose
+the receipt back to the queue. Local cache edits do not count as reads. Failed reads show the conversation read error, whose
 Retry only reads, including after navigation. They do not restore accepted text for sending again.
-Explicit HTTP refusals restore the submitted text with "Not sent. Retry."; transport, malformed
-receipt and server failures without acceptance evidence restore it with "Could not confirm delivery.
-Check the conversation before sending again." and no send Retry. Recovery retains newly typed text
-after the submitted text on a new line. Combined failed drafts remain unconfirmed if any send lacks a
-receipt. No text matching or automatic resend infers delivery.
+In the project chat an explicit HTTP refusal (an image converter refusal for image sends) marks the
+message Not sent with the server's reason; transport, malformed receipt and server failures without
+acceptance evidence mark it Unconfirmed, with Copy to draft and no send Retry. A failure that arrives
+after acceptance is ignored. On the task conversation, explicit refusals restore the submitted text with
+"Not sent. Retry."; failures without acceptance evidence restore it with "Could not confirm delivery.
+Check the conversation before sending again." and no send Retry; recovery retains newly typed text
+after the submitted text on a new line, and combined failed drafts remain unconfirmed if any send lacks
+a receipt. No text matching or automatic resend infers delivery.
 Task sends carry a UUID `request_id`, retained as the saved message ID. The conversation renders
 the pending preview only while that ID is absent from polled messages, so the saved row owns its
 display even before the POST completes. A late receipt preserves that row's canonical position and
@@ -2258,8 +2261,10 @@ The composer keeps only submitted-text recovery in browser-tab `sessionStorage`,
 project or project/task identity. Live request callbacks outlast component unmount and restore a
 failure only to their original conversation. A receipt removes its request's recovery copy before
 the answer finishes; older reads are cancelled before a late receipt updates the query cache.
-A reload without a receipt restores pending text as unconfirmed, even if history now contains a
-similar message. The operator checks history before choosing to send. Recovered text and later typed
+Project chat keeps one copy per failed message, marked refused or not, while the message shows it.
+A reload without a receipt restores every remaining copy to the field in send order ahead of the
+saved draft, as unconfirmed unless every copy was refused, even if history now contains a similar
+message. The operator checks history before choosing to send. Recovered text and later typed
 or dictated edits remain recoverable while unconfirmed; editing a refused recovery returns it to an
 ordinary draft. Sending explicitly replaces the recovery with the submitted request. Ordinary unsent
 project text survives route remounts in client memory; it is not synchronized or stored across reloads.
@@ -2368,7 +2373,7 @@ transcription, cancellation, and focus. A landed transcript is appended to the
 draft with the cursor at the end and nothing else appears (issue #195): existing draft text is the
 prefix, separated from dictated text by one space when it does not already end in whitespace. Its
 send control is an arrow in an accent circle in every state, with no visible text and an accessible
-name of "Send" ("Queue" while busy). Its states are the design spec's §3.6 table (idle, typing, sending at 60% with a progress ring that settles in place on acknowledgement, busy queueing, listening
+name of "Send" ("Queue" while busy). Its states are the design spec's §3.6 table (idle, typing, sending at 60% that settles in place on acknowledgement, busy queueing, listening
 with a live waveform and timer, transcribing, landed, denied, unavailable, refused), each walked at
 phone and desktop widths in `web/e2e/conversation.pw.ts` (upload backends) and
 `web/e2e/voice-recognition.pw.ts` (browser recognition). While listening, desktop keeps Cancel, a
@@ -2384,10 +2389,13 @@ through each message. Browser emulation verifies layout and application transiti
 behavior requires real phone acceptance. Decision and reason fields remain
 ordinary form fields.
 The same composer adds a single image control and a conditional preview strip.
-Image admission freezes that submission's controls until acceptance or confirmed refusal; an uncertain
-response retains a pending bubble until polling observes its saved message and retries with the same identity while mounted. Submitted captions
-use the existing text recovery; image bytes are not persisted in browser storage. Acceptance clears selection
-and releases the composer before the agent finishes. Private thumbnails belong to the original saved
+Each image is checked and read in page memory when chosen, so Send takes the selection at once. In the
+project chat the message carries its images from Send (its outbox entry keeps them for Retry and Edit until
+acceptance) and the composer stays free. On the task conversation image admission freezes that submission's
+controls until acceptance or confirmed refusal; an uncertain response retains a pending bubble until polling
+observes its saved message and retries with the same identity while mounted, and acceptance clears selection
+and releases the composer before the agent finishes. Submitted captions use the existing text recovery; image
+bytes are not persisted in browser storage. Private thumbnails belong to the original saved
 message. The shell owns one modal viewer per page (`ImageViewerHost`): it holds its own copy of the
 opened image's bytes, so it outlives the queued row that opened it when history admission replaces
 that row, and closes when the route changes. Image interaction states and boundaries are specified in

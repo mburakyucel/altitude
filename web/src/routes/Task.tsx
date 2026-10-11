@@ -568,7 +568,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
       </div> : null}
       </div>
       {facts.canMessage ? <div className="convo-dock">
-        <Composer active={active} conversation={`task/${project}/${task.slug}`} value={draft} onChange={setDraft} onSubmit={(...args) => prepareSend()(...args)} prepareSubmit={prepareSend} selection={selection} onEscapeOwnership={onEscapeOwnership}
+        <Composer active={active} conversation={`task/${project}/${task.slug}`} value={draft} onChange={setDraft} onSubmit={(text, accepted, images) => prepareSend()(text, accepted, images)} prepareSubmit={prepareSend} selection={selection} onEscapeOwnership={onEscapeOwnership}
         imageScope={{ project, task: task.slug, engine: str(task["l2_engine"]) || str(task["engine"]) }}
         ariaLabel="Message the L2" placeholder="Message the L2" disabled={readOnly || denied}
         sendDisabled={["stopping", "stop_unconfirmed"].includes(steering.state)}

@@ -38,7 +38,11 @@ test("failed recovery updates preserve newer edits across navigation and explain
   await page.route((url) => url.pathname === "/api/chat", (route) => route.abort("connectionfailed"), { times: 1 });
   await v.field("alpha").fill("Unconfirmed sample");
   await v.send.click();
+  await expect(v.convo.locator(".msg-row").filter({ hasText: "Unconfirmed sample" }).getByText("Unconfirmed", { exact: true })).toBeVisible();
+  // A reload returns the unconfirmed words to the field, where later edits stay recoverable.
+  await page.reload();
   await expect(v.convo.getByRole("alert")).toContainText("Could not confirm delivery.");
+  await expect(v.field("alpha")).toHaveValue("Unconfirmed sample");
   await page.evaluate(() => {
     const setItem = Storage.prototype.setItem;
     Object.defineProperty(window, "restoreRecoveryStorage", { value: () => { Storage.prototype.setItem = setItem; } });
@@ -330,15 +334,19 @@ test("late refused sends leave Beta alone and a visible refusal retries only in 
   await expect(v.field("beta")).toHaveValue("Beta untouched draft");
   await walk.state("01-beta-after-late-refusal-overlay", { visible: [v.field("beta"), v.send], hidden: [v.retry, v.convo.getByRole("alert"), v.text("Alpha refused request")] });
   await switchProject(page, info, "alpha");
-  await expect(v.field("alpha")).toHaveValue("Alpha refused request");
-  await walk.state("02-alpha-refused-submission-recovered", { visible: [v.text("Alpha saved history."), v.retry, v.convo.getByRole("alert").filter({ hasText: "Not sent." })], hidden: [v.convo.locator(".bubble").filter({ hasText: "Alpha refused request" })] });
+  // The refusal stays on its own message in Alpha; the field is free.
+  const message = (text: string) => v.convo.locator(".msg-row").filter({ hasText: text });
+  const notSent = (text: string) => message(text).getByRole("alert").filter({ hasText: "Not sent: controlled refusal." });
+  const retry = (text: string) => message(text).getByRole("button", { name: "Retry", exact: true });
+  await expect(v.field("alpha")).toHaveValue("");
+  await walk.state("02-alpha-refused-on-its-message", { visible: [v.text("Alpha saved history."), notSent("Alpha refused request"), retry("Alpha refused request")], hidden: [] });
   await page.route((url) => url.pathname === "/api/chat", (route) => route.fulfill({ status: 409, json: { error: "Controlled refusal" } }), { times: 1 });
   await v.field("alpha").fill("Alpha retry request");
   await v.send.click();
-  await walk.state("03-alpha-refused-overlay", { visible: [v.convo.getByRole("alert").filter({ hasText: "Not sent." }), v.retry], hidden: [v.convo.locator(".bubble").filter({ hasText: "Alpha retry request" })] });
-  await expect(v.field("alpha")).toHaveValue("Alpha retry request");
-  await v.retry.click();
-  await walk.state("04-alpha-retry-answered", { visible: [v.text("Alpha retry request answered.")], hidden: [v.retry, v.convo.getByRole("alert")] });
+  await walk.state("03-alpha-refused-overlay", { visible: [notSent("Alpha retry request"), retry("Alpha retry request"), notSent("Alpha refused request")], hidden: [] });
+  await expect(v.field("alpha")).toHaveValue("");
+  await retry("Alpha retry request").click();
+  await walk.state("04-alpha-retry-answered", { visible: [v.text("Alpha retry request answered."), notSent("Alpha refused request")], hidden: [notSent("Alpha retry request"), retry("Alpha retry request")] });
   const calls = (await (await request.get(`${service}/fixture/calls`)).json()).calls;
   expect(calls.map((row: { project: string; text: string }) => [row.project, row.text])).toEqual([["alpha", "Alpha retry request"]]);
 });
@@ -675,12 +683,14 @@ test("lost L3 queue receipt survives navigation and reload without automatic res
   await expect(v.field("beta")).toHaveValue("Beta keeps its draft");
   await walk.state("01-lost-receipt-destination-untouched", { visible: [v.field("beta")], hidden: [v.retry, v.convo.getByRole("alert")] });
   await switchProject(page, info, "alpha");
-  await expect(v.field("alpha")).toHaveValue(text);
+  // The server's queue lists the message by its send id, so it is the ordinary queued message: nothing to recover.
   const hint = v.convo.getByRole("alert").filter({ hasText: "Could not confirm delivery." });
-  await walk.state("02-original-submitted-text-recovered", { visible: [hint, v.queued.getByText(text, { exact: true })], hidden: [v.retry] });
+  const unconfirmed = v.convo.getByText("Unconfirmed", { exact: true });
+  await walk.state("02-queued-by-its-send-id", { visible: [v.queued.getByText(text, { exact: true })], hidden: [hint, unconfirmed, v.retry] });
+  await expect(v.field("alpha")).toHaveValue("");
   await page.reload();
-  await expect(v.field("alpha")).toHaveValue(text);
-  await walk.state("03-reload-preserves-uncertainty", { visible: [hint, v.queued.getByText(text, { exact: true })], hidden: [v.retry] });
+  await walk.state("03-reload-keeps-it-queued", { visible: [v.queued.getByText(text, { exact: true })], hidden: [hint, unconfirmed, v.retry] });
+  await expect(v.field("alpha")).toHaveValue("");
   const view = await (await request.get(`${service}/api/chat/alpha`)).json();
   expect(view.queued.filter((row: { text: string }) => row.text === text)).toHaveLength(1);
   expect((await (await request.get(`${service}/api/chat/beta`)).json()).history).toEqual([]);

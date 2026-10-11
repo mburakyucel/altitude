@@ -13,7 +13,7 @@ const PATHS = {
 };
 const STATE_ICON: Record<Exclude<ChoiceState, "ready" | "busy">, keyof typeof PATHS> = { wait: "clock", sent: "check", done: "check", fail: "retry" };
 
-function Icon({ name }: { name: keyof typeof PATHS }) {
+export function Icon({ name }: { name: keyof typeof PATHS }) {
   return (
     <svg aria-hidden viewBox="0 0 20 20" width="16" height="16">
       <path d={PATHS[name]} fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" strokeLinecap="round" />

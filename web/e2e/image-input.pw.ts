@@ -107,8 +107,14 @@ for (const scope of ["project", "task"] as const) {
     });
     // Hold the real completion boundary after active clears but before its retained claim is removed.
     if (scope === "project") await request.post("/fixture/pause-completion");
-    await walk.state("04-sending-images", { action: () => v.send.click(), visible: [page.getByText("Sending images…", { exact: true }), page.getByLabel("Sending images", { exact: true })], hidden: [v.strip] });
-    await expect(v.field).toBeDisabled(); await expect(v.add).toBeDisabled();
+    // Project chat shows the images on the faded message itself; the task conversation says so in the composer.
+    const sendingMessage = page.locator('.msg-row[data-pending][data-mine]').filter({ hasText: caption });
+    await walk.state("04-sending-images", { action: () => v.send.click(),
+      visible: scope === "project" ? [sendingMessage.locator("img")] : [page.getByText("Sending images…", { exact: true }), page.getByLabel("Sending images", { exact: true })],
+      hidden: scope === "project" ? [v.strip, page.getByText("Sending images…", { exact: true })] : [v.strip] });
+    // The project message carries its own state, so its composer stays free; the task composer waits.
+    if (scope === "project") { await expect(v.field).toBeEnabled(); await expect(v.add).toBeEnabled(); }
+    else { await expect(v.field).toBeDisabled(); await expect(v.add).toBeDisabled(); }
     release();
     // The saved-image states name the stored row's opener; the queued-to-history transition has its own journey.
     if (scope === "project") await expect(page.locator(".bubble").getByRole("button", { name: "Open image timer.png", exact: true })).toBeVisible();
@@ -153,6 +159,40 @@ for (const scope of ["project", "task"] as const) {
       if (mode === "lost") return route.abort("connectionreset");
       return route.fulfill({ response });
     });
+    if (scope === "project") {
+      // The message keeps its images and says what happened; Edit returns both, Retry resends the same bytes.
+      const message = page.locator(".msg-row[data-mine]").filter({ hasText: caption });
+      const refusal = message.getByRole("alert").filter({ hasText: "Not sent: choose a smaller image." });
+      await walk.state("01-refused-on-message", { action: () => v.send.click(),
+        visible: [refusal, message.locator("img"), message.getByRole("button", { name: "Retry", exact: true }), message.getByRole("button", { name: "Edit", exact: true })], hidden: [v.strip] });
+      await expect(v.field).toHaveValue("");
+      await walk.state("01b-edit-returns-images", { action: () => message.getByRole("button", { name: "Edit", exact: true }).click(), visible: [v.strip], hidden: [message] });
+      await expect(v.field).toHaveValue(caption);
+      await expect(v.field).toBeFocused();
+      await v.send.click();
+      await expect(refusal).toBeVisible();
+      // The response is lost after the server stores the message; reads wait so the unconfirmed state can be seen.
+      let releaseReads: () => void = () => undefined;
+      const reads = new Promise<void>((resolve) => { releaseReads = resolve; });
+      await page.route((url) => url.pathname === "/api/chat/alpha", async (route) => { await reads; await route.continue(); });
+      mode = "lost";
+      await walk.state("02-unconfirmed-on-message", { action: () => message.getByRole("button", { name: "Retry", exact: true }).click(),
+        visible: [message.getByText("Unconfirmed", { exact: true }), message.getByRole("button", { name: "Copy to draft", exact: true })], hidden: [refusal, v.strip] });
+      await expect(message.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
+      await expect(v.field).toBeEnabled();
+      mode = "normal";
+      // The next read shows the stored message: the bubble becomes the ordinary one, with no duplicate.
+      await walk.state("03-unconfirmed-stored", { action: async () => releaseReads(),
+        visible: [v.preview], hidden: [page.getByText("Unconfirmed", { exact: true }), v.strip] });
+      expect(submissions[1]?.images).toEqual(submissions[0]?.images);
+      expect(submissions[2]?.images).toEqual(submissions[1]?.images);
+      expect(new Set(submissions.map((one) => one.request_id)).size).toBe(3);
+      await page.reload();
+      await expect(v.preview).toHaveCount(1);
+      const stored = await (await request.get("/api/chat/alpha")).json();
+      expect([...stored.history, ...(stored.queued ?? [])].filter((row: { text: string }) => row.text === caption)).toHaveLength(1);
+      return;
+    }
     await walk.state("01-refused-draft", { action: () => v.send.click(), visible: [v.strip, page.getByText(/Not sent\. Choose a smaller image\./)], hidden: [page.getByLabel("Sending images", { exact: true })] });
     await expect(v.field).toHaveValue(caption);
     mode = "lost";
@@ -601,16 +641,17 @@ test("an earlier text stream cannot replace or retire a pending image admission"
     await route.fulfill({ response });
   });
   await page.route("**/api/chat", async (route) => { await gate; const response = await route.fetch(); await receipt; await route.fulfill({ response }); });
-  await walk.state("01-image-pending-behind-stream", { action: () => v.send.click(), visible: [page.getByText("Sending images…", { exact: true }), page.getByLabel("Sending images", { exact: true })], hidden: [v.strip] });
+  await walk.state("01-image-pending-behind-stream", { action: () => v.send.click(), visible: [page.getByLabel("Sending images", { exact: true })], hidden: [v.strip, page.getByText("Sending images…", { exact: true })] });
   await request.post("/fixture/release/alpha");
   const reply = "I can inspect 0 image(s). Answer this first text turn.";
   await expect.poll(async () => (await (await request.get("/api/chat/alpha")).json()).history.some((row: { text: string }) => row.text === reply)).toBe(true);
   await expect(page.getByText(reply, { exact: true })).toBeVisible();
   const pending = page.locator(".turn[data-local]");
-  await walk.state("02-original-stream-finished-image-stays-pending", { visible: [pending, pending.getByLabel("Sending images", { exact: true }), page.getByText("Sending images…", { exact: true })], hidden: [pending.locator(".reply")] });
+  await walk.state("02-original-stream-finished-image-stays-pending", { visible: [pending, pending.getByLabel("Sending images", { exact: true })], hidden: [pending.locator(".reply")] });
   await expect(pending).toContainText(caption);
   await expect(pending.locator(".msg-row[data-pending]")).toHaveCount(1);
-  await expect(v.field).toBeDisabled();
+  // The message carries its own state, so the composer stays free for the next one.
+  await expect(v.field).toBeEnabled();
   release();
   try {
     await expect.poll(async () => (await (await request.get("/fixture/calls")).json()).calls.length).toBe(2);

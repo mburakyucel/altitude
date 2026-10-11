@@ -5,6 +5,7 @@ import type { VoiceSettings } from "../data/api";
 import { Link } from "react-router";
 import { IMAGE_HELP, useImageDraft } from "./ImageDraft";
 import type { ImageScope, ImageSubmission } from "./ImageDraft";
+import type { ImagePreview } from "./MessageImages";
 import { HostCapture, MAX_RETAINED, UNREACHED } from "./hostCapture";
 import { useLiveReveal } from "./liveReveal";
 import { RecognitionCapture, recognitionAvailable } from "./recognition";
@@ -65,16 +66,18 @@ type Phase = "idle" | "starting" | "listening" | "transcribing";
 type Capture = RecognitionCapture | HostCapture;
 /** "transcription": the recording failed; "unreached": host voice lost the connection past its wait. */
 type SendFailure = "refused" | "unconfirmed" | "transcription" | "unreached" | null;
-type VoiceSend = { id: string; text: string; failure: SendFailure; controller: AbortController; send: ComposerProps["onSubmit"]; images?: Promise<ImageSubmission>; capture: Capture; cancel: () => void };
+type VoiceSend = { id: string; text: string; failure: SendFailure; controller: AbortController; send: ComposerProps["onSubmit"]; images?: ImageSubmission; capture: Capture; cancel: () => void };
 const voiceSends = new Map<string, VoiceSend>();
 
 // #320: only submitted text lives beyond a composer. These records never initiate a send.
-type SubmittedText = { pending: Record<string, string>; text: string; failure: SendFailure };
+// `refused` names the pending copies the server refused; every other pending copy recovers as unconfirmed.
+type SubmittedText = { pending: Record<string, string>; text: string; failure: SendFailure; refused?: string[] };
 const liveSubmissions = new Set<string>();
 // A failed update retains the current recovery within this document. The stored bytes identify
 // the copy it supersedes; clearing/replacing browser storage also discards that fallback.
 const unwrittenRecovery = new Map<string, { stored: string | null; value: SubmittedText }>();
 const recoveryViews = new Map<string, { draft: () => string; failure: () => SendFailure; restore: (saved: SubmittedText, unavailable?: boolean, id?: string) => void;
+  paste: (text: string, images?: ImagePreview[]) => boolean;
   voice: (send: VoiceSend | null) => void; submit: (text: string, retry?: ImageSubmission, voice?: VoiceSend) => Promise<void> }>();
 const recoveryKey = (conversation: string) => `altitude.submitted:${conversation}`;
 function readSubmitted(conversation: string): SubmittedText {
@@ -122,6 +125,35 @@ function settleSubmitted(conversation: string, id: string, text: string, failure
   if (failure || restore) view?.restore(saved, !readable || unwrittenRecovery.has(conversation), id);
 }
 
+function updatePending(conversation: string, id: string, change: (saved: SubmittedText, refused: string[]) => void) {
+  try {
+    const saved = readSubmitted(conversation);
+    if (!(id in saved.pending)) return;
+    const refused = (saved.refused ?? []).filter((one) => one !== id);
+    change(saved, refused);
+    saved.refused = refused.length ? refused : undefined;
+    saveSubmitted(conversation, saved);
+  } catch { /* the pending copy recovers as unconfirmed */ }
+}
+
+/**
+ * A conversation that shows a failed send on its own message (SPEC.md §3.6) keeps the send's copy for a reload,
+ * marked with how it failed; `null` while it is sent again.
+ */
+export function markSubmitted(conversation: string, id: string, failure: "refused" | "unconfirmed" | null) {
+  updatePending(conversation, id, (_, refused) => { if (failure === "refused") refused.push(id); });
+}
+
+/** The message no longer needs its copy: a read shows it arrived, or Edit took its words back. */
+export function releaseSubmitted(conversation: string, id: string) {
+  updatePending(conversation, id, (saved) => { delete saved.pending[id]; });
+}
+
+/** Put a message's words back in its conversation's field, ahead of the draft, with its images in the picker. */
+export function returnToComposer(conversation: string, text: string, images?: ImagePreview[]): boolean {
+  return recoveryViews.get(conversation)?.paste(text, images) ?? false;
+}
+
 export interface ComposerProps {
   /** Stable project/task identity, independent of route tab and display title. */
   conversation: string;
@@ -129,7 +161,7 @@ export interface ComposerProps {
   onChange: (value: string) => void;
   /** Resolve accepted sends. Explicit HTTP refusal restores the draft with Retry; an uncertain
    * transport/server failure restores it with a reminder to check the conversation first. */
-  onSubmit: (text: string, onAccepted: () => void, images?: ImageSubmission) => void | Promise<void>;
+  onSubmit: (text: string, onAccepted: () => void, images?: ImageSubmission, copy?: string) => void | Promise<void>;
   /** Freeze any reply context when Send is requested, before asynchronous voice preparation. */
   prepareSubmit?: () => ComposerProps["onSubmit"];
   imageScope?: ImageScope;
@@ -142,6 +174,12 @@ export interface ComposerProps {
   /** The control beside the message box, such as L3's model button. */
   pill?: ReactNode;
   disabled?: boolean;
+  /** The conversation shows a sending or failed message on its own bubble, images included: the field and
+      picker clear at Send and stay as they are on failure, and the send's recovery copy (its `copy` id) waits
+      for a reload. */
+  showsFailures?: boolean;
+  /** Whether a failed send's copy is still shown on its message; the copies it does not show return to the field. */
+  shows?: (copy: string) => boolean;
   /** A worker stop can hold sending while the operator continues editing or dictating. */
   sendDisabled?: boolean;
   selection?: RefObject<{ start: number; end: number } | null>;
@@ -342,6 +380,8 @@ export default function Composer({
   hint,
   pill,
   disabled = false,
+  showsFailures = false,
+  shows,
   sendDisabled = false,
   selection,
   onEscapeOwnership,
@@ -355,6 +395,10 @@ export default function Composer({
   visible.current = active;
   const picker = useRef<HTMLInputElement>(null);
   const images = useImageDraft(imageScope);
+  const imageDraft = useRef(images);
+  imageDraft.current = images;
+  const showing = useRef(shows);
+  showing.current = shows;
   const [admission, setAdmission] = useState<"" | "sending" | "uncertain">("");
   const admitting = useRef(false);
   const retryImage = useRef<{ text: string; submission: ImageSubmission; recoveryId: string; send: ComposerProps["onSubmit"]; preserveDraft: boolean } | null>(null);
@@ -505,6 +549,14 @@ export default function Composer({
       submit: (text: string, retry?: ImageSubmission, voice?: VoiceSend) => currentSubmit.current(text, retry, voice),
       draft: () => deferredRecovery.current?.text ?? draft.current,
       failure: () => failure.current,
+      paste: (text: string, previews?: ImagePreview[]) => {
+        if (previews?.length && !imageDraft.current.restore(previews)) return false;
+        const next = [text, draft.current].filter(Boolean).join("\n");
+        draft.current = next;
+        onChange(next);
+        focusField(next.length);
+        return true;
+      },
       restore: (saved: SubmittedText, unavailable = false, id?: string) => {
         if (admitting.current) { deferredRecovery.current = saved; return; }
         draft.current = saved.text;
@@ -519,12 +571,15 @@ export default function Composer({
     recoveryViews.set(conversation, view);
     try {
       const saved = readSubmitted(conversation);
-      // A reload has no live request to await. Keep its text without claiming acceptance or resending.
-      for (const [id, text] of Object.entries(saved.pending)) {
-        if (liveSubmissions.has(id)) continue;
-        saved.text = [text, saved.text].filter(Boolean).join("\n");
-        saved.failure = "unconfirmed";
-        delete saved.pending[id];
+      // A reload has no live request to await. Keep the copies' words in send order without claiming acceptance
+      // or resending; the cautious hint wins unless every copy was refused.
+      const orphaned = Object.entries(saved.pending).filter(([id]) => !liveSubmissions.has(id) && !showing.current?.(id));
+      if (orphaned.length) {
+        const refused = new Set(saved.refused ?? []);
+        saved.text = [...orphaned.map(([, text]) => text), saved.text].filter(Boolean).join("\n");
+        saved.failure = saved.failure === "unconfirmed" || orphaned.some(([id]) => !refused.has(id)) ? "unconfirmed" : "refused";
+        for (const [id] of orphaned) { delete saved.pending[id]; refused.delete(id); }
+        saved.refused = refused.size ? [...refused] : undefined;
       }
       if (saved.text || saved.failure === "transcription" || saved.failure === "unreached") {
         saved.text = [saved.text, draft.current].filter(Boolean).join("\n");
@@ -587,40 +642,42 @@ export default function Composer({
       if (!preserveDraft) { failure.current = null; setSendFailure(null); }
       setRecoveryUnavailable(false); setRefusalReason("");
       setVoiceFailure(""); setSetupNeeded(false); setUnpunctuated(null); images.setError("");
-      if (withImages) { admitting.current = true; setAdmission("sending"); }
+      // Where the message shows its own state, each send stands alone and the composer stays free.
+      if (withImages && !showsFailures) { admitting.current = true; setAdmission("sending"); }
       if (!preserveDraft) { draft.current = ""; onChange(""); }
       let accepted = false;
       const accept = () => {
         accepted = true;
         settleSubmitted(conversation, id, text, null);
       };
-      let submission = retry;
+      const submission = !withImages ? undefined : retry ?? voice?.images ?? images.submission();
+      if (submission) {
+        // The bubble shows the images from here, as it shows the words.
+        if (showsFailures) images.clear();
+        else retryImage.current = { text, submission, recoveryId: id, send, preserveDraft };
+      }
       try {
-        if (withImages) {
-          submission ??= await (voice?.images ?? images.submission());
-          if (!mounted.current && !voice) {
-            settleSubmitted(conversation, id, text, "refused");
-            return;
-          }
-          retryImage.current = { text, submission, recoveryId: id, send, preserveDraft };
-          await send(ready, accept, submission);
-        } else await send(ready, accept);
+        await (showsFailures ? send(ready, accept, submission, id) : submission ? send(ready, accept, submission) : send(ready, accept));
         accept();
       } catch (error) {
         if (!accepted) {
-          if (withImages && submission && !imageSendRefused(error) && mounted.current) {
+          // The conversation shows the failure on the message and has marked its copy.
+          if (showsFailures) {
+            liveSubmissions.delete(id);
+          } else if (submission && !imageSendRefused(error) && mounted.current) {
             // Keep the immutable image retry here; a later remount recovers only its caption.
             liveSubmissions.delete(id);
             setAdmission("uncertain");
             return;
+          } else {
+            settleSubmitted(conversation, id, text,
+              error instanceof ApiError && error.status < 500 ? "refused" : "unconfirmed");
+            if (mounted.current && withImages && error instanceof Error) setRefusalReason(error.message);
           }
-          settleSubmitted(conversation, id, text,
-            !submission && withImages || error instanceof ApiError && error.status < 500 ? "refused" : "unconfirmed");
-          if (mounted.current && withImages && error instanceof Error) setRefusalReason(error.message);
         }
       }
       if (!mounted.current) return;
-      if (withImages) {
+      if (withImages && !showsFailures) {
         if (accepted) images.clear();
         admitting.current = false; setAdmission(""); retryImage.current = null;
         if (deferredRecovery.current) {
@@ -636,7 +693,7 @@ export default function Composer({
       }
       if (focusAfterSend.current.delete(id)) focusField();
     },
-    [conversation, disabled, sendDisabled, focusField, images, onChange, onSubmit],
+    [conversation, disabled, showsFailures, sendDisabled, focusField, images, onChange, onSubmit],
   );
   // A returning source view owns admission UI; an explicit voice Send retains its captured transport.
   const currentSubmit = useRef(submit);
@@ -728,8 +785,6 @@ export default function Composer({
           endVoiceSend(sending);
         },
       };
-      // Image reads start now, while the selected Files and reply context still belong to this Send.
-      void sending.images?.catch(() => undefined);
       sendAfterTranscribing.current = sending;
       if (visible.current) focusAfterSend.current.add(id);
       voiceSends.set(conversation, sending);

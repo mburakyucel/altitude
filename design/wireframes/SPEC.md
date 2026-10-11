@@ -364,6 +364,14 @@ conversation." and Retry, cached rows still shown); a turn in progress (§4.2); 
 (§4.2); a reply that failed ("L3 could not answer this turn." in muted text under the prompt, with
 Retry that resends the same prompt).
 
+Entrance: a row that first appears while the conversation is on screen (the operator's bubble at Send,
+a reply's first words, a system line, a task card, a queued message, a message from another device)
+fades in and rises 4px over 160ms ease-out. It takes its full height at once, so following the bottom
+is not delayed. Rows present when the conversation opens or is returned to, older history, a message
+changing state or place (a sending bubble replaced by its stored or queued copy, a queued message
+taken by the turn) and a streaming reply growing have no entrance; identity is the send id or turn id,
+decided once per mounted view. Leaving is immediate. Under reduced motion rows appear at once.
+
 Project switching uses the rail on desktop and the header switcher on phone. These states apply
 on both, including switching back before or after a response finishes:
 
@@ -616,9 +624,11 @@ at both phone and desktop widths; `mobile-chat.pw.ts` walks the task page's pend
 | --- | --- | --- |
 | Idle | placeholder, mic, arrow disabled | typing enables the arrow |
 | Typing | draft text, arrow enabled | Enter or the arrow: the draft becomes a bubble at once, the field clears |
-| Sending | the bubble is in the conversation at once at 60%, a small progress ring beside it, until the server acknowledges it (stream accepted, queued receipt or stored row); screen readers hear "Sending" | accepted: the same bubble settles to full opacity in place over 240ms, the ring leaves, and the stored copy replaces it without a duplicate row, re-layout or scroll jump; leaving the conversation (the phone's Work tab, another project) and returning shows each sent bubble and its streaming reply until the server's record has it, one bubble per send even for identical words; refused: the bubble leaves, the draft returns, hint reads "Not sent. Retry." in `--danger` |
+| Sending | the bubble is in the conversation at once at 60%, with no other cue, until the server acknowledges it (stream accepted, queued receipt or stored row); screen readers hear "Sending" | accepted: the same bubble settles to full opacity in place over 240ms, and the stored copy replaces it without a duplicate row, re-layout or scroll jump; leaving the conversation (the phone's Work tab, another project) and returning shows each sent bubble and its streaming reply until the server's record has it, one bubble per send even for identical words |
 | Accepted; stream or refresh interrupted | sent bubble or saved queue row; the composer stays cleared and newly typed text stays | refresh reconstructs history, active turn and queue by their IDs; read-error Retry only reads; no unsent Retry or invented answer failure |
-| Delivery unconfirmed | submitted text followed by any newly typed draft on a new line; hint reads "Could not confirm delivery. Check the conversation before sending again." | no send Retry; the operator checks history before editing or sending; HTTP headers, server errors and matching text alone do not prove delivery |
+| Not sent (project chat) | the bubble stays in place at full strength with a red **!** in its gutter; under it, right aligned, `Not sent: <reason>.` (`role="alert"`) then **Retry** · **Edit**; the composer is idle | Retry sends the same words again in place with a new send id, back to Sending; Edit removes the bubble and puts its words (and images) in the field ahead of anything typed since, on a new line, with focus at the end |
+| Unconfirmed (project chat) | the bubble stays at full strength with an amber **!**; under it `Unconfirmed` (`role="status"`) then **Copy to draft**; the composer is idle | no send Retry; Copy to draft puts the words in the field the same way and keeps the message; a read that shows its send id makes it the ordinary sent or queued message; HTTP headers, server errors and matching text alone do not prove delivery |
+| Refused or unconfirmed (task conversation) | the pending bubble leaves; the submitted text returns ahead of any newly typed draft on a new line; the hint reads "Not sent. Retry." in `--danger`, or "Could not confirm delivery. Check the conversation before sending again." with no send Retry | the operator edits or sends again; an unconfirmed recovery stays unconfirmed until sent |
 | Busy (L3 mid-turn) | the same arrow, enabled with a draft; header names the active work; desktop retains its mid-turn hint | the arrow appends to `queued[]`; the message joins the queued group (§4.2) as an outlined bubble |
 | Opening microphone | "Opening microphone…" with an indeterminate spinner inside the composer box; existing text remains readable and read-only. A restart waits for recognizer shutdown (at most three seconds), followed by the waveform audio context's asynchronous close (at most three more seconds), before opening another microphone. Its waveform graph connects before capture starts, without waiting for graph activation | Cancel or Esc restores editing and prevents the waiting attempt from opening audio later; denial or failure preserves the draft |
 | Listening | Read-only, selectable draft; "Listening… Stop to add text, or Send." with activity indicator inside the box. With the browser backend, recognized words appear after the draft while speaking and the last phrase may still change; English phrases gain punctuation and capitals once final, while the phrase being heard shows as heard; once the text passes the field's height, the field follows the latest words. With either backend, new words flow in letter by letter at a steady pace timed to finish as the next update arrives (about speaking pace, faster while catching up); a revised word changes in place without the text backing up, and under reduced motion each update appears at once. Stop, Send and a recording that stops early use every recognized word, including any still flowing in. Cancel, Stop, arrow, waveform and timer share one control row: on desktop they sit together at the right beside the engine pill with a crisp 168px waveform; at 390px the waveform fills the row without wrapping | Cancel or Esc: back to editing, nothing added; the X leaves focus on the microphone so no phone keyboard opens, and Esc returns focus to the field; Stop or Ctrl/⌘+M: land the words in the draft; the arrow or Enter: land them, then send at once; a later browser dictation in the page whose live microphone stays exactly silent for three seconds before any words (iOS 27 Safari, [WebKit bug 326069](https://bugs.webkit.org/show_bug.cgi?id=326069)): back to editing with nothing added, focus on the microphone and "The microphone went silent. Close and reopen Altitude to dictate again. Typing works." |
@@ -645,10 +655,21 @@ formatting.
 Explicit Send retains its transcription operation through route navigation in the current document;
 returning to its source shows the pending text and Cancel. Stop-to-edit transcription cancels on leaving.
 Reloading or closing the document ends client voice processing; it does not replay audio later.
-An explicit refusal also preserves any newly typed draft after the refused text on a new line;
-Retry submits that recoverable draft. Combined failed drafts stay unconfirmed if any send lacks a receipt,
-so Retry cannot duplicate or discard uncertain text. A later callback from an earlier send cannot change a newer
-pending message. `web/e2e/project-isolation.pw.ts`, `task-lifecycle.pw.ts` and `conversation.pw.ts`
+In the project chat the reason is the server's own message, first letter lowercased, with one final
+period (`Not sent: no L3 for this project.`), or `Not sent.` without one. The actions are underlined link
+buttons separated by a middle dot; the line wraps between words and keeps its actions together, within
+90% of the column. A message whose saved images cannot return to the picker offers Retry only. A failed or
+unconfirmed message is not activity, so the next message can be sent at once, and leaving and returning
+keeps it. The browser tab keeps one recovery copy per not-sent or unconfirmed message, keyed by its send
+id; Retry replaces it, Edit and a read that shows the send id remove it, Copy to draft keeps it. After a
+reload the copies return to the field in send order, each on its own line, ahead of any draft, with one
+hint: "Could not confirm delivery. Check the conversation before sending again." when any copy is
+unconfirmed, otherwise "Not sent. Retry."; image messages recover their caption only. Nothing is sent
+without the operator pressing Send.
+On the task conversation an explicit refusal also preserves any newly typed draft after the refused text
+on a new line; Retry submits that recoverable draft. Combined failed drafts stay unconfirmed if any send
+lacks a receipt, so Retry cannot duplicate or discard uncertain text. A later callback from an earlier send
+cannot change a newer pending message. `web/e2e/project-isolation.pw.ts`, `task-lifecycle.pw.ts` and `conversation.pw.ts`
 walk accepted/interrupted, failed refresh, reconnect, queued, refused and unconfirmed states at both viewports.
 
 Image input uses the same toolbar and adds no permanent row when empty. A conditional strip holds
@@ -661,9 +682,9 @@ local until Send; leaving the conversation releases it and late results cannot f
 | --- | --- |
 | Empty / cancel picker | Add images shares the existing controls; no strip or status row. Cancel changes nothing. |
 | Selected / remove | Preview strip appears; last Remove removes it and keeps text. Invalid format, unreadable preview or size/count rejection names recovery inline and preserves other selections. |
-| Sending | Pending bubble holds text and previews. Composer controls freeze for this submission; acceptance clears selection and releases the composer before the agent finishes. |
-| Confirmed refusal | Pending bubble leaves; the full editable draft/selection returns with the server's reason. Removing or replacing images allows another send. No partial message is accepted. |
-| Uncertain response | Pending bubble remains with Could not confirm send and Retry; controls stay frozen. Retry uses the original identity and content. Navigation remains available. |
+| Sending | Pending bubble holds text and previews. In the project chat the selection clears at Send and the composer stays free; on the task conversation the composer reads "Sending images…" and its controls freeze until acceptance, which clears the selection and releases the composer before the agent finishes. |
+| Confirmed refusal | No partial message is accepted. Project chat: the message shows Not sent with its previews; Retry sends the saved images again and Edit returns the caption to the field and the images to the picker. Task conversation: the pending bubble leaves; the full editable draft/selection returns with the server's reason. Removing or replacing images allows another send. |
+| Uncertain response | Project chat: the message shows Unconfirmed with its previews and Copy to draft (the caption); a read that shows it settles it. Task conversation: the pending bubble remains with Could not confirm send and Retry; controls stay frozen. Retry uses the original identity and content. Navigation remains available. |
 | Queued / delivery failure | Images retain their caption. Project rows and unclaimed task messages offer Remove; removed task messages show a muted placeholder without images. Failed project-turn Retry uses saved images; task recovery keeps existing authority. |
 | Sent / viewer | Thumbnails belong to the saved message. Open shows the full image in a modal with Fit/Zoom, Close and Escape; closing restores thumbnail focus, or focuses the same image's stored thumbnail once history admission has replaced a queued opener. Archived tasks retain viewing without a composer. |
 | Loading / missing / denied | Image-sized placeholder names loading or the error; Retry repeats only the private read, never the send. Text remains readable. |
@@ -1262,7 +1283,7 @@ Queued operator messages form a group of outlined bubbles, 6px apart (a decision
 to the running turn in arrival order; each message retains its receipt and later arrivals stay outside
 the claim. Quick-choice receipts and messages used by recorded decisions keep their evidence.
 A pressed × spins until success removes its bubble and announces removal. Original text stays in
-the record. A claimed message has a sending ring and no ×; a delivered message is a plain filled
+the record. A claimed message is faded (on its way) with no ×; a delivered message is a plain filled
 bubble. Uncertain handoff shows an amber **!** and **Unconfirmed**. Screen readers hear queued and
 sending states, and confirmed receipts retain screen-reader-only “Delivered”. Each remove control has its message as an accessible description. A prelaunch failure restores queued controls; failed actions retain an inline reason.
 Saved or loading reads disable actions. Pending Send now holds a spinner in place and ignores
@@ -1866,7 +1887,8 @@ its mid-turn hint. Queued operator messages appear as outlined bubbles, 6px apar
 (**Remove**) each and one bordered **Send now** following the group. System rows keep their own
 position and have no operator actions. Send now promotes the operator group in arrival order;
 each message keeps its bubble and receipt, and later arrivals stay outside the claim.
-A pending Send now shows a spinner in place. Native claims show sending rings and no ×.
+Send now shows a spinner in its label's place while its request is out, and a clock once the server
+holds the press; messages it hands over are faded (on their way) with no × until the turn takes them.
 Boundary delivery retains the outlined queue; pressing the busy control reveals its waiting reason.
 Once the turn takes the messages in, the reply so far ends, each message appears as its own operator
 bubble, and the rest of the reply streams beneath the group. Historical interrupted replies retain
@@ -1874,8 +1896,16 @@ partial text as an ordinary reply with no notice; an empty interrupted reply lea
 two operator bubbles sit back to back (8px apart, the first bubble's time beside it).
 Uncertain engine acknowledgement shows an amber **!** and **Unconfirmed** after settlement and reload;
 it never causes automatic replay. Groups with images or without an active chat turn run at a turn
-boundary; Remove stays available until claim. A pressed × spins until its bubble disappears and
-removal is announced. Denied, conflict and unconfirmed actions keep their inline error after refresh.
+boundary; Remove stays available until claim. A pressed × spins in place while its request is out;
+the outcome comes from the server: removed, the bubble leaves and the rows below close up; taken by the
+turn first ("already started"), the next read shows it faded or sent with no failure line; any other
+failure shows `Not removed: <reason>.` and **Retry** under the bubble only once a read after it still
+lists the message, so a removal whose answer was lost never reads as failed. A failed Send now leaves
+the control ready with the reason under the group (`You do not have permission to send this message now.`,
+the server's reason, or `Send now unconfirmed. Check this message’s status before trying again.`) until a
+read shows the press held. These lines and the spinners do not survive leaving or a reload; pressing
+again is safe. `web/e2e/message-states.pw.ts` walks each of these message states, Edit, leaving and
+returning, Retry while reading above the bottom, and the entrance at both widths.
 A message retained because no engine can run stays outlined in its historical position, without ×,
 and joins newer queued messages in order after recovery. Its reply appears beneath that bubble,
 or beneath the last newer message. Older retained messages appear in the
