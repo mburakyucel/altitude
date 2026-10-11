@@ -3047,7 +3047,7 @@ def review(prompt: str, *, engine: str, snapshot: Path, runtime: Path, model: st
     read_errors = []
     def drain(stream, capture, keep):
         try:
-            while chunk := stream.readline(65536):
+            while chunk := stream.readline(1 << 20):  # whole records: a tool result can exceed 64 KiB once escaped
                 if keep(chunk):
                     capture.add(chunk)
         except (OSError, ValueError):
