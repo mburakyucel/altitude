@@ -713,8 +713,8 @@ to the reviewer's first prompt in that order: Codex with its image option, Claud
 in its stream-json input. The receipt keeps the design identity the preview shares and names the
 screenshots given; an engine CLI without image input gets none, and the capture's limitations say so. Identity and freshness hash the
 logical context, independent of this representation; the input hash covers every captured file. Changes reviews capture the merge-candidate tree and diff; a branch that conflicts with main is
-refused with its conflicted files. Missing proposal input prevents invocation. Image evidence needs a
-textual account and is explicitly outside the text reviewer's coverage.
+refused with its conflicted files. Missing proposal input prevents invocation. Images attached to
+messages need a textual account and stay outside the reviewer's coverage.
 The adapter exposes only a fixed captured-file list/read/literal-search tool: no tests, shell,
 connectors, network tools, mutation, nested helpers or task identity. Read and search deliver text
 from a line/column cursor, at most 100 lines and 16 KiB per response; a truncated response names
