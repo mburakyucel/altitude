@@ -78,6 +78,8 @@ const unwrittenRecovery = new Map<string, { stored: string | null; value: Submit
 const recoveryViews = new Map<string, { draft: () => string; failure: () => SendFailure; restore: (saved: SubmittedText, unavailable?: boolean, id?: string) => void;
   paste: (text: string, images?: ImagePreview[]) => boolean;
   voice: (send: VoiceSend | null) => void; submit: (text: string, voice?: VoiceSend) => Promise<void>; recover: (live?: boolean) => void }>();
+// Conversations whose stored recovery missed an edit because storage could not be read; the field is newer.
+const missedEdits = new Set<string>();
 const recoveryKey = (conversation: string) => `altitude.submitted:${conversation}`;
 function readSubmitted(conversation: string): SubmittedText {
   const saved = sessionStorage.getItem(recoveryKey(conversation));
@@ -97,6 +99,21 @@ function saveSubmitted(conversation: string, saved: SubmittedText, beforeSend = 
     if (!beforeSend) unwrittenRecovery.set(conversation, { stored, value: structuredClone(saved) });
     throw error;
   }
+}
+// An edit of the field keeps recovered unconfirmed words as typed; any other recovery hint ends with it.
+function editSubmitted(saved: SubmittedText, text: string) {
+  if (!saved.failure && !saved.text) return false;
+  saved.text = saved.failure === "unconfirmed" ? text : "";
+  if (saved.failure !== "unconfirmed") saved.failure = null;
+  return true;
+}
+// Storage that missed an edit takes the field as it is now, once it can be read again.
+function readCaughtUp(conversation: string, field: string) {
+  const saved = readSubmitted(conversation);
+  if (missedEdits.delete(conversation) && editSubmitted(saved, field)) {
+    try { saveSubmitted(conversation, saved); } catch { /* the caught-up copy stays in this document */ }
+  }
+  return saved;
 }
 function beginSubmitted(conversation: string, text: string, id: string = crypto.randomUUID(), preserve = false) {
   const saved = readSubmitted(conversation);
@@ -537,12 +554,11 @@ export default function Composer({
     draft.current = text;
     onChange(text);
     try {
-      const saved = readSubmitted(conversation);
-      if (saved.failure || saved.text) {
-        saved.text = saved.failure === "unconfirmed" ? text : "";
-        if (saved.failure !== "unconfirmed") saved.failure = null;
-        saveSubmitted(conversation, saved);
-      }
+      let saved: SubmittedText;
+      // A failed write keeps its value in this document; a failed read leaves storage behind the field.
+      try { saved = readSubmitted(conversation); } catch (error) { missedEdits.add(conversation); throw error; }
+      missedEdits.delete(conversation);
+      if (editSubmitted(saved, text)) saveSubmitted(conversation, saved);
       setRecoveryUnavailable(false);
     } catch { setRecoveryUnavailable(true); }
     if (failure.current !== "unconfirmed") { failure.current = null; setSendFailure(null); }
@@ -554,14 +570,15 @@ export default function Composer({
     // A live view already holds its recovered text in the field, so only the newly orphaned words join it.
     const recover = (live = false) => {
       try {
-        const saved = readSubmitted(conversation);
+        const saved = readCaughtUp(conversation, draft.current);
         // A reload has no live request to await. Keep the copies' words in send order without claiming acceptance
         // or resending; the cautious hint wins unless every copy was refused.
         const orphaned = Object.entries(saved.pending).filter(([id]) => !liveSubmissions.has(id) && !showing.current?.(id));
         if (live && !orphaned.length) return;
         if (!orphaned.length && !saved.text && saved.failure !== "transcription" && saved.failure !== "unreached") return;
-        // Stored recovery text is the whole field as last edited anywhere in this tab (every edit keeps it), so it
-        // stands for the field over a draft a page remembered for Back; a live field is already current.
+        // Stored recovery text is the whole field as last edited anywhere in this tab (every edit keeps it, or catches
+        // it up once storage can be read again), so it stands for the field over a draft a page remembered for Back;
+        // a live field is already current.
         const field = live ? draft.current : saved.text || draft.current;
         if (orphaned.length) {
           const refused = new Set(saved.refused ?? []);
@@ -606,7 +623,7 @@ export default function Composer({
       // Task tabs retain their parent draft. Transfer recovered text to storage on leaving so a
       // remount restores it once, while ordinary unsent task drafts keep their existing owner.
       try {
-        if (readSubmitted(conversation).text) { draft.current = ""; onChange(""); }
+        if (readCaughtUp(conversation, draft.current).text) { draft.current = ""; onChange(""); }
       } catch { /* keep the parent draft */ }
     };
   }, [conversation, editDraft, focusField, onChange]);

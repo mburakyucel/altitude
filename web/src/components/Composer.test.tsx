@@ -386,6 +386,35 @@ describe("Composer", () => {
     expect(screen.getByRole("alert")).not.toHaveTextContent("Keep this tab open");
   });
 
+  it.each([true, false])("an edit made while recovery cannot be read is kept when access returns (before leaving: %s)", async (beforeLeaving) => {
+    const { onSubmit, settles, shows, forget } = conversationSend();
+    const user = userEvent.setup();
+    render(<Switcher onSubmit={onSubmit} shows={shows} />);
+    const field = () => screen.getByLabelText("Message L3 about altitude");
+    const switchView = async () => {
+      await user.click(screen.getByRole("button", { name: "Switch view" }));
+      await user.click(screen.getByRole("button", { name: "Switch view" }));
+    };
+    await user.type(field(), "Recovered words");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await act(async () => settles[0]!(new TypeError("Lost receipt")));
+    forget();
+    await switchView();
+    expect(field()).toHaveValue("Recovered words");
+    const storage = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Read denied"); });
+    try {
+      await user.type(field(), " and newer edits");
+      if (!beforeLeaving) await user.click(screen.getByRole("button", { name: "Switch view" }));
+    } finally { storage.mockRestore(); }
+    if (beforeLeaving) await switchView();
+    else await user.click(screen.getByRole("button", { name: "Switch view" }));
+    expect(field()).toHaveValue("Recovered words and newer edits");
+    await switchView();
+    expect(field()).toHaveValue("Recovered words and newer edits");
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery.");
+    expect(onSubmit).toHaveBeenCalledOnce();
+  });
+
   it("keeps the draft unsent if its recovery copy cannot be saved", async () => {
     const onSubmit = vi.fn();
     const { user, field } = mount({ onSubmit });
