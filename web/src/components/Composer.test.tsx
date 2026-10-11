@@ -448,21 +448,28 @@ describe("Composer", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("words typed while recovered words cannot be read join them once they can", async () => {
-    sessionStorage.setItem("altitude.submitted:project/altitude", JSON.stringify({ pending: {}, text: "Original message", failure: "unconfirmed" }));
+  it.each(["remount", "send"])("words typed where recovered words were never read join them, or leave them recoverable when sent (%s)", async (next) => {
+    // This page has never read the conversation's recovery: reads fail from the start.
+    sessionStorage.setItem(`altitude.submitted:project/never-read-${next}`, JSON.stringify({ pending: {}, text: "Original message", failure: "unconfirmed" }));
+    const { onSubmit, settles, shows } = conversationSend(`project/never-read-${next}`);
     const user = userEvent.setup();
     const field = () => screen.getByLabelText("Message L3 about altitude");
     const storage = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Read denied"); });
     try {
-      render(<Switcher />);
+      render(<Switcher conversation={`project/never-read-${next}`} onSubmit={onSubmit} shows={shows} />);
       expect(field()).toHaveValue("");
       await user.type(field(), "New");
     } finally { storage.mockRestore(); }
     // Reads work again while typing goes on: the field is still an ordinary draft that never showed the stored words.
     await user.type(field(), " draft");
+    if (next === "send") {
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      expect(onSubmit.mock.calls.map(([text]) => text)).toEqual(["New draft"]);
+      await act(async () => settles[0]!());
+    }
     await user.click(screen.getByRole("button", { name: "Switch view" }));
     await user.click(screen.getByRole("button", { name: "Switch view" }));
-    expect(field()).toHaveValue("Original message\nNew draft");
+    expect(field()).toHaveValue(next === "send" ? "Original message" : "Original message\nNew draft");
     expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery.");
   });
 
@@ -504,7 +511,7 @@ describe("Composer", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery.");
   });
 
-  it("a failed read never overwrites the stored copies, and mixed copies return after a reload in send order without Retry", async () => {
+  it("a failed read uses this page's copy of the recovery, and mixed copies return after a reload in send order without Retry", async () => {
     const { onSubmit, settles, shows, forget } = conversationSend();
     const first = mount({ onSubmit, shows });
     for (const text of ["Unconfirmed text", "Refused text"]) {
@@ -512,14 +519,13 @@ describe("Composer", () => {
       await first.user.click(screen.getByRole("button", { name: "Send" }));
     }
     await act(async () => settles[0]!(new TypeError("Lost receipt")));
-    const evidence = sessionStorage.getItem("altitude.submitted:project/altitude");
     const storage = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Read denied"); });
     try {
       await act(async () => settles[1]!(new ApiError(409, "Refused")));
       expect(first.field).toHaveValue("");
       expect(screen.queryByRole("alert")).toBeNull();
     } finally { storage.mockRestore(); }
-    expect(sessionStorage.getItem("altitude.submitted:project/altitude")).toBe(evidence);
+    expect(JSON.parse(sessionStorage.getItem("altitude.submitted:project/altitude")!).refused).toHaveLength(1);
     first.unmount();
     forget();
     expect(mount().field).toHaveValue("Unconfirmed text\nRefused text");

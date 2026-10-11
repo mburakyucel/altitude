@@ -72,37 +72,42 @@ const voiceSends = new Map<string, VoiceSend>();
 // `refused` names the pending copies the server refused; every other pending copy recovers as unconfirmed.
 type SubmittedText = { pending: Record<string, string>; text: string; failure: SendFailure; refused?: string[] };
 const liveSubmissions = new Set<string>();
-// A failed update retains the current recovery within this document. The stored bytes identify
-// the copy it supersedes; clearing/replacing browser storage also discards that fallback.
-const unwrittenRecovery = new Map<string, { stored: string | null; value: SubmittedText }>();
+// The latest recovery this document read or wrote, so a failed storage read or write later in the document still
+// sees every edit. The stored bytes identify the copy it matches; clearing or replacing browser storage outside this
+// document makes storage win again. `unwritten` marks a value storage did not accept.
+const documentRecovery = new Map<string, { stored: string | null | undefined; value: SubmittedText; unwritten: boolean }>();
 const recoveryViews = new Map<string, { draft: () => string; failure: () => SendFailure; restore: (saved: SubmittedText, unavailable?: boolean, id?: string) => void;
   paste: (text: string, images?: ImagePreview[]) => boolean;
   voice: (send: VoiceSend | null) => void; submit: (text: string, voice?: VoiceSend) => Promise<void>; recover: (live?: boolean) => void }>();
-// The field as last edited while its conversation's recovery could not be read: storage is behind it.
-const missedEdits = new Map<string, string>();
-// The recovered words each conversation's field last showed in this document, whether or not storage can be read.
-// A field holds recovered words only while it shows exactly these.
+// The recovered words each conversation's field last showed in this document. A field holds recovered words only
+// while it shows exactly these.
 const heldFields = new Map<string, string>();
 const holds = (conversation: string, field: string) => Boolean(field) && heldFields.get(conversation) === field;
-// Stored recovered words a field does not show (it never read them): they stay recoverable beside it.
+// Stored recovered words a field does not show (storage could not be read when it mounted): they stay recoverable
+// beside it.
 const unshown = (conversation: string, saved: SubmittedText, field: string) => holds(conversation, field) ? "" : saved.text;
 const recoveryKey = (conversation: string) => `altitude.submitted:${conversation}`;
 function readSubmitted(conversation: string): SubmittedText {
-  const saved = sessionStorage.getItem(recoveryKey(conversation));
-  const unwritten = unwrittenRecovery.get(conversation);
-  if (unwritten?.stored === saved) return structuredClone(unwritten.value);
-  unwrittenRecovery.delete(conversation);
-  return saved ? JSON.parse(saved) as SubmittedText : { pending: {}, text: "", failure: null };
+  const known = documentRecovery.get(conversation);
+  let stored: string | null;
+  try { stored = sessionStorage.getItem(recoveryKey(conversation)); }
+  catch (error) { if (known) return structuredClone(known.value); throw error; }
+  if (known?.stored === stored) return structuredClone(known.value);
+  const value: SubmittedText = stored ? JSON.parse(stored) as SubmittedText : { pending: {}, text: "", failure: null };
+  documentRecovery.set(conversation, { stored, value: structuredClone(value), unwritten: false });
+  return value;
 }
 function saveSubmitted(conversation: string, saved: SubmittedText, beforeSend = false) {
   const key = recoveryKey(conversation);
-  const stored = sessionStorage.getItem(key);
+  const stored = saved.text || saved.failure === "transcription" || saved.failure === "unreached" || Object.keys(saved.pending).length
+    ? JSON.stringify(saved) : null;
   try {
-    if (saved.text || saved.failure === "transcription" || saved.failure === "unreached" || Object.keys(saved.pending).length) sessionStorage.setItem(key, JSON.stringify(saved));
+    if (stored) sessionStorage.setItem(key, stored);
     else sessionStorage.removeItem(key);
-    unwrittenRecovery.delete(conversation);
+    documentRecovery.set(conversation, { stored, value: structuredClone(saved), unwritten: false });
   } catch (error) {
-    if (!beforeSend) unwrittenRecovery.set(conversation, { stored, value: structuredClone(saved) });
+    // A send that cannot save its copy does not happen, so its record stays as it was.
+    if (!beforeSend) documentRecovery.set(conversation, { stored: documentRecovery.get(conversation)?.stored, value: structuredClone(saved), unwritten: true });
     throw error;
   }
 }
@@ -115,15 +120,6 @@ function editSubmitted(saved: SubmittedText, text: string) {
   if (!kept) saved.failure = null;
   return true;
 }
-// Storage that missed an edit takes that edit once it can be read again, whichever view reads it.
-function readCaughtUp(conversation: string) {
-  const saved = readSubmitted(conversation);
-  const missed = missedEdits.get(conversation);
-  if (missed !== undefined && missedEdits.delete(conversation) && editSubmitted(saved, missed)) {
-    try { saveSubmitted(conversation, saved); } catch { /* the caught-up copy stays in this document */ }
-  }
-  return saved;
-}
 function beginSubmitted(conversation: string, text: string, id: string = crypto.randomUUID(), preserve = false) {
   const saved = readSubmitted(conversation);
   saved.pending[id] = text;
@@ -131,28 +127,24 @@ function beginSubmitted(conversation: string, text: string, id: string = crypto.
   const sent = !preserve && !unshown(conversation, saved, text);
   if (sent) { saved.text = ""; saved.failure = null; }
   saveSubmitted(conversation, saved, true);
-  if (sent) { heldFields.delete(conversation); missedEdits.delete(conversation); }
+  if (sent) heldFields.delete(conversation);
   liveSubmissions.add(id);
   return id;
 }
 function settleSubmitted(conversation: string, id: string, text: string, failure: SendFailure, restore = false) {
   if (!liveSubmissions.delete(id)) return;
-  let saved: SubmittedText;
-  let readable = true;
-  try { saved = readSubmitted(conversation); }
-  catch { readable = false; saved = { pending: {}, text: "", failure: null }; }
+  // Admission read this conversation's recovery, so the document has a copy whether or not storage can be read now.
+  const saved = readSubmitted(conversation);
   delete saved.pending[id];
   const view = recoveryViews.get(conversation);
   if (failure || restore) {
     saved.text = [text, ...view ? [unshown(conversation, saved, view.draft()), view.draft()] : [saved.text]].filter(Boolean).join("\n");
     saved.failure = [failure, saved.failure, view?.failure()].includes("unconfirmed") ? "unconfirmed" : failure ?? view?.failure() ?? saved.failure;
-    // The view's field joined this copy, so storage takes every edit it missed.
-    if (readable && view) missedEdits.delete(conversation);
   }
   // If browser storage stops accepting writes after admission, its earlier pending copy remains
   // recoverable as unconfirmed on reload. A storage error cannot undo a server receipt.
-  try { if (readable) saveSubmitted(conversation, saved); } catch { /* retain the pending recovery copy */ }
-  if (failure || restore) view?.restore(saved, !readable || unwrittenRecovery.has(conversation), id);
+  try { saveSubmitted(conversation, saved); } catch { /* retain the pending recovery copy */ }
+  if (failure || restore) view?.restore(saved, documentRecovery.get(conversation)?.unwritten, id);
 }
 
 function updatePending(conversation: string, id: string, change: (saved: SubmittedText, refused: string[]) => void) {
@@ -574,11 +566,7 @@ export default function Composer({
     draft.current = text;
     onChange(text);
     try {
-      let saved: SubmittedText;
-      // A failed write keeps its value in this document; a failed read leaves storage behind the field until an edit
-      // or a view reads it again, which applies the missed edit first.
-      try { saved = readCaughtUp(conversation); }
-      catch (error) { if (held) missedEdits.set(conversation, text); throw error; }
+      const saved = readSubmitted(conversation);
       // An ordinary draft leaves stored words it never showed for the next view to join; it only ends a stored hint.
       if ((held || !saved.text) && editSubmitted(saved, text)) saveSubmitted(conversation, saved);
       setRecoveryUnavailable(false);
@@ -593,7 +581,7 @@ export default function Composer({
     // A live view already holds its recovered text in the field, so only the newly orphaned words join it.
     const recover = (live = false) => {
       try {
-        const saved = readCaughtUp(conversation);
+        const saved = readSubmitted(conversation);
         // A reload has no live request to await. Keep the copies' words in send order without claiming acceptance
         // or resending; the cautious hint wins unless every copy was refused.
         const orphaned = Object.entries(saved.pending).filter(([id]) => !liveSubmissions.has(id) && !showing.current?.(id));
@@ -646,7 +634,7 @@ export default function Composer({
       // Task tabs retain their parent draft. Transfer recovered text to storage on leaving so a
       // remount restores it once, while ordinary unsent task drafts keep their existing owner.
       try {
-        if (readCaughtUp(conversation).text && holds(conversation, draft.current)) {
+        if (readSubmitted(conversation).text && holds(conversation, draft.current)) {
           heldFields.delete(conversation); draft.current = ""; onChange("");
         }
       } catch { /* keep the parent draft */ }

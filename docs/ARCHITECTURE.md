@@ -2302,16 +2302,17 @@ while unconfirmed; editing a refused recovery, or clearing the field, returns it
 showed stay recoverable. Ordinary unsent
 project text survives route remounts in client memory; it is not synchronized or stored across reloads.
 Recovered text transfers back to recovery storage on unmount so returning restores it only once.
-Recovery storage is the recovered text's only owner: a task page's Back/Forward memory keeps none of it,
-judged by the browser document's own record of which fields hold recovered words, so this holds while storage
-cannot be read. An edit made then to a field showing recovered words is applied by the next view that reads
-storage; words typed while recovered words could not be shown are an ordinary draft, which the stored words join.
+The browser document keeps the latest recovery record it read or wrote for each conversation, matched to the
+stored bytes it last saw, so a later failed storage read or write uses that copy, while storage cleared or
+replaced outside the document wins again. Recovery is the recovered text's only owner: a task page's
+Back/Forward memory keeps none of it, judged by the document's record of the recovered words each field
+shows. Where the document has never read a conversation's recovery, words typed are an ordinary draft; the
+stored words join it once readable and stay recoverable if it is sent.
 Failure to save the initial recovery copy leaves the text
 unsent with an inline error. No recovery record initiates delivery or provides a second server queue.
 A failed recovery update keeps the latest text in the current browser document and displays a
 keep-tab-open warning; it cannot promise that unwritten edits survive reload. Once storage accepts
-updates again, returning to the conversation saves that recovery and clears the warning. Unread
-browser evidence is not overwritten by a failed read.
+updates again, returning to the conversation saves that recovery and clears the warning.
 The shared textarea is read-only during microphone startup, listening and transcription; text remains
 selectable and readable at both viewports. The voice status and indeterminate spinner appear inside
 the composer box. Cancel remains available during transcription. Each cancelled microphone acquisition
