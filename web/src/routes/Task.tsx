@@ -245,13 +245,13 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   const group = task.question_group;
   const inGroup = (question: Decision) => group?.questions.some((q) => q.id === question.id && q.revision === question.revision);
   const target = questionId ? [...questions].reverse().find((q) => q.id === questionId && (revision == null || String(q.revision) === revision)) : undefined;
-  // Back from a preview or review opened on this entry returns to its question's latest revision or the merge review card; only the
-  // URL's question retargets replies.
+  // Back from a preview or review opened on this entry returns to its question's latest revision or the merge review card, even when
+  // the URL names an older revision; only the URL's question retargets replies.
   const origin = useVisitReturn<QuestionOrigin>("origin");
-  const returned = !questionId && origin?.project === project && origin.slug === task.slug
+  const returned = origin?.project === project && origin.slug === task.slug
     ? origin.id ? [...questions].reverse().find((q) => q.id === origin.id)
       : facts.review ?? undefined : undefined;
-  const anchor = target ?? returned;
+  const anchor = returned ?? target;
   const open = (group?.questions ?? (task.question ? [task.question] : [])).filter((question) => question.status === "open" && !question.response);
   const current = open.find((question) => question.design_url) ?? open[0];
   // The open group is the last thing in the chat; a reply hands the questions asked before it back to the L2.
@@ -298,7 +298,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   const waiting = messages.filter((row) => row.delivery?.state === "queued" && (row.delivery.removable || row.delivery.send_now_pending));
   const lastWaiting = waiting.at(-1);
   const sendingNow = sendNow.isPending || waiting.some((row) => row.delivery?.send_now_pending);
-  const anchorKey = `${location.key}:${questionVisit}:${questionId ?? returned?.id ?? ""}:${revision ?? returned?.revision ?? ""}`;
+  const anchorKey = `${location.key}:${questionVisit}:${returned?.id ?? questionId ?? ""}:${returned?.revision ?? revision ?? ""}`;
   const updateQuestionVisibility = useCallback((node: HTMLDivElement) => {
     const anchor = current && anchors.current.get(`${current.id}:${current.revision}`);
     setQuestionAtLatest(Boolean(anchor && anchor.getBoundingClientRect().top - node.getBoundingClientRect().top + node.scrollTop >= node.scrollHeight - node.clientHeight));

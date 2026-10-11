@@ -736,8 +736,7 @@ def skip(project, slug, *, actor, subject, reason, expected_attempt=None):
         _owner(task, actor, expected_attempt, required=True)
         if not _open(task):
             raise T.TransitionError("Finished review history is read-only.")
-        latest = next((r for r in reversed(task.get("reviews", [])) if r.get("subject", "changes") == subject), None)
-        if latest and latest["state"] != "withdrawn":
+        if any(r.get("subject", "changes") == subject and r["state"] != "withdrawn" for r in task.get("reviews", [])):
             raise T.TransitionError(f"A {subject} review is already recorded; withdraw a waiting one with its own reason instead.")
         at, identity = T._conversation_time(), uuid.uuid4().hex
         row = {"id": identity, "requested_at": at, "requested_by": actor, "subject": subject, "state": "withdrawn",

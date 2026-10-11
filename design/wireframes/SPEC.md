@@ -926,13 +926,15 @@ Its accessible name is "<name> · <state>". The state reads the latest review of
 | Failed or stopped | didn’t finish | amber ! |
 | Skipped by L2 as not needed | skipped by L2 · <its reason> | grey dashed circle with a dash |
 | Skipped by the operator | skipped by you | grey dashed circle with a dash |
+| Requested, running, failed or skipped while an earlier review of the kind has open findings | the state, then " · N open findings" | amber ! |
 | Any of these covering an earlier version | the state, then " · earlier version" | amber ! |
 
 "Earlier version" is the review card's own comparison (§3.4), so the box and the card agree. The box
 never requests a review and has no ids. It opens `/projects/:name/tasks/:slug?review=<id>`, which
 scrolls to the review card, opens and focuses it, adding one history entry. Back (browser, phone header
 or desktop crumb) returns to Needs you with that card in view, or to the conversation with the question
-or merge card in view and focused; a question revised meanwhile returns at its latest revision, and a
+or merge card in view and focused; a question revised meanwhile returns at its latest revision, even when the
+conversation's link named an older one, and a
 card that has left Needs you, or a merge card that has gone, leaves the page where it was. Modified clicks open the review without recording a return.
 `web/e2e/review-status.pw.ts` walks Needs you and the conversation at both widths: resolved, open,
 the longest state, no review, a skip by the owner and no box, each review and Back, and Back after a revision.

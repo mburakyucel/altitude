@@ -97,6 +97,7 @@ describe("review status on proposal and merge questions (SPEC.md §3.8.3)", () =
     ["didn't finish", { id: "r1", state: "failed" }, "didn’t finish", "warn"],
     ["skipped by L2, with its reason", { id: "r1", state: "withdrawn", skipped_by: "l2", reason: "One-line copy change." }, "skipped by L2 · One-line copy change.", "skip"],
     ["skipped by you", { id: "r1", state: "withdrawn", skipped_by: "operator" }, "skipped by you", "skip"],
+    ["withdrawn over another review's open finding", { id: "r1", state: "withdrawn", skipped_by: "operator", open: 1 }, "skipped by you · 1 open finding", "warn"],
   ];
   it.each(states)("a design question's proposal review: %s", (_name, review, text, tone) => {
     const { container } = mount(<QuestionSet decisions={[{ ...design, review: DecisionSchema.shape.review.parse({ subject: "proposal", ...review }) }]} from="needs" />);

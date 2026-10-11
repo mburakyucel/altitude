@@ -269,8 +269,10 @@ export function reviewLine(review: ReviewLine): { tone: Tone; name: string; stat
     : review.open ? ["warn", `done, ${count(review.open, "open finding")}`]
     : review.findings ? ["ok", `done, ${count(review.findings, "finding")} resolved`]
     : ["ok", "done, no findings"];
-  return review.earlier && review.state !== "none" ? { tone: tone === "ok" ? "warn" : tone, name: NAME[review.subject], state: `${state} · earlier version` }
-    : { tone, name: NAME[review.subject], state };
+  // Another review's open findings still warn while a later one waits, runs or is skipped.
+  const open = review.state !== "completed" && review.open ? ` · ${count(review.open, "open finding")}` : "";
+  return review.earlier && review.state !== "none" ? { tone: tone === "ok" ? "warn" : tone, name: NAME[review.subject], state: `${state}${open} · earlier version` }
+    : { tone: open ? "warn" : tone, name: NAME[review.subject], state: `${state}${open}` };
 }
 
 /** The review's own small box: icon, name, state, and a chevron when it opens the review card. */

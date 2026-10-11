@@ -913,6 +913,11 @@ class TestReviews(AltitudeCase):
                          (["f1"], T.OPERATOR_MESSAGE_ROLE, "Challenge the isolation boundary"))
         self.assertEqual(view["subjects"]["proposal"]["latest"]["id"], clean["id"])
         self.assertEqual(S.load_task(self.project, self.slug)["hold_merge"], "Operator review before merge")
+        # A skip never sits over a recorded review, and the question still counts the original's open finding.
+        with self.assertRaisesRegex(T.TransitionError, "already recorded"):
+            reviews.skip(self.project, self.slug, actor="l2", subject="proposal", reason="Small change.", expected_attempt=1)
+        status = reviews.status(self.project, S.load_task(self.project, self.slug), "proposal")
+        self.assertEqual((status["id"], status["state"], status["open"]), (clean["id"], "withdrawn", 1))
         reviews.assess(self.project, self.slug, original["id"], actor="l2", expected_attempt=1, reason="Checked the proposal",
                        dispositions=[{"finding_id": "f1", "disposition": "fixed", "reason": "Recorded Linux evidence."}])
         reviews.require_merge(self.project, self.slug, self.pair())
