@@ -101,27 +101,30 @@ test("a question's review line in its conversation opens the review card and Bac
   await expect(line).toBeInViewport();
 });
 
-test("Back after the question is revised while its review is open returns to the latest revision", async ({ page, request }, info) => {
+test("Back after the question is revised while its review is open returns to the latest revision", async ({ page }, info) => {
   const walk = walkthrough(page, info);
+  // While reading the review the operator messages the L2, which revises the question.
+  const revise = async (revision: number) => {
+    await expect(page.locator("#review-settings-l-proposal")).toBeVisible();
+    await page.getByRole("textbox", { name: "Message the L2", exact: true }).fill("Raise the label contrast.");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(conversation(page).getByText(`Build settings layout revision ${revision} as shown?`, { exact: true })).toBeAttached();
+    await page.goBack();
+    const latest = page.getByText(`Build settings layout revision ${revision} as shown?`, { exact: true });
+    await expect(latest).toBeInViewport();
+    return latest;
+  };
   for (const [state, path, revision] of [["needs-you", "/", 2], ["conversation", "/projects/atlas/tasks/settings-layout", 3]] as const) {
     await walk.open(path);
     const scope = path === "/" ? page.getByRole("article", { name: "Settings layout", exact: true }) : conversation(page).locator(".conversation-question").last();
     await scope.getByRole("link", { name: /^Proposal review/ }).click();
-    await expect(page.locator("#review-settings-l-proposal")).toBeVisible();
-    expect((await request.post("/fixture/revise-settings")).ok()).toBe(true);
-    await page.goBack();
-    const latest = page.getByText(`Build settings layout revision ${revision} as shown?`, { exact: true });
-    await expect(latest).toBeInViewport();
-    await walk.state(`08-${state}-back-to-revised-question`, { visible: [latest], hidden: [] });
+    await walk.state(`08-${state}-back-to-revised-question`, { visible: [await revise(revision)], hidden: [] });
   }
   // A conversation opened from Needs you names the question's revision; Back still returns to the latest one.
   await walk.open("/");
   await page.getByRole("article", { name: "Settings layout", exact: true }).getByRole("link", { name: "Open L2 chat", exact: true }).click();
   await expect(page).toHaveURL(/\?question=.+&revision=3$/);
   await conversation(page).locator(".conversation-question").last().getByRole("link", { name: /^Proposal review/ }).click();
-  await expect(page.locator("#review-settings-l-proposal")).toBeVisible();
-  expect((await request.post("/fixture/revise-settings")).ok()).toBe(true);
-  await page.goBack();
+  await revise(4);
   await expect(page).toHaveURL(/\?question=.+&revision=3$/);
-  await expect(page.getByText("Build settings layout revision 4 as shown?", { exact: true })).toBeInViewport();
 });
