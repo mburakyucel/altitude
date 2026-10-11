@@ -78,8 +78,8 @@ const unwrittenRecovery = new Map<string, { stored: string | null; value: Submit
 const recoveryViews = new Map<string, { draft: () => string; failure: () => SendFailure; restore: (saved: SubmittedText, unavailable?: boolean, id?: string) => void;
   paste: (text: string, images?: ImagePreview[]) => boolean;
   voice: (send: VoiceSend | null) => void; submit: (text: string, voice?: VoiceSend) => Promise<void>; recover: (live?: boolean) => void }>();
-// Conversations whose stored recovery missed an edit because storage could not be read; the field is newer.
-const missedEdits = new Set<string>();
+// The field as last edited while its conversation's recovery could not be read: storage is behind it.
+const missedEdits = new Map<string, string>();
 const recoveryKey = (conversation: string) => `altitude.submitted:${conversation}`;
 function readSubmitted(conversation: string): SubmittedText {
   const saved = sessionStorage.getItem(recoveryKey(conversation));
@@ -107,10 +107,11 @@ function editSubmitted(saved: SubmittedText, text: string) {
   if (saved.failure !== "unconfirmed") saved.failure = null;
   return true;
 }
-// Storage that missed an edit takes the field as it is now, once it can be read again.
-function readCaughtUp(conversation: string, field: string) {
+// Storage that missed an edit takes that edit once it can be read again, whichever view reads it.
+function readCaughtUp(conversation: string) {
   const saved = readSubmitted(conversation);
-  if (missedEdits.delete(conversation) && editSubmitted(saved, field)) {
+  const missed = missedEdits.get(conversation);
+  if (missed !== undefined && missedEdits.delete(conversation) && editSubmitted(saved, missed)) {
     try { saveSubmitted(conversation, saved); } catch { /* the caught-up copy stays in this document */ }
   }
   return saved;
@@ -134,6 +135,8 @@ function settleSubmitted(conversation: string, id: string, text: string, failure
   if (failure || restore) {
     saved.text = [text, view?.draft() ?? saved.text].filter(Boolean).join("\n");
     saved.failure = [failure, saved.failure, view?.failure()].includes("unconfirmed") ? "unconfirmed" : failure ?? view?.failure() ?? saved.failure;
+    // The view's field joined this copy, so storage takes every edit it missed.
+    if (readable && view) missedEdits.delete(conversation);
   }
   // If browser storage stops accepting writes after admission, its earlier pending copy remains
   // recoverable as unconfirmed on reload. A storage error cannot undo a server receipt.
@@ -556,7 +559,7 @@ export default function Composer({
     try {
       let saved: SubmittedText;
       // A failed write keeps its value in this document; a failed read leaves storage behind the field.
-      try { saved = readSubmitted(conversation); } catch (error) { missedEdits.add(conversation); throw error; }
+      try { saved = readSubmitted(conversation); } catch (error) { missedEdits.set(conversation, text); throw error; }
       missedEdits.delete(conversation);
       if (editSubmitted(saved, text)) saveSubmitted(conversation, saved);
       setRecoveryUnavailable(false);
@@ -570,7 +573,7 @@ export default function Composer({
     // A live view already holds its recovered text in the field, so only the newly orphaned words join it.
     const recover = (live = false) => {
       try {
-        const saved = readCaughtUp(conversation, draft.current);
+        const saved = readCaughtUp(conversation);
         // A reload has no live request to await. Keep the copies' words in send order without claiming acceptance
         // or resending; the cautious hint wins unless every copy was refused.
         const orphaned = Object.entries(saved.pending).filter(([id]) => !liveSubmissions.has(id) && !showing.current?.(id));
@@ -623,7 +626,7 @@ export default function Composer({
       // Task tabs retain their parent draft. Transfer recovered text to storage on leaving so a
       // remount restores it once, while ordinary unsent task drafts keep their existing owner.
       try {
-        if (readCaughtUp(conversation, draft.current).text) { draft.current = ""; onChange(""); }
+        if (readCaughtUp(conversation).text) { draft.current = ""; onChange(""); }
       } catch { /* keep the parent draft */ }
     };
   }, [conversation, editDraft, focusField, onChange]);
