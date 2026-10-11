@@ -139,6 +139,30 @@ class TestPush(AltitudeCase):
         push.notify()
         self.assertEqual(len(self.service.requests), 1)
 
+    def test_a_reworded_waiting_decision_wakes_nobody_and_one_asked_again_after_a_reply_does(self):
+        push.subscribe(self.endpoint)
+        task = self.decision("Choose backup retention", "How long should backups stay?")
+        push.notify()
+        T.escalate(self.project, task["slug"], "How many days should backups stay?")  # reworded while it waits
+        push.notify()
+        self.assertEqual(len(self.service.requests), 1)
+
+        # The operator replies and the owner asks again before altd's next read: the decision left Needs you
+        # and came back unseen, and it still wakes the device once.
+        T.message(self.project, task["slug"], T.OPERATOR_MESSAGE_ROLE, "Why not keep them forever?")
+        resumed = S.load_task(self.project, task["slug"])
+        resumed["state"] = "running"
+        S.save_task(self.project, resumed)
+        T.block(self.project, task["slug"], "Forever costs storage: how many days?", actor="l2",
+                updates={"waiting_on": "l3"})
+        T.escalate(self.project, task["slug"], "Forever costs storage: how many days?")
+        [row] = digest.queue()
+        replied = S.load_task(self.project, task["slug"])["replied"]
+        self.assertEqual(row["alert_key"], f"{self.project}:{task['slug']}:{row['group_id']}:{replied}")
+        push.notify()
+        push.notify()
+        self.assertEqual(len(self.service.requests), 2)
+
     def test_a_device_hears_nothing_about_the_decisions_that_were_already_waiting(self):
         self.decision("Choose backup retention", "How long should backups stay?")
         push.subscribe(self.endpoint)

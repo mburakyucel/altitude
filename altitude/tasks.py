@@ -658,7 +658,7 @@ def message(project: str, slug: str, role: str, text: str, *, by: str | None = N
                                message_id=row["id"])
                 S.regen_state_md(project)
         if role == OPERATOR_MESSAGE_ROLE:
-            task["handed_back"] = row["at"]
+            task["handed_back"] = task["replied"] = row["at"]
         if row.get("images") or role == OPERATOR_MESSAGE_ROLE:
             S.save_task(project, task)
         S.append_event(project, slug, "task-message", message_id=row["id"], role=role, by=row["by"])
@@ -2336,7 +2336,7 @@ def _accept_questions(project: str, slug: str, answers: list[dict], *,
         for question, option in chosen:
             question["acceptance_message"] = row
             question["response"] = {"text": option["text"], "at": at, "message_id": message_id}
-        task["handed_back"] = at
+        task["handed_back"] = task["replied"] = at
         group["revision"] += 1
         row["answers"] = [q["id"] for q, _ in chosen]
         saved = {"request": canonical, "question_id": chosen[0][0]["id"], "question_revision": chosen[0][0]["revision"]}

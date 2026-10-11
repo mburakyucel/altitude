@@ -4,7 +4,7 @@ from pathlib import Path
 
 from service_support import configure, serve
 from tests.support import add_worktree, make_repo
-from altitude import config, push, server, tasks as T
+from altitude import config, push, server, state as S, tasks as T
 
 
 def main():
@@ -48,6 +48,16 @@ def main():
             if self.path == "/fixture/answer":  # the operator answers from another device
                 body = self._body()
                 T.message(body["project"], body["slug"], T.OPERATOR_MESSAGE_ROLE, "Thirty days.")
+                return self._json({"ok": True})
+            if self.path == "/fixture/ask-again":  # the owner, resumed by the reply, asks again
+                body = self._body()
+                task = S.load_task(body["project"], body["slug"])
+                task["state"] = "running"
+                S.save_task(body["project"], task)
+                T.block(body["project"], body["slug"], body["question"], actor="l2",
+                        questions={"questions": [{"question": body["question"]}]})
+                T.escalate(body["project"], body["slug"], body["question"],
+                           questions={"questions": [{"question": body["question"]}]})
                 return self._json({"ok": True})
             if self.path == "/fixture/escalate":
                 body = self._body()

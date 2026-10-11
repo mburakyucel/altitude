@@ -161,10 +161,13 @@ for up to thirty minutes. A usage limit is not cleared this way; it waits for it
 ## Decision alerts on a device
 
 A subscribed phone or browser is woken once for each new decision that still needs you after L3 has had
-its turn and the owner has stopped, or an hour after it was asked if either is still busy. The banner reads
+its turn and the owner has stopped, or an hour after it was asked if either is still busy, and again when a
+decision is asked again after you reply; a rewording while it waits wakes nothing. The banner reads
 "<project> needs a decision" with the task name, and tapping it opens that decision. Away from Altitude's
-network it reads "A decision needs you" and says Altitude is out of reach; a decision settled in the moment
-before the device read it shows "No decision needs you now". PR reviews, faults and stops stay in Needs you
+network it reads "A decision needs you" and says Altitude is out of reach. A wake that finds nothing new
+names what still waits, silently ("<project> still needs a decision", or "Still waiting for you" with one
+line per decision); a decision settled in the moment before the device read it shows "No decision needs you
+now". PR reviews, faults and stops stay in Needs you
 without waking a device. No push is sent only to clear a banner, because Safari shows something for every
 push: an answered banner closes when Altitude is next open on that device or the next alert arrives. altd
 logs each wake as `push wakes <n> device(s) for <m> new decision(s)`.

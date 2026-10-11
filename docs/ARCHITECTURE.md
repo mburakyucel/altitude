@@ -1983,9 +1983,13 @@ under `altitude.alerts`, the permission states, and the keys already alerted und
 question alerts: faults, stops and reviews stay in Needs you without one. Every alert is shown through
 `web/public/sw.js`, the one service worker, whose registration Android requires for a notification and whose
 click handler routes the open app to the decision before focusing it, or opens the decision when there is no
-app or it cannot be focused. Content is the project and task name only. A key names the waiting decision, not
-its revision, so a block and the escalation that republishes it alert once; a decision that is answered leaves
-the queue, and an ask that returns alerts again. `digest.queue()` marks a decision `alert_held` while its task
+app or it cannot be focused. Content is the project and task name only. `digest.queue()` gives each operator
+question its `alert_key`, the one identity altd's wake, the page and the worker alert on: project, task and
+question group, followed by the time of the operator's latest message on that task once there is one (the
+task's `replied`, set with `handed_back` on every operator message and never cleared). A rewording, the
+escalation that republishes a block, or a member L3 settles keeps the key, so the decision alerts once; a
+decision asked again after the operator replied gets a new key and alerts again, even when the reply and the
+new ask fall between two reads. `digest.queue()` also marks a decision `alert_held` while its task
 is still moving: L3 has that task's block notification queued or running (`l3.reading_blocks`), or its owner is
 running, queued or due to resume, as after L3 answers it. `alt task block` queues that notification under the
 lock that publishes the question, so no reader sees the question before L3 is due to read it. A held decision
@@ -2011,10 +2015,15 @@ Safari ends a subscription after three pushes that show no notification, WebKit 
 close within 30 seconds, and iOS stacks a second banner for a tag rather than replacing the first, so a push
 sent only to clear a banner leaves another one standing. The worker's `push` handler reads `/api/overview`,
 closes the banners whose key is no longer waiting and the generic one, and names the project and task of
-each new decision, without sound while an Altitude window is on screen. Every push shows a notification that
-says something true: out of reach of Altitude, "A decision needs you" with "Altitude is out of reach, so this
-alert can't name it."; with nothing new, "No decision needs you now" when the decision was settled before the
-worker read the queue, or "No new decision" when what waits was announced already. An answered banner
+each new decision, one banner per question group, without sound while an Altitude window is on screen.
+Because a re-asked decision carries a new key, the worker need not have seen it leave. Every push shows a
+notification that says something true: out of reach of Altitude, "A decision needs you" with "Altitude is
+out of reach, so this alert can't name it."; with nothing new, as when several wakes arrive together, it
+silently names what still waits on the operator, leaving held decisions out: "<project> still needs a
+decision" with the task name under that decision's own key, or "Still waiting for you" with one
+"<project> · <task>" line per decision, opening Needs you; with only held decisions, "No decision needs
+you now" / "L3 or the task's owner is handling it first."; with none, "No decision needs you now" / "It was
+settled before this alert arrived." An answered banner
 therefore closes when a page next reads the queue or the next alert wakes the device. An endpoint the
 service reports gone is dropped, a refusal is logged and kept, and a machine without OpenSSL or outbound
 reach simply has no push, which the switch states.

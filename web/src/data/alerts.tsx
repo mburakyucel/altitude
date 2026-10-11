@@ -168,7 +168,7 @@ export async function enableAlerts(pending: Decision[]): Promise<AlertState> {
     return readAlertState();
   }
   await navigator.serviceWorker.register("/sw.js");
-  const waiting = pending.filter((decision) => decision.id).map(alertKey);
+  const waiting = pending.filter(alerting).map((decision) => decision.alert_key);
   writeSeen(waiting);
   await rememberInWorker(waiting);
   store(ALERTS_KEY, "on");
@@ -199,13 +199,15 @@ export function useAlertState(): AlertState {
   return useSyncExternalStore(watch, readAlertState, () => "unsupported");
 }
 
+type Ask = Decision & { alert_key: string };
+
 /**
- * One key per waiting ask: the members of a grouped question share one card and one alert, and a
- * republished question keeps its key. A block and the escalation that follows it are two
- * publications of the same waiting decision, and keying on the revision alerted twice for one card.
+ * A published operator question, which altd keys for alerting (`alert_key`): one key per question group,
+ * renewed only when the decision is asked again after the operator replied, so a rewording or an escalation
+ * of a waiting decision never alerts twice.
  */
-export function alertKey(decision: Decision): string {
-  return `${decision.project}:${decision.slug}:${decision.group_id || decision.id}`;
+function alerting(decision: Decision): decision is Ask {
+  return Boolean(decision.alert_key);
 }
 
 /** Needs you shows every decision; a task or decision page shows its own. */
@@ -257,16 +259,16 @@ export function useDecisionAlerts(overview: Overview | undefined, pathname: stri
   const state = useAlertState();
   const pushed = useSyncExternalStore(watch, readPushState, () => false);
   const navigate = useNavigate();
-  const asks = (overview?.queue ?? []).filter((decision) => decision.id);
-  const signature = asks.map((decision) => `${alertKey(decision)}${decision.alert_held ? " held" : ""}`).join("\n");
+  const asks = (overview?.queue ?? []).filter(alerting);
+  const signature = asks.map((decision) => `${decision.alert_key}${decision.alert_held ? " held" : ""}`).join("\n");
   const latest = useRef(asks);
   latest.current = asks;
 
   useEffect(() => {
     if (state !== "on" || !overview) return;
-    const waiting = new Set(latest.current.map(alertKey));
+    const waiting = new Set(latest.current.map((decision) => decision.alert_key));
     const current = new Map(latest.current.filter((decision) => !decision.alert_held)
-      .map((decision) => [alertKey(decision), decision]));
+      .map((decision) => [decision.alert_key, decision]));
     const seen = readSeen();
     // Answered decisions drop out, so the record stays the size of the queue.
     writeSeen([...new Set([...(seen ?? []).filter((key) => waiting.has(key)), ...current.keys()])]);
@@ -283,7 +285,7 @@ export function useDecisionAlerts(overview: Overview | undefined, pathname: stri
   useEffect(() => {
     if (state !== "on") return;
     const retry = () => {
-      if (!document.hidden) void closeAnswered(new Set(latest.current.map(alertKey))).catch(() => undefined);
+      if (!document.hidden) void closeAnswered(new Set(latest.current.map((decision) => decision.alert_key))).catch(() => undefined);
     };
     const timer = window.setInterval(retry, CLOSE_RETRY_MS);
     document.addEventListener("visibilitychange", retry);

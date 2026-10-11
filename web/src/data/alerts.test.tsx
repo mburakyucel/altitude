@@ -14,8 +14,12 @@ const question = {
   id: "q-retention", revision: 1, anchor_id: "q-message", status: "open", audience: "operator",
   project: "altitude", slug: "choose-retention", title: "Choose backup retention", kind: "asks",
   asked_by: "l2", question: "How long should backups stay?", asked: ago(3), since: ago(3),
+  alert_key: "altitude:choose-retention:q-retention",
 };
-const second = { ...question, id: "q-drill", slug: "run-restore-drill", title: "Run a restore drill", question: "Which drill?" };
+const second = {
+  ...question, id: "q-drill", slug: "run-restore-drill", title: "Run a restore drill", question: "Which drill?",
+  alert_key: "altitude:run-restore-drill:q-drill",
+};
 const stopped = { project: "harbor", slug: "fix-audio", title: "Fix the audio", kind: "stopped", asked_by: "l2", question: "upload fails", asked: ago(2), since: ago(2) };
 
 function overview(queue: unknown[]) {

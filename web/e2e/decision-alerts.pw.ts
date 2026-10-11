@@ -141,28 +141,38 @@ test("a push wakes the real worker, which names the decision and never shows a b
     });
   };
 
-  // The decision already waiting when alerts were turned on is not news; a wake with nothing new says so.
+  // The decision already waiting when alerts were turned on is not news; a wake with nothing new says what still
+  // waits, never that nothing is new.
+  const retention = { title: "atlas still needs a decision", body: "Choose backup retention", tag: expect.stringContaining("choose-backup-retention") };
   await wake();
-  await expect.poll(() => banners(page)).toEqual([
-    { title: "No new decision", body: "Nothing new since your last alert.", tag: "altitude-nothing-new" }]);
+  await expect.poll(() => banners(page)).toEqual([retention]);
 
   // A new decision: the worker names its project and task, and the page, which push now covers, adds nothing.
   const slug = (await (await request.post("/fixture/decision", {
     data: { project: "beacon", title: "Pick a drill day", question: "Which day?" } })).json()).slug as string;
   await wake();
-  await expect.poll(async () => (await banners(page)).map((banner) => banner.title)).toEqual(["beacon needs a decision"]);
-  expect((await banners(page))[0]).toEqual({ title: "beacon needs a decision", body: "Pick a drill day", tag: expect.stringContaining(slug) });
+  const drill = { title: "beacon needs a decision", body: "Pick a drill day", tag: expect.stringContaining(slug) };
+  await expect.poll(() => banners(page)).toEqual([retention, drill]);
   await walk.state("12-push-names-the-decision", { visible: [page.getByRole("article", { name: "Pick a drill day" })], hidden: [] });
 
   // Answered elsewhere: the open page closes its banner without being touched.
   expect((await request.post("/fixture/answer", { data: { project: "beacon", slug } })).ok()).toBe(true);
-  await expect.poll(() => banners(page), { timeout: 30_000 }).toEqual([]);
+  await expect.poll(() => banners(page), { timeout: 30_000 }).toEqual([retention]);
   await walk.state("13-answered-banner-closed", { visible: [page.getByRole("article", { name: "Choose backup retention" })], hidden: [page.getByRole("article", { name: "Pick a drill day" })] });
 
-  // No path shows a bare "Altitude".
+  // The reported night: the owner asks again after the reply, and the wake names it like a first ask.
+  expect((await request.post("/fixture/ask-again", {
+    data: { project: "beacon", slug, question: "Which day, given the freeze?" } })).ok()).toBe(true);
   await wake();
-  await expect.poll(async () => (await banners(page)).map((banner) => banner.title)).toEqual(["No new decision"]);
+  await expect.poll(() => banners(page)).toEqual([retention, drill]);
+  await walk.state("14-asked-again-named", { visible: [page.getByRole("article", { name: "Pick a drill day" })], hidden: [] });
+
+  // Nothing new: the wake names every decision still waiting and opens Needs you. No path shows a bare "Altitude".
+  await wake();
+  await expect.poll(() => banners(page)).toEqual([retention, drill,
+    { title: "Still waiting for you", body: "atlas · Choose backup retention\nbeacon · Pick a drill day", tag: "altitude-nothing-new" }]);
   expect((await banners(page)).map((banner) => banner.title)).not.toContain("Altitude");
+  await walk.state("15-still-waiting-named", { visible: [page.getByRole("article", { name: "Choose backup retention" }), page.getByRole("article", { name: "Pick a drill day" })], hidden: [] });
 });
 
 test("a browser without notifications keeps every decision usable", async ({ page }, info) => {
