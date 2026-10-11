@@ -415,6 +415,22 @@ describe("Composer", () => {
     expect(onSubmit).toHaveBeenCalledOnce();
   });
 
+  it("words typed while recovered words cannot be read join them once they can", async () => {
+    sessionStorage.setItem("altitude.submitted:project/altitude", JSON.stringify({ pending: {}, text: "Original message", failure: "unconfirmed" }));
+    const user = userEvent.setup();
+    const field = () => screen.getByLabelText("Message L3 about altitude");
+    const storage = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Read denied"); });
+    try {
+      render(<Switcher />);
+      expect(field()).toHaveValue("");
+      await user.type(field(), "New draft");
+    } finally { storage.mockRestore(); }
+    await user.click(screen.getByRole("button", { name: "Switch view" }));
+    await user.click(screen.getByRole("button", { name: "Switch view" }));
+    expect(field()).toHaveValue("Original message\nNew draft");
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery.");
+  });
+
   it("keeps the draft unsent if its recovery copy cannot be saved", async () => {
     const onSubmit = vi.fn();
     const { user, field } = mount({ onSubmit });

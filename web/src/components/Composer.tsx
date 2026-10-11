@@ -567,7 +567,8 @@ export default function Composer({
     try {
       let saved: SubmittedText;
       // A failed write keeps its value in this document; a failed read leaves storage behind the field.
-      try { saved = readSubmitted(conversation); } catch (error) { missedEdits.set(conversation, text); throw error; }
+      try { saved = readSubmitted(conversation); }
+      catch (error) { if (heldFields.has(conversation)) missedEdits.set(conversation, text); throw error; }
       missedEdits.delete(conversation);
       if (editSubmitted(saved, text)) saveSubmitted(conversation, saved);
       setRecoveryUnavailable(false);
@@ -588,10 +589,10 @@ export default function Composer({
         const orphaned = Object.entries(saved.pending).filter(([id]) => !liveSubmissions.has(id) && !showing.current?.(id));
         if (live && !orphaned.length) return;
         if (!orphaned.length && !saved.text && saved.failure !== "transcription" && saved.failure !== "unreached") return;
-        // Stored recovery text is the whole field as last edited anywhere in this tab (every edit keeps it, or catches
-        // it up once storage can be read again), so it stands for the field over a draft a page remembered for Back;
-        // a live field is already current.
-        const field = live ? draft.current : saved.text || draft.current;
+        // A field that holds recovered words is current (storage has caught up with it); otherwise the field is an
+        // ordinary draft, which keeps nothing recovered, and the stored words join it.
+        const field = live || (heldFields.has(conversation) && draft.current) ? draft.current
+          : [saved.text, draft.current].filter(Boolean).join("\n");
         if (orphaned.length) {
           const refused = new Set(saved.refused ?? []);
           saved.failure = saved.failure === "unconfirmed" || orphaned.some(([id]) => !refused.has(id)) ? "unconfirmed" : "refused";
@@ -636,7 +637,7 @@ export default function Composer({
       // Task tabs retain their parent draft. Transfer recovered text to storage on leaving so a
       // remount restores it once, while ordinary unsent task drafts keep their existing owner.
       try {
-        if (readCaughtUp(conversation).text) { draft.current = ""; onChange(""); }
+        if (readCaughtUp(conversation).text && heldFields.delete(conversation)) { draft.current = ""; onChange(""); }
       } catch { /* keep the parent draft */ }
     };
   }, [conversation, editDraft, focusField, onChange]);
