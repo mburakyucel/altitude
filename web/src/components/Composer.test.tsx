@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import Composer, { combineDraft, formatTimer, markSubmitted, returnToComposer } from "./Composer";
 import type { ComposerProps } from "./Composer";
 import { ApiError } from "../data/api";
+import { forgetRecovery } from "../data/recovery";
 import type { HostVoiceOptions } from "./voiceTest";
 import { FakeSpeechRecognition, hostMicrophone, hostVoiceServer, installVoiceBrowser, punctuationFixture, sentence, speak } from "./voiceTest";
 import { HostCapture, UNREACHED, WAIT_MS } from "./hostCapture";
@@ -470,6 +471,40 @@ describe("Composer", () => {
     await user.click(screen.getByRole("button", { name: "Switch view" }));
     await user.click(screen.getByRole("button", { name: "Switch view" }));
     expect(field()).toHaveValue(next === "send" ? "Original message" : "Original message\nNew draft");
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery.");
+  });
+
+  it("removing a project drops this page's copy of its recovery, even where storage cannot be read", async () => {
+    sessionStorage.setItem("altitude.submitted:project/removed", JSON.stringify({ pending: {}, text: "Removed project's words", failure: "unconfirmed" }));
+    sessionStorage.setItem("altitude.submitted:project/removed-two", JSON.stringify({ pending: {}, text: "Another project's words", failure: "unconfirmed" }));
+    const user = userEvent.setup();
+    const field = () => screen.getByLabelText("Message L3 about altitude");
+    render(<Switcher conversation="project/removed" />);
+    expect(field()).toHaveValue("Removed project's words");
+    await user.click(screen.getByRole("button", { name: "Switch view" }));
+    forgetRecovery("removed");
+    expect(sessionStorage.getItem("altitude.submitted:project/removed")).toBeNull();
+    expect(sessionStorage.getItem("altitude.submitted:project/removed-two")).not.toBeNull();
+    const storage = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Read denied"); });
+    try {
+      await user.click(screen.getByRole("button", { name: "Switch view" }));
+      expect(field()).toHaveValue("");
+    } finally { storage.mockRestore(); }
+  });
+
+  it("recovery replaced outside the page is no longer the field's: Send leaves it recoverable", async () => {
+    sessionStorage.setItem("altitude.submitted:project/replaced", JSON.stringify({ pending: {}, text: "Shown words", failure: "unconfirmed" }));
+    const { onSubmit, settles, shows } = conversationSend("project/replaced");
+    const user = userEvent.setup();
+    const field = () => screen.getByLabelText("Message L3 about altitude");
+    render(<Switcher conversation="project/replaced" onSubmit={onSubmit} shows={shows} />);
+    expect(field()).toHaveValue("Shown words");
+    sessionStorage.setItem("altitude.submitted:project/replaced", JSON.stringify({ pending: {}, text: "Replacement words", failure: "unconfirmed" }));
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await act(async () => settles[0]!());
+    await user.click(screen.getByRole("button", { name: "Switch view" }));
+    await user.click(screen.getByRole("button", { name: "Switch view" }));
+    expect(field()).toHaveValue("Replacement words");
     expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery.");
   });
 

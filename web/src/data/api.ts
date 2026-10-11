@@ -3,6 +3,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useReducer, useRef } from "react";
 import { z } from "zod";
 import { readAlertState } from "./alerts";
+import { forgetRecovery } from "./recovery";
 import { useOptimisticMutation } from "./useOptimisticMutation";
 
 /**
@@ -1478,12 +1479,8 @@ export async function forgetProject(queryClient: QueryClient, name: string) {
     await queryClient.cancelQueries({ queryKey: [kind, name] });
     queryClient.removeQueries({ queryKey: [kind, name] });
   }
-  // The composer's recovery copies of the project's conversations (Composer.tsx) go with it.
-  try {
-    for (const key of Object.keys(sessionStorage)) {
-      if (key === `altitude.submitted:project/${name}` || key.startsWith(`altitude.submitted:task/${name}/`)) sessionStorage.removeItem(key);
-    }
-  } catch { /* browser storage is unavailable: it holds no copies */ }
+  // The composer's recovery of the project's conversations goes with it.
+  forgetRecovery(name);
   void queryClient.invalidateQueries({ queryKey: ["overview"] });
   void queryClient.invalidateQueries({ queryKey: ["monitor"] });
 }

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useReducer, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from "react";
 import type { VoiceSettings } from "../data/api";
+import { documentRecovery, heldFields, recoveryKey } from "../data/recovery";
+import type { SendFailure, SubmittedText } from "../data/recovery";
 import { Link } from "react-router";
 import { IMAGE_HELP, useImageDraft } from "./ImageDraft";
 import type { ImageScope, ImageSubmission } from "./ImageDraft";
@@ -63,36 +65,27 @@ function closeWaveform(context: AudioContext) {
 
 type Phase = "idle" | "starting" | "listening" | "transcribing";
 type Capture = RecognitionCapture | HostCapture;
-/** "transcription": the recording failed; "unreached": host voice lost the connection past its wait. */
-type SendFailure = "refused" | "unconfirmed" | "transcription" | "unreached" | null;
 type VoiceSend = { id: string; text: string; failure: SendFailure; controller: AbortController; send: ComposerProps["onSubmit"]; images?: ImageSubmission; capture: Capture; cancel: () => void };
 const voiceSends = new Map<string, VoiceSend>();
 
-// #320: only submitted text lives beyond a composer. These records never initiate a send.
-// `refused` names the pending copies the server refused; every other pending copy recovers as unconfirmed.
-type SubmittedText = { pending: Record<string, string>; text: string; failure: SendFailure; refused?: string[] };
+// Submitted-text recovery (data/recovery.ts): only submitted text lives beyond a composer.
 const liveSubmissions = new Set<string>();
-// The latest recovery this document read or wrote, so a failed storage read or write later in the document still
-// sees every edit. The stored bytes identify the copy it matches; clearing or replacing browser storage outside this
-// document makes storage win again. `unwritten` marks a value storage did not accept.
-const documentRecovery = new Map<string, { stored: string | null | undefined; value: SubmittedText; unwritten: boolean }>();
 const recoveryViews = new Map<string, { draft: () => string; failure: () => SendFailure; restore: (saved: SubmittedText, unavailable?: boolean, id?: string) => void;
   paste: (text: string, images?: ImagePreview[]) => boolean;
   voice: (send: VoiceSend | null) => void; submit: (text: string, voice?: VoiceSend) => Promise<void>; recover: (live?: boolean) => void }>();
-// The recovered words each conversation's field last showed in this document. A field holds recovered words only
-// while it shows exactly these.
-const heldFields = new Map<string, string>();
+// A field holds recovered words only while it shows exactly the words it was last given or edited to.
 const holds = (conversation: string, field: string) => Boolean(field) && heldFields.get(conversation) === field;
 // Stored recovered words a field does not show (storage could not be read when it mounted): they stay recoverable
 // beside it.
 const unshown = (conversation: string, saved: SubmittedText, field: string) => holds(conversation, field) ? "" : saved.text;
-const recoveryKey = (conversation: string) => `altitude.submitted:${conversation}`;
 function readSubmitted(conversation: string): SubmittedText {
   const known = documentRecovery.get(conversation);
   let stored: string | null;
   try { stored = sessionStorage.getItem(recoveryKey(conversation)); }
   catch (error) { if (known) return structuredClone(known.value); throw error; }
   if (known?.stored === stored) return structuredClone(known.value);
+  // Storage changed outside this document: no field shows its record.
+  if (known) heldFields.delete(conversation);
   const value: SubmittedText = stored ? JSON.parse(stored) as SubmittedText : { pending: {}, text: "", failure: null };
   documentRecovery.set(conversation, { stored, value: structuredClone(value), unwritten: false });
   return value;

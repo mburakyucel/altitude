@@ -2103,7 +2103,7 @@ the same outbox under `task-outbox`, the project and the task, and each of its e
 the message was sent to: the question or question group revision it answered and the stopped session it
 continues. Its Retry sends there again and is offered only while a Send would go to the same place;
 otherwise the message offers Edit only. Pairing clears every outbox with every query, and removing the
-project drops its outboxes with its reads and deletes its composer recovery copies. Unsent text lives in the existing
+project drops its outboxes with its reads and deletes its composer recovery, stored and in the document. Unsent text lives in the existing
 client query cache under `project-draft` and the project name, without timed eviction, until document
 reload. Every draft change, including manual clearing and send admission, updates that entry.
 Submitted-text recovery
@@ -2304,7 +2304,7 @@ project text survives route remounts in client memory; it is not synchronized or
 Recovered text transfers back to recovery storage on unmount so returning restores it only once.
 The browser document keeps the latest recovery record it read or wrote for each conversation, matched to the
 stored bytes it last saw, so a later failed storage read or write uses that copy, while storage cleared or
-replaced outside the document wins again. Recovery is the recovered text's only owner: a task page's
+replaced outside the document wins again and no field keeps a claim on the replaced words. Recovery is the recovered text's only owner: a task page's
 Back/Forward memory keeps none of it, judged by the document's record of the recovered words each field
 shows. Where the document has never read a conversation's recovery, words typed are an ordinary draft; the
 stored words join it once readable and stay recoverable if it is sent.
