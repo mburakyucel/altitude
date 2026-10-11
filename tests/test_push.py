@@ -132,6 +132,115 @@ class TestPush(AltitudeCase):
         push.notify()
         self.assertEqual(len(self.service.requests), 2)
 
+    def age(self, seconds: int) -> None:
+        """The device's last wake, as if it was taken `seconds` earlier."""
+        record = json.loads(push.RECORD.read_text())
+        record["woken"] = {endpoint: at - seconds for endpoint, at in record["woken"].items()}
+        S.atomic_write(push.RECORD, json.dumps(record))
+
+    def test_a_device_with_a_pace_hears_the_decisions_in_between_in_one_wake(self):
+        push.subscribe(self.endpoint, every=900)
+        self.decision("Choose backup retention", "How long should backups stay?")
+        push.notify()
+        self.assertEqual(len(self.service.requests), 1)  # the first decision wakes it at once
+        self.decision("Rotate the signing key", "Rotate now or at the next release?")
+        self.decision("Pick a drill day", "Which day?")
+        push.notify()
+        self.age(899)
+        push.notify()
+        self.assertEqual(len(self.service.requests), 1)  # still within its quarter hour: owed, not woken
+        self.age(2)
+        push.notify()
+        push.notify()
+        self.assertEqual(len(self.service.requests), 2)  # one wake for both, once the pace has passed
+
+    def test_a_paced_device_owed_nothing_once_its_decisions_are_settled_stays_asleep(self):
+        push.subscribe(self.endpoint, every=3600)
+        first = self.decision("Choose backup retention", "How long should backups stay?")
+        push.notify()
+        second = self.decision("Rotate the signing key", "Rotate now or at the next release?")
+        push.notify()
+        for task in (first, second):
+            T.message(self.project, task["slug"], T.OPERATOR_MESSAGE_ROLE, "Done.")
+        self.age(3601)
+        push.notify()
+        self.assertEqual(len(self.service.requests), 1)
+
+    def test_a_paced_device_is_not_woken_for_a_decision_settled_while_it_waited(self):
+        push.subscribe(self.endpoint, every=3600)
+        self.decision("Choose backup retention", "How long should backups stay?")
+        push.notify()
+        later = self.decision("Rotate the signing key", "Rotate now or at the next release?")
+        push.notify()
+        T.message(self.project, later["slug"], T.OPERATOR_MESSAGE_ROLE, "Rotate now.")  # the first still waits
+        self.age(3601)
+        push.notify()
+        self.assertEqual(len(self.service.requests), 1)  # the first was announced; nothing new is owed
+
+    def test_a_decision_held_again_stays_owed_through_a_wake_for_another(self):
+        push.subscribe(self.endpoint, every=3600)
+        self.decision("Choose backup retention", "How long should backups stay?")
+        push.notify()
+        held = self.decision("Rotate the signing key", "Rotate now or at the next release?")
+        self.decision("Pick a drill day", "Which day?")
+        push.notify()
+        task = S.load_task(self.project, held["slug"])
+        S.save_task(self.project, {**task, "state": "running"})  # its owner works on before it alerted
+        self.age(3601)
+        push.notify()
+        self.assertEqual(len(self.service.requests), 2)  # the wake carries the drill day only
+        S.save_task(self.project, {**task, "state": "blocked"})
+        self.age(3601)
+        push.notify()
+        self.assertEqual(len(self.service.requests), 3)  # and the key alerts once its task rests
+
+    def test_a_wake_sent_while_the_device_subscribes_again_leaves_the_new_subscription_alone(self):
+        push.subscribe(self.endpoint, every=3600)
+        self.decision("Choose backup retention", "How long should backups stay?")
+        sending = push._send
+
+        def resubscribed_meanwhile(endpoint):
+            outcome = sending(endpoint)
+            push.subscribe(endpoint, every=3600)
+            return outcome
+
+        self.patch(push, "_send", resubscribed_meanwhile)
+        push.notify()
+        self.assertNotIn(self.endpoint, json.loads(push.RECORD.read_text())["woken"])
+        self.patch(push, "_send", sending)
+        self.decision("Rotate the signing key", "Rotate now or at the next release?")
+        push.notify()
+        self.assertEqual(len(self.service.requests), 2)  # its first decision alerts at once, not an hour later
+
+        self.service.status = 410
+
+        def renewed_while_gone(endpoint):
+            outcome = sending(endpoint)
+            push.subscribe(endpoint)
+            return outcome
+
+        self.patch(push, "_send", renewed_while_gone)
+        self.decision("Pick a drill day", "Which day?")
+        self.age(3601)
+        push.notify()
+        self.assertEqual(json.loads(push.RECORD.read_text())["subscriptions"], [self.endpoint])
+
+    def test_changing_the_pace_keeps_what_the_device_is_owed(self):
+        push.subscribe(self.endpoint, every=3600)
+        self.decision("Choose backup retention", "How long should backups stay?")
+        push.notify()
+        self.decision("Rotate the signing key", "Rotate now or at the next release?")
+        push.notify()
+        self.assertEqual(push.pace(self.endpoint, 0), {"every": 0})
+        push.notify()
+        self.assertEqual(len(self.service.requests), 2)
+        self.assertNotIn(self.endpoint, json.loads(push.RECORD.read_text())["every"])
+        with self.assertRaisesRegex(push.PushFailure, "not subscribed"):
+            push.pace("https://push.example/wake/elsewhere", 900)
+        for wrong in (60, "900", True, None):
+            with self.assertRaisesRegex(push.PushFailure, "How often"):
+                push.pace(self.endpoint, wrong)
+
     def test_republishing_a_waiting_decision_wakes_nobody_a_second_time(self):
         push.subscribe(self.endpoint)
         task = self.decision("Choose backup retention", "How long should backups stay?")
@@ -394,7 +503,7 @@ class TestPush(AltitudeCase):
         T.message(self.project, task["slug"], T.OPERATOR_MESSAGE_ROLE, "Thirty days.")  # answered on the first
         push.notify()
         self.assertEqual([sent["path"] for sent in self.service.requests], ["/wake/device-1", "/wake/device-2"])
-        self.assertEqual(json.loads((self.tmp / "push.json").read_text())["owed"], [])
+        self.assertEqual(json.loads((self.tmp / "push.json").read_text())["owes"], {})
 
     def test_a_review_held_for_the_operator_wakes_no_device(self):
         push.subscribe(self.endpoint)
@@ -496,6 +605,21 @@ class TestAlertsAPI(AltitudeCase):
         self.assertEqual(self.call("POST", "/api/alerts/subscription", {"endpoint": endpoint, "remove": True}),
                          (200, {"push": False}))
         self.assertEqual(json.loads((self.tmp / "push.json").read_text())["subscriptions"], [])
+
+    def test_the_page_sets_how_often_its_device_is_woken(self):
+        endpoint = "https://push.example/wake/device-1"
+        self.assertEqual(self.call("POST", "/api/alerts/subscription", {"endpoint": endpoint, "every": 900}),
+                         (200, {"push": True}))
+        self.assertEqual(json.loads((self.tmp / "push.json").read_text())["every"], {endpoint: 900})
+        self.assertEqual(self.call("POST", "/api/alerts/pace", {"endpoint": endpoint, "every": 3600}),
+                         (200, {"every": 3600}))
+        self.assertEqual(json.loads((self.tmp / "push.json").read_text())["every"], {endpoint: 3600})
+        status, out = self.call("POST", "/api/alerts/pace", {"endpoint": endpoint, "every": 5})
+        self.assertEqual(status, 400)
+        self.assertIn("How often", out["error"])
+        self.assertEqual(self.call("POST", "/api/alerts/subscription", {"endpoint": endpoint, "remove": True}),
+                         (200, {"push": False}))
+        self.assertEqual(json.loads((self.tmp / "push.json").read_text())["every"], {})
 
     def test_only_the_operator_devices_are_kept_and_only_https_endpoints(self):
         for index in range(push.DEVICES + 2):

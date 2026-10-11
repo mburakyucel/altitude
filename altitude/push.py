@@ -33,6 +33,7 @@ KEY_DIR = config.ROOT / "push"
 RECORD = config.ROOT / "push.json"
 DEVICES = 5  # the operator's own devices; a bounded list keeps replaced phones from accumulating
 TTL_SECONDS = 12 * 60 * 60  # a decision older than half a day is read in Altitude, not from a banner
+PACES = (0, 15 * 60, 60 * 60)  # the device's choice of the least time between two of its wakes (Settings)
 TIMEOUT = 10
 _LOCK = threading.Lock()  # the daemon alone writes the record: its timer thread and its request threads
 _KEY_LOCK = threading.Lock()  # two first readers must not each generate a key and hand out the loser
@@ -131,13 +132,15 @@ def _reason(refusal: urllib.error.HTTPError) -> str:
 
 
 def _record() -> dict:
-    """`seen` holds the announced decision keys; `owed` the devices a wake has not yet reached."""
+    """`seen` holds the announced decision keys; `owes` each device's new decision keys no wake has yet reached
+    it with; `every` each device's chosen pace in seconds and `woken` when its push service last took a wake."""
     stored = S.read_json(RECORD, {}) or {}
     subscriptions = list(stored.get("subscriptions") or [])
+
+    def kept(field: str) -> dict:
+        return {endpoint: value for endpoint, value in (stored.get(field) or {}).items() if endpoint in subscriptions}
     return {"subscriptions": subscriptions, "seen": list(stored.get("seen") or []),
-            "owed": [endpoint for endpoint in stored.get("owed") or [] if endpoint in subscriptions],
-            "refused": {endpoint: why for endpoint, why in (stored.get("refused") or {}).items()
-                        if endpoint in subscriptions}}
+            "owes": kept("owes"), "refused": kept("refused"), "every": kept("every"), "woken": kept("woken")}
 
 
 def _save(record: dict) -> None:
@@ -153,8 +156,16 @@ def _waiting() -> tuple[list[str], list[str]]:
     return [row["alert_key"] for row in rows], [row["alert_key"] for row in rows if not row.get("alert_held")]
 
 
-def subscribe(endpoint: str) -> dict:
-    """A device registers what waking it takes. Altitude stores the endpoint and nothing about the device."""
+def _pace(every) -> int:
+    if every not in PACES or isinstance(every, bool):
+        raise PushFailure(f"How often to alert is one of {', '.join(map(str, PACES))} seconds.")
+    return every
+
+
+def subscribe(endpoint: str, every=0) -> dict:
+    """A device registers what waking it takes and how often it may be woken. Altitude stores the endpoint and
+    nothing else about the device."""
+    every = _pace(every)
     endpoint = (endpoint or "").strip()
     target = urlparse(endpoint)
     # Altitude posts to this address unattended: only the https endpoint a push service issues qualifies.
@@ -170,16 +181,38 @@ def subscribe(endpoint: str) -> dict:
         # A fresh subscription starts unrefused and owed nothing: the page subscribing it shows what waits,
         # and what its push service thinks shows on the next send.
         refused = {known: why for known, why in record["refused"].items() if known in kept and known != endpoint}
-        owed = [known for known in record["owed"] if known in kept and known != endpoint]
-        _save({"subscriptions": kept, "seen": seen, "owed": owed, "refused": refused})
+        owes = {known: keys for known, keys in record["owes"].items() if known in kept and known != endpoint}
+        paces = {known: pace for known, pace in record["every"].items() if known in kept and known != endpoint}
+        woken = {known: at for known, at in record["woken"].items() if known in kept and known != endpoint}
+        _save({"subscriptions": kept, "seen": seen, "owes": owes, "refused": refused,
+               "every": {**paces, endpoint: every} if every else paces, "woken": woken})
     return {"push": True}
+
+
+def pace(endpoint: str, every) -> dict:
+    """A subscribed device changes how often it may be woken; what it is owed stays owed."""
+    every = _pace(every)
+    with _LOCK:
+        record = _record()
+        if endpoint not in record["subscriptions"]:
+            raise PushFailure("This device is not subscribed to alerts. Turn alerts off and on to subscribe it again.")
+        record["every"].pop(endpoint, None)
+        if every:
+            record["every"][endpoint] = every
+        _save(record)
+    return {"every": every}
+
+
+def _drop(record: dict, endpoint: str) -> None:
+    record["subscriptions"] = [known for known in record["subscriptions"] if known != endpoint]
+    for field in ("owes", "refused", "every", "woken"):
+        record[field].pop(endpoint, None)
 
 
 def forget(endpoint: str) -> dict:
     with _LOCK:
         record = _record()
-        record["subscriptions"] = [known for known in record["subscriptions"] if known != endpoint]
-        record["refused"].pop(endpoint, None)
+        _drop(record, endpoint)
         _save(record)
     return {"push": False}
 
@@ -190,14 +223,17 @@ def refused() -> list[dict]:
 
 
 def notify(log=lambda message: None) -> None:
-    """Called each tick: a decision that newly may alert owes every subscribed device one wake. Nothing else
+    """Called each tick: a decision that newly may alert is owed to every subscribed device. Nothing else
     wakes a device: Safari shows something for every push, and WebKit keeps a banner it is asked to close
     within 30 seconds, so a wake that only cleared a banner left a bare one behind. An answered banner closes
     when the page next reads the queue or the next alert wakes the device.
 
-    A device stays owed until its push service takes a wake. One asleep, off its network or refused when
-    the decision arrived therefore still wakes on the next tick that gets through, even when another device
-    took it, and a fix on either side of a refusal reaches it without another step."""
+    A device is owed a decision until its push service takes a wake or the decision is settled. One asleep,
+    off its network or refused when the decision arrived therefore still wakes on the next tick that gets
+    through, even when another device took it, and a fix on either side of a refusal reaches it without
+    another step; one whose owed decisions were all settled meanwhile is not woken to announce nothing. A
+    device that chose a pace waits until that long has passed since its last wake, so the decisions in between
+    arrive in one."""
     with _LOCK:
         record = _record()
         if not record["subscriptions"]:
@@ -206,38 +242,45 @@ def notify(log=lambda message: None) -> None:
         fresh = [key for key in alerting if key not in record["seen"]]
         # Answered decisions drop out, so the record stays the size of the queue and one that returns alerts again.
         seen = [key for key in keys if key in record["seen"] or key in fresh]
-        if fresh or seen != record["seen"]:
-            record["seen"] = seen
-            if fresh:
-                record["owed"] = list(record["subscriptions"])
-                log(f"push wakes {len(record['owed'])} device(s) for {len(fresh)} new decision(s)")
-            elif not seen:  # every decision a device was owed is settled: a late wake would announce nothing
-                record["owed"] = []
+        # A decision held again stays owed and wakes no one until its task rests; a settled one is owed no more.
+        owes = {endpoint: owed for endpoint in record["subscriptions"]
+                if (owed := [key for key in record["owes"].get(endpoint, []) if key in seen] + fresh)}
+        if fresh:
+            log(f"push wakes {len(record['subscriptions'])} device(s) for {len(fresh)} new decision(s)")
+        if seen != record["seen"] or owes != record["owes"]:
+            record["seen"], record["owes"] = seen, owes
             _save(record)
-        endpoints = list(record["owed"])
-        before = dict(record["refused"])  # a subscription renewed while sending starts clean, not refused again
+        started = time.time()
+        # A wake carries the decisions that may alert now; one held again stays owed until its task rests.
+        waking = {endpoint: due for endpoint, owed in owes.items()
+                  if (due := [key for key in owed if key in alerting])
+                  and started - record["woken"].get(endpoint, 0) >= record["every"].get(endpoint, 0)}
     outcomes = {}
-    for endpoint in endpoints:  # sent outside the lock: a slow push service must not stall a subscription
+    for endpoint in waking:  # sent outside the lock: a slow push service must not stall a subscription
         try:
             status, reason = _send(endpoint)
         except (PushFailure, OSError) as exc:  # unreachable service or no signing tool: again next tick
             log(f"push to {urlparse(endpoint).netloc} deferred: {exc}")
             continue
-        if status in (404, 410):  # gone for good; the device subscribes again when it next alerts
-            forget(endpoint)
-        elif status >= 300:  # still owed, and recorded with its reason below
-            outcomes[endpoint] = f"{status} {reason}".strip()
-        else:
-            outcomes[endpoint] = None
+        # 404 and 410: gone for good, and the device subscribes again when it next alerts; any other refusal
+        # stays owed and is recorded with its reason below.
+        outcomes[endpoint] = status if status in (404, 410) else f"{status} {reason}".strip() if status >= 300 else None
     if not outcomes:
         return
     with _LOCK:
         record = _record()
-        record["owed"] = [endpoint for endpoint in record["owed"]
-                          if endpoint not in outcomes or outcomes[endpoint] is not None]
         for endpoint, why in outcomes.items():
-            now = record["refused"].get(endpoint)
-            if endpoint not in record["subscriptions"] or now != before.get(endpoint) or now == why:
+            # Subscribing again or turning alerts off while the wake was sent clears what this device owed: the
+            # outcome belongs to the subscription it was sent for, so the new one starts clean.
+            if endpoint not in record["owes"]:
+                continue
+            if why in (404, 410):
+                _drop(record, endpoint)
+                continue
+            if why is None:
+                record["owes"][endpoint] = [key for key in record["owes"][endpoint] if key not in waking[endpoint]]
+                record["woken"][endpoint] = started
+            if record["refused"].get(endpoint) == why:
                 continue
             # Once per change, with its reason: a refusal logged every tick without one hid its cause.
             host = urlparse(endpoint).netloc
@@ -246,4 +289,5 @@ def notify(log=lambda message: None) -> None:
                 record["refused"][endpoint] = why
             else:
                 record["refused"].pop(endpoint, None)
+        record["owes"] = {endpoint: owed for endpoint, owed in record["owes"].items() if owed}
         _save(record)

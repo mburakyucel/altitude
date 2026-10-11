@@ -14,11 +14,18 @@ function worker(options: { visible?: boolean; focus?: () => Promise<unknown> } =
   const shown: Shown[] = [];
   const displayed = new Map<string, Banner>(); // what the device shows now, one banner per tag
   const stored = new Map<string, string>();
+  let refusing: "open" | "put" | undefined;
   const caches = {
-    open: async () => ({
-      match: async (key: string) => (stored.has(key) ? new Response(stored.get(key)) : undefined),
-      put: async (key: string, value: Response) => { stored.set(key, await value.text()); },
-    }),
+    open: async () => {
+      if (refusing === "open") throw new DOMException("refused", "SecurityError");
+      return {
+        match: async (key: string) => (stored.has(key) ? new Response(stored.get(key)) : undefined),
+        put: async (key: string, value: Response) => {
+          if (refusing === "put") throw new DOMException("full", "QuotaExceededError");
+          stored.set(key, await value.text());
+        },
+      };
+    },
   };
   const self = {
     addEventListener: (type: string, handler: (event: Waiting) => void) => { handlers[type] = handler; },
@@ -50,6 +57,12 @@ function worker(options: { visible?: boolean; focus?: () => Promise<unknown> } =
     showing: () => [...displayed.keys()],
     /** What `altitude-alerts` already holds, as a page turning alerts on or an earlier worker left it. */
     remember: (tags: string[]) => stored.set("/announced", JSON.stringify(tags)),
+    /** This device's choices, as its Settings page saves them. */
+    prefer: (chosen: Record<string, unknown>) => stored.set("/preferences", JSON.stringify(chosen)),
+    /** A store that answers with what cannot be parsed, as a damaged record does. */
+    unreadable: () => stored.set("/preferences", "{not json"),
+    /** Cache Storage refusing to open at all, or to keep what the worker writes. */
+    refuse: (step: "open" | "put") => { refusing = step; },
     /** The operator taps the banner shown under `tag`. */
     tap: async (tag: string) => {
       let work: Promise<unknown> = Promise.resolve();
@@ -81,6 +94,113 @@ beforeEach(() => {
   if (!("timeout" in AbortSignal)) {
     Object.defineProperty(AbortSignal, "timeout", { configurable: true, value: () => new AbortController().signal });
   }
+});
+
+describe("this device's alert preferences", () => {
+  const logs = {
+    ...question, id: "q-logs", project: "beacon", slug: "archive-logs", title: "Archive the old logs",
+    alert_key: "beacon:archive-logs:g-logs",
+  };
+
+  it("names the project alone when asked to, in new, still waiting and grouped banners", async () => {
+    const running = worker();
+    running.prefer({ reveal: "project" });
+    running.fetched.mockImplementation(queue([question]));
+    await running.push();
+    expect(running.shown.at(-1)).toEqual({
+      title: "atlas needs a decision",
+      options: { body: undefined, tag: question.alert_key, data: { url: "/projects/atlas/tasks/run-restore-drill?question=q-drill&revision=2" }, silent: false },
+    });
+    await running.push();
+    expect(running.shown.at(-1)).toMatchObject({ title: "atlas still needs a decision", options: { body: undefined } });
+    running.fetched.mockImplementation(queue([question, key, logs]));
+    await running.push();
+    await running.push();
+    expect(running.shown.at(-1)).toMatchObject({ title: "Still waiting for you", options: { body: "atlas\nbeacon" } });
+    // What the screen shows; the tag and link stay inside the device.
+    expect(JSON.stringify(running.shown.map(({ title, options }) => [title, options.body])))
+      .not.toMatch(/restore drill|signing key|old logs/i);
+  });
+
+  it("names nothing when asked to: only that decisions wait, and how many", async () => {
+    const running = worker();
+    running.prefer({ reveal: "none" });
+    running.fetched.mockImplementation(queue([question]));
+    await running.push();
+    expect(running.shown.at(-1)).toEqual({
+      title: "A decision needs you",
+      options: { body: undefined, tag: question.alert_key, data: { url: "/projects/atlas/tasks/run-restore-drill?question=q-drill&revision=2" }, silent: false },
+    });
+    await running.push();
+    expect(running.shown.at(-1)).toMatchObject({ title: "A decision still needs you", options: { body: undefined } });
+    running.fetched.mockImplementation(queue([question, key, logs]));
+    await running.push();
+    await running.push();
+    expect(running.shown.at(-1)).toMatchObject({ title: "Still waiting for you", options: { body: "3 decisions" } });
+    expect(JSON.stringify(running.shown.map(({ title, options }) => [title, options.body])))
+      .not.toMatch(/atlas|beacon|restore drill|signing key|old logs/i);
+  });
+
+  it("with a pace, puts the decisions that came in between into one banner opening Needs you", async () => {
+    const running = worker();
+    running.prefer({ every: 900 });
+    running.fetched.mockImplementation(queue([question, key, logs]));
+    await running.push();
+    expect(running.shown).toEqual([{
+      title: "3 decisions need you",
+      options: {
+        body: "atlas · Run a restore drill\natlas · Rotate the signing key\nbeacon · Archive the old logs",
+        tag: question.alert_key, data: { url: "/" }, silent: false,
+      },
+    }]);
+    // One new decision alone is named as usual.
+    const day = { ...logs, id: "q-day", slug: "pick-a-day", title: "Pick a drill day", alert_key: "beacon:pick-a-day:g-day" };
+    running.fetched.mockImplementation(queue([question, key, logs, day]));
+    await running.push();
+    expect(running.shown.at(-1)).toMatchObject({ title: "beacon needs a decision", options: { body: "Pick a drill day" } });
+  });
+
+  it("with a pace and nothing named, the banner only counts", async () => {
+    const running = worker();
+    running.prefer({ every: 3600, reveal: "none" });
+    running.fetched.mockImplementation(queue([question, logs]));
+    await running.push();
+    expect(running.shown).toEqual([expect.objectContaining({ title: "2 decisions need you", options: expect.objectContaining({ body: undefined }) })]);
+  });
+
+  it("without sound, every banner is silent, even with Altitude out of sight or out of reach", async () => {
+    const running = worker({ visible: false });
+    running.prefer({ sound: false });
+    running.fetched.mockImplementation(queue([question]));
+    await running.push();
+    expect(running.shown.at(-1)).toMatchObject({ title: "atlas needs a decision", options: { body: "Run a restore drill", silent: true } });
+    running.fetched.mockImplementation(async () => { throw new TypeError("offline"); });
+    await running.push();
+    expect(running.shown.at(-1)).toMatchObject({ title: "A decision needs you", options: { silent: true } });
+  });
+
+  it.each(["read", "open", "put"] as const)("names nothing, still shows its banner and closes answered ones, when its store refuses to %s", async (step) => {
+    const running = worker();
+    running.prefer({ reveal: "task" });
+    running.fetched.mockImplementation(queue([question, key]));
+    await running.push();
+    if (step === "read") running.unreadable();
+    else running.refuse(step);
+    running.fetched.mockImplementation(queue([question])); // the signing key was answered
+    await running.push();
+    expect(running.shown.at(-1)).toEqual({ title: "A decision needs you", options: { tag: "altitude-decision", data: { url: "/" } } });
+    expect(running.showing()).toEqual([question.alert_key, "altitude-decision"]);
+  });
+
+  it("reads choices it does not know as the defaults: project and task, every decision, aloud", async () => {
+    const running = worker({ visible: false });
+    running.prefer({ reveal: "everything", every: "soon", sound: "loud" });
+    running.fetched.mockImplementation(queue([question, key]));
+    await running.push();
+    expect(running.shown.map(({ title, options }) => [title, options.body, options.silent])).toEqual([
+      ["atlas needs a decision", "Run a restore drill", false], ["atlas needs a decision", "Rotate the signing key", false],
+    ]);
+  });
 });
 
 describe("the service worker's push", () => {

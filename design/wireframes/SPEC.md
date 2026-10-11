@@ -869,7 +869,9 @@ line returns to the reach once a push gets through. An unavailable alert control
 leaves Needs you, its cards and all typing untouched.
 
 Each newly published operator question alerts once, titled with the project and carrying the task name
-only — never question, conversation or incident text. A question asked again after the operator replied
+at most — never question, conversation or incident text. What a banner names, how often alerts come and
+whether they sound follow the device's choices in Settings (§3.15); the formats below are the default,
+project and task. A question asked again after the operator replied
 alerts again, the same way; a rewording, an escalation or L3 settling one member while it waits does not. Activating it opens that decision in the running
 app. Faults, stopped tasks, reviews and completed work stay in Needs you without an alert. A grouped
 ask alerts once. On a device without push, a decision already on screen, in Needs you or its owning task,
@@ -886,6 +888,14 @@ out decisions L3 or the owner is handling first. One decision reads **<project> 
 held decisions it reads **No decision needs you now** / *L3 or the task's owner is handling it first.*
 An alert whose decision is answered, withdrawn or superseded closes when Altitude is next open on that
 device or the next alert arrives.
+
+With **Project only**, every banner keeps its title and drops the task: one decision reads **<project>
+needs a decision** (or **still needs a decision**) with no body, and **Still waiting for you** lists one
+project per line. With **Only that a decision waits**, one decision reads **A decision needs you** (or
+**A decision still needs you**) with no body, and **Still waiting for you** reads *<n> decisions*. With a
+pace, decisions that arrived meanwhile come in one banner, **<n> decisions need you**, with one line each as
+the device reveals (none when it reveals nothing), opening Needs you; one alone is named as usual. The out
+of reach and settled banners are the same in every mode. Sound off makes every banner silent.
 
 #### 3.8.2 Decision selections
 
@@ -1649,10 +1659,28 @@ choice and routing ("L3: Fable · Low · tasks prefer Codex"), opening `/setting
 **Models** holds **New tasks**, the same value and Models dialog as the control beside the quota
 (§3.6.1). **Projects** holds **All projects** ("2 projects · folder ~/Projects"), opening
 `/settings/projects`: every managed project, each opening its page, then **Projects folder**.
-**Voice** holds **Voice input**. **Devices and access** holds Devices, the Terminal switch and the
+**Voice** holds **Voice input**. **Notifications** holds this device's decision alerts (below).
+**Devices and access** holds Devices, the Terminal switch and the
 read-only Network row (address and HTTPS). **Coding agents** holds Prerequisites, the Validation
 runs switch and Incident reports. **About** holds the Version rows on an installed copy. Every row
 that opens a page has a chevron; switches save in place.
+
+**Notifications** is set on each device. Its first row, **Decision alerts**, is a switch with the same
+line as the Needs you switch (§3.8.1); where alerts cannot be on, the switch looks disabled and pressing
+it reveals that line. While alerts are on, three rows follow, saving in place:
+
+| Row | Line under the label | Control |
+| --- | --- | --- |
+| **Show** | the banner title in quotes, for the first managed project: “atlas needs a decision” and the task name / “atlas needs a decision” / “A decision needs you” | select: Project and task · Project only · Only that a decision waits |
+| **How often** | only with a pace: "Decisions in between arrive together in the next alert." | select: Every new decision · At most every 15 minutes · At most once an hour |
+| **Sound** | none | switch |
+
+Turning alerts off removes the three rows; turning them on restores the device's saved choices. A change
+shows at once, with the controls disabled and "Saving…" under the group until it is saved; a refusal shows
+Altitude's reason in red under the group and the control returns to the saved choice. A device whose choices
+cannot be read shows, in place of the rows, "This browser cannot keep alert choices here, so alerts name
+nothing." in red. On phone a select wraps under its label at full width. The pace limits how often Altitude
+sends to the device: the first decision after a quiet spell alerts at once.
 
 One bordered **Voice input** row shows the saved backend and a chevron.
 Its whole area opens `/settings/voice`; no backend options or credentials occupy the overview.

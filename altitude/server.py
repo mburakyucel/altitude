@@ -2524,7 +2524,13 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "alerts", "subscription"]:
                 try:
                     endpoint = str(o.get("endpoint") or "")
-                    return self._json(push.forget(endpoint) if o.get("remove") else push.subscribe(endpoint))
+                    return self._json(push.forget(endpoint) if o.get("remove")
+                                      else push.subscribe(endpoint, o.get("every", 0)))
+                except push.PushFailure as exc:
+                    return self._json({"error": str(exc)}, 400)
+            if parts == ["api", "alerts", "pace"]:
+                try:
+                    return self._json(push.pace(str(o.get("endpoint") or ""), o.get("every")))
                 except push.PushFailure as exc:
                     return self._json({"error": str(exc)}, 400)
             if api == "l3" and len(parts) > 2 and parts[2] == "reset":

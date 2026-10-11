@@ -41,23 +41,59 @@ self.addEventListener("notificationclick", (event) => {
 const ANNOUNCED = "altitude-alerts";
 const ANY_DECISION = "altitude-decision"; // shown when Altitude is out of reach; stands for any waiting decision
 
-self.addEventListener("push", (event) => event.waitUntil(alertWaiting()));
+// A store that cannot be read or written still ends in a banner, one that names nothing, so a failure never
+// reveals more than this device chose nor leaves a push without the banner Safari requires.
+self.addEventListener("push", (event) => event.waitUntil(alertWaiting().catch(() =>
+  self.registration.showNotification("A decision needs you", { tag: ANY_DECISION, data: { url: "/" } }))));
+
+/**
+ * This device's preferences, which its Settings page keeps beside the announced keys: what a banner reveals
+ * (`task`, `project` or `none`), the pace Altitude wakes it at (`every` seconds, decisions in between arriving
+ * together) and whether it sounds. A device that never chose names the project and task, every time, aloud.
+ */
+async function preferences() {
+  const stored = await (await caches.open(ANNOUNCED)).match("/preferences");
+  const chosen = stored ? await stored.json() : {};
+  return {
+    reveal: ["project", "none"].includes(chosen.reveal) ? chosen.reveal : "task",
+    every: Number(chosen.every) || 0,
+    sound: chosen.sound !== false,
+  };
+}
+
+/** One decision's banner: "<project> needs a decision" over its task name, as much of that as `reveal` allows. */
+function named(decision, still, reveal, silent) {
+  const needs = still ? "still needs" : "needs";
+  return [reveal === "none" ? `A decision ${needs} you` : `${decision.project} ${needs} a decision`, {
+    body: reveal === "task" ? decision.title : undefined, tag: decision.tag, data: { url: decision.url }, silent,
+  }];
+}
+
+/** One line per decision, the projects alone, or nothing, as `reveal` allows. */
+function lines(decisions, reveal) {
+  if (reveal === "none") return undefined;
+  return (reveal === "task" ? decisions.map((decision) => `${decision.project} · ${decision.title}`)
+    : [...new Set(decisions.map((decision) => decision.project))]).join("\n");
+}
 
 async function alertWaiting() {
   const open = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-  // With Altitude on screen the alert still shows, without a sound.
-  const silent = open.some((client) => client.visibilityState === "visible");
   const waiting = await pending();
+  if (waiting) {
+    const tags = new Set(waiting.map((decision) => decision.tag));
+    for (const banner of await self.registration.getNotifications()) {
+      // Answered, withdrawn, superseded or asked again since it was shown; a generic banner is named below or no
+      // longer true. This comes before reading the device's store, so a store that fails still clears them.
+      if (banner.tag === ANY_DECISION || !tags.has(banner.tag)) banner.close();
+    }
+  }
+  const chosen = await preferences();
+  // With Altitude on screen the alert still shows, without a sound.
+  const silent = !chosen.sound || open.some((client) => client.visibilityState === "visible");
   if (!waiting) {
     return self.registration.showNotification("A decision needs you", {
       body: "Altitude is out of reach, so this alert can't name it.", tag: ANY_DECISION, data: { url: "/" }, silent,
     });
-  }
-  const tags = new Set(waiting.map((decision) => decision.tag));
-  for (const banner of await self.registration.getNotifications()) {
-    // Answered, withdrawn, superseded or asked again since it was shown; a generic banner is named below or no
-    // longer true.
-    if (banner.tag === ANY_DECISION || !tags.has(banner.tag)) banner.close();
   }
   const announced = await remembered();
   // A decision whose task is still moving is neither shown nor recorded, so it alerts once the task rests.
@@ -65,22 +101,24 @@ async function alertWaiting() {
   const fresh = ready.filter((decision) => !announced.includes(decision.tag));
   await remember(waiting.filter((decision) => !decision.held || announced.includes(decision.tag))
     .map((decision) => decision.tag));
-  for (const decision of fresh) {
-    await self.registration.showNotification(`${decision.project} needs a decision`, {
-      body: decision.title, tag: decision.tag, data: { url: decision.url }, silent,
+  if (chosen.every && fresh.length > 1) {
+    // Decisions that arrived while Altitude waited out this device's pace come together, opening Needs you.
+    return self.registration.showNotification(`${fresh.length} decisions need you`, {
+      body: lines(fresh, chosen.reveal), tag: fresh[0].tag, data: { url: "/" }, silent,
     });
+  }
+  for (const decision of fresh) {
+    await self.registration.showNotification(...named(decision, false, chosen.reveal, silent));
   }
   if (fresh.length) return;
   // Several wakes delivered together, or handed back between the wake and this read: the push still shows,
   // silently, and says what waits rather than that nothing is new.
   const [decision] = ready;
   if (ready.length === 1) {
-    return self.registration.showNotification(`${decision.project} still needs a decision`, {
-      body: decision.title, tag: decision.tag, data: { url: decision.url }, silent: true,
-    });
+    return self.registration.showNotification(...named(decision, true, chosen.reveal, true));
   }
   const [title, body] = ready.length
-    ? ["Still waiting for you", ready.map((waits) => `${waits.project} · ${waits.title}`).join("\n")]
+    ? ["Still waiting for you", lines(ready, chosen.reveal) ?? `${ready.length} decisions`]
     : waiting.length
       ? ["No decision needs you now", "L3 or the task's owner is handling it first."]
       : ["No decision needs you now", "It was settled before this alert arrived."];
