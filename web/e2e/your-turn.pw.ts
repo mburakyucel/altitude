@@ -101,16 +101,19 @@ test("a question at the end of the chat: reply hands the turn back, asked again,
   });
   const retryText = "Keep seven days unless rollback needs more.";
   await v.field.fill(retryText);
-  const alert = v.conversation.getByRole("alert").filter({ hasText: "Not sent." });
+  // The refused reply stays on its message; the question stays the operator's turn until a reply is stored.
+  const message = v.conversation.locator(".msg-row[data-mine]").filter({ hasText: retryText });
+  const alert = message.getByRole("alert").filter({ hasText: "Not sent: the fixture refuses one send." });
+  const retry = message.getByRole("button", { name: "Retry", exact: true });
   await walk.state("06-send-failed-question-stays", {
     action: () => v.send.click(),
-    visible: [alert, alert.getByRole("button", { name: "Retry", exact: true }), v.card,
+    visible: [alert, retry, v.bubble(retryText), v.card,
       v.turn.getByText("Your turn · 1 question · asked again", { exact: true }), v.badge(3)],
-    hidden: [v.quiet, v.bubble(retryText)],
+    hidden: [v.quiet],
   });
-  await expect(v.field).toHaveValue(retryText);
+  await expect(v.field).toHaveValue("");
   const retried = page.waitForResponse((row) => new URL(row.url()).pathname === "/api/l2/message" && row.status() === 200);
-  await alert.getByRole("button", { name: "Retry", exact: true }).click();
+  await retry.click();
   await retried;
   await walk.state("06b-retry-hands-turn-back", {
     visible: [v.quiet, v.bubble(retryText), v.badge(2)],
