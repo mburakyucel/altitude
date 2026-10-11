@@ -1,7 +1,7 @@
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp } from "../test/render";
-import { ALERTS_KEY, ALERTS_PUSH_KEY, ALERTS_SEEN_KEY } from "./alerts";
+import { ALERTS_KEY, ALERTS_LAST_KEY, ALERTS_PUSH_KEY, ALERTS_SEEN_KEY } from "./alerts";
 
 /** Decision alerts (issue #221) through the whole app: the shell watches, Needs you switches. */
 function jsonResponse(obj: unknown, status = 200): Response {
@@ -40,11 +40,14 @@ const PUSH_KEY = btoa(String.fromCharCode(...new Uint8Array(65).fill(4))).replac
 function mockFetch(initial: unknown[], key: string | null = PUSH_KEY, unreachable = false,
   refused: { host: string; reason: string }[] = []) {
   let queue = initial;
-  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/alerts/subscription")) {
       if (unreachable) throw new TypeError("Failed to fetch");
       return jsonResponse({ push: true });
+    }
+    if (url.includes("/api/alerts/pace")) {
+      return paceRefusal ? jsonResponse({ error: paceRefusal }, 400) : jsonResponse({ every: JSON.parse(String(init?.body)).every });
     }
     if (url.includes("/api/alerts")) return jsonResponse({ key, refused });
     if (url.includes("/api/overview")) return jsonResponse(overview(queue));
@@ -57,6 +60,22 @@ function mockFetch(initial: unknown[], key: string | null = PUSH_KEY, unreachabl
 }
 
 const ENDPOINT = "https://push.example/wake/device-1";
+
+/** What altd answers a change of pace with: refused with this reason, or saved. */
+let paceRefusal: string | null = null;
+
+/** The worker's store in Cache Storage, which the page shares: announced keys and this device's preferences. */
+function deviceStore(preferences?: Record<string, unknown>) {
+  const stored = new Map<string, string>();
+  if (preferences) stored.set("/preferences", JSON.stringify(preferences));
+  vi.stubGlobal("caches", {
+    open: async () => ({
+      match: async (key: string) => (stored.has(key) ? new Response(stored.get(key)) : undefined),
+      put: async (key: string, value: Response) => { stored.set(key, await value.text()); },
+    }),
+  });
+  return stored;
+}
 
 /** The bytes a browser stores with a subscription, as it decodes the key altd handed the page. */
 function keyBytes(key: string): Uint8Array {
@@ -114,6 +133,7 @@ function alertingBrowser(permission: NotificationPermission = "default", answer:
   };
   Object.defineProperty(window, "isSecureContext", { configurable: true, value: true });
   Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: worker });
+  deviceStore(); // Cache Storage, empty: this device never chose
   vi.stubGlobal("ServiceWorkerRegistration", FakeRegistration);
   const notification = {
     permission,
@@ -142,6 +162,7 @@ function alreadyOn(seen: string[]) {
 const KEY = "altitude:choose-retention:q-retention";
 
 afterEach(() => {
+  paceRefusal = null;
   Reflect.deleteProperty(navigator, "serviceWorker");
   Reflect.deleteProperty(globalThis, "caches");
   vi.restoreAllMocks();
@@ -169,7 +190,7 @@ describe("decision alerts", () => {
     expect(options.userVisibleOnly).toBe(true);
     expect((options.applicationServerKey as Uint8Array).length).toBe(65);
     expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
-      method: "POST", body: JSON.stringify({ endpoint: "https://push.example/wake/device-1" }),
+      method: "POST", body: JSON.stringify({ endpoint: "https://push.example/wake/device-1", every: 0 }),
     }));
     expect(localStorage.getItem(ALERTS_PUSH_KEY)).toBe("on");
     expect(await screen.findByText(/even when Altitude is closed/)).toBeVisible();
@@ -191,7 +212,7 @@ describe("decision alerts", () => {
     await waitFor(() => expect(stale.unsubscribe).toHaveBeenCalled());
     expect(browser.registration.pushManager.subscribe).toHaveBeenCalled();
     expect(fetch).toHaveBeenCalledWith("/api/alerts/subscription", expect.objectContaining({
-      body: JSON.stringify({ endpoint: ENDPOINT }),
+      body: JSON.stringify({ endpoint: ENDPOINT, every: 0 }),
     }));
   });
 
@@ -401,5 +422,170 @@ describe("decision alerts", () => {
     // the next time its push service answers that it is gone.
     await waitFor(() => expect(browser.registration.subscription.unsubscribe).toHaveBeenCalled());
     expect(localStorage.getItem(ALERTS_PUSH_KEY)).toBeNull();
+  });
+});
+
+describe("this device's alert preferences", () => {
+  it("names nothing and stays silent when this device chose so", async () => {
+    const browser = alreadyOn([KEY]);
+    deviceStore({ reveal: "none", sound: false });
+    const setQueue = mockFetch([question]);
+    const { queryClient } = renderApp({ route: "/projects/altitude" });
+    await waitFor(() => expect(localStorage.getItem(ALERTS_SEEN_KEY)).toContain("q-retention"));
+
+    setQueue([question, second]);
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
+    await waitFor(() => expect(browser.shown).toHaveBeenCalledTimes(1));
+    expect(browser.shown).toHaveBeenCalledWith("A decision needs you", {
+      body: undefined, tag: second.alert_key,
+      data: { url: "/projects/altitude/tasks/run-restore-drill?question=q-drill&revision=1" }, silent: true,
+    });
+  });
+
+  it("names nothing when this device's choices cannot be read, and says so in Settings", async () => {
+    const browser = alreadyOn([KEY]);
+    deviceStore().set("/preferences", "{not json");
+    const setQueue = mockFetch([question]);
+    const { queryClient, router } = renderApp({ route: "/projects/altitude" });
+    await waitFor(() => expect(localStorage.getItem(ALERTS_SEEN_KEY)).toContain("q-retention"));
+
+    setQueue([question, second]);
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
+    await waitFor(() => expect(browser.shown).toHaveBeenCalledWith("A decision needs you", expect.objectContaining({ body: undefined })));
+
+    await act(async () => { await router.navigate("/settings"); });
+    const notifications = within(await screen.findByRole("region", { name: "Notifications" }));
+    expect(await notifications.findByRole("alert")).toHaveTextContent("This browser cannot keep alert choices here, so alerts name nothing.");
+    expect(notifications.queryByRole("combobox", { name: "Show" })).toBeNull();
+  });
+
+  it("brings Altitude's copy of this device's pace back to the device's own each time it opens", async () => {
+    const browser = alreadyOn([KEY]);
+    browser.registration.subscribed = browser.registration.subscription;
+    localStorage.setItem(ALERTS_PUSH_KEY, "on");
+    deviceStore({ every: 3600 });
+    mockFetch([question]);
+    renderApp({ route: "/" });
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/alerts/pace", expect.objectContaining({
+      body: JSON.stringify({ endpoint: ENDPOINT, every: 3600 }),
+    })));
+  });
+
+  it("names the project alone when this device chose so", async () => {
+    const browser = alreadyOn([KEY]);
+    deviceStore({ reveal: "project" });
+    const setQueue = mockFetch([question]);
+    const { queryClient } = renderApp({ route: "/projects/altitude" });
+    await waitFor(() => expect(localStorage.getItem(ALERTS_SEEN_KEY)).toContain("q-retention"));
+
+    setQueue([question, second]);
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
+    await waitFor(() => expect(browser.shown).toHaveBeenCalledWith("altitude needs a decision",
+      expect.objectContaining({ body: undefined, silent: false })));
+  });
+
+  it("with a pace, holds what arrives before it has passed and then shows it in one banner", async () => {
+    const browser = alreadyOn([]);
+    deviceStore({ every: 900 });
+    localStorage.setItem(ALERTS_LAST_KEY, String(Date.now() - 900_000 + 1_000)); // the pace ends in a second
+    const setQueue = mockFetch([]);
+    const { queryClient } = renderApp({ route: "/projects/altitude" });
+    await screen.findByRole("heading", { name: /altitude/i });
+
+    setQueue([question, second]);
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ["overview"] }); });
+    expect(browser.shown).not.toHaveBeenCalled();
+    expect(JSON.parse(localStorage.getItem(ALERTS_SEEN_KEY)!)).toEqual([]); // held, not recorded
+
+    await waitFor(() => expect(browser.shown).toHaveBeenCalledTimes(1), { timeout: 3_000 });
+    expect(browser.shown).toHaveBeenCalledWith("2 decisions need you", {
+      body: "altitude · Choose backup retention\naltitude · Run a restore drill",
+      tag: question.alert_key, data: { url: "/" }, silent: false,
+    });
+    expect(JSON.parse(localStorage.getItem(ALERTS_SEEN_KEY)!)).toEqual([question.alert_key, second.alert_key]);
+  });
+});
+
+describe("Notifications in Settings", () => {
+  const group = async () => within(await screen.findByRole("region", { name: "Notifications" }));
+
+  it("offers the switch alone, then this device's choices once alerts are on, and saves them on the device", async () => {
+    alertingBrowser("default", "granted");
+    const stored = deviceStore();
+    mockFetch([question], null);
+    const { user } = renderApp({ route: "/settings" });
+    const notifications = await group();
+    const alerts = notifications.getByRole("switch", { name: "Decision alerts" });
+    expect(alerts).not.toBeChecked();
+    expect(notifications.getByText("Altitude can alert you when a new decision arrives.")).toBeVisible();
+    expect(notifications.queryByRole("combobox", { name: "Show" })).toBeNull();
+    expect(notifications.queryByRole("switch", { name: "Sound" })).toBeNull();
+
+    await user.click(alerts);
+    await waitFor(() => expect(alerts).toBeChecked());
+    expect(await notifications.findByText(/only while Altitude is open/)).toBeVisible();
+    const show = notifications.getByRole("combobox", { name: "Show" });
+    const often = notifications.getByRole("combobox", { name: "How often" });
+    const sound = notifications.getByRole("switch", { name: "Sound" });
+    await waitFor(() => expect(show).toBeEnabled());
+    expect(show).toHaveValue("task");
+    expect(notifications.getByText("“altitude needs a decision” and the task name")).toBeVisible();
+    expect(often).toHaveValue("0");
+    expect(notifications.queryByText(/arrive together/)).toBeNull();
+    expect(sound).toBeChecked();
+
+    await user.selectOptions(show, "Project only");
+    expect(await notifications.findByText("“altitude needs a decision”")).toBeVisible();
+    await user.selectOptions(show, "Only that a decision waits");
+    expect(await notifications.findByText("“A decision needs you”")).toBeVisible();
+    await user.selectOptions(often, "At most once an hour");
+    expect(await notifications.findByText("Decisions in between arrive together in the next alert.")).toBeVisible();
+    await user.click(sound);
+    await waitFor(() => expect(sound).not.toBeChecked());
+    expect(JSON.parse(stored.get("/preferences")!)).toEqual({ reveal: "none", every: 3600, sound: false });
+    // A device push cannot wake keeps its pace to itself.
+    expect(fetch).not.toHaveBeenCalledWith("/api/alerts/pace", expect.anything());
+
+    await user.click(alerts);
+    await waitFor(() => expect(alerts).not.toBeChecked());
+    expect(notifications.queryByRole("combobox", { name: "Show" })).toBeNull();
+  });
+
+  it("tells Altitude how often it may wake this device, and keeps the earlier pace when refused", async () => {
+    const browser = alreadyOn([KEY]);
+    browser.registration.subscribed = browser.registration.subscription;
+    localStorage.setItem(ALERTS_PUSH_KEY, "on");
+    const stored = deviceStore();
+    mockFetch([question]);
+    const { user } = renderApp({ route: "/settings" });
+    const notifications = await group();
+    const often = await notifications.findByRole("combobox", { name: "How often" });
+    await waitFor(() => expect(often).toBeEnabled());
+
+    await user.selectOptions(often, "At most every 15 minutes");
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/alerts/pace", expect.objectContaining({
+      method: "POST", body: JSON.stringify({ endpoint: ENDPOINT, every: 900 }),
+    })));
+    await waitFor(() => expect(JSON.parse(stored.get("/preferences")!)).toMatchObject({ every: 900 }));
+
+    paceRefusal = "This device is not subscribed to alerts. Turn alerts off and on to subscribe it again.";
+    await user.selectOptions(often, "At most once an hour");
+    expect(await notifications.findByRole("alert")).toHaveTextContent(paceRefusal);
+    expect(often).toHaveValue("900");
+    expect(JSON.parse(stored.get("/preferences")!)).toMatchObject({ every: 900 });
+  });
+
+  it("shows only the switch, explaining itself on press, where alerts cannot be on", async () => {
+    alertingBrowser("denied", "denied");
+    deviceStore();
+    mockFetch([]);
+    const { user } = renderApp({ route: "/settings" });
+    const notifications = await group();
+    const alerts = notifications.getByRole("switch", { name: "Decision alerts" });
+    expect(alerts).toHaveAttribute("aria-disabled", "true");
+    expect(notifications.getByText(/blocked in this browser's settings/)).toHaveClass("sr-only");
+    await user.click(alerts);
+    expect(notifications.getByText(/blocked in this browser's settings/)).not.toHaveClass("sr-only");
+    expect(notifications.queryByRole("combobox")).toBeNull();
   });
 });

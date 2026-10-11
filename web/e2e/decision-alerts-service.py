@@ -32,7 +32,8 @@ def main():
     class Handler(server.Handler):
         def do_GET(self):
             if self.path == "/fixture/push":  # what altd would wake for a decision
-                return self._json({"subscriptions": push._record()["subscriptions"]})
+                record = push._record()
+                return self._json({"subscriptions": record["subscriptions"], "every": record["every"]})
             return super().do_GET()
 
         def do_POST(self):

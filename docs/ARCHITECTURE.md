@@ -1994,7 +1994,7 @@ under `altitude.alerts`, the permission states, and the keys already alerted und
 question alerts: faults, stops and reviews stay in Needs you without one. Every alert is shown through
 `web/public/sw.js`, the one service worker, whose registration Android requires for a notification and whose
 click handler routes the open app to the decision before focusing it, or opens the decision when there is no
-app or it cannot be focused. Content is the project and task name only. `tasks.decisions()` gives each operator
+app or it cannot be focused. Content is the project and task name at most. `tasks.decisions()` gives each operator
 question its `alert_key`, the one identity altd's wake, the page and the worker alert on: project, task and
 question group, followed by the time of the operator's latest message on that task once there is one (the
 task's `replied`, set with `handed_back` on every operator message and never cleared). A rewording, the
@@ -2019,9 +2019,12 @@ alerts on keeps its change stream while hidden; every other hidden tab still clo
 A device is also woken while Altitude is closed. `altitude/push.py` keeps the VAPID signing key under
 `~/.altitude/push/` and the subscribed endpoints in `~/.altitude/push.json`, both written only by the
 daemon; the switch registers its endpoint through `/api/alerts/subscription` and reads the public key
-from `/api/alerts`. Each tick, a decision key that newly may alert marks every device `owed` one empty,
-signed POST and logs `push wakes <n> device(s) for <m> new decision(s)`; an owed device is tried each tick
-until its push service takes one, or until every announced decision is settled. No payload is sent, so no
+from `/api/alerts`. Each tick, a decision key that newly may alert is recorded as owed to every device
+(`owes`), which is woken with one empty, signed POST, and logs `push wakes <n> device(s) for <m> new
+decision(s)`; an owed device is tried each tick until its push service takes a wake for it, a decision
+whose task is moving again stays owed until the task rests, and a decision settled first is owed no more, so
+a device whose owed decisions were all settled is not woken. A wake's outcome applies only to the subscription
+it was sent for: a device that subscribes again meanwhile starts clean. No payload is sent, so no
 encryption library is needed and no word of the decision leaves the machine. Nothing else wakes a device:
 Safari ends a subscription after three pushes that show no notification, WebKit keeps a banner it is asked to
 close within 30 seconds, and iOS stacks a second banner for a tag rather than replacing the first, so a push
@@ -2039,6 +2042,23 @@ settled before this alert arrived." An answered banner
 therefore closes when a page next reads the queue or the next alert wakes the device. An endpoint the
 service reports gone is dropped, a refusal is logged and kept, and a machine without OpenSSL or outbound
 reach simply has no push, which the switch states.
+
+Each device chooses in Settings › Notifications what its banners reveal (project and task, the project
+only, or only that a decision waits), how often it is alerted (every new decision, at most every 15
+minutes, or at most once an hour) and whether alerts sound. The choices live on the device, under
+`/preferences` in the worker's Cache Storage `altitude-alerts`, the one store both the page and
+`web/public/sw.js` read, so a phone can stay discreet while a desktop names everything. A device that never
+chose gets the project and task, every decision, with sound; a store that cannot be read or written names
+nothing, so a storage failure never reveals more than was chosen nor leaves a push without its banner, and
+Settings says so. With a pace chosen, several new
+decisions read "<n> decisions need you" with one line each, as much as the device reveals, and open Needs
+you; sound off makes every banner silent. Altitude learns only the pace, because it sends the wakes: the
+subscription carries it, `POST /api/alerts/pace` changes it, and `push.json` keeps it per endpoint
+(`every`) with when that device's push service last took a wake (`woken`). An owed device is woken only
+once its pace has passed since then, so one wake covers what arrived meanwhile; Altitude takes a change
+before the device saves it, and the page re-sends the device's pace each time Altitude opens there, so the
+two copies converge. A device without push paces the open page the same way, holding fresh keys
+unrecorded until `altitude.alerts.last` plus the pace has passed.
 EventSource retries a dropped connection after the stream's 3-second `retry`; a refused stream, such
 as during daemon activation, reconnects after 5 seconds. A hidden tab closes its stream and reopens it,
 refetching, when shown, so background tabs hold none of the browser's connections to altd. Ordinary 20-second polling, the 2-second

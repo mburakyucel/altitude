@@ -15,6 +15,8 @@ import { useViewport } from "../shell/breakpoints";
 import VoiceDiagnostics from "../components/VoiceDiagnostics";
 import { UnavailableAction } from "../components/UnavailableAction";
 import { dateText } from "../data/observed";
+import { disableAlerts, enableAlerts, savePreferences, useAlertNote, useAlertState, usePreferences } from "../data/alerts";
+import type { Preferences, Reveal } from "../data/alerts";
 import "./settings.css";
 
 const labels: Record<VoiceBackend, string> = { host: "This computer", browser: "Browser recognition" };
@@ -239,6 +241,80 @@ function MachineSwitch({ id, title, detail, enabled, unavailable, save: send }: 
       : <input id={id} type="checkbox" role="switch" className="settings-switch" checked={enabled ?? false}
         disabled={enabled === undefined || save.status === "saving"} onChange={(event) => void change(event.target.checked)} />}
   </div>;
+}
+
+const reveals: Record<Reveal, string> = { task: "Project and task", project: "Project only", none: "Only that a decision waits" };
+const paces: Record<Preferences["every"], string> = { 0: "Every new decision", 900: "At most every 15 minutes", 3600: "At most once an hour" };
+
+/**
+ * Decision alerts on this device (SPEC.md §3.15): the switch, then what a banner shows, how often one arrives
+ * and whether it sounds. Each device keeps its own, so the choices appear only once alerts are on here.
+ */
+function NotificationsGroup({ overview }: { overview: Overview | undefined }) {
+  const state = useAlertState();
+  const note = useAlertNote(state);
+  const chosen = usePreferences();
+  const [asking, setAsking] = useState(false);
+  const [showReason, setShowReason] = useState(false);
+  const [save, setSave] = useState<{ status: "idle" | "saving"; change?: Partial<Preferences> } | { status: "failed"; error: Error }>({ status: "idle" });
+  const settled = state === "unsupported" || state === "blocked";
+  const project = managedProjects(overview).at(0)?.name ?? "atlas";
+  // The change being saved shows at once; a refusal puts the saved choice back.
+  const shown = chosen ? { ...chosen, ...(save.status === "saving" ? save.change : {}) } : undefined;
+  const choose = async (change: Partial<Preferences>) => {
+    if (!chosen) return;
+    setSave({ status: "saving", change });
+    try {
+      await savePreferences({ ...chosen, ...change });
+      setSave({ status: "idle" });
+    } catch (error) {
+      setSave({ status: "failed", error: error as Error });
+    }
+  };
+  const busy = save.status === "saving";
+  const shows = !shown ? "" : shown.reveal === "task" ? `“${project} needs a decision” and the task name`
+    : shown.reveal === "project" ? `“${project} needs a decision”` : "“A decision needs you”";
+  return <section className="settings-section" aria-label="Notifications">
+    <h2>Notifications</h2>
+    <div className="settings-group">
+      <div className="settings-row settings-switch-row">
+        <label htmlFor="alerts-switch"><strong>Decision alerts</strong>{" "}
+          <small id="alerts-switch-note" className={settled && !showReason ? "sr-only" : undefined}>{note}</small></label>
+        {settled ? <button id="alerts-switch" type="button" role="switch" className="settings-switch" aria-checked="false"
+          aria-label="Decision alerts" aria-disabled="true" aria-describedby="alerts-switch-note" onClick={() => setShowReason(!showReason)} />
+          : <input id="alerts-switch" type="checkbox" role="switch" className="settings-switch" aria-label="Decision alerts"
+            checked={state === "on"} disabled={asking} aria-describedby="alerts-switch-note" onChange={(event) => {
+              if (!event.target.checked) return disableAlerts();
+              setAsking(true);
+              void enableAlerts(overview?.queue ?? []).catch(disableAlerts).finally(() => setAsking(false));
+            }} />}
+      </div>
+      {state === "on" && shown ? <>
+        <label className="settings-row">
+          <span><strong>Show</strong>{" "}<small>{shows}</small></span>
+          <select className="settings-select" aria-label="Show" value={shown.reveal} disabled={busy}
+            onChange={(event) => void choose({ reveal: event.target.value as Reveal })}>
+            {Object.entries(reveals).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </label>
+        <label className="settings-row">
+          <span><strong>How often</strong>{shown.every ? <>{" "}<small>Decisions in between arrive together in the next alert.</small></> : null}</span>
+          <select className="settings-select" aria-label="How often" value={shown.every} disabled={busy}
+            onChange={(event) => void choose({ every: Number(event.target.value) as Preferences["every"] })}>
+            {Object.entries(paces).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </label>
+        <div className="settings-row settings-switch-row">
+          <label htmlFor="alerts-sound"><strong>Sound</strong></label>
+          <input id="alerts-sound" type="checkbox" role="switch" className="settings-switch" checked={shown.sound} disabled={busy}
+            onChange={(event) => void choose({ sound: event.target.checked })} />
+        </div>
+      </> : null}
+    </div>
+    {state === "on" && chosen === null ? <p role="alert" className="text-meta text-danger">This browser cannot keep alert choices here, so alerts name nothing.</p> : null}
+    {busy ? <StatusMark label="Saving…" /> : null}
+    {save.status === "failed" ? <p role="alert" className="text-meta text-danger">{save.error.message}</p> : null}
+  </section>;
 }
 
 /** The operator's terminal, off after install. */
@@ -598,6 +674,7 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
         </div>
         <div className="settings-column">
           <Group title="Voice">{voiceRow}</Group>
+          <NotificationsGroup overview={overview.data} />
           <Group title="Devices and access">
             <Link className="settings-row" to="/settings/devices" state={state}>
               <span><strong>Devices</strong>{" "}<small>{devices.data ? `${devices.data.devices.length} paired · pair another, certificate` : "Loading…"}</small></span><span aria-hidden>›</span>
