@@ -666,7 +666,8 @@ id; Retry replaces it, Edit and a read that shows the send id remove it, Copy to
 reload, or after pairing again (which clears the messages on their way), the copies no message shows return
 to the field as a draft in send order, each on its own line, ahead of any draft, with one hint: "Could not
 confirm delivery. Check the conversation before sending again." when any copy is unconfirmed, otherwise
-"Not sent."; image messages recover their caption only. Nothing is sent without the operator pressing Send,
+"Not sent."; a send that fails after pairing again cleared its message returns the same way at once. Image
+messages recover their caption only. Nothing is sent without the operator pressing Send,
 and a recovered draft goes wherever a typed one would. Removing a project in this browser drops its copies.
 A later callback from an earlier send cannot change a newer pending message.
 

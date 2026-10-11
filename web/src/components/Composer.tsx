@@ -77,7 +77,7 @@ const liveSubmissions = new Set<string>();
 const unwrittenRecovery = new Map<string, { stored: string | null; value: SubmittedText }>();
 const recoveryViews = new Map<string, { draft: () => string; failure: () => SendFailure; restore: (saved: SubmittedText, unavailable?: boolean, id?: string) => void;
   paste: (text: string, images?: ImagePreview[]) => boolean;
-  voice: (send: VoiceSend | null) => void; submit: (text: string, voice?: VoiceSend) => Promise<void> }>();
+  voice: (send: VoiceSend | null) => void; submit: (text: string, voice?: VoiceSend) => Promise<void>; recover: (live?: boolean) => void }>();
 const recoveryKey = (conversation: string) => `altitude.submitted:${conversation}`;
 function readSubmitted(conversation: string): SubmittedText {
   const saved = sessionStorage.getItem(recoveryKey(conversation));
@@ -533,6 +533,32 @@ export default function Composer({
   }, []);
 
   useEffect(() => {
+    // Copies that no live send owns and no message shows return to the field: on mount (a reload, a remount, pairing
+    // again) and when a send fails after its message is gone (pairing again cleared it while the request was out).
+    // A live view already holds its recovered text in the field, so only the newly orphaned words join it.
+    const recover = (live = false) => {
+      try {
+        const saved = readSubmitted(conversation);
+        // A reload has no live request to await. Keep the copies' words in send order without claiming acceptance
+        // or resending; the cautious hint wins unless every copy was refused.
+        const orphaned = Object.entries(saved.pending).filter(([id]) => !liveSubmissions.has(id) && !showing.current?.(id));
+        if (live && !orphaned.length) return;
+        if (orphaned.length) {
+          const refused = new Set(saved.refused ?? []);
+          saved.text = [...orphaned.map(([, text]) => text), live ? "" : saved.text].filter(Boolean).join("\n");
+          saved.failure = saved.failure === "unconfirmed" || orphaned.some(([id]) => !refused.has(id)) ? "unconfirmed" : "refused";
+          for (const [id] of orphaned) { delete saved.pending[id]; refused.delete(id); }
+          saved.refused = refused.size ? [...refused] : undefined;
+        }
+        if (saved.text || saved.failure === "transcription" || saved.failure === "unreached") {
+          saved.text = [saved.text, draft.current].filter(Boolean).join("\n");
+          view.restore(saved);
+          try { saveSubmitted(conversation, saved); setRecoveryUnavailable(false); }
+          catch { setRecoveryUnavailable(true); }
+        }
+        // A live failure its message shows needs nothing from storage; only a mount says recovery is unavailable.
+      } catch { if (!live) setVoiceFailure("Message recovery is unavailable in this browser."); }
+    };
     const view = {
       voice: (send: VoiceSend | null) => { setVoiceSend(send); if (!send) setPhase("idle"); },
       submit: (text: string, voice?: VoiceSend) => currentSubmit.current(text, voice),
@@ -546,6 +572,7 @@ export default function Composer({
         focusField(next.length);
         return true;
       },
+      recover,
       restore: (saved: SubmittedText, unavailable = false, id?: string) => {
         draft.current = saved.text;
         onChange(saved.text);
@@ -557,25 +584,7 @@ export default function Composer({
       },
     };
     recoveryViews.set(conversation, view);
-    try {
-      const saved = readSubmitted(conversation);
-      // A reload has no live request to await. Keep the copies' words in send order without claiming acceptance
-      // or resending; the cautious hint wins unless every copy was refused.
-      const orphaned = Object.entries(saved.pending).filter(([id]) => !liveSubmissions.has(id) && !showing.current?.(id));
-      if (orphaned.length) {
-        const refused = new Set(saved.refused ?? []);
-        saved.text = [...orphaned.map(([, text]) => text), saved.text].filter(Boolean).join("\n");
-        saved.failure = saved.failure === "unconfirmed" || orphaned.some(([id]) => !refused.has(id)) ? "unconfirmed" : "refused";
-        for (const [id] of orphaned) { delete saved.pending[id]; refused.delete(id); }
-        saved.refused = refused.size ? [...refused] : undefined;
-      }
-      if (saved.text || saved.failure === "transcription" || saved.failure === "unreached") {
-        saved.text = [saved.text, draft.current].filter(Boolean).join("\n");
-        view.restore(saved);
-        try { saveSubmitted(conversation, saved); setRecoveryUnavailable(false); }
-        catch { setRecoveryUnavailable(true); }
-      }
-    } catch { setVoiceFailure("Message recovery is unavailable in this browser."); }
+    view.recover();
     return () => {
       if (recoveryViews.get(conversation) === view) recoveryViews.delete(conversation);
       // Task tabs retain their parent draft. Transfer recovered text to storage on leaving so a
@@ -636,8 +645,10 @@ export default function Composer({
         await send(ready, () => settleSubmitted(conversation, id, text, null), submission, id);
         settleSubmitted(conversation, id, text, null);
       } catch {
-        // The conversation shows the failure on the message and has marked its copy for a reload.
+        // The conversation shows the failure on the message and has marked its copy; a copy no message shows
+        // returns to the field now.
         liveSubmissions.delete(id);
+        recoveryViews.get(conversation)?.recover(true);
       }
       if (mounted.current && focusAfterSend.current.delete(id)) focusField();
     },

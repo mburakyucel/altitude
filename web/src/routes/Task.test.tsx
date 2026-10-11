@@ -1442,6 +1442,35 @@ describe("Task on the phone", () => {
     expect(finishes).toHaveLength(2);
   });
 
+  it.each([409, 200])("a send that finishes %i after pairing again cleared its message returns its words only if it failed", async (status) => {
+    setViewport(390);
+    let finish!: (response: Response) => void;
+    stub(running, { message: () => new Promise<Response>((resolve) => { finish = resolve; }) });
+    const { user, queryClient, router } = renderApp({ route });
+    const field = await screen.findByLabelText("Message the L2");
+    await user.type(field, "Sent before pairing again");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    // Pairing again starts the app fresh while the request is still out (PairGate.tsx): the message is gone.
+    await act(async () => { await router.navigate("/settings"); });
+    act(() => queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "access" }));
+    await act(async () => { await router.navigate(route); });
+    const fresh = await screen.findByLabelText("Message the L2");
+    expect(fresh).toHaveValue("");
+    await user.type(fresh, "Typed since");
+    await act(async () => finish(status === 409 ? jsonResponse({ error: "Send failed" }, 409)
+      : jsonResponse({ ok: true, message: { id: "m-late", at: new Date().toISOString(), role: "burak", text: "Sent before pairing again" } })));
+    if (status === 409) {
+      // No message shows the refusal, so its words return to the field at once, ahead of what was typed since.
+      await waitFor(() => expect(fresh).toHaveValue("Sent before pairing again\nTyped since"));
+      expect(document.querySelector(".composer-hint[role=alert]")).toHaveTextContent("Not sent.");
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    } else {
+      expect(fresh).toHaveValue("Typed since");
+      expect(document.querySelector(".composer-hint[role=alert]")).toBeNull();
+    }
+    expect(screen.queryByText("Sent before pairing again", { selector: ".bubble *, .bubble" })).toBeNull();
+  });
+
   it("does not restore an earlier task's failed send into the destination task", async () => {
     setViewport(390);
     let finish!: (response: Response) => void;

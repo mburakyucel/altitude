@@ -5,7 +5,6 @@ import { StrictMode, useState } from "react";
 import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import Composer, { combineDraft, formatTimer, markSubmitted } from "./Composer";
 import type { ComposerProps } from "./Composer";
-import type { ImageSubmission } from "./ImageDraft";
 import { ApiError } from "../data/api";
 import type { HostVoiceOptions } from "./voiceTest";
 import { FakeSpeechRecognition, hostMicrophone, hostVoiceServer, installVoiceBrowser, punctuationFixture, sentence, speak } from "./voiceTest";
@@ -53,19 +52,36 @@ function Switcher(props: Partial<ComposerProps>) {
 }
 
 /**
+ * A page's outbox (Conversation.tsx, Task.tsx): a sent message shows its copy, through view changes and remounts,
+ * until the send is accepted. `keep` wraps a send so; only a reload or pairing again loses the outbox (`forget`).
+ */
+function outbox() {
+  const shown = new Set<string>();
+  return {
+    shows: (copy: string) => shown.has(copy),
+    forget: () => shown.clear(),
+    keep: (submit: ComposerProps["onSubmit"]): ComposerProps["onSubmit"] => (text, accepted, images, copy) => {
+      shown.add(copy!);
+      return submit(text, () => { shown.delete(copy!); accepted(); }, images, copy);
+    },
+  };
+}
+
+/**
  * A conversation's sends, each settled by the test. Like the pages (Conversation.tsx, Task.tsx), it shows a failed
  * send on its own message and marks the send's recovery copy with how it failed.
  */
 function conversationSend(conversation = "project/altitude") {
   const settles: Array<(error?: Error) => void> = [];
-  const onSubmit = vi.fn((_text: string, accepted: () => void, _images?: ImageSubmission, copy?: string) => new Promise<void>((resolve, reject) => {
+  const { shows, forget, keep } = outbox();
+  const onSubmit = vi.fn(keep((_text, accepted, _images, copy) => new Promise<void>((resolve, reject) => {
     settles.push((error) => {
       if (!error) { accepted(); resolve(); return; }
       markSubmitted(conversation, copy!, error instanceof ApiError && error.status < 500 ? "refused" : "unconfirmed");
       reject(error);
     });
-  }));
-  return { onSubmit, settles };
+  })));
+  return { onSubmit, settles, shows, forget };
 }
 
 /** This computer's speech service: it answers `words` while listening and `final` at the end. */
@@ -197,25 +213,52 @@ describe("Composer", () => {
     expect(field).toHaveValue("Keep this editing works");
   });
 
-  it.each([false, true])("a late failure leaves the remounted composer's newer draft alone; the next mount returns the copy unless a message shows it (%s)", async (shown) => {
-    const { onSubmit, settles } = conversationSend();
-    const shows = () => shown;
+  it.each([true, false])("a late failure leaves the remounted composer's newer draft alone while its message shows it; once the message is gone, the words return at once ahead of it (shown: %s)", async (shown) => {
+    const { onSubmit, settles, shows, forget } = conversationSend();
     const first = mount({ onSubmit, shows });
     await first.user.type(first.field, "Submitted before leaving");
     await first.user.click(screen.getByRole("button", { name: "Send" }));
     first.unmount();
     const second = mount({ onSubmit, shows });
     await second.user.type(second.field, "Typed after returning");
+    // Pairing again while the request is out clears the outbox, and with it the message.
+    if (!shown) forget();
     await act(async () => settles[0]!(new TypeError("Lost receipt")));
-    // The conversation shows the failure on its message; the field keeps what was typed since.
-    expect(second.field).toHaveValue("Typed after returning");
-    expect(screen.queryByRole("alert")).toBeNull();
+    if (shown) {
+      // The conversation shows the failure on its message; the field keeps what was typed since.
+      expect(second.field).toHaveValue("Typed after returning");
+      expect(screen.queryByRole("alert")).toBeNull();
+    } else {
+      expect(second.field).toHaveValue("Submitted before leaving\nTyped after returning");
+      expect(screen.getByRole("alert").textContent).toBe("Could not confirm delivery. Check the conversation before sending again.");
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    }
     second.unmount();
     const third = mount({ onSubmit, shows });
-    expect(third.field).toHaveValue(shown ? "" : "Submitted before leaving");
+    expect(third.field).toHaveValue(shown ? "" : "Submitted before leaving\nTyped after returning");
     if (shown) expect(screen.queryByRole("alert")).toBeNull();
     else expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery.");
     expect(onSubmit).toHaveBeenCalledOnce();
+  });
+
+  it("a send refused after its message is gone joins the field at once ahead of the draft under Not sent.; one its message shows leaves the field alone", async () => {
+    const { onSubmit, settles, shows, forget } = conversationSend();
+    const { user, field } = mount({ onSubmit, shows });
+    await user.type(field, "Sent before pairing");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    // Pairing again while the request is out clears the outbox, and with it the message.
+    forget();
+    await user.type(field, "Sent after pairing");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.type(field, "Typed since");
+    await act(async () => settles[1]!(new ApiError(409, "Refused")));
+    expect(field).toHaveValue("Typed since");
+    expect(screen.queryByRole("alert")).toBeNull();
+    await act(async () => settles[0]!(new ApiError(409, "Refused")));
+    expect(field).toHaveValue("Sent before pairing\nTyped since");
+    expect(screen.getByRole("alert").textContent).toBe("Not sent.");
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(onSubmit).toHaveBeenCalledTimes(2);
   });
 
   it("retires recovery at acceptance while the response remains open and leaves the next draft alone", async () => {
@@ -269,12 +312,15 @@ describe("Composer", () => {
   it("keeps dictated edits in unconfirmed recovery across remount", async () => {
     installVoiceBrowser();
     hostVoice("", "and the tests");
-    const { onSubmit, settles } = conversationSend();
-    const first = mount({ onSubmit });
+    const { onSubmit, settles, shows, forget } = conversationSend();
+    const first = mount({ onSubmit, shows });
     await first.user.type(first.field, "Inspect the sample");
     await first.user.click(screen.getByRole("button", { name: "Send" }));
     await act(async () => settles[0]!(new TypeError("Lost receipt")));
+    expect(first.field).toHaveValue("");
     first.unmount();
+    // A reload loses the outbox; the words the message showed return to the field.
+    forget();
     const second = mount();
     expect(second.field).toHaveValue("Inspect the sample");
     expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery.");
@@ -334,10 +380,11 @@ describe("Composer", () => {
 
   it.each([true, false])("storage read failure after submission preserves accepted=%s semantics", async (accepted) => {
     let finish!: () => void;
-    const onSubmit = vi.fn((_text: string, accept: () => void) => new Promise<void>((resolve, reject) => {
+    const { shows, forget, keep } = outbox();
+    const onSubmit = vi.fn(keep((_text, accept) => new Promise<void>((resolve, reject) => {
       finish = () => { if (accepted) { accept(); resolve(); } else reject(new TypeError("Lost receipt")); };
-    }));
-    const { user, field, unmount } = mount({ onSubmit });
+    })));
+    const { user, field, unmount } = mount({ onSubmit, shows });
     await user.type(field, "Submitted text");
     await user.click(screen.getByRole("button", { name: "Send" }));
     await user.type(field, "New draft");
@@ -349,15 +396,16 @@ describe("Composer", () => {
       expect(screen.queryByRole("alert")).toBeNull();
     } finally { storage.mockRestore(); }
     if (accepted) return;
-    // The unaccepted message keeps its copy for the next view.
+    // The unaccepted message keeps its copy for a reload.
     unmount();
+    forget();
     expect(mount().field).toHaveValue("Submitted text");
     expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery.");
   });
 
-  it("a failed read never overwrites the stored copies, and mixed copies return in send order without Retry", async () => {
-    const { onSubmit, settles } = conversationSend();
-    const first = mount({ onSubmit });
+  it("a failed read never overwrites the stored copies, and mixed copies return after a reload in send order without Retry", async () => {
+    const { onSubmit, settles, shows, forget } = conversationSend();
+    const first = mount({ onSubmit, shows });
     for (const text of ["Unconfirmed text", "Refused text"]) {
       await first.user.type(first.field, text);
       await first.user.click(screen.getByRole("button", { name: "Send" }));
@@ -372,6 +420,7 @@ describe("Composer", () => {
     } finally { storage.mockRestore(); }
     expect(sessionStorage.getItem("altitude.submitted:project/altitude")).toBe(evidence);
     first.unmount();
+    forget();
     expect(mount().field).toHaveValue("Unconfirmed text\nRefused text");
     expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery.");
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
@@ -415,17 +464,18 @@ describe("Composer", () => {
     expect(queue).toBeDisabled();
   });
 
-  it("refused: the field stays clear; the next mount returns the words as a draft under Not sent., and Send sends them", async () => {
-    const { onSubmit, settles } = conversationSend();
-    const first = mount({ onSubmit, hint: "L3 answers or creates one task." });
+  it("refused: the field stays clear; after a reload the words return as a draft under Not sent., and Send sends them", async () => {
+    const { onSubmit, settles, shows, forget } = conversationSend();
+    const first = mount({ onSubmit, shows, hint: "L3 answers or creates one task." });
     await first.user.type(first.field, "ship it");
     await first.user.click(screen.getByRole("button", { name: "Send" }));
     await act(async () => settles[0]!(new ApiError(409, "Refused")));
     expect(first.field).toHaveValue("");
     expect(screen.queryByRole("alert")).toBeNull();
     first.unmount();
+    forget();
 
-    const { user, field } = mount({ onSubmit, hint: "L3 answers or creates one task." });
+    const { user, field } = mount({ onSubmit, shows, hint: "L3 answers or creates one task." });
     expect(field).toHaveValue("ship it");
     const alert = screen.getByRole("alert");
     // Recovered words are a draft: Send sends them to what the page shows now (SPEC.md §3.6).
@@ -441,9 +491,9 @@ describe("Composer", () => {
     expect(sessionStorage.getItem("altitude.submitted:project/altitude")).toBeNull();
   });
 
-  it.each([409, 500, null])("keeps newer typing through failure %s, and the next view returns the unsent words ahead of it", async (status) => {
-    const { onSubmit, settles } = conversationSend();
-    render(<Switcher onSubmit={onSubmit} />);
+  it.each([409, 500, null])("keeps newer typing through failure %s and view changes; after pairing again the next view returns the unsent words ahead of it", async (status) => {
+    const { onSubmit, settles, shows, forget } = conversationSend();
+    render(<Switcher onSubmit={onSubmit} shows={shows} />);
     const user = userEvent.setup();
     const field = () => screen.getByLabelText("Message L3 about altitude");
     await user.type(field(), "Original draft");
@@ -452,7 +502,13 @@ describe("Composer", () => {
     await act(async () => settles[0]!(status ? new ApiError(status, "Request failed") : new TypeError("Network failed")));
     expect(field()).toHaveValue("New draft");
     expect(screen.queryByRole("alert")).toBeNull();
+    // The message still shows the failure in the next view.
     await user.click(screen.getByRole("button", { name: "Switch view" }));
+    await user.click(screen.getByRole("button", { name: "Switch view" }));
+    expect(field()).toHaveValue("New draft");
+    expect(screen.queryByRole("alert")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Switch view" }));
+    forget();
     await user.click(screen.getByRole("button", { name: "Switch view" }));
     expect(field()).toHaveValue("Original draft\nNew draft");
     expect(screen.getByRole("alert").textContent).toBe(status === 409 ? "Not sent." : "Could not confirm delivery. Check the conversation before sending again.");
@@ -460,24 +516,26 @@ describe("Composer", () => {
     expect(onSubmit).toHaveBeenCalledOnce();
   });
 
-  it("returns concurrent refused sends in send order without losing either", async () => {
-    const { onSubmit, settles } = conversationSend();
-    const first = mount({ onSubmit });
+  it("returns concurrent refused sends after a reload in send order without losing either", async () => {
+    const { onSubmit, settles, shows, forget } = conversationSend();
+    const first = mount({ onSubmit, shows });
     for (const text of ["First draft", "Second draft"]) {
       await first.user.type(first.field, text);
       await first.user.click(screen.getByRole("button", { name: "Send" }));
     }
     await act(async () => { [...settles].reverse().forEach((refuse) => refuse(new ApiError(409, "Refused"))); });
     expect(first.field).toHaveValue("");
+    expect(screen.queryByRole("alert")).toBeNull();
     first.unmount();
+    forget();
     expect(mount().field).toHaveValue("First draft\nSecond draft");
     expect(onSubmit).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("alert").textContent).toBe("Not sent.");
   });
 
   it.each([true, false])("keeps mixed failed sends unconfirmed when refusal finishes first: %s", async (refusalFirst) => {
-    const { onSubmit, settles } = conversationSend();
-    render(<Switcher onSubmit={onSubmit} />);
+    const { onSubmit, settles, shows, forget } = conversationSend();
+    render(<Switcher onSubmit={onSubmit} shows={shows} />);
     const user = userEvent.setup();
     const field = () => screen.getByLabelText("Message L3 about altitude");
     for (const text of ["Refused draft", "Unconfirmed draft"]) {
@@ -489,7 +547,10 @@ describe("Composer", () => {
       await act(async () => settles[index]!(index === 0 ? new ApiError(409, "Refused") : new TypeError("Network failed")));
     }
     expect(field()).toHaveValue("New draft");
+    expect(screen.queryByRole("alert")).toBeNull();
+    // Pairing again while away loses the messages; the next view returns their words.
     await user.click(screen.getByRole("button", { name: "Switch view" }));
+    forget();
     await user.click(screen.getByRole("button", { name: "Switch view" }));
     expect(field()).toHaveValue("Refused draft\nUnconfirmed draft\nNew draft");
     expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery. Check the conversation before sending again.");
@@ -710,16 +771,17 @@ describe("Composer", () => {
 
   it.each([["accepted", false], ["refused", false], ["accepted", true], ["refused", true]])("a send %s after a view change (stayed in view: %s) focuses the field only for a Send made in view", async (outcome, stayed) => {
     const pending: Array<(refuse: boolean) => void> = [];
-    const onSubmit = vi.fn(() => new Promise<void>((resolve, reject) => {
+    const { shows, keep } = outbox();
+    const onSubmit = vi.fn(keep(() => new Promise<void>((resolve, reject) => {
       pending.push((refuse) => (refuse ? reject(new ApiError(409, "Refused")) : resolve()));
-    }));
-    const { user, field, rerender } = mount({ onSubmit });
+    })));
+    const { user, field, rerender } = mount({ onSubmit, shows });
     await user.type(field, "first");
     await user.click(screen.getByRole("button", { name: "Send" }));
     if (!stayed) {
-      rerender(<Harness onSubmit={onSubmit} active={false} />);
+      rerender(<Harness onSubmit={onSubmit} shows={shows} active={false} />);
       await act(async () => undefined);
-      rerender(<Harness onSubmit={onSubmit} active />);
+      rerender(<Harness onSubmit={onSubmit} shows={shows} active />);
     }
     // A second Send made after returning keeps its own claim and cannot lend it to the first.
     await user.type(field, "second");
@@ -789,28 +851,34 @@ describe("Composer", () => {
   it.each([false, true])("an earlier failed send remains unsent while voice Send finishes; failure after remount=%s", async (afterRemount) => {
     installVoiceBrowser();
     const server = hostVoice("", "dictated");
-    const { onSubmit, settles } = conversationSend();
-    const first = mount({ initial: "Earlier request", onSubmit });
+    const { onSubmit, settles, shows, forget } = conversationSend();
+    const first = mount({ initial: "Earlier request", onSubmit, shows });
     await first.user.click(screen.getByRole("button", { name: "Send" }));
     await first.user.type(first.field, "Voice request");
     await listen(first.user);
     server.connection = "hold";
     await first.user.click(screen.getByRole("button", { name: "Send" }));
     first.unmount();
-    if (!afterRemount) await act(async () => settles[0]!(new ApiError(409, "Refused")));
-    const source = mount({ onSubmit });
+    if (!afterRemount) {
+      await act(async () => settles[0]!(new ApiError(409, "Refused")));
+      // Pairing again while away loses the message.
+      forget();
+    }
+    const source = mount({ onSubmit, shows });
     if (afterRemount) await act(async () => settles[0]!(new ApiError(409, "Refused")));
     expect(source.field).toHaveValue("Voice request");
     expect(source.field).toHaveAttribute("readonly");
     await act(async () => server.reconnect());
     await settle();
     expect(onSubmit).toHaveBeenNthCalledWith(2, "Voice request dictated", expect.any(Function), undefined, expect.any(String));
-    // A refusal known when this view opened is back in its field; a later one waits for the next view.
+    // A refusal whose message was gone when this view opened is back in its field; one its message shows stays there.
     expect(source.field).toHaveValue(afterRemount ? "" : "Earlier request");
     if (afterRemount) expect(screen.queryByRole("alert")).toBeNull();
     else expect(screen.getByRole("alert")).toHaveTextContent("Not sent.");
     source.unmount();
-    const returned = mount({ onSubmit });
+    // A reload loses the message that showed it.
+    forget();
+    const returned = mount({ onSubmit, shows });
     expect(returned.field).toHaveValue("Earlier request");
     expect(screen.getByRole("alert")).toHaveTextContent("Not sent.");
     expect(onSubmit).toHaveBeenCalledTimes(2);

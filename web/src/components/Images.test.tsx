@@ -63,6 +63,22 @@ function Harness({ initial = "Explain this", ...props }: Partial<ComposerProps> 
   return <Composer conversation={`project/${props.imageScope?.project ?? "alpha"}`} value={text} onChange={setText} onSubmit={() => undefined} ariaLabel="Message" placeholder="Message" imageScope={{ project: "alpha" }} {...props} />;
 }
 
+/**
+ * A page's outbox (Conversation.tsx, Task.tsx): a sent message shows its copy, through view changes and remounts,
+ * until the send is accepted. `keep` wraps a send so; only a reload or pairing again loses the outbox (`forget`).
+ */
+function outbox() {
+  const shown = new Set<string>();
+  return {
+    shows: (copy: string) => shown.has(copy),
+    forget: () => shown.clear(),
+    keep: (submit: ComposerProps["onSubmit"]): ComposerProps["onSubmit"] => (text, accepted, images, copy) => {
+      shown.add(copy!);
+      return submit(text, () => { shown.delete(copy!); accepted(); }, images, copy);
+    },
+  };
+}
+
 async function select(files: File[] = [image()]) {
   // Request start does not mean the capability body has reached React yet.
   await act(async () => { await capabilityRead; });
@@ -80,15 +96,16 @@ describe("image draft admission", () => {
       if (original.mock.calls.length === 1) throw new TypeError("Lost image receipt");
     });
     const destination = vi.fn();
+    const { shows, keep } = outbox();
     const user = userEvent.setup();
-    const first = render(<Harness onSubmit={original} />);
+    const first = render(<Harness onSubmit={keep(original)} shows={shows} />);
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     await select();
     await listen(user);
     server.connection = "hold";
     await user.click(screen.getByRole("button", { name: "Send" }));
     first.unmount();
-    render(<Harness initial="Other unsent recovery" onSubmit={destination} />);
+    render(<Harness initial="Other unsent recovery" onSubmit={keep(destination)} shows={shows} />);
     expect(screen.getByRole("textbox")).toHaveValue("Explain this");
     await act(async () => server.reconnect());
     await waitFor(() => expect(original).toHaveBeenCalledOnce());
@@ -118,8 +135,9 @@ describe("image draft admission", () => {
   it("a refused message's words and images edited and sent again go under a fresh identity", async () => {
     browser();
     const onSubmit = vi.fn(async (_text: string, _accepted: () => void, _images?: ImageSubmission, _copy?: string) => { if (onSubmit.mock.calls.length === 1) throw new ApiError(422, "Choose a smaller image."); });
+    const { shows, keep } = outbox();
     const user = userEvent.setup();
-    render(<Harness conversation="project/edited-images" onSubmit={onSubmit} />);
+    render(<Harness conversation="project/edited-images" onSubmit={keep(onSubmit)} shows={shows} />);
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     await select();
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -141,8 +159,9 @@ describe("image draft admission", () => {
   it("where the message shows its own failure, Send hands the images to it and Edit returns them to the picker", async () => {
     browser();
     const onSubmit = vi.fn(async (_text: string, _accepted: () => void, _images?: ImageSubmission, _copy?: string) => { throw new ApiError(422, "refused"); });
+    const { shows, keep } = outbox();
     const user = userEvent.setup();
-    render(<Harness conversation="project/edit-images" onSubmit={onSubmit} />);
+    render(<Harness conversation="project/edit-images" onSubmit={keep(onSubmit)} shows={shows} />);
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     await select();
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -308,11 +327,12 @@ describe("image draft admission", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("recovers an unconfirmed image caption after leaving, without persisting or resending the image", async () => {
+  it("recovers an unconfirmed image caption after a reload, without persisting or resending the image", async () => {
     browser();
     const onSubmit = vi.fn(async () => { throw new TypeError("Lost receipt"); });
+    const { shows, forget, keep } = outbox();
     const user = userEvent.setup();
-    const view = render(<Harness onSubmit={onSubmit} />);
+    const view = render(<Harness onSubmit={keep(onSubmit)} shows={shows} />);
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     await select();
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -320,7 +340,9 @@ describe("image draft admission", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByRole("textbox")).toHaveValue("");
     view.unmount();
-    render(<Harness initial="" onSubmit={onSubmit} />);
+    // A reload loses the message that showed the caption.
+    forget();
+    render(<Harness initial="" onSubmit={keep(onSubmit)} shows={shows} />);
     expect(await screen.findByRole("alert")).toHaveTextContent("Check the conversation before sending again.");
     expect(screen.getByRole("textbox")).toHaveValue("Explain this");
     expect(screen.queryByLabelText("Selected images")).toBeNull();

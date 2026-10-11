@@ -2295,7 +2295,8 @@ the answer finishes; older reads are cancelled before a late receipt updates the
 Each conversation keeps one copy per failed message, marked refused or not, while the message shows it.
 A reload or a new pairing without a receipt restores every remaining copy to the field as a draft in send
 order ahead of the saved draft, as unconfirmed unless every copy was refused, even if history now
-contains a similar message; a recovered draft sends wherever a typed one would. The operator checks
+contains a similar message; a recovered draft sends wherever a typed one would. A send that fails while no
+message shows it, because pairing again cleared the outbox while its request was out, returns to the field at once. The operator checks
 history before choosing to send. Recovered text and later typed or dictated edits remain recoverable
 while unconfirmed; editing a refused recovery returns it to an ordinary draft. Sending explicitly replaces the recovery with the submitted request. Ordinary unsent
 project text survives route remounts in client memory; it is not synchronized or stored across reloads.
