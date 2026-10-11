@@ -3,6 +3,97 @@
 Release notes describe user-visible behavior, compatibility and recovery. The project is an early
 preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is not a published release.
 
+## v0.3.0 — 2026-10-11
+
+Feature release of the early preview. It is mostly about reading Altitude at a glance: decisions
+show how they were reviewed, every message you send shows its own state, alerts are yours to tune
+and every time is in your own zone.
+
+Updating: copies on `v0.1.2` or `v0.2.0` install this release automatically at a quiet point, or
+offer it in the app and through `alt update` when automatic updates are off. Copies on `v0.1.0` or
+`v0.1.1` need one manual update. Configuration, TLS identity and data are kept; nothing needs
+migrating.
+
+Decisions and alerts:
+
+- A question asking you to approve a proposal or a merge shows a small review box: whether its
+  review was requested, is running, found nothing, had findings resolved or still open, did not
+  finish, covers an earlier version or was skipped. Opening task details is no longer needed to see it.
+- Pressing a choice on a decision shows as that choice ("Approve merge", "7 days") with the question
+  or PR it answers beneath, not as a message you typed. Answers written under Other… stay messages.
+- Settings › Notifications lets each device choose what a decision alert shows (project and task,
+  project only, or only that a decision waits), how often alerts come (every new decision, at most
+  every 15 minutes, or at most once an hour, with the ones in between grouped) and whether they make
+  a sound. The defaults keep the earlier behavior.
+- Alerts wake a device only for a new decision that still needs you, and every banner says what it
+  is about. A decision is held while the coordinator or the task's owner is still handling it, and
+  alerts once the task rests or an hour after it was asked. Pull requests awaiting your review,
+  faults and stops wait in Needs you without waking the device, and no bare "from Altitude" banner is left behind.
+- A decision asked again after you replied alerts like a new one, and an alert never says nothing
+  is new while a decision waits.
+
+Conversations:
+
+- In project chat and in a task's conversation, every state of a message you send shows on the
+  message itself. It appears at once and settles when saved; one that was refused says why and
+  offers Retry and Edit; one Altitude cannot confirm is marked Unconfirmed with Copy to draft.
+  Messages on their way stay in view when you switch to Work or leave the task and come back.
+  New messages enter with a short, calm motion.
+- Coordinator notices in project chat read as one line, what happened, which task and what it
+  needs, with Needs you or Open task. The text Altitude writes for the coordinator is never shown.
+- A coordinator turn that created a task or filed an issue keeps its own line in project chat with
+  Open task or Open issue, instead of folding into "handled N system events".
+- A task page no longer puts a status paragraph between the header and the tabs. What the task
+  waits on is the last line of its conversation, and task details lists the full reasons, which gives a
+  waiting task's conversation more room on a phone. An interrupted task's state shows in red.
+- The Create task button under a coordinator reply no longer repeats as reply text.
+
+Everywhere in the app:
+
+- Every time is shown in your own time zone, including times written in owner and coordinator text;
+  hovering a time shows it exactly, with its zone.
+- Loading and pending actions show spinners, and saved or copied show checks. Repeated status
+  explanations are gone; an unavailable voice, terminal or alert control says why when pressed.
+- Fonts ship with the app, so pages make no requests to other sites.
+
+Installation:
+
+- Altitude runs on Linux with a systemd user manager and on macOS 15 or newer. The installer
+  accepts any processor architecture and says when a host is not yet validated; releases are
+  validated on Ubuntu 24.04 x86_64 and Apple silicon Macs. Host voice input still needs Linux
+  x86_64, and features that need a particular architecture say so when used.
+
+Task owners and the coordinator:
+
+- Owner and coordinator text written for you leads with the plain idea: what it does for you, why,
+  and what you need to decide.
+- Every proposal that changes the interface gets a design review that reads the written design and
+  sees its screenshots, and offers up to two alternative directions for you to choose from.
+- Owners have one way to message the coordinator and can see that it was queued. An owner turn that
+  ends with only a message is resumed once before it counts as a failed worker, and an owner can
+  act on a review that finished while it waited for your answer.
+- Landing reads GitHub sparingly and waits out rate limits instead of failing, and optional checks
+  that end neutral or cancelled no longer block a merge. A task's newer validation request replaces
+  its earlier one.
+- Native checks that only the other installation can run are tracked on the change's own issue with
+  a `verify:macos` or `verify:linux` label.
+
+Releases:
+
+- Version numbers follow semantic versioning: a release of fixes only raises the last number, and a
+  release with anything else you would notice raises the middle one
+  ([cadence and versions](docs/RELEASING.md#cadence-and-versions)).
+- The installation test VM checks that a published release updates itself to the candidate, and
+  the macOS VM lane checks automatic updates.
+
+Known limits: notification preferences still await checks on a real iPhone
+([#829](https://github.com/mburakyucel/altitude/issues/829)), and the relaxed host checks await
+confirmation on each installation ([#818](https://github.com/mburakyucel/altitude/issues/818)).
+If an update fails to activate, Altitude restores the previous version. Use `alt recover` from a
+desktop or SSH terminal for interrupted activation, or retry an offered update explicitly after
+checking its error. Native macOS confirmation and real-provider compatibility remain limited as
+described for `v0.1.1`.
+
 ## v0.2.0 — 2026-10-10
 
 Feature release of the early preview, with the same Linux x86_64 and Apple silicon macOS targets
