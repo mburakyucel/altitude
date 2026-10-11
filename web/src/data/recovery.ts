@@ -13,8 +13,8 @@ export const recoveryKey = (conversation: string) => `altitude.submitted:${conve
 
 /**
  * The latest record this document read or wrote, so a failed storage read or write later in the document still
- * sees every edit. The stored bytes identify the copy it matches; storage cleared or replaced outside this document
- * wins again. `unwritten` marks a value storage did not accept.
+ * sees every edit. The stored bytes identify the copy it matches (undefined: whatever storage holds); storage cleared
+ * or replaced outside this document wins again. `unwritten` marks a value storage did not accept.
  */
 export const documentRecovery = new Map<string, { stored: string | null | undefined; value: SubmittedText; unwritten: boolean }>();
 
@@ -44,9 +44,10 @@ export function forgetRecovery(project: string) {
   for (const key of keys) {
     const conversation = key.slice(recoveryKey("").length);
     if (!key.startsWith(recoveryKey("")) || !ours(conversation)) continue;
-    try {
-      forget(conversation, sessionStorage.getItem(key));
-      sessionStorage.removeItem(key);
-    } catch { /* the record stays in storage; this document reads it as empty */ }
+    // A record storage keeps reads as empty here: matched to its bytes, or to whatever it holds when unreadable.
+    let stored: string | null | undefined;
+    try { stored = sessionStorage.getItem(key); } catch { stored = undefined; }
+    try { sessionStorage.removeItem(key); stored = null; } catch { /* the record stays in storage */ }
+    forget(conversation, stored);
   }
 }

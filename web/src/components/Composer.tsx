@@ -82,7 +82,7 @@ function readSubmitted(conversation: string): SubmittedText {
   let stored: string | null;
   try { stored = sessionStorage.getItem(recoveryKey(conversation)); }
   catch (error) { if (known) return structuredClone(known.value); throw error; }
-  if (known?.stored === stored) return structuredClone(known.value);
+  if (known && (known.stored === undefined || known.stored === stored)) return structuredClone(known.value);
   // Storage changed outside this document: no field shows its record.
   if (known) heldFields.delete(conversation);
   const value: SubmittedText = stored ? JSON.parse(stored) as SubmittedText : { pending: {}, text: "", failure: null };

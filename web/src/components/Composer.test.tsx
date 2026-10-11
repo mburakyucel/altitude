@@ -474,8 +474,9 @@ describe("Composer", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery.");
   });
 
-  it.each(["reading", "deleting"])("removing a project drops this page's copy of its recovery, even where storage fails %s", async (failing) => {
-    const removed = `project/removed-${failing}`;
+  it.each(["reading", "deleting", "reading and deleting"])("removing a project drops this page's copy of its recovery, even where storage fails %s", async (failing) => {
+    const project = `removed-${failing.replaceAll(" ", "-")}`;
+    const removed = `project/${project}`;
     sessionStorage.setItem(`altitude.submitted:${removed}`, JSON.stringify({ pending: {}, text: "Removed project's words", failure: "unconfirmed" }));
     sessionStorage.setItem(`altitude.submitted:${removed}-two`, JSON.stringify({ pending: {}, text: "Another project's words", failure: "unconfirmed" }));
     const user = userEvent.setup();
@@ -483,19 +484,20 @@ describe("Composer", () => {
     render(<Switcher conversation={removed} />);
     expect(field()).toHaveValue("Removed project's words");
     await user.click(screen.getByRole("button", { name: "Switch view" }));
-    if (failing === "deleting") {
+    if (failing !== "reading") {
       // A task of the project that this page never opened has its own record too.
-      sessionStorage.setItem(`altitude.submitted:task/removed-${failing}/unopened`, JSON.stringify({ pending: {}, text: "Unopened task's words", failure: "unconfirmed" }));
-      const storage = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => { throw new Error("Delete denied"); });
-      try { forgetRecovery(`removed-${failing}`); } finally { storage.mockRestore(); }
+      sessionStorage.setItem(`altitude.submitted:task/${project}/unopened`, JSON.stringify({ pending: {}, text: "Unopened task's words", failure: "unconfirmed" }));
+      const deleting = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => { throw new Error("Delete denied"); });
+      const reading = failing === "deleting" ? null : vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Read denied"); });
+      try { forgetRecovery(project); } finally { deleting.mockRestore(); reading?.mockRestore(); }
       await user.click(screen.getByRole("button", { name: "Switch view" }));
       expect(field()).toHaveValue("");
       cleanup();
-      render(<Switcher conversation={`task/removed-${failing}/unopened`} />);
+      render(<Switcher conversation={`task/${project}/unopened`} />);
       expect(field()).toHaveValue("");
       return;
     }
-    forgetRecovery(`removed-${failing}`);
+    forgetRecovery(project);
     expect(sessionStorage.getItem(`altitude.submitted:${removed}`)).toBeNull();
     expect(sessionStorage.getItem(`altitude.submitted:${removed}-two`)).not.toBeNull();
     const storage = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Read denied"); });
