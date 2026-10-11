@@ -42,8 +42,9 @@ export default function NeedsYou() {
       : `[data-review-task="${CSS.escape(`${origin.project}/${origin.slug}`)}"]`);
     if (!card) return;
     card.scrollIntoView({ block: "center" });
-    returned.current = true;
-  }, [origin, overview.data]);
+    // The saved queue shows the card at once; the fresh read can move a question revised meanwhile.
+    if (overview.isFetchedAfterMount) returned.current = true;
+  }, [origin, overview.data, overview.isFetchedAfterMount]);
 
   return (
     <div className="page needs-page">
