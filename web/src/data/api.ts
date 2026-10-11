@@ -305,6 +305,8 @@ export const DecisionSchema = z
     response: z.object({ text: z.string(), at: z.string(), message_id: z.string() }).nullish(),
     asked_again: z.boolean().nullish(),
     alert_held: z.boolean().nullish(),
+    /** The identity every alert uses: the question group since the operator's latest reply (altitude/digest.py). */
+    alert_key: z.string().nullish(),
     pr: z.number().nullish(),
     /** A proposal or merge question's review (SPEC.md §3.8.3): its kind's latest review, or state "none". */
     review: z.object({

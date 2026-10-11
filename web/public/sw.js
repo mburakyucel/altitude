@@ -28,9 +28,11 @@ self.addEventListener("notificationclick", (event) => {
 });
 
 /**
- * A push carries nothing and is sent only when a decision newly needs the operator. The worker asks Altitude
- * what is waiting, closes the banners whose decision has left the queue, and names the project and task of
- * each new decision. `altitude-alerts` keeps the tags already announced, so a later push repeats none.
+ * A push carries nothing and is sent only when a decision newly needs the operator: first asked, or asked again
+ * after they replied. The worker asks Altitude what is waiting, closes the banners whose decision has left the
+ * queue, and names the project and task of each new decision. Altitude keys each decision (`alert_key`) and
+ * renews the key only when it is asked again after a reply, so this worker need not have seen it leave;
+ * `altitude-alerts` keeps the keys already announced, so a later push repeats none.
  *
  * Every push shows a notification, because Safari ends a subscription after three that show none, and
  * none is a bare "Altitude": WebKit keeps a banner it is asked to close within 30 seconds, and a tag never
@@ -53,12 +55,14 @@ async function alertWaiting() {
   }
   const tags = new Set(waiting.map((decision) => decision.tag));
   for (const banner of await self.registration.getNotifications()) {
-    // Answered, withdrawn or superseded since it was shown; a generic banner is named below or no longer true.
+    // Answered, withdrawn, superseded or asked again since it was shown; a generic banner is named below or no
+    // longer true.
     if (banner.tag === ANY_DECISION || !tags.has(banner.tag)) banner.close();
   }
   const announced = await remembered();
   // A decision whose task is still moving is neither shown nor recorded, so it alerts once the task rests.
-  const fresh = waiting.filter((decision) => !decision.held && !announced.includes(decision.tag));
+  const ready = waiting.filter((decision) => !decision.held);
+  const fresh = ready.filter((decision) => !announced.includes(decision.tag));
   await remember(waiting.filter((decision) => !decision.held || announced.includes(decision.tag))
     .map((decision) => decision.tag));
   for (const decision of fresh) {
@@ -67,9 +71,16 @@ async function alertWaiting() {
     });
   }
   if (fresh.length) return;
-  // Settled or handed back between the wake and this read, or already announced: the push still shows, truthfully.
-  const [title, body] = waiting.some((decision) => !decision.held)
-    ? ["No new decision", "Nothing new since your last alert."]
+  // Several wakes delivered together, or handed back between the wake and this read: the push still shows,
+  // silently, and says what waits rather than that nothing is new.
+  const [decision] = ready;
+  if (ready.length === 1) {
+    return self.registration.showNotification(`${decision.project} still needs a decision`, {
+      body: decision.title, tag: decision.tag, data: { url: decision.url }, silent: true,
+    });
+  }
+  const [title, body] = ready.length
+    ? ["Still waiting for you", ready.map((waits) => `${waits.project} · ${waits.title}`).join("\n")]
     : waiting.length
       ? ["No decision needs you now", "L3 or the task's owner is handling it first."]
       : ["No decision needs you now", "It was settled before this alert arrived."];
@@ -78,23 +89,26 @@ async function alertWaiting() {
   });
 }
 
-/** What Altitude says is waiting, or null while this device cannot reach it. */
+/** What Altitude says is waiting, one entry per decision (a question group), or null while this device cannot
+ * reach it. */
 async function pending() {
   try {
     const response = await fetch("/api/overview", { cache: "no-store", signal: AbortSignal.timeout(5000) });
     if (!response.ok) return null;
-    const rows = (await response.json()).queue || [];
-    return rows.filter((row) => row.id).map((row) => {
+    const decisions = new Map();
+    for (const row of (await response.json()).queue || []) {
+      if (!row.alert_key || decisions.has(row.alert_key)) continue; // reviews, faults and stops alert no one
       const query = new URLSearchParams({ question: row.id }); // the link Needs you uses for that ask
       if (row.revision !== undefined && row.revision !== null) query.set("revision", String(row.revision));
-      return {
+      decisions.set(row.alert_key, {
         project: row.project,
         title: row.title || row.slug,
         held: Boolean(row.alert_held),
-        tag: `${row.project}:${row.slug}:${row.group_id || row.id}`, // the decision, not its revision
+        tag: row.alert_key,
         url: `/projects/${row.project}/tasks/${row.slug}?${query}`,
-      };
-    });
+      });
+    }
+    return [...decisions.values()];
   } catch {
     return null; // no route to Altitude, or it did not answer in time
   }

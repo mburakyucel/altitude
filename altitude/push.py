@@ -146,15 +146,11 @@ def _save(record: dict) -> None:
 
 
 def _waiting() -> tuple[list[str], list[str]]:
-    """The key of every waiting operator question, in the form the page and the worker both use, and the keys
+    """The `alert_key` of every waiting operator question, which the page and the worker use too, and the keys
     among them that may wake a device now: a decision whose task is still moving waits. Reviews, faults and
-    stops stay in Needs you without waking anyone.
-
-    Keyed on the decision, not its revision: a block and its escalation publish the same waiting
-    decision twice, and the operator is woken for it once."""
-    rows = [row for row in digest.queue() if row.get("id")]
-    keys = [f"{row['project']}:{row['slug']}:{row.get('group_id') or row['id']}" for row in rows]
-    return keys, [key for key, row in zip(keys, rows) if not row.get("alert_held")]
+    stops stay in Needs you without waking anyone."""
+    rows = [row for row in digest.queue() if row.get("alert_key")]
+    return [row["alert_key"] for row in rows], [row["alert_key"] for row in rows if not row.get("alert_held")]
 
 
 def subscribe(endpoint: str) -> dict:

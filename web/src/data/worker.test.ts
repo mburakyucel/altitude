@@ -48,6 +48,8 @@ function worker(options: { visible?: boolean; focus?: () => Promise<unknown> } =
   return {
     shown, fetched, posted, opened,
     showing: () => [...displayed.keys()],
+    /** What `altitude-alerts` already holds, as a page turning alerts on or an earlier worker left it. */
+    remember: (tags: string[]) => stored.set("/announced", JSON.stringify(tags)),
     /** The operator taps the banner shown under `tag`. */
     tap: async (tag: string) => {
       let work: Promise<unknown> = Promise.resolve();
@@ -68,7 +70,11 @@ const queue = (rows: unknown[]) => async () =>
 
 const question = {
   id: "q-drill", revision: 2, project: "atlas", slug: "run-restore-drill", title: "Run a restore drill",
-  kind: "asks", question: "Which drill first?",
+  kind: "asks", question: "Which drill first?", alert_key: "atlas:run-restore-drill:g-drill",
+};
+const key = {
+  ...question, id: "q-key", slug: "rotate-the-signing-key", title: "Rotate the signing key",
+  alert_key: "atlas:rotate-the-signing-key:g-key",
 };
 
 beforeEach(() => {
@@ -87,7 +93,7 @@ describe("the service worker's push", () => {
       title: "atlas needs a decision",
       options: {
         body: "Run a restore drill",
-        tag: "atlas:run-restore-drill:q-drill",
+        tag: "atlas:run-restore-drill:g-drill",
         data: { url: "/projects/atlas/tasks/run-restore-drill?question=q-drill&revision=2" },
         silent: false,
       },
@@ -95,32 +101,97 @@ describe("the service worker's push", () => {
     // The question itself stays in Altitude, and a fault is not a decision.
     expect(JSON.stringify(running.shown)).not.toContain("Which drill first?");
 
-    // A second wake with nothing new still shows a notification, and it says so: the standing banner is not
-    // shown again, since iOS would stack a second one for the same decision.
-    await running.push();
-    expect(running.shown[1]).toEqual({
-      title: "No new decision",
-      options: { body: "Nothing new since your last alert.", tag: "altitude-nothing-new", data: { url: "/" }, silent: true },
-    });
-
-    // The same decision at a later revision is the same decision.
+    // A rewording while it waits keeps Altitude's key: nothing is new, and the wake says what still waits,
+    // silently, in that decision's own banner.
     running.fetched.mockImplementation(queue([{ ...question, revision: 3 }]));
     await running.push();
-    expect(running.shown[2]!.title).toBe("No new decision");
+    expect(running.shown[1]).toEqual({
+      title: "atlas still needs a decision",
+      options: {
+        body: "Run a restore drill", tag: "atlas:run-restore-drill:g-drill",
+        data: { url: "/projects/atlas/tasks/run-restore-drill?question=q-drill&revision=3" }, silent: true,
+      },
+    });
 
-    running.fetched.mockImplementation(queue([question, { ...question, id: "q-key", slug: "rotate-the-signing-key", title: "Rotate the signing key" }]));
+    running.fetched.mockImplementation(queue([question, key]));
     await running.push();
-    expect(running.shown).toHaveLength(4);
-    expect(running.shown[3]).toEqual({
+    expect(running.shown).toHaveLength(3);
+    expect(running.shown[2]).toEqual({
       title: "atlas needs a decision",
       options: {
-        body: "Rotate the signing key", tag: "atlas:rotate-the-signing-key:q-key",
+        body: "Rotate the signing key", tag: "atlas:rotate-the-signing-key:g-key",
         data: { url: "/projects/atlas/tasks/rotate-the-signing-key?question=q-key&revision=2" },
         silent: false,
       },
     });
-    // The note that nothing was new has done its work once a decision is named.
-    expect(running.showing()).toEqual(["atlas:run-restore-drill:q-drill", "atlas:rotate-the-signing-key:q-key"]);
+    expect(running.showing()).toEqual(["atlas:run-restore-drill:g-drill", "atlas:rotate-the-signing-key:g-key"]);
+  });
+
+  it("names a question asked again after the operator replied, as the reported night needed", async () => {
+    const running = worker();
+    running.fetched.mockImplementation(queue([question]));
+    await running.push();
+
+    // The operator replies, the decision leaves Needs you with no push to tell this device, and the owner asks
+    // again: Altitude gives it a new key, so the wake names it like a first ask and the old banner goes.
+    const again = { ...question, revision: 3, alert_key: "atlas:run-restore-drill:g-drill:2026-10-11T00:12:00+00:00" };
+    running.fetched.mockImplementation(queue([again]));
+    await running.push();
+    expect(running.shown.at(-1)).toEqual({
+      title: "atlas needs a decision",
+      options: {
+        body: "Run a restore drill", tag: again.alert_key,
+        data: { url: "/projects/atlas/tasks/run-restore-drill?question=q-drill&revision=3" }, silent: false,
+      },
+    });
+    expect(running.showing()).toEqual([again.alert_key]);
+  });
+
+  it("shows one banner for a question group, linking its first question", async () => {
+    const running = worker();
+    running.fetched.mockImplementation(queue([question, { ...question, id: "q-drill-day", revision: 1 }]));
+    await running.push();
+    expect(running.shown).toEqual([expect.objectContaining({
+      title: "atlas needs a decision",
+      options: expect.objectContaining({ data: { url: "/projects/atlas/tasks/run-restore-drill?question=q-drill&revision=2" } }),
+    })]);
+  });
+
+  it("with nothing new, names each decision still on the operator's turn and leaves held ones out", async () => {
+    const running = worker();
+    const logs = {
+      ...question, id: "q-logs", project: "beacon", slug: "archive-logs", title: "Archive the old logs",
+      alert_key: "beacon:archive-logs:g-logs",
+    };
+    running.fetched.mockImplementation(queue([question, key, logs]));
+    await running.push();
+    await running.push(); // a second wake delivered with the first, after the phone was offline
+    expect(running.shown.at(-1)).toEqual({
+      title: "Still waiting for you",
+      options: {
+        body: "atlas · Run a restore drill\natlas · Rotate the signing key\nbeacon · Archive the old logs",
+        tag: "altitude-nothing-new", data: { url: "/" }, silent: true,
+      },
+    });
+
+    // Two handed back to L3 or their owners since: the one still on the operator's turn is named alone.
+    running.fetched.mockImplementation(queue([{ ...question, alert_held: true }, key, { ...logs, alert_held: true }]));
+    await running.push();
+    expect(running.shown.at(-1)).toEqual({
+      title: "atlas still needs a decision",
+      options: {
+        body: "Rotate the signing key", tag: "atlas:rotate-the-signing-key:g-key",
+        data: { url: "/projects/atlas/tasks/rotate-the-signing-key?question=q-key&revision=2" }, silent: true,
+      },
+    });
+  });
+
+  it("keeps matching the record an earlier worker kept for a decision nobody has replied to since", async () => {
+    const running = worker();
+    running.remember([question.alert_key]); // the group key the earlier worker built, which altd still gives it
+    running.fetched.mockImplementation(queue([question]));
+    await running.push();
+    expect(running.shown.map((shown) => shown.title)).toEqual(["atlas still needs a decision"]);
   });
 
   it("never shows a bare banner: a settled, held or review-only queue leaves a plain, true note", async () => {
@@ -143,28 +214,27 @@ describe("the service worker's push", () => {
     // The task rests with the decision open: it alerts, with a sound, once.
     running.fetched.mockImplementation(queue([question]));
     await running.push();
-    expect(running.showing()).toEqual(["atlas:run-restore-drill:q-drill"]);
+    expect(running.showing()).toEqual(["atlas:run-restore-drill:g-drill"]);
     expect(running.shown.at(-1)!.options.silent).toBe(false);
   });
 
   it("closes the banner of a decision answered since when the next alert wakes it", async () => {
     const running = worker();
-    const key = { ...question, id: "q-key", slug: "rotate-the-signing-key", title: "Rotate the signing key" };
     running.fetched.mockImplementation(queue([question, key]));
     await running.push();
-    expect(running.showing()).toEqual(["atlas:run-restore-drill:q-drill", "atlas:rotate-the-signing-key:q-key"]);
+    expect(running.showing()).toEqual(["atlas:run-restore-drill:g-drill", "atlas:rotate-the-signing-key:g-key"]);
 
     // The drill was settled elsewhere and a new decision wakes the device: the drill's banner goes,
     // the one still waiting stays, and the new one is named.
-    const logs = { ...question, id: "q-logs", slug: "archive-logs", title: "Archive the old logs" };
+    const logs = { ...question, id: "q-logs", slug: "archive-logs", title: "Archive the old logs", alert_key: "atlas:archive-logs:g-logs" };
     running.fetched.mockImplementation(queue([key, logs]));
     await running.push();
-    expect(running.showing()).toEqual(["atlas:rotate-the-signing-key:q-key", "atlas:archive-logs:q-logs"]);
+    expect(running.showing()).toEqual(["atlas:rotate-the-signing-key:g-key", "atlas:archive-logs:g-logs"]);
 
     // A decision that returns after being answered alerts again.
     running.fetched.mockImplementation(queue([question]));
     await running.push();
-    expect(running.showing()).toEqual(["atlas:run-restore-drill:q-drill"]);
+    expect(running.showing()).toEqual(["atlas:run-restore-drill:g-drill"]);
   });
 
   it("says plainly that it cannot name the decision when Altitude is out of reach", async () => {
@@ -180,13 +250,12 @@ describe("the service worker's push", () => {
         data: { url: "/" }, silent: false,
       },
     });
-    expect(running.showing()).toEqual(["atlas:run-restore-drill:q-drill", "altitude-decision"]);
+    expect(running.showing()).toEqual(["atlas:run-restore-drill:g-drill", "altitude-decision"]);
 
     // Back in reach, the next wake names what waits and the generic banner goes.
-    const key = { ...question, id: "q-key", slug: "rotate-the-signing-key", title: "Rotate the signing key" };
     running.fetched.mockImplementation(queue([question, key]));
     await running.push();
-    expect(running.showing()).toEqual(["atlas:run-restore-drill:q-drill", "atlas:rotate-the-signing-key:q-key"]);
+    expect(running.showing()).toEqual(["atlas:run-restore-drill:g-drill", "atlas:rotate-the-signing-key:g-key"]);
   });
 
   it("still alerts with Altitude on screen, without a sound", async () => {
@@ -210,7 +279,7 @@ describe("tapping a banner", () => {
     const running = worker({ visible: false });
     running.fetched.mockImplementation(queue([question]));
     await running.push();
-    await running.tap("atlas:run-restore-drill:q-drill");
+    await running.tap("atlas:run-restore-drill:g-drill");
     expect(running.posted).toEqual([{ type: "alert-open", url }]);
     expect(running.opened).toEqual([]);
     expect(running.showing()).toEqual([]);
@@ -220,7 +289,7 @@ describe("tapping a banner", () => {
     const running = worker({ visible: false, focus: async () => { throw new DOMException("not allowed", "InvalidAccessError"); } });
     running.fetched.mockImplementation(queue([question]));
     await running.push();
-    await running.tap("atlas:run-restore-drill:q-drill");
+    await running.tap("atlas:run-restore-drill:g-drill");
     expect(running.posted).toEqual([{ type: "alert-open", url }]);
     expect(running.opened).toEqual([url]);
   });
@@ -229,7 +298,7 @@ describe("tapping a banner", () => {
     const running = worker();
     running.fetched.mockImplementation(queue([question]));
     await running.push();
-    await running.tap("atlas:run-restore-drill:q-drill");
+    await running.tap("atlas:run-restore-drill:g-drill");
     expect(running.opened).toEqual([url]);
   });
 });

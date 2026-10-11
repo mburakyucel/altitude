@@ -869,7 +869,8 @@ line returns to the reach once a push gets through. An unavailable alert control
 leaves Needs you, its cards and all typing untouched.
 
 Each newly published operator question alerts once, titled with the project and carrying the task name
-only — never question, conversation or incident text. Activating it opens that decision in the running
+only — never question, conversation or incident text. A question asked again after the operator replied
+alerts again, the same way; a rewording, an escalation or L3 settling one member while it waits does not. Activating it opens that decision in the running
 app. Faults, stopped tasks, reviews and completed work stay in Needs you without an alert. A grouped
 ask alerts once. On a device without push, a decision already on screen, in Needs you or its owning task,
 is recorded without alerting; a device push wakes gets the alert without sound while Altitude is on screen.
@@ -878,6 +879,11 @@ announces what is already waiting. A question shows in Needs you at once but ale
 its turn and the owner has stopped with it still open (or an hour after it was asked). No alert is ever a
 bare "Altitude": out of reach it reads **A decision needs you** / *Altitude is out of reach, so this alert
 can't name it.*, and a decision settled just before the device read it shows **No decision needs you now**.
+A wake that finds nothing new never says so: it names, silently, what still waits on the operator, leaving
+out decisions L3 or the owner is handling first. One decision reads **<project> still needs a decision** /
+*<task>* and opens it, replacing that decision's banner where the platform replaces by tag; several read
+**Still waiting for you** with one *<project> · <task>* line each, oldest first, and open Needs you. With only
+held decisions it reads **No decision needs you now** / *L3 or the task's owner is handling it first.*
 An alert whose decision is answered, withdrawn or superseded closes when Altitude is next open on that
 device or the next alert arrives.
 

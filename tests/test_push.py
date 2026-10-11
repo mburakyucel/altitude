@@ -15,6 +15,7 @@ import subprocess
 import threading
 import unittest
 import urllib.request
+from unittest import mock
 
 from tests.support import AltitudeCase
 from datetime import timedelta
@@ -138,6 +139,43 @@ class TestPush(AltitudeCase):
         T.escalate(self.project, task["slug"], "How long should backups stay?")  # block, then escalation
         push.notify()
         self.assertEqual(len(self.service.requests), 1)
+
+    def test_a_reworded_waiting_decision_wakes_nobody_and_one_asked_again_after_a_reply_does(self):
+        push.subscribe(self.endpoint)
+        task = self.decision("Choose backup retention", "How long should backups stay?")
+        push.notify()
+        T.escalate(self.project, task["slug"], "How many days should backups stay?")  # reworded while it waits
+        push.notify()
+        self.assertEqual(len(self.service.requests), 1)
+
+        # The operator replies and the owner asks again before altd's next read: the decision left Needs you
+        # and came back unseen, and it still wakes the device once.
+        T.message(self.project, task["slug"], T.OPERATOR_MESSAGE_ROLE, "Why not keep them forever?")
+        resumed = S.load_task(self.project, task["slug"])
+        resumed["state"] = "running"
+        S.save_task(self.project, resumed)
+        T.block(self.project, task["slug"], "Forever costs storage: how many days?", actor="l2",
+                updates={"waiting_on": "l3"})
+        T.escalate(self.project, task["slug"], "Forever costs storage: how many days?")
+        [row] = digest.queue()
+        replied = S.load_task(self.project, task["slug"])["replied"]
+        self.assertEqual(row["alert_key"], f"{self.project}:{task['slug']}:{row['group_id']}:{replied}")
+        push.notify()
+        push.notify()
+        self.assertEqual(len(self.service.requests), 2)
+
+    def test_a_reply_arriving_while_the_queue_is_read_never_renames_the_question_it_hands_back(self):
+        task = self.decision("Choose backup retention", "How long should backups stay?")
+        views = T.question_views
+
+        def reply_meanwhile(project, slug):
+            T.message(self.project, slug, T.OPERATOR_MESSAGE_ROLE, "Why not keep them forever?")
+            return views(project, slug)
+
+        with mock.patch.object(T, "question_views", reply_meanwhile):
+            [row] = digest.queue()
+        self.assertTrue(S.load_task(self.project, task["slug"])["replied"])
+        self.assertEqual(row["alert_key"], f"{self.project}:{task['slug']}:{row['group_id']}")
 
     def test_a_device_hears_nothing_about_the_decisions_that_were_already_waiting(self):
         self.decision("Choose backup retention", "How long should backups stay?")
