@@ -708,10 +708,13 @@ also binds the exact original L2 message and text against the committed head's s
 code differs from main. That text is captured once, as `proposal.md` with its own 64 KiB bound, and
 `context.json` names the proposal message and points to the file. A UI proposal's design preview
 selection adds its spec as `design.md`, captured by the same checks as the preview, with the screenshots
-named in `context.json` but not viewed; the receipt keeps the design identity the preview shares. Identity and freshness hash the
+named in `context.json` and copied into the snapshot's `design/` folder. The engine attaches them natively
+to the reviewer's first prompt in that order: Codex with its image option, Claude as titled image blocks
+in its stream-json input. The receipt keeps the design identity the preview shares and names the
+screenshots given; an engine CLI without image input gets none, and the capture's limitations say so. Identity and freshness hash the
 logical context, independent of this representation; the input hash covers every captured file. Changes reviews capture the merge-candidate tree and diff; a branch that conflicts with main is
-refused with its conflicted files. Missing proposal input prevents invocation. Image evidence needs a
-textual account and is explicitly outside the text reviewer's coverage.
+refused with its conflicted files. Missing proposal input prevents invocation. Images attached to
+messages need a textual account and stay outside the reviewer's coverage.
 The adapter exposes only a fixed captured-file list/read/literal-search tool: no tests, shell,
 connectors, network tools, mutation, nested helpers or task identity. Read and search deliver text
 from a line/column cursor, at most 100 lines and 16 KiB per response; a truncated response names
@@ -721,7 +724,11 @@ answer without one fails as invalid findings. Codex reaches it through its
 code-mode host, the one native feature left enabled besides skipping host skill discovery: a
 JavaScript tool bridge without filesystem, process or network globals, whose patch tool the read-only
 sandbox rejects. Claude loads it from the command-line MCP configuration in restricted mode with no
-built-in tools, no skills and no safe mode, which disables every MCP server. Both are provider
+built-in tools, no skills and no safe mode, which disables every MCP server; its prompt arrives as one
+stream-json user line and its answer is the final stream-json result record. Review stdout keeps only
+the records the result and its diagnostics read (Claude's result record, Codex's status events and
+agent messages); tool calls and their results echo captured input and are dropped before the 2 MiB
+stdout bound, so a long review cannot exhaust it. Both are provider
 properties established by recorded reviewer runs, not by the suite. The result's `text` is a
 one-sentence verdict the UI shows as the review's summary. The adapter records the first
 content-bearing read in the review runtime; a reviewer that read no content fails with that reason

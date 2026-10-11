@@ -104,7 +104,7 @@ class TestReviews(AltitudeCase):
         self.patch(engines, "_review_command", return_value=["fixture-only"])
         self.patch(engines.platform, "job_active", return_value=False)
         records = [
-            {"is_error": True, "errors": ["captured adapter connection refused PRIVATE SOURCE"]},
+            {"type": "result", "is_error": True, "errors": ["captured adapter connection refused PRIVATE SOURCE"]},
             {"type": "turn.failed", "error": {"message": "captured adapter connection refused PRIVATE SOURCE"}},
         ]
         # Both configured engine fixtures share the same real process/task receipt path.
@@ -1438,22 +1438,39 @@ class TestReviews(AltitudeCase):
         captured = {}
         def inspect(prompt, **kwargs):
             design = kwargs["snapshot"] / "design.md"
-            captured.update(prompt=prompt, design=design.read_text() if design.exists() else None,
-                            context=json.loads((kwargs["snapshot"] / "context.json").read_text()))
+            captured.update(prompt=prompt, design=design.read_text() if design.exists() else None, images=kwargs["images"],
+                            context=json.loads((kwargs["snapshot"] / "context.json").read_text()),
+                            screens={path.name: path.read_bytes() for path in (kwargs["snapshot"] / "design").glob("*")})
             return self.success(prompt, **kwargs)
         self.engine.side_effect = inspect
+        capability = self.patch(engines, "review_capability", return_value={"available": True, "images": True})
         proposal = T.message(self.project, self.slug, "l2", "Build the compact rows in the saved design.", expected_attempt=1)
         result = self.run_review(self.request(subject="proposal"), proposal_id=proposal["id"], design=selection)
 
+        # The reviewer is given the screenshots themselves, and the receipt names each one.
         self.assertEqual(result["state"], "completed")
         self.assertEqual(captured["design"], spec)
         self.assertEqual(captured["context"]["design"], {"title": "Compact rows", "file": "design.md",
                                                          "screenshots": ["Phone — idle"]})
-        self.assertIn("Design screenshots are named, not viewed; design.md is the design under review.",
-                      captured["context"]["limitations"])
-        for words in ("proposal.md and design.md", "not obviously clickable on a phone", "up to two alternative directions",
-                      'severity "alternative"'):
+        name = hashlib.sha256(png()).hexdigest() + ".png"
+        self.assertEqual(captured["screens"], {name: png()})
+        self.assertEqual(captured["images"], [{"title": "Phone — idle", "file": f"design/{name}"}])
+        self.assertEqual(result["snapshot"]["design"]["images"], captured["images"])
+        self.assertFalse(any("named, not viewed" in item for item in captured["context"].get("limitations", [])))
+        for words in ("proposal.md and design.md", "screenshots attached to this prompt as images", "not obviously clickable on a phone",
+                      "up to two alternative directions", 'severity "alternative"'):
             self.assertIn(words, captured["prompt"])
+
+        # An engine whose CLI cannot take images says so plainly instead of quietly reviewing only the spec.
+        capability.return_value = {"available": True, "images": False}
+        self.assess(result)
+        result = self.run_review(self.request(subject="proposal", previous=result["id"]), proposal_id=proposal["id"], design=selection)
+        self.assertEqual(result["state"], "completed")
+        notice = "This reviewer's engine cannot take images, so the design screenshots are named, not viewed; design.md is the design under review."
+        self.assertIn(notice, captured["context"]["limitations"])
+        self.assertIn(notice, result["snapshot"]["limitations"])
+        self.assertEqual((captured["images"], captured["screens"], result["snapshot"]["design"]["images"]), ([], {}, []))
+        self.assertNotIn("attached to this prompt", captured["prompt"])
 
         # A proposal review without a design still asks for the design part when the UI changes; changes review refuses a design.
         self.assess(result)
@@ -1469,7 +1486,7 @@ class TestReviews(AltitudeCase):
         self.engine.assert_not_called()
         # The reviewed design is the one the operator's preview shows; a changed spec makes the review an earlier version.
         question = T.block(self.project, self.slug, "Build the rows as shown?", actor="l2", expected_attempt=1, design=selection)
-        self.assertEqual(result["snapshot"]["design"], {"id": question["questions"][-1]["design"]["id"], "title": "Compact rows"})
+        self.assertEqual(result["snapshot"]["design"], {"id": question["questions"][-1]["design"]["id"], "title": "Compact rows", "images": []})
         reviewed = lambda: next(r for r in reviews.view(self.project, self.slug)["history"] if r["id"] == result["id"])
         self.assertFalse(reviewed()["earlier"])
         (boards / "spec.md").write_text(spec + "Desktop: two lines.\n")

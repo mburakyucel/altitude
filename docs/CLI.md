@@ -1688,9 +1688,11 @@ that needs an approved proposal selects that L2 message with `--context-message`
 captures the exact proposal text separately as `proposal.md`, bounded to 64 KiB, so the proposal never
 competes with retained authority. `--design-file` takes the same selection JSON as
 [design previews](#task-design-previews), with the same path, type and size checks: the selection's
-spec becomes `design.md` and the captured context names the screenshots by title. The reviewer reads
-text only, so screenshots are named, not viewed, and the capture records that limitation. The receipt
-keeps the design's identity, which equals the preview's when the same selection is published with
+spec becomes `design.md`, the captured context names the screenshots by title, and the reviewer
+receives the screenshots themselves as images attached to its first prompt, in that order. The review
+record's `snapshot.design.images` lists each screenshot the reviewer was given. When the reviewer's
+installed engine CLI cannot attach images, that list is empty and the capture's limitations say the
+screenshots are named, not viewed. The receipt keeps the design's identity, which equals the preview's when the same selection is published with
 the design question; when the task's latest published design differs, the review shows as covering an
 earlier version. A changes review refuses `--design-file`.
 For image context, supply an L2 textual account and select that message explicitly; the capture

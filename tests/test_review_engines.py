@@ -1,6 +1,7 @@
 """Captured review adapters: real fixture processes; never live provider or service calls."""
 from tests.support import AltitudeCase
 
+import base64
 import io
 import json
 import os
@@ -98,7 +99,7 @@ class ReviewEngineTests(AltitudeCase):
 
     def test_commands_disable_native_tools_and_user_configuration_for_both_engines(self):
         features = ("shell_tool", "apps", "plugins", "multi_agent", "view_image", "code_mode_host", "skip_host_skill_discovery")
-        self.patch(engines, "_review_native", return_value=(True, features))
+        self.patch(engines, "_review_native", return_value=(True, features, True))
         first = engines._review_command("claude", self.snapshot, self.runtime, "selected")
         for flag in ("--restricted", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands"):
             self.assertIn(flag, first)
@@ -124,6 +125,79 @@ class ReviewEngineTests(AltitudeCase):
             self.assertNotIn("resume", command)
             self.assertNotIn("altitude-l3", " ".join(command))
 
+    def test_design_screenshots_attach_natively_in_order_for_both_engines(self):
+        from tests.test_task_design import JPEG, png
+        (self.snapshot / "design").mkdir()
+        (self.snapshot / "design" / "phone.png").write_bytes(png())
+        (self.snapshot / "design" / "desktop.jpg").write_bytes(JPEG)
+        images = [{"title": "Phone — idle", "file": "design/phone.png"}, {"title": "Desktop — error", "file": "design/desktop.jpg"}]
+        attached = [(image["title"], self.snapshot.resolve() / image["file"]) for image in images]
+        self.patch(engines, "_review_native", return_value=(True, ("code_mode_host",), True))
+        codex = engines._review_command("codex", self.snapshot, self.runtime, None, attached)
+        self.assertEqual([item for item in codex if item.startswith("--image")],
+                         [f"--image={self.snapshot.resolve() / 'design/phone.png'}", f"--image={self.snapshot.resolve() / 'design/desktop.jpg'}"])
+        self.assertEqual(codex[-1], "-", "the prompt still arrives on stdin after the attached images")
+        claude = engines._review_command("claude", self.snapshot, self.runtime, None, attached)
+        self.assertEqual(claude[claude.index("--input-format") + 1], "stream-json")
+        self.assertFalse(any(item.startswith("--image") for item in claude))
+
+        # The reviewer's first turn: Claude's stream-json line titles each image block; Codex reads plain text.
+        received = self.tmp / "stdin.txt"
+        for engine in config.ENGINES:
+            with self.subTest(engine=engine):
+                service = self.fixture()
+                command = self.patch(engines, "_review_command", return_value=["fixture-only"])
+                program = service.return_value[-1].replace("sys.stdin.read()", f"open({str(received)!r}, 'w').write(sys.stdin.read())")
+                if engine == "codex":
+                    stdout = "\n".join(map(json.dumps, [{"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(
+                        {"text": "Fine.", "findings": []})}}]))
+                    program = f"import sys; open({str(received)!r}, 'w').write(sys.stdin.read()); print({stdout!r})"
+                service.return_value = [sys.executable, "-I", "-c", program]
+                result = engines.review("Review the design", engine=engine, snapshot=self.snapshot, runtime=self.runtime, images=images)
+                self.assertIsNone(result["error"])
+                self.assertEqual(command.call_args.args[4], attached)
+                if engine == "codex":
+                    self.assertTrue(received.read_text().endswith("Review the design"))
+                    continue
+                line = json.loads(received.read_text())
+                content = line["message"]["content"]
+                self.assertEqual((line["type"], line["message"]["role"]), ("user", "user"))
+                self.assertTrue(content[0]["text"].endswith("Review the design"))
+                self.assertEqual([item.get("text") for item in content[1::2]], ["Screenshot 1: Phone — idle", "Screenshot 2: Desktop — error"])
+                self.assertEqual([(item["source"]["media_type"], base64.b64decode(item["source"]["data"])) for item in content[2::2]],
+                                 [("image/png", png()), ("image/jpeg", JPEG)])
+
+    def test_tool_records_beyond_the_stdout_bound_keep_the_result_and_its_failure_facts(self):
+        # Claude's verbose stream echoes every captured_input result; a long review once exceeded the stdout bound.
+        bulk = "PRIVATE SOURCE " * 1100
+        echoes = {"claude": {"type": "user", "message": {"content": [{"type": "tool_result", "content": bulk}]}},
+                  "codex": {"type": "item.completed", "item": {"type": "mcp_tool_call", "result": {"content": [{"text": bulk}]}}}}
+        answer = json.dumps({"text": "Fine.", "findings": [], "limitations": []})
+        endings = {
+            ("claude", True): [{"type": "result", "result": answer, "usage": {"input_tokens": 9}}],
+            ("claude", False): [{"type": "result", "is_error": True, "errors": ["MCP connection refused"], "num_turns": 140}],
+            ("codex", True): [{"type": "item.completed", "item": {"type": "agent_message", "text": answer}},
+                              {"type": "turn.completed", "usage": {"input_tokens": 9}}],
+            ("codex", False): [{"type": "turn.failed", "error": {"message": "MCP connection refused"}}]}
+        for (engine, success), ending in endings.items():
+            with self.subTest(engine=engine, success=success):
+                service = self.fixture()
+                tail = "\n".join(map(json.dumps, ending))
+                service.return_value = [sys.executable, "-I", "-c",
+                    f"import sys; sys.stdin.read(); line = {json.dumps(echoes[engine])!r}\n"
+                    f"for _ in range(160): print(line)\nprint({tail!r})"]
+                self.assertGreater(160 * len(json.dumps(echoes[engine])), engines.RAW_CAPTURE_CAP)
+                result = engines.review("Review", engine=engine, snapshot=self.snapshot, runtime=self.runtime)
+                if success:
+                    self.assertIsNone(result["error"])
+                    self.assertEqual((result["text"], result["usage"]), ("Fine.", {"input_tokens": 9}))
+                    continue
+                evidence = result["diagnostics"]
+                self.assertEqual((evidence["stdout_state"], evidence["stdout_errors"], evidence["stdout_truncated"]),
+                                 ("recognized_error", ["connection", "captured_input"], False))
+                self.assertEqual(evidence.get("stdout_facts", {}).get("num_turns"), 140 if engine == "claude" else None)
+                self.assertNotIn("PRIVATE", json.dumps(result))
+
     def test_environment_strips_owner_machine_and_credential_authority(self):
         with patch.dict(os.environ, {"ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": "owner", "ALTITUDE_SESSION_KEY": "key",
                                      "GH_TOKEN": "secret", "ANTHROPIC_API_KEY": "secret", "OPENAI_API_KEY": "secret",
@@ -145,8 +219,12 @@ class ReviewEngineTests(AltitudeCase):
         payload = result if result is not None else {"text": "Needs a fix", "findings": [
             {"severity": "high", "title": "Missing check", "body": "Evidence", "path": "code.py", "line": 2}],
             "limitations": ["Tests were not executed."]}
-        record = {"result": json.dumps(payload) if answer is None else answer, "usage": {"input_tokens": 20}}
-        program = f"import sys; sys.stdin.read(); print({json.dumps(record)!r}); sys.exit({exitcode})"
+        # Claude's stream-json output: session records, then the final result record.
+        stdout = "\n".join(map(json.dumps, [{"type": "system", "subtype": "init"},
+                                            {"type": "assistant", "message": {"content": [{"type": "text", "text": "Reading."}]}},
+                                            {"type": "result", "result": json.dumps(payload) if answer is None else answer,
+                                             "usage": {"input_tokens": 20}}]))
+        program = f"import sys; sys.stdin.read(); print({stdout!r}); sys.exit({exitcode})"
         service = self.patch(platform, "job_command", return_value=[sys.executable, "-I", "-c", program])
         return service
 
@@ -229,7 +307,7 @@ class ReviewEngineTests(AltitudeCase):
     def test_stdout_only_structured_errors_are_fixed_categories_for_both_engines(self):
         private = 'PRIVATE SOURCE password=fictional-secret /Users/fictional/private'
         outputs = {
-            "claude": json.dumps({"is_error": True, "errors": ["MCP connection refused " + private],
+            "claude": json.dumps({"type": "result", "is_error": True, "errors": ["MCP connection refused " + private],
                                   "result": private, "usage": {"private": private}}),
             "codex": '\n'.join(map(json.dumps, [
                 {"type": "item.completed", "item": {"type": "agent_message", "text": private}},
@@ -444,7 +522,7 @@ class ReviewEngineTests(AltitudeCase):
         self.patch(engines, "review_stop", return_value=True)
         spawn = engines.subprocess.Popen
         class FailedReader:
-            def read(self, size):
+            def readline(self, size):
                 raise OSError("private reader failure")
             def close(self):
                 self.stream.close()
