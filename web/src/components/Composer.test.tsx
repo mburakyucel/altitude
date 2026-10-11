@@ -432,6 +432,22 @@ describe("Composer", () => {
     expect(JSON.parse(sessionStorage.getItem("altitude.submitted:project/altitude")!)).toMatchObject({ text: "", failure: null });
   });
 
+  it("a clear made while recovered words cannot be read still ends their recovery when typing resumes with access", async () => {
+    // Another message still shows its own copy, so the conversation keeps its recovery record.
+    sessionStorage.setItem("altitude.submitted:project/altitude", JSON.stringify({ pending: { shown: "Shown message" }, text: "Original message", failure: "unconfirmed" }));
+    const user = userEvent.setup();
+    const field = () => screen.getByLabelText("Message L3 about altitude");
+    render(<Switcher shows={(copy) => copy === "shown"} />);
+    expect(field()).toHaveValue("Original message");
+    const storage = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Read denied"); });
+    try { await user.clear(field()); } finally { storage.mockRestore(); }
+    await user.type(field(), "New draft");
+    await user.click(screen.getByRole("button", { name: "Switch view" }));
+    await user.click(screen.getByRole("button", { name: "Switch view" }));
+    expect(field()).toHaveValue("New draft");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("words typed while recovered words cannot be read join them once they can", async () => {
     sessionStorage.setItem("altitude.submitted:project/altitude", JSON.stringify({ pending: {}, text: "Original message", failure: "unconfirmed" }));
     const user = userEvent.setup();

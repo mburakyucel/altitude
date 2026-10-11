@@ -125,7 +125,8 @@ function beginSubmitted(conversation: string, text: string, id: string = crypto.
   saved.pending[id] = text;
   if (!preserve) { saved.text = ""; saved.failure = null; }
   saveSubmitted(conversation, saved, true);
-  if (!preserve) heldFields.delete(conversation);
+  // The field's words are sent: nothing in it is recovered, and no edit of it is missed.
+  if (!preserve) { heldFields.delete(conversation); missedEdits.delete(conversation); }
   liveSubmissions.add(id);
   return id;
 }
@@ -568,10 +569,10 @@ export default function Composer({
     onChange(text);
     try {
       let saved: SubmittedText;
-      // A failed write keeps its value in this document; a failed read leaves storage behind the field.
-      try { saved = readSubmitted(conversation); }
+      // A failed write keeps its value in this document; a failed read leaves storage behind the field until an edit
+      // or a view reads it again, which applies the missed edit first.
+      try { saved = readCaughtUp(conversation); }
       catch (error) { if (heldFields.has(conversation)) missedEdits.set(conversation, text); throw error; }
-      missedEdits.delete(conversation);
       if (editSubmitted(saved, text)) saveSubmitted(conversation, saved);
       setRecoveryUnavailable(false);
     } catch { setRecoveryUnavailable(true); }
