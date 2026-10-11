@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { InlineProse, Prose, ProseRepository, ProseScope, QuestionProse, lastParagraph } from "./Prose";
+import { InlineProse, Prose, ProseAt, ProseRepository, ProseScope, QuestionProse, lastParagraph } from "./Prose";
+import { clockText, exactTime } from "../data/observed";
 
 const repository = "https://github.com/example/project";
 function prose(text: string, repo: string | null = repository) {
@@ -146,5 +147,35 @@ describe("question prose", () => {
     expect(root.querySelector("ul")?.textContent).toBe("keeps alt on PATHone copy");
     expect(root.querySelector("pre.session-code")?.textContent).toBe("sudo make install");
     expect(destinations()).toEqual([["docs", "https://example.org/install"]]);
+  });
+});
+
+describe("written times", () => {
+  it("shows UTC times in the reader's zone and leaves code, links and zoneless clocks alone", () => {
+    const text = "Restart pending since 23:58Z; checks at 2026-10-11T01:30:00+00:00 and 07:20–07:45 UTC (PR #12). " +
+      "`2026-10-10T23:58:42+00:00` and a bare 23:58 stay.\n\n~~~\nat 23:58Z\n~~~";
+    const { container } = render(<ProseAt value="2026-10-11T01:55:00+00:00"><Prose text={text} /></ProseAt>);
+    const times = [...container.querySelectorAll("time.prose-time")];
+    const local = (iso: string) => new Date(iso).toTimeString().slice(0, 5);
+    expect(times.map((t) => t.getAttribute("datetime"))).toEqual([local("2026-10-10T23:58:00Z"), "2026-10-11T01:30:00.000Z", local("2026-10-11T07:20:00Z")]);
+    expect(times[0]).toHaveTextContent(clockText("2026-10-10T23:58:00Z"));
+    expect(times[1]).toHaveAttribute("title", exactTime("2026-10-11T01:30:00Z"));
+    expect(times[2]).toHaveTextContent(`${clockText("2026-10-11T07:20:00Z")}–${clockText("2026-10-11T07:45:00Z")}`);
+    expect(container.querySelector("p")!.textContent).not.toMatch(/\dZ\b|UTC|T01:30/);
+    expect(screen.getByText("2026-10-10T23:58:42+00:00").tagName).toBe("CODE");
+    expect(container.textContent).toContain("a bare 23:58 stay");
+    expect(container.querySelector("pre, .code-block")?.textContent).toContain("at 23:58Z");
+    expect(destinations()).toEqual([]);
+  });
+
+  it("leaves a relative path that contains a timestamp as written", () => {
+    const { container } = render(<Prose text="Saved to logs/2026-10-10T23:58Z.txt at 23:58Z." />);
+    expect(container.textContent).toContain("logs/2026-10-10T23:58Z.txt");
+    expect(container.querySelectorAll("time.prose-time")).toHaveLength(1);
+  });
+
+  it("converts times in compact prose too", () => {
+    const { container } = render(<InlineProse text="since 2026-10-10T23:58Z" />);
+    expect(container.querySelector("time.prose-time")).toHaveAttribute("datetime", "2026-10-10T23:58:00.000Z");
   });
 });

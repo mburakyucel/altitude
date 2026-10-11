@@ -2,6 +2,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderApp, setViewport } from "../test/render";
 import type { ChatView } from "../data/api";
+import { localTimes } from "../data/observed";
 import { HostCapture } from "../components/hostCapture";
 import { hostMicrophone, hostVoiceServer, installVoiceBrowser, speak } from "../components/voiceTest";
 
@@ -1007,6 +1008,19 @@ describe("Conversation", () => {
     await user.click(within(card).getByRole("button", { name: "Hide" }));
     expect(headsUp()).toBeVisible();
     expect(within(region).queryByRole("article")).toBeNull();
+  });
+
+  it("reads a system reply's written times against the reply's own time, not the prompt's", async () => {
+    const sent = new Date(Date.now() - 3 * 86_400_000).toISOString();
+    const replied = ago(1);
+    const reply = `Checks finished at ${ago(2)}.`;
+    mockFetch({ chat: { ...chatView, history: [
+      { at: sent, role: "user", text: "Altitude restarted.", trigger: "restart", turn_id: "late" },
+      { at: replied, role: "assistant", text: reply, trigger: "restart", engine: "alpha", turn_id: "late", tasks: [] },
+    ] } });
+    renderApp({ route: "/projects/altitude" });
+    const region = await conversation();
+    expect(await within(region).findByText(/Checks finished at/)).toHaveTextContent(localTimes(reply, Date.parse(replied)));
   });
 
   it.each([390, 1440])("keeps a system turn that created a task or filed an issue outside the routine group at %ipx", async (width) => {

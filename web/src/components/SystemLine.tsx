@@ -4,7 +4,7 @@ import { useProject, useTask } from "../data/api";
 import { questionPath } from "../data/decisions";
 import type { ChatMessage, TaskRow } from "../data/api";
 import { stampText } from "../data/observed";
-import { InlineProse, Prose, ProseProject, ProseRepository, lastParagraph } from "./Prose";
+import { InlineProse, Prose, ProseAt, ProseProject, ProseRepository, lastParagraph } from "./Prose";
 import { Stamp } from "./Stamp";
 import { TaskCards } from "./TaskCard";
 
@@ -24,6 +24,8 @@ export interface SystemTurn {
   prompt: string;
   /** L3's reply, once the assistant row exists. */
   reply: string | null;
+  /** When the reply or error row was written, which its written times are read against. */
+  replyAt?: string | null;
   /** The error row's text when the turn failed. */
   error: string | null;
   inProgress: boolean;
@@ -218,7 +220,7 @@ function SystemCard({
   const digest = Boolean(task.data?.files?.digest);
   const label = kindLabel(turn.trigger);
   return (
-    <article className="sys-card" aria-label={`${label}${name ? ` · ${name}` : ""}`}>
+    <ProseAt value={turn.at}><article className="sys-card" aria-label={`${label}${name ? ` · ${name}` : ""}`}>
       <header className="sys-card-head">
         <span className="sys-card-title">
           <Dot trigger={turn.trigger} />
@@ -261,7 +263,7 @@ function SystemCard({
             <>
               <p className="sys-card-label">L3 replied</p>
               <div className="sys-card-body">
-                <Prose text={turn.reply} />
+                <ProseAt value={turn.replyAt ?? turn.at}><Prose text={turn.reply} /></ProseAt>
               </div>
             </>
           ) : turn.error ? (
@@ -296,7 +298,7 @@ function SystemCard({
           {digest ? <Link to={`/projects/${project}/tasks/${turn.slug}/report#digest`}>Digest</Link> : null}
         </footer>
       ) : null}
-    </article>
+    </article></ProseAt>
   );
 }
 
@@ -342,7 +344,7 @@ export function SystemLine({
       <Dot trigger={turn.trigger} />
       <Stamp at={turn.at} className="sys-time" />
       <span className="sys-text">
-        {turn.projectMessage ? text : <InlineProse text={text} />}
+        {turn.projectMessage ? text : <ProseAt value={turn.fyi ? turn.at : turn.replyAt ?? turn.at}><InlineProse text={text} /></ProseAt>}
       </span>
       {turn.inProgress ? null : <NewWork turn={turn} project={project} />}
       {turn.inProgress ? null : (

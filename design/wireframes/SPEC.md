@@ -1952,8 +1952,24 @@ removes that task's card until its owner re-parks. Those changes do not claim th
 Sentence case everywhere; the only uppercase is a count badge. L3's chat text carries no ids, paths,
 or JSON; identifiers live in chips, links, and the expanded system card. Say "the operator" in fixed
 UI text and show the configured name where a name is shown. Engine and model names are whatever the
-engine seam reports. Ages read "N min ago", "2h", "yesterday"; exact times appear on hover or in the
-expanded card.
+engine seam reports.
+
+Every time reads in the reader's own zone and locale, through one formatter; no screen, line or title
+shows an ISO string, `Z`, `UTC` or an offset. Ages read "just now", "N min ago", "2h", "yesterday",
+"3d". A record's time reads "14:05", dated ("Sep 16, 14:05") when not today, with the year when not
+this one; a day divider reads "Today", "Yesterday", "Thu, Oct 8"; a date alone reads "Sep 24, 2036".
+The exact time ("Oct 10, 2026, 4:58:42 PM PDT") appears on hover or in the expanded card.
+
+Agent and system text keeps its own words, with written UTC times shown in local time outside code
+spans, code blocks, links and paths, never adding a date the writer left out. A dated time (an ISO instant with `Z`
+or an offset, a date and UTC clock, a month day and UTC clock such as "Oct 10, 23:58Z") reads as a
+clock on the local day of the text's own recorded time and dated otherwise, with the exact time on
+hover, seconds included. A UTC clock ("23:58Z", "23:58 UTC", "23:58 GMT") or range ("07:20–07:45 UTC", "07:20/07:45
+UTC") stays a clock with no date, its hover the clock with the zone ("3:58:00 PM PST"); its offset is
+the one at the occurrence nearest the text's own time, and a range's end is the first after its start.
+A list of clocks sharing one zone ("18:43, 19:05 UTC"), a clock without a zone, a zone name such as
+"PDT", and a date alone stay as written. Converted times look like the surrounding text and never
+wrap inside.
 
 ### 4.6 Boards and spec stay aligned
 

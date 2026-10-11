@@ -198,7 +198,7 @@ class ClientStop:
         first, second = self.rows()
         self.assertEqual((first["ended"], first["cleanup"]), ("replaced", None))
         self.assertRegex(first["error"], r"^replaced by this task's newer validation request of "
-                                         r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC$")
+                                         r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+00:00$")
         self.assertEqual(self.stops.call_args_list[0].args[0], first["unit"])
         self.assertEqual(json.loads(abandoned.getresponse().read().splitlines()[-1])["ended"], "replaced")
 
@@ -211,7 +211,7 @@ class ClientStop:
                       json.loads(waiting.readline())["waiting"])
         replacing = self.send(["echo", "replacing"]).getresponse()
         self.assertRegex(json.loads(waiting.read().splitlines()[-1])["error"],
-                         r"^alt task validate: replaced by this task's newer validation request of .* UTC while it "
+                         r"^alt task validate: replaced by this task's newer validation request of \S+\+00:00 while it "
                          r"waited$")
         release.touch()
         holder.getresponse().read()
@@ -359,7 +359,7 @@ class TestValidationRunner(ClientStop, RunnerCase):
         second = self.send(["echo", "second"], slug=tasks["second"]).getresponse()
         self.assertEqual((second.status, second.headers["Content-Type"]), (200, "application/x-ndjson"))
         with validation.LINE.lock:
-            ends = f"{validation.LINE.holders[0]['ends']:%Y-%m-%d %H:%M:%S} UTC"
+            ends = validation.LINE.holders[0]['ends'].isoformat(timespec='seconds')
         self.assertEqual(json.loads(second.readline()), {"waiting": (
             f"waiting for the validation slot: the validation run of {self.project}/{self.slug} holds this machine "
             f"until its limit at {ends}")})
@@ -685,8 +685,9 @@ class TestValidationRunner(ClientStop, RunnerCase):
         waiting.join()
         [result] = done
         self.assertEqual(result.returncode, 0, result.stderr)
+        # The terminal reads the limit in local time; the stream itself carries ISO with offset.
         self.assertEqual(result.stderr, "[altitude] waiting for the validation slot: the validation run of other/task "
-                                        "holds this machine until its limit at 2026-10-08 02:08:48 UTC\n")
+                                        f"holds this machine until its limit at {S.local('2026-10-08T02:08:48+00:00')}\n")
         self.assertIn("after\n", result.stdout)
 
     def test_a_failed_cleanup_keeps_the_area_until_a_request_removes_it_and_an_unrecorded_outcome_keeps_its_record(self):

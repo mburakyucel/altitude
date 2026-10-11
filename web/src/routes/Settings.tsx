@@ -14,6 +14,7 @@ import { updateVoiceSettings } from "../components/voiceBackend";
 import { useViewport } from "../shell/breakpoints";
 import VoiceDiagnostics from "../components/VoiceDiagnostics";
 import { UnavailableAction } from "../components/UnavailableAction";
+import { dateText } from "../data/observed";
 import "./settings.css";
 
 const labels: Record<VoiceBackend, string> = { host: "This computer", browser: "Browser recognition" };
@@ -265,8 +266,6 @@ function ValidationSwitch({ machine }: { machine: Machine | undefined }) {
 }
 
 /** A date without its time: a device's last use is recorded at most daily. */
-const day = (at: string) => new Date(at).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
-
 /** One paired device; Remove asks once before it signs the device out. */
 function DeviceRow({ device, current, onRemoved }: { device: Device; current: boolean; onRemoved: () => void }) {
   const [state, setState] = useState<{ status: "idle" | "confirm" | "removing" } | { status: "failed"; error: Error }>({ status: "idle" });
@@ -281,7 +280,7 @@ function DeviceRow({ device, current, onRemoved }: { device: Device; current: bo
   };
   return <li className="device-row">
     <span className="device-name"><span className="device-title"><strong>{device.name}</strong>{current ? <span className="device-current">This device</span> : null}</span>
-      <small>Paired {day(device.paired)} · last used {day(device.used)}</small>
+      <small>Paired {dateText(device.paired)} · last used {dateText(device.used)}</small>
       {state.status === "confirm" ? <small className="device-confirm">{current ? "This browser will need a new code to open Altitude again." : "It will need a new code to open Altitude again."}</small> : null}
       {state.status === "failed" ? <small role="alert" className="text-danger">{state.error.message}</small> : null}
     </span>
@@ -357,7 +356,7 @@ function CertificateCard({ certificate }: { certificate: Certificate }) {
       <dt>Name</dt><dd>{certificate.name}</dd>
       <dt>SHA-256</dt><dd className="certificate-fingerprint">{rows.join("\n")}</dd>
       <dt>Trusting it allows</dt><dd>{certificate.scope}</dd>
-      <dt>Expires</dt><dd>{certificate.expires}</dd>
+      <dt>Expires</dt><dd>{dateText(certificate.expires)}</dd>
     </dl>
   </section>;
 }

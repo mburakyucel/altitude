@@ -198,6 +198,7 @@ class TestTLS(unittest.TestCase):
         self.assertRegex(authority["name"], r"^Altitude CA [2-9A-HJ-NP-Z]{4}$")
         self.assertEqual(f"sha256 Fingerprint={authority['sha256']}", tls.info("trial.example")["ca_sha256"])
         self.assertRegex(authority["sha256"], r"^[0-9A-F]{2}(:[0-9A-F]{2}){31}$")
+        self.assertRegex(authority["expires"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+00:00$")
         self.assertEqual(authority["scope"]["excluded"], [])
         for entry in ("DNS:localhost", "DNS:home.arpa", "DNS:trial.example", "IP:10.0.0.0/8", "IP:100.64.0.0/10",
                       "IP:::1/128", "IP:fc00::/7"):

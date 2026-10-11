@@ -24,7 +24,7 @@ class Line:
 
     def _waiting_for(self, ahead: int) -> str:
         """What a request in line waits for, with `lock` held."""
-        held = ", ".join(h["what"] + (f" until its limit at {h['ends']:%Y-%m-%d %H:%M:%S} UTC" if h.get("ends") else "")
+        held = ", ".join(h["what"] + (f" until its limit at {h['ends'].isoformat(timespec='seconds')}" if h.get("ends") else "")
                          for h in self.holders) or "the requests ahead of it are being admitted"
         return f"waiting for {self.name}: {held}" + (f"; {ahead} request(s) ahead of this one" if ahead else "")
 

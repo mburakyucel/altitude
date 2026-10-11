@@ -11,11 +11,11 @@ import type { Decision, L2MessageInput, Overview, TaskMessage, TaskView } from "
 import { InlineProse, ProseScope } from "../components/Prose";
 import { ProseTerminal } from "../components/CodeBlock";
 import { requestCommand } from "../data/terminalCommand";
-import { agoText, modelName, when } from "../data/observed";
+import { agoText, dayText, localTimes, modelName, when } from "../data/observed";
 import { questionPath, selections, turnLabel } from "../data/decisions";
 import { stoppedByCoordinator, taskExplanation } from "../data/taskStatus";
 import { holdText } from "../components/TaskCard";
-import { Bubble, Coordination, DayDivider, MessageRow, RemoveMessage, Reply, dayLabel } from "../components/Bubbles";
+import { Bubble, Coordination, DayDivider, MessageRow, RemoveMessage, Reply } from "../components/Bubbles";
 import { Choice, deliveryChoice } from "../components/Choice";
 import Composer from "../components/Composer";
 import { TaskActivity } from "../components/TaskActivity";
@@ -417,8 +417,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     const atGroup = Boolean(group?.anchor_id && group.anchor_id === message.id);
     // The current group occupies one stable discussion anchor. Old revisions retain their receipts.
     if (!atGroup && question && inGroup(question)) return;
-    const at = when(message.at);
-    const day = at != null ? dayLabel(at) : "";
+    const day = dayText(message.at);
     if (day && day !== lastDay) {
       rows.push(<DayDivider key={`day-${day}`} label={day} />);
       lastDay = day;
@@ -503,7 +502,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   });
   if (pending && !messages.some((message) => message.id === pending.id)) {
     // The stored row keeps this key, so acceptance settles the same bubble in place (SPEC.md §3.6 Sending).
-    const day = dayLabel(Date.now());
+    const day = dayText(new Date().toISOString());
     if (day !== lastDay) rows.push(<DayDivider key={`day-${day}`} label={day} />);
     rows.push(<Bubble key={pending.id} text={pending.text} at={new Date().toISOString()} state="pending" images={<PendingImages images={pending.images} />} />);
   }
@@ -756,9 +755,9 @@ function TaskPage({
       {facts.sub ? <p className="task-sub">{facts.sub}</p> : null}
       <Chips chips={facts.chips} />
       {/* The complete reasons come first: the page shows only the state and a short excerpt (SPEC.md §3.10). */}
-      {facts.blockReason ? <section><h3>{facts.label}</h3><p>{facts.blockReason}</p></section> : null}
-      {facts.queueReason ? <section><h3>Start condition</h3><p>{facts.queueReason}</p></section> : null}
-      {facts.holdReason ? <section><h3>Merge held</h3><p>{facts.holdReason}</p></section> : null}
+      {facts.blockReason ? <section><h3>{facts.label}</h3><p>{localTimes(facts.blockReason)}</p></section> : null}
+      {facts.queueReason ? <section><h3>Start condition</h3><p>{localTimes(facts.queueReason)}</p></section> : null}
+      {facts.holdReason ? <section><h3>Merge held</h3><p>{localTimes(facts.holdReason)}</p></section> : null}
       <ReviewBoxes task={task} controls={reviewControls} view={(id) => {
         closeDetails();
         const search = new URLSearchParams(location.search);

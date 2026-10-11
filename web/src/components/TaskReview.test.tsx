@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ReviewSchema, TaskViewSchema } from "../data/api";
 import type { Review } from "../data/api";
 import { renderApp, setViewport } from "../test/render";
+import { clockText, stampText } from "../data/observed";
 
 const route = "/projects/atlas/tasks/index";
 const snapshot = { head: "abc123", base: "base123", tree: "tree123", context_hash: "context123", captured_context_hash: "captured123", selected_owner_evidence: true, context_ids: ["evidence"], limitations: ["Original image bytes are not reviewed."] };
@@ -53,6 +54,19 @@ const card = (id: string) => within(document.getElementById(`review-${id}`)!);
 afterEach(() => setViewport(1024));
 
 describe("Adversarial review", () => {
+  it("shows the reviewed proposal and the times written in it in local time, never as ISO", async () => {
+    const plan = ReviewSchema.parse({ ...completed, id: "review-plan", subject: "proposal",
+      snapshot: { ...snapshot, proposal: { id: "plan", at: "2026-09-22T10:20:00+00:00", text: "Ship after 2026-09-22T12:00:00Z." } } });
+    const app = setup(withReviews(plan));
+    const details = await openDetails(app.user);
+    await app.user.click(within(within(details).getByRole("region", { name: "Proposal review" })).getByRole("button", { name: "View" }));
+    const opened = card("review-plan");
+    await app.user.click(opened.getByRole("button", { name: "Technical details" }));
+    expect(opened.getByText("Reviewed proposal").parentElement).toHaveTextContent(`Reviewed proposal · ${stampText("2026-09-22T10:20:00+00:00")}`);
+    expect(opened.getByText(/Ship after/)).toHaveTextContent(`Ship after ${clockText("2026-09-22T12:00:00Z")}.`);
+    expect(document.getElementById("review-review-plan")!.textContent).not.toMatch(/2026-09-22T|\+00:00/);
+  });
+
   it.each([390, 1440])("task details shows a box per kind and a request queues once at %i", async (width) => {
     setViewport(width);
     let accept!: (response: Response) => void;

@@ -1,4 +1,5 @@
 import type { Decision, TaskRow } from "./api";
+import { localTimes } from "./observed";
 
 function text(value: unknown): string {
   return typeof value === "string" ? value : "";
@@ -12,10 +13,10 @@ function sentence(value: string): string {
   return /[.!?…]$/.test(value) ? value : `${value}.`;
 }
 
-/** Display prose only. Full authored reasons and diagnostic evidence stay in Task details.
+/** Display prose only, its written times in local time. Full authored reasons and diagnostic evidence stay in Task details.
  * #658: raw worker output and identifiers must never become the primary explanation. */
 export function statusExcerpt(value: unknown): string {
-  const prose = text(value).trim().replace(/^L[23]:\s*/i, "").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
+  const prose = localTimes(text(value).trim()).replace(/^L[23]:\s*/i, "").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
   const first = prose.split(/\n|\\[nrt"]|[{}]|\s*\([^)]*\b[a-f0-9]{8,}\b|\b[a-f0-9]{8,}\b|(?<=[.!?])\s/)[0]?.trim() ?? "";
   if (!first || /^(system fault|L2 worker|worker state=)/i.test(first)) return "";
   const short = first.length > 120 ? `${first.slice(0, 117).replace(/\s+\S*$/, "")}…` : first;

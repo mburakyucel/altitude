@@ -1,7 +1,7 @@
 import { Component, createRef, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { StatusMark } from "../components/StatusMark";
-import { Prose } from "../components/Prose";
+import { Prose, ProseAt } from "../components/Prose";
 import { ApiError, fetchTranscriptRecord, useTranscript } from "../data/api";
 import type { TaskView, TranscriptEvent } from "../data/api";
 import { SteeringControls, SteeringNotice } from "../components/TaskSteering";
@@ -62,7 +62,7 @@ function Message({ event, engineLabel }: { event: TranscriptEvent; engineLabel: 
         <span>{engineLabel}</span>
         <Stamp className="session-time" at={event.at} />
       </header>
-      <Prose text={event.text} />
+      <ProseAt value={event.at}><Prose text={event.text} /></ProseAt>
     </article>
   );
 }
@@ -178,7 +178,7 @@ function RawRecord({ event, scope, active }: { event: TranscriptEvent; scope: Re
   return (
     <article className="raw-row" data-transcript-id={event.id}>
       <p className="raw-meta">
-        {event.at ?? "—"} · {event.source} · {event.kind} · {event.type}
+        <Stamp at={event.at} className="raw-time" /> · {event.source} · {event.kind} · {event.type}
         {event.role ? ` · ${event.role}` : ""}
       </p>
       {event.summary ? <p className="raw-summary">{event.summary}</p> : null}

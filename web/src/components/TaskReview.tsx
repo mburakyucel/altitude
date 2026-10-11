@@ -2,7 +2,8 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError, taskReview } from "../data/api";
 import type { Decision, Review, ReviewAction, ReviewSubject, TaskView } from "../data/api";
-import { InlineProse } from "./Prose";
+import { InlineProse, ProseAt } from "./Prose";
+import { Stamp } from "./Stamp";
 import "./task-review.css";
 
 const NAME: Record<ReviewSubject, string> = { proposal: "Proposal review", changes: "Implementation review" };
@@ -209,7 +210,7 @@ function ReviewBody({ review, controls, children }: { review: Review; controls: 
     {technical ? <div className="review-technical text-meta">
       <p>{[review.engine_label, review.model].filter(Boolean).join(" · ")}{review.fallback_reason ? ` · ${review.fallback_reason}` : ""}</p>
       <p>Requested by {who(review.requested_by)}{review.focus ? <>. Focus: <InlineProse text={review.focus} /></> : "."}</p>
-      {review.snapshot?.proposal ? <div><p><strong>Reviewed proposal</strong> · {review.snapshot.proposal.at}</p><p><InlineProse text={review.snapshot.proposal.text} /></p></div> : null}
+      {review.snapshot?.proposal ? <div><p><strong>Reviewed proposal</strong> · <Stamp at={review.snapshot.proposal.at} className="review-time" /></p><p><ProseAt value={review.snapshot.proposal.at}><InlineProse text={review.snapshot.proposal.text} /></ProseAt></p></div> : null}
       {review.snapshot ? <p className="review-evidence">Reviewed head {review.snapshot.head} · base {review.snapshot.base} · tree {review.snapshot.tree} · context {review.snapshot.context_hash}{review.snapshot.input_hash ? ` · inputs ${review.snapshot.input_hash}` : ""}</p> : null}
       {review.snapshot?.selected_owner_evidence ? <p>Selected L2 evidence: {review.snapshot.context_ids?.join(", ") || "none"}; every operator and coordinator message included.</p> : null}
       {review.snapshot?.limitations?.length ? <p>Capture limits: <InlineProse text={review.snapshot.limitations.join("\n")} /></p> : null}

@@ -1687,6 +1687,17 @@ authorization and post-change health verification.
 
 ## Interfaces and storage
 
+### Times
+
+Records, events and JSON carry every instant as ISO 8601 with an explicit offset (`+00:00`), and
+text Altitude composes for a record or message, such as a block reason, an FYI or a waiting line,
+writes its instants the same way. Nothing a person reads shows that form. The web app formats
+instants in the browser's zone and locale through `web/src/data/observed.ts`, and its prose renderer
+shows written UTC times in agent and system text (ISO instants, `HH:MMZ`, `HH:MM UTC`, a UTC clock
+range) the same way, never adding a date the writer left out, outside code and paths; `bin/alt` human output passes through `state.localized`, which
+shows ISO instants in the machine's zone. Formats are in [SPEC.md §4.5](../design/wireframes/SPEC.md#45-copy)
+and [CLI times](CLI.md#times).
+
 ### Conversation-audit pilot
 
 `audit.py` owns the finite pilot for the project named in `config.py`. The operator explicitly starts

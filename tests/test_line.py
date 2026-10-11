@@ -41,7 +41,7 @@ class TestLine(unittest.TestCase):
             with places.lock:
                 self.assertIn("recovered until its limit at", places._waiting_for(0))
             with self.assertRaisesRegex(ValueError, r"^test: not admitted within 0 minutes, waiting for a place: "
-                                        r"running, recovered until its limit at .* UTC; try again$"):
+                                        r"running, recovered until its limit at \S+\+00:00; try again$"):
                 with places.turn("late", None, command="test"):
                     pass
         self.assertEqual((places.holders, places._queue), ([], []))

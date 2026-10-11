@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import runpy
+import time
 import unittest
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -252,6 +253,28 @@ class TestInspectionCLI(AltitudeCase):
         self.assertNotIn("detail", record["faults"]["restart"])
         self.assertEqual(set(record["faults"]), {"restart"})
         self.assertEqual(record["service"], service)
+
+    def test_human_output_reads_times_in_local_time_and_json_keeps_iso(self):
+        self.addCleanup(time.tzset)
+        self.setenv("TZ", "America/Los_Angeles")
+        time.tzset()
+        today = datetime.now(timezone.utc).replace(microsecond=0)
+        earlier = today - timedelta(days=40)
+        S.write_json(config.MONITOR_DIR / "restart-pending.json", {"since": today.isoformat(), "files": ["bin/alt"]})
+        self.task(state="blocked", blocked_reason=f"usage limit: resets {earlier.isoformat()}")
+        service = {"state": "active", "substate": "running", "pid": 321, "error": None}
+        with mock.patch.object(engines, "service_status", return_value=service):
+            text = cli("repo")
+            record = json.loads(cli("repo", "--json"))
+        brief = cli("task", "status", "inspect", "--brief")
+
+        self.assertIn(f"since {today.astimezone():%H:%M %Z}", text)
+        self.assertRegex(brief, r"usage limit: resets [A-Z][a-z]{2} \d{1,2}, (\d{4}, )?\d\d:\d\d P[SD]T")
+        for human in (text, brief):
+            self.assertNotRegex(human, r"\+00:00|\dZ\b|UTC")
+        self.assertEqual(record["restart_pending"]["since"], today.isoformat())
+        self.assertEqual(json.loads(cli("task", "status", "inspect", "--json"))["blocked_reason"],
+                         f"usage limit: resets {earlier.isoformat()}")
 
     def test_repo_counts_a_rename_and_quoted_filename_once_each(self):
         git("mv", "README.md", "renamed\nreadme.md", cwd=self.repo)

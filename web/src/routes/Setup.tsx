@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useSearchParams } from "react-router";
+import { Stamp } from "../components/Stamp";
 import { StatusMark } from "../components/StatusMark";
 import { ApiError, useSetup, useSetupAction } from "../data/api";
 import type { Setup } from "../data/api";
@@ -134,7 +135,7 @@ export function ProjectSetup({ name }: { name: string }) {
         </ol>
         {failed ? <div className="setup-help"><p className="text-meta text-muted">Retry runs setup again. Discuss with L3 opens your project conversation.</p><button type="button" className="btn" onClick={() => close(true)}>Discuss with L3</button></div> : null}
         <footer className="setup-footer">
-          {data?.checked_at ? <p className="text-meta text-muted">{stale ? "Last observed" : "Checked"} {new Date(data.checked_at).toLocaleString()}</p> : null}
+          {data?.checked_at ? <p className="text-meta text-muted">{stale ? "Last observed" : "Checked"} <Stamp at={data.checked_at} className="setup-time" /></p> : null}
           <div className="setup-actions">
             <button type="button" className="btn" disabled={busy || setup.isPending} onClick={() => run("check")}>Check again</button>
             <button type="button" className="btn btn-primary" onClick={() => close(true)}>Open conversation</button>

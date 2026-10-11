@@ -9,10 +9,10 @@ import type { ChatMessage, ChatSent, ChatView, ProjectView, TaskRow } from "../d
 import { ProseScope } from "../components/Prose";
 import { ProseTerminal } from "../components/CodeBlock";
 import { requestCommand } from "../data/terminalCommand";
-import { when } from "../data/observed";
+import { dayText, when } from "../data/observed";
 import { carries, inFlight, readOf, retired, settleOutgoing, startOutgoing, updateOutgoing, dropOutgoing, useOutbox } from "../data/outbox";
 import type { Outgoing } from "../data/outbox";
-import { Bubble, DayDivider, RemoveMessage, Reply, Typing, dayLabel } from "../components/Bubbles";
+import { Bubble, DayDivider, RemoveMessage, Reply, Typing } from "../components/Bubbles";
 import Composer, { markSubmitted, releaseSubmitted, returnToComposer } from "../components/Composer";
 import { L3ModelButton } from "../components/Models";
 import type { ImageSubmission } from "../components/ImageDraft";
@@ -88,6 +88,7 @@ function systemTurn(turn: Turn, project: string, activeId: string | null): Syste
     at: turn.at,
     prompt: turn.user?.text ?? "",
     reply: turn.assistant?.text ?? null,
+    replyAt: (turn.assistant ?? turn.error)?.at ?? null,
     error: turn.error?.text ?? null,
     inProgress: !turn.assistant && !turn.error && turn.id === activeId,
     slug: row && !row.project_message ? subjectOf(row, project) : null,
@@ -383,8 +384,7 @@ export default function Conversation({
   const rows: ReactNode[] = [];
   let lastDay = "";
   const divide = (at: string | null | undefined) => {
-    const time = when(at);
-    const day = time != null ? dayLabel(time) : "";
+    const day = dayText(at);
     if (day && day !== lastDay) {
       rows.push(<DayDivider key={`day-${day}`} label={day} />);
       lastDay = day;

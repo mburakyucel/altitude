@@ -13,6 +13,15 @@ Start with [setup](SETUP.md) to build the app, register a project with Auto pref
 pins, and start a conversation. Registration requests daemon-owned setup, including routine Git
 guard installation or refresh. [Operations](OPERATIONS.md) covers project settings and service lifecycle.
 
+## Times
+
+Human output shows every instant in the machine's local time, the operator's zone: `16:58 PDT` today,
+`Oct 9, 16:58 PDT` otherwise, with the year when it is not this one. This covers the text views
+(`repo`, `queue`, `pr`, `state`, `l3 search`, `task status --brief`, `task messages`, `task events`,
+`task report`), the waiting lines of `task run` and `task validate`, and error messages. `--json`
+keeps ISO 8601 with an offset, as stored; message text printed by `task messages` converts only full
+ISO instants.
+
 ## Inspection
 
 ### Conversation-audit pilot
