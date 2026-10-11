@@ -1478,6 +1478,12 @@ export async function forgetProject(queryClient: QueryClient, name: string) {
     await queryClient.cancelQueries({ queryKey: [kind, name] });
     queryClient.removeQueries({ queryKey: [kind, name] });
   }
+  // The composer's recovery copies of the project's conversations (Composer.tsx) go with it.
+  try {
+    for (const key of Object.keys(sessionStorage)) {
+      if (key === `altitude.submitted:project/${name}` || key.startsWith(`altitude.submitted:task/${name}/`)) sessionStorage.removeItem(key);
+    }
+  } catch { /* browser storage is unavailable: it holds no copies */ }
   void queryClient.invalidateQueries({ queryKey: ["overview"] });
   void queryClient.invalidateQueries({ queryKey: ["monitor"] });
 }

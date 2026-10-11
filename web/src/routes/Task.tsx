@@ -566,7 +566,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     <section className="convo" aria-label="Task conversation">
       <p className="sr-only" role="status">{removal.isSuccess ? "Message removed" : ""}</p>
       {(readOnly || denied) ? <p className="conversation-notice" role="alert">
-        {denied ? "You cannot send messages or answers here." : "Showing saved conversation. Refresh before replying or deciding."}{" "}
+        {denied ? "This page lost access." : "Showing saved conversation. Refresh before replying or deciding."}{" "}
         <button className="link" onClick={restoreAccess}>Refresh</button>
       </p> : null}
       {questionId && !target ? <p className="conversation-notice" role="status">This question is unavailable. The task conversation is below.</p> : null}

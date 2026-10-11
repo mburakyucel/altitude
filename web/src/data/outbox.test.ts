@@ -1,8 +1,8 @@
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ChatView } from "./api";
-import { readOf, retired, settleOutgoing, startOutgoing, updateOutgoing } from "./outbox";
-import type { Outgoing } from "./outbox";
+import { forgetProject, type ChatView } from "./api";
+import { readOf, retired, settleOutgoing, startOutgoing, startTaskOutgoing, updateOutgoing } from "./outbox";
+import type { Outgoing, TaskOutgoing } from "./outbox";
 
 /*
  * The project outbox (SPEC.md §3.6 Sending): what it keeps, for how long, and which server read may
@@ -120,5 +120,21 @@ describe("project outbox", () => {
       { role: "user", text: "Sample", turn_id: "t3", request_id: "b2" },
       { role: "assistant", text: "Done", turn_id: "t3" },
     ] }), 0)).toBe(false);
+  });
+});
+
+describe("removing a project", () => {
+  it("drops its outboxes and its composer recovery copies, and no other project's", async () => {
+    const client = new QueryClient();
+    startTaskOutgoing(client, "atlas", "pager", { id: "a1", text: "Keep twenty per page.", target: {} });
+    startTaskOutgoing(client, "beacon", "pager", { id: "b1", text: "Ship it.", target: {} });
+    for (const key of ["altitude.submitted:task/atlas/pager", "altitude.submitted:project/atlas", "altitude.submitted:task/beacon/pager", "altitude.submitted:project/atlas-two"]) {
+      sessionStorage.setItem(key, JSON.stringify({ pending: { a: "Words" }, text: "", failure: null }));
+    }
+    await forgetProject(client, "atlas");
+    expect(client.getQueryData(["task-outbox", "atlas", "pager"])).toBeUndefined();
+    expect(client.getQueryData<TaskOutgoing[]>(["task-outbox", "beacon", "pager"])).toHaveLength(1);
+    expect(Object.keys(sessionStorage).sort()).toEqual(["altitude.submitted:project/atlas-two", "altitude.submitted:task/beacon/pager"]);
+    sessionStorage.clear();
   });
 });

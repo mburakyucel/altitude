@@ -130,18 +130,18 @@ test("a message to the L2 stays on its bubble from Send until the record shows i
   await send.click();
   const denied = row("Merge when green.");
   await walk.state("09-not-sent-access-lost", {
-    visible: [denied.getByText("Not sent: requests must come from Altitude's own page."), convo.getByText("You cannot send messages or answers here.")],
+    visible: [denied.getByText("Not sent: requests must come from Altitude's own page."), convo.getByText("This page lost access.")],
     hidden: [denied.getByRole("button", { name: "Retry" }), denied.getByRole("button", { name: "Edit" })],
   });
   await convo.getByRole("button", { name: "Refresh", exact: true }).click();
   await walk.state("10-refresh-returns-retry-and-edit", {
     visible: [denied.getByRole("button", { name: "Retry" }), denied.getByRole("button", { name: "Edit" }), field],
-    hidden: [convo.getByText("You cannot send messages or answers here.")],
+    hidden: [convo.getByText("This page lost access.")],
   });
   await expect(field).toBeEnabled();
 });
 
-test("re-pairing starts the page afresh: unsent words return to the field, never sent by themselves", async ({ page, request }, info) => {
+test("re-pairing starts the page afresh: unsent words return to the field as a draft, never sent by themselves", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const { slug, convo, field, send, row } = await setup(page, request);
   await walk.open(`/projects/atlas/tasks/${slug}`);
@@ -152,7 +152,8 @@ test("re-pairing starts the page afresh: unsent words return to the field, never
   const code = (await (await request.post("/api/devices/code", { data: {} })).json()).code as string;
   await page.getByLabel("Pairing code").fill(code);
   await page.getByRole("button", { name: "Pair", exact: true }).click();
-  await walk.state("12-after-pairing-words-return-to-field", { visible: [field, convo.getByText("Not sent.")], hidden: [row("Merge when green.")] });
+  // The words are a draft again: an ordinary Send sends them to what the page now shows.
+  await walk.state("12-after-pairing-words-return-to-field", { visible: [field, convo.getByText("Not sent.", { exact: true })], hidden: [row("Merge when green."), convo.getByRole("button", { name: "Retry" })] });
   await expect(field).toHaveValue("Merge when green.");
   expect((await (await request.get(`/api/task/atlas/${slug}`)).json()).messages.some((message: { text: string }) => message.text === "Merge when green.")).toBe(false);
 });

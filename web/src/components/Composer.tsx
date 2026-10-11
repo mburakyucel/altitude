@@ -16,7 +16,7 @@ import { traceVoice, traceVoiceTracks, voiceError } from "./voiceTrace";
  * the draft and the send; the composer owns the states in the §3.6 table: Idle, Typing, Sending (the
  * page's bubble at 60%), Busy (the arrow queues), Listening, Transcribing, Landed (the transcript is
  * appended to the draft and nothing else appears, issue #195), Denied and Unavailable. A sent message's own
- * state shows on its bubble; after a reload, copies no message shows return here ("Not sent. Retry."). Voice is capped at ten minutes; audio never becomes state anywhere.
+ * state shows on its bubble; after a reload, copies no message shows return here as a draft ("Not sent."). Voice is capped at ten minutes; audio never becomes state anywhere.
  * The installation's voice backend decides the capture: host voice streams to this computer's speech
  * model and browser recognition never uploads; both show their words flowing in while listening and run the same
  * recorder-shaped state machine. Host voice keeps recording through a lost connection and its words catch
@@ -958,14 +958,8 @@ export default function Composer({
   } else if (sendFailure === "refused" && !images.error) {
     hintTone = "danger";
     hintRole = "alert";
-    hintText = (
-      <>
-        Not sent.{" "}
-        <button type="button" className="link" onClick={() => void submit(draft.current)}>
-          Retry
-        </button>
-      </>
-    );
+    // Recovered words are a draft: Send sends them to what the page shows now (SPEC.md §3.6).
+    hintText = "Not sent.";
   } else if (sendFailure === "unconfirmed") {
     hintTone = "danger";
     hintRole = "alert";
