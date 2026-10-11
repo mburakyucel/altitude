@@ -80,6 +80,8 @@ const recoveryViews = new Map<string, { draft: () => string; failure: () => Send
   voice: (send: VoiceSend | null) => void; submit: (text: string, voice?: VoiceSend) => Promise<void>; recover: (live?: boolean) => void }>();
 // The field as last edited while its conversation's recovery could not be read: storage is behind it.
 const missedEdits = new Map<string, string>();
+// Conversations whose field holds recovered words, as this document last set it, whether or not storage can be read.
+const heldFields = new Set<string>();
 const recoveryKey = (conversation: string) => `altitude.submitted:${conversation}`;
 function readSubmitted(conversation: string): SubmittedText {
   const saved = sessionStorage.getItem(recoveryKey(conversation));
@@ -121,6 +123,7 @@ function beginSubmitted(conversation: string, text: string, id: string = crypto.
   saved.pending[id] = text;
   if (!preserve) { saved.text = ""; saved.failure = null; }
   saveSubmitted(conversation, saved, true);
+  if (!preserve) heldFields.delete(conversation);
   liveSubmissions.add(id);
   return id;
 }
@@ -170,7 +173,7 @@ export function releaseSubmitted(conversation: string, id: string) {
 
 /** Whether this tab's recovery copy holds the conversation's field; a page then keeps none of it for Back. */
 export function recoveryHoldsDraft(conversation: string): boolean {
-  try { return Boolean(readSubmitted(conversation).text); } catch { return false; }
+  return heldFields.has(conversation);
 }
 
 /** Put a message's words back in its conversation's field, ahead of the draft, with its images in the picker. */
@@ -570,6 +573,7 @@ export default function Composer({
       setRecoveryUnavailable(false);
     } catch { setRecoveryUnavailable(true); }
     if (failure.current !== "unconfirmed") { failure.current = null; setSendFailure(null); }
+    if (failure.current !== "unconfirmed" || !text) heldFields.delete(conversation);
   }, [conversation, onChange]);
 
   useEffect(() => {
@@ -617,6 +621,7 @@ export default function Composer({
       restore: (saved: SubmittedText, unavailable = false, id?: string) => {
         draft.current = saved.text;
         onChange(saved.text);
+        if (saved.text) heldFields.add(conversation); else heldFields.delete(conversation);
         failure.current = saved.failure;
         setSendFailure(saved.failure);
         setRecoveryUnavailable(unavailable);

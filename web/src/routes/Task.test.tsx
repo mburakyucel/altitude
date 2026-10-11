@@ -1548,6 +1548,37 @@ describe("Task on the phone", () => {
     expect(document.querySelector(".composer-hint[role=alert]")).toBeNull();
   });
 
+  it.each(["clears", "sends"])("recovered words left while their copy cannot be read stay gone with Back once another visit %s them", async (consume) => {
+    setViewport(390);
+    let finish!: (response: Response) => void;
+    let sent = 0;
+    stub(running, { message: () => ++sent === 1 ? new Promise<Response>((resolve) => { finish = resolve; }) : Promise.resolve(jsonResponse({ ok: true })) });
+    const { user, queryClient, router } = renderApp({ route });
+    await user.type(await screen.findByLabelText("Message the L2"), "First words");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await act(async () => { await router.navigate("/settings"); });
+    act(() => queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "access" }));
+    await act(async () => { await router.navigate(route); });
+    await act(async () => finish(jsonResponse({ error: "Response lost" }, 500)));
+    await waitFor(() => expect(screen.getByLabelText("Message the L2")).toHaveValue("First words"));
+    // Leaving while storage cannot be read, then a second visit, in a new history entry, uses the recovered words.
+    const storage = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Read denied"); });
+    try {
+      await act(async () => { await router.navigate("/settings"); });
+    } finally { storage.mockRestore(); }
+    await act(async () => { await router.navigate(route); });
+    expect(await screen.findByLabelText("Message the L2")).toHaveValue("First words");
+    if (consume === "clears") await user.clear(screen.getByLabelText("Message the L2"));
+    else await user.click(screen.getByRole("button", { name: "Send" }));
+    await act(async () => { await router.navigate("/settings"); });
+    // Back to the first visit: it kept none of the recovered words, so nothing returns.
+    await act(async () => { await router.navigate(-1); });
+    await act(async () => { await router.navigate(-1); });
+    await act(async () => { await router.navigate(-1); });
+    await screen.findByRole("heading", { name: "Fix the timer" });
+    expect(screen.getByLabelText("Message the L2")).toHaveValue("");
+  });
+
   it("recovered words edited while their copy cannot be read come back as edited on a new visit to the task", async () => {
     setViewport(390);
     let finish!: (response: Response) => void;

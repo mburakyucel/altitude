@@ -2302,7 +2302,8 @@ while unconfirmed; editing a refused recovery returns it to an ordinary draft. S
 project text survives route remounts in client memory; it is not synchronized or stored across reloads.
 Recovered text transfers back to recovery storage on unmount so returning restores it only once.
 Recovery storage is the recovered text's only owner: a task page's Back/Forward memory keeps none of it,
-and an edit made while storage cannot be read is applied by the next view that reads it.
+judged by the browser document's own record of which fields hold recovered words, so this holds while storage
+cannot be read; an edit made then is applied by the next view that reads storage.
 Failure to save the initial recovery copy leaves the text
 unsent with an inline error. No recovery record initiates delivery or provides a second server queue.
 A failed recovery update keeps the latest text in the current browser document and displays a
