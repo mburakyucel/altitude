@@ -969,14 +969,14 @@ test("question loading, read failure, write failure and denied access retain rec
   await expect(field).toBeDisabled();
   await expect(field).toHaveValue("Keep the draft after this failed send.");
   await walk.state("03-denied-send-and-acceptance", {
-    visible: [page.getByText("You cannot send messages or answers here.", { exact: false }), card],
+    visible: [page.getByText("This page lost access.", { exact: false }), card],
     hidden: [card.getByText("Decision recorded", { exact: true })],
   });
   expect((await readTask(request, slug)).question?.status).toBe("open");
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(field).toBeEnabled();
   await expect(card.getByRole("button", { name: q.recommendation!.label, exact: true })).toBeEnabled();
-  await walk.state("04-refresh-restores-writing", { visible: [field], hidden: [page.getByText("You cannot send messages or answers here.", { exact: false })] });
+  await walk.state("04-refresh-restores-writing", { visible: [field], hidden: [page.getByText("This page lost access.", { exact: false })] });
   await page.route(endpoint, (route) => route.fulfill({ status: 503, json: { error: "Question read unavailable." } }));
   await page.reload();
   const error = page.getByText(/Could not load the task/);

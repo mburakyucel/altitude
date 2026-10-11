@@ -26,11 +26,11 @@ An explicit voice Send captures its images before transcription. That operation 
 original project or task after route navigation; returning while it is pending shows its status.
 It remains client-side within the current document, without an audio replay or persistent image queue.
 
-Send shows a pending bubble and freezes that submission's text/image/microphone controls until
-admission is known. Acceptance clears the selection and releases the composer before the agent
-finishes. A confirmed refusal removes the pending bubble and restores the editable draft with the
-reason. An uncertain response keeps the pending bubble and frozen submission; Retry uses the same
-identity and content. Navigation remains available. No artificial percentage implies upload progress.
+Send shows the message at once with its images, clears the selection and leaves the composer free.
+A confirmed refusal shows Not sent on the message, with the server's reason: Retry sends the saved
+images again and Edit returns the caption to the field and the images to the picker. An uncertain
+response shows Unconfirmed with Copy to draft (the caption) and no send Retry; a read that shows the
+message settles it. Navigation remains available. No artificial percentage implies upload progress.
 
 Saved thumbnails stay with their caption and open in a full-image modal on phone/desktop, with
 Fit/Zoom, scrolling, Close/Escape and focus return. A viewer opened on a queued project image stays

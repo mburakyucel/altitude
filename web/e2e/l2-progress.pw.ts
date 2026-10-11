@@ -421,13 +421,15 @@ for (const status of [409, 500, 200]) {
       await (await arrived).finished();
     }
     await page.getByRole("link", { name: "Conversation", exact: true }).click();
-    await expect(field).toHaveValue(status === 200 ? "A newer unsent draft." : "Original steering message.\nA newer unsent draft.");
-    await walk.state(status === 200 ? "02-accepted-send-keeps-only-new-draft" : status === 409 ? "02-refused-send-restores-both-drafts" : "02-unknown-send-restores-with-check-hint", {
-      visible: [field, ...(status === 200 ? [convo.getByText("Original steering message.", { exact: true })] : [convo.locator(".composer-hint[role=alert]")])],
-      hidden: status === 200 ? [convo.locator(".composer-hint[role=alert]")] : status === 500 ? [convo.getByRole("button", { name: "Retry", exact: true })] : [],
+    // The outcome shows on the message itself; the newer draft stays in the field as typed (SPEC.md §3.10).
+    await expect(field).toHaveValue("A newer unsent draft.");
+    const sent = convo.locator(".msg-row").filter({ hasText: "Original steering message." });
+    await walk.state(status === 200 ? "02-accepted-send-keeps-only-new-draft" : status === 409 ? "02-refused-send-shows-on-its-message" : "02-unknown-send-settles-from-the-record", {
+      visible: [field, ...status === 409 ? [sent.getByText("Not sent: message refused."), sent.getByRole("button", { name: "Retry" }), sent.getByRole("button", { name: "Edit" })]
+        : [sent.getByRole("button", { name: "Remove", exact: true })]],
+      // An unknown answer never offers a send Retry; the read that lists the stored message settles it.
+      hidden: [convo.locator(".composer-hint[role=alert]"), ...status === 409 ? [] : [sent.getByRole("button", { name: "Retry" }), sent.getByText("Unconfirmed")]],
     });
-    if (status === 409) await expect(convo.locator(".composer-hint")).toHaveText("Not sent. Retry");
-    if (status === 500) await expect(convo.locator(".composer-hint")).toHaveText("Could not confirm delivery. Check the conversation before sending again.");
     const task = await (await request.get(`/api/task/atlas/${initial.slug}`)).json();
     expect(task.messages.filter((row: { text: string }) => row.text === "Original steering message.")).toHaveLength(status === 409 ? 0 : 1);
   });

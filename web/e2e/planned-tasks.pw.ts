@@ -95,7 +95,7 @@ test("planned-message denial retains the draft and restores sending after access
   const text = "Preserve the compatibility scope.";
   await field.fill(text);
   await conversation.getByRole("button", { name: "Send", exact: true }).click();
-  const denial = conversation.getByRole("alert").filter({ hasText: "You cannot send messages or answers here." });
+  const denial = conversation.getByRole("alert").filter({ hasText: "This page lost access." });
   await walk.state("01-denied-draft-retained", { visible: [field, denial], hidden: [conversation.locator(".msg-row[data-pending]")] });
   await expect(field).toHaveValue(text);
   await expect(field).toBeDisabled();
