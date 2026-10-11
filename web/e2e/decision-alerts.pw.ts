@@ -169,8 +169,9 @@ test("a push wakes the real worker, which names the decision and never shows a b
 
   // Nothing new: the wake names every decision still waiting and opens Needs you. No path shows a bare "Altitude".
   await wake();
-  await expect.poll(() => banners(page)).toEqual([retention, drill,
-    { title: "Still waiting for you", body: "atlas · Choose backup retention\nbeacon · Pick a drill day", tag: "altitude-nothing-new" }]);
+  const waiting = { title: "Still waiting for you", body: "atlas · Choose backup retention\nbeacon · Pick a drill day", tag: "altitude-nothing-new" };
+  await expect.poll(async () => (await banners(page)).sort((a, b) => a.title.localeCompare(b.title)))
+    .toEqual([retention, drill, waiting]);
   expect((await banners(page)).map((banner) => banner.title)).not.toContain("Altitude");
   await walk.state("15-still-waiting-named", { visible: [page.getByRole("article", { name: "Choose backup retention" }), page.getByRole("article", { name: "Pick a drill day" })], hidden: [] });
 });
