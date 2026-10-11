@@ -1,8 +1,7 @@
 import { Link, useLocation } from "react-router";
 import { useOverview } from "../data/api";
 import type { Decision, Overview, TaskRow } from "../data/api";
-import { agoText, when } from "../data/observed";
-import { clock } from "./Bubbles";
+import { agoText, clockText } from "../data/observed";
 import type { DotState } from "../shell/projects";
 import { questionPath, turnLabel } from "../data/decisions";
 import { setSelectedProject } from "../shell/scope";
@@ -27,8 +26,8 @@ export function holdText(hold: string | null | undefined, why: string | null | u
   if (!hold || hold === "ready for dispatch") return why === "resume" ? "waits for resume" : "waits for dispatch";
   const checkpoint = /^resume checkpoint (\S+)/.exec(hold);
   if (checkpoint) {
-    const at = when(checkpoint[1]);
-    return at != null ? `waits for resume at ${clock(at)}` : "waits for resume";
+    const at = clockText(checkpoint[1]);
+    return at ? `waits for resume at ${at}` : "waits for resume";
   }
   if (hold.startsWith("restart in progress")) return "waits for Altitude to restart";
   if (hold.startsWith("engine hold: ")) return "waits for an available coding engine";

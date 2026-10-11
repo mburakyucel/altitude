@@ -533,7 +533,7 @@ def run(project: str, slug: str, attempt: object, argv: object, *, kvm: object =
         _latest[key] = mine
 
     def leaving() -> str | None:
-        return (f"replaced by this task's newer validation request of {mine['replaced']:%Y-%m-%d %H:%M:%S} UTC"
+        return (f"replaced by this task's newer validation request of {mine['replaced'].isoformat(timespec='seconds')}"
                 if mine["replaced"] else line.CLIENT_GONE if gone() else None)
     try:
         with LINE.turn(f"the validation run of {project}/{slug} holds this machine",

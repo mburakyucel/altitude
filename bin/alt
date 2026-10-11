@@ -84,6 +84,11 @@ def out(obj) -> None:
     print(json.dumps(obj, indent=2, sort_keys=True, default=str) if not isinstance(obj, str) else obj)
 
 
+def say(text: str) -> None:
+    """Human output: times in it read in local time (docs/CLI.md#times); --json keeps ISO with offset."""
+    print(S.localized(text))
+
+
 def _task_review(args, project: str) -> dict:
     from altitude import reviews
     slug = args.slug or os.environ.get("ALTITUDE_TASK")
@@ -598,9 +603,9 @@ def main(argv=None) -> None:
                             result = json.loads(line)
                             if result.keys() == {"waiting"} and result["waiting"] != shown:
                                 shown = result["waiting"]
-                                print(f"[altitude] {shown}", file=sys.stderr, flush=True)
+                                print(f"[altitude] {S.localized(shown)}", file=sys.stderr, flush=True)
                         if "unit" not in result and result.get("error"):
-                            sys.exit(result["error"])
+                            sys.exit(S.localized(result["error"]))
                         if "unit" not in result:
                             if machine_run:  # a restart ended the connection: ask again for this request's result
                                 raise ConnectionResetError("altd ended the connection before the command's result")
@@ -739,7 +744,7 @@ def main(argv=None) -> None:
             out(config.load_projects())
         return
     if c == "state":
-        print(S.regen_state_md(_project(args))); return
+        say(S.regen_state_md(_project(args))); return
     if c == "task":
         p = _project(args); tc = args.tcmd
         if tc == "new":
@@ -886,18 +891,18 @@ def main(argv=None) -> None:
             if not slug:
                 sys.exit("alt task status: slug or ALTITUDE_TASK required")
             record = status.status(p, slug)
-            print(_brief_text(record)) if tc == "status" and args.brief else out(record)
+            say(_brief_text(record)) if tc == "status" and args.brief else out(record)
         elif tc == "report":
             from altitude import status
             record = status.task_report(p, args.slug)
-            out(record) if args.as_json else print(_report_text(record))
+            out(record) if args.as_json else say(_report_text(record))
         elif tc == "events":
             count = max(0, args.last); rows = S.read_events(p, args.slug)
             rows = rows[-count:] if count else []
-            out(rows) if args.as_json else print(_events_text(rows))
+            out(rows) if args.as_json else say(_events_text(rows))
         elif tc == "messages":
             rows = T.task_messages(p, args.slug, args.last)
-            out(rows) if args.as_json else print(_messages_text(rows))
+            out(rows) if args.as_json else say(_messages_text(rows))
         elif tc == "list":
             out([{**{k: t.get(k) for k in ("slug", "state", "title", "attempt", "updated")}, "waiting": T.wait_label(p, t)}
                  for t in S.list_tasks(p, include_archive=args.all)])
@@ -911,23 +916,23 @@ def main(argv=None) -> None:
         out({"seats": route.seats(), "routing": monitor.routing(), "sessions": monitor.sessions()}); return
     if c == "queue":
         from altitude import digest
-        record = digest.queue_status(); out(record) if args.as_json else print(_queue_text(record)); return
+        record = digest.queue_status(); out(record) if args.as_json else say(_queue_text(record)); return
     if c == "repo":
         from altitude import status
-        record = status.repo(_project(args)); out(record) if args.as_json else print(_repo_text(record)); return
+        record = status.repo(_project(args)); out(record) if args.as_json else say(_repo_text(record)); return
     if c == "pr":
         from altitude import status
         if args.number is not None or not args.target.isdecimal() or int(args.target) < 1:
             ap.error("alt pr requires one positive PR number, or close NUMBER")
-        record = status.pr(_project(args), int(args.target)); out(record) if args.as_json else print(_pr_text(record)); return
+        record = status.pr(_project(args), int(args.target)); out(record) if args.as_json else say(_pr_text(record)); return
     if c == "l3":
         if args.l3cmd == "search":
             try:
                 record = l3.search(_project(args), args.query, args.limit)
             except (ValueError, KeyError, OSError) as exc:
                 sys.exit(f"alt l3 search: evidence unavailable: {exc}")
-            print(json.dumps(record) if args.as_json else _search_text(record)); return
-        record = l3.tool_summary(_project(args), args.days); out(record) if args.as_json else print(_tools_text(record)); return
+            print(json.dumps(record)) if args.as_json else say(_search_text(record)); return
+        record = l3.tool_summary(_project(args), args.days); out(record) if args.as_json else say(_tools_text(record)); return
     if c == "dispatch":
         from altitude import dispatch; out(dispatch.run(_project(args), args.slug, model=args.model)); return
     if c == "verify":
@@ -1041,4 +1046,4 @@ if __name__ == "__main__":
     try:
         main()
     except (T.TransitionError, ValueError) as e:
-        sys.exit(f"alt: {e}")
+        sys.exit(f"alt: {S.localized(str(e))}")

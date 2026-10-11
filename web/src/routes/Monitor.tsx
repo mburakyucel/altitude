@@ -5,7 +5,7 @@ import { TokenUsage } from "../components/TokenUsage";
 import { RestartDetails } from "../shell/RestartBanner";
 import { NewTasksButton } from "../components/Models";
 import { useViewport } from "../shell/breakpoints";
-import { age, agoText, exactTime, modelName, older, RESERVE_PERCENT, SESSION_STALE_MS, when } from "../data/observed";
+import { age, agoText, exactTime, modelName, older, RESERVE_PERCENT, SESSION_STALE_MS, stampText, when } from "../data/observed";
 
 /**
  * Monitor (SPEC.md §3.14): one seat card per configured engine with its windows, their reset times
@@ -52,11 +52,11 @@ function span(ms: number): string {
   return hours % 24 ? `${days}d ${hours % 24}h` : `${days}d`;
 }
 
-/** "resets in 2h 10m (Thu 21:30)": relative first, the clock time in parentheses. */
+/** "resets in 2h 10m (21:30)": relative first, the local time in parentheses, dated when not today. */
 function resetText(value: unknown): string {
   const at = when(value);
   if (at == null) return "";
-  const clock = new Date(at).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
+  const clock = stampText(value);
   const left = at - Date.now();
   return left > 0 ? `resets in ${span(left)} (${clock})` : `reset due (${clock})`;
 }

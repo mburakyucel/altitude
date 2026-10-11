@@ -221,6 +221,29 @@ def age(iso: str) -> str:
     return f"{s // 86400}d"
 
 
+# An ISO 8601 instant with Z or an offset inside text, as records and composed messages carry it.
+_INSTANT = re.compile(r"(?<![\d:.])\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})(?![\w:])")
+
+
+def local(iso: str) -> str:
+    """An instant as a person reads it on this machine: "16:58 PDT" today, "Oct 9, 16:58 PDT" otherwise,
+    with the year when it is not this one (docs/CLI.md#times)."""
+    try:
+        at = datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone()
+    except ValueError:
+        return iso
+    today = datetime.now().astimezone()
+    clock = f"{at:%H:%M %Z}"
+    if at.date() == today.date():
+        return clock
+    return f"{at:%b} {at.day}, " + (f"{at.year}, " if at.year != today.year else "") + clock
+
+
+def localized(text: str) -> str:
+    """Human output with every ISO instant in it shown in local time; JSON and records keep ISO."""
+    return _INSTANT.sub(lambda match: local(match.group()), text)
+
+
 def regen_state_md(project: str) -> str:
     from . import incidents
     tasks = list_tasks(project)

@@ -271,7 +271,7 @@ describe("Set up a device", () => {
       const path = String(input);
       if (init?.method === "POST") posts.push({ path, body: JSON.parse(String(init.body)) });
       if (path === "/api/devices") return json({ devices: [], current: null,
-        certificate: { name: "Altitude local CA", expires: "Sep 25 04:00:00 2036 GMT", sha256: FINGERPRINT, scope: "Names under local." } });
+        certificate: { name: "Altitude local CA", expires: "2036-09-25T04:00:00+00:00", sha256: FINGERPRINT, scope: "Names under local." } });
       if (path === "/api/devices/share") {
         if (options.refuse) return json({ error: options.refuse }, 409);
         opened += 1;

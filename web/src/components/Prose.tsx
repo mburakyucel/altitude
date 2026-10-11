@@ -1,9 +1,13 @@
 import { createContext, Fragment, useContext } from "react";
 import type { ReactNode } from "react";
 import { CodeBlock } from "./CodeBlock";
+import { clockText, exactTime, timeTokens, when } from "../data/observed";
+import { Stamp } from "./Stamp";
 
 export const ProseRepository = createContext<string | null | undefined>(null);
 export const ProseProject = createContext<string | undefined>(undefined);
+/** The text's own recorded time: a written clock without a date is read on that day (SPEC.md §4.5). */
+export const ProseAt = createContext<string | null | undefined>(undefined);
 export function ProseScope({ project, repository, children }: { project: string; repository?: string | null; children: ReactNode }) {
   return <ProseProject value={project}><ProseRepository value={repository}>{children}</ProseRepository></ProseProject>;
 }
@@ -35,6 +39,26 @@ function codeBlocks(text: string): { text: string; code: boolean; info: string }
   return blocks;
 }
 
+/** A written clock in the reader's zone, exact on hover. */
+function Clock({ at }: { at: string }) {
+  return <time className="prose-time" dateTime={at} title={exactTime(at)}>{clockText(at)}</time>;
+}
+
+/** Written UTC times read in the reader's zone; the text between them goes on to reference matching. */
+function times(text: string, anchor: string | null | undefined, repository?: string | null): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  let end = 0;
+  for (const token of timeTokens(text, when(anchor) ?? undefined)) {
+    nodes.push(<Fragment key={`text-${token.index}`}>{references(text.slice(end, token.index), repository)}</Fragment>);
+    nodes.push(token.until
+      ? <Fragment key={token.index}><Clock at={token.at} />{token.separator}<Clock at={token.until} /></Fragment>
+      : token.dated ? <Stamp key={token.index} at={token.at} className="prose-time" /> : <Clock key={token.index} at={token.at} />);
+    end = token.index + token.text.length;
+  }
+  nodes.push(<Fragment key="tail">{references(text.slice(end), repository)}</Fragment>);
+  return nodes;
+}
+
 /** Only plain text reaches reference matching; links and code are consumed first. */
 function references(text: string, repository?: string | null): ReactNode[] {
   const nodes: ReactNode[] = [];
@@ -55,22 +79,28 @@ function references(text: string, repository?: string | null): ReactNode[] {
 }
 
 export function InlineProse({ text }: { text: string }) {
-  const repository = useContext(ProseRepository);
-  const project = useContext(ProseProject);
+  const scope = useScope(false);
   return <>{codeBlocks(text).map((block, index) => (
     <Fragment key={index}>
       {index > 0 ? "\n" : null}
-      {block.code ? <code>{block.text}</code> : inline(block.text, repository, project)}
+      {block.code ? <code>{block.text}</code> : inline(block.text, scope)}
     </Fragment>
   ))}</>;
 }
 
-/** Inline code, bold, existing links, and GitHub references in plain text. */
-export function inline(text: string, repository?: string | null, project?: string, showLinkTargets = false): ReactNode[] {
+type Scope = { repository?: string | null; project?: string; at?: string | null; showLinkTargets: boolean };
+
+function useScope(showLinkTargets: boolean): Scope {
+  return { repository: useContext(ProseRepository), project: useContext(ProseProject), at: useContext(ProseAt), showLinkTargets };
+}
+
+/** Inline code, bold, existing links, written times and GitHub references in plain text. */
+function inline(text: string, scope: Scope): ReactNode[] {
+  const { repository, project, showLinkTargets } = scope;
   const nodes: ReactNode[] = [];
   let end = 0;
   for (const match of text.matchAll(INLINE)) {
-    nodes.push(<Fragment key={`text-${match.index}`}>{references(text.slice(end, match.index), repository)}</Fragment>);
+    nodes.push(<Fragment key={`text-${match.index}`}>{times(text.slice(end, match.index), scope.at, repository)}</Fragment>);
     const part = match[0];
     const index = match.index;
     end = index + part.length;
@@ -79,7 +109,7 @@ export function inline(text: string, repository?: string | null, project?: strin
       continue;
     }
     if (part.length > 4 && part.startsWith("**") && part.endsWith("**")) {
-      nodes.push(<strong key={index}>{inline(part.slice(2, -2), repository, project, showLinkTargets)}</strong>);
+      nodes.push(<strong key={index}>{inline(part.slice(2, -2), scope)}</strong>);
       continue;
     }
     const fileLink = /^\[([^\]]+)\]\(<?((?:file:\/\/|\/)[\s\S]*?)>?\)$/.exec(part);
@@ -114,7 +144,7 @@ export function inline(text: string, repository?: string | null, project?: strin
     }
     nodes.push(part);
   }
-  nodes.push(<Fragment key="tail">{references(text.slice(end), repository)}</Fragment>);
+  nodes.push(<Fragment key="tail">{times(text.slice(end), scope.at, repository)}</Fragment>);
   return nodes;
 }
 
@@ -129,8 +159,7 @@ const HEADING = /^\s*#{1,6}\s+(.*)$/;
  * no headings and no tables, so neither gets a shape here.
  */
 export function Prose({ text, document = false, showLinkTargets = false }: { text: string; document?: boolean; showLinkTargets?: boolean }) {
-  const repository = useContext(ProseRepository);
-  const project = useContext(ProseProject);
+  const scope = useScope(showLinkTargets);
   const blocks: ReactNode[] = [];
   let para: string[] = [];
   let list: { ordered: boolean; items: string[] } | null = null;
@@ -139,7 +168,7 @@ export function Prose({ text, document = false, showLinkTargets = false }: { tex
     if (para.length > 0) {
       blocks.push(
         <p key={blocks.length}>
-          {inline(para.join("\n"), repository, project, showLinkTargets)}
+          {inline(para.join("\n"), scope)}
         </p>,
       );
     }
@@ -151,7 +180,7 @@ export function Prose({ text, document = false, showLinkTargets = false }: { tex
       blocks.push(
         <Tag key={blocks.length}>
           {list.items.map((item, index) => (
-            <li key={index}>{inline(item, repository, project, showLinkTargets)}</li>
+            <li key={index}>{inline(item, scope)}</li>
           ))}
         </Tag>,
       );
@@ -196,7 +225,7 @@ export function Prose({ text, document = false, showLinkTargets = false }: { tex
       if (document && heading) {
         flushPara();
         const Tag = `h${Math.min(6, /^#+/.exec(line.trimStart())![0].length + 1)}` as "h2" | "h3" | "h4" | "h5" | "h6";
-        blocks.push(<Tag key={blocks.length}>{inline(heading[1]!, repository, project, showLinkTargets)}</Tag>);
+        blocks.push(<Tag key={blocks.length}>{inline(heading[1]!, scope)}</Tag>);
         continue;
       }
       para.push(heading?.[1] ?? line);

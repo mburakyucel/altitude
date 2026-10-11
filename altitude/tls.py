@@ -1,6 +1,7 @@
 """Installation-local HTTPS identity. Trust-store changes remain explicit operator actions."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import ipaddress
 import os
 from pathlib import Path
@@ -11,7 +12,7 @@ import ssl
 import subprocess
 import tempfile
 
-from . import config
+from . import config, state as S
 
 RENEW_SECONDS = 30 * 24 * 60 * 60
 LABEL_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"  # no 0/O or 1/I/L to misread
@@ -448,7 +449,8 @@ def identity(certificate: Path) -> dict:
             elif block in scope:
                 scope[block].append(_subtree(stripped))
     return {"name": _rfc2253(subject if common is None else common),
-            "expires": re.search(r"^notAfter=(.*)$", text, re.M).group(1).strip(),
+            "expires": datetime.fromtimestamp(ssl.cert_time_to_seconds(re.search(r"^notAfter=(.*)$", text, re.M).group(1).strip()),
+                                              timezone.utc).isoformat(),
             "sha256": re.search(r"Fingerprint=([0-9A-F:]+)", text).group(1), "scope": scope}
 
 
@@ -837,7 +839,7 @@ def share(minutes: float = SHARE_MINUTES, out=print) -> None:
             + "".join(f"      {row}\n" for row in fingerprint_rows(authority["sha256"])) +
             "If anything differs or cannot be inspected, stop before trusting it. Never transfer private keys.\n"
             f"Trusting it allows: {describe_scope(authority['scope'])}\n"
-            f"It expires {authority['expires']}.\n"
+            f"It expires {S.local(authority['expires'])}.\n"
             f"iPhone/iPad after Install: Settings > General > About > Certificate Trust Settings > turn on {authority['name']}.\n"
             f"Then open {found['url']} in a new Private tab. It must load with no warning; only then run alt pair.\n"
             "Ctrl-C closes the link sooner.")

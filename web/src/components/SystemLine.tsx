@@ -4,7 +4,7 @@ import { useProject, useTask } from "../data/api";
 import { questionPath } from "../data/decisions";
 import type { ChatMessage, TaskRow } from "../data/api";
 import { stampText } from "../data/observed";
-import { InlineProse, Prose, ProseProject, ProseRepository, lastParagraph } from "./Prose";
+import { InlineProse, Prose, ProseAt, ProseProject, ProseRepository, lastParagraph } from "./Prose";
 import { Stamp } from "./Stamp";
 import { TaskCards } from "./TaskCard";
 
@@ -218,7 +218,7 @@ function SystemCard({
   const digest = Boolean(task.data?.files?.digest);
   const label = kindLabel(turn.trigger);
   return (
-    <article className="sys-card" aria-label={`${label}${name ? ` · ${name}` : ""}`}>
+    <ProseAt value={turn.at}><article className="sys-card" aria-label={`${label}${name ? ` · ${name}` : ""}`}>
       <header className="sys-card-head">
         <span className="sys-card-title">
           <Dot trigger={turn.trigger} />
@@ -296,7 +296,7 @@ function SystemCard({
           {digest ? <Link to={`/projects/${project}/tasks/${turn.slug}/report#digest`}>Digest</Link> : null}
         </footer>
       ) : null}
-    </article>
+    </article></ProseAt>
   );
 }
 
@@ -342,7 +342,7 @@ export function SystemLine({
       <Dot trigger={turn.trigger} />
       <Stamp at={turn.at} className="sys-time" />
       <span className="sys-text">
-        {turn.projectMessage ? text : <InlineProse text={text} />}
+        {turn.projectMessage ? text : <ProseAt value={turn.at}><InlineProse text={text} /></ProseAt>}
       </span>
       {turn.inProgress ? null : <NewWork turn={turn} project={project} />}
       {turn.inProgress ? null : (

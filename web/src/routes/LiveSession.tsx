@@ -178,7 +178,7 @@ function RawRecord({ event, scope, active }: { event: TranscriptEvent; scope: Re
   return (
     <article className="raw-row" data-transcript-id={event.id}>
       <p className="raw-meta">
-        {event.at ?? "—"} · {event.source} · {event.kind} · {event.type}
+        <Stamp at={event.at} className="raw-time" /> · {event.source} · {event.kind} · {event.type}
         {event.role ? ` · ${event.role}` : ""}
       </p>
       {event.summary ? <p className="raw-summary">{event.summary}</p> : null}

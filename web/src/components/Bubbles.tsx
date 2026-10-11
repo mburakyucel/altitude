@@ -1,27 +1,13 @@
 import { useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
-import { when } from "../data/observed";
-import { Prose } from "./Prose";
+import { clockText, dayText, exactTime } from "../data/observed";
+import { Prose, ProseAt } from "./Prose";
 
 /*
  * The conversation's rows (SPEC.md §3.3), shared by the project conversation and the task page: the
  * operator's message is a right-aligned bubble, a reply is left-aligned prose with no bubble, a day
  * divider names the day. Hovering a row shows its time in the gutter; on the phone a long press does.
  */
-
-export function dayLabel(at: number): string {
-  const day = new Date(at);
-  const today = new Date();
-  const startOf = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).valueOf();
-  const diff = Math.round((startOf(today) - startOf(day)) / 86_400_000);
-  if (diff === 0) return "Today";
-  if (diff === 1) return "Yesterday";
-  return day.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-}
-
-export function clock(at: number): string {
-  return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
 
 /** A long press (touch or pen, not a mouse) reveals the row's time on the phone (SPEC.md §3.3). */
 export function useLongPress(onLong: () => void) {
@@ -72,7 +58,7 @@ export function MessageRow({
 }) {
   const [shown, setShown] = useState(false);
   const press = useLongPress(() => setShown((v) => !v));
-  const time = when(at);
+  const time = clockText(at);
   return (
     <div
       className="msg-row"
@@ -83,10 +69,10 @@ export function MessageRow({
       data-time-shown={shown || undefined}
       {...press}
     >
-      {children}
-      {time != null ? (
-        <time className="msg-time" dateTime={at ?? undefined} title={new Date(time).toLocaleString()}>
-          {clock(time)}
+      <ProseAt value={at}>{children}</ProseAt>
+      {time ? (
+        <time className="msg-time" dateTime={at ?? undefined} title={exactTime(at)}>
+          {time}
         </time>
       ) : null}
     </div>
