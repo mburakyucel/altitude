@@ -2103,7 +2103,8 @@ the same outbox under `task-outbox`, the project and the task, and each of its e
 the message was sent to: the question or question group revision it answered and the stopped session it
 continues. Its Retry sends there again and is offered only while a Send would go to the same place;
 otherwise the message offers Edit only. Pairing clears every outbox with every query, and removing the
-project drops its outboxes with its reads and deletes its composer recovery, stored and in the document. Unsent text lives in the existing
+project drops its outboxes with its reads and deletes its composer recovery, stored and in the document; a voice
+Send still transcribing for it then sends nothing and restores nothing. Unsent text lives in the existing
 client query cache under `project-draft` and the project name, without timed eviction, until document
 reload. Every draft change, including manual clearing and send admission, updates that entry.
 Submitted-text recovery

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useReducer, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from "react";
 import type { VoiceSettings } from "../data/api";
-import { documentRecovery, heldFields, recoveryKey } from "../data/recovery";
+import { documentRecovery, heldFields, liveSubmissions, recoveryKey } from "../data/recovery";
 import type { SendFailure, SubmittedText } from "../data/recovery";
 import { Link } from "react-router";
 import { IMAGE_HELP, useImageDraft } from "./ImageDraft";
@@ -69,7 +69,6 @@ type VoiceSend = { id: string; text: string; failure: SendFailure; controller: A
 const voiceSends = new Map<string, VoiceSend>();
 
 // Submitted-text recovery (data/recovery.ts): only submitted text lives beyond a composer.
-const liveSubmissions = new Set<string>();
 const recoveryViews = new Map<string, { draft: () => string; failure: () => SendFailure; restore: (saved: SubmittedText, unavailable?: boolean, id?: string) => void;
   paste: (text: string, images?: ImagePreview[]) => boolean;
   voice: (send: VoiceSend | null) => void; submit: (text: string, voice?: VoiceSend) => Promise<void>; recover: (live?: boolean) => void }>();
@@ -723,6 +722,8 @@ export default function Composer({
         voiceSends.delete(conversation);
         const view = recoveryViews.get(conversation);
         view?.voice(null);
+        // A voice Send whose project was removed while it transcribed goes nowhere.
+        if (!liveSubmissions.has(sending.id)) return;
         void (view?.submit ?? currentSubmit.current)(combineDraft(sending.text, text), sending);
         return;
       }

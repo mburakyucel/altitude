@@ -21,15 +21,24 @@ export const documentRecovery = new Map<string, { stored: string | null | undefi
 /** The recovered words each conversation's field last showed in this document, for the record it read. */
 export const heldFields = new Map<string, string>();
 
-/** Removing a project drops its conversations' recovery: this document's copies and the stored records. */
+/** The pending copies a send in this document still owns; a late callback for any other copy changes nothing. */
+export const liveSubmissions = new Set<string>();
+
+/**
+ * Removing a project drops its conversations' recovery: the stored records, this document's copies (left empty for
+ * the bytes they matched, so a record storage failed to delete stays empty here) and its sends' claims on their copies.
+ */
 export function forgetRecovery(project: string) {
   const ours = (conversation: string) => conversation === `project/${project}` || conversation.startsWith(`task/${project}/`);
-  for (const kept of [documentRecovery, heldFields]) {
-    for (const conversation of [...kept.keys()]) if (ours(conversation)) kept.delete(conversation);
+  for (const [conversation, copy] of documentRecovery) {
+    if (!ours(conversation)) continue;
+    for (const id of Object.keys(copy.value.pending)) liveSubmissions.delete(id);
+    documentRecovery.set(conversation, { stored: copy.stored, value: { pending: {}, text: "", failure: null }, unwritten: false });
   }
+  for (const conversation of [...heldFields.keys()]) if (ours(conversation)) heldFields.delete(conversation);
   try {
     for (const key of Object.keys(sessionStorage)) {
       if (key.startsWith(recoveryKey("")) && ours(key.slice(recoveryKey("").length))) sessionStorage.removeItem(key);
     }
-  } catch { /* browser storage is unavailable: it gives this document nothing to restore */ }
+  } catch { /* browser storage is unavailable: this document's copies are already empty */ }
 }

@@ -474,17 +474,25 @@ describe("Composer", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery.");
   });
 
-  it("removing a project drops this page's copy of its recovery, even where storage cannot be read", async () => {
-    sessionStorage.setItem("altitude.submitted:project/removed", JSON.stringify({ pending: {}, text: "Removed project's words", failure: "unconfirmed" }));
-    sessionStorage.setItem("altitude.submitted:project/removed-two", JSON.stringify({ pending: {}, text: "Another project's words", failure: "unconfirmed" }));
+  it.each(["reading", "deleting"])("removing a project drops this page's copy of its recovery, even where storage fails %s", async (failing) => {
+    const removed = `project/removed-${failing}`;
+    sessionStorage.setItem(`altitude.submitted:${removed}`, JSON.stringify({ pending: {}, text: "Removed project's words", failure: "unconfirmed" }));
+    sessionStorage.setItem(`altitude.submitted:${removed}-two`, JSON.stringify({ pending: {}, text: "Another project's words", failure: "unconfirmed" }));
     const user = userEvent.setup();
     const field = () => screen.getByLabelText("Message L3 about altitude");
-    render(<Switcher conversation="project/removed" />);
+    render(<Switcher conversation={removed} />);
     expect(field()).toHaveValue("Removed project's words");
     await user.click(screen.getByRole("button", { name: "Switch view" }));
-    forgetRecovery("removed");
-    expect(sessionStorage.getItem("altitude.submitted:project/removed")).toBeNull();
-    expect(sessionStorage.getItem("altitude.submitted:project/removed-two")).not.toBeNull();
+    if (failing === "deleting") {
+      const storage = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => { throw new Error("Delete denied"); });
+      try { forgetRecovery(`removed-${failing}`); } finally { storage.mockRestore(); }
+      await user.click(screen.getByRole("button", { name: "Switch view" }));
+      expect(field()).toHaveValue("");
+      return;
+    }
+    forgetRecovery(`removed-${failing}`);
+    expect(sessionStorage.getItem(`altitude.submitted:${removed}`)).toBeNull();
+    expect(sessionStorage.getItem(`altitude.submitted:${removed}-two`)).not.toBeNull();
     const storage = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Read denied"); });
     try {
       await user.click(screen.getByRole("button", { name: "Switch view" }));
@@ -868,6 +876,24 @@ describe("Composer", () => {
     await source.user.clear(source.field);
     source.unmount();
     expect(mount().field).toHaveValue("");
+  });
+
+  it.each(["failure", "words"])("a voice Send whose project is removed while it transcribes leaves nothing behind (%s)", async (outcome) => {
+    installVoiceBrowser();
+    const server = hostVoice("", outcome === "words" ? "late words" : null);
+    const onSubmit = vi.fn();
+    const first = mount({ conversation: "project/removed-voice", initial: "Source text", onSubmit });
+    await listen(first.user);
+    server.connection = "hold";
+    await first.user.click(screen.getByRole("button", { name: "Send" }));
+    first.unmount();
+    forgetRecovery("removed-voice");
+    if (outcome === "failure") server.refuse = { on: "audio", status: 503, error: "Voice stopped: the speech process stopped." };
+    await act(async () => server.reconnect());
+    await settle();
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem("altitude.submitted:project/removed-voice")).toBeNull();
+    expect(mount({ conversation: "project/removed-voice" }).field).toHaveValue("");
   });
 
   it("a voice-only transcription failure remains visible when returning after completion", async () => {
