@@ -456,8 +456,10 @@ describe("Composer", () => {
     try {
       render(<Switcher />);
       expect(field()).toHaveValue("");
-      await user.type(field(), "New draft");
+      await user.type(field(), "New");
     } finally { storage.mockRestore(); }
+    // Reads work again while typing goes on: the field is still an ordinary draft that never showed the stored words.
+    await user.type(field(), " draft");
     await user.click(screen.getByRole("button", { name: "Switch view" }));
     await user.click(screen.getByRole("button", { name: "Switch view" }));
     expect(field()).toHaveValue("Original message\nNew draft");

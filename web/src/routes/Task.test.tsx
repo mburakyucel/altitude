@@ -1600,6 +1600,33 @@ describe("Task on the phone", () => {
     expect(document.querySelector(".composer-hint[role=alert]")).toBeNull();
   });
 
+  it("a new visit that cannot read recovered words does not take them over; they join its draft once readable", async () => {
+    setViewport(390);
+    let finish!: (response: Response) => void;
+    stub(running, { message: () => new Promise<Response>((resolve) => { finish = resolve; }) });
+    const { user, queryClient, router } = renderApp({ route });
+    await user.type(await screen.findByLabelText("Message the L2"), "First words");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await act(async () => { await router.navigate("/settings"); });
+    act(() => queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "access" }));
+    await act(async () => { await router.navigate(route); });
+    await act(async () => finish(jsonResponse({ error: "Response lost" }, 500)));
+    await waitFor(() => expect(screen.getByLabelText("Message the L2")).toHaveValue("First words"));
+    // Reads fail through leaving, a new visit and typing there.
+    const storage = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Read denied"); });
+    try {
+      await act(async () => { await router.navigate("/settings"); });
+      await act(async () => { await router.navigate(route); });
+      expect(await screen.findByLabelText("Message the L2")).toHaveValue("");
+      await user.type(screen.getByLabelText("Message the L2"), "New draft");
+    } finally { storage.mockRestore(); }
+    await act(async () => { await router.navigate("/settings"); });
+    await act(async () => { await router.navigate(-1); });
+    await screen.findByRole("heading", { name: "Fix the timer" });
+    await waitFor(() => expect(screen.getByLabelText("Message the L2")).toHaveValue("First words\nNew draft"));
+    expect(document.querySelector(".composer-hint[role=alert]")).toHaveTextContent("Could not confirm delivery.");
+  });
+
   it("recovered words edited while their copy cannot be read come back as edited on a new visit to the task", async () => {
     setViewport(390);
     let finish!: (response: Response) => void;

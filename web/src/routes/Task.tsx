@@ -783,7 +783,7 @@ function TaskPage({
   // owner, the recovery copy, which every visit reads; the entry keeps none of them.
   const message = `message:${project}/${task.slug}`;
   const kept: Record<string, string> = useVisitMemory<string>([message], (): string | undefined =>
-    draft && !recoveryHoldsDraft(`task/${project}/${task.slug}`) ? draft : undefined);
+    draft && !recoveryHoldsDraft(`task/${project}/${task.slug}`, draft) ? draft : undefined);
   const [draft, setDraft] = useState<string>(kept[message] ?? "");
   const [denied, setDenied] = useState(false);
   const [questionVisit, setQuestionVisit] = useState(0);

@@ -80,8 +80,10 @@ const recoveryViews = new Map<string, { draft: () => string; failure: () => Send
   voice: (send: VoiceSend | null) => void; submit: (text: string, voice?: VoiceSend) => Promise<void>; recover: (live?: boolean) => void }>();
 // The field as last edited while its conversation's recovery could not be read: storage is behind it.
 const missedEdits = new Map<string, string>();
-// Conversations whose field holds recovered words, as this document last set it, whether or not storage can be read.
-const heldFields = new Set<string>();
+// The recovered words each conversation's field last showed in this document, whether or not storage can be read.
+// A field holds recovered words only while it shows exactly these.
+const heldFields = new Map<string, string>();
+const holds = (conversation: string, field: string) => Boolean(field) && heldFields.get(conversation) === field;
 const recoveryKey = (conversation: string) => `altitude.submitted:${conversation}`;
 function readSubmitted(conversation: string): SubmittedText {
   const saved = sessionStorage.getItem(recoveryKey(conversation));
@@ -175,8 +177,8 @@ export function releaseSubmitted(conversation: string, id: string) {
 }
 
 /** Whether this tab's recovery copy holds the conversation's field; a page then keeps none of it for Back. */
-export function recoveryHoldsDraft(conversation: string): boolean {
-  return heldFields.has(conversation);
+export function recoveryHoldsDraft(conversation: string, draft: string): boolean {
+  return holds(conversation, draft);
 }
 
 /** Put a message's words back in its conversation's field, ahead of the draft, with its images in the picker. */
@@ -565,6 +567,7 @@ export default function Composer({
 
   // Typing, dictation and a message's words put back by Edit or Copy to draft are one edit of the draft.
   const editDraft = useCallback((text: string) => {
+    const held = holds(conversation, draft.current);
     draft.current = text;
     onChange(text);
     try {
@@ -572,11 +575,13 @@ export default function Composer({
       // A failed write keeps its value in this document; a failed read leaves storage behind the field until an edit
       // or a view reads it again, which applies the missed edit first.
       try { saved = readCaughtUp(conversation); }
-      catch (error) { if (heldFields.has(conversation)) missedEdits.set(conversation, text); throw error; }
-      if (editSubmitted(saved, text)) saveSubmitted(conversation, saved);
+      catch (error) { if (held) missedEdits.set(conversation, text); throw error; }
+      // An ordinary draft leaves stored words it never showed for the next view to join; it only ends a stored hint.
+      if ((held || !saved.text) && editSubmitted(saved, text)) saveSubmitted(conversation, saved);
       setRecoveryUnavailable(false);
     } catch { setRecoveryUnavailable(true); }
-    if (failure.current !== "unconfirmed" || !text) { failure.current = null; setSendFailure(null); heldFields.delete(conversation); }
+    if (failure.current !== "unconfirmed" || !text) { failure.current = null; setSendFailure(null); }
+    if (held && failure.current === "unconfirmed") heldFields.set(conversation, text); else heldFields.delete(conversation);
   }, [conversation, onChange]);
 
   useEffect(() => {
@@ -593,7 +598,7 @@ export default function Composer({
         if (!orphaned.length && !saved.text && saved.failure !== "transcription" && saved.failure !== "unreached") return;
         // A field that holds recovered words is current (storage has caught up with it); otherwise the field is an
         // ordinary draft, which keeps nothing recovered, and the stored words join it.
-        const field = live || (heldFields.has(conversation) && draft.current) ? draft.current
+        const field = live || holds(conversation, draft.current) ? draft.current
           : [saved.text, draft.current].filter(Boolean).join("\n");
         if (orphaned.length) {
           const refused = new Set(saved.refused ?? []);
@@ -624,7 +629,7 @@ export default function Composer({
       restore: (saved: SubmittedText, unavailable = false, id?: string) => {
         draft.current = saved.text;
         onChange(saved.text);
-        if (saved.text) heldFields.add(conversation); else heldFields.delete(conversation);
+        if (saved.text) heldFields.set(conversation, saved.text); else heldFields.delete(conversation);
         failure.current = saved.failure;
         setSendFailure(saved.failure);
         setRecoveryUnavailable(unavailable);
@@ -639,7 +644,9 @@ export default function Composer({
       // Task tabs retain their parent draft. Transfer recovered text to storage on leaving so a
       // remount restores it once, while ordinary unsent task drafts keep their existing owner.
       try {
-        if (readCaughtUp(conversation).text && heldFields.delete(conversation)) { draft.current = ""; onChange(""); }
+        if (readCaughtUp(conversation).text && holds(conversation, draft.current)) {
+          heldFields.delete(conversation); draft.current = ""; onChange("");
+        }
       } catch { /* keep the parent draft */ }
     };
   }, [conversation, editDraft, focusField, onChange]);
