@@ -51,7 +51,7 @@ test("reported open PR accepts follow-ups in the same held owner conversation", 
   expect((await task()).messages.filter((row: { role: string }) => row.role === "burak")).toHaveLength(2);
 });
 
-test("reported continuation refuses a PR that closed before send and retains the draft", async ({ page, request }, info) => {
+test("reported continuation refuses a PR that closed before send and keeps the words on the message", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   await request.post("/fixture/reported", { data: { pr_state: "MERGED" } });
   const field = page.getByRole("textbox", { name: "Message the L2", exact: true });
@@ -59,14 +59,15 @@ test("reported continuation refuses a PR that closed before send and retains the
   await walk.open("/projects/atlas/tasks/prepare-index-migration");
   await field.fill("Resolve the conflicts.");
   await conversation.getByRole("button", { name: "Send", exact: true }).click();
-  await walk.state("01-closed-pr-refused-recoverable", { visible: [field, conversation.getByRole("alert").filter({ hasText: "Not sent." })], hidden: [conversation.locator(".msg-row[data-pending]")] });
-  await expect(field).toHaveValue("Resolve the conflicts.");
+  const message = conversation.locator(".msg-row[data-mine]").filter({ hasText: "Resolve the conflicts." });
+  await walk.state("01-closed-pr-refused-on-message", { visible: [field, message.getByRole("alert").filter({ hasText: /^Not sent: / }), message.getByRole("button", { name: "Edit", exact: true })], hidden: [] });
+  await expect(field).toHaveValue("");
   const task = await (await request.get("/api/task/atlas/prepare-index-migration")).json();
   expect(task.state).toBe("reported");
   expect(task.messages.some((row: { text: string }) => row.text === "Resolve the conflicts.")).toBe(false);
 });
 
-test("lost reported-message receipt preserves one saved message through reload without replay", async ({ page, request }, info) => {
+test("lost reported-message receipt settles one saved message from the record, through reload, without replay", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   await request.post("/fixture/reported", { data: {} });
   let submissions = 0;
@@ -77,15 +78,19 @@ test("lost reported-message receipt preserves one saved message through reload w
   });
   const field = page.getByRole("textbox", { name: "Message the L2", exact: true });
   const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
-  const hint = conversation.getByRole("alert").filter({ hasText: "Could not confirm delivery." });
+  const doubt = [conversation.getByText("Unconfirmed", { exact: true }), conversation.getByRole("alert"), conversation.getByRole("button", { name: "Retry", exact: true })];
   const text = "Retain this follow-up even if its receipt is lost.";
   await walk.open("/projects/atlas/tasks/prepare-index-migration");
   await field.fill(text);
   await conversation.getByRole("button", { name: "Send", exact: true }).click();
-  await walk.state("01-unconfirmed-delivery-recoverable", { visible: [field, hint], hidden: [conversation.getByRole("button", { name: "Retry", exact: true })] });
+  const bubble = conversation.locator(".bubble").filter({ hasText: text });
+  // The read that lists the send id settles the lost receipt: one stored message, never offered for resending.
+  await walk.state("01-lost-receipt-settled-from-record", { visible: [field, bubble], hidden: doubt });
+  await expect(field).toHaveValue("");
   await page.reload();
-  await expect(field).toHaveValue(text);
-  await walk.state("02-reload-retains-saved-row-without-resend", { visible: [field, hint, conversation.locator(".bubble").filter({ hasText: text })], hidden: [] });
+  await walk.state("02-reload-retains-saved-row-without-resend", { visible: [field, bubble], hidden: doubt });
+  await expect(field).toHaveValue("");
+  await expect(bubble).toHaveCount(1);
   const task = await (await request.get("/api/task/atlas/prepare-index-migration")).json();
   expect(task.messages.filter((row: { text: string }) => row.text === text)).toHaveLength(1);
   expect(task.hold_merge).toBe("Operator review required");
