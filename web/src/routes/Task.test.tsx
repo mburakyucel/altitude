@@ -1600,6 +1600,35 @@ describe("Task on the phone", () => {
     expect(document.querySelector(".composer-hint[role=alert]")).toBeNull();
   });
 
+  it("a draft sent by a visit that could not read recovered words leaves them for the next visit", async () => {
+    setViewport(390);
+    let finish!: (response: Response) => void;
+    let sends = 0;
+    const fetchMock = stub(running, { message: () => ++sends === 1 ? new Promise<Response>((resolve) => { finish = resolve; }) : Promise.resolve(jsonResponse({ ok: true })) });
+    const { user, queryClient, router } = renderApp({ route });
+    await user.type(await screen.findByLabelText("Message the L2"), "First words");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await act(async () => { await router.navigate("/settings"); });
+    act(() => queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "access" }));
+    await act(async () => { await router.navigate(route); });
+    await act(async () => finish(jsonResponse({ error: "Response lost" }, 500)));
+    await waitFor(() => expect(screen.getByLabelText("Message the L2")).toHaveValue("First words"));
+    const storage = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Read denied"); });
+    try {
+      await act(async () => { await router.navigate("/settings"); });
+      await act(async () => { await router.navigate(route); });
+      expect(await screen.findByLabelText("Message the L2")).toHaveValue("");
+      await user.type(screen.getByLabelText("Message the L2"), "New draft");
+    } finally { storage.mockRestore(); }
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(sends).toBe(2));
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/l2/message")).map(([, init]) => JSON.parse(String(init?.body)).text)).toEqual(["First words", "New draft"]);
+    await act(async () => { await router.navigate("/settings"); });
+    await act(async () => { await router.navigate(route); });
+    await waitFor(() => expect(screen.getByLabelText("Message the L2")).toHaveValue("First words"));
+    expect(document.querySelector(".composer-hint[role=alert]")).toHaveTextContent("Could not confirm delivery.");
+  });
+
   it("a new visit that cannot read recovered words does not take them over; they join its draft once readable", async () => {
     setViewport(390);
     let finish!: (response: Response) => void;

@@ -84,6 +84,8 @@ const missedEdits = new Map<string, string>();
 // A field holds recovered words only while it shows exactly these.
 const heldFields = new Map<string, string>();
 const holds = (conversation: string, field: string) => Boolean(field) && heldFields.get(conversation) === field;
+// Stored recovered words a field does not show (it never read them): they stay recoverable beside it.
+const unshown = (conversation: string, saved: SubmittedText, field: string) => holds(conversation, field) ? "" : saved.text;
 const recoveryKey = (conversation: string) => `altitude.submitted:${conversation}`;
 function readSubmitted(conversation: string): SubmittedText {
   const saved = sessionStorage.getItem(recoveryKey(conversation));
@@ -125,10 +127,11 @@ function readCaughtUp(conversation: string) {
 function beginSubmitted(conversation: string, text: string, id: string = crypto.randomUUID(), preserve = false) {
   const saved = readSubmitted(conversation);
   saved.pending[id] = text;
-  if (!preserve) { saved.text = ""; saved.failure = null; }
+  // The field's words are sent, ending a recovery the field showed; recovered words it never showed stay.
+  const sent = !preserve && !unshown(conversation, saved, text);
+  if (sent) { saved.text = ""; saved.failure = null; }
   saveSubmitted(conversation, saved, true);
-  // The field's words are sent: nothing in it is recovered, and no edit of it is missed.
-  if (!preserve) { heldFields.delete(conversation); missedEdits.delete(conversation); }
+  if (sent) { heldFields.delete(conversation); missedEdits.delete(conversation); }
   liveSubmissions.add(id);
   return id;
 }
@@ -141,7 +144,7 @@ function settleSubmitted(conversation: string, id: string, text: string, failure
   delete saved.pending[id];
   const view = recoveryViews.get(conversation);
   if (failure || restore) {
-    saved.text = [text, view?.draft() ?? saved.text].filter(Boolean).join("\n");
+    saved.text = [text, ...view ? [unshown(conversation, saved, view.draft()), view.draft()] : [saved.text]].filter(Boolean).join("\n");
     saved.failure = [failure, saved.failure, view?.failure()].includes("unconfirmed") ? "unconfirmed" : failure ?? view?.failure() ?? saved.failure;
     // The view's field joined this copy, so storage takes every edit it missed.
     if (readable && view) missedEdits.delete(conversation);
@@ -598,8 +601,7 @@ export default function Composer({
         if (!orphaned.length && !saved.text && saved.failure !== "transcription" && saved.failure !== "unreached") return;
         // A field that holds recovered words is current (storage has caught up with it); otherwise the field is an
         // ordinary draft, which keeps nothing recovered, and the stored words join it.
-        const field = live || holds(conversation, draft.current) ? draft.current
-          : [saved.text, draft.current].filter(Boolean).join("\n");
+        const field = [unshown(conversation, saved, draft.current), draft.current].filter(Boolean).join("\n");
         if (orphaned.length) {
           const refused = new Set(saved.refused ?? []);
           saved.failure = saved.failure === "unconfirmed" || orphaned.some(([id]) => !refused.has(id)) ? "unconfirmed" : "refused";
