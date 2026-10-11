@@ -1289,7 +1289,9 @@ payload has this form:
 ]}
 ```
 
-Options have stable keys, short button labels and explicit answer text. A question may omit options;
+Options have stable keys, short button labels and explicit answer text. `"review": "proposal"` marks a
+proposal approval, so the question shows its proposal review (spec §3.8.3); a design question and a
+question naming the held PR are recognised without it, and revisions keep the mark. A question may omit options;
 multiple options require a recommendation key. Nothing becomes an operator answer by default.
 Include an existing question `id` to revise that member. Omitted unresolved members remain open;
 close obsolete questions explicitly rather than dropping them from a later publication. A group
@@ -1656,6 +1658,8 @@ alt task review assess --review-id <id> --file /tmp/assessment.json
 alt task review assess --review-id <proposal-review-id> --proposal-message <revised-message-id> --file /tmp/assessment.json
 alt task review cancel --review-id <id> --reason "The owner needs to stop"
 alt task review withdraw --review-id <id> --reason "Why this L2-requested review is unnecessary"
+# Record that a proposal or merge approval needs no review, and why (at most 120 characters):
+alt task review skip --subject proposal --reason "Small, reversible change."
 # Repeat a finished review; --previous names the review it replaces:
 alt task review request --subject changes --previous <id> --focus "Review the later revision"
 # Review new material while earlier reviews and their open findings stay in the merge gate:
@@ -1668,7 +1672,9 @@ alt task review request --previous <waiting-id> --model <model>
 Task defaults to `ALTITUDE_TASK`; an explicit task follows the action. `--subject` defaults to
 `changes`. Commands fence mutations to the current owner attempt. Operator requests can only be
 skipped by the operator's **Skip review**, which asks no reason; L2's withdrawal of its own request
-names one. Open questions do not prevent either subject: a request can continue a
+names one. `skip` records the same withdrawn state for a kind with no review yet, so a proposal or merge
+question shows "skipped by L2" with its reason (spec §3.8.3); a recorded review is never replaced by a
+skip, and merge requirements are unchanged. Open questions do not prevent either subject: a request can continue a
 question-blocked owner solely to prepare, run and assess review. Every open question, its revision, its card
 and any merge hold stay unchanged, and implementation or merge still needs its own approval. Because review
 freshness covers the task conversation and decisions, a later answer or resolution needs reassessment before merge.

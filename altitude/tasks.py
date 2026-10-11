@@ -1804,8 +1804,10 @@ def _validate_questions(payload: dict) -> list[dict]:
         raise TransitionError("ask one to three independent questions")
     normalized, ids, texts = [], set(), set()
     for item in items:
-        if not isinstance(item, dict) or set(item) - {"id", "question", "options", "recommended_key", "why"}:
-            raise TransitionError("question fields are id, question, options, recommended_key and why")
+        if not isinstance(item, dict) or set(item) - {"id", "question", "options", "recommended_key", "why", "review"}:
+            raise TransitionError("question fields are id, question, options, recommended_key, why and review")
+        if item.get("review", "proposal") != "proposal":
+            raise TransitionError('"review": "proposal" marks a proposal approval; merge questions name the held PR')
         text = item.get("question")
         if not isinstance(text, str) or not text.strip():
             raise TransitionError("every question needs nonempty text")
@@ -1834,7 +1836,7 @@ def _validate_questions(payload: dict) -> list[dict]:
         if not isinstance(why, str):
             raise TransitionError("recommendation rationale must be text")
         normalized.append({"id": identity, "question": text.strip(), "options": options,
-                           "recommended_key": recommended, "why": why.strip(),
+                           "recommended_key": recommended, "why": why.strip(), "review": item.get("review"),
                            "options_supplied": "options" in item, "why_supplied": "why" in item})
     return normalized
 
@@ -1851,12 +1853,14 @@ def _publish_question(task: dict, text: str, actor: str, *, recommendation: str 
                       label: str | None = None, why: str | None = None, force_revision: bool = False,
                       previous: object = _UNSET, group: dict | None = None, options: list[dict] | None = None,
                       recommended_key: str | None = None, bump: bool = True, design: object = _UNSET,
-                      audience: str | None = None) -> dict:
+                      audience: str | None = None, review: str | None = None) -> dict:
     questions = task.setdefault("questions", [])
     if previous is _UNSET:
         previous = questions[-1] if questions else None
     if design is _UNSET:
         design = previous.get("design") if previous and (previous["status"] == "open" or force_revision) else None
+    # A revision stays a proposal approval; the mark is never removed by rewording.
+    review = review or (previous.get("review") if previous and (previous["status"] == "open" or force_revision) else None)
     groups = _store_groups(task)
     audience = audience or ("l3" if task.get("waiting_on") == "l3" else "operator")
     parsed = parse_dilemma(text)
@@ -1875,7 +1879,8 @@ def _publish_question(task: dict, text: str, actor: str, *, recommendation: str 
     if (previous and previous["status"] == "open" and not force_revision and previous["detail"] == text
             and previous["audience"] == audience and previous["recommendation"] == recommended
             and previous["asked_by"] == actor and question_choices(previous) == options
-            and _recommended_key(previous) == recommended_key and previous.get("design") == design):
+            and _recommended_key(previous) == recommended_key and previous.get("design") == design
+            and previous.get("review") == review):
         return previous
     continuing = previous and (previous["status"] == "open" or force_revision)
     if previous and previous["status"] == "open":
@@ -1905,6 +1910,8 @@ def _publish_question(task: dict, text: str, actor: str, *, recommendation: str 
                 "options": options, "recommended_key": recommended_key}
     if design is not None:
         question["design"] = design
+    if review:
+        question["review"] = review
     questions.append(question)
     if bump:
         group["revision"] += 1
@@ -1943,7 +1950,7 @@ def _publish_questions(task: dict, payload: dict, actor: str, reason: str, audie
         _publish_question(task, item["question"], actor, previous=previous, group=group, bump=False,
                           force_revision=bool(previous and previous.get("response")),
                           options=options, recommended_key=recommended, why=why,
-                          design=design if design is not None else _UNSET,
+                          design=design if design is not None else _UNSET, review=item["review"],
                           audience=_audience(audience, previous, item["question"]))
     group["reason"] = reason
     if len(task["questions"]) != before:
@@ -2054,11 +2061,23 @@ def open_questions(task: dict) -> str:
                       if q.get("response") else "") for q in rows)
 
 
+def _question_review(project: str, task: dict, question: dict) -> dict | None:
+    """An open proposal approval (marked, or with a design preview) rests on the proposal review and one naming the held
+    PR on the implementation review."""
+    from . import reviews
+    if question["status"] != "open":
+        return None
+    if question.get("review") == "proposal" or question.get("design"):
+        return reviews.status(project, task, "proposal")
+    return reviews.status(project, task, "changes") if _references_held_pr(task, question) else None
+
+
 def question_view(project: str, task: dict, question: dict) -> dict:
     group = _group_for(task, question)
     return {**{k: v for k, v in question.items() if k not in ("message", "acceptance_message", "acceptance_delivered", "design")},
             **({"design_url": design_url(project, task["slug"], question),
                 "design_title": question["design"]["title"]} if question.get("design") else {}),
+            "review": _question_review(project, task, question),
             "options": question_choices(question), "recommended_key": _recommended_key(question),
             "response": question.get("response"),
             "group_id": group["id"], "group_revision": group["revision"], "group_anchor_id": group["anchor_id"],
@@ -2511,6 +2530,7 @@ def decision_row(project: str, task: dict) -> dict:
 
 
 def review_row(project: str, task: dict) -> dict | None:
+    from . import reviews
     number = review_pr(project, task)
     if not number:
         return None
@@ -2518,7 +2538,7 @@ def review_row(project: str, task: dict) -> dict | None:
     at = delivery.get("at") or task.get("updated")
     return {"project": project, "slug": task["slug"], "title": task.get("title"), "kind": "review", "pr": number,
             "question": f"Review PR #{number} before merge", "detail": task["hold_merge"],
-            "recommendation": None, "asked": at, "since": at}
+            "review": reviews.status(project, task, "changes"), "recommendation": None, "asked": at, "since": at}
 
 
 def decisions(project: str) -> list[dict]:

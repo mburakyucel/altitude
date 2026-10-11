@@ -306,6 +306,14 @@ export const DecisionSchema = z
     asked_again: z.boolean().nullish(),
     alert_held: z.boolean().nullish(),
     pr: z.number().nullish(),
+    /** A proposal or merge question's review (SPEC.md §3.8.3): its kind's latest review, or state "none". */
+    review: z.object({
+      subject: z.enum(["proposal", "changes"]), id: z.string().nullable(),
+      state: z.enum(["none", "requested", "running", "completed", "failed", "cancelled", "withdrawn"]),
+      findings: z.number().default(0), open: z.number().default(0),
+      reconciled: z.boolean().default(false), earlier: z.boolean().default(false),
+      skipped_by: z.enum(["l2", "operator"]).nullish(), reason: z.string().default(""),
+    }).nullish(),
   })
   .passthrough();
 

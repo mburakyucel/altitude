@@ -1,15 +1,16 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError, taskReview } from "../data/api";
-import type { Review, ReviewAction, ReviewSubject, TaskView } from "../data/api";
+import type { Decision, Review, ReviewAction, ReviewSubject, TaskView } from "../data/api";
 import { InlineProse } from "./Prose";
 import "./task-review.css";
 
 const NAME: Record<ReviewSubject, string> = { proposal: "Proposal review", changes: "Implementation review" };
 const SUBJECTS = ["proposal", "changes"] as const;
-type Tone = "none" | "wait" | "run" | "ok" | "warn" | "bad";
+type Tone = "none" | "skip" | "wait" | "run" | "ok" | "warn" | "bad";
 const ICON: Record<Tone, React.ReactNode> = {
   none: <circle cx="12" cy="12" r="8.5" strokeDasharray="2.5 3" />,
+  skip: <><circle cx="12" cy="12" r="8.5" strokeDasharray="2.5 3" /><path d="M8.5 12h7" /></>,
   wait: <><circle cx="12" cy="12" r="8.5" /><path d="M12 8v4l2.5 2" /></>,
   run: <path d="M12 3.5a8.5 8.5 0 1 1-8.5 8.5" />,
   ok: <><circle cx="12" cy="12" r="8.5" /><path d="M8.5 12.2l2.4 2.4 4.6-5" /></>,
@@ -20,7 +21,8 @@ const who = (role: string | null | undefined) => role === "l2" ? "L2" : "you";
 
 function tone(review: Review): Tone {
   switch (review.state) {
-    case "requested": case "withdrawn": return "wait";
+    case "requested": return "wait";
+    case "withdrawn": return "skip";
     case "running": return "run";
     case "failed": case "cancelled": return "bad";
     case "completed": return !review.reconciled ? (review.result?.findings.length ? "warn" : "ok") : review.unresolved.length ? "warn" : "ok";
@@ -250,6 +252,43 @@ export function ReviewCard({ review, task, controls, target, onRead }: { review:
       </ReviewBody>
     </div> : null}
   </div>;
+}
+
+export type ReviewLine = NonNullable<Decision["review"]>;
+
+/** A proposal or merge question's review in a few words (SPEC.md §3.8.3); it warns only when the review is missing, unresolved or of an earlier version. */
+export function reviewLine(review: ReviewLine): { tone: Tone; name: string; state: string } {
+  const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const [tone, state]: [Tone, string] = review.state === "none" ? ["warn", "not done"]
+    : review.state === "requested" ? ["wait", "requested"]
+    : review.state === "running" ? ["run", "in progress"]
+    // A skip is a recorded choice, shown calmly with its reason; only a missing review warns.
+    : review.state === "withdrawn" ? ["skip", review.skipped_by === "l2" ? ["skipped by L2", review.reason].filter(Boolean).join(" · ") : "skipped by you"]
+    : review.state !== "completed" ? ["warn", "didn’t finish"]
+    : !review.reconciled && review.findings ? ["warn", `done, ${count(review.findings, "finding")} pending`]
+    : review.open ? ["warn", `done, ${count(review.open, "open finding")}`]
+    : review.findings ? ["ok", `done, ${count(review.findings, "finding")} resolved`]
+    : ["ok", "done, no findings"];
+  // Another review's open findings still warn while a later one waits, runs or is skipped.
+  const open = review.state !== "completed" && review.open ? ` · ${count(review.open, "open finding")}` : "";
+  return review.earlier && review.state !== "none" ? { tone: tone === "ok" ? "warn" : tone, name: NAME[review.subject], state: `${state}${open} · earlier version` }
+    : { tone: open ? "warn" : tone, name: NAME[review.subject], state: `${state}${open}` };
+}
+
+/** The review's own small box: icon, name, state, and a chevron when it opens the review card. */
+export function ReviewStatus({ review, opens }: { review: ReviewLine; opens: boolean }) {
+  const { tone, name, state } = reviewLine(review);
+  return <>
+    <span className={`review-icon review-icon-${tone}`} aria-hidden><svg viewBox="0 0 24 24">{ICON[tone]}</svg></span>
+    <span className="question-review-body">
+      <span className="question-review-name">{name}</span>
+      <span className="visually-hidden"> · </span>
+      <span className="question-review-state">{state}</span>
+    </span>
+    {opens ? <svg className="question-review-go" aria-hidden viewBox="0 0 20 20" width="16" height="16">
+      <path d="M8 5l5 5-5 5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg> : null}
+  </>;
 }
 
 /** The latest review of each kind, the only ones the conversation shows. */

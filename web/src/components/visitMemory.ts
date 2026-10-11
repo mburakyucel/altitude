@@ -20,11 +20,12 @@ export function keepForVisit(entry: string, item: string, value: unknown) {
   kept.set(id(entry, item), value);
 }
 
-/** What this entry kept for `item` when the page mounted; it stays for every return to the entry. */
+/** What the shown entry kept for `item`, read once per entry; it stays for every return to the entry, including a
+ * Back within the same page. */
 export function useVisitReturn<T>(item: string): T | undefined {
   const { key } = useLocation();
-  const value = useRef<{ kept: T | undefined } | null>(null);
-  value.current ??= { kept: kept.get(id(key, item)) as T | undefined };
+  const value = useRef<{ key: string; kept: T | undefined } | null>(null);
+  if (value.current?.key !== key) value.current = { key, kept: kept.get(id(key, item)) as T | undefined };
   return value.current.kept;
 }
 

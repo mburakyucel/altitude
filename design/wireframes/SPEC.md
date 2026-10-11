@@ -543,7 +543,7 @@ review left in the merge gate still blocks merge; and a footer naming the review
 **Technical details** and **Skip review**. Technical details shows the model, any fallback reason,
 focus, the captured proposal and the reviewed and assessed checkpoints. Skip review asks for
 confirmation without a reason; the review stops blocking merge and its findings stay visible. **View**
-in task details opens and focuses the card. Open findings block merge; no findings never means
+in task details, and a question's review box (§3.8.3), open and focus the card. Open findings block merge; no findings never means
 permission to merge.
 
 Loading and saving disable the buttons. Unavailable explains why in the box; denied and uncertain
@@ -898,6 +898,46 @@ records the decision.
 
 `web/e2e/decision-selections.pw.ts` walks these states at both widths against real question, review
 and delivery records, with a refused send as a browser overlay.
+
+#### 3.8.3 Review status
+
+A question that asks the operator to approve a proposal or a merge shows its review in its own small
+box, so whether it was reviewed is visible in Needs you and the conversation without task details:
+
+| Question | Box |
+| --- | --- |
+| An open proposal approval: a question with a design preview, or one its owner marks as a proposal | **Proposal review** |
+| The held PR's **Review before merge** card, or an open operator question naming the held PR | **Implementation review** |
+| Any other question, and a resolved or withdrawn one | none |
+
+The box sits under the question, its **View preview** link or the merge card's detail, above the recommendation. Its
+anatomy follows the task card (§3.5): a 16px state icon, the review's name (14px, 600) over its state
+(13px, muted), and a chevron; bordered, card radius, at least 44px tall, full card width up to 480px.
+Its accessible name is "<name> · <state>". The state reads the latest review of that kind:
+
+| Review | State | Icon |
+| --- | --- | --- |
+| None recorded | not done | amber !, dashed border, no chevron, not a link |
+| Requested / running | requested / in progress | clock / spinner |
+| Done, no findings | done, no findings | green check |
+| Done, L2 has not answered its findings | done, N findings pending | amber ! |
+| Done, findings still open in a current review | done, N open findings | amber ! |
+| Done, every finding fixed or dismissed | done, N findings resolved | green check |
+| Failed or stopped | didn’t finish | amber ! |
+| Skipped by L2 as not needed | skipped by L2 · <its reason> | grey dashed circle with a dash |
+| Skipped by the operator | skipped by you | grey dashed circle with a dash |
+| Requested, running, failed or skipped while an earlier review of the kind has open findings | the state, then " · N open findings" | amber ! |
+| Any of these covering an earlier version | the state, then " · earlier version" | amber ! |
+
+"Earlier version" is the review card's own comparison (§3.4), so the box and the card agree. The box
+never requests a review and has no ids. It opens `/projects/:name/tasks/:slug?review=<id>`, which
+scrolls to the review card, opens and focuses it, adding one history entry. Back (browser, phone header
+or desktop crumb) returns to Needs you with that card in view, or to the conversation with the question
+or merge card in view and focused; a question revised meanwhile returns at its latest revision, even when the
+conversation's link named an older one, and a
+card that has left Needs you, or a merge card that has gone, leaves the page where it was. Modified clicks open the review without recording a return.
+`web/e2e/review-status.pw.ts` walks Needs you and the conversation at both widths: resolved, open,
+the longest state, no review, a skip by the owner and no box, each review and Back, and Back after a revision.
 
 ### 3.9 Open the owning L2 question
 

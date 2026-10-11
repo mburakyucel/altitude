@@ -7,6 +7,7 @@
 .review-icon svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 .review-icon-none { color: var(--border); }
 .review-icon-wait { color: var(--text-muted); }
+.review-icon-skip { color: var(--text-muted); }
 .review-icon-run { color: var(--accent); }
 .review-icon-run svg { animation: review-spin 1.2s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .review-icon-run svg { animation: none; } }
@@ -54,3 +55,17 @@
   .review-finding-title { flex-direction: column; gap: 2px; }
   .review-finding-body { margin-left: 0; }
 }
+/* A proposal or merge question's review in its own small box, like a task card (SPEC.md §3.8.3): icon, name, state, chevron. */
+.question-review {
+  display: flex; align-items: center; gap: 10px; box-sizing: border-box; width: 100%; max-width: 480px; min-height: 44px;
+  margin: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--card);
+  color: var(--text-primary); text-decoration: none;
+}
+a.question-review:hover, a.question-review:focus-visible { border-color: var(--text-muted); }
+/* No review is not a place to go: a dashed outline, no chevron. */
+p.question-review { border-style: dashed; background: none; }
+.question-review .review-icon, .question-review .review-icon svg { flex: none; width: 16px; height: 16px; }
+.question-review-body { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
+.question-review-name { font-size: 14px; font-weight: 600; }
+.question-review-state { font-size: 13px; color: var(--text-muted); overflow-wrap: anywhere; }
+.question-review-go { flex: none; color: var(--text-muted); }

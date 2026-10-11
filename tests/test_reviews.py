@@ -913,6 +913,11 @@ class TestReviews(AltitudeCase):
                          (["f1"], T.OPERATOR_MESSAGE_ROLE, "Challenge the isolation boundary"))
         self.assertEqual(view["subjects"]["proposal"]["latest"]["id"], clean["id"])
         self.assertEqual(S.load_task(self.project, self.slug)["hold_merge"], "Operator review before merge")
+        # A skip never sits over a recorded review, and the question still counts the original's open finding.
+        with self.assertRaisesRegex(T.TransitionError, "already recorded"):
+            reviews.skip(self.project, self.slug, actor="l2", subject="proposal", reason="Small change.", expected_attempt=1)
+        status = reviews.status(self.project, S.load_task(self.project, self.slug), "proposal")
+        self.assertEqual((status["id"], status["state"], status["open"]), (clean["id"], "withdrawn", 1))
         reviews.assess(self.project, self.slug, original["id"], actor="l2", expected_attempt=1, reason="Checked the proposal",
                        dispositions=[{"finding_id": "f1", "disposition": "fixed", "reason": "Recorded Linux evidence."}])
         reviews.require_merge(self.project, self.slug, self.pair())
@@ -1309,6 +1314,7 @@ class TestReviews(AltitudeCase):
         [original] = json.loads(json.dumps([q for q in task["questions"] if q["status"] == "open"]))
         cards = T.decisions(self.project)
         self.assertEqual([row["kind"] for row in cards], ["asks"])
+        self.assertEqual(cards[0]["review"], {"subject": "changes", "id": None, "state": "none"})
         self.assertTrue(reviews.view(self.project, self.slug)["subjects"]["changes"]["available"])
         requested = self.request()
         self.assertEqual(S.load_task(self.project, self.slug)["resume_request"], requested["id"])
@@ -1319,12 +1325,20 @@ class TestReviews(AltitudeCase):
         self.assess(result)
         task = T.block(self.project, self.slug, "Merge PR #42?", actor="l2", expected_attempt=1)
         self.assertEqual([q for q in task["questions"] if q["status"] == "open"], [original])
-        self.assertEqual(T.decisions(self.project), cards)
+        # Only the question's review status follows the review.
+        after = T.decisions(self.project)
+        self.assertEqual([{**row, "review": None} for row in after], [{**row, "review": None} for row in cards])
+        self.assertEqual({k: after[0]["review"][k] for k in ("id", "state", "reconciled", "open")},
+                         {"id": result["id"], "state": "completed", "reconciled": True, "open": 0})
         self.assertEqual(task["hold_merge"], "Operator review before merge")
         self.assertIsNone(task.get("merge_approval"))
         self.assertIsNone(T.approved_pr(self.project, task))
         reviews.require_merge(self.project, self.slug, self.pair())
         self.assertEqual(self.engine.call_count, 1)
+        # A later commit makes the question's line and the review card both say "earlier version".
+        self.commit("value.py", "VALUE = 3\n")
+        self.assertTrue(T.decisions(self.project)[0]["review"]["earlier"])
+        self.assertTrue(reviews.view(self.project, self.slug)["subjects"]["changes"]["latest"]["earlier"])
 
     def test_changes_review_leaves_unrelated_open_questions_and_their_authority_intact(self):
         # The one-command VM increment (#587): publication and runner-image decisions stay open while the
@@ -1489,10 +1503,74 @@ class TestReviews(AltitudeCase):
         self.assertEqual(result["snapshot"]["design"], {"id": question["questions"][-1]["design"]["id"], "title": "Compact rows", "images": []})
         reviewed = lambda: next(r for r in reviews.view(self.project, self.slug)["history"] if r["id"] == result["id"])
         self.assertFalse(reviewed()["earlier"])
+        # The design question's review line names the latest proposal review (SPEC.md §3.8.3).
+        self.assertEqual({k: T.question_views(self.project, self.slug)[-1]["review"][k] for k in ("subject", "id", "earlier")},
+                         {"subject": "proposal", "id": plain["id"], "earlier": False})
         (boards / "spec.md").write_text(spec + "Desktop: two lines.\n")
         T.resume(self.project, self.slug)
         T.block(self.project, self.slug, "Build the rows as shown?", actor="l2", expected_attempt=1, design=selection)
         self.assertTrue(reviewed()["earlier"])
+
+    def test_question_review_status_reads_the_saved_reviews(self):
+        # SPEC.md §3.8.3: a kind's latest review and its open findings; with no worktree identity only the design compares.
+        task = {"questions": [{"design": {"id": "d1"}}], "reviews": [
+            {"id": "p1", "subject": "proposal", "state": "completed", "snapshot": {"head": "a" * 40, "design": {"id": "d1"}},
+             "reconciled": {"head": "a" * 40}, "result": {"findings": [{"id": "f1"}, {"id": "f2"}]},
+             "dispositions": [{"finding_id": "f1", "disposition": "open"}, {"finding_id": "f2", "disposition": "fixed"}]},
+            {"id": "c1", "subject": "changes", "state": "running", "snapshot": None}]}
+        self.assertEqual(reviews.status(self.project, task, "proposal"), {"subject": "proposal", "id": "p1", "state": "completed",
+                                                                          "findings": 2, "reconciled": True, "open": 1, "earlier": False})
+        task["questions"].append({"design": {"id": "d2"}})
+        self.assertTrue(reviews.status(self.project, task, "proposal")["earlier"])
+        self.assertEqual({k: reviews.status(self.project, task, "changes")[k] for k in ("id", "state", "earlier")},
+                         {"id": "c1", "state": "running", "earlier": False})
+        self.assertEqual(reviews.status(self.project, {}, "changes"), {"subject": "changes", "id": None, "state": "none"})
+
+    def test_only_open_design_and_held_pr_questions_carry_a_review_line(self):
+        plain = T.block(self.project, self.slug, "Which region?", actor="l2", expected_attempt=1,
+                        updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE})["questions"][-1]
+        self.assertIsNone(T.question_views(self.project, self.slug)[-1]["review"])
+        T.resume(self.project, self.slug)
+        merge = T.block(self.project, self.slug, "Merge PR #42?", actor="l2", expected_attempt=1,
+                        updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE}, questions=self.held_pr_question())["questions"][-1]
+        views = {q["id"]: q for q in T.question_views(self.project, self.slug)}
+        self.assertIsNone(views[plain["id"]]["review"])
+        self.assertEqual(views[merge["id"]]["review"], {"subject": "changes", "id": None, "state": "none"})
+        # A closed question keeps no line: the status describes the review now, not when it was asked.
+        task = S.load_task(self.project, self.slug)
+        self.assertIsNone(T._question_review(self.project, task, {**next(q for q in task["questions"] if q["id"] == merge["id"]), "status": "resolved"}))
+
+    def test_a_marked_proposal_question_carries_the_proposal_review_through_revisions(self):
+        marked = {"questions": [{"question": "Adopt the queue-per-project design?", "review": "proposal", "recommended_key": "go",
+                                 "options": [{"key": "go", "label": "Approve proposal", "text": "Approved: build the queue-per-project design."}]}]}
+        question = T.block(self.project, self.slug, "Adopt the queue-per-project design?", actor="l2", expected_attempt=1,
+                           updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE}, questions=marked)["questions"][-1]
+        self.assertEqual(T.question_views(self.project, self.slug)[-1]["review"], {"subject": "proposal", "id": None, "state": "none"})
+        # A reworded revision without the field stays a proposal approval.
+        T.resume(self.project, self.slug)
+        reworded = {"questions": [{"id": question["id"], "question": "Adopt the queue-per-project design, with limits?"}]}
+        T.block(self.project, self.slug, "Revised", actor="l2", expected_attempt=1, updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE}, questions=reworded)
+        latest = T.question_views(self.project, self.slug)[-1]
+        self.assertEqual((latest["id"], latest["revision"], latest["review"]["subject"]), (question["id"], 2, "proposal"))
+        with self.assertRaises(T.TransitionError):
+            T._validate_questions({"questions": [{"question": "Merge?", "review": "changes"}]})
+
+    def test_owner_skip_records_why_no_review_is_needed_without_changing_the_gate(self):
+        skipped = reviews.skip(self.project, self.slug, actor="l2", subject="proposal", reason="One-line copy change.", expected_attempt=1)
+        self.assertEqual((skipped["state"], skipped["withdrawn_by"], skipped["withdrawal_reason"]), ("withdrawn", "l2", "One-line copy change."))
+        task = S.load_task(self.project, self.slug)
+        self.assertEqual({k: reviews.status(self.project, task, "proposal")[k] for k in ("id", "state", "skipped_by", "reason")},
+                         {"id": skipped["id"], "state": "withdrawn", "skipped_by": "l2", "reason": "One-line copy change."})
+        # A skip shows in the conversation and leaves the kind requestable, like any withdrawn review.
+        self.assertTrue(any(m.get("review_id") == skipped["id"] for m in T.task_messages(self.project, self.slug)))
+        self.assertEqual(self.request(subject="proposal", previous=skipped["id"])["state"], "requested")
+        for kwargs, why in (({"reason": " "}, "empty"), ({"reason": "x" * 121}, "long"), ({"actor": T.OPERATOR_MESSAGE_ROLE}, "operator")):
+            with self.subTest(why), self.assertRaises(T.TransitionError):
+                reviews.skip(self.project, self.slug, **{"actor": "l2", "subject": "changes", "reason": "Small fix.", "expected_attempt": 1, **kwargs})
+        # A recorded review is never replaced by a skip, so its findings stay in the merge gate.
+        self.request()
+        with self.assertRaises(T.TransitionError):
+            reviews.skip(self.project, self.slug, actor="l2", subject="changes", reason="Small fix.", expected_attempt=1)
 
     def test_missing_proposal_never_invokes_provider_and_retry_preserves_subject(self):
         result = self.run_review(self.request(subject="proposal"))

@@ -80,3 +80,59 @@ describe("question and review text", () => {
     expect(screen.queryByText(/operator · /)).toBeNull();
   });
 });
+
+describe("review status on proposal and merge questions (SPEC.md §3.8.3)", () => {
+  const design = DecisionSchema.parse({ ...base, question: "Build the settings layout as shown?", design_url: "/projects/atlas/tasks/gate/design/q1/1", design_title: "Settings layout" });
+  const merge = DecisionSchema.parse({ ...base, id: null, revision: null, kind: "review", pr: 7, question: "Review PR #7 before merge" });
+  const done = { id: "r1", state: "completed", reconciled: true };
+  const states: [string, Record<string, unknown>, string, string][] = [
+    ["not done", { id: null, state: "none" }, "not done", "warn"],
+    ["requested", { id: "r1", state: "requested" }, "requested", "wait"],
+    ["in progress", { id: "r1", state: "running" }, "in progress", "run"],
+    ["done without findings", { ...done, findings: 0 }, "done, no findings", "ok"],
+    ["done, findings not yet answered", { ...done, reconciled: false, findings: 3 }, "done, 3 findings pending", "warn"],
+    ["done with unresolved findings", { ...done, findings: 3, open: 1 }, "done, 1 open finding", "warn"],
+    ["done and reconciled", { ...done, findings: 2 }, "done, 2 findings resolved", "ok"],
+    ["done and reconciled, of an earlier version", { ...done, findings: 1, earlier: true }, "done, 1 finding resolved · earlier version", "warn"],
+    ["didn't finish", { id: "r1", state: "failed" }, "didn’t finish", "warn"],
+    ["skipped by L2, with its reason", { id: "r1", state: "withdrawn", skipped_by: "l2", reason: "One-line copy change." }, "skipped by L2 · One-line copy change.", "skip"],
+    ["skipped by you", { id: "r1", state: "withdrawn", skipped_by: "operator" }, "skipped by you", "skip"],
+    ["withdrawn over another review's open finding", { id: "r1", state: "withdrawn", skipped_by: "operator", open: 1 }, "skipped by you · 1 open finding", "warn"],
+  ];
+  it.each(states)("a design question's proposal review: %s", (_name, review, text, tone) => {
+    const { container } = mount(<QuestionSet decisions={[{ ...design, review: DecisionSchema.shape.review.parse({ subject: "proposal", ...review }) }]} from="needs" />);
+    const line = container.querySelector(".question-review")!;
+    expect(line.textContent).toBe(`Proposal review · ${text}`);
+    expect(line.querySelector(`.review-icon-${tone}`)).not.toBeNull();
+    // A review opens its card in the task conversation; no review is plain text, never a request.
+    if (review.id) expect(screen.getByRole("link", { name: `Proposal review · ${text}` })).toHaveAttribute("href", `/projects/atlas/tasks/gate?review=${review.id}`);
+    else expect(line.tagName).toBe("P");
+    // The line sits between the preview link and the recommendation's choices.
+    expect(container.querySelector(".question-preview + .question-review")).toBe(line);
+  });
+  it.each(states)("the merge card's implementation review: %s", (_name, review, text, tone) => {
+    const { container } = mount(<ReviewDecision decision={{ ...merge, review: DecisionSchema.shape.review.parse({ subject: "changes", ...review }) }} />);
+    const line = container.querySelector(".question-review")!;
+    expect(line.textContent).toBe(`Implementation review · ${text}`);
+    expect(line.querySelector(`.review-icon-${tone}`)).not.toBeNull();
+    expect(line.tagName).toBe(review.id ? "A" : "P");
+  });
+  it("a proposal approval without a design preview shows its proposal review under the question", () => {
+    const question = DecisionSchema.parse({ ...base, question: "Adopt the queue-per-project design?", review: { subject: "proposal", id: "p1", state: "withdrawn", skipped_by: "l2", reason: "Small, reversible change." } });
+    const { container } = mount(<QuestionSet decisions={[question]} chat />);
+    expect(screen.getByRole("link", { name: "Proposal review · skipped by L2 · Small, reversible change." })).toHaveAttribute("href", "/projects/atlas/tasks/gate?review=p1");
+    expect(container.querySelector(".question-preview")).toBeNull();
+  });
+  it("a question naming the held PR shows the implementation review", () => {
+    const question = DecisionSchema.parse({ ...base, question: "Merge PR #7?", review: { subject: "changes", ...done, findings: 0 } });
+    mount(<QuestionSet decisions={[question]} chat />);
+    expect(screen.getByRole("link", { name: "Implementation review · done, no findings" })).toHaveAttribute("href", "/projects/atlas/tasks/gate?review=r1");
+  });
+  it("a question that is neither a proposal nor a merge approval has no line", () => {
+    const { container, unmount } = mount(<QuestionSet decisions={[DecisionSchema.parse({ ...base, question: "Where should the backup live?" })]} />);
+    expect(container.querySelector(".question-review")).toBeNull();
+    unmount();
+    const card = mount(<ReviewDecision decision={merge} />);
+    expect(card.container.querySelector(".question-review")).toBeNull();
+  });
+});

@@ -10,16 +10,34 @@ import { setSelectedProject } from "../shell/scope";
 import { Choice, deliveryChoice } from "./Choice";
 import type { ChoiceState } from "./Choice";
 import { InlineProse, Prose, ProseScope, QuestionProse } from "./Prose";
+import { ReviewStatus, reviewLine } from "./TaskReview";
 import { keepForVisit, useVisitMemory } from "./visitMemory";
 
 type Draft = { option?: string; text?: string };
 const draftKey = (q: Decision) => `${q.project}:${q.slug}:${q.id}:${q.revision}`;
 /** Who closed a question; any actor other than the agents and Altitude is the operator. */
 const closedBy = (by: string) => by === "l2" || by === "l3" ? by.toUpperCase() : by === "altd" ? "Altitude" : "You";
-/** The question whose preview was opened from a history entry, so returning there brings it into view. */
-export type PreviewOrigin = Pick<Decision, "project" | "slug" | "id" | "revision">;
+/** The question whose preview or review was opened from a history entry, so returning there brings it into view;
+ * no id is the task's merge review card. */
+export type QuestionOrigin = Pick<Decision, "project" | "slug" | "id">;
+const plainClick = (event: React.MouseEvent) => event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
 function recommendedKey(question: Decision) {
   return question.recommended_key ?? (!question.options && question.recommendation?.text ? "recommended" : null);
+}
+
+/** A proposal or merge question's review in its own small box (SPEC.md §3.8.3), opening its review card in the task conversation. */
+function ReviewLink({ decision, from }: { decision: Decision; from?: "needs" | "project" }) {
+  const location = useLocation();
+  const review = decision.review;
+  if (!review) return null;
+  if (!review.id) return <p className="question-review"><ReviewStatus review={review} opens={false} /></p>;
+  const { name, state } = reviewLine(review);
+  return <Link className="question-review" aria-label={`${name} · ${state}`} to={`/projects/${decision.project}/tasks/${decision.slug}?${new URLSearchParams({ review: review.id })}`}
+    state={from ? { from, tab: from === "needs" ? "needs" : "work" } : location.state} onClick={(event) => {
+      if (!plainClick(event)) return;
+      setSelectedProject(decision.project);
+      keepForVisit(location.key, "origin", { project: decision.project, slug: decision.slug, id: decision.id } satisfies QuestionOrigin);
+    }}><ReviewStatus review={review} opens /></Link>;
 }
 
 type QuestionProps = {
@@ -146,10 +164,9 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
       {!resolved && question.response ? <Receipt response={question.response} picked={options.find((option) => option.text === question.response!.text)?.label}
         delivery={deliveries?.[question.response.message_id]} /> : null}
       {question.design_url ? <Link className="text-meta question-preview" to={question.design_url} onClick={(event) => {
-        if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
-          keepForVisit(location.key, "preview", { project: question.project, slug: question.slug, id: question.id, revision: question.revision } satisfies PreviewOrigin);
-        }
+        if (plainClick(event)) keepForVisit(location.key, "origin", { project: question.project, slug: question.slug, id: question.id } satisfies QuestionOrigin);
       }}>View preview · {question.design_title}</Link> : null}
+      <ReviewLink decision={question} from={chat ? undefined : from} />
       {(resolved && !withdrawn || question.response) && question.recommendation?.text ? <details className="question-context"><summary>Earlier recommendation</summary>{recommendation}</details> : recommendation}
       {chat && question.detail && question.detail !== question.question ? <details className="question-context">
         <summary>More context</summary>
@@ -204,8 +221,8 @@ export function Question({ decision, ...props }: QuestionProps & { decision: Dec
 }
 
 /** #419: a held review-ready PR asks for review. Approve sends the operator's own message; the L2 merges with it. */
-export function ReviewDecision({ decision, repository, disabled = false, chat = false }: {
-  decision: Decision; repository?: string | null; disabled?: boolean; chat?: boolean;
+export function ReviewDecision({ decision, repository, disabled = false, chat = false, from = "project" }: {
+  decision: Decision; repository?: string | null; disabled?: boolean; chat?: boolean; from?: "needs" | "project";
 }) {
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -219,9 +236,10 @@ export function ReviewDecision({ decision, repository, disabled = false, chat = 
   const denied = approve.error instanceof ApiError && [401, 403].includes(approve.error.status);
   // Approve merge changes in place (SPEC.md §3.8.2): it spins while sending and then waits to be read.
   const state: ChoiceState = approve.isPending ? "busy" : approve.isSuccess ? "wait" : approve.isError && !denied ? "fail" : "ready";
-  return <div className="question-set" data-review-pr={decision.pr ?? undefined}>
+  return <div className="question-set" data-review-pr={decision.pr ?? undefined} data-review-task={`${decision.project}/${decision.slug}`}>
     <QuestionProse className="decision-question" text={decision.question || `Review PR #${decision.pr} before merge`} />
     {decision.detail ? <QuestionProse className="decision-why" text={decision.detail} /> : null}
+    <ReviewLink decision={decision} from={chat ? undefined : from} />
     <div className="decision-options" role="group" aria-label="Merge review">
       <Choice primary label={state === "fail" ? "Retry" : "Approve merge"} state={state} disabled={disabled || denied}
         spoken={state === "busy" ? "sending" : state === "wait" ? "waiting for the L2" : state === "fail" ? "Approve merge" : undefined}
@@ -252,7 +270,7 @@ export function DecisionCard({ decision, decisions = [decision], selected = fals
         <span className="ml-auto text-muted" title={exactTime(decision.asked)}>{ageText(decision.asked)}</span>
       </div>
       <Link className="decision-task" to={to} state={state} onClick={() => setSelectedProject(decision.project)}>{title}</Link>
-      {decision.kind === "review" ? <ReviewDecision decision={decision} repository={project.data?.repository} disabled={disabled} />
+      {decision.kind === "review" ? <ReviewDecision decision={decision} repository={project.data?.repository} disabled={disabled} from={from} />
         : <QuestionSet decisions={decisions} disabled={disabled} from={from} />}
       <Link className="text-meta" to={to} state={state} onClick={() => setSelectedProject(decision.project)}>Open L2 chat</Link>
     </article>
