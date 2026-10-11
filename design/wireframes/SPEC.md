@@ -1960,14 +1960,16 @@ shows an ISO string, `Z`, `UTC` or an offset. Ages read "just now", "N min ago",
 this one; a day divider reads "Today", "Yesterday", "Thu, Oct 8"; a date alone reads "Sep 24, 2036".
 The exact time ("Oct 10, 2026, 4:58:42 PM PDT") appears on hover or in the expanded card.
 
-Agent and system text keeps its own words, with written UTC times shown in local time the same way,
-outside code spans, code blocks, links and paths: an ISO instant with `Z` or an offset, a date and
-UTC clock, a month day and UTC clock ("Oct 10, 23:58Z") read like a record's time; a UTC clock
-("23:58Z", "23:58 UTC", "23:58 GMT") or clock range ("07:20–07:45 UTC") reads as a clock. A clock
-is its latest occurrence no more than three hours after the text's own recorded time, so history
-converts correctly across midnight and daylight saving. A clock without a zone, a zone name such as
-"PDT", and a date alone stay as written. Converted times look like the surrounding text, with the
-exact time on hover.
+Agent and system text keeps its own words, with written UTC times shown in local time outside code
+spans, code blocks, links and paths, at the writer's precision. A dated time (an ISO instant with `Z`
+or an offset, a date and UTC clock, a month day and UTC clock such as "Oct 10, 23:58Z") reads as a
+clock on the local day of the text's own recorded time and dated otherwise, with the exact time on
+hover. A UTC clock ("23:58Z", "23:58 UTC", "23:58 GMT") or range ("07:20–07:45 UTC", "07:20/07:45
+UTC") stays a clock with no date, its hover the clock with the zone ("3:58:00 PM PST"); its offset is
+the one at the occurrence nearest the text's own time, and a range's end is the first after its start.
+A list of clocks sharing one zone ("18:43, 19:05 UTC"), a clock without a zone, a zone name such as
+"PDT", and a date alone stay as written. Converted times look like the surrounding text and never
+wrap inside.
 
 ### 4.6 Boards and spec stay aligned
 

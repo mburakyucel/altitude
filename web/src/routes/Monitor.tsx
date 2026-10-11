@@ -5,7 +5,7 @@ import { TokenUsage } from "../components/TokenUsage";
 import { RestartDetails } from "../shell/RestartBanner";
 import { NewTasksButton } from "../components/Models";
 import { useViewport } from "../shell/breakpoints";
-import { age, agoText, exactTime, modelName, older, RESERVE_PERCENT, SESSION_STALE_MS, stampText, when } from "../data/observed";
+import { age, agoText, exactTime, localTimes, modelName, older, RESERVE_PERCENT, SESSION_STALE_MS, stampText, when } from "../data/observed";
 
 /**
  * Monitor (SPEC.md §3.14): one seat card per configured engine with its windows, their reset times
@@ -144,7 +144,7 @@ function seatFor(row: MonitorSeat): Seat {
     at: quota.at ?? quota.read_at,
     stale: (windows != null || models.some((model) => model.percent != null)) && !quota.known,
     windows,
-    fix: capitalize(str(quota.why)) || "The seat has not been read yet.",
+    fix: capitalize(localTimes(str(quota.why))) || "The seat has not been read yet.",
     models,
   };
 }
@@ -248,7 +248,7 @@ function RoutingCard({ rows, label }: { rows: RoutingRow[]; label: (engine: unkn
                     {row.engine ? label(row.engine) : "No engine"}
                   </span>
                 </div>
-                {row.why ? <p className="monitor-route-why">{row.why}</p> : null}
+                {row.why ? <p className="monitor-route-why">{localTimes(row.why)}</p> : null}
               </li>
             ))}
           </ul>

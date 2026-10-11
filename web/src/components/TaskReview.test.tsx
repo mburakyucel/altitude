@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ReviewSchema, TaskViewSchema } from "../data/api";
 import type { Review } from "../data/api";
 import { renderApp, setViewport } from "../test/render";
-import { stampText } from "../data/observed";
+import { clockText, stampText } from "../data/observed";
 
 const route = "/projects/atlas/tasks/index";
 const snapshot = { head: "abc123", base: "base123", tree: "tree123", context_hash: "context123", captured_context_hash: "captured123", selected_owner_evidence: true, context_ids: ["evidence"], limitations: ["Original image bytes are not reviewed."] };
@@ -63,7 +63,7 @@ describe("Adversarial review", () => {
     const opened = card("review-plan");
     await app.user.click(opened.getByRole("button", { name: "Technical details" }));
     expect(opened.getByText("Reviewed proposal").parentElement).toHaveTextContent(`Reviewed proposal · ${stampText("2026-09-22T10:20:00+00:00")}`);
-    expect(opened.getByText(/Ship after/)).toHaveTextContent(`Ship after ${stampText("2026-09-22T12:00:00Z")}.`);
+    expect(opened.getByText(/Ship after/)).toHaveTextContent(`Ship after ${clockText("2026-09-22T12:00:00Z")}.`);
     expect(document.getElementById("review-review-plan")!.textContent).not.toMatch(/2026-09-22T|\+00:00/);
   });
 

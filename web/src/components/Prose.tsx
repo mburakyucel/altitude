@@ -1,8 +1,7 @@
 import { createContext, Fragment, useContext } from "react";
 import type { ReactNode } from "react";
 import { CodeBlock } from "./CodeBlock";
-import { clockText, exactTime, timeTokens, when } from "../data/observed";
-import { Stamp } from "./Stamp";
+import { timeTokens, when } from "../data/observed";
 
 export const ProseRepository = createContext<string | null | undefined>(null);
 export const ProseProject = createContext<string | undefined>(undefined);
@@ -39,20 +38,13 @@ function codeBlocks(text: string): { text: string; code: boolean; info: string }
   return blocks;
 }
 
-/** A written clock in the reader's zone, exact on hover. */
-function Clock({ at }: { at: string }) {
-  return <time className="prose-time" dateTime={at} title={exactTime(at)}>{clockText(at)}</time>;
-}
-
-/** Written UTC times read in the reader's zone; the text between them goes on to reference matching. */
+/** Written UTC times read in the reader's zone, exact on hover; the text between them goes on to reference matching. */
 function times(text: string, anchor: string | null | undefined, repository?: string | null): ReactNode[] {
   const nodes: ReactNode[] = [];
   let end = 0;
   for (const token of timeTokens(text, when(anchor) ?? undefined)) {
     nodes.push(<Fragment key={`text-${token.index}`}>{references(text.slice(end, token.index), repository)}</Fragment>);
-    nodes.push(token.until
-      ? <span key={token.index} className="prose-time"><Clock at={token.at} />{token.separator}<Clock at={token.until} /></span>
-      : token.dated ? <Stamp key={token.index} at={token.at} className="prose-time" /> : <Clock key={token.index} at={token.at} />);
+    nodes.push(<time key={token.index} className="prose-time" dateTime={token.at} title={token.exact}>{token.shown}</time>);
     end = token.index + token.text.length;
   }
   nodes.push(<Fragment key="tail">{references(text.slice(end), repository)}</Fragment>);

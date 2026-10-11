@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Decision, TaskRow } from "./api";
+import { stampText } from "./observed";
 import { statusExcerpt, taskExplanation } from "./taskStatus";
 
 const blocked: TaskRow = { slug: "verify-release", state: "blocked" };
@@ -19,6 +20,11 @@ describe("status excerpts", () => {
   it("keeps a useful first sentence and readable link text", () => {
     expect(statusExcerpt("L3: Wait for [release rc.2](https://example.test/release) to finish. Then resume the owner."))
       .toBe("Wait for release rc.2 to finish");
+  });
+
+  it("shows a written UTC time in the reader's zone", () => {
+    const resets = new Date(Date.now() + 60 * 60_000).toISOString();
+    expect(statusExcerpt(`Usage limit: resets ${resets}.`)).toBe(`Usage limit: resets ${stampText(resets)}`);
   });
 
   it.each(["\n", "\\n", "\\\"", "{", "}"])("excludes trailing event output after %j", (separator) => {

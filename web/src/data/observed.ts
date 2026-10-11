@@ -114,16 +114,19 @@ export function exactTime(value: unknown): string {
   return then == null ? "" : new Date(then).toLocaleString([], { dateStyle: "medium", timeStyle: "long" });
 }
 
+/** "14:05" on the local day of `day`, else "Sep 16, 14:05", with the year when not that day's year. */
+function stamp(ms: number, day: number): string {
+  const date = new Date(ms);
+  const on = new Date(day);
+  if (date.toDateString() === on.toDateString()) return clock(ms);
+  const year = date.getFullYear() === on.getFullYear() ? undefined : "numeric";
+  return `${date.toLocaleDateString([], { month: "short", day: "numeric", year })}, ${clock(ms)}`;
+}
+
 /** A recorded time as the activity views show it (SPEC.md §3.10): "14:05", dated when not today, with the year when not this year. */
 export function stampText(value: unknown): string {
   const then = when(value);
-  if (then == null) return "";
-  const date = new Date(then);
-  const time = clock(then);
-  const today = new Date();
-  if (date.toDateString() === today.toDateString()) return time;
-  const year = date.getFullYear() === today.getFullYear() ? undefined : "numeric";
-  return `${date.toLocaleDateString([], { month: "short", day: "numeric", year })}, ${time}`;
+  return then == null ? "" : stamp(then, Date.now());
 }
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
@@ -131,65 +134,80 @@ const CLOCK = String.raw`(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?`;
 const UTC = String.raw`\s?(?:Z|UTC|GMT)`;
 /**
  * A written UTC time in prose: an ISO 8601 instant with Z or an offset; a date, clock and UTC; a month
- * day, clock and UTC; a UTC clock or clock range. A clock glued to a word ("at04:10Z") still counts;
- * one inside a longer number (a fingerprint, host:port, file:12:34) or without a zone does not.
+ * day, clock and UTC; a UTC clock, or two joined by "–", "-" or "/". A clock glued to a word ("at04:10Z")
+ * still counts. A clock inside a longer number (a fingerprint, host:port, file:12:34), without a zone,
+ * or ending a longer list of clocks that share the zone ("18:43, 19:05 UTC") does not, so a phrase is
+ * never shown half converted.
  */
 const TIME = new RegExp(
   String.raw`(?<![\d:.])(?:(\d{4})-(\d{2})-(\d{2})[T ]${CLOCK}(?:(Z|[+-]\d{2}:?\d{2})(?:\s?UTC)?|${UTC})` +
   String.raw`|\b(${MONTHS.join("|")})[a-z]*\.? (\d{1,2}),? ${CLOCK}${UTC}` +
-  String.raw`|${CLOCK}(?:(\s?[–-]\s?)${CLOCK})?${UTC})(?![\w:]|[+-]\d)`,
+  String.raw`|${CLOCK}(?:(\s?[–\-/]\s?)${CLOCK})?${UTC})(?![\w:]|[+-]\d)`,
   "gi",
 );
 
-/** A written time and its instants as ISO strings; `dated` when the writer gave a date, `until` for a range's end. */
-export type TimeToken = { index: number; text: string; at: string; dated: boolean; separator?: string; until?: string };
-
-const iso = (ms: number) => new Date(ms).toISOString();
-const HOUR = 3_600_000;
-const DAY = 24 * HOUR;
-
-/** The UTC clock's instant on the day that puts it last at or before `anchor` plus three hours. */
-function onDay(anchor: number, hour: string, minute: string, second = "0"): number {
-  const day = new Date(anchor);
-  let at = Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), +hour, +minute, +second);
-  while (at > anchor + 3 * HOUR) at -= DAY;
-  while (at + DAY <= anchor + 3 * HOUR) at += DAY;
-  return at;
-}
+/** A bare clock and a list separator just before a UTC clock: the zone belongs to the whole list. */
+const LISTED = /(?:^|[^\d:.+\-])\d{1,2}:\d{2}(?::\d{2})?(?:,\s?|\s?[–\-/]\s?|\s(?:and|or|to)\s)$/;
 
 /**
- * Written UTC times in `text`, each with its instant. A clock without a date takes its day from
- * `anchor` (the text's own recorded time, else now), a month day its year; out-of-range parts are
- * left as text.
+ * A written time: where it is, its `<time datetime>` value, and how it reads in the reader's zone. A clock
+ * written without a date stays a clock (its value is the local "HH:MM"), so no screen states a day the
+ * writer did not.
+ */
+export type TimeToken = { index: number; text: string; at: string; shown: string; exact: string };
+
+const DAY = 86_400_000;
+const zoned = (ms: number) => new Date(ms).toLocaleTimeString([], { timeStyle: "long" });
+const hhmm = (ms: number) => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+
+/**
+ * Written UTC times in `text` (SPEC.md §4.5). `anchor` is the text's own recorded time, else now. A dated
+ * time reads as a clock on the anchor's local day and dated otherwise; a month day takes the year nearest
+ * the anchor. A clock without a date converts at its occurrence nearest the anchor (which decides only the
+ * offset across daylight saving) and stays undated; a range ends at its first end clock after its start.
  */
 export function timeTokens(text: string, anchor = Date.now()): TimeToken[] {
   const tokens: TimeToken[] = [];
+  const valid = (hour?: string, minute?: string) => +hour! < 24 && +minute! < 60;
+  const nearest = (values: number[]) => values.reduce((best, value) => Math.abs(value - anchor) < Math.abs(best - anchor) ? value : best);
   for (const m of text.matchAll(TIME)) {
-    const [whole] = m;
-    const index = m.index;
-    let at: number | null = null;
-    let dated = true;
-    if (m[1]) {
-      const offset = m[7] && m[7].toUpperCase() !== "Z" ? m[7].replace(/^([+-]\d{2}):?(\d{2})$/, "$1:$2") : "Z";
-      at = Date.parse(`${m[1]}-${m[2]}-${m[3]}T${m[4]!.padStart(2, "0")}:${m[5]}:${m[6] ?? "00"}${offset}`);
-    } else if (m[8]) {
-      const month = MONTHS.indexOf(m[8].slice(0, 3).toLowerCase());
-      const year = new Date(anchor).getUTCFullYear();
-      const near = [year - 1, year, year + 1].map((y) => Date.UTC(y, month, +m[9]!, +m[10]!, +m[11]!, +(m[12] ?? 0)));
-      at = near.reduce((best, value) => Math.abs(value - anchor) < Math.abs(best - anchor) ? value : best);
-    } else if (m[16]) {
-      const from = onDay(anchor, m[13]!, m[14]!, m[15]);
-      const to = onDay(anchor, m[17]!, m[18]!, m[19]);
-      if ([m[13], m[17]].every((h) => +h! < 24) && [m[14], m[18]].every((n) => +n! < 60)) {
-        tokens.push({ index, text: whole, at: iso(from), dated: false, separator: m[16], until: iso(to) });
+    if (m[1] || m[8]) {
+      let at: number;
+      if (m[1]) {
+        const offset = m[7] && m[7].toUpperCase() !== "Z" ? m[7].replace(/^([+-]\d{2}):?(\d{2})$/, "$1:$2") : "Z";
+        at = Date.parse(`${m[1]}-${m[2]}-${m[3]}T${m[4]!.padStart(2, "0")}:${m[5]}:${m[6] ?? "00"}${offset}`);
+      } else {
+        if (!valid(m[10], m[11])) continue;
+        const month = MONTHS.indexOf(m[8]!.slice(0, 3).toLowerCase());
+        const year = new Date(anchor).getUTCFullYear();
+        at = nearest([year - 1, year, year + 1].map((y) => Date.UTC(y, month, +m[9]!, +m[10]!, +m[11]!, +(m[12] ?? 0))));
       }
+      if (Number.isNaN(at)) continue;
+      tokens.push({ index: m.index, text: m[0], at: new Date(at).toISOString(), shown: stamp(at, anchor), exact: exactTime(at / 1000) });
       continue;
-    } else {
-      if (+m[13]! > 23 || +m[14]! > 59) continue;
-      at = onDay(anchor, m[13]!, m[14]!, m[15]);
-      dated = false;
     }
-    if (at != null && !Number.isNaN(at)) tokens.push({ index, text: whole, at: iso(at), dated });
+    if (!valid(m[13], m[14]) || (m[16] && !valid(m[17], m[18])) || LISTED.test(text.slice(Math.max(0, m.index - 16), m.index))) continue;
+    const day = new Date(anchor);
+    const at = nearest([-DAY, 0, DAY].map((shift) => shift + Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), +m[13]!, +m[14]!, +(m[15] ?? 0))));
+    const until = m[16] ? at + ((Date.UTC(1970, 0, 1, +m[17]!, +m[18]!, +(m[19] ?? 0)) - at) % DAY + DAY) % DAY : null;
+    tokens.push({
+      index: m.index,
+      text: m[0],
+      at: hhmm(at),
+      shown: until == null ? clock(at) : `${clock(at)}${m[16]}${clock(until)}`,
+      exact: until == null ? zoned(at) : `${zoned(at)} – ${zoned(until)}`,
+    });
   }
   return tokens;
+}
+
+/** Plain text with its written UTC times in the reader's zone, for a line that shows a string rather than prose. */
+export function localTimes(text: string, anchor?: number): string {
+  let shown = "";
+  let end = 0;
+  for (const token of timeTokens(text, anchor)) {
+    shown += text.slice(end, token.index) + token.shown;
+    end = token.index + token.text.length;
+  }
+  return shown + text.slice(end);
 }

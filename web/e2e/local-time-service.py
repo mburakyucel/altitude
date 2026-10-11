@@ -3,9 +3,9 @@ from service_support import configure, serve
 from tests.support import git
 from altitude import config, l3, state as S, tasks
 
-# A January evening in Los Angeles (PST): written clocks are read on the message's own day, not today's.
+# A January evening in Los Angeles (PST): written times take the reply's own offset and day, not today's.
 REPLY_AT = "2026-01-15T00:30:00+00:00"
-REPLY = ("Restart pending since 23:58Z. Checks finished at 2026-01-14T23:12:04+00:00; "
+REPLY = ("Restart pending since 23:58Z. Checks finished at 2026-01-13T23:12:04+00:00; "
          "the quiet window is 22:20–22:45 UTC.\n\n"
          "The record keeps `2026-01-14T23:58:42+00:00`; a bare 23:58 has no zone.")
 

@@ -156,9 +156,11 @@ describe("written times", () => {
       "`2026-10-10T23:58:42+00:00` and a bare 23:58 stay.\n\n~~~\nat 23:58Z\n~~~";
     const { container } = render(<ProseAt value="2026-10-11T01:55:00+00:00"><Prose text={text} /></ProseAt>);
     const times = [...container.querySelectorAll("time.prose-time")];
-    expect(times.map((t) => t.getAttribute("datetime"))).toEqual(["2026-10-10T23:58:00.000Z", "2026-10-11T01:30:00.000Z", "2026-10-10T07:20:00.000Z", "2026-10-10T07:45:00.000Z"]);
+    const local = (iso: string) => new Date(iso).toTimeString().slice(0, 5);
+    expect(times.map((t) => t.getAttribute("datetime"))).toEqual([local("2026-10-10T23:58:00Z"), "2026-10-11T01:30:00.000Z", local("2026-10-11T07:20:00Z")]);
     expect(times[0]).toHaveTextContent(clockText("2026-10-10T23:58:00Z"));
-    expect(times[0]).toHaveAttribute("title", exactTime("2026-10-10T23:58:00Z"));
+    expect(times[1]).toHaveAttribute("title", exactTime("2026-10-11T01:30:00Z"));
+    expect(times[2]).toHaveTextContent(`${clockText("2026-10-11T07:20:00Z")}–${clockText("2026-10-11T07:45:00Z")}`);
     expect(container.querySelector("p")!.textContent).not.toMatch(/\dZ\b|UTC|T01:30/);
     expect(screen.getByText("2026-10-10T23:58:42+00:00").tagName).toBe("CODE");
     expect(container.textContent).toContain("a bare 23:58 stay");

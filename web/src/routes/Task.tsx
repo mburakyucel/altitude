@@ -11,7 +11,7 @@ import type { Decision, L2MessageInput, Overview, TaskMessage, TaskView } from "
 import { InlineProse, ProseScope } from "../components/Prose";
 import { ProseTerminal } from "../components/CodeBlock";
 import { requestCommand } from "../data/terminalCommand";
-import { agoText, dayText, modelName, when } from "../data/observed";
+import { agoText, dayText, localTimes, modelName, when } from "../data/observed";
 import { questionPath, selections, turnLabel } from "../data/decisions";
 import { stoppedByCoordinator, taskExplanation } from "../data/taskStatus";
 import { holdText } from "../components/TaskCard";
@@ -755,7 +755,7 @@ function TaskPage({
       {facts.sub ? <p className="task-sub">{facts.sub}</p> : null}
       <Chips chips={facts.chips} />
       {/* The complete reasons come first: the page shows only the state and a short excerpt (SPEC.md §3.10). */}
-      {facts.blockReason ? <section><h3>{facts.label}</h3><p>{facts.blockReason}</p></section> : null}
+      {facts.blockReason ? <section><h3>{facts.label}</h3><p>{localTimes(facts.blockReason)}</p></section> : null}
       {facts.queueReason ? <section><h3>Start condition</h3><p>{facts.queueReason}</p></section> : null}
       {facts.holdReason ? <section><h3>Merge held</h3><p>{facts.holdReason}</p></section> : null}
       <ReviewBoxes task={task} controls={reviewControls} view={(id) => {
