@@ -17,7 +17,7 @@ import { stoppedByCoordinator, taskExplanation } from "../data/taskStatus";
 import { holdText } from "../components/TaskCard";
 import { Bubble, Coordination, DayDivider, MessageRow, RemoveMessage, Reply, notDone, useEntrance } from "../components/Bubbles";
 import { Choice, deliveryChoice } from "../components/Choice";
-import Composer, { markSubmitted, releaseSubmitted, returnToComposer } from "../components/Composer";
+import Composer, { markSubmitted, recoveryHoldsDraft, releaseSubmitted, returnToComposer } from "../components/Composer";
 import { dropTaskOutgoing, startTaskOutgoing, updateTaskOutgoing, useTaskOutbox, type SendTarget } from "../data/outbox";
 import type { TaskOutgoing } from "../data/outbox";
 import { TaskActivity } from "../components/TaskActivity";
@@ -779,9 +779,11 @@ function TaskPage({
   const facts = taskFacts(task, overview.data, project, task.repository);
   const decision = (task.question_group?.questions ?? (task.question ? [task.question] : []))
     .find((question) => question.status === "open" && !question.response);
-  // The unsent message returns with Back/Forward to this history entry, like unsent answers.
+  // The unsent message returns with Back/Forward to this history entry, like unsent answers. Recovered words have one
+  // owner, the recovery copy, which every visit reads; the entry keeps none of them.
   const message = `message:${project}/${task.slug}`;
-  const kept: Record<string, string> = useVisitMemory<string>([message], (): string | undefined => draft || undefined);
+  const kept: Record<string, string> = useVisitMemory<string>([message], (): string | undefined =>
+    draft && !recoveryHoldsDraft(`task/${project}/${task.slug}`) ? draft : undefined);
   const [draft, setDraft] = useState<string>(kept[message] ?? "");
   const [denied, setDenied] = useState(false);
   const [questionVisit, setQuestionVisit] = useState(0);

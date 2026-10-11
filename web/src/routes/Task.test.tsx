@@ -1518,6 +1518,36 @@ describe("Task on the phone", () => {
     expect(document.querySelector(".composer-hint[role=alert]")).toHaveTextContent("Could not confirm delivery.");
   });
 
+  it.each([false, true])("recovered words cleared on another visit stay cleared with Back (reads failing: %s)", async (failing) => {
+    setViewport(390);
+    let finish!: (response: Response) => void;
+    stub(running, { message: () => new Promise<Response>((resolve) => { finish = resolve; }) });
+    const { user, queryClient, router } = renderApp({ route });
+    await user.type(await screen.findByLabelText("Message the L2"), "First words");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await act(async () => { await router.navigate("/settings"); });
+    act(() => queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "access" }));
+    await act(async () => { await router.navigate(route); });
+    await act(async () => finish(jsonResponse({ error: "Response lost" }, 500)));
+    await waitFor(() => expect(screen.getByLabelText("Message the L2")).toHaveValue("First words"));
+    // A second visit to the same task, in a new history entry, clears the recovered words.
+    await act(async () => { await router.navigate("/settings"); });
+    await act(async () => { await router.navigate(route); });
+    expect(await screen.findByLabelText("Message the L2")).toHaveValue("First words");
+    const storage = failing ? vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Read denied"); }) : null;
+    try {
+      await user.clear(screen.getByLabelText("Message the L2"));
+    } finally { storage?.mockRestore(); }
+    await act(async () => { await router.navigate("/settings"); });
+    // Back to the first visit: it kept none of the recovered words, so nothing returns.
+    await act(async () => { await router.navigate(-1); });
+    await act(async () => { await router.navigate(-1); });
+    await act(async () => { await router.navigate(-1); });
+    await screen.findByRole("heading", { name: "Fix the timer" });
+    expect(screen.getByLabelText("Message the L2")).toHaveValue("");
+    expect(document.querySelector(".composer-hint[role=alert]")).toBeNull();
+  });
+
   it("recovered words edited while their copy cannot be read come back as edited on a new visit to the task", async () => {
     setViewport(390);
     let finish!: (response: Response) => void;

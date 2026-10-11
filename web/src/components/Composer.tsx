@@ -168,6 +168,11 @@ export function releaseSubmitted(conversation: string, id: string) {
   updatePending(conversation, id, (saved) => { delete saved.pending[id]; });
 }
 
+/** Whether this tab's recovery copy holds the conversation's field; a page then keeps none of it for Back. */
+export function recoveryHoldsDraft(conversation: string): boolean {
+  try { return Boolean(readSubmitted(conversation).text); } catch { return false; }
+}
+
 /** Put a message's words back in its conversation's field, ahead of the draft, with its images in the picker. */
 export function returnToComposer(conversation: string, text: string, images?: ImagePreview[]): boolean {
   return recoveryViews.get(conversation)?.paste(text, images) ?? false;
