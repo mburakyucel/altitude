@@ -160,7 +160,7 @@ describe("image draft admission", () => {
     browser();
     const onSubmit = vi.fn(async (_text: string, _accepted: () => void, _images?: ImageSubmission, _copy?: string) => { throw new ApiError(422, "refused"); });
     const user = userEvent.setup();
-    render(<Harness conversation="project/edit-images" onSubmit={onSubmit} showsFailures />);
+    render(<Harness conversation="project/edit-images" onSubmit={onSubmit} />);
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     await select();
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -185,7 +185,7 @@ describe("image draft admission", () => {
     const onSubmit = vi.fn((_text: string, accepted: () => void, images?: ImageSubmission) =>
       images ? new Promise<void>((resolve) => { accept = () => { accepted(); resolve(); }; }) : Promise.resolve());
     const user = userEvent.setup();
-    render(<Harness conversation="project/next-during-images" onSubmit={onSubmit} showsFailures />);
+    render(<Harness conversation="project/next-during-images" onSubmit={onSubmit} />);
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     await select();
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -204,7 +204,7 @@ describe("image draft admission", () => {
     browser();
     const onSubmit = vi.fn(async (_text: string, accepted: () => void, _images?: ImageSubmission) => { accepted(); });
     const user = userEvent.setup();
-    render(<Harness conversation="project/send-order" initial="" onSubmit={onSubmit} showsFailures />);
+    render(<Harness conversation="project/send-order" initial="" onSubmit={onSubmit} />);
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     await select();
     await user.type(screen.getByRole("textbox"), "With the image");
@@ -234,7 +234,7 @@ describe("image draft admission", () => {
 
   it("Edit changes nothing when the message's images do not fit beside the picker's, and says why", async () => {
     browser();
-    render(<Harness conversation="project/full-picker" initial="" showsFailures />);
+    render(<Harness conversation="project/full-picker" initial="" />);
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     await select([image(), image(), image(), image()]);
     const preview = { name: "earlier.png", url: "data:image/png;base64,iVBORw0KGgo=" };

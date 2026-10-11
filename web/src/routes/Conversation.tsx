@@ -12,7 +12,7 @@ import { requestCommand } from "../data/terminalCommand";
 import { dayText, when } from "../data/observed";
 import { carries, inFlight, readOf, retired, settleOutgoing, startOutgoing, updateOutgoing, dropOutgoing, useOutbox } from "../data/outbox";
 import type { Outgoing } from "../data/outbox";
-import { Bubble, DayDivider, RemoveMessage, Reply, Typing } from "../components/Bubbles";
+import { Bubble, DayDivider, RemoveMessage, Reply, Typing, notDone, useEntrance } from "../components/Bubbles";
 import Composer, { markSubmitted, releaseSubmitted, returnToComposer } from "../components/Composer";
 import { L3ModelButton } from "../components/Models";
 import type { ImageSubmission } from "../components/ImageDraft";
@@ -134,11 +134,6 @@ export function itemsOf(turns: Turn[], project: string, activeId: string | null)
 }
 
 /** "Not sent: <reason>." with the refusal's own words, or "Not sent." without any; removal reads "Not removed". */
-function notDone(what: string, reason?: string): string {
-  const words = reason?.trim().replace(/\.+$/, "");
-  return words ? `${what}: ${words.charAt(0).toLowerCase()}${words.slice(1)}.` : `${what}.`;
-}
-
 function itemAt(item: Item): string | null {
   return item.kind === "group" ? item.at : item.turn.at;
 }
@@ -151,27 +146,6 @@ function Skeleton() {
       <div className="skeleton" />
     </div>
   );
-}
-
-/**
- * Entrance (SPEC.md §3.6): a row that first appears while this view is open fades in once. Whatever the view
- * opened with appears at once, and so does a row already known under another of its ids: a message moving
- * between the outbox, the queue and the history, or a reply passing from its stream to its stored copy.
- */
-function useEntrance(ready: boolean) {
-  const state = useRef({ opened: false, known: new Set<string>(), decided: new Map<string, boolean>() });
-  useEffect(() => { if (ready) state.current.opened = true; });
-  return useCallback((key: string, ...ids: (string | null | undefined)[]) => {
-    const { opened, known, decided } = state.current;
-    const named = [key, ...ids].filter((id): id is string => Boolean(id));
-    let entering = decided.get(key);
-    if (entering === undefined) {
-      entering = opened && !named.some((id) => known.has(id));
-      decided.set(key, entering);
-    }
-    for (const id of named) known.add(id);
-    return entering;
-  }, []);
 }
 
 export default function Conversation({
@@ -582,7 +556,6 @@ export default function Conversation({
           value={draft}
           onChange={setDraft}
           onSubmit={send}
-          showsFailures
           shows={shownCopy}
           imageScope={{ project: name, engine: view?.engine }}
           placeholder={`Message L3 about ${name}`}
