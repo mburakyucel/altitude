@@ -108,9 +108,9 @@ test("Back after the question is revised while its review is open returns to the
     await expect(page.locator("#review-settings-l-proposal")).toBeVisible();
     await page.getByRole("textbox", { name: "Message the L2", exact: true }).fill("Raise the label contrast.");
     await page.getByRole("button", { name: "Send", exact: true }).click();
-    await expect(conversation(page).getByText(`Build settings layout revision ${revision} as shown?`, { exact: true })).toBeAttached();
+    const latest = page.locator("p.decision-question", { hasText: new RegExp(`^Build settings layout revision ${revision} as shown\\?$`) });
+    await expect(latest).toBeAttached();
     await page.goBack();
-    const latest = page.getByText(`Build settings layout revision ${revision} as shown?`, { exact: true });
     await expect(latest).toBeInViewport();
     return latest;
   };
