@@ -631,7 +631,7 @@ export default function Composer({
       setVoiceFailure(""); setSetupNeeded(false); setUnpunctuated(null); images.setError("");
       const submission = !withImages ? undefined : voice?.images ?? images.submission();
       // The bubble shows the images from here, as it shows the words.
-      if (submission && !voice) images.clear();
+      if (submission) images.clear();
       try {
         await send(ready, () => settleSubmitted(conversation, id, text, null), submission, id);
         settleSubmitted(conversation, id, text, null);

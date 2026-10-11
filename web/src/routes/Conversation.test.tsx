@@ -437,8 +437,8 @@ describe("the operator's message states (SPEC.md §3.6, §4.2)", () => {
 
   it.each([
     [["refused", "unconfirmed"], "Could not confirm delivery. Check the conversation before sending again."],
-    [["refused", "refused"], "Not sent. Retry"],
-  ])("after a reload the copies %j return to the field in send order, ahead of the draft, with the cautious hint", async (kinds, hint) => {
+    [["refused", "refused"], "Not sent."],
+  ])("after a reload the copies %j return to the field in send order, ahead of the draft, with the cautious hint and no Retry", async (kinds, hint) => {
     const ids = kinds.map((_, index) => `reload-copy-${index}-${kinds.join("-")}`);
     sessionStorage.setItem("altitude.submitted:project/altitude", JSON.stringify({ text: "", failure: null,
       pending: Object.fromEntries(ids.map((id, index) => [id, `Copy ${index + 1}`])), refused: ids.filter((_, index) => kinds[index] === "refused") }));
@@ -446,7 +446,9 @@ describe("the operator's message states (SPEC.md §3.6, §4.2)", () => {
     renderApp({ route: "/projects/altitude" });
     await conversation();
     expect(screen.getByLabelText("Message L3 about altitude")).toHaveValue("Copy 1\nCopy 2");
-    expect(document.querySelector(".composer-hint[role=alert]")).toHaveTextContent(hint);
+    // Recovered words are a draft: Send sends them to what the page shows now (SPEC.md §3.6).
+    expect(document.querySelector(".composer-hint[role=alert]")?.textContent).toBe(hint);
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
     expect(fetchMock.mock.calls.filter(([url]) => String(url) === "/api/chat")).toHaveLength(0);
   });
 
@@ -463,7 +465,8 @@ describe("the operator's message states (SPEC.md §3.6, §4.2)", () => {
     await act(async () => { await router.navigate("/projects/altitude"); });
     const back = await conversation();
     expect(screen.getByLabelText("Message L3 about altitude")).toHaveValue("Words to keep");
-    expect(document.querySelector(".composer-hint[role=alert]")).toHaveTextContent("Not sent. Retry");
+    expect(document.querySelector(".composer-hint[role=alert]")?.textContent).toBe("Not sent.");
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
     expect(within(back).queryByText("Not sent: no L3 for this project.")).toBeNull();
   });
 

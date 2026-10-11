@@ -328,7 +328,7 @@ describe("Conversation-first decisions", () => {
     const { user } = renderApp({ route: path });
     await user.click(await screen.findByRole("button", { name: "Use 7 days & resume" }));
     await user.click(screen.getByRole("button", { name: "Send 1 answer" }));
-    await screen.findByText("You cannot send messages or answers here.");
+    await screen.findByText("This page lost access.");
     expect(screen.getByRole("textbox", { name: "Message the L2" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Use 7 days & resume" })).toBeDisabled();
     server.permit();

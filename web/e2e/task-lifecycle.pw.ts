@@ -259,7 +259,7 @@ test("late L2 receipt preserves polled removal, message order and the next draft
   } finally { releaseReceipt(); releaseReads(); }
 });
 
-for (const lostReceipt of [false, true]) test(`L2 immediate Live and task navigation retains ${lostReceipt ? "unconfirmed recovery" : "accepted input"} through reload`, async ({ page, request }, info) => {
+for (const lostReceipt of [false, true]) test(`L2 immediate Live and task navigation ${lostReceipt ? "settles a lost receipt from the record" : "retains accepted input"} through reload`, async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const slug = "prepare-index-migration";
   const other = "clarify-retry-policy";
@@ -317,19 +317,19 @@ for (const lostReceipt of [false, true]) test(`L2 immediate Live and task naviga
   await page.locator(`a[href="/projects/atlas/tasks/${slug}"]`).first().click();
   await expect(page).toHaveURL(`/projects/atlas/tasks/${slug}`);
   const bubble = conversation.locator(".bubble").filter({ hasText: text });
-  const hint = conversation.getByRole("alert").filter({ hasText: "Could not confirm delivery." });
-  const retry = conversation.getByRole("button", { name: "Retry", exact: true });
-  await expect(field).toHaveValue(lostReceipt ? text : "");
-  await walk.state("03-returned-original-conversation", { visible: [bubble, ...(lostReceipt ? [hint] : [])], hidden: [retry, ...(!lostReceipt ? [hint] : [])] });
+  // A lost receipt is settled by the read that lists the send id: one stored message, nothing to recover or resend.
+  const doubt = [conversation.getByText("Unconfirmed", { exact: true }), conversation.getByRole("alert"), conversation.getByRole("button", { name: "Retry", exact: true }), conversation.getByRole("button", { name: "Copy to draft", exact: true })];
+  await walk.state("03-returned-original-conversation", { visible: [bubble], hidden: doubt });
+  await expect(field).toHaveValue("");
   await page.reload();
-  await expect(field).toHaveValue(lostReceipt ? text : "");
-  await walk.state("04-reloaded-original-conversation", { visible: [bubble, ...(lostReceipt ? [hint] : [])], hidden: [retry, ...(!lostReceipt ? [hint] : [])] });
+  await walk.state("04-reloaded-original-conversation", { visible: [bubble], hidden: doubt });
+  await expect(field).toHaveValue("");
   await expect(bubble).toHaveCount(1);
   expect(submissions).toBe(1);
   expect((await (await request.get(`/api/task/atlas/${slug}`)).json()).messages.filter((row: { id: string }) => row.id === receipt.id)).toHaveLength(1);
 });
 
-for (const refusalFirst of [true, false]) test(`overlapping L2 refusal and lost receipt preserve all drafts without Retry; refusal first: ${refusalFirst}`, async ({ page, request }, info) => {
+for (const refusalFirst of [true, false]) test(`overlapping L2 refusal and lost receipt each show on their own message; refusal first: ${refusalFirst}`, async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const slug = "prepare-index-migration";
   const conversation = page.getByRole("region", { name: "Task conversation", exact: true });
@@ -347,17 +347,18 @@ for (const refusalFirst of [true, false]) test(`overlapping L2 refusal and lost 
   const response = await routes[1]!.fetch();
   expect(response.ok()).toBe(true);
   const { message } = await response.json();
-  let recovered = "Next draft";
   for (const index of refusalFirst ? [0, 1] : [1, 0]) {
     if (index === 0) await routes[0]!.fulfill({ status: 409, json: { error: "Refused before storage" } });
     else await routes[1]!.abort("connectionfailed");
-    recovered = `${index === 0 ? "Refused instruction" : "Stored instruction"}\n${recovered}`;
-    await expect(field).toHaveValue(recovered);
   }
-  await walk.state("mixed-delivery-uncertain-drafts-preserved", {
-    visible: [conversation.getByRole("alert").filter({ hasText: "Could not confirm delivery." }), field],
-    hidden: [conversation.getByRole("button", { name: "Retry", exact: true })],
+  // Neither outcome touches the newer draft; the stored one settles from the record and is never offered for resending.
+  const refused = conversation.locator(".msg-row[data-mine]").filter({ hasText: "Refused instruction" });
+  const stored = conversation.locator(".msg-row[data-mine]").filter({ hasText: "Stored instruction" });
+  await walk.state("mixed-delivery-each-on-its-message", {
+    visible: [refused.getByRole("alert").filter({ hasText: "Not sent: refused before storage." }), refused.getByRole("button", { name: "Retry", exact: true }), stored, field],
+    hidden: [stored.getByRole("alert"), stored.getByText("Unconfirmed", { exact: true }), stored.getByRole("button", { name: "Retry", exact: true }), stored.getByRole("button", { name: "Copy to draft", exact: true })],
   });
+  await expect(field).toHaveValue("Next draft");
   const task = await (await request.get(`/api/task/atlas/${slug}`)).json();
   expect(task.messages.filter((row: { id: string }) => row.id === message.id)).toHaveLength(1);
   expect(task.messages.some((row: { text: string }) => row.text === "Refused instruction")).toBe(false);
