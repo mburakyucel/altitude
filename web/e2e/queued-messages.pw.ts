@@ -59,7 +59,7 @@ test("separate queued messages remove independently and the remaining batch reac
   expect((await status()).tasks[0].pending).toEqual([]);
 });
 
-test("removal refuses a raced pickup and distinguishes denied, failed and uncertain recovery", async ({ page, request }, info) => {
+test("removal refuses a raced pickup; denied and failed removals say so on the message", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const slug = (await (await request.get("/fixture/status")).json()).tasks[0].slug;
   const control = async (mode: string) => expect((await request.post("/fixture/control", { data: { slug, mode } })).ok()).toBe(true);
@@ -71,13 +71,17 @@ test("removal refuses a raced pickup and distinguishes denied, failed and uncert
   await convo.getByRole("button", { name: "Send", exact: true }).click();
   await page.route("**/api/l2/remove", (route) => route.fulfill({ status: 403, json: { error: "Permission denied" } }), { times: 1 });
   await remove.click();
-  await walk.state("01-removal-denied-keeps-message", { visible: [convo.getByText("You do not have permission to remove this message."), convo.getByText("Keep the original evidence.", { exact: true })], hidden: [] });
+  await walk.state("01-removal-denied-keeps-message", { visible: [convo.getByText("Not removed: permission denied."), convo.getByText("This page lost access."), convo.getByText("Keep the original evidence.", { exact: true })], hidden: [] });
+  await convo.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(convo.getByText("This page lost access.")).toBeHidden();
   await page.route("**/api/l2/remove", (route) => route.abort(), { times: 1 });
   await remove.click();
-  await walk.state("02-removal-transport-error-never-claims-success", { visible: [convo.getByText("Removal unconfirmed. Check this message’s status before trying again."), convo.getByText("Keep the original evidence.", { exact: true })], hidden: [] });
+  // No answer never claims success: a read that still lists the message shows it was not removed.
+  await walk.state("02-removal-transport-error-never-claims-success", { visible: [convo.getByText("Not removed.", { exact: true }), convo.getByText("Keep the original evidence.", { exact: true })], hidden: [] });
   await page.route("**/api/l2/remove", async (route) => { await control("unconfirmed-delivery"); await route.continue(); }, { times: 1 });
   await remove.click();
-  await walk.state("03-pickup-wins-removal-race", { visible: [convo.getByText("This message can no longer be removed. Refresh its delivery status."), convo.getByText("Unconfirmed")], hidden: [remove] });
+  // The session took it first: the message's own state says so, with no failure line.
+  await walk.state("03-pickup-wins-removal-race", { visible: [convo.getByText("Unconfirmed")], hidden: [remove, convo.getByText(/^Not removed/)] });
   await page.reload();
   await field.fill("Next batch remains separate.");
   await convo.getByRole("button", { name: "Send", exact: true }).click();

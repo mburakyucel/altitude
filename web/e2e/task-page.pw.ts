@@ -399,7 +399,7 @@ test("done and rejected tasks read read-only, the PR in the header", async ({ pa
   });
 });
 
-test("a message shows at once, then Not sent. Retry when the server refuses it", async ({ page, request }, info) => {
+test("a message shows at once, then says Not sent on its bubble when the server refuses it", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
@@ -421,8 +421,9 @@ test("a message shows at once, then Not sent. Retry when the server refuses it",
     const json = (await response.json()) as Row;
     await route.fulfill({ response, json: { ...json, messages: [...((json["messages"] as Row[]) ?? []), ...sent] } });
   });
-  const alert = v.main.getByRole("alert").filter({ hasText: "Not sent." });
-  const retry = alert.getByRole("button", { name: "Retry", exact: true });
+  const bubble = v.conversation.locator(".msg-row", { hasText: text });
+  const alert = bubble.getByRole("alert").filter({ hasText: "Not sent: no active session." });
+  const retry = bubble.getByRole("button", { name: "Retry", exact: true });
 
   await walk.open(taskPath(project.name, task.slug));
   await walk.state("01-composer", { visible: [v.composer], hidden: [alert] });
@@ -432,15 +433,16 @@ test("a message shows at once, then Not sent. Retry when the server refuses it",
       await v.main.getByRole("button", { name: "Send", exact: true }).click();
     },
     visible: [alert, retry, v.composer],
-    hidden: [v.conversation.locator(".bubble", { hasText: text })],
+    hidden: [v.main.locator(".composer-hint[role=alert]")],
   });
-  await expect(v.composer).toHaveValue(text);
+  await expect(v.composer).toHaveValue("");
   await expect(v.composer).toBeFocused();
   refuse = false;
+  await bubble.evaluate((node) => Promise.all(node.getAnimations({ subtree: true }).map((animation) => animation.finished)));
   await walk.state("03-sent", {
     action: () => retry.click(),
-    visible: [v.conversation.locator(".bubble", { hasText: text })],
-    hidden: [alert],
+    visible: [bubble],
+    hidden: [alert, retry],
   });
   await expect(v.composer).toHaveValue("");
   // The accepted send invalidates the task query; finish its route before page teardown disposes it.

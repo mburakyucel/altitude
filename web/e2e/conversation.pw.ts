@@ -506,6 +506,9 @@ test("an interrupted request without a receipt stays Unconfirmed on its message 
   const hint = v.main.getByText("Could not confirm delivery. Check the conversation before sending again.", { exact: true });
   await walk.state("03-reloaded-words-in-the-field", { visible: [hint, v.field], hidden: [v.bubble(text)] });
   await expect(v.field).toHaveValue(new RegExp(`^${text}`));
+  // Clearing the recovered words ends their recovery: the hint goes and the field is an ordinary draft.
+  await v.field.fill("");
+  await walk.state("04-cleared-recovered-words", { visible: [v.field], hidden: [hint] });
   expect(posts).toBe(1);
   const history = (await (await request.get(`/api/chat/${project.name}`)).json()).history;
   expect(history.some((row: { text: string }) => row.text === text)).toBe(false);

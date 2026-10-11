@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useReducer, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from "react";
-import { ApiError, imageSendRefused } from "../data/api";
 import type { VoiceSettings } from "../data/api";
+import { documentRecovery, heldFields, liveSubmissions, recoveryKey } from "../data/recovery";
+import type { SendFailure, SubmittedText } from "../data/recovery";
 import { Link } from "react-router";
 import { IMAGE_HELP, useImageDraft } from "./ImageDraft";
 import type { ImageScope, ImageSubmission } from "./ImageDraft";
@@ -16,8 +17,8 @@ import { traceVoice, traceVoiceTracks, voiceError } from "./voiceTrace";
  * The one composer (SPEC.md §3.6): project chat and task conversation. The page owns
  * the draft and the send; the composer owns the states in the §3.6 table: Idle, Typing, Sending (the
  * page's bubble at 60%), Busy (the arrow queues), Listening, Transcribing, Landed (the transcript is
- * appended to the draft and nothing else appears, issue #195), Denied, Unavailable, and a refused
- * send ("Not sent. Retry."). Voice is capped at ten minutes; audio never becomes state anywhere.
+ * appended to the draft and nothing else appears, issue #195), Denied and Unavailable. A sent message's own
+ * state shows on its bubble; after a reload, copies no message shows return here as a draft ("Not sent."). Voice is capped at ten minutes; audio never becomes state anywhere.
  * The installation's voice backend decides the capture: host voice streams to this computer's speech
  * model and browser recognition never uploads; both show their words flowing in while listening and run the same
  * recorder-shaped state machine. Host voice keeps recording through a lost connection and its words catch
@@ -64,65 +65,78 @@ function closeWaveform(context: AudioContext) {
 
 type Phase = "idle" | "starting" | "listening" | "transcribing";
 type Capture = RecognitionCapture | HostCapture;
-/** "transcription": the recording failed; "unreached": host voice lost the connection past its wait. */
-type SendFailure = "refused" | "unconfirmed" | "transcription" | "unreached" | null;
 type VoiceSend = { id: string; text: string; failure: SendFailure; controller: AbortController; send: ComposerProps["onSubmit"]; images?: ImageSubmission; capture: Capture; cancel: () => void };
 const voiceSends = new Map<string, VoiceSend>();
 
-// #320: only submitted text lives beyond a composer. These records never initiate a send.
-// `refused` names the pending copies the server refused; every other pending copy recovers as unconfirmed.
-type SubmittedText = { pending: Record<string, string>; text: string; failure: SendFailure; refused?: string[] };
-const liveSubmissions = new Set<string>();
-// A failed update retains the current recovery within this document. The stored bytes identify
-// the copy it supersedes; clearing/replacing browser storage also discards that fallback.
-const unwrittenRecovery = new Map<string, { stored: string | null; value: SubmittedText }>();
+// Submitted-text recovery (data/recovery.ts): only submitted text lives beyond a composer.
 const recoveryViews = new Map<string, { draft: () => string; failure: () => SendFailure; restore: (saved: SubmittedText, unavailable?: boolean, id?: string) => void;
   paste: (text: string, images?: ImagePreview[]) => boolean;
-  voice: (send: VoiceSend | null) => void; submit: (text: string, retry?: ImageSubmission, voice?: VoiceSend) => Promise<void> }>();
-const recoveryKey = (conversation: string) => `altitude.submitted:${conversation}`;
+  voice: (send: VoiceSend | null) => void; submit: (text: string, voice?: VoiceSend) => Promise<void>; recover: (live?: boolean) => void }>();
+// A field holds recovered words only while it shows exactly the words it was last given or edited to.
+const holds = (conversation: string, field: string) => Boolean(field) && heldFields.get(conversation) === field;
+// Stored recovered words a field does not show (storage could not be read when it mounted): they stay recoverable
+// beside it.
+const unshown = (conversation: string, saved: SubmittedText, field: string) => holds(conversation, field) ? "" : saved.text;
 function readSubmitted(conversation: string): SubmittedText {
-  const saved = sessionStorage.getItem(recoveryKey(conversation));
-  const unwritten = unwrittenRecovery.get(conversation);
-  if (unwritten?.stored === saved) return structuredClone(unwritten.value);
-  unwrittenRecovery.delete(conversation);
-  return saved ? JSON.parse(saved) as SubmittedText : { pending: {}, text: "", failure: null };
+  const known = documentRecovery.get(conversation);
+  let stored: string | null;
+  try { stored = sessionStorage.getItem(recoveryKey(conversation)); }
+  catch (error) { if (known) return structuredClone(known.value); throw error; }
+  if (known && (known.stored === undefined || known.stored === stored)) return structuredClone(known.value);
+  // Storage changed outside this document: no field shows its record.
+  if (known) heldFields.delete(conversation);
+  const value: SubmittedText = stored ? JSON.parse(stored) as SubmittedText : { pending: {}, text: "", failure: null };
+  documentRecovery.set(conversation, { stored, value: structuredClone(value), unwritten: false });
+  return value;
 }
 function saveSubmitted(conversation: string, saved: SubmittedText, beforeSend = false) {
   const key = recoveryKey(conversation);
-  const stored = sessionStorage.getItem(key);
+  const stored = saved.text || saved.failure === "transcription" || saved.failure === "unreached" || Object.keys(saved.pending).length
+    ? JSON.stringify(saved) : null;
   try {
-    if (saved.text || saved.failure === "transcription" || saved.failure === "unreached" || Object.keys(saved.pending).length) sessionStorage.setItem(key, JSON.stringify(saved));
+    if (stored) sessionStorage.setItem(key, stored);
     else sessionStorage.removeItem(key);
-    unwrittenRecovery.delete(conversation);
+    documentRecovery.set(conversation, { stored, value: structuredClone(saved), unwritten: false });
   } catch (error) {
-    if (!beforeSend) unwrittenRecovery.set(conversation, { stored, value: structuredClone(saved) });
+    // A send that cannot save its copy does not happen, so its record stays as it was.
+    if (!beforeSend) documentRecovery.set(conversation, { stored: documentRecovery.get(conversation)?.stored, value: structuredClone(saved), unwritten: true });
     throw error;
   }
+}
+// An edit of the field keeps recovered unconfirmed words as typed; clearing them, or any other recovery hint, ends
+// with it.
+function editSubmitted(saved: SubmittedText, text: string) {
+  if (!saved.failure && !saved.text) return false;
+  const kept = saved.failure === "unconfirmed" && text;
+  saved.text = kept ? text : "";
+  if (!kept) saved.failure = null;
+  return true;
 }
 function beginSubmitted(conversation: string, text: string, id: string = crypto.randomUUID(), preserve = false) {
   const saved = readSubmitted(conversation);
   saved.pending[id] = text;
-  if (!preserve) { saved.text = ""; saved.failure = null; }
+  // The field's words are sent, ending a recovery the field showed; recovered words it never showed stay.
+  const sent = !preserve && !unshown(conversation, saved, text);
+  if (sent) { saved.text = ""; saved.failure = null; }
   saveSubmitted(conversation, saved, true);
+  if (sent) heldFields.delete(conversation);
   liveSubmissions.add(id);
   return id;
 }
 function settleSubmitted(conversation: string, id: string, text: string, failure: SendFailure, restore = false) {
   if (!liveSubmissions.delete(id)) return;
-  let saved: SubmittedText;
-  let readable = true;
-  try { saved = readSubmitted(conversation); }
-  catch { readable = false; saved = { pending: {}, text: "", failure: null }; }
+  // Admission read this conversation's recovery, so the document has a copy whether or not storage can be read now.
+  const saved = readSubmitted(conversation);
   delete saved.pending[id];
   const view = recoveryViews.get(conversation);
   if (failure || restore) {
-    saved.text = [text, view?.draft() ?? saved.text].filter(Boolean).join("\n");
+    saved.text = [text, ...view ? [unshown(conversation, saved, view.draft()), view.draft()] : [saved.text]].filter(Boolean).join("\n");
     saved.failure = [failure, saved.failure, view?.failure()].includes("unconfirmed") ? "unconfirmed" : failure ?? view?.failure() ?? saved.failure;
   }
   // If browser storage stops accepting writes after admission, its earlier pending copy remains
   // recoverable as unconfirmed on reload. A storage error cannot undo a server receipt.
-  try { if (readable) saveSubmitted(conversation, saved); } catch { /* retain the pending recovery copy */ }
-  if (failure || restore) view?.restore(saved, !readable || unwrittenRecovery.has(conversation), id);
+  try { saveSubmitted(conversation, saved); } catch { /* retain the pending recovery copy */ }
+  if (failure || restore) view?.restore(saved, documentRecovery.get(conversation)?.unwritten, id);
 }
 
 function updatePending(conversation: string, id: string, change: (saved: SubmittedText, refused: string[]) => void) {
@@ -149,6 +163,11 @@ export function releaseSubmitted(conversation: string, id: string) {
   updatePending(conversation, id, (saved) => { delete saved.pending[id]; });
 }
 
+/** Whether this tab's recovery copy holds the conversation's field; a page then keeps none of it for Back. */
+export function recoveryHoldsDraft(conversation: string, draft: string): boolean {
+  return holds(conversation, draft);
+}
+
 /** Put a message's words back in its conversation's field, ahead of the draft, with its images in the picker. */
 export function returnToComposer(conversation: string, text: string, images?: ImagePreview[]): boolean {
   return recoveryViews.get(conversation)?.paste(text, images) ?? false;
@@ -159,8 +178,8 @@ export interface ComposerProps {
   conversation: string;
   value: string;
   onChange: (value: string) => void;
-  /** Resolve accepted sends. Explicit HTTP refusal restores the draft with Retry; an uncertain
-   * transport/server failure restores it with a reminder to check the conversation first. */
+  /** Send the message; the page shows it, and how it went, on its own bubble (SPEC.md §3.6). `copy` names the
+   * send's recovery copy, which the page marks on failure and releases once the message needs it no more. */
   onSubmit: (text: string, onAccepted: () => void, images?: ImageSubmission, copy?: string) => void | Promise<void>;
   /** Freeze any reply context when Send is requested, before asynchronous voice preparation. */
   prepareSubmit?: () => ComposerProps["onSubmit"];
@@ -174,10 +193,6 @@ export interface ComposerProps {
   /** The control beside the message box, such as L3's model button. */
   pill?: ReactNode;
   disabled?: boolean;
-  /** The conversation shows a sending or failed message on its own bubble, images included: the field and
-      picker clear at Send and stay as they are on failure, and the send's recovery copy (its `copy` id) waits
-      for a reload. */
-  showsFailures?: boolean;
   /** Whether a failed send's copy is still shown on its message; the copies it does not show return to the field. */
   shows?: (copy: string) => boolean;
   /** A worker stop can hold sending while the operator continues editing or dictating. */
@@ -380,7 +395,6 @@ export default function Composer({
   hint,
   pill,
   disabled = false,
-  showsFailures = false,
   shows,
   sendDisabled = false,
   selection,
@@ -399,11 +413,6 @@ export default function Composer({
   imageDraft.current = images;
   const showing = useRef(shows);
   showing.current = shows;
-  const [admission, setAdmission] = useState<"" | "sending" | "uncertain">("");
-  const admitting = useRef(false);
-  const retryImage = useRef<{ text: string; submission: ImageSubmission; recoveryId: string; send: ComposerProps["onSubmit"]; preserveDraft: boolean } | null>(null);
-  const deferredRecovery = useRef<SubmittedText | null>(null);
-  const [refusalReason, setRefusalReason] = useState("");
   const recorder = useRef<Capture | null>(null);
   const cancelled = useRef(false);
   // Only a cancel made in view takes focus back, even when a recorder reports its end later (issue
@@ -543,24 +552,66 @@ export default function Composer({
     });
   }, []);
 
+  // Typing, dictation and a message's words put back by Edit or Copy to draft are one edit of the draft.
+  const editDraft = useCallback((text: string) => {
+    const held = holds(conversation, draft.current);
+    draft.current = text;
+    onChange(text);
+    try {
+      const saved = readSubmitted(conversation);
+      // An ordinary draft leaves stored words it never showed for the next view to join; it only ends a stored hint.
+      if ((held || !saved.text) && editSubmitted(saved, text)) saveSubmitted(conversation, saved);
+      setRecoveryUnavailable(false);
+    } catch { setRecoveryUnavailable(true); }
+    if (failure.current !== "unconfirmed" || !text) { failure.current = null; setSendFailure(null); }
+    if (held && failure.current === "unconfirmed") heldFields.set(conversation, text); else heldFields.delete(conversation);
+  }, [conversation, onChange]);
+
   useEffect(() => {
+    // Copies that no live send owns and no message shows return to the field: on mount (a reload, a remount, pairing
+    // again) and when a send fails after its message is gone (pairing again cleared it while the request was out).
+    // A live view already holds its recovered text in the field, so only the newly orphaned words join it.
+    const recover = (live = false) => {
+      try {
+        const saved = readSubmitted(conversation);
+        // A reload has no live request to await. Keep the copies' words in send order without claiming acceptance
+        // or resending; the cautious hint wins unless every copy was refused.
+        const orphaned = Object.entries(saved.pending).filter(([id]) => !liveSubmissions.has(id) && !showing.current?.(id));
+        if (live && !orphaned.length) return;
+        if (!orphaned.length && !saved.text && saved.failure !== "transcription" && saved.failure !== "unreached") return;
+        // A field that holds recovered words is current (storage has caught up with it); otherwise the field is an
+        // ordinary draft, which keeps nothing recovered, and the stored words join it.
+        const field = [unshown(conversation, saved, draft.current), draft.current].filter(Boolean).join("\n");
+        if (orphaned.length) {
+          const refused = new Set(saved.refused ?? []);
+          saved.failure = saved.failure === "unconfirmed" || orphaned.some(([id]) => !refused.has(id)) ? "unconfirmed" : "refused";
+          for (const [id] of orphaned) { delete saved.pending[id]; refused.delete(id); }
+          saved.refused = refused.size ? [...refused] : undefined;
+        }
+        saved.text = [...orphaned.map(([, text]) => text), field].filter(Boolean).join("\n");
+        view.restore(saved);
+        try { saveSubmitted(conversation, saved); setRecoveryUnavailable(false); }
+        catch { setRecoveryUnavailable(true); }
+        // A live failure its message shows needs nothing from storage; only a mount says recovery is unavailable.
+      } catch { if (!live) setVoiceFailure("Message recovery is unavailable in this browser."); }
+    };
     const view = {
       voice: (send: VoiceSend | null) => { setVoiceSend(send); if (!send) setPhase("idle"); },
-      submit: (text: string, retry?: ImageSubmission, voice?: VoiceSend) => currentSubmit.current(text, retry, voice),
-      draft: () => deferredRecovery.current?.text ?? draft.current,
+      submit: (text: string, voice?: VoiceSend) => currentSubmit.current(text, voice),
+      draft: () => draft.current,
       failure: () => failure.current,
       paste: (text: string, previews?: ImagePreview[]) => {
         if (previews?.length && !imageDraft.current.restore(previews)) return false;
         const next = [text, draft.current].filter(Boolean).join("\n");
-        draft.current = next;
-        onChange(next);
+        editDraft(next);
         focusField(next.length);
         return true;
       },
+      recover,
       restore: (saved: SubmittedText, unavailable = false, id?: string) => {
-        if (admitting.current) { deferredRecovery.current = saved; return; }
         draft.current = saved.text;
         onChange(saved.text);
+        if (saved.text) heldFields.set(conversation, saved.text); else heldFields.delete(conversation);
         failure.current = saved.failure;
         setSendFailure(saved.failure);
         setRecoveryUnavailable(unavailable);
@@ -569,131 +620,62 @@ export default function Composer({
       },
     };
     recoveryViews.set(conversation, view);
-    try {
-      const saved = readSubmitted(conversation);
-      // A reload has no live request to await. Keep the copies' words in send order without claiming acceptance
-      // or resending; the cautious hint wins unless every copy was refused.
-      const orphaned = Object.entries(saved.pending).filter(([id]) => !liveSubmissions.has(id) && !showing.current?.(id));
-      if (orphaned.length) {
-        const refused = new Set(saved.refused ?? []);
-        saved.text = [...orphaned.map(([, text]) => text), saved.text].filter(Boolean).join("\n");
-        saved.failure = saved.failure === "unconfirmed" || orphaned.some(([id]) => !refused.has(id)) ? "unconfirmed" : "refused";
-        for (const [id] of orphaned) { delete saved.pending[id]; refused.delete(id); }
-        saved.refused = refused.size ? [...refused] : undefined;
-      }
-      if (saved.text || saved.failure === "transcription" || saved.failure === "unreached") {
-        saved.text = [saved.text, draft.current].filter(Boolean).join("\n");
-        view.restore(saved);
-        try { saveSubmitted(conversation, saved); setRecoveryUnavailable(false); }
-        catch { setRecoveryUnavailable(true); }
-      }
-    } catch { setVoiceFailure("Message recovery is unavailable in this browser."); }
+    view.recover();
     return () => {
       if (recoveryViews.get(conversation) === view) recoveryViews.delete(conversation);
       // Task tabs retain their parent draft. Transfer recovered text to storage on leaving so a
       // remount restores it once, while ordinary unsent task drafts keep their existing owner.
       try {
-        if (readSubmitted(conversation).text) { draft.current = ""; onChange(""); }
+        if (readSubmitted(conversation).text && holds(conversation, draft.current)) {
+          heldFields.delete(conversation); draft.current = ""; onChange("");
+        }
       } catch { /* keep the parent draft */ }
     };
-  }, [conversation, focusField, onChange]);
-
-  const editDraft = useCallback((text: string) => {
-    draft.current = text;
-    onChange(text);
-    try {
-      const saved = readSubmitted(conversation);
-      if (saved.failure || saved.text) {
-        saved.text = saved.failure === "unconfirmed" ? text : "";
-        if (saved.failure !== "unconfirmed") saved.failure = null;
-        saveSubmitted(conversation, saved);
-      }
-      setRecoveryUnavailable(false);
-    } catch { setRecoveryUnavailable(true); }
-    if (failure.current !== "unconfirmed") { failure.current = null; setSendFailure(null); }
-  }, [conversation, onChange]);
+  }, [conversation, editDraft, focusField, onChange]);
 
   const releaseStream = useCallback((released: MediaStream | null) => {
     released?.getTracks().forEach((track) => track.stop());
     releaseWaveform();
   }, [releaseWaveform]);
 
-  // ---- send: the draft becomes the page's bubble at once; a refusal brings it back ----------------
+  // ---- send: the draft becomes the page's bubble at once; the bubble shows how it went -------------
   const submit = useCallback(
-    async (text: string, retry?: ImageSubmission, voice?: VoiceSend) => {
+    async (text: string, voice?: VoiceSend) => {
       const ready = text.trim();
-      const preserveDraft = Boolean(voice || (retry && retryImage.current?.preserveDraft));
-      const send = voice?.send ?? (retry ? retryImage.current?.send : undefined) ?? onSubmit;
-      const withImages = Boolean(retry || (voice ? voice.images : images.selected.length));
-      if (!voice && ((!ready && !withImages) || disabled || sendDisabled || images.checking || (admitting.current && !retry))) return;
-      if (withImages && !retry && !voice && !images.capability?.available) {
+      const send = voice?.send ?? onSubmit;
+      const withImages = Boolean(voice ? voice.images : images.selected.length);
+      if (!voice && ((!ready && !withImages) || disabled || sendDisabled || images.checking)) return;
+      if (withImages && !voice && !images.capability?.available) {
         images.setError(`Image input unavailable. ${images.capability?.reason ?? "Checking image input…"}`);
         return;
       }
-      const id = voice?.id ?? (retry && retryImage.current ? retryImage.current.recoveryId : crypto.randomUUID());
+      const id = voice?.id ?? crypto.randomUUID();
       if (!voice && visible.current) focusAfterSend.current.add(id);
       try {
-        beginSubmitted(conversation, text, id, preserveDraft);
+        beginSubmitted(conversation, text, id, Boolean(voice));
       } catch {
         if (voice) settleSubmitted(conversation, id, text, "refused");
         setVoiceFailure("Could not save message recovery. Your message was not sent.");
         return;
       }
-      if (!preserveDraft) { failure.current = null; setSendFailure(null); }
-      setRecoveryUnavailable(false); setRefusalReason("");
+      if (!voice) { failure.current = null; setSendFailure(null); draft.current = ""; onChange(""); }
+      setRecoveryUnavailable(false);
       setVoiceFailure(""); setSetupNeeded(false); setUnpunctuated(null); images.setError("");
-      // Where the message shows its own state, each send stands alone and the composer stays free.
-      if (withImages && !showsFailures) { admitting.current = true; setAdmission("sending"); }
-      if (!preserveDraft) { draft.current = ""; onChange(""); }
-      let accepted = false;
-      const accept = () => {
-        accepted = true;
-        settleSubmitted(conversation, id, text, null);
-      };
-      const submission = !withImages ? undefined : retry ?? voice?.images ?? images.submission();
-      if (submission) {
-        // The bubble shows the images from here, as it shows the words.
-        if (showsFailures) images.clear();
-        else retryImage.current = { text, submission, recoveryId: id, send, preserveDraft };
-      }
+      const submission = !withImages ? undefined : voice?.images ?? images.submission();
+      // The bubble shows the images from here, as it shows the words.
+      if (submission) images.clear();
       try {
-        await (showsFailures ? send(ready, accept, submission, id) : submission ? send(ready, accept, submission) : send(ready, accept));
-        accept();
-      } catch (error) {
-        if (!accepted) {
-          // The conversation shows the failure on the message and has marked its copy.
-          if (showsFailures) {
-            liveSubmissions.delete(id);
-          } else if (submission && !imageSendRefused(error) && mounted.current) {
-            // Keep the immutable image retry here; a later remount recovers only its caption.
-            liveSubmissions.delete(id);
-            setAdmission("uncertain");
-            return;
-          } else {
-            settleSubmitted(conversation, id, text,
-              error instanceof ApiError && error.status < 500 ? "refused" : "unconfirmed");
-            if (mounted.current && withImages && error instanceof Error) setRefusalReason(error.message);
-          }
-        }
+        await send(ready, () => settleSubmitted(conversation, id, text, null), submission, id);
+        settleSubmitted(conversation, id, text, null);
+      } catch {
+        // The conversation shows the failure on the message and has marked its copy; a copy no message shows
+        // returns to the field now.
+        liveSubmissions.delete(id);
+        recoveryViews.get(conversation)?.recover(true);
       }
-      if (!mounted.current) return;
-      if (withImages && !showsFailures) {
-        if (accepted) images.clear();
-        admitting.current = false; setAdmission(""); retryImage.current = null;
-        if (deferredRecovery.current) {
-          const saved = deferredRecovery.current; deferredRecovery.current = null;
-          let unavailable = false;
-          try {
-            const current = readSubmitted(conversation);
-            current.text = saved.text; current.failure = saved.failure;
-            saveSubmitted(conversation, current);
-          } catch { unavailable = true; }
-          recoveryViews.get(conversation)?.restore(saved, unavailable, id);
-        }
-      }
-      if (focusAfterSend.current.delete(id)) focusField();
+      if (mounted.current && focusAfterSend.current.delete(id)) focusField();
     },
-    [conversation, disabled, showsFailures, sendDisabled, focusField, images, onChange, onSubmit],
+    [conversation, disabled, sendDisabled, focusField, images, onChange, onSubmit],
   );
   // A returning source view owns admission UI; an explicit voice Send retains its captured transport.
   const currentSubmit = useRef(submit);
@@ -740,7 +722,9 @@ export default function Composer({
         voiceSends.delete(conversation);
         const view = recoveryViews.get(conversation);
         view?.voice(null);
-        void (view?.submit ?? currentSubmit.current)(combineDraft(sending.text, text), undefined, sending);
+        // A voice Send whose project was removed while it transcribed goes nowhere.
+        if (!liveSubmissions.has(sending.id)) return;
+        void (view?.submit ?? currentSubmit.current)(combineDraft(sending.text, text), sending);
         return;
       }
       setPhase("idle");
@@ -805,7 +789,7 @@ export default function Composer({
   }, [conversation, disabled, endVoiceSend, finish, images, onChange, onSubmit, prepareSubmit, releaseWaveform, sendDisabled]);
 
   const start = useCallback(async () => {
-    if (unavailable || disabled || admitting.current || phase !== "idle") return;
+    if (unavailable || disabled || phase !== "idle") return;
     if (voice?.backend === "host" && voice.host.state !== "ready") {
       // Setup may have finished since this page read it: read again, and the next tap starts.
       setSetupNeeded(true);
@@ -984,9 +968,9 @@ export default function Composer({
   const listening = phase === "listening" || phase === "starting";
   const transcribing = phase === "transcribing";
   const remaining = MAX_RECORDING_MS - elapsed;
-  const canSend = !disabled && !sendDisabled && !admission && !images.checking && (!images.selected.length || images.capability?.available) && (phase === "listening" || (phase === "idle" && (value.trim().length > 0 || images.selected.length > 0)));
+  const canSend = !disabled && !sendDisabled && !images.checking && (!images.selected.length || images.capability?.available) && (phase === "listening" || (phase === "idle" && (value.trim().length > 0 || images.selected.length > 0)));
   const [showVoiceReason, setShowVoiceReason] = useState(false);
-  const micDisabled = disabled || transcribing || Boolean(admission);
+  const micDisabled = disabled || transcribing;
 
   let hintText: ReactNode = hint ?? null;
   let routineHint = false;
@@ -1003,13 +987,6 @@ export default function Composer({
     hintText = phase === "starting" ? startingVoice ? "Starting voice…" : "Opening microphone…"
       : connection === "lost" ? "Connection lost — still recording. Your words will catch up."
       : connection === "catching-up" ? "Catching up…" : "Listening… Stop to add text, or Send.";
-  } else if (admission === "uncertain") {
-    hintTone = "danger";
-    hintRole = "alert";
-    hintText = <>Could not confirm send. <button type="button" className="link" onClick={() => { const retry = retryImage.current; if (retry) void submit(retry.text, retry.submission); }}>Retry</button></>;
-  } else if (admission === "sending") {
-    hintRole = "status";
-    hintText = "Sending images…";
   } else if (sendFailure === "transcription" || sendFailure === "unreached") {
     hintTone = "danger";
     hintRole = "alert";
@@ -1017,14 +994,8 @@ export default function Composer({
   } else if (sendFailure === "refused" && !images.error) {
     hintTone = "danger";
     hintRole = "alert";
-    hintText = (
-      <>
-        Not sent. {refusalReason}{" "}
-        <button type="button" className="link" onClick={() => void submit(draft.current)}>
-          Retry
-        </button>
-      </>
-    );
+    // Recovered words are a draft: Send sends them to what the page shows now (SPEC.md §3.6).
+    hintText = "Not sent.";
   } else if (sendFailure === "unconfirmed") {
     hintTone = "danger";
     hintRole = "alert";
@@ -1066,11 +1037,11 @@ export default function Composer({
     hintText = <>{hintText} Recovery could not be updated. Keep this tab open to retain your latest text.</>;
   }
 
-  const quietProgress = (transcribing || listening || admission === "sending") && connection !== "lost" && !recoveryUnavailable;
+  const quietProgress = (transcribing || listening) && connection !== "lost" && !recoveryUnavailable;
   const hiddenReason = ["insecure", "unrecognized", "host"].includes(unavailable ?? "") && !showVoiceReason && !hintRole && !recoveryUnavailable;
   const feedback = hintText ? (
     <p id={hintId} className={hiddenReason ? "sr-only" : `composer-hint ${hintTone === "danger" ? "text-danger" : "text-muted"}`} data-routine={routineHint || undefined} role={hintRole} aria-label={hintRole === "status" && typeof hintText === "string" ? hintText : undefined}>
-      {phase !== "idle" || admission === "sending" ? <span className="spinner" aria-hidden="true" /> : null}<span className={quietProgress ? "sr-only" : undefined}>{hintText}</span>
+      {phase !== "idle" ? <span className="spinner" aria-hidden="true" /> : null}<span className={quietProgress ? "sr-only" : undefined}>{hintText}</span>
     </p>
   ) : null;
 
@@ -1080,11 +1051,11 @@ export default function Composer({
         const files = Array.from(event.clipboardData.items).filter((item) => item.kind === "file" && item.type.startsWith("image/")).map((item) => item.getAsFile()).filter((file): file is File => file !== null);
         if (!imageScope || !files.length) return;
         event.preventDefault();
-        if (!disabled && !admission && phase === "idle") void images.add(files);
+        if (!disabled && phase === "idle") void images.add(files);
       }}>
       <div className="composer-box">
         {phase !== "idle" ? feedback : null}
-        {images.selected.length && !admission ? <div className="image-draft" aria-label="Selected images">{images.selected.map((image) =>
+        {images.selected.length ? <div className="image-draft" aria-label="Selected images">{images.selected.map((image) =>
           <div className="image-draft-item" key={image.key}>
             <img src={image.url} alt={image.name} />
             <button className="image-remove" type="button" aria-label={`Remove image ${image.name}`} disabled={disabled || phase !== "idle"} onClick={() => images.remove(image.key)}><CloseIcon /></button>
@@ -1097,7 +1068,7 @@ export default function Composer({
           placeholder={listening ? "" : placeholder}
           value={displayedDraft}
           rows={1}
-          disabled={disabled || Boolean(admission)}
+          disabled={disabled}
           readOnly={phase !== "idle"}
           autoFocus={autoFocus}
           onChange={(event) => editDraft(event.target.value)}
@@ -1106,13 +1077,13 @@ export default function Composer({
           onBlur={(event) => { if (selection) selection.current = { start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd }; }}
         />
         <div className="composer-row">
-          {pill ? <fieldset role="presentation" className="composer-pill" disabled={disabled || Boolean(admission)}>{pill}</fieldset> : null}
+          {pill ? <fieldset role="presentation" className="composer-pill" disabled={disabled}>{pill}</fieldset> : null}
           {imageScope && !listening && !transcribing ? <>
             <input ref={picker} type="file" accept="image/png,image/jpeg,image/webp" multiple hidden aria-label="Choose images" onChange={(event) => {
-              if (!disabled && !admission) void images.add(Array.from(event.target.files ?? []));
+              if (!disabled) void images.add(Array.from(event.target.files ?? []));
               event.target.value = "";
             }} />
-            <button type="button" className="composer-icon composer-add-image" aria-label="Add images" title={IMAGE_HELP} disabled={disabled || Boolean(admission) || images.checking} onClick={() => {
+            <button type="button" className="composer-icon composer-add-image" aria-label="Add images" title={IMAGE_HELP} disabled={disabled || images.checking} onClick={() => {
               if (!images.capability?.available) images.setError(`Image input unavailable. ${images.capability?.reason ?? "Checking image input…"}`);
               else picker.current?.click();
             }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM4 16l5-5 4 4 3-3 4 4" /><circle cx="15" cy="8" r="1.5" /></svg></button>

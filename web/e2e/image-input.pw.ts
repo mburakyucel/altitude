@@ -107,18 +107,14 @@ for (const scope of ["project", "task"] as const) {
     });
     // Hold the real completion boundary after active clears but before its retained claim is removed.
     if (scope === "project") await request.post("/fixture/pause-completion");
-    // Project chat shows the images on the faded message itself; the task conversation says so in the composer.
+    // The images show on the faded message itself, and the composer stays free while it is on its way.
     const sendingMessage = page.locator('.msg-row[data-pending][data-mine]').filter({ hasText: caption });
-    await walk.state("04-sending-images", { action: () => v.send.click(),
-      visible: scope === "project" ? [sendingMessage.locator("img")] : [page.getByText("Sending images…", { exact: true }), page.getByLabel("Sending images", { exact: true })],
-      hidden: scope === "project" ? [v.strip, page.getByText("Sending images…", { exact: true })] : [v.strip] });
-    // The project message carries its own state, so its composer stays free; the task composer waits.
-    if (scope === "project") { await expect(v.field).toBeEnabled(); await expect(v.add).toBeEnabled(); }
-    else { await expect(v.field).toBeDisabled(); await expect(v.add).toBeDisabled(); }
+    await walk.state("04-sending-images", { action: () => v.send.click(), visible: [sendingMessage.locator("img")], hidden: [v.strip] });
+    await expect(v.field).toBeEnabled(); await expect(v.add).toBeEnabled();
     release();
     // The saved-image states name the stored row's opener; the queued-to-history transition has its own journey.
-    if (scope === "project") await expect(page.locator(".bubble").getByRole("button", { name: "Open image timer.png", exact: true })).toBeVisible();
-    await walk.state("05-saved-image", { visible: [v.preview], hidden: [v.strip, page.getByText("Sending images…", { exact: true })] });
+    await expect(page.locator(".bubble").getByRole("button", { name: "Open image timer.png", exact: true })).toBeVisible();
+    await walk.state("05-saved-image", { visible: [v.preview], hidden: [v.strip] });
     await expect(v.field).toBeEnabled(); await expect(v.field).toHaveValue("");
     await walk.state("06-view-image", { action: () => v.preview.click(), visible: [page.getByRole("dialog", { name: "Image timer.png" })], hidden: [] });
     const fullImage = page.getByRole("dialog").getByRole("img");
@@ -159,52 +155,37 @@ for (const scope of ["project", "task"] as const) {
       if (mode === "lost") return route.abort("connectionreset");
       return route.fulfill({ response });
     });
-    if (scope === "project") {
-      // The message keeps its images and says what happened; Edit returns both, Retry resends the same bytes.
-      const message = page.locator(".msg-row[data-mine]").filter({ hasText: caption });
-      const refusal = message.getByRole("alert").filter({ hasText: "Not sent: choose a smaller image." });
-      await walk.state("01-refused-on-message", { action: () => v.send.click(),
-        visible: [refusal, message.locator("img"), message.getByRole("button", { name: "Retry", exact: true }), message.getByRole("button", { name: "Edit", exact: true })], hidden: [v.strip] });
-      await expect(v.field).toHaveValue("");
-      await walk.state("01b-edit-returns-images", { action: () => message.getByRole("button", { name: "Edit", exact: true }).click(), visible: [v.strip], hidden: [message] });
-      await expect(v.field).toHaveValue(caption);
-      await expect(v.field).toBeFocused();
-      await v.send.click();
-      await expect(refusal).toBeVisible();
-      // The response is lost after the server stores the message; reads wait so the unconfirmed state can be seen.
-      let releaseReads: () => void = () => undefined;
-      const reads = new Promise<void>((resolve) => { releaseReads = resolve; });
-      await page.route((url) => url.pathname === "/api/chat/alpha", async (route) => { await reads; await route.continue(); });
-      mode = "lost";
-      await walk.state("02-unconfirmed-on-message", { action: () => message.getByRole("button", { name: "Retry", exact: true }).click(),
-        visible: [message.getByText("Unconfirmed", { exact: true }), message.getByRole("button", { name: "Copy to draft", exact: true })], hidden: [refusal, v.strip] });
-      await expect(message.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
-      await expect(v.field).toBeEnabled();
-      mode = "normal";
-      // The next read shows the stored message: the bubble becomes the ordinary one, with no duplicate.
-      await walk.state("03-unconfirmed-stored", { action: async () => releaseReads(),
-        visible: [v.preview], hidden: [page.getByText("Unconfirmed", { exact: true }), v.strip] });
-      expect(submissions[1]?.images).toEqual(submissions[0]?.images);
-      expect(submissions[2]?.images).toEqual(submissions[1]?.images);
-      expect(new Set(submissions.map((one) => one.request_id)).size).toBe(3);
-      await page.reload();
-      await expect(v.preview).toHaveCount(1);
-      const stored = await (await request.get("/api/chat/alpha")).json();
-      expect([...stored.history, ...(stored.queued ?? [])].filter((row: { text: string }) => row.text === caption)).toHaveLength(1);
-      return;
-    }
-    await walk.state("01-refused-draft", { action: () => v.send.click(), visible: [v.strip, page.getByText(/Not sent\. Choose a smaller image\./)], hidden: [page.getByLabel("Sending images", { exact: true })] });
+    const read = scope === "task" ? "/api/task/alpha/image-task" : "/api/chat/alpha";
+    // Both conversations keep the images on the message and say what happened; Edit returns both, Retry resends the same bytes.
+    const message = page.locator(".msg-row[data-mine]").filter({ hasText: caption });
+    const refusal = message.getByRole("alert").filter({ hasText: "Not sent: choose a smaller image." });
+    await walk.state("01-refused-on-message", { action: () => v.send.click(),
+      visible: [refusal, message.locator("img"), message.getByRole("button", { name: "Retry", exact: true }), message.getByRole("button", { name: "Edit", exact: true })], hidden: [v.strip] });
+    await expect(v.field).toHaveValue("");
+    await walk.state("01b-edit-returns-images", { action: () => message.getByRole("button", { name: "Edit", exact: true }).click(), visible: [v.strip], hidden: [message] });
     await expect(v.field).toHaveValue(caption);
+    await expect(v.field).toBeFocused();
+    await v.send.click();
+    await expect(refusal).toBeVisible();
+    // The response is lost after the server stores the message; reads wait so the unconfirmed state can be seen.
+    let releaseReads: () => void = () => undefined;
+    const reads = new Promise<void>((resolve) => { releaseReads = resolve; });
+    await page.route((url) => url.pathname === read, async (route) => { await reads; await route.continue(); });
     mode = "lost";
-    await walk.state("02-unconfirmed-send", { action: () => v.composer.getByRole("button", { name: "Retry", exact: true }).click(), visible: [page.getByText("Could not confirm send.", { exact: false })], hidden: [v.strip] });
-    await expect(v.field).toBeDisabled();
+    await walk.state("02-unconfirmed-on-message", { action: () => message.getByRole("button", { name: "Retry", exact: true }).click(),
+      visible: [message.getByText("Unconfirmed", { exact: true }), message.getByRole("button", { name: "Copy to draft", exact: true })], hidden: [refusal, v.strip] });
+    await expect(message.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
+    await expect(v.field).toBeEnabled();
     mode = "normal";
-    await walk.state("03-safe-retry-accepted", { action: () => v.composer.getByRole("button", { name: "Retry", exact: true }).click(), visible: [v.preview], hidden: [page.getByText("Could not confirm send.", { exact: false }), v.strip] });
-    expect(submissions[1]).toEqual(submissions[2]);
-    expect(submissions[0]?.request_id).not.toBe(submissions[1]?.request_id);
+    // The next read shows the stored message: the bubble becomes the ordinary one, with no duplicate.
+    await walk.state("03-unconfirmed-stored", { action: async () => releaseReads(),
+      visible: [v.preview], hidden: [page.getByText("Unconfirmed", { exact: true }), v.strip] });
+    expect(submissions[1]?.images).toEqual(submissions[0]?.images);
+    expect(submissions[2]?.images).toEqual(submissions[1]?.images);
+    expect(new Set(submissions.map((one) => one.request_id)).size).toBe(3);
     await page.reload();
     await expect(v.preview).toHaveCount(1);
-    const view = await (await request.get(scope === "task" ? "/api/task/alpha/image-task" : "/api/chat/alpha")).json();
+    const view = await (await request.get(read)).json();
     const rows = scope === "task" ? view.messages : [...view.history, ...(view.queued ?? [])];
     expect(rows.filter((row: { text: string }) => row.text === caption)).toHaveLength(1);
   });
@@ -551,7 +532,7 @@ test("task: image-only checkpoint delivery and archived viewing retain the origi
 });
 
 for (const firstResult of ["accepted", "refused"] as const) {
-  test(`task: earlier text ${firstResult} cannot clear a pending image or its retry`, async ({ page }, info) => {
+  test(`task: earlier text ${firstResult} leaves a pending image message its own state`, async ({ page }, info) => {
     const walk = walkthrough(page, info);
     await open(page, "task", info);
     const v = controls(page, "task");
@@ -575,19 +556,23 @@ for (const firstResult of ["accepted", "refused"] as const) {
     });
     await v.field.fill("The first text."); await v.send.click();
     await v.picker.setInputFiles(await screenshotFile(page)); await v.field.fill(caption); await v.send.click();
-    await expect(page.getByLabel("Sending images", { exact: true })).toBeVisible();
+    const image = page.locator(".msg-row[data-mine]").filter({ hasText: caption });
+    await expect(image.locator("img")).toBeVisible();
     const textResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/l2/message" && !response.request().postDataJSON().images);
     finishText(); await textResponse;
-    await walk.state("01-image-still-pending-after-text", { visible: [page.getByLabel("Sending images", { exact: true })], hidden: [v.strip] });
-    await expect(v.field).toBeDisabled();
+    // Each message keeps its own state: the text's outcome leaves the image message on its way, and the field free.
+    await walk.state("01-image-still-pending-after-text", { visible: [image.locator("img")], hidden: [v.strip] });
+    await expect(image).toHaveAttribute("data-pending", "true");
+    await expect(v.field).toBeEnabled();
+    const text = page.locator(".msg-row[data-mine]").filter({ hasText: "The first text." });
+    if (firstResult === "refused") await expect(text.getByText("Not sent: earlier text refused.")).toBeVisible();
+    else await expect(text.getByRole("button", { name: "Remove", exact: true })).toBeVisible();
     finishImage();
-    await expect(v.composer).toContainText("Could not confirm send.");
-    await walk.state("02-image-immutable-retry", {
-      action: () => v.composer.getByRole("button", { name: "Retry", exact: true }).click(),
-      visible: [v.preview], hidden: [page.getByLabel("Sending images", { exact: true })],
-    });
-    expect(imageInputs).toHaveLength(2); expect(imageInputs[1]).toEqual(imageInputs[0]);
-    await expect(v.field).toHaveValue(firstResult === "refused" ? "The first text." : "");
+    // The image's answer is lost after the server stored it: never a send Retry, and the next read settles it once.
+    await walk.state("02-image-unknown-settles-from-the-record", { visible: [v.preview], hidden: [image.getByRole("button", { name: "Retry", exact: true }), image.getByText("Unconfirmed")] });
+    expect(imageInputs).toHaveLength(1);
+    await expect(v.preview).toHaveCount(1);
+    await expect(v.field).toHaveValue("");
   });
 }
 

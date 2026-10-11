@@ -3,6 +3,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useReducer, useRef } from "react";
 import { z } from "zod";
 import { readAlertState } from "./alerts";
+import { forgetRecovery } from "./recovery";
 import { useOptimisticMutation } from "./useOptimisticMutation";
 
 /**
@@ -1474,10 +1475,12 @@ export async function forgetProject(queryClient: QueryClient, name: string) {
     projects: cached.projects.map((row) => row.name === name ? { ...row, managed: false } : row),
     queue: cached.queue.filter((row) => row.project !== name),
   });
-  for (const kind of ["project", "chat", "chat-outbox", "task", "transcript"]) {
+  for (const kind of ["project", "chat", "chat-outbox", "task", "task-outbox", "transcript"]) {
     await queryClient.cancelQueries({ queryKey: [kind, name] });
     queryClient.removeQueries({ queryKey: [kind, name] });
   }
+  // The composer's recovery of the project's conversations goes with it.
+  forgetRecovery(name);
   void queryClient.invalidateQueries({ queryKey: ["overview"] });
   void queryClient.invalidateQueries({ queryKey: ["monitor"] });
 }

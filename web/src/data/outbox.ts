@@ -1,7 +1,7 @@
 import { useCallback, useRef, useSyncExternalStore } from "react";
 import { notifyManager, useQueryClient } from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
-import type { ChatMessage, ChatView } from "./api";
+import type { ChatMessage, ChatView, L2MessageInput } from "./api";
 import type { ImageSubmission } from "../components/ImageDraft";
 import type { ImagePreview } from "../components/MessageImages";
 
@@ -84,13 +84,12 @@ export function readOf(client: QueryClient, view: ChatView | undefined): number 
   return view ? reads(client).of.get(view) ?? 0 : 0;
 }
 
-/**
- * Start an entry, replacing one with the same send id (an image Retry keeps its identity), or taking the
- * place of `replaces` (a refused message's Retry, in its position).
- */
-export function startOutgoing(client: QueryClient, project: string, entry: Outgoing, replaces?: string) {
-  reads(client);
-  client.setQueryData<Outgoing[]>(outboxKey(project), (entries = NONE) => {
+type Entry = { id: string; row?: string };
+type OutboxKey = readonly unknown[];
+
+/** Start an entry, replacing one with the same send id, or taking the place of `replaces` in its position. */
+function startEntry<E extends Entry>(client: QueryClient, key: OutboxKey, entry: E, replaces?: string) {
+  client.setQueryData<E[]>(key, (entries = []) => {
     const at = entries.findIndex((current) => current.id === replaces);
     const rest = entries.filter((current) => current.id !== entry.id && current.id !== replaces);
     if (at < 0) return [...rest, entry];
@@ -100,13 +99,31 @@ export function startOutgoing(client: QueryClient, project: string, entry: Outgo
 }
 
 /** Change an entry that still exists; `null` removes it. A missing entry stays missing. Returns the change. */
-export function updateOutgoing(client: QueryClient, project: string, id: string, change: (current: Outgoing) => Outgoing | null) {
-  const entries = client.getQueryData<Outgoing[]>(outboxKey(project));
+function updateEntry<E extends Entry>(client: QueryClient, key: OutboxKey, id: string, change: (current: E) => E | null) {
+  const entries = client.getQueryData<E[]>(key);
   const current = entries?.find((entry) => entry.id === id);
   if (!entries || !current) return undefined;
   const next = change(current);
-  client.setQueryData<Outgoing[]>(outboxKey(project), entries.flatMap((entry) => entry !== current ? [entry] : next ? [next] : []));
+  client.setQueryData<E[]>(key, entries.flatMap((entry) => entry !== current ? [entry] : next ? [next] : []));
   return next;
+}
+
+function dropEntries(client: QueryClient, key: OutboxKey, ids: Set<string>) {
+  const entries = client.getQueryData<Entry[]>(key);
+  if (entries?.some((entry) => ids.has(entry.id))) client.setQueryData<Entry[]>(key, entries.filter((entry) => !ids.has(entry.id)));
+}
+
+/**
+ * Start an entry, replacing one with the same send id (an image Retry keeps its identity), or taking the
+ * place of `replaces` (a refused message's Retry, in its position).
+ */
+export function startOutgoing(client: QueryClient, project: string, entry: Outgoing, replaces?: string) {
+  reads(client);
+  startEntry(client, outboxKey(project), entry, replaces);
+}
+
+export function updateOutgoing(client: QueryClient, project: string, id: string, change: (current: Outgoing) => Outgoing | null) {
+  return updateEntry(client, outboxKey(project), id, change);
 }
 
 /** Mark an entry finished. In-flight reads are cancelled first, so only a read started after it can retire it. */
@@ -117,10 +134,7 @@ export async function settleOutgoing(client: QueryClient, project: string, id: s
 }
 
 export function dropOutgoing(client: QueryClient, project: string, ids: Set<string>) {
-  const entries = client.getQueryData<Outgoing[]>(outboxKey(project));
-  if (entries?.some((entry) => ids.has(entry.id))) {
-    client.setQueryData<Outgoing[]>(outboxKey(project), entries.filter((entry) => !ids.has(entry.id)));
-  }
+  dropEntries(client, outboxKey(project), ids);
 }
 
 /**
@@ -175,4 +189,56 @@ export function useOutbox(project: string): Outgoing[] {
     return last.current;
   }, [client, project]);
   return useSyncExternalStore(subscribe, snapshot).entries;
+}
+
+/*
+ * A task conversation's outbox (SPEC.md §3.10): each operator message to the L2 from Send until the task's
+ * record lists it, kept in the query cache like the project's, so leaving the task and returning keeps it in view.
+ * Pairing clears it with every query, and removing the project drops it (forgetProject).
+ */
+
+/** One message to the L2 on its way, or one that failed and stands on its own bubble. */
+export type SendTarget = Pick<L2MessageInput, "stop_id" | "question_id" | "revision" | "group_id" | "group_revision">;
+
+export interface TaskOutgoing {
+  /** The send id, which the stored row keeps as its id. */
+  id: string;
+  /** The bubble's identity on screen: its first send id, kept when Retry sends it again under a new one. */
+  row?: string;
+  text: string;
+  images?: ImagePreview[];
+  /** The images as sent, kept for Retry and Edit until the server accepts the message. */
+  replay?: ImageSubmission;
+  /** The composer's recovery copy of this send (Composer.tsx), released once the message needs it no more. */
+  copy?: string;
+  /** What the message answers and which stopped session it continues, as sent; Retry sends to exactly these. */
+  target: SendTarget;
+  failure?: "refused" | "unconfirmed";
+  reason?: string;
+}
+
+const taskOutboxKey = (project: string, slug: string) => ["task-outbox", project, slug] as const;
+
+export const startTaskOutgoing = (client: QueryClient, project: string, slug: string, entry: TaskOutgoing, replaces?: string) => {
+  client.setQueryDefaults(["task-outbox"], { gcTime: Infinity });
+  startEntry(client, taskOutboxKey(project, slug), entry, replaces);
+};
+export const updateTaskOutgoing = (client: QueryClient, project: string, slug: string, id: string, change: (current: TaskOutgoing) => TaskOutgoing | null) =>
+  updateEntry(client, taskOutboxKey(project, slug), id, change);
+export const dropTaskOutgoing = (client: QueryClient, project: string, slug: string, ids: Set<string>) =>
+  dropEntries(client, taskOutboxKey(project, slug), ids);
+
+const NO_TASK_ENTRIES: TaskOutgoing[] = [];
+/** The task's entries, re-rendering when they change; the task's own reads re-render its page. */
+export function useTaskOutbox(project: string, slug: string): TaskOutgoing[] {
+  const client = useQueryClient();
+  const subscribe = useCallback((changed: () => void) => {
+    const notify = notifyManager.batchCalls(changed);
+    return client.getQueryCache().subscribe((event) => {
+      const [kind, name, task] = event.query.queryKey;
+      if (kind === "task-outbox" && name === project && task === slug) notify();
+    });
+  }, [client, project, slug]);
+  const snapshot = useCallback(() => client.getQueryData<TaskOutgoing[]>(taskOutboxKey(project, slug)) ?? NO_TASK_ENTRIES, [client, project, slug]);
+  return useSyncExternalStore(subscribe, snapshot);
 }

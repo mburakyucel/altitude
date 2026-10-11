@@ -956,10 +956,13 @@ test("question loading, read failure, write failure and denied access retain rec
   await page.route("**/api/l2/message", (route) => route.fulfill({ status: 503, json: { error: "Message could not be saved." } }), { times: 1 });
   await field.fill("Keep the draft after this failed send.");
   await page.getByRole("region", { name: "Task conversation", exact: true }).getByRole("button", { name: "Send", exact: true }).click();
-  await expect(field).toHaveValue("Keep the draft after this failed send.");
-  await walk.state("02-delivery-unconfirmed-draft-retained", {
-    visible: [field, page.getByRole("alert").filter({ hasText: "Could not confirm delivery." })],
-    hidden: [page.getByRole("button", { name: "Retry", exact: true }), page.getByRole("region", { name: "Task conversation", exact: true }).locator(".bubble").filter({ hasText: "Keep the draft after this failed send." })],
+  // A server error proves nothing either way: the message says Unconfirmed and offers its words back, never a send Retry.
+  const unsent = page.getByRole("region", { name: "Task conversation", exact: true }).locator(".msg-row[data-mine]").filter({ hasText: "Keep the draft after this failed send." });
+  const copy = unsent.getByRole("button", { name: "Copy to draft", exact: true });
+  await expect(field).toHaveValue("");
+  await walk.state("02-delivery-unconfirmed-on-message", {
+    visible: [field, unsent.getByText("Unconfirmed", { exact: true }), copy],
+    hidden: [page.getByRole("button", { name: "Retry", exact: true })],
   });
   expect((await readTask(request, slug)).messages.some((row) => row.text === "Keep the draft after this failed send.")).toBe(false);
   await page.route("**/api/decide", (route) => route.fulfill({ status: 403, json: { error: "Write access denied." } }), { times: 1 });
@@ -967,16 +970,15 @@ test("question loading, read failure, write failure and denied access retain rec
   await page.getByRole("button", { name: "Send 1 answer", exact: true }).click();
   await expect(card.getByRole("button", { name: q.recommendation!.label, exact: true })).toBeDisabled();
   await expect(field).toBeDisabled();
-  await expect(field).toHaveValue("Keep the draft after this failed send.");
   await walk.state("03-denied-send-and-acceptance", {
-    visible: [page.getByText("You cannot send messages or answers here.", { exact: false }), card],
-    hidden: [card.getByText("Decision recorded", { exact: true })],
+    visible: [page.getByText("This page lost access.", { exact: false }), card, unsent],
+    hidden: [card.getByText("Decision recorded", { exact: true }), copy],
   });
   expect((await readTask(request, slug)).question?.status).toBe("open");
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(field).toBeEnabled();
   await expect(card.getByRole("button", { name: q.recommendation!.label, exact: true })).toBeEnabled();
-  await walk.state("04-refresh-restores-writing", { visible: [field], hidden: [page.getByText("You cannot send messages or answers here.", { exact: false })] });
+  await walk.state("04-refresh-restores-writing", { visible: [field, copy], hidden: [page.getByText("This page lost access.", { exact: false })] });
   await page.route(endpoint, (route) => route.fulfill({ status: 503, json: { error: "Question read unavailable." } }));
   await page.reload();
   const error = page.getByText(/Could not load the task/);

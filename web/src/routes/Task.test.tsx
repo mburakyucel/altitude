@@ -361,7 +361,7 @@ describe("Task on desktop", () => {
     expect(within(convo.querySelector<HTMLElement>('[data-role="l2"]')!).queryByRole("link")).toBeNull();
   });
 
-  it.each([200, 500])("reconciles by identity before response %i without hiding repeated text or changing recovery", async (status) => {
+  it.each([200, 500])("reconciles by identity before response %i without hiding repeated text, marking it failed or keeping recovery", async (status) => {
     let finish!: (response: Response) => void;
     const response = new Promise<Response>((resolve) => { finish = resolve; });
     let record = running;
@@ -383,10 +383,12 @@ describe("Task on desktop", () => {
     await user.type(field, "New draft");
     await act(async () => finish(jsonResponse(status === 200 ? { message: row } : { error: "Response lost" }, status)));
     expect(screen.getAllByText(text, { exact: true })).toHaveLength(2);
-    expect(field).toHaveValue(status === 200 ? "New draft" : `${text}\nNew draft`);
-    if (status === 500) expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery.");
-    else expect(screen.queryByRole("alert")).toBeNull();
+    // The record already lists the message: a lost response cannot make it Unconfirmed or return its words.
+    expect(field).toHaveValue("New draft");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText("Unconfirmed", { exact: true })).toBeNull();
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(sessionStorage.getItem("altitude.submitted:task/altitude/fix-timer")).toBeNull();
   });
 
   it("keeps the reported open-PR owner reachable without releasing its merge hold", async () => {
@@ -941,28 +943,48 @@ describe("Task on desktop", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("returns the draft with Not sent. Retry when the server refuses the message", async () => {
+  it.each(["Retry", "Edit"])("a refused message stays on its bubble with Not sent and its reason while the field stays empty; %s", async (action) => {
     let refuse = true;
-    const fetchMock = stub(running, {
-      message: () =>
-        refuse
-          ? jsonResponse({ error: "no active session" }, 409)
-          : jsonResponse({ ok: true, message: { id: "m-9", at: new Date().toISOString(), role: "l2", text: "" } }),
-    });
+    const fetchMock = stub(running);
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => refuse && String(input).includes("/api/l2/message")
+      ? jsonResponse({ error: "No active session" }, 409) : original(input, init));
     const { user } = renderApp({ route });
-
-    await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
-    await user.type(screen.getByLabelText("Message the L2"), "prefer the smaller diff");
+    const convo = await screen.findByRole("region", { name: "Task conversation" });
+    const field = screen.getByLabelText("Message the L2");
+    await user.type(field, "prefer the smaller diff");
     await user.click(screen.getByRole("button", { name: "Send" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent("Not sent. Retry");
-    expect(screen.getByLabelText("Message the L2")).toHaveValue("prefer the smaller diff");
-    expect(document.querySelector("[data-pending]")).toBeNull();
-
+    const bubble = await waitFor(() => {
+      const row = within(convo).getByText("prefer the smaller diff").closest(".msg-row") as HTMLElement;
+      expect(within(row).getByRole("alert")).toHaveTextContent("Not sent: no active session.");
+      return row;
+    });
+    expect(bubble).not.toHaveAttribute("data-pending");
+    expect(bubble.querySelector(".bubble")).toHaveAttribute("data-state", "failed");
+    expect(field).toHaveValue("");
+    expect(convo.querySelector(".composer-hint[role=alert]")).toBeNull();
+    expect(within(bubble).getByRole("button", { name: "Retry" })).toBeEnabled();
     refuse = false;
-    await user.click(screen.getByRole("button", { name: "Retry" }));
-    await waitFor(() => expect(fetchMock.mock.calls.filter(([u]) => String(u).includes("/api/l2/message"))).toHaveLength(2));
-    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    await user.click(within(bubble).getByRole("button", { name: action }));
+    const sends = () => fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/l2/message"))
+      .map(([, init]) => JSON.parse(String(init?.body)) as { text: string; request_id: string });
+    if (action === "Retry") {
+      // Retry sends the same words again where they went, under a new send id, and the record settles them.
+      await waitFor(() => expect(sends()).toHaveLength(2));
+      const [first, second] = sends();
+      expect(second!.text).toBe("prefer the smaller diff");
+      expect(second!.request_id).not.toBe(first!.request_id);
+      await waitFor(() => expect(within(convo).queryByRole("alert")).toBeNull());
+      await waitFor(() => expect(within(convo).getByText("prefer the smaller diff").closest(".msg-row")).not.toHaveAttribute("data-pending"));
+      expect(within(convo).getAllByText("prefer the smaller diff")).toHaveLength(1);
+      expect(field).toHaveValue("");
+    } else {
+      // Edit takes the message off the conversation and hands its words back to the field.
+      expect(within(convo).queryByText("prefer the smaller diff", { selector: ".bubble *, .bubble" })).toBeNull();
+      expect(field).toHaveValue("prefer the smaller diff");
+      expect(sends()).toHaveLength(1);
+    }
+    expect(sessionStorage.getItem("altitude.submitted:task/altitude/fix-timer")).toBeNull();
   });
 
   it("says when the attempt has no session file", async () => {
@@ -1346,7 +1368,7 @@ describe("Task on the phone", () => {
     await waitFor(() => expect(actionCall(fetchMock)).toBeDefined());
   });
 
-  it.each([409, 500, 200])("keeps send outcome %i and newer typing across a Live session switch", async (status) => {
+  it.each([409, 500, 200])("keeps send outcome %i on its bubble and newer typing across a Live session switch", async (status) => {
     setViewport(390);
     let finish!: (response: Response) => void;
     const response = new Promise<Response>((resolve) => { finish = resolve; });
@@ -1364,22 +1386,30 @@ describe("Task on the phone", () => {
     if (status === 200) record = { ...running, messages: [...running.messages, message] };
     await act(async () => { finish(jsonResponse(status === 200 ? { ok: true, message } : { error: "Send failed" }, status)); });
     await user.click(screen.getByRole("link", { name: "Conversation" }));
-    expect(screen.getByLabelText("Message the L2")).toHaveValue(status === 200 ? "New thought" : "Original message\nNew thought");
-    if (status === 409) expect(screen.getByRole("alert")).toHaveTextContent("Not sent. Retry");
-    else if (status === 500) {
-      expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery. Check the conversation before sending again.");
+    expect(screen.getByLabelText("Message the L2")).toHaveValue("New thought");
+    expect(document.querySelector(".composer-hint[role=alert]")).toBeNull();
+    const bubble = screen.getByText("Original message").closest(".msg-row") as HTMLElement;
+    if (status === 409) {
+      expect(within(bubble).getByRole("alert")).toHaveTextContent("Not sent: send failed.");
+      expect(within(bubble).getByRole("button", { name: "Retry" })).toBeEnabled();
+      expect(within(bubble).getByRole("button", { name: "Edit" })).toBeEnabled();
+    } else if (status === 500) {
+      // An unknown outcome is never sent again from here: its words can only be copied to the draft.
+      expect(within(bubble).getByText("Unconfirmed", { exact: true })).toBeInTheDocument();
+      expect(within(bubble).getByRole("button", { name: "Copy to draft" })).toBeEnabled();
       expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
     } else {
       expect(screen.queryByRole("alert")).toBeNull();
       expect(screen.getAllByText("Original message")).toHaveLength(1);
+      expect(bubble).not.toHaveAttribute("data-pending");
     }
   });
 
-  it.each([true, false])("keeps mixed send failures unconfirmed across views, refusal first: %s", async (refusalFirst) => {
+  it.each([true, false])("keeps each failed send on its own bubble across views, and re-pairing returns them in send order, refusal first: %s", async (refusalFirst) => {
     setViewport(390);
     const finishes: Array<(response: Response) => void> = [];
     stub(running, { message: () => new Promise<Response>((resolve) => finishes.push(resolve)) });
-    const { user } = renderApp({ route });
+    const { user, queryClient, router } = renderApp({ route });
     const field = await screen.findByLabelText("Message the L2");
     for (const text of ["Refused draft", "Unconfirmed draft"]) {
       await user.type(field, text);
@@ -1391,16 +1421,244 @@ describe("Task on the phone", () => {
       await act(async () => finishes[index]!(jsonResponse({ error: "Send failed" }, index === 0 ? 409 : 500)));
     }
     await user.click(screen.getByRole("link", { name: "Conversation" }));
-    const restored = screen.getByLabelText("Message the L2");
-    expect(restored).toHaveValue(refusalFirst ? "Unconfirmed draft\nRefused draft\nNew draft" : "Refused draft\nUnconfirmed draft\nNew draft");
-    await user.type(restored, " edited");
-    expect(screen.getByRole("alert")).toHaveTextContent("Could not confirm delivery. Check the conversation before sending again.");
+    expect(field).toHaveValue("New draft");
+    expect(document.querySelector(".composer-hint[role=alert]")).toBeNull();
+    const refused = screen.getByText("Refused draft").closest(".msg-row") as HTMLElement;
+    const unconfirmed = screen.getByText("Unconfirmed draft").closest(".msg-row") as HTMLElement;
+    expect(within(refused).getByRole("alert")).toHaveTextContent("Not sent: send failed.");
+    expect(within(refused).getByRole("button", { name: "Retry" })).toBeEnabled();
+    expect(within(unconfirmed).getByText("Unconfirmed", { exact: true })).toBeInTheDocument();
+    expect(within(unconfirmed).queryByRole("button", { name: "Retry" })).toBeNull();
+    // Pairing again starts the app fresh (PairGate.tsx): the copies no message shows return to the field in send
+    // order, and an unknown outcome among them keeps the cautious hint.
+    await act(async () => { await router.navigate("/settings"); });
+    act(() => queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "access" }));
+    await act(async () => { await router.navigate(route); });
+    const restored = await screen.findByLabelText("Message the L2");
+    expect(restored).toHaveValue("Refused draft\nUnconfirmed draft");
+    expect(document.querySelector(".composer-hint[role=alert]")).toHaveTextContent("Could not confirm delivery. Check the conversation before sending again.");
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(screen.queryByText("Refused draft", { selector: ".bubble *, .bubble" })).toBeNull();
+    expect(finishes).toHaveLength(2);
+  });
+
+  it.each([409, 200])("a send that finishes %i after pairing again cleared its message returns its words only if it failed", async (status) => {
+    setViewport(390);
+    let finish!: (response: Response) => void;
+    stub(running, { message: () => new Promise<Response>((resolve) => { finish = resolve; }) });
+    const { user, queryClient, router } = renderApp({ route });
+    const field = await screen.findByLabelText("Message the L2");
+    await user.type(field, "Sent before pairing again");
     await user.click(screen.getByRole("button", { name: "Send" }));
-    await act(async () => finishes[2]!(jsonResponse({ ok: true, message: { id: "confirmed", at: ago(0), role: running.messages[0]!.role, text: "Confirmed correction" } })));
-    expect(screen.queryByRole("alert")).toBeNull();
-    expect(restored).toHaveValue("");
-    expect(finishes).toHaveLength(3);
+    // Pairing again starts the app fresh while the request is still out (PairGate.tsx): the message is gone.
+    await act(async () => { await router.navigate("/settings"); });
+    act(() => queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "access" }));
+    await act(async () => { await router.navigate(route); });
+    const fresh = await screen.findByLabelText("Message the L2");
+    expect(fresh).toHaveValue("");
+    await user.type(fresh, "Typed since");
+    await act(async () => finish(status === 409 ? jsonResponse({ error: "Send failed" }, 409)
+      : jsonResponse({ ok: true, message: { id: "m-late", at: new Date().toISOString(), role: "operator", text: "Sent before pairing again" } })));
+    if (status === 409) {
+      // No message shows the refusal, so its words return to the field at once, ahead of what was typed since.
+      await waitFor(() => expect(fresh).toHaveValue("Sent before pairing again\nTyped since"));
+      expect(document.querySelector(".composer-hint[role=alert]")).toHaveTextContent("Not sent.");
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    } else {
+      expect(fresh).toHaveValue("Typed since");
+      expect(document.querySelector(".composer-hint[role=alert]")).toBeNull();
+    }
+    expect(screen.queryByText("Sent before pairing again", { selector: ".bubble *, .bubble" })).toBeNull();
+  });
+
+  it.each([409, 500])("recovered words (failure %i) come back once with Back after leaving the task", async (status) => {
+    setViewport(390);
+    let finish!: (response: Response) => void;
+    stub(running, { message: () => new Promise<Response>((resolve) => { finish = resolve; }) });
+    const { user, queryClient, router } = renderApp({ route });
+    const field = await screen.findByLabelText("Message the L2");
+    await user.type(field, "Recovered once");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await act(async () => { await router.navigate("/settings"); });
+    act(() => queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "access" }));
+    await act(async () => { await router.navigate(route); });
+    await act(async () => finish(jsonResponse({ error: "Send failed" }, status)));
+    await waitFor(() => expect(screen.getByLabelText("Message the L2")).toHaveValue("Recovered once"));
+    // Leaving moves the recovered words to recovery storage while the task's Back memory also keeps them.
+    await act(async () => { await router.navigate("/settings"); });
+    await act(async () => { await router.navigate(-1); });
+    await waitFor(() => expect(screen.getByLabelText("Message the L2")).toHaveValue("Recovered once"));
+    expect(document.querySelector(".composer-hint[role=alert]")).toHaveTextContent(status === 409 ? "Not sent." : "Could not confirm delivery.");
+  });
+
+  it("recovered words edited from another visit to the task come back as edited with Back, once", async () => {
+    setViewport(390);
+    let finish!: (response: Response) => void;
+    stub(running, { message: () => new Promise<Response>((resolve) => { finish = resolve; }) });
+    const { user, queryClient, router } = renderApp({ route });
+    await user.type(await screen.findByLabelText("Message the L2"), "First words");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await act(async () => { await router.navigate("/settings"); });
+    act(() => queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "access" }));
+    await act(async () => { await router.navigate(route); });
+    await act(async () => finish(jsonResponse({ error: "Response lost" }, 500)));
+    await waitFor(() => expect(screen.getByLabelText("Message the L2")).toHaveValue("First words"));
+    // A second visit to the same task, in a new history entry, edits the recovered words.
+    await act(async () => { await router.navigate("/settings"); });
+    await act(async () => { await router.navigate(route); });
+    const second = await screen.findByLabelText("Message the L2");
+    expect(second).toHaveValue("First words");
+    await user.type(second, ", edited");
+    await act(async () => { await router.navigate("/settings"); });
+    // Back to the first visit: its remembered draft is older than the recovered words, which come back as edited.
+    await act(async () => { await router.navigate(-1); });
+    await act(async () => { await router.navigate(-1); });
+    await act(async () => { await router.navigate(-1); });
+    await waitFor(() => expect(screen.getByLabelText("Message the L2")).toHaveValue("First words, edited"));
+    expect(document.querySelector(".composer-hint[role=alert]")).toHaveTextContent("Could not confirm delivery.");
+  });
+
+  it.each([false, true])("recovered words cleared on another visit stay cleared with Back (reads failing: %s)", async (failing) => {
+    setViewport(390);
+    let finish!: (response: Response) => void;
+    stub(running, { message: () => new Promise<Response>((resolve) => { finish = resolve; }) });
+    const { user, queryClient, router } = renderApp({ route });
+    await user.type(await screen.findByLabelText("Message the L2"), "First words");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await act(async () => { await router.navigate("/settings"); });
+    act(() => queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "access" }));
+    await act(async () => { await router.navigate(route); });
+    await act(async () => finish(jsonResponse({ error: "Response lost" }, 500)));
+    await waitFor(() => expect(screen.getByLabelText("Message the L2")).toHaveValue("First words"));
+    // A second visit to the same task, in a new history entry, clears the recovered words.
+    await act(async () => { await router.navigate("/settings"); });
+    await act(async () => { await router.navigate(route); });
+    expect(await screen.findByLabelText("Message the L2")).toHaveValue("First words");
+    const storage = failing ? vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Read denied"); }) : null;
+    try {
+      await user.clear(screen.getByLabelText("Message the L2"));
+    } finally { storage?.mockRestore(); }
+    await act(async () => { await router.navigate("/settings"); });
+    // Back to the first visit: it kept none of the recovered words, so nothing returns.
+    await act(async () => { await router.navigate(-1); });
+    await act(async () => { await router.navigate(-1); });
+    await act(async () => { await router.navigate(-1); });
+    await screen.findByRole("heading", { name: "Fix the timer" });
+    expect(screen.getByLabelText("Message the L2")).toHaveValue("");
+    expect(document.querySelector(".composer-hint[role=alert]")).toBeNull();
+  });
+
+  it.each(["clears", "sends"])("recovered words left while their copy cannot be read stay gone with Back once another visit %s them", async (consume) => {
+    setViewport(390);
+    let finish!: (response: Response) => void;
+    let sent = 0;
+    stub(running, { message: () => ++sent === 1 ? new Promise<Response>((resolve) => { finish = resolve; }) : Promise.resolve(jsonResponse({ ok: true })) });
+    const { user, queryClient, router } = renderApp({ route });
+    await user.type(await screen.findByLabelText("Message the L2"), "First words");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await act(async () => { await router.navigate("/settings"); });
+    act(() => queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "access" }));
+    await act(async () => { await router.navigate(route); });
+    await act(async () => finish(jsonResponse({ error: "Response lost" }, 500)));
+    await waitFor(() => expect(screen.getByLabelText("Message the L2")).toHaveValue("First words"));
+    // Leaving while storage cannot be read, then a second visit, in a new history entry, uses the recovered words.
+    const storage = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Read denied"); });
+    try {
+      await act(async () => { await router.navigate("/settings"); });
+    } finally { storage.mockRestore(); }
+    await act(async () => { await router.navigate(route); });
+    expect(await screen.findByLabelText("Message the L2")).toHaveValue("First words");
+    if (consume === "clears") await user.clear(screen.getByLabelText("Message the L2"));
+    else await user.click(screen.getByRole("button", { name: "Send" }));
+    await act(async () => { await router.navigate("/settings"); });
+    // Back to the first visit: it kept none of the recovered words, so nothing returns.
+    await act(async () => { await router.navigate(-1); });
+    await act(async () => { await router.navigate(-1); });
+    await act(async () => { await router.navigate(-1); });
+    await screen.findByRole("heading", { name: "Fix the timer" });
+    expect(screen.getByLabelText("Message the L2")).toHaveValue("");
+  });
+
+  it("words typed after clearing recovered words come back once with Back", async () => {
+    setViewport(390);
+    let finish!: (response: Response) => void;
+    stub(running, { message: () => new Promise<Response>((resolve) => { finish = resolve; }) });
+    const { user, queryClient, router } = renderApp({ route });
+    await user.type(await screen.findByLabelText("Message the L2"), "First words");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await act(async () => { await router.navigate("/settings"); });
+    act(() => queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "access" }));
+    await act(async () => { await router.navigate(route); });
+    await act(async () => finish(jsonResponse({ error: "Response lost" }, 500)));
+    await waitFor(() => expect(screen.getByLabelText("Message the L2")).toHaveValue("First words"));
+    await user.clear(screen.getByLabelText("Message the L2"));
+    await user.type(screen.getByLabelText("Message the L2"), "New draft");
+    await act(async () => { await router.navigate("/settings"); });
+    await act(async () => { await router.navigate(-1); });
+    await screen.findByRole("heading", { name: "Fix the timer" });
+    expect(screen.getByLabelText("Message the L2")).toHaveValue("New draft");
+    expect(document.querySelector(".composer-hint[role=alert]")).toBeNull();
+  });
+
+  it.each(["leaves", "sends"])("a new visit while storage reads fail shows recovered words from this page's copy, and its edits stay once (%s)", async (next) => {
+    setViewport(390);
+    let finish!: (response: Response) => void;
+    let sends = 0;
+    const fetchMock = stub(running, { message: () => ++sends === 1 ? new Promise<Response>((resolve) => { finish = resolve; }) : Promise.resolve(jsonResponse({ ok: true })) });
+    const { user, queryClient, router } = renderApp({ route });
+    await user.type(await screen.findByLabelText("Message the L2"), "First words");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await act(async () => { await router.navigate("/settings"); });
+    act(() => queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "access" }));
+    await act(async () => { await router.navigate(route); });
+    await act(async () => finish(jsonResponse({ error: "Response lost" }, 500)));
+    await waitFor(() => expect(screen.getByLabelText("Message the L2")).toHaveValue("First words"));
+    // Reads fail through leaving, a new visit and typing there.
+    const storage = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Read denied"); });
+    try {
+      await act(async () => { await router.navigate("/settings"); });
+      await act(async () => { await router.navigate(route); });
+      expect(await screen.findByLabelText("Message the L2")).toHaveValue("First words");
+      await user.type(screen.getByLabelText("Message the L2"), " and more");
+    } finally { storage.mockRestore(); }
+    if (next === "sends") {
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      await waitFor(() => expect(sends).toBe(2));
+      expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/l2/message")).map(([, init]) => JSON.parse(String(init?.body)).text)).toEqual(["First words", "First words and more"]);
+    }
+    await act(async () => { await router.navigate("/settings"); });
+    await act(async () => { await router.navigate(-1); });
+    await screen.findByRole("heading", { name: "Fix the timer" });
+    if (next === "sends") {
+      expect(screen.getByLabelText("Message the L2")).toHaveValue("");
+      expect(document.querySelector(".composer-hint[role=alert]")).toBeNull();
+    } else {
+      await waitFor(() => expect(screen.getByLabelText("Message the L2")).toHaveValue("First words and more"));
+      expect(document.querySelector(".composer-hint[role=alert]")).toHaveTextContent("Could not confirm delivery.");
+    }
+  });
+
+  it("recovered words edited while their copy cannot be read come back as edited on a new visit to the task", async () => {
+    setViewport(390);
+    let finish!: (response: Response) => void;
+    stub(running, { message: () => new Promise<Response>((resolve) => { finish = resolve; }) });
+    const { user, queryClient, router } = renderApp({ route });
+    await user.type(await screen.findByLabelText("Message the L2"), "First words");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await act(async () => { await router.navigate("/settings"); });
+    act(() => queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "access" }));
+    await act(async () => { await router.navigate(route); });
+    await act(async () => finish(jsonResponse({ error: "Response lost" }, 500)));
+    await waitFor(() => expect(screen.getByLabelText("Message the L2")).toHaveValue("First words"));
+    const storage = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Read denied"); });
+    try {
+      await user.type(screen.getByLabelText("Message the L2"), ", edited");
+      await act(async () => { await router.navigate("/settings"); });
+    } finally { storage.mockRestore(); }
+    // A new history entry has no remembered draft; the edit made while the copy could not be read comes back.
+    await act(async () => { await router.navigate(route); });
+    await waitFor(() => expect(screen.getByLabelText("Message the L2")).toHaveValue("First words, edited"));
+    expect(document.querySelector(".composer-hint[role=alert]")).toHaveTextContent("Could not confirm delivery.");
   });
 
   it("does not restore an earlier task's failed send into the destination task", async () => {
@@ -1454,9 +1712,13 @@ describe("L2 activity and steering", () => {
     const field = await screen.findByRole("textbox", { name: "Message the L2" });
     await user.type(field, "Keep this correction");
     await user.click(screen.getByRole("button", { name: "Send" }));
-    await screen.findByText("You cannot send messages or answers here.", { exact: false });
+    await screen.findByText("This page lost access.", { exact: false });
     expect(field).toBeDisabled();
-    expect(field).toHaveValue("Keep this correction");
+    expect(field).toHaveValue("");
+    // The message says why it was not sent, with no action while the field cannot be used.
+    const bubble = screen.getByText("Keep this correction").closest(".msg-row") as HTMLElement;
+    expect(within(bubble).getByRole("alert")).toHaveTextContent("Not sent: access denied.");
+    expect(within(bubble).queryByRole("button")).toBeNull();
     expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
     if (width === 390) {
       await user.click(screen.getByRole("link", { name: "Live session" }));
@@ -1469,7 +1731,8 @@ describe("L2 activity and steering", () => {
     await user.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled());
     expect(field).toBeEnabled();
-    expect(field).toHaveValue("Keep this correction");
+    expect(within(bubble).getByRole("button", { name: "Retry" })).toBeEnabled();
+    expect(within(bubble).getByRole("button", { name: "Edit" })).toBeEnabled();
   });
 
   it.each([390, 1440])("replaces fresh public words without adding replies and hides stale or missing evidence at %i", async (width) => {

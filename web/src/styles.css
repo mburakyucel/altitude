@@ -1693,7 +1693,9 @@
 .task-reading { position: relative; }
 /* Phone views sit side by side on a track (SPEC.md §3.10): the layout rests it on the current view and a
  * drag slides it with the finger by transform, so fixed overlays keep the viewport at rest. */
-.task-views { overflow: hidden; }
+/* Clipped, not hidden: a hidden box still scrolls when the browser brings an element into view, which left
+ * the track resting partway between views. */
+.task-views { overflow: clip; }
 .task-tab-slot { display: contents; }
 .task-track { display: flex; flex: none; width: 100%; min-height: 0; }
 .task-view { display: flex; flex: 0 0 100%; min-width: 0; min-height: 0; }

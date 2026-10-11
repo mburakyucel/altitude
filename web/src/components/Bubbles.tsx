@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { clockText, dayText, exactTime } from "../data/observed";
 import { Prose, ProseAt } from "./Prose";
@@ -149,6 +149,7 @@ export function Coordination({
   at,
   images = 0,
   onOpen,
+  enter,
   children,
 }: {
   text: string;
@@ -156,11 +157,12 @@ export function Coordination({
   at?: string | null;
   images?: number;
   onOpen?: () => void;
+  enter?: boolean;
   children?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <MessageRow at={at} role="l3">
+    <MessageRow at={at} role="l3" enter={enter}>
       <div className="coordination" data-open={open || undefined}>
         <div className="coordination-line">
           <span className="sys-dot" aria-hidden />
@@ -188,4 +190,31 @@ export function Typing({ label = "L3 is answering" }: { label?: string }) {
       </div>
     </div>
   );
+}
+
+/** A failure line on a message: "Not sent: <reason>." in the server's own words, or the bare outcome. */
+export function notDone(what: string, reason?: string): string {
+  const words = reason?.trim().replace(/\.+$/, "");
+  return words ? `${what}: ${words.charAt(0).toLowerCase()}${words.slice(1)}.` : `${what}.`;
+}
+
+/**
+ * Entrance (SPEC.md §3.6): a row that first appears while this view is open fades in once. Whatever the view
+ * opened with appears at once, and so does a row already known under another of its ids: a message moving
+ * between the outbox, the queue and the history, or a reply passing from its stream to its stored copy.
+ */
+export function useEntrance(ready: boolean) {
+  const state = useRef({ opened: false, known: new Set<string>(), decided: new Map<string, boolean>() });
+  useEffect(() => { if (ready) state.current.opened = true; });
+  return useCallback((key: string, ...ids: (string | null | undefined)[]) => {
+    const { opened, known, decided } = state.current;
+    const named = [key, ...ids].filter((id): id is string => Boolean(id));
+    let entering = decided.get(key);
+    if (entering === undefined) {
+      entering = opened && !named.some((id) => known.has(id));
+      decided.set(key, entering);
+    }
+    for (const id of named) known.add(id);
+    return entering;
+  }, []);
 }

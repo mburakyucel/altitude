@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { Dispatch, ReactNode, RefObject, SetStateAction } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode, RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Link, NavLink, useLocation, useMatch, useNavigate, useParams } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -7,7 +7,7 @@ import type { UseQueryResult } from "@tanstack/react-query";
 import { ApiError, imageSendRefused, removeL2Message, sendL2Message, taskAction, useOverview, useTask, useSendNow } from "../data/api";
 import { SendNow, SendNowError } from "../components/SendNow";
 import { BusyLabel } from "../components/StatusMark";
-import type { Decision, L2MessageInput, Overview, TaskMessage, TaskView } from "../data/api";
+import type { Decision, Overview, TaskMessage, TaskView } from "../data/api";
 import { InlineProse, ProseScope } from "../components/Prose";
 import { ProseTerminal } from "../components/CodeBlock";
 import { requestCommand } from "../data/terminalCommand";
@@ -15,16 +15,17 @@ import { agoText, dayText, localTimes, modelName, when } from "../data/observed"
 import { questionPath, selections, turnLabel } from "../data/decisions";
 import { stoppedByCoordinator, taskExplanation } from "../data/taskStatus";
 import { holdText } from "../components/TaskCard";
-import { Bubble, Coordination, DayDivider, MessageRow, RemoveMessage, Reply } from "../components/Bubbles";
+import { Bubble, Coordination, DayDivider, MessageRow, RemoveMessage, Reply, notDone, useEntrance } from "../components/Bubbles";
 import { Choice, deliveryChoice } from "../components/Choice";
-import Composer from "../components/Composer";
+import Composer, { markSubmitted, recoveryHoldsDraft, releaseSubmitted, returnToComposer } from "../components/Composer";
+import { dropTaskOutgoing, startTaskOutgoing, updateTaskOutgoing, useTaskOutbox, type SendTarget } from "../data/outbox";
+import type { TaskOutgoing } from "../data/outbox";
 import { TaskActivity } from "../components/TaskActivity";
 import { Stamp } from "../components/Stamp";
 import { SteeringControls, SteeringNotice, useTaskSteering } from "../components/TaskSteering";
 import type { Steering } from "../components/TaskSteering";
 import type { ImageSubmission } from "../components/ImageDraft";
 import { MessageImages, PendingImages } from "../components/MessageImages";
-import type { ImagePreview } from "../components/MessageImages";
 import { Question, QuestionSet, ReviewDecision } from "../components/DecisionCard";
 import type { QuestionOrigin } from "../components/DecisionCard";
 import { TaskContext, TokenUsage } from "../components/TokenUsage";
@@ -217,7 +218,6 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
 
 // ---- the conversation (SPEC.md §3.3 bubbles and prose, §3.6 composer, §3.10 states) ------------
 
-interface PendingMessage { id: string; text: string; images?: ImagePreview[] }
 
 /** An L2 reply's validation captures open in their own tab, leaving the conversation and draft in place. */
 function CaptureLink({ project, slug, message }: { project: string; slug: string; message: TaskMessage }) {
@@ -228,9 +228,9 @@ function CaptureLink({ project, slug, message }: { project: string; slug: string
   </a>;
 }
 
-function TaskConversation({ project, task, facts, readOnly, checking, refresh, draft, setDraft, pending, setPending, steering, active, denied, setDenied, questionVisit, selection, onEscapeOwnership, reviewControls }: {
+function TaskConversation({ project, task, facts, readOnly, checking, refresh, draft, setDraft, steering, active, denied, setDenied, questionVisit, selection, onEscapeOwnership, reviewControls }: {
   project: string; task: TaskView; facts: Facts; readOnly: boolean; checking: boolean; refresh: () => void;
-  draft: string; setDraft: (value: string) => void; pending: PendingMessage | null; setPending: Dispatch<SetStateAction<PendingMessage | null>>;
+  draft: string; setDraft: (value: string) => void;
   steering: Steering; active: boolean; denied: boolean; setDenied: (denied: boolean) => void; questionVisit: number;
   selection: RefObject<{ start: number; end: number } | null>; onEscapeOwnership: (owned: boolean) => void;
   reviewControls: ReviewControls;
@@ -272,19 +272,30 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   const reading = useRef(0);
   const pinned = useRef<number | null>(null);
   const [accessRefresh, setAccessRefresh] = useState(0);
-  const submission = useRef<L2MessageInput | null>(null);
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => { mounted.current = false; setPending(null); };
-  }, [setPending]);
   const messages = task.messages ?? [];
-  // The stored row carries the submission id: once it renders, it has settled the pending bubble in place.
+  const conversation = `task/${project}/${task.slug}`;
+  const enter = useEntrance(true);
+  // Each message stays on screen from Send until the task's record lists it under its send id, wherever the
+  // operator went meanwhile; a failed one stays with its reason (SPEC.md §3.10).
+  const outbox = useTaskOutbox(project, task.slug);
+  const listed = useMemo(() => new Set(messages.map((message) => message.id)), [messages]);
+  const pending = outbox.filter((entry) => !listed.has(entry.id));
   useEffect(() => {
-    if (pending && messages.some((message) => message.id === pending.id)) setPending(null);
-  }, [messages, pending, setPending]);
+    const leaving = outbox.filter((entry) => listed.has(entry.id));
+    if (!leaving.length) return;
+    for (const entry of leaving) if (entry.copy) releaseSubmitted(conversation, entry.copy);
+    dropTaskOutgoing(queryClient, project, task.slug, new Set(leaving.map((entry) => entry.id)));
+  }, [outbox, listed, conversation, project, task.slug, queryClient]);
+  // A failed message keeps its recovery copy while it shows; pairing clears both.
+  const shownCopy = useCallback((copy: string) => outbox.some((entry) => entry.copy === copy), [outbox]);
+  const removeFailedAt = useRef<number | null>(null);
   const removal = useMutation({
     mutationFn: (id: string) => removeL2Message(project, task.slug, id),
+    onMutate: () => { removeFailedAt.current = null; },
+    onError: (error) => {
+      removeFailedAt.current = Date.now();
+      if (error instanceof ApiError && [401, 403].includes(error.status)) setDenied(true);
+    },
     onSuccess: async (_result, id) => {
       await queryClient.cancelQueries({ queryKey: ["task", project, task.slug] });
       queryClient.setQueryData<TaskView>(["task", project, task.slug], (cached) => cached && ({ ...cached,
@@ -297,7 +308,11 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
   // Queued messages share one Send now, under the last of them (SPEC.md §3.10).
   const waiting = messages.filter((row) => row.delivery?.state === "queued" && (row.delivery.removable || row.delivery.send_now_pending));
   const lastWaiting = waiting.at(-1);
-  const sendingNow = sendNow.isPending || waiting.some((row) => row.delivery?.send_now_pending);
+  // A failed removal says "Not removed" only once a read after it still lists the message; one the session
+  // took meanwhile (409) needs no line, its own state says it (SPEC.md §3.10).
+  const readAt = queryClient.getQueryState(["task", project, task.slug])?.dataUpdatedAt ?? 0;
+  const notRemoved = removal.isError && !(removal.error instanceof ApiError && removal.error.status === 409)
+    && removeFailedAt.current !== null && readAt > removeFailedAt.current ? removal.variables : undefined;
   const anchorKey = `${location.key}:${questionVisit}:${returned?.id ?? questionId ?? ""}:${returned?.revision ?? revision ?? ""}`;
   const updateQuestionVisibility = useCallback((node: HTMLDivElement) => {
     const anchor = current && anchors.current.get(`${current.id}:${current.revision}`);
@@ -365,6 +380,43 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     const node = scroller.current;
     if (active && following.current && node) follow(node);
   });
+  // What a message answers and which stopped session it continues. Retry sends to exactly what the message was
+  // sent to, and only while a Send would send there too: a revised question or a new stop takes Edit.
+  const targetOf = (context?: Decision | null): SendTarget => ({
+    ...(steering.state === "stopped" && task.steering?.stop_id ? { stop_id: task.steering.stop_id } : {}),
+    ...(group && group.questions.length > 1 && context && inGroup(context)
+      ? { group_id: group.id, group_revision: group.revision }
+      : context?.id && context.revision != null ? { question_id: context.id, revision: context.revision } : {}) });
+  const send = async (text: string, to: SendTarget, onAccepted?: () => void, images?: ImageSubmission, copy?: string, replaces?: string) => {
+    // A new message brings the operator to the bottom; Retry keeps the reader where they are.
+    if (!replaces) { following.current = true; setLatest(false); }
+    // The stored row keeps the send id as its own, so it settles this bubble in place (SPEC.md §3.6 Sending).
+    const id = (images?.request_id ?? crypto.randomUUID()).replaceAll("-", "");
+    if (copy) markSubmitted(conversation, copy, null);
+    startTaskOutgoing(queryClient, project, task.slug, { id, text, images: images?.previews, replay: images, copy, target: to }, replaces);
+    try {
+      const row = await sendL2Message({ project, slug: task.slug, text, request_id: images?.request_id ?? id, ...to,
+        ...(images ? { images: images.images } : {}) });
+      onAccepted?.();
+      if (copy) releaseSubmitted(conversation, copy);
+      await queryClient.cancelQueries({ queryKey: ["task", project, task.slug] });
+      queryClient.setQueryData<TaskView>(["task", project, task.slug], (cached) =>
+        cached && !cached.messages?.some((message) => message.id === row.id)
+          ? { ...cached, messages: [...(cached.messages ?? []), row] } : cached,
+      );
+    } catch (error) {
+      // The message keeps its bubble: a refusal says why with Retry and Edit; an unknown outcome says Unconfirmed.
+      if (error instanceof ApiError && [401, 403].includes(error.status)) setDenied(true);
+      const refused = images ? imageSendRefused(error) : error instanceof ApiError && error.status < 500;
+      const failure = refused ? "refused" : "unconfirmed";
+      updateTaskOutgoing(queryClient, project, task.slug, id, (current) => ({ ...current, failure,
+        reason: refused && error instanceof Error ? error.message : undefined }));
+      if (copy) markSubmitted(conversation, copy, failure);
+      throw error;
+    } finally {
+      for (const queryKey of [["task", project, task.slug], ["overview"], ["project", project]]) void queryClient.invalidateQueries({ queryKey });
+    }
+  };
   const prepareSend = () => {
     const currentNode = current && anchors.current.get(`${current.id}:${current.revision}`);
     const bounds = scroller.current?.getBoundingClientRect();
@@ -372,39 +424,30 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     const viewingCurrent = bounds && currentBounds && Math.min(bounds.bottom, currentBounds.bottom) - Math.max(bounds.top, currentBounds.top) >= 48;
     // A historical URL does not keep replies attached to an old revision after the reader scrolls
     // to the current question. Merely having a newer record offscreen does not retarget a reply.
-    const context = following.current || viewingCurrent ? current ?? target : target ?? current;
-    return async (text: string, onAccepted: () => void, images?: ImageSubmission) => {
-      following.current = true;
-      setLatest(false);
-      const preview = { id: (images?.request_id ?? crypto.randomUUID()).replaceAll("-", ""), text, images: images?.previews };
-      setPending(preview);
-      try {
-        const input = images && submission.current?.request_id === images.request_id ? submission.current : { project, slug: task.slug, text, request_id: preview.id,
-          ...(steering.state === "stopped" && task.steering?.stop_id ? { stop_id: task.steering.stop_id } : {}),
-          ...(images ? { request_id: images.request_id, images: images.images } : {}),
-          ...(group && group.questions.length > 1 && context && inGroup(context)
-            ? { group_id: group.id, group_revision: group.revision }
-            : context?.id && context.revision != null ? { question_id: context.id, revision: context.revision } : {}) };
-        if (images) submission.current = input;
-        const row = await sendL2Message(input);
-        onAccepted();
-        await queryClient.cancelQueries({ queryKey: ["task", project, task.slug] });
-        queryClient.setQueryData<TaskView>(["task", project, task.slug], (cached) =>
-          cached && !cached.messages?.some((message) => message.id === row.id)
-            ? { ...cached, messages: [...(cached.messages ?? []), row] } : cached,
-        );
-        for (const queryKey of [["task", project, task.slug], ["overview"], ["project", project]]) void queryClient.invalidateQueries({ queryKey });
-        if (images && submission.current?.request_id === images.request_id) submission.current = null;
-      } catch (error) {
-        if (error instanceof ApiError && [401, 403].includes(error.status)) setDenied(true);
-        if (mounted.current && (!images || imageSendRefused(error))) {
-          if (images && submission.current?.request_id === images.request_id) submission.current = null;
-          setPending((current) => current === preview ? null : current);
-        }
-        throw error;
-      }
-    };
+    const to = targetOf(following.current || viewingCurrent ? current ?? target : target ?? current);
+    return (text: string, onAccepted?: () => void, images?: ImageSubmission, copy?: string) => send(text, to, onAccepted, images, copy);
   };
+  const retarget = targetOf(current);
+  const sameTarget = (sent: SendTarget) => (["stop_id", "question_id", "revision", "group_id", "group_revision"] as const)
+    .every((key) => sent[key] === retarget[key]);
+  // Edit hands a refused message's words, and its images, back to the field and takes it off the conversation;
+  // a message whose images do not fit beside the picker's stays.
+  const edit = (entry: TaskOutgoing) => {
+    if (!returnToComposer(conversation, entry.text, entry.images)) return;
+    dropTaskOutgoing(queryClient, project, task.slug, new Set([entry.id]));
+    if (entry.copy) releaseSubmitted(conversation, entry.copy);
+  };
+  // Retry sends the same words, and images, to the same question and session, under a new send id.
+  const retry = (entry: TaskOutgoing) => void send(entry.text, entry.target, undefined, entry.replay && { ...entry.replay, request_id: crypto.randomUUID() }, entry.copy, entry.id)
+    .catch(() => undefined);
+  // A refused message offers Retry while it would go where it went, and Edit while its images can return to the
+  // picker (images the server already stored cannot); an unknown outcome only copies its words (SPEC.md §3.10).
+  const actionsFor = (entry: TaskOutgoing) => {
+    if (entry.failure !== "refused") return ["Copy to draft"];
+    const actions = [...sameTarget(entry.target) ? ["Retry"] : [], ...entry.replay?.image_ids ? [] : ["Edit"]];
+    return actions.length ? actions : ["Copy to draft"];
+  };
+  const composing = facts.canMessage && !readOnly && !denied;
   const rows: ReactNode[] = [];
   const deliveries = Object.fromEntries(messages.map((message) => [message.id, message.delivery?.state]));
   const shownReviews = latestReviews(task);
@@ -459,18 +502,21 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         rows.push(<ReviewCard key={key} review={review} task={task} controls={reviewControls} target={reviewId === review.id} onRead={() => { following.current = false; }} />);
       }
     } else if (!question && message.role === "system") {
-      rows.push(<p key={key} className="text-meta text-muted"><InlineProse text={message.text} /></p>);
+      rows.push(<p key={key} className="text-meta text-muted" data-enter={enter(`msg:${key}`) || undefined}><InlineProse text={message.text} /></p>);
     } else if (!question) {
+      const removeBlocked = readOnly || checking || denied || removal.isPending || sendNow.isPending || Boolean(message.delivery?.send_now_pending);
       const queueActions = <>
         {message.id === lastWaiting?.id ? <div className="queued-actions">
-          <SendNow task pending={sendingNow}
+          <SendNow task pending={sendNow.isPending}
             disabled={readOnly || checking || denied || removal.isPending || sendNow.isPending || !message.delivery?.send_now}
             reason={waiting.find((row) => row.delivery?.send_now_pending)?.delivery?.send_now_reason ?? message.delivery?.send_now_reason}
             onClick={() => sendNow.mutate(message.id)} />
         </div> : null}
-        {removal.isError && removal.variables === message.id ? <span role="alert">{removal.error instanceof ApiError && [401, 403].includes(removal.error.status) ? "You do not have permission to remove this message." : removal.error instanceof ApiError && removal.error.status === 409 ? removal.error.message : "Removal unconfirmed. Check this message’s status before trying again."}</span> : null}
+        {notRemoved === message.id ? <>
+          <span className="text-danger" role="alert">{notDone("Not removed", removal.error instanceof ApiError ? removal.error.message : undefined)}</span>
+          {message.delivery?.removable ? <span className="message-actions"><button type="button" className="link" disabled={removeBlocked} onClick={() => removal.mutate(message.id)}>Retry</button></span> : null}
+        </> : null}
       </>;
-      const removeBlocked = readOnly || checking || denied || removal.isPending || sendNow.isPending || Boolean(message.delivery?.send_now_pending);
       const chosen = REPLIERS.has(message.role) || message.images?.length ? [] : selections(message, questions);
       if (chosen.length) {
         const state = message.delivery?.state;
@@ -478,39 +524,49 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         // bubble. Each names the question it answers (SPEC.md §3.8.2 Decision selections).
         chosen.forEach((choice, index) => {
           const last = index === chosen.length - 1;
-          rows.push(choice.label ? <MessageRow key={`${key}-${index}`} at={state === "queued" ? null : message.at} mine>
+          rows.push(choice.label ? <MessageRow key={`${key}-${index}`} at={state === "queued" ? null : message.at} mine enter={enter(`choice:${key}:${index}`, index ? null : `msg:${key}`)}>
             <Choice mine label={choice.label} about={choice.about} aboutShown
               {...deliveryChoice(state, choice.question?.resolution?.disposition === "answered" && choice.question.resolution.message_id === message.id)}
               onRemove={message.delivery?.removable ? () => removal.mutate(message.id) : undefined} removing={removeBlocked} />
             {last ? queueActions : null}
-          </MessageRow> : <Bubble key={`${key}-${index}`} text={choice.text} at={message.at} state={state}>
+          </MessageRow> : <Bubble key={`${key}-${index}`} text={choice.text} at={message.at} state={state} enter={enter(`choice:${key}:${index}`, index ? null : `msg:${key}`)}>
             <span className="choice-about">{choice.about}</span>{last ? queueActions : null}
           </Bubble>);
         });
         return;
       }
-      rows.push(!REPLIERS.has(message.role) ? <Bubble key={key} text={message.text} at={message.at}
+      rows.push(!REPLIERS.has(message.role) ? <Bubble key={key} text={message.text} at={message.at} enter={enter(`msg:${key}`)}
         images={<MessageImages project={project} images={message.images} />}
         state={message.delivery?.state}
         side={message.delivery?.removable ? <RemoveMessage message={message.text} removing={removal.isPending && removal.variables === message.id}
           disabled={removeBlocked} onClick={() => removal.mutate(message.id)} /> : undefined}>
         {queueActions}
       </Bubble> :
-        message.role === "l3" ? <Coordination key={key} text={message.text} summary={message.summary} at={message.at} images={message.images?.length} onOpen={() => { following.current = false; }}><MessageImages project={project} images={message.images} /></Coordination>
-        : <Reply key={key} text={message.text} at={message.at} role={message.role}><MessageImages project={project} images={message.images} /><CaptureLink project={project} slug={task.slug} message={message} /></Reply>);
+        message.role === "l3" ? <Coordination key={key} text={message.text} summary={message.summary} at={message.at} images={message.images?.length} enter={enter(`msg:${key}`)} onOpen={() => { following.current = false; }}><MessageImages project={project} images={message.images} /></Coordination>
+        : <Reply key={key} text={message.text} at={message.at} role={message.role} enter={enter(`msg:${key}`)}><MessageImages project={project} images={message.images} /><CaptureLink project={project} slug={task.slug} message={message} /></Reply>);
     }
   });
-  if (pending && !messages.some((message) => message.id === pending.id)) {
-    // The stored row keeps this key, so acceptance settles the same bubble in place (SPEC.md §3.6 Sending).
+  for (const entry of pending) {
     const day = dayText(new Date().toISOString());
-    if (day !== lastDay) rows.push(<DayDivider key={`day-${day}`} label={day} />);
-    rows.push(<Bubble key={pending.id} text={pending.text} at={new Date().toISOString()} state="pending" images={<PendingImages images={pending.images} />} />);
+    if (day !== lastDay) { rows.push(<DayDivider key={`day-${day}`} label={day} />); lastDay = day; }
+    const key = entry.row ?? entry.id;
+    rows.push(<Bubble key={key} text={entry.text} at={new Date().toISOString()} images={<PendingImages images={entry.images} />}
+      enter={enter(`local:${key}`, `msg:${entry.id}`)} state={entry.failure === "refused" ? "failed" : entry.failure ?? "pending"}>
+      {entry.failure === "refused" ? <span className="text-danger" role="alert">{notDone("Not sent", entry.reason)}</span> : null}
+      {composing && entry.failure ? <span className="message-actions">
+        {actionsFor(entry).map((action, index) => <Fragment key={action}>
+          {index ? <span aria-hidden="true">·</span> : null}
+          <button type="button" className="link" disabled={action === "Retry" && (checking || ["stopping", "stop_unconfirmed"].includes(steering.state))}
+            onClick={() => action === "Retry" ? retry(entry) : action === "Edit" ? edit(entry) : returnToComposer(conversation, entry.text)}>{action}</button>
+        </Fragment>)}
+      </span> : null}
+    </Bubble>);
   }
   return (
     <section className="convo" aria-label="Task conversation">
       <p className="sr-only" role="status">{removal.isSuccess ? "Message removed" : ""}</p>
       {(readOnly || denied) ? <p className="conversation-notice" role="alert">
-        {denied ? "You cannot send messages or answers here." : "Showing saved conversation. Refresh before replying or deciding."}{" "}
+        {denied ? "This page lost access." : "Showing saved conversation. Refresh before replying or deciding."}{" "}
         <button className="link" onClick={restoreAccess}>Refresh</button>
       </p> : null}
       {questionId && !target ? <p className="conversation-notice" role="status">This question is unavailable. The task conversation is below.</p> : null}
@@ -527,7 +583,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         updateQuestionVisibility(node);
       }}>
         <div className="convo-col">
-          {messages.length === 0 && !pending ? <p className="convo-empty text-muted">{facts.finished ? "No messages on this task." : "No messages yet."}</p> : null}
+          {messages.length === 0 && !pending.length ? <p className="convo-empty text-muted">{facts.finished ? "No messages on this task." : "No messages yet."}</p> : null}
           {rows}
           {sendNow.isError && waiting.some((row) => row.id === sendNow.variables) ? <SendNowError error={sendNow.error} /> : null}
           {task.review?.history.filter((review) => shownReviews.has(review.id) && !messages.some((message) => message.review_id === review.id)).map((review) => <ReviewCard key={review.id} review={review} task={task} controls={reviewControls} target={reviewId === review.id} onRead={() => { following.current = false; }} />)}
@@ -567,7 +623,8 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
       </div> : null}
       </div>
       {facts.canMessage ? <div className="convo-dock">
-        <Composer active={active} conversation={`task/${project}/${task.slug}`} value={draft} onChange={setDraft} onSubmit={(text, accepted, images) => prepareSend()(text, accepted, images)} prepareSubmit={prepareSend} selection={selection} onEscapeOwnership={onEscapeOwnership}
+        <Composer active={active} conversation={conversation} value={draft} onChange={setDraft} onSubmit={(text, accepted, images, copy) => prepareSend()(text, accepted, images, copy)} prepareSubmit={prepareSend} selection={selection} onEscapeOwnership={onEscapeOwnership}
+        shows={shownCopy}
         imageScope={{ project, task: task.slug, engine: str(task["l2_engine"]) || str(task["engine"]) }}
         ariaLabel="Message the L2" placeholder="Message the L2" disabled={readOnly || denied}
         sendDisabled={["stopping", "stop_unconfirmed"].includes(steering.state)}
@@ -722,13 +779,14 @@ function TaskPage({
   const facts = taskFacts(task, overview.data, project, task.repository);
   const decision = (task.question_group?.questions ?? (task.question ? [task.question] : []))
     .find((question) => question.status === "open" && !question.response);
-  // The unsent message returns with Back/Forward to this history entry, like unsent answers.
+  // The unsent message returns with Back/Forward to this history entry, like unsent answers. Recovered words have one
+  // owner, the recovery copy, which every visit reads; the entry keeps none of them.
   const message = `message:${project}/${task.slug}`;
-  const kept: Record<string, string> = useVisitMemory<string>([message], (): string | undefined => draft || undefined);
+  const kept: Record<string, string> = useVisitMemory<string>([message], (): string | undefined =>
+    draft && !recoveryHoldsDraft(`task/${project}/${task.slug}`, draft) ? draft : undefined);
   const [draft, setDraft] = useState<string>(kept[message] ?? "");
   const [denied, setDenied] = useState(false);
   const [questionVisit, setQuestionVisit] = useState(0);
-  const [pending, setPending] = useState<PendingMessage | null>(null);
   const closeDetails = useCallback(() => setDetailsOpen(false), [setDetailsOpen]);
   const selection = useRef<{ start: number; end: number } | null>(null);
   const [voiceOwnsEscape, setVoiceOwnsEscape] = useState(false);
@@ -832,7 +890,7 @@ function TaskPage({
       void navigate(`${base}/terminal${location.search}`, { replace: true, state: location.state });
     } }
     : { unavailable: "This task has no terminal now." }, [task.worktree, task.state, task.slug, project, base, location.search, location.state, navigate]);
-  const conversation = <ProseScope project={project} repository={task.repository}><ProseTerminal value={runTarget}><TaskConversation project={project} task={task} facts={facts} readOnly={readOnly} checking={checking} refresh={refresh} draft={draft} setDraft={setDraft} pending={pending} setPending={setPending} steering={steering} active={!phone || view === 0} denied={denied} setDenied={setDenied} questionVisit={questionVisit} selection={selection} onEscapeOwnership={setVoiceOwnsEscape} reviewControls={reviewControls} /></ProseTerminal></ProseScope>;
+  const conversation = <ProseScope project={project} repository={task.repository}><ProseTerminal value={runTarget}><TaskConversation project={project} task={task} facts={facts} readOnly={readOnly} checking={checking} refresh={refresh} draft={draft} setDraft={setDraft} steering={steering} active={!phone || view === 0} denied={denied} setDenied={setDenied} questionVisit={questionVisit} selection={selection} onEscapeOwnership={setVoiceOwnsEscape} reviewControls={reviewControls} /></ProseTerminal></ProseScope>;
 
   if (phone) {
     const idleUnless = (index: number) => view !== index && !swipe.dragging ? idle : undefined;

@@ -63,6 +63,22 @@ function Harness({ initial = "Explain this", ...props }: Partial<ComposerProps> 
   return <Composer conversation={`project/${props.imageScope?.project ?? "alpha"}`} value={text} onChange={setText} onSubmit={() => undefined} ariaLabel="Message" placeholder="Message" imageScope={{ project: "alpha" }} {...props} />;
 }
 
+/**
+ * A page's outbox (Conversation.tsx, Task.tsx): a sent message shows its copy, through view changes and remounts,
+ * until the send is accepted. `keep` wraps a send so; only a reload or pairing again loses the outbox (`forget`).
+ */
+function outbox() {
+  const shown = new Set<string>();
+  return {
+    shows: (copy: string) => shown.has(copy),
+    forget: () => shown.clear(),
+    keep: (submit: ComposerProps["onSubmit"]): ComposerProps["onSubmit"] => (text, accepted, images, copy) => {
+      shown.add(copy!);
+      return submit(text, () => { shown.delete(copy!); accepted(); }, images, copy);
+    },
+  };
+}
+
 async function select(files: File[] = [image()]) {
   // Request start does not mean the capability body has reached React yet.
   await act(async () => { await capabilityRead; });
@@ -72,7 +88,7 @@ async function select(files: File[] = [image()]) {
 }
 
 describe("image draft admission", () => {
-  it("voice navigation retains image bytes and the original retry callback without clearing another draft", async () => {
+  it("voice navigation sends image bytes through the original callback, and its failure leaves another draft alone", async () => {
     browser();
     installVoiceBrowser();
     const server = hostVoice("spoken");
@@ -80,28 +96,26 @@ describe("image draft admission", () => {
       if (original.mock.calls.length === 1) throw new TypeError("Lost image receipt");
     });
     const destination = vi.fn();
+    const { shows, keep } = outbox();
     const user = userEvent.setup();
-    const first = render(<Harness onSubmit={original} />);
+    const first = render(<Harness onSubmit={keep(original)} shows={shows} />);
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     await select();
     await listen(user);
     server.connection = "hold";
     await user.click(screen.getByRole("button", { name: "Send" }));
     first.unmount();
-    render(<Harness initial="Other unsent recovery" onSubmit={destination} />);
+    render(<Harness initial="Other unsent recovery" onSubmit={keep(destination)} shows={shows} />);
     expect(screen.getByRole("textbox")).toHaveValue("Explain this");
     await act(async () => server.reconnect());
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not confirm send.");
-    expect(original).toHaveBeenCalledOnce();
+    await waitFor(() => expect(original).toHaveBeenCalledOnce());
     const sent = original.mock.calls[0]?.[2];
     expect(sent?.images).toEqual([{ name: "screen.png", data: btoa("fictional raster") }]);
     expect(sent?.previews[0]?.url).toBe(`data:image/png;base64,${btoa("fictional raster")}`);
-    await user.click(screen.getByRole("button", { name: "Retry" }));
-    await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
-    expect(original).toHaveBeenCalledTimes(2);
-    expect(original.mock.calls[1]?.[2]).toBe(sent);
+    // The conversation shows the failure on its message; the field keeps what was typed since.
+    await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue("Other unsent recovery"));
+    expect(screen.queryByRole("alert")).toBeNull();
     expect(destination).not.toHaveBeenCalled();
-    expect(screen.getByRole("textbox")).toHaveValue("Other unsent recovery");
   });
 
   it("keeps selection local, removes the strip and URLs, and leaves text intact", async () => {
@@ -118,49 +132,36 @@ describe("image draft admission", () => {
     expect(revoke).toHaveBeenCalledWith("blob:image-1");
   });
 
-  it("freezes an unconfirmed immutable send and retries the same identity and bytes", async () => {
+  it("a refused message's words and images edited and sent again go under a fresh identity", async () => {
     browser();
-    const onSubmit = vi.fn(async (_text: string, _accepted: () => void, _images?: ImageSubmission) => { if (onSubmit.mock.calls.length === 1) throw new TypeError("connection lost"); });
+    const onSubmit = vi.fn(async (_text: string, _accepted: () => void, _images?: ImageSubmission, _copy?: string) => { if (onSubmit.mock.calls.length === 1) throw new ApiError(422, "Choose a smaller image."); });
+    const { shows, keep } = outbox();
     const user = userEvent.setup();
-    render(<Harness onSubmit={onSubmit} />);
+    render(<Harness conversation="project/edited-images" onSubmit={keep(onSubmit)} shows={shows} />);
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     await select();
     await user.click(screen.getByRole("button", { name: "Send" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not confirm send.");
-    expect(screen.getByRole("textbox")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Add images" })).toBeDisabled();
-    expect(screen.queryByLabelText("Selected images")).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Retry" }));
-    await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
-    expect(onSubmit.mock.calls[1]?.[2]).toBe(onSubmit.mock.calls[0]?.[2]);
-    expect(onSubmit.mock.calls[0]?.[2]?.images?.[0]).toEqual({ name: "screen.png", data: btoa("fictional raster") });
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    // The message shows the refusal; the field and picker stay as Send left them until Edit.
+    expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByRole("textbox")).toHaveValue("");
-    expect(screen.queryByLabelText("Selected images")).toBeNull();
-  });
-
-  it("restores a refused draft and its images, with a fresh identity for an edited retry", async () => {
-    browser();
-    const onSubmit = vi.fn(async (_text: string, _accepted: () => void, _images?: ImageSubmission) => { if (onSubmit.mock.calls.length === 1) throw new ApiError(422, "Choose a smaller image."); });
-    const user = userEvent.setup();
-    render(<Harness onSubmit={onSubmit} />);
-    await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
-    await select();
-    await user.click(screen.getByRole("button", { name: "Send" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Not sent. Choose a smaller image.");
-    expect(screen.getByRole("textbox")).toHaveValue("Explain this");
-    expect(screen.getByLabelText("Selected images")).toBeVisible();
+    const [text, , sent] = onSubmit.mock.calls[0]!;
+    await act(async () => returnToComposer("project/edited-images", text, sent!.previews));
+    await screen.findByLabelText("Selected images");
     await user.type(screen.getByRole("textbox"), " more");
     await user.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
     expect(onSubmit.mock.calls[1]?.[0]).toBe("Explain this more");
-    expect(onSubmit.mock.calls[1]?.[2]?.request_id).not.toBe(onSubmit.mock.calls[0]?.[2]?.request_id);
+    expect(onSubmit.mock.calls[1]?.[2]?.images).toEqual(sent!.images);
+    expect(onSubmit.mock.calls[1]?.[2]?.request_id).not.toBe(sent!.request_id);
   });
 
   it("where the message shows its own failure, Send hands the images to it and Edit returns them to the picker", async () => {
     browser();
     const onSubmit = vi.fn(async (_text: string, _accepted: () => void, _images?: ImageSubmission, _copy?: string) => { throw new ApiError(422, "refused"); });
+    const { shows, keep } = outbox();
     const user = userEvent.setup();
-    render(<Harness conversation="project/edit-images" onSubmit={onSubmit} showsFailures />);
+    render(<Harness conversation="project/edit-images" onSubmit={keep(onSubmit)} shows={shows} />);
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     await select();
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -185,7 +186,7 @@ describe("image draft admission", () => {
     const onSubmit = vi.fn((_text: string, accepted: () => void, images?: ImageSubmission) =>
       images ? new Promise<void>((resolve) => { accept = () => { accepted(); resolve(); }; }) : Promise.resolve());
     const user = userEvent.setup();
-    render(<Harness conversation="project/next-during-images" onSubmit={onSubmit} showsFailures />);
+    render(<Harness conversation="project/next-during-images" onSubmit={onSubmit} />);
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     await select();
     await user.click(screen.getByRole("button", { name: "Send" }));
@@ -204,7 +205,7 @@ describe("image draft admission", () => {
     browser();
     const onSubmit = vi.fn(async (_text: string, accepted: () => void, _images?: ImageSubmission) => { accepted(); });
     const user = userEvent.setup();
-    render(<Harness conversation="project/send-order" initial="" onSubmit={onSubmit} showsFailures />);
+    render(<Harness conversation="project/send-order" initial="" onSubmit={onSubmit} />);
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     await select();
     await user.type(screen.getByRole("textbox"), "With the image");
@@ -234,7 +235,7 @@ describe("image draft admission", () => {
 
   it("Edit changes nothing when the message's images do not fit beside the picker's, and says why", async () => {
     browser();
-    render(<Harness conversation="project/full-picker" initial="" showsFailures />);
+    render(<Harness conversation="project/full-picker" initial="" />);
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     await select([image(), image(), image(), image()]);
     const preview = { name: "earlier.png", url: "data:image/png;base64,iVBORw0KGgo=" };
@@ -307,7 +308,7 @@ describe("image draft admission", () => {
     expect(onSubmit.mock.calls[0]?.[2]?.images).toHaveLength(1);
   });
 
-  it("releases local previews on navigation and a late admission cannot restore another draft", async () => {
+  it("releases local previews once sent, and a late refusal after navigation cannot restore another draft", async () => {
     const revoke = browser();
     let refuse: (error: Error) => void = () => undefined;
     const onSubmit = () => new Promise<void>((_resolve, reject) => { refuse = reject; });
@@ -316,26 +317,32 @@ describe("image draft admission", () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     await select();
     await user.click(screen.getByRole("button", { name: "Send" }));
-    await screen.findByText("Sending images…");
-    view.rerender(<Harness key="beta" imageScope={{ project: "beta" }} />);
-    refuse(new ApiError(422, "refused"));
-    await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue("Explain this"));
+    // The message's bubble shows the images from Send; the picker lets go of its own previews.
+    expect(screen.queryByLabelText("Selected images")).toBeNull();
+    expect(revoke).toHaveBeenCalledWith("blob:image-1");
+    view.rerender(<Harness key="beta" initial="Beta draft" imageScope={{ project: "beta" }} />);
+    await act(async () => refuse(new ApiError(422, "refused")));
+    expect(screen.getByRole("textbox")).toHaveValue("Beta draft");
     expect(screen.queryByLabelText("Selected images")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(revoke).toHaveBeenCalledWith("blob:image-1");
   });
 
-  it("recovers an unconfirmed image caption after leaving, without persisting or resending the image", async () => {
+  it("recovers an unconfirmed image caption after a reload, without persisting or resending the image", async () => {
     browser();
     const onSubmit = vi.fn(async () => { throw new TypeError("Lost receipt"); });
+    const { shows, forget, keep } = outbox();
     const user = userEvent.setup();
-    const view = render(<Harness onSubmit={onSubmit} />);
+    const view = render(<Harness onSubmit={keep(onSubmit)} shows={shows} />);
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     await select();
     await user.click(screen.getByRole("button", { name: "Send" }));
-    await screen.findByText("Could not confirm send.", { exact: false });
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("textbox")).toHaveValue("");
     view.unmount();
-    render(<Harness initial="" onSubmit={onSubmit} />);
+    // A reload loses the message that showed the caption.
+    forget();
+    render(<Harness initial="" onSubmit={keep(onSubmit)} shows={shows} />);
     expect(await screen.findByRole("alert")).toHaveTextContent("Check the conversation before sending again.");
     expect(screen.getByRole("textbox")).toHaveValue("Explain this");
     expect(screen.queryByLabelText("Selected images")).toBeNull();
@@ -393,34 +400,6 @@ describe("image draft admission", () => {
     expect(screen.getByRole("textbox")).toHaveValue("Explain this");
     expect(revoke).toHaveBeenCalledWith("blob:image-1");
     expect(revoke).toHaveBeenCalledWith("blob:image-2");
-  });
-
-  it.each([false, true])("an older text refusal survives newer image admission (recovery write fails: %s)", async (writeFails) => {
-    browser();
-    let refuseText: (error: Error) => void = () => undefined;
-    let acceptImage: () => void = () => undefined;
-    const onSubmit = vi.fn((_text: string, _accepted: () => void, images?: ImageSubmission) => images
-      ? new Promise<void>((resolve) => { acceptImage = resolve; })
-      : new Promise<void>((_resolve, reject) => { refuseText = reject; }));
-    const user = userEvent.setup();
-    render(<Harness onSubmit={onSubmit} />);
-    await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
-    await user.click(screen.getByRole("button", { name: "Send" }));
-    await select(); await user.type(screen.getByRole("textbox"), "Caption for the image");
-    await user.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
-    await act(async () => { refuseText(new ApiError(409, "Earlier text was refused")); });
-    expect(screen.getByRole("textbox")).toBeDisabled();
-    expect(screen.getByRole("textbox")).toHaveValue("");
-    expect(screen.getByText("Sending images…")).toBeVisible();
-    expect(screen.queryByRole("alert")).toBeNull();
-    if (writeFails) vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("full", "QuotaExceededError"); });
-    await act(async () => { acceptImage(); });
-    expect(screen.getByRole("textbox")).toBeEnabled();
-    expect(screen.queryByLabelText("Selected images")).toBeNull();
-    expect(screen.getByRole("textbox")).toHaveValue("Explain this");
-    expect(screen.getByRole("alert")).toHaveTextContent("Not sent.");
-    if (writeFails) expect(screen.getByRole("alert")).toHaveTextContent("Recovery could not be updated.");
   });
 });
 
