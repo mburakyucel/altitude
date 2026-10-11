@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Link, NavLink, useLocation, useMatch, useNavigate, useParams } from "react-router";
@@ -18,7 +18,7 @@ import { holdText } from "../components/TaskCard";
 import { Bubble, Coordination, DayDivider, MessageRow, RemoveMessage, Reply, notDone, useEntrance } from "../components/Bubbles";
 import { Choice, deliveryChoice } from "../components/Choice";
 import Composer, { markSubmitted, releaseSubmitted, returnToComposer } from "../components/Composer";
-import { dropTaskOutgoing, startTaskOutgoing, updateTaskOutgoing, useTaskOutbox } from "../data/outbox";
+import { dropTaskOutgoing, startTaskOutgoing, updateTaskOutgoing, useTaskOutbox, type SendTarget } from "../data/outbox";
 import type { TaskOutgoing } from "../data/outbox";
 import { TaskActivity } from "../components/TaskActivity";
 import { Stamp } from "../components/Stamp";
@@ -380,6 +380,43 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     const node = scroller.current;
     if (active && following.current && node) follow(node);
   });
+  // What a message answers and which stopped session it continues. Retry sends to exactly what the message was
+  // sent to, and only while a Send would send there too: a revised question or a new stop takes Edit.
+  const targetOf = (context?: Decision | null): SendTarget => ({
+    ...(steering.state === "stopped" && task.steering?.stop_id ? { stop_id: task.steering.stop_id } : {}),
+    ...(group && group.questions.length > 1 && context && inGroup(context)
+      ? { group_id: group.id, group_revision: group.revision }
+      : context?.id && context.revision != null ? { question_id: context.id, revision: context.revision } : {}) });
+  const send = async (text: string, to: SendTarget, onAccepted?: () => void, images?: ImageSubmission, copy?: string, replaces?: string) => {
+    // A new message brings the operator to the bottom; Retry keeps the reader where they are.
+    if (!replaces) { following.current = true; setLatest(false); }
+    // The stored row keeps the send id as its own, so it settles this bubble in place (SPEC.md §3.6 Sending).
+    const id = (images?.request_id ?? crypto.randomUUID()).replaceAll("-", "");
+    if (copy) markSubmitted(conversation, copy, null);
+    startTaskOutgoing(queryClient, project, task.slug, { id, text, images: images?.previews, replay: images, copy, target: to }, replaces);
+    try {
+      const row = await sendL2Message({ project, slug: task.slug, text, request_id: images?.request_id ?? id, ...to,
+        ...(images ? { images: images.images } : {}) });
+      onAccepted?.();
+      if (copy) releaseSubmitted(conversation, copy);
+      await queryClient.cancelQueries({ queryKey: ["task", project, task.slug] });
+      queryClient.setQueryData<TaskView>(["task", project, task.slug], (cached) =>
+        cached && !cached.messages?.some((message) => message.id === row.id)
+          ? { ...cached, messages: [...(cached.messages ?? []), row] } : cached,
+      );
+    } catch (error) {
+      // The message keeps its bubble: a refusal says why with Retry and Edit; an unknown outcome says Unconfirmed.
+      if (error instanceof ApiError && [401, 403].includes(error.status)) setDenied(true);
+      const refused = images ? imageSendRefused(error) : error instanceof ApiError && error.status < 500;
+      const failure = refused ? "refused" : "unconfirmed";
+      updateTaskOutgoing(queryClient, project, task.slug, id, (current) => ({ ...current, failure,
+        reason: refused && error instanceof Error ? error.message : undefined }));
+      if (copy) markSubmitted(conversation, copy, failure);
+      throw error;
+    } finally {
+      for (const queryKey of [["task", project, task.slug], ["overview"], ["project", project]]) void queryClient.invalidateQueries({ queryKey });
+    }
+  };
   const prepareSend = () => {
     const currentNode = current && anchors.current.get(`${current.id}:${current.revision}`);
     const bounds = scroller.current?.getBoundingClientRect();
@@ -387,42 +424,12 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     const viewingCurrent = bounds && currentBounds && Math.min(bounds.bottom, currentBounds.bottom) - Math.max(bounds.top, currentBounds.top) >= 48;
     // A historical URL does not keep replies attached to an old revision after the reader scrolls
     // to the current question. Merely having a newer record offscreen does not retarget a reply.
-    const context = following.current || viewingCurrent ? current ?? target : target ?? current;
-    return async (text: string, onAccepted?: () => void, images?: ImageSubmission, copy?: string, replaces?: string) => {
-      // A new message brings the operator to the bottom; Retry keeps the reader where they are.
-      if (!replaces) { following.current = true; setLatest(false); }
-      // The stored row keeps the send id as its own, so it settles this bubble in place (SPEC.md §3.6 Sending).
-      const id = (images?.request_id ?? crypto.randomUUID()).replaceAll("-", "");
-      if (copy) markSubmitted(conversation, copy, null);
-      startTaskOutgoing(queryClient, project, task.slug, { id, text, images: images?.previews, replay: images, copy }, replaces);
-      try {
-        const row = await sendL2Message({ project, slug: task.slug, text, request_id: images?.request_id ?? id,
-          ...(steering.state === "stopped" && task.steering?.stop_id ? { stop_id: task.steering.stop_id } : {}),
-          ...(images ? { images: images.images } : {}),
-          ...(group && group.questions.length > 1 && context && inGroup(context)
-            ? { group_id: group.id, group_revision: group.revision }
-            : context?.id && context.revision != null ? { question_id: context.id, revision: context.revision } : {}) });
-        onAccepted?.();
-        if (copy) releaseSubmitted(conversation, copy);
-        await queryClient.cancelQueries({ queryKey: ["task", project, task.slug] });
-        queryClient.setQueryData<TaskView>(["task", project, task.slug], (cached) =>
-          cached && !cached.messages?.some((message) => message.id === row.id)
-            ? { ...cached, messages: [...(cached.messages ?? []), row] } : cached,
-        );
-      } catch (error) {
-        // The message keeps its bubble: a refusal says why with Retry and Edit; an unknown outcome says Unconfirmed.
-        if (error instanceof ApiError && [401, 403].includes(error.status)) setDenied(true);
-        const refused = images ? imageSendRefused(error) : error instanceof ApiError && error.status < 500;
-        const failure = refused ? "refused" : "unconfirmed";
-        updateTaskOutgoing(queryClient, project, task.slug, id, (current) => ({ ...current, failure,
-          reason: refused && error instanceof Error ? error.message : undefined }));
-        if (copy) markSubmitted(conversation, copy, failure);
-        throw error;
-      } finally {
-        for (const queryKey of [["task", project, task.slug], ["overview"], ["project", project]]) void queryClient.invalidateQueries({ queryKey });
-      }
-    };
+    const to = targetOf(following.current || viewingCurrent ? current ?? target : target ?? current);
+    return (text: string, onAccepted?: () => void, images?: ImageSubmission, copy?: string) => send(text, to, onAccepted, images, copy);
   };
+  const retarget = targetOf(current);
+  const sameTarget = (sent: SendTarget) => (["stop_id", "question_id", "revision", "group_id", "group_revision"] as const)
+    .every((key) => sent[key] === retarget[key]);
   // Edit hands a refused message's words, and its images, back to the field and takes it off the conversation;
   // a message whose images do not fit beside the picker's stays.
   const edit = (entry: TaskOutgoing) => {
@@ -430,9 +437,16 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     dropTaskOutgoing(queryClient, project, task.slug, new Set([entry.id]));
     if (entry.copy) releaseSubmitted(conversation, entry.copy);
   };
-  // Retry sends the same words, and images, as a Send would now: to the question on screen, under a new send id.
-  const retry = (entry: TaskOutgoing) => void prepareSend()(entry.text, undefined, entry.replay && { ...entry.replay, request_id: crypto.randomUUID() }, entry.copy, entry.id)
+  // Retry sends the same words, and images, to the same question and session, under a new send id.
+  const retry = (entry: TaskOutgoing) => void send(entry.text, entry.target, undefined, entry.replay && { ...entry.replay, request_id: crypto.randomUUID() }, entry.copy, entry.id)
     .catch(() => undefined);
+  // A refused message offers Retry while it would go where it went, and Edit while its images can return to the
+  // picker (images the server already stored cannot); an unknown outcome only copies its words (SPEC.md §3.10).
+  const actionsFor = (entry: TaskOutgoing) => {
+    if (entry.failure !== "refused") return ["Copy to draft"];
+    const actions = [...sameTarget(entry.target) ? ["Retry"] : [], ...entry.replay?.image_ids ? [] : ["Edit"]];
+    return actions.length ? actions : ["Copy to draft"];
+  };
   const composing = facts.canMessage && !readOnly && !denied;
   const rows: ReactNode[] = [];
   const deliveries = Object.fromEntries(messages.map((message) => [message.id, message.delivery?.state]));
@@ -539,13 +553,12 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
     rows.push(<Bubble key={key} text={entry.text} at={new Date().toISOString()} images={<PendingImages images={entry.images} />}
       enter={enter(`local:${key}`, `msg:${entry.id}`)} state={entry.failure === "refused" ? "failed" : entry.failure ?? "pending"}>
       {entry.failure === "refused" ? <span className="text-danger" role="alert">{notDone("Not sent", entry.reason)}</span> : null}
-      {composing && entry.failure === "refused" ? <span className="message-actions">
-        <button type="button" className="link" disabled={checking || ["stopping", "stop_unconfirmed"].includes(steering.state)} onClick={() => retry(entry)}>Retry</button>
-        {/* Images already stored by the server cannot return to the picker, so only Retry sends them. */}
-        {entry.replay?.image_ids ? null : <><span aria-hidden="true">·</span>
-          <button type="button" className="link" onClick={() => edit(entry)}>Edit</button></>}
-      </span> : composing && entry.failure ? <span className="message-actions">
-        <button type="button" className="link" onClick={() => returnToComposer(conversation, entry.text)}>Copy to draft</button>
+      {composing && entry.failure ? <span className="message-actions">
+        {actionsFor(entry).map((action, index) => <Fragment key={action}>
+          {index ? <span aria-hidden="true">·</span> : null}
+          <button type="button" className="link" disabled={action === "Retry" && (checking || ["stopping", "stop_unconfirmed"].includes(steering.state))}
+            onClick={() => action === "Retry" ? retry(entry) : action === "Edit" ? edit(entry) : returnToComposer(conversation, entry.text)}>{action}</button>
+        </Fragment>)}
       </span> : null}
     </Bubble>);
   }

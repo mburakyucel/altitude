@@ -8,7 +8,7 @@ import threading
 from service_support import configure, serve
 from tests.support import add_worktree, make_repo
 from tests.fakes import FakeL2
-from altitude import config, engines, server, state as S, tasks as T
+from altitude import config, dispatch, engines, server, state as S, tasks as T
 
 
 def main():
@@ -145,6 +145,21 @@ def main():
             elif mode == "blocked":
                 T.block(project, row["slug"], "Keep the original page size?", actor="l2")
                 T.escalate(project, row["slug"], "Keep the original page size?")
+            elif mode in ("group", "revise-group"):
+                # Two open questions form one group; revising one publishes the group's next revision.
+                if mode == "revise-group":
+                    T.resume(project, row["slug"])
+                    first, second = [q for q in S.load_task(project, row["slug"])["questions"] if q["status"] == "open"][-2:]
+                    members = [{"id": first["id"], "question": "Keep the original page size of 20?"}, {"id": second["id"], "question": second["question"]}]
+                else:
+                    members = [{"question": "Keep the original page size?"}, {"question": "Which page should load first?"}]
+                T.block(project, row["slug"], "Two pagination choices.", actor="l2",
+                        updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE}, questions={"questions": members})
+            elif mode == "restop":
+                # Another device continues the stopped session and stops it again: the page's stop is no longer current.
+                T.message(project, row["slug"], T.OPERATOR_MESSAGE_ROLE, "Continue from the saved page.", stop_id=row["stop_id"])
+                dispatch.resume(project, row["slug"])
+                dispatch.stop(project, row["slug"], reason="Fixture stop")
             elif mode == "finished":
                 T.message(project, row["slug"], "l2", "Pagination and steering are verified.")
                 row = S.load_task(project, row["slug"])

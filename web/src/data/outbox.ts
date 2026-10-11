@@ -1,7 +1,7 @@
 import { useCallback, useRef, useSyncExternalStore } from "react";
 import { notifyManager, useQueryClient } from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
-import type { ChatMessage, ChatView } from "./api";
+import type { ChatMessage, ChatView, L2MessageInput } from "./api";
 import type { ImageSubmission } from "../components/ImageDraft";
 import type { ImagePreview } from "../components/MessageImages";
 
@@ -198,6 +198,8 @@ export function useOutbox(project: string): Outgoing[] {
  */
 
 /** One message to the L2 on its way, or one that failed and stands on its own bubble. */
+export type SendTarget = Pick<L2MessageInput, "stop_id" | "question_id" | "revision" | "group_id" | "group_revision">;
+
 export interface TaskOutgoing {
   /** The send id, which the stored row keeps as its id. */
   id: string;
@@ -209,6 +211,8 @@ export interface TaskOutgoing {
   replay?: ImageSubmission;
   /** The composer's recovery copy of this send (Composer.tsx), released once the message needs it no more. */
   copy?: string;
+  /** What the message answers and which stopped session it continues, as sent; Retry sends to exactly these. */
+  target: SendTarget;
   failure?: "refused" | "unconfirmed";
   reason?: string;
 }
