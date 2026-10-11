@@ -51,7 +51,7 @@ function times(text: string, anchor: string | null | undefined, repository?: str
   for (const token of timeTokens(text, when(anchor) ?? undefined)) {
     nodes.push(<Fragment key={`text-${token.index}`}>{references(text.slice(end, token.index), repository)}</Fragment>);
     nodes.push(token.until
-      ? <Fragment key={token.index}><Clock at={token.at} />{token.separator}<Clock at={token.until} /></Fragment>
+      ? <span key={token.index} className="prose-time"><Clock at={token.at} />{token.separator}<Clock at={token.until} /></span>
       : token.dated ? <Stamp key={token.index} at={token.at} className="prose-time" /> : <Clock key={token.index} at={token.at} />);
     end = token.index + token.text.length;
   }

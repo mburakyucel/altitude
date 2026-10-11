@@ -1918,6 +1918,10 @@
   text-decoration: underline;
   overflow-wrap: anywhere;
 }
+/* A written time read in local time (SPEC.md §4.5): plain text that never breaks inside a time or range. */
+.prose-time {
+  white-space: nowrap;
+}
 /* A message L3 sent the L2 (§3.10): one left-aligned meta line; Show opens the original in place. */
 .coordination {
   display: flex;
