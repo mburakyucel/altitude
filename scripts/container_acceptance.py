@@ -26,14 +26,16 @@ from scripts import container
 
 def proc_exposure(command, ident: str, evidence: Path):
     """Retain the approved exposure inventory; any broader predicate fails release (#543)."""
-    from tests.container_proc_probe import differences, require_tuple
+    from tests.container_proc_probe import differences, observed_tuple, require_tuple
     source=Path(__file__).resolve().parents[1]/'tests'
     policy=json.loads((source/'fixtures/container-proc-policy.json').read_text())
     program=(source/'container_proc_probe.py').read_text()
     controller=json.loads(command(['inspect',ident]))[0]
-    observed=require_tuple(json.loads(command(['info','--format=json'])),
-                           controller['HostConfig']['NetworkMode'],policy)
+    info=json.loads(command(['info','--format=json']))
+    observed=observed_tuple(info,controller['HostConfig']['NetworkMode'])
     (evidence/'proc-tuple.json').write_text(json.dumps(observed,indent=2)+'\n')
+    # An unreviewed tuple still records both inventories, so its review has the evidence it needs.
+    reviewed=observed in policy['tuples']
     failures=[]
     for uid in ('0','1000'):
         baseline_name='fixture-proc-default-'+uuid.uuid4().hex
@@ -46,9 +48,10 @@ def proc_exposure(command, ident: str, evidence: Path):
             command(['rm','--force','--ignore',baseline_name],timeout=30)
         (evidence/('proc-default-'+uid+'.json')).write_text(json.dumps(baseline,indent=2)+'\n')
         value=json.loads(command(['exec','--user',uid,ident,'python3','-c',program],timeout=30))
-        value['unexpected_exposure']=differences(value,policy,baseline)
+        value['unexpected_exposure']=differences(value,policy,baseline) if reviewed else None
         (evidence/('proc-exposure-'+uid+'.json')).write_text(json.dumps(value,indent=2)+'\n')
-        failures.extend('uid'+uid+':'+item for item in value['unexpected_exposure'])
+        failures.extend('uid'+uid+':'+item for item in value['unexpected_exposure'] or [])
+    require_tuple(info,observed['network'],policy)
     if failures:
         raise RuntimeError('Unexpected proc exposure; stop for review: '+str(failures))
 
