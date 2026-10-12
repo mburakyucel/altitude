@@ -2705,9 +2705,10 @@ def _references_held_pr(task: dict, question: dict) -> bool:
 
 def _require_merge_mark(project: str, task: dict, published: set) -> None:
     """While the task's PR waits for the operator's review, a newly published operator question with choices says
-    whether it is that PR's merge question: unmarked, it showed a second Approve merge beside the review card."""
+    whether it is that PR's merge question: unmarked, it showed a second Approve merge beside the review card.
+    An approved PR shows no card, so nothing needs the mark."""
     number = _held_pr(task, S.read_events(project, task["slug"]))
-    if not (number and (task.get("delivery") or task.get("adopted_pr"))):
+    if not (number and (task.get("delivery") or task.get("adopted_pr"))) or approved_pr(project, task):
         return
     if any(q["status"] == "open" and (q["id"], q["revision"]) not in published and q["audience"] == "operator"
            and question_choices(q) and not q.get("review") and not _references_held_pr(task, q)
