@@ -65,7 +65,10 @@ while True:
 def user_data(public_key: str) -> str:
     # The same packages line as installation_vm.user_data, which scripts/container_vm.py extends.
     return "\n".join(["#cloud-config", "ssh_pwauth: false", "ssh_authorized_keys:", f"  - {public_key}",
-                      "bootcmd:", "  - " + json.dumps(["modprobe", "vmw_vsock_virtio_transport"]),
+                      # The guest has no clock it reads at boot and would start at its image's build time,
+                      # which fails TLS; it starts from this Mac's time instead and NTP refines it.
+                      "bootcmd:", "  - " + json.dumps(["date", "-u", "-s", f"@{int(time.time())}"]),
+                      "  - " + json.dumps(["modprobe", "vmw_vsock_virtio_transport"]),
                       # bootcmd runs before sysinit.target, so the relay must not wait for it.
                       "  - " + json.dumps(["systemd-run", "--no-block", "--property=DefaultDependencies=no",
                                            "--unit=altitude-vsock-ssh", "python3", "-c", RELAY]),
