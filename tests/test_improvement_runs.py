@@ -570,3 +570,34 @@ class TestCoordinatorVerbs(RunCase):
         result = self.alt("improve", "post", run["id"], "--keep", "1", env={"ALTITUDE_PROJECT": self.project})
         self.assertIn("only through the project's coordinator socket", result.stderr)
         self.assertNotEqual(result.returncode, 0)
+
+
+class TestPastSuggestions(RunCase):
+    """Past suggestions, the feature's own measure: the runs that posted or found nothing, the suggestions they showed,
+    how many became tasks and how many the operator dismissed."""
+    def test_past_suggestions_sum_runs_suggestions_tasks_and_dismissals(self):
+        self.assertNotIn("past", improve.settings(self.project, now=NOW))
+        self.patch(improve, "CUTOFF", NOW - timedelta(days=60))
+        improve_eval.load({"project": self.project, "now": NOW.isoformat(), "tasks": [
+            *(finished_task(n, 13 + n) for n in range(1, 7)), *(finished_task(20 + n, n) for n in range(1, 7))]})
+        self.agree()
+        then = NOW - timedelta(days=12)
+        self.answer = {"suggestions": [suggestion(anchors=["CITE"])]}
+        first = improve.start(self.project, self.operator("Get improvement suggestions"), now=then)["run"]
+        improve.execute(self.project, first)
+        improve.post(self.project, first, [1], [], now=then)
+        improve.resolve(self.project, f"{first}/1", "accepted", self.operator("Make a task", 1), "all of it",
+                        now=then + timedelta(hours=1))
+        status = S.task_dir(self.project, "dock-1") / "status.json"
+        S.write_json(status, {**S.read_json(status, {}), "improvement": f"{first}/1"})
+        second = improve.start(self.project, self.operator("Again please", 2), now=NOW)["run"]
+        improve.execute(self.project, second)
+        improve.post(self.project, second, [1], [], now=NOW)
+        improve.resolve(self.project, f"{second}/1", "dismissed", self.operator("Dismiss it", 3), "no", now=NOW)
+        self.assertEqual(improve.settings(self.project, now=NOW)["past"],
+                         {"line": "2 runs · 2 suggestions · 1 became a task · 1 dismissed", "latest": second})
+
+    def test_a_review_with_nothing_to_suggest_counts_as_a_run_without_a_card(self):
+        self.started()
+        self.assertEqual(improve.settings(self.project, now=NOW)["past"],
+                         {"line": "1 run · 0 suggestions · 0 became tasks · 0 dismissed", "latest": None})

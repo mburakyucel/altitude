@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useLocation } from "react-router";
+import { Link, useLocation } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { sendImprovementSetting, useImprovementSettings } from "../data/api";
 import type { ImprovementSettings } from "../data/api";
@@ -11,7 +11,7 @@ import { UnavailableAction } from "./UnavailableAction";
 
 /*
  * Improvement suggestions in a project's settings (design/wireframes/improvement-review/PROPOSAL.md, "Turning it
- * on"): the Weekly switch, Get suggestions now and what is sent. Without the operator's agreement to the current
+ * on"): the Weekly switch, Get suggestions now, what is sent and Past suggestions. Without the operator's agreement to the current
  * terms either control opens the sheet first; nothing saves or runs until Turn on, which agrees and then completes
  * the press. Every line is read from the record.
  */
@@ -91,6 +91,8 @@ export function ImprovementSection({ name }: { name: string }) {
             </>}
         </div> : null}
       <p className="settings-row improve-sent"><small>{data.terms.sent}</small></p>
+      {data.past ? <p className="settings-row improve-past"><small>{data.past.line}{data.past.latest ? <>
+        {" · "}<Link to={`/projects/${encodeURIComponent(name)}#improvement-${data.past.latest}`}>Latest</Link></> : null}</small></p> : null}
     </div>
     {saving === "weekly" ? <StatusMark label="Saving…" /> : null}
     {error ? <p role="alert" className="text-meta text-danger">{error}</p> : null}

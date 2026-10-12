@@ -161,6 +161,35 @@ describe.each([390, 1440])("improvement suggestions settings at %ipx", (width) =
     expect(within(area).queryByText("Saving…")).not.toBeInTheDocument();
   });
 
+  it("sums past suggestions once there is a run, with Latest opening the latest card in chat", async () => {
+    setViewport(width);
+    serve({ agreed: true, past: { line: "4 runs · 7 suggestions · 3 became tasks · 2 dismissed", latest: "0123456789ab" } });
+    const { user, router } = renderApp({ route: "/settings/projects/altitude" });
+    const area = await section();
+    expect(await within(area).findByText(/^4 runs · 7 suggestions · 3 became tasks · 2 dismissed/)).toBeVisible();
+    await user.click(within(area).getByRole("link", { name: "Latest" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/projects/altitude"));
+    expect(router.state.location.hash).toBe("#improvement-0123456789ab");
+  });
+
+  it("has no Past suggestions line before the first run", async () => {
+    setViewport(width);
+    serve({});
+    renderApp({ route: "/settings/projects/altitude" });
+    const area = await section();
+    expect(within(area).getByText(terms.sent)).toBeInTheDocument();
+    expect(within(area).queryByText(/ runs? · /)).toBeNull();
+  });
+
+  it("has no Latest when no review has had a card", async () => {
+    setViewport(width);
+    serve({ past: { line: "1 run · 0 suggestions · 0 became tasks · 0 dismissed", latest: null } });
+    renderApp({ route: "/settings/projects/altitude" });
+    const area = await section();
+    expect(within(area).getByText("1 run · 0 suggestions · 0 became tasks · 0 dismissed")).toBeVisible();
+    expect(within(area).queryByRole("link", { name: "Latest" })).toBeNull();
+  });
+
   it("has no section where reviews are not available", async () => {
     setViewport(width);
     serve({ available: false });
