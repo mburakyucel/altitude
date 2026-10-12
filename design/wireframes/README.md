@@ -14,6 +14,12 @@ preview and steering for #302 on 2026-09-09; the delivered application remains h
 Stop stays directly accessible beside the composer and in Live session on phone and desktop;
 task metadata and Reject remain in the compact phone details sheet.
 
+## Improvement suggestions
+
+[The design](improvement-review/PROPOSAL.md) the operator approved on 2026-10-12, with its eval.
+`improvement-review/gen.py` writes the boards beside it; review captures stay in its ignored
+`captures/`. Each rollout step folds what it builds into the system docs and walks its own states.
+
 ## Approved image-input interaction
 
 [Images in project and task chats](IMAGE_INPUT.md) describes the interaction approved on 2026-09-10.

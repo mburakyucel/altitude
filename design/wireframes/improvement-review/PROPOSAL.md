@@ -1,7 +1,7 @@
 # Improvement review: proposal
 
-Status: the operator approved this design; the eval in **Proving it works** awaits their decision on
-its use of your plan. Nothing here is built yet. In the interface the feature is called **Improvement
+Status: the operator approved this design and its eval on 2026-10-12. Nothing here is built yet; the
+rollout below builds it in held steps. In the interface the feature is called **Improvement
 suggestions**, so it is never confused with the code and proposal reviews that Needs you already
 shows; this document calls one run "a review".
 
