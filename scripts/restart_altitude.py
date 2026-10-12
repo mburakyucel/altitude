@@ -282,12 +282,13 @@ def main() -> int:
         head = require_deployed_checkout()
         print("Building the web app in a staging directory...")
         staging = build_bundle()
-        # The bundle and the backend the service exports at startup must be the same commit.
-        if (moved := require_deployed_checkout()) != head:
-            raise Transient(f"the checkout moved from {head[:7]} to {moved[:7]} during the build")
         print("Checking that Altitude is idle...")
         require_idle()
         attempt = requested_at()
+        # With the gate closed no self-deploy moves the checkout again, so the bundle and the backend the service
+        # exports at startup are the same commit.
+        if (moved := require_deployed_checkout()) != head:
+            raise Transient(f"the checkout moved from {head[:7]} to {moved[:7]} after the build began")
         print("Restarting Altitude and waiting for API/UI health...")
         publish_and_restart(staging)
         staging = None

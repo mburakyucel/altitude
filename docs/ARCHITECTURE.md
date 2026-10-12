@@ -1677,7 +1677,7 @@ to remove the label before completing Stop or bootstrapping again; unreadable re
 Independent worker jobs retain their own coalitions. Monitor's Restart button runs the same path sooner by hand: it appears
 at that narrow quiet point, even while workers run, disappears once restart is under way, and
 the notice leaves when the new process answers with nothing pending. A transient refusal (no quiet-probe
-answer in three tries, work claimed the quiet point, the checkout moved during the build) withdraws the
+answer in three tries, work claimed the quiet point, the checkout moved after the build began) withdraws the
 request with its `error` and a five-minute `retry_at`, and altd requests the unit again at a later quiet point,
 up to three retries. Any other failure, or a transient one past that bound, files a
 system fault naming its reason at once and, while its request is still pending, marks the record `failed`

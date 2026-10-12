@@ -238,17 +238,18 @@ class TestRestartCommand(AltitudeCase):
         self.assertEqual(pending["error"], str(failure))
         self.assertFalse(config.restart_in_progress())
 
-    def activate(self, restart, *, heads=("a" * 40, "a" * 40), idle=None):
-        """Run the unit against a requested activation with fixture checkout heads and quiet probe."""
-        S.write_json(config.MONITOR_DIR / dispatch.RESTART_PENDING,
-                     {**(S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING) or {"files": ["altitude/server.py"]}),
-                      "requested_at": S.now(), "unit": "u"})
+    def activate(self, restart, *, heads=("a" * 40, "a" * 40), idle=None, requested=True):
+        """Run the unit, requested by altd or by hand, with fixture checkout heads and quiet probe."""
+        if requested:
+            S.write_json(config.MONITOR_DIR / dispatch.RESTART_PENDING,
+                         {**(S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING) or {"files": ["altitude/server.py"]}),
+                          "requested_at": S.now(), "unit": "u"})
         checkout = [h if isinstance(h, Exception) else mock.Mock(head=h, behind=1) for h in heads]
         with mock.patch.object(restart, "unit_properties", return_value={"WorkingDirectory": str(restart.ROOT),
                                                                          "Environment": f"ALTITUDE_HOME={config.ROOT}"}), \
                 mock.patch.object(restart.git_policy, "service_preflight", side_effect=checkout), \
                 mock.patch.object(restart, "build_bundle", return_value=self.tmp / "staging"), \
-                mock.patch.object(restart, "require_idle", side_effect=idle), \
+                mock.patch.object(restart, "require_idle", side_effect=idle or restart.require_idle), \
                 mock.patch.object(restart, "publish_and_restart") as publish, \
                 mock.patch.object(restart.incidents, "system_fault") as fault:
             code = restart.main()
@@ -262,15 +263,19 @@ class TestRestartCommand(AltitudeCase):
         self.assertEqual(code, 0)
         publish.assert_called_once(); fault.assert_not_called()
 
-    def test_a_checkout_that_moved_during_the_build_retries_instead_of_activating_a_mismatch(self):
+    def test_a_checkout_that_moved_before_the_gate_closed_retries_instead_of_activating_a_mismatch(self):
+        """A hand run's gate closes only at the quiet check, so a self-deploy can move the checkout until then."""
         restart = load_script()
         self.private_ledgers()
-        code, publish, fault, pending = self.activate(restart, heads=("a" * 40, "b" * 40))
-        self.assertEqual(code, 1)
-        publish.assert_not_called(); fault.assert_not_called()
-        self.assertNotIn("requested_at", pending); self.assertNotIn("failed", pending)
-        self.assertEqual(pending["retries"], 1)
-        self.assertIn("moved from aaaaaaa to bbbbbbb", pending["error"])
+        for requested in (True, False):
+            with self.subTest(requested=requested):
+                (config.MONITOR_DIR / dispatch.RESTART_PENDING).unlink(missing_ok=True)
+                code, publish, fault, pending = self.activate(restart, heads=("a" * 40, "b" * 40), requested=requested)
+                self.assertEqual(code, 1)
+                publish.assert_not_called(); fault.assert_not_called()
+                self.assertNotIn("requested_at", pending); self.assertNotIn("failed", pending)
+                self.assertEqual(pending["retries"], 1)
+                self.assertIn("moved from aaaaaaa to bbbbbbb", pending["error"])
 
     def test_a_dirty_ahead_or_diverged_checkout_parks_at_once_with_its_fault(self):
         restart = load_script()

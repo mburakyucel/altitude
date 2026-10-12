@@ -372,7 +372,7 @@ quiet point through its one-hour execution limit, evidence recording and cleanup
 activates within one validation run. Monitor names the validation run and review tasks it waits for.
 The unit refuses for one of two kinds of reason. A refusal a later quiet point can clear (the quiet
 probe gets no answer in three tries of ten seconds each, work claimed the quiet point first, or the
-checkout moved during the build) withdraws the request and records the reason as `error`, a
+checkout moved after the build began) withdraws the request and records the reason as `error`, a
 `retries` count and a `retry_at` time five minutes later in `monitor/restart-pending.json`; the hold
 lifts and `altd` requests the unit again at the first quiet point after that time, up to three
 retries, without a fault. Any other refusal, or one more transient refusal after the third retry,
@@ -387,7 +387,7 @@ activation, or sooner from the Restart button, with its full retry allowance.
 An explicitly authorized operator can restart sooner by pressing Restart on the web app's banner
 (shown only at the narrow quiet point, including while workers run) or running `make restart`
 from the deployed primary checkout. The command refuses another clone/worktree, a dirty, ahead,
-diverged or other-branch `main`, a checkout that moves during its build, and an in-flight dispatch,
+diverged or other-branch `main`, a checkout that moves after its build begins, and an in-flight dispatch,
 L3 turn, adversarial review, validation run, or report verification. A `main` behind `origin/main` activates the
 head it built, and the deployment tick fast-forwards and marks the rest pending. Both engines run L2 workers in independent transient user units,
 so workers survive and are adopted after restart. Dispatch and
