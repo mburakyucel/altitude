@@ -470,8 +470,10 @@ def _day(at: str) -> str:
 
 
 def _span(start: str, end: str) -> str:
-    """"Oct 5–12", or "Sep 28–Oct 5" across a month."""
+    """"Oct 5–12", "Sep 28–Oct 5" across a month, or "Oct 12" within one day."""
     a, b = _date(start).astimezone(), _date(end).astimezone()
+    if a.date() == b.date():
+        return _day(start)
     return f"{a:%b} {a.day}–{b.day}" if (a.year, a.month) == (b.year, b.month) else f"{_day(start)}–{_day(end)}"
 
 

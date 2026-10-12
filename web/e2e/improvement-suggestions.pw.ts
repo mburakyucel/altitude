@@ -26,7 +26,8 @@ test("posted suggestions read as one reply with run numbers, task links and drop
   await walk.state("01-endings-and-posted-suggestions", { visible: [failed, nothing, heading, first, third, dropped], hidden: [harbor] });
   await expect(post.locator("ol, ul")).toHaveCount(0);
   await expect(post.locator("strong")).toHaveText(["1. Owners re-ask merge questions you already answered", "3. Reports name checks that never ran"]);
-  await expect(post.getByText(/· How agents work$/)).toHaveCount(2);
+  const targets = await post.locator("strong").evaluateAll((titles) => titles.map((t) => t.nextSibling?.textContent?.split("\n")[0]));
+  expect(targets).toEqual([" · How agents work", " · How agents work"]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 
   const links = post.getByRole("link");

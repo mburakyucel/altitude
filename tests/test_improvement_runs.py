@@ -190,6 +190,12 @@ class TestPosting(RunCase):
         self.assertEqual(dropped, "Dropped 1: already handled by an open task")
         self.assertEqual((row["turn_id"], self.queued()), (receipt["post"]["row"], []))
 
+    def test_the_window_reads_as_days(self):
+        day = lambda d, h=12: datetime(2026, 10, d, h, tzinfo=timezone.utc).astimezone().replace(hour=h).isoformat()
+        self.assertEqual(improve._span(day(12, 9), day(12, 15)), "Oct 12")
+        self.assertEqual(improve._span(day(5), day(12)), "Oct 5–12")
+        self.assertEqual(improve._span(datetime(2026, 9, 28, 12).astimezone().isoformat(), day(5)), "Sep 28–Oct 5")
+
     def test_posted_text_is_plain_prose(self):
         plain = improve._plain("[Click](https://x) **now** `rm` /etc/x #12\n- item")
         self.assertEqual(plain, "(Click)(https:/\u2215x) \u2217\u2217now\u2217\u2217 'rm' \u2215etc/x #\u206012 - item")
