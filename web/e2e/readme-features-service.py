@@ -121,7 +121,8 @@ def main():
     S.regen_state_md(PROJECT)
 
     class Handler(server.Handler):
-        def do_POST(self):
+        # Fixture controls answer PUT alone, so they never pass through the application's own routes.
+        def do_PUT(self):
             if self.path == "/fixture/repair":
                 # The coordinator's incident turn: it fixed the machine problem and resumed the task.
                 with readme.minutes_ago(0.1):
@@ -134,7 +135,7 @@ def main():
                                                 "continue where you stopped.", actor="l3")
                 dispatch.run_task_operation(PROJECT, sso)
                 return self._json(S.load_task(PROJECT, sso))
-            return super().do_POST()
+            return self._json({"error": "unknown fixture"}, 404)
 
     serve(Handler, release=terminal.close_all)
 

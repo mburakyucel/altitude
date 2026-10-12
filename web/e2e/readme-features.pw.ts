@@ -71,7 +71,7 @@ test("review before merge, a repaired fault and improvement suggestions", async 
   await expect(signOn).toContainText("A system problem paused work.");
   await signOn.scrollIntoViewIfNeeded();
   await capture("heal-1-fault");
-  expect((await request.post("/fixture/repair")).ok()).toBe(true);
+  expect((await request.put("/fixture/repair")).ok()).toBe(true);
   await page.goto(phone ? "/projects/atlas?tab=work" : "/projects/atlas");  // the coordinator's turn reaches the chat on its next load
   await expect(signOn).toContainText("L2 working");
   await signOn.scrollIntoViewIfNeeded();  // the resumed task joins the end of the working list
