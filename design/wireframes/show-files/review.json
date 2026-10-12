@@ -15,7 +15,7 @@
       "path": "design/wireframes/show-files/captures/PhoneReader.png"
     },
     {
-      "title": "Phone states: reader skeleton, Newer, image failed, gallery 2 / 5, unavailable, denied; card loading, thumbnail failed with retry, earlier card without a cover, files missing",
+      "title": "Phone states: reader skeleton, Newer, image failed, gallery 2 / 5, unavailable, denied; card loading, thumbnail retry, coverless Earlier card, files missing",
       "path": "design/wireframes/show-files/captures/PhoneStates.png"
     },
     {
