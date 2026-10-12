@@ -9,7 +9,7 @@ Usage: python3 design/readme/balance.py
 from pathlib import Path
 
 OUT = Path(__file__).resolve().parents[2] / "docs/images/balance.svg"
-W, H, T = 760, 380, 20.0  # canvas and loop length in seconds
+W, H, T = 760, 340, 20.0  # canvas and loop length in seconds
 FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif"
 INK, MUTED, LINE, ACCENT, TINT = "#1f2328", "#59636e", "#d1d9e0", "#6366f1", "#eef2ff"
 ENGINES = [("Claude", 4), ("Codex", 7)]  # name, percent of the week used at the start
@@ -55,10 +55,8 @@ def main():
            '<defs><filter id="s" x="-10%" y="-20%" width="120%" height="160%"><feDropShadow dx="0" dy="1.5" '
            'stdDeviation="2" flood-color="#0f172a" flood-opacity=".08"/></filter></defs>',
            f'<rect width="{W}" height="{H}" rx="16" fill="#fbfbfd"/>',
-           f'<text x="{CHIP_X}" y="46" font-size="13" fill="#4f46e5" font-weight="700" letter-spacing="1.3">NEW TASKS</text>',
-           f'<text x="{CARD_X}" y="46" font-size="13" fill="#4f46e5" font-weight="700" letter-spacing="1.3">WEEK USED</text>',
-           f'<text x="{CHIP_X}" y="{H - 28}" font-size="16" fill="{MUTED}">Each task goes to the engine that has used less '
-           'of its week, so both are used evenly.</text>']
+           f'<text x="{CHIP_X}" y="46" font-size="15" fill="#4f46e5" font-weight="700" letter-spacing="1.3">NEW TASKS</text>',
+           f'<text x="{CARD_X}" y="46" font-size="15" fill="#4f46e5" font-weight="700" letter-spacing="1.3">WEEK USED</text>']
 
     # The fork: idle grey, the taken branch lit while a task travels it.
     for e in range(2):
@@ -73,7 +71,7 @@ def main():
 
     # A new week: its label, then both meters empty.
     out.append(f'<g opacity="0"><rect x="{W - 32 - 96}" y="28" width="96" height="26" rx="13" fill="{TINT}"/>'
-               f'<text x="{W - 32 - 48}" y="46" font-size="13" fill="#4f46e5" font-weight="600" text-anchor="middle">'
+               f'<text x="{W - 32 - 48}" y="46" font-size="15" fill="#4f46e5" font-weight="600" text-anchor="middle">'
                f'New week</text>{anim("opacity", [(0, 0), (week, 0), (week + 0.3, 1), (fade - 0.4, 1), (fade, 0), (T, 0)])}</g>')
 
     for e, (name, percent) in enumerate(ENGINES):
@@ -84,7 +82,7 @@ def main():
         pulse.append((T, LINE))
         out.append(f'<rect x="{CARD_X}" y="{y}" width="{CARD_W}" height="{CARD_H}" rx="14" fill="#fff" stroke="{LINE}" '
                    f'stroke-width="1.5" filter="url(#s)">{anim("stroke", pulse)}</rect>')
-        out.append(f'<text x="{BAR_X}" y="{y + 40}" font-size="21" fill="{INK}" font-weight="700">{name}</text>')
+        out.append(f'<text x="{BAR_X}" y="{y + 40}" font-size="24" fill="{INK}" font-weight="700">{name}</text>')
         out.append(f'<rect x="{BAR_X}" y="{y + 60}" width="{BAR_W}" height="14" rx="7" fill="#eef0f3"/>')
         width = lambda p: round(BAR_W * p / 100, 1)
         bar, last = [(0, width(percent))], percent
@@ -99,7 +97,7 @@ def main():
         for i, (since, value) in enumerate(shown):
             until = shown[i + 1][0] if i + 1 < len(shown) else empty + 0.7
             frames = [(0, 1), (until, 0), (empty + 0.7, 1)] if i == 0 else [(0, 0), (since, 1), (until, 0)]
-            out.append(f'<text x="{CARD_X + CARD_W - 26}" y="{y + 40}" font-size="18" fill="{MUTED}" text-anchor="end" '
+            out.append(f'<text x="{CARD_X + CARD_W - 26}" y="{y + 40}" font-size="20" fill="{MUTED}" text-anchor="end" '
                        f'opacity="{1 if i == 0 else 0}">{value}% of week{anim("opacity", frames, "discrete")}</text>')
 
     # "Less used" marks the engine the next task goes to.
@@ -111,9 +109,9 @@ def main():
                 frames.append((0 if not frames else p["t0"] - 0.2, state))
                 on = state
         frames.append((week, 0))
-        name_w = 76 if ENGINES[e][0] == "Claude" else 68
-        out.append(f'<g opacity="{frames[0][1]}"><rect x="{BAR_X + name_w + 10}" y="{CARD_Y[e] + 22}" width="84" height="24" '
-                   f'rx="12" fill="{TINT}"/><text x="{BAR_X + name_w + 52}" y="{CARD_Y[e] + 39}" font-size="13" fill="#4f46e5" '
+        name_w = 86 if ENGINES[e][0] == "Claude" else 78
+        out.append(f'<g opacity="{frames[0][1]}"><rect x="{BAR_X + name_w + 10}" y="{CARD_Y[e] + 20}" width="96" height="27" '
+                   f'rx="13.5" fill="{TINT}"/><text x="{BAR_X + name_w + 58}" y="{CARD_Y[e] + 39}" font-size="15" fill="#4f46e5" '
                    f'font-weight="600" text-anchor="middle">less used</text>{anim("opacity", frames, "discrete")}</g>')
 
     # Each task: it slides in, waits a beat, slides into the fork, and a dot carries it along the branch.
@@ -121,7 +119,7 @@ def main():
         t0, go, arrive = p["t0"], p["go"], p["arrive"]
         out.append(f'<g opacity="0"><rect x="{CHIP_X}" y="{MID - 20}" width="{CHIP_W}" height="40" rx="20" fill="#fff" '
                    f'stroke="#a5b4fc" stroke-width="1.5" filter="url(#s)"/><text x="{CHIP_X + 20}" y="{MID + 6}" '
-                   f'font-size="16" fill="{INK}" font-weight="500">{p["title"]}</text>'
+                   f'font-size="18" fill="{INK}" font-weight="500">{p["title"]}</text>'
                    f'<animateTransform attributeName="transform" type="translate" dur="{T}s" repeatCount="indefinite" '
                    f'calcMode="spline" keySplines="0 0 1 1;{EASE};0 0 1 1;{EASE};0 0 1 1" '
                    f'keyTimes="0;{k(t0)};{k(t0 + 0.35)};{k(go)};{k(go + 0.3)};1" values="-18 0;-18 0;0 0;0 0;28 0;28 0"/>'
