@@ -249,9 +249,9 @@ The change-stream outage fixture reports its captured shutdown targets; connecti
 erase them from the count before the response reaches the browser assertion.
 The lost-queue-receipt test waits for the initial streamed reply before installing its overlay,
 so the intended queued request is the only send it interrupts.
-The live-loading measurement waits for the service to finish the transcript read its navigation
-abandoned before measuring the task switch, so that read neither shares the next phase's CPU nor
-outlives the test.
+The live-loading measurement waits for the service to finish the reads its navigations abandoned
+before measuring the warm open and the task switch, so those reads neither share the next phase's
+CPU nor outlive the test.
 The phone swipe walkthrough touches a view only once its switch has committed. A completed swipe
 commits its view together with its URL; a tab click commits in a transition, so the walkthrough
 waits for the previous view to leave, because Playwright counts a view beside the screen as visible.

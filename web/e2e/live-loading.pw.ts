@@ -90,6 +90,11 @@ for (const count of [100, 5000, 20000]) {
         if (info.project.name === "phone") await page.getByRole("link", { name: "Live session", exact: true }).click();
       };
       for (const temperature of ["cold", "warm"]) {
+        if (temperature === "warm") {
+          // Leaving the task abandons its polling reads, which the service finishes before the warm open measures.
+          await page.goto("about:blank");
+          expect((await request.post("/fixture/control", { data: { slug: task.slug, mode: "settle" } })).ok()).toBe(true);
+        }
         const started = reset();
         await page.goto(path);
         await expect(conversation.getByText(`Conversation for ${count} records is ready.`)).toBeVisible();
