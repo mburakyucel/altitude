@@ -216,9 +216,11 @@ switches model without your recorded decision.
 - **Start.** Three ways, each refused without agreement, while another review of the project runs, with
   fewer than five tasks finished since the last review, or with Claude's allowance inside Altitude's
   reserve:
-  - **Weekly**, by the Monday 08:00 morning check (or the first check after it, if Altitude was down).
-    Its authority is your recorded switch and agreement. A Monday that fails a condition is skipped and
-    recorded; nothing is posted.
+  - **Weekly**, by the morning check at 08:00 on Monday in the machine's local time zone. Each week,
+    Monday to Sunday, has at most one scheduled run, claimed durably before it starts. If Altitude was
+    down at 08:00, the first check later that same week runs it; missed weeks are never caught up, and
+    turning **Weekly** on mid-week first runs the next Monday. Its authority is your recorded switch
+    and agreement. A week whose run fails a condition is skipped and recorded; nothing is posted.
   - **Get suggestions now** in the project's settings: your own authenticated press, sent with a
     request id; a repeat with the same id returns the same run.
   - **In chat**: you ask L3, and L3 starts it with `alt improve run --message <id>`. Altitude checks the
@@ -264,8 +266,8 @@ between **Routing** and **Project**, follows the page's existing form: heading, 
   reason (**Needs 5 finished tasks since Oct 12; 3 so far.** or **Claude's weekly allowance is inside
   Altitude's reserve.**) is its accessible description and appears under it on press, as SPEC §3.8.1
   does for an unavailable alert switch.
-- **What is sent**, muted, no control: **Counts and short chat quotes · Claude Sonnet 5.5 · up to $0.27
-  a run, plus one L3 check**.
+- **What is sent**, muted, no control: **Counts and short chat quotes · Claude Sonnet 5.5 · capped at
+  $0.27 a run at API prices, plus one L3 check**.
 - **Past suggestions**, muted, once there is one run: **4 runs · 7 suggestions · 3 became tasks · 2
   dismissed**, and an underlined **Latest** that opens the latest card in the project's chat.
 
@@ -274,9 +276,9 @@ current terms opens a sheet before anything is saved or run:
 
 - Title: **Turn on improvement suggestions for altitude?**
 - Body: **Claude Sonnet 5.5 reads counts from this project's tasks and short quotes from its chats (up
-  to 300 characters each), using up to $0.27 of your Claude plan a run, plus one L3 turn to check what
-  it finds. With Weekly on, this happens Monday mornings once 5 tasks have finished. Nothing is
-  published, and nothing becomes work until you choose it.**
+  to 300 characters each). Its share is capped at $0.27 a run at API prices, drawn from your Claude
+  plan; one ordinary L3 turn then checks what it finds. With Weekly on, this happens Monday mornings
+  once 5 tasks have finished. Nothing is published, and nothing becomes work until you choose it.**
 - Buttons: **Turn on** (primary) and **Cancel**. **Turn on** records the agreement, then completes what
   was pressed (the switch turns on, or the run starts). Cancel or Escape changes nothing.
 
@@ -305,14 +307,16 @@ none, the run ends with the nothing-to-suggest line.
 ## Where suggestions appear
 
 One card per review, in the project's chat in conversation order. While any of its suggestions is
-undecided, the same card also appears in Needs you under the project's section, below a muted
-**Suggestions** subheading after anything that needs you. It is not a question: it never alerts a
-device, never adds to the Needs you count or badge, and never changes the summary line; with no
-questions, Needs you still says **Nothing needs you.** above it. Deciding in either place updates both.
+undecided, the same card also appears in Needs you, in a muted **Suggestions** section after
+everything that needs you, grouped under project headings like the rest of the page. It is not a
+question: it never alerts a device, never adds to the Needs you count or badge, and never changes the
+summary line. With no questions, held reviews or operational items anywhere, Needs you says **Nothing
+needs you.** with the **Suggestions** section below it, and the badge stays hidden.
+Deciding in either place updates both. Two cards on one project stand newest first.
 
-A suggestion lapses seven days after its card posted, or earlier when the next review posts
-suggestions: it folds to **Not decided** and the card leaves Needs you once nothing on it is undecided.
-A nothing-to-suggest, stopped or failed review lapses nothing.
+A suggestion lapses seven days after its card posted, and only then: it folds to **Not decided**. A card
+leaves Needs you when nothing on it is undecided and no accepted suggestion is still waiting for its
+task; the last card leaving leaves **Nothing needs you.** alone, or the empty page as before.
 
 ### States and exact text
 
@@ -330,10 +334,11 @@ A nothing-to-suggest, stopped or failed review lapses nothing.
 ### The card
 
 - Header: **Improvement suggestions** and its time (system-line format); below, muted, **<N> tasks from
-  <window>**. The number of suggestions is not written. In Needs you the header is an underlined link
+  <window>**. The card's date names it in typed answers ("the Oct 12 suggestions"). The number of suggestions is not written. In Needs you the header is an underlined link
   to the card in the project's chat.
 - Each suggestion, separated by a hairline: target chip (**How agents work**, or the project's name);
-  title, 15 px semibold, at most 90 characters, wraps, never cut; explanation, at most 300 characters:
+  title, 15 px semibold, at most 90 characters, wraps, never cut, after its run number (**1.**, **3.**:
+  the same numbers as the first step's message, kept when L3 drops one); explanation, at most 300 characters:
   what happens and what would change it, wraps fully.
 - **Seen in**: up to three underlined links, each a task title opening its cited place (question,
   message or event). More citations show **<n> more** (underlined), which expands the rest in place.
@@ -347,7 +352,8 @@ A nothing-to-suggest, stopped or failed review lapses nothing.
 | Action or state | What appears and disappears |
 | --- | --- |
 | Make a task pressed | Its label becomes a spinner, same width; Dismiss dims. |
-| Accepted | Buttons leave; a check and **Accepted · L3 is opening a task**. |
+| Accepted | Buttons leave; a check and **Accepted · L3 is opening a task**. The card stays in Needs you until the task exists. |
+| Task not opened | If L3's turn fails, is interrupted or ends without a task: **Accepted · no task yet** and an underlined **Try again**, which queues the same single turn; one task per suggestion still holds, so no retry can make a second. |
 | Task opened | That line becomes the ordinary compact task card (SPEC §3.5); if L3 attached it to an existing task or issue instead, the line names and links that. |
 | Dismiss pressed, then dismissed | Spinner in place; then the suggestion folds to its chip, muted title, **Dismissed** and an underlined **Undo**. |
 | Undo pressed | The suggestion opens again with both buttons. Undo is offered until the suggestion lapses. |
@@ -370,7 +376,7 @@ change. The allowed changes:
 | From | To | How |
 | --- | --- | --- |
 | Undecided | Accepted or dismissed | A button, or your typed answer |
-| Undecided | Not decided | Seven days after posting, or the next review posting suggestions |
+| Undecided | Not decided | Seven days after posting |
 | Dismissed | Undecided | **Undo**, until it would have lapsed |
 | Dismissed or not decided | Accepted | Your typed answer naming it ("make a task for the Oct 12 merge-approval one") |
 | Accepted | (none) | Final: reject or stop its task instead |
@@ -433,14 +439,16 @@ became tasks and how many you dismissed.
   coverage, dropped citations, oversized and secret-bearing answers, the isolation check failing closed,
   token caps and budget arguments, unknown prices refused, timeout, unavailable model with no fallback;
   start authority (no agreement refused; the Monday check with its five-task and allowance conditions,
-  a missed Monday after downtime and recorded skips; Get suggestions now with request-id replay; a chat
+  the weekly claim, a run later in the week after downtime, no catch-up across weeks, turning Weekly
+  on mid-week, recorded skips; Get suggestions now with request-id replay; a chat
   message, reuse refused; L3 alone refused; L3 and owners refused when switching or agreeing; changed
   terms turning Weekly off with its chat line), the window advancing and its 30-day limit, Stop while
   reading and while checking, the check deadline, interrupted runs, posting with L3 drops and kept
   numbering, post refused for stopped, ended or late runs and replayed for the same post, typed answers
   before the receipt, for a dropped number, delayed past a later run, ambiguous across runs and
   replayed, every allowed and refused change in the decisions table including Undo and late
-  acceptance, button replays and conflicts, lapsing at seven days and at the next posting, one task per
+  acceptance, button replays and conflicts, lapsing at seven days only, an accepted suggestion whose task turn fails and its Try again,
+  suggestions-only Needs you with the badge hidden, one task per
   suggestion, measurement cohorts after merge, the Needs you Suggestions section leaving the count and
   badge unchanged, and every chat, Needs you and settings state walked on phone and desktop.
 

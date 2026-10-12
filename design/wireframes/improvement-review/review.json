@@ -15,7 +15,7 @@
       "path": "design/wireframes/improvement-review/captures/SettingsStates.png"
     },
     {
-      "title": "Phone, Needs you: suggestions below a question, under Suggestions, not counted in the badge",
+      "title": "Phone, Needs you with nothing that needs you: the Suggestions section, no badge",
       "path": "design/wireframes/improvement-review/captures/PhoneNeedsYou.png"
     },
     {
@@ -35,7 +35,7 @@
       "path": "design/wireframes/improvement-review/captures/PhoneEndings.png"
     },
     {
-      "title": "Desktop: every card state, including measured changes, Not decided and Needs you",
+      "title": "Desktop: every card state, including lapsing, Undo, no task yet and Needs you after a question",
       "path": "design/wireframes/improvement-review/captures/States.png"
     },
     {
