@@ -56,7 +56,7 @@ One engine is enough, and each integration is
 - **Phone access.** [Pair each browser](docs/SETUP.md#pair-each-device) with a one-time code, add
   Altitude to the iPhone Home Screen and get an alert when a decision needs you, choosing on each
   device how much the alert reveals, how often it comes and whether it sounds. Dictation runs on
-  your computer on Linux and uses the browser's recognition elsewhere.
+  your computer on Linux and on Macs with Apple silicon, and uses the browser's recognition elsewhere.
 - **Terminals beside the work.** [Open a shell](docs/ARCHITECTURE.md#operator-terminal) in a task's
   worktree or the project folder from the browser. A command an agent hands you arrives typed at
   the prompt, waiting for your Enter.
