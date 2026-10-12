@@ -1,0 +1,677 @@
+{
+ "project": "vetdesk",
+ "now": "2026-11-10T08:00:00+00:00",
+ "tasks": [
+  {
+   "slug": "online-booking",
+   "title": "Let pet owners book appointments online",
+   "state": "done",
+   "created": "2026-10-27T09:00:00+00:00",
+   "reported": "2026-10-27T16:00:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-27T16:30:00+00:00",
+   "tokens": 2400000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-27T09:00:00+00:00",
+     "role": "l3",
+     "text": "Task: pet owners phone the front desk to book. Offer online booking for routine appointments (vaccinations, check-ups), with the clinic's opening hours and each vet's calendar."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-27T09:30:00+00:00",
+     "role": "l2",
+     "text": "Proposal: routine appointment types bookable online in 15-minute slots from each vet's calendar, with the pet chosen from the owner's account; surgery and emergencies stay phone only. Proposal review requested."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-27T11:00:00+00:00",
+     "role": "operator",
+     "text": "Leave out choosing a specific vet for now; the clinic assigns them."
+    },
+    {
+     "id": "m4",
+     "at": "2026-10-27T11:20:00+00:00",
+     "role": "l2",
+     "text": "Revised the proposal without vet choice and asked for a second proposal review, since the slot logic changed: slots are now pooled across vets."
+    },
+    {
+     "id": "m5",
+     "at": "2026-10-27T16:00:00+00:00",
+     "role": "l2",
+     "text": "Merged: PR #250. Owners book routine appointments online in pooled slots; the clinic assigns the vet."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-27T15:50:00+00:00",
+     "kind": "delivery",
+     "number": 250
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "proposal",
+     "requested": "2026-10-27T10:00:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "low",
+       "title": "Slot length should follow the appointment type"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Durations per type"
+      }
+     ]
+    },
+    {
+     "id": "r2",
+     "subject": "proposal",
+     "requested": "2026-10-27T11:30:00+00:00",
+     "findings": [],
+     "dispositions": []
+    }
+   ]
+  },
+  {
+   "slug": "vaccination-reminders",
+   "title": "Remind owners when vaccinations are due",
+   "state": "done",
+   "created": "2026-10-28T09:00:00+00:00",
+   "reported": "2026-10-28T14:50:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-28T15:20:00+00:00",
+   "tokens": 1500000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-28T09:00:00+00:00",
+     "role": "l3",
+     "text": "Task: send owners a reminder four weeks before a pet's vaccination is due, with a booking link."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-28T09:25:00+00:00",
+     "role": "l2",
+     "text": "Proposal: a daily job reading due dates from the vaccination records, email four weeks and one week before, with a link that opens online booking for a vaccination. Question about text messages."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-28T10:20:00+00:00",
+     "role": "operator",
+     "text": "Email only for now."
+    },
+    {
+     "id": "m4",
+     "at": "2026-10-28T10:30:00+00:00",
+     "role": "l2",
+     "text": "Thanks. Your answer leaves one case open that I'd otherwise guess at."
+    },
+    {
+     "id": "m5",
+     "at": "2026-10-28T11:40:00+00:00",
+     "role": "operator",
+     "text": "Then a letter is fine, the desk prints them weekly. No calls."
+    },
+    {
+     "id": "m6",
+     "at": "2026-10-28T14:50:00+00:00",
+     "role": "l2",
+     "text": "Merged: PR #252. Owners with email get emails; those without go on the weekly letter list for the desk."
+    }
+   ],
+   "questions": [
+    {
+     "id": "q1",
+     "revision": 1,
+     "asked": "2026-10-28T09:26:00+00:00",
+     "audience": "operator",
+     "text": "Should reminders also go by text message, or email only?",
+     "asked_again": false,
+     "resolution": {
+      "disposition": "superseded",
+      "at": "2026-10-28T10:31:00+00:00",
+      "by": "l2"
+     }
+    },
+    {
+     "id": "q1",
+     "revision": 2,
+     "asked": "2026-10-28T10:31:00+00:00",
+     "audience": "operator",
+     "text": "About a fifth of owners have no email address on file: should they get a printed letter, a call from the desk, or nothing?",
+     "asked_again": false,
+     "resolution": {
+      "disposition": "answered",
+      "at": "2026-10-28T11:40:00+00:00",
+      "by": "operator",
+      "message": "m5"
+     }
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-28T14:40:00+00:00",
+     "kind": "delivery",
+     "number": 252
+    }
+   ]
+  },
+  {
+   "slug": "weight-chart",
+   "title": "Chart each pet's weight over time",
+   "state": "done",
+   "created": "2026-10-29T09:00:00+00:00",
+   "reported": "2026-10-29T12:50:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-29T13:20:00+00:00",
+   "tokens": 1200000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-29T09:00:00+00:00",
+     "role": "l3",
+     "text": "Task: vets want a weight chart on the pet's record, from the weights taken at each visit."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-29T09:20:00+00:00",
+     "role": "l2",
+     "text": "Proposal: a line chart from the visit weights with the breed's healthy range shaded where we have one. Tests with a puppy's growth and an adult cat."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-29T12:50:00+00:00",
+     "role": "l2",
+     "text": "Pushed PR #254, then had to push again: the migration number 0031 clashed with the one the booking task merged this morning. Renumbered to 0032. Merged: PR #254."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-29T12:20:00+00:00",
+     "kind": "delivery",
+     "number": 254
+    },
+    {
+     "id": "e2",
+     "at": "2026-10-29T12:45:00+00:00",
+     "kind": "delivery",
+     "number": 254
+    }
+   ]
+  },
+  {
+   "slug": "dosage-calculator",
+   "title": "Dosage calculator for common medicines",
+   "state": "done",
+   "created": "2026-10-30T09:00:00+00:00",
+   "reported": "2026-10-31T13:50:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-31T14:20:00+00:00",
+   "tokens": 2100000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-30T09:00:00+00:00",
+     "role": "l3",
+     "text": "Task: vets work out doses by hand from weight. Add a calculator for the clinic's common medicines, showing the dose and the wording for the label."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-30T09:30:00+00:00",
+     "role": "l2",
+     "text": "Proposal: a calculator on the pet's record with the clinic's medicine list, dose per kilogram and maximum dose, and label wording generated from the result. Every result shows the inputs used."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-30T14:00:00+00:00",
+     "role": "l2",
+     "text": "Ready and green. Asking for merge approval."
+    },
+    {
+     "id": "m4",
+     "at": "2026-10-30T14:20:00+00:00",
+     "role": "operator",
+     "text": "Not yet. The head vet wants to read every label wording first; I'll approve once she has."
+    },
+    {
+     "id": "m5",
+     "at": "2026-10-31T13:20:00+00:00",
+     "role": "operator",
+     "text": "Approved, wording signed off."
+    },
+    {
+     "id": "m6",
+     "at": "2026-10-31T13:50:00+00:00",
+     "role": "l2",
+     "text": "Merged: PR #256."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-30T14:25:00+00:00",
+     "kind": "merge-approval-refused",
+     "reason": "Operator held approval until the head vet signs off the label wording"
+    },
+    {
+     "id": "e2",
+     "at": "2026-10-31T13:40:00+00:00",
+     "kind": "delivery",
+     "number": 256
+    }
+   ]
+  },
+  {
+   "slug": "waiting-room-screen",
+   "title": "Waiting room queue screen",
+   "state": "done",
+   "created": "2026-10-31T09:00:00+00:00",
+   "reported": "2026-10-31T14:30:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-31T15:00:00+00:00",
+   "tokens": 1300000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-31T09:00:00+00:00",
+     "role": "l3",
+     "text": "Task: a screen in the waiting room showing which pet is called next, by first name only."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-31T09:30:00+00:00",
+     "role": "l2",
+     "text": "Proposal: a read-only queue view for a wall screen, pet first names and a room number when called, nothing else. Proposal review requested."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-31T10:50:00+00:00",
+     "role": "operator",
+     "text": "Add the vet's name next to the room. People ask which vet they're seeing."
+    },
+    {
+     "id": "m4",
+     "at": "2026-10-31T11:10:00+00:00",
+     "role": "l2",
+     "text": "Updated the proposal with the vet's name beside the room, and asked for a second proposal review since it now shows staff names on a public screen."
+    },
+    {
+     "id": "m5",
+     "at": "2026-10-31T14:30:00+00:00",
+     "role": "l2",
+     "text": "Merged: PR #258."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-31T14:20:00+00:00",
+     "kind": "delivery",
+     "number": 258
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "proposal",
+     "requested": "2026-10-31T10:00:00+00:00",
+     "findings": [],
+     "dispositions": []
+    },
+    {
+     "id": "r2",
+     "subject": "proposal",
+     "requested": "2026-10-31T11:20:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "low",
+       "title": "Vet names should be the display name the vet chose"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Uses the staff display name"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "lab-results-import",
+   "title": "Import lab results into pet records",
+   "state": "done",
+   "created": "2026-11-02T09:00:00+00:00",
+   "reported": "2026-11-02T15:20:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-02T15:50:00+00:00",
+   "tokens": 2000000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-02T09:00:00+00:00",
+     "role": "l3",
+     "text": "Task: blood test results come back from the outside lab as files. Import them into the pet's record."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-02T09:25:00+00:00",
+     "role": "l2",
+     "text": "Proposal: read the lab's result files from the shared drop folder, match them to the pet by the request number, show the values with the lab's reference ranges and flag out-of-range values."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-02T12:00:00+00:00",
+     "role": "l3",
+     "text": "The owner was blocked for 40 minutes by the engine provider's outage this morning, which their status page lists; resumed once it cleared. Nothing else affected."
+    },
+    {
+     "id": "m4",
+     "at": "2026-11-02T15:20:00+00:00",
+     "role": "l2",
+     "text": "Merged: PR #260. Had to push twice, migration 0034 clashed with the weight chart's follow-up. Results import, match by request number and flag out-of-range values."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-02T11:00:00+00:00",
+     "kind": "fault",
+     "fault": "engine-unavailable",
+     "reason": "Engine provider outage"
+    },
+    {
+     "id": "e2",
+     "at": "2026-11-02T14:40:00+00:00",
+     "kind": "delivery",
+     "number": 260
+    },
+    {
+     "id": "e3",
+     "at": "2026-11-02T15:10:00+00:00",
+     "kind": "delivery",
+     "number": 260
+    }
+   ]
+  },
+  {
+   "slug": "invoice-at-checkout",
+   "title": "Itemised invoice at checkout",
+   "state": "done",
+   "created": "2026-11-03T09:00:00+00:00",
+   "reported": "2026-11-03T15:00:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-03T15:30:00+00:00",
+   "tokens": 1600000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-03T09:00:00+00:00",
+     "role": "l3",
+     "text": "Task: produce an itemised invoice at the end of a visit from the treatments and medicines recorded."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-03T09:25:00+00:00",
+     "role": "l2",
+     "text": "Proposal: invoice lines from the visit's treatments and dispensed medicines with the price list in effect on the visit date, tax per line, printable and emailable. Proposal review requested."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-03T10:40:00+00:00",
+     "role": "operator",
+     "text": "Insurance claims need the diagnosis on the invoice too."
+    },
+    {
+     "id": "m4",
+     "at": "2026-11-03T11:00:00+00:00",
+     "role": "l2",
+     "text": "Added the diagnosis to the invoice layout and requested a second proposal review for the change."
+    },
+    {
+     "id": "m5",
+     "at": "2026-11-03T15:00:00+00:00",
+     "role": "l2",
+     "text": "Merged: PR #262."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-03T14:50:00+00:00",
+     "kind": "delivery",
+     "number": 262
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "proposal",
+     "requested": "2026-11-03T09:50:00+00:00",
+     "findings": [],
+     "dispositions": []
+    },
+    {
+     "id": "r2",
+     "subject": "proposal",
+     "requested": "2026-11-03T11:10:00+00:00",
+     "findings": [],
+     "dispositions": []
+    }
+   ]
+  },
+  {
+   "slug": "pet-photos",
+   "title": "Pet photos on the record",
+   "state": "done",
+   "created": "2026-11-04T09:00:00+00:00",
+   "reported": "2026-11-04T12:20:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-04T12:50:00+00:00",
+   "tokens": 900000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-04T09:00:00+00:00",
+     "role": "l3",
+     "text": "Task: show a photo of the pet at the top of its record, so staff recognise it."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-04T09:20:00+00:00",
+     "role": "l2",
+     "text": "Proposal: owners or staff upload a photo, resized and stored privately, shown on the record and the waiting list."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-04T12:20:00+00:00",
+     "role": "l2",
+     "text": "Merged: PR #264."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-04T12:10:00+00:00",
+     "kind": "delivery",
+     "number": 264
+    }
+   ]
+  },
+  {
+   "slug": "surgery-consent",
+   "title": "Surgery consent forms",
+   "state": "done",
+   "created": "2026-11-05T09:00:00+00:00",
+   "reported": "2026-11-05T13:20:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-05T13:50:00+00:00",
+   "tokens": 1300000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-05T09:00:00+00:00",
+     "role": "l3",
+     "text": "Task: owners sign a paper consent form before surgery. Let them sign on a tablet at the desk."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-05T09:25:00+00:00",
+     "role": "l2",
+     "text": "Proposal: a consent form per procedure from the clinic's templates, signed on a tablet with the owner's name, stored on the visit and printable."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-05T13:20:00+00:00",
+     "role": "l2",
+     "text": "Merged: PR #266 on the second push; migration 0036 clashed again with another task's. Renumbered."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-05T12:50:00+00:00",
+     "kind": "delivery",
+     "number": 266
+    },
+    {
+     "id": "e2",
+     "at": "2026-11-05T13:15:00+00:00",
+     "kind": "delivery",
+     "number": 266
+    }
+   ]
+  },
+  {
+   "slug": "no-show-tracking",
+   "title": "Track missed appointments",
+   "state": "done",
+   "created": "2026-11-06T09:00:00+00:00",
+   "reported": "2026-11-06T12:40:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-06T13:10:00+00:00",
+   "tokens": 1000000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-06T09:00:00+00:00",
+     "role": "l3",
+     "text": "Task: mark appointments as no-shows and show the count on the owner's account, so the desk can ask for a deposit from repeat no-shows."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-06T09:25:00+00:00",
+     "role": "l2",
+     "text": "Proposal: a no-show action on past appointments, a count per owner over the last year shown on the account, and a note at booking when the count is three or more."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-06T12:40:00+00:00",
+     "role": "l2",
+     "text": "Merged: PR #268."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-06T12:30:00+00:00",
+     "kind": "delivery",
+     "number": 268
+    }
+   ]
+  },
+  {
+   "slug": "opening-hours-holidays",
+   "title": "Holiday opening hours",
+   "state": "done",
+   "created": "2026-11-06T13:00:00+00:00",
+   "reported": "2026-11-06T16:10:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-06T16:40:00+00:00",
+   "tokens": 800000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-06T13:00:00+00:00",
+     "role": "l3",
+     "text": "Task: the clinic closes on public holidays and opens late on some days. Let the desk set exceptions to the opening hours."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-06T13:20:00+00:00",
+     "role": "l2",
+     "text": "Proposal: dated exceptions (closed, or different hours) that online booking and the reminders respect."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-06T16:10:00+00:00",
+     "role": "l2",
+     "text": "Merged: PR #270."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-06T16:00:00+00:00",
+     "kind": "delivery",
+     "number": 270
+    }
+   ]
+  }
+ ],
+ "current": [
+  {
+   "slug": "timestamped-migrations",
+   "title": "Switch database migrations to timestamped names",
+   "state": "running"
+  }
+ ],
+ "chat": [
+  {
+   "id": "c1",
+   "at": "2026-11-05T17:00:00+00:00",
+   "role": "operator",
+   "text": "Migration numbers clash every few days. Can we stop numbering them by hand?",
+   "turn": "t1"
+  },
+  {
+   "id": "c2",
+   "at": "2026-11-05T17:01:00+00:00",
+   "role": "l3",
+   "text": "Dispatched a task to switch migrations to timestamped names.",
+   "turn": "t1"
+  },
+  {
+   "id": "c3",
+   "at": "2026-11-06T08:30:00+00:00",
+   "role": "operator",
+   "text": "No-shows and holiday hours today please.",
+   "turn": "t2"
+  },
+  {
+   "id": "c4",
+   "at": "2026-11-06T08:31:00+00:00",
+   "role": "l3",
+   "text": "Both dispatched.",
+   "turn": "t2"
+  }
+ ],
+ "earlier": [
+  {
+   "title": "Owners skip the second proposal review when only the scope changed",
+   "outcome": "dismissed"
+  }
+ ]
+}

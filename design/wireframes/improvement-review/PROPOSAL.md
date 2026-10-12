@@ -1,7 +1,8 @@
 # Improvement review: proposal
 
-Status: the operator approved this design and its eval on 2026-10-12. Nothing here is built yet; the
-rollout below builds it in held steps. In the interface the feature is called **Improvement
+Status: the operator approved this design and its eval on 2026-10-12. The first rollout step is
+built: the reviewer and its eval on fictional projects; nothing reads a real conversation yet. The
+rollout below builds the rest in held steps. In the interface the feature is called **Improvement
 suggestions**, so it is never confused with the code and proposal reviews that Needs you already
 shows; this document calls one run "a review".
 
@@ -115,7 +116,8 @@ within 64 KiB, as the pilot's does.
 
 1. **Signals.** A fixed, versioned catalog of counted predicates per task (below).
 2. **Task sheets**, ranked by their signals and added in that order until 48 KiB, each at most 3 KiB:
-   title, outcome and durations; signal counts, each with the anchors that produced it; every question
+   title, outcome and durations; signal counts, each with the anchors that produced it and what each event recorded (its reason or
+   error, or the unmerged PRs a replaced report named); every question
    with its first sentence, revisions, how it was answered or resolved and by whom; each operator
    message as a paired excerpt (the message it answered, the operator's words, the next reply, 300
    characters each, at most four pairs); review findings' titles with their dispositions; and the
@@ -135,13 +137,13 @@ with like. The card names the signal itself, never a narrower claim the predicat
 
 | Signal (card wording) | Predicate |
 | --- | --- |
-| Questions re-asked without your input | A question member re-published, or re-parked as `asked_again`, with no operator message to that task since its previous revision |
-| Approvals refused | `merge-approval-refused`, `l2-action-refused`, `grant-refused` or `machine-grant-refused` events |
+| Questions re-asked without your input | A question's new revision with no operator message to that task since its previous revision |
+| Approvals refused | `merge-approval-refused` and `grant-refused` events |
 | Your messages after a report | Operator messages on a task after its owner reported, before it closed |
 | Review rounds beyond the first | `review-requested` events beyond the first per subject (proposal, changes) |
-| Review findings open at merge | Findings with an `open` disposition when the task's PR merged |
-| CI and landing retries | `ci-recheck` events, failed-check reruns and repeated landing attempts for one PR |
-| Resume or dispatch failures | `resume-failed`, `dispatch-failed` events and faults |
+| Review findings open at completion | Findings the owner's final report leaves `open` |
+| CI and landing retries | `ci-recheck` events and `delivery` events beyond the first for one PR |
+| Resume or dispatch failures | `resume-failed` and `dispatch-failed` events and system faults |
 | Reports rewritten | `report-superseded` events |
 | Escalations | `escalated` events |
 | Hours waiting on you | Time a task's open question was the operator's turn |
@@ -181,7 +183,8 @@ One fresh call per run through the engine seam (`engines.py`), using the isolati
 uses for its quota read: `--safe-mode` (no CLAUDE.md, skills, plugins, hooks or MCP),
 `--no-session-persistence`, `--tools ""`, `--strict-mcp-config`, an empty temporary working directory,
 no added directories and a JSON response schema. The adapter fails closed: if the session's own start
-record lists any tool, or reports no model, the run stops before its answer is used.
+record lists any tool other than Claude Code's carrier for the schema-bound answer, or reports no
+model, the run stops before its answer is used.
 
 **Runs on your plan.** Every call runs through the Claude Code login on your subscription, like every
 task; nothing uses the API or an API key, and nothing is billed. Claude Code also reports each call's
