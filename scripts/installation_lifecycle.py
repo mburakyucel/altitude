@@ -406,9 +406,9 @@ class Lifecycle:
         """A baseline whose activation fails, the documented cleanup, then the candidate's installer over what it left.
 
         The published v0.1.0-rc.1 fails at service start and leaves its refused unit and an interrupted activation;
-        after docs/SETUP.md's steps, the candidate must install and keep its settings, TLS identity and data."""
+        after CHANGELOG.md's cleanup for it, the candidate must install and keep its settings, TLS identity and data."""
         old, old_sha, _, _, new, new_sha, _, after = self.prepare()
-        self.result["limits"][0] = ("Published-release baseline whose installation fails, docs/SETUP.md's cleanup, then the candidate installed over it; "
+        self.result["limits"][0] = ("Published-release baseline whose installation fails, CHANGELOG.md's cleanup, then the candidate installed over it; "
                                     "the guest runs the published files offline, not its own GitHub download; "
                                     "the candidate installs with its install.py, which its install.sh downloads and runs")
         self.run("failed-install", "/usr/bin/python3", "-B", self.baseline / "install.py", "--archive", old,
@@ -426,7 +426,7 @@ class Lifecycle:
         refused = self.run("refused-install", "/usr/bin/python3", "-B", self.candidate / "install.py", "--archive", new,
                            "--sha256", new_sha, success=False)
         assert "Interrupted activation exists" in refused, refused
-        # docs/SETUP.md's steps for a machine that ran the failed release.
+        # CHANGELOG.md's steps for a machine that ran the failed release.
         unit = self.home / ".config/systemd/user/altitude.service"
         self.run("disable-unit", "systemctl", "--user", "disable", "altitude.service")
         self.run("remove-unit", "rm", unit)
