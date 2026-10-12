@@ -121,6 +121,50 @@ The scope and ordering here are an example of engineering judgment, not a prescr
 For session identity and engine-specific message timing, see [lifecycle](SESSION_LIFECYCLE.md).
 To try a project, follow [setup](SETUP.md).
 
+## See the features
+
+Five of the README's features in the same Atlas project. On a computer each picture shows two phone
+screens side by side; on a phone it shows the one screen that proves it.
+
+**Steer mid-flight.** Your message to the compatibility owner beside its live session.
+
+<picture>
+  <source media="(max-width: 600px)" srcset="images/session-phone.png">
+  <img src="images/feature-live.webp" alt="The compatibility task's live session: the owner's replies and the commands it ran, with their output folded." width="860">
+</picture>
+
+**Take the terminal.** The billing owner hands you a step only you can take; it waits typed in the
+task's terminal until you press Enter.
+
+<picture>
+  <source media="(max-width: 600px)" srcset="images/feature-terminal-phone.webp">
+  <img src="images/feature-terminal.webp" alt="The task's terminal with make deploy ENV=staging typed at the prompt, waiting for Enter." width="860">
+</picture>
+
+**Nothing ships unchecked.** The independent review's two findings, both fixed, beside the pull
+request waiting for your merge.
+
+<picture>
+  <source media="(max-width: 600px)" srcset="images/feature-review-phone.webp">
+  <img src="images/feature-review.webp" alt="The per-tenant limits task's implementation review by the other engine: a burst at the window edge and a missing Retry-After, each marked fixed with the owner's fix." width="860">
+</picture>
+
+**Self-healing.** A machine problem pauses the sign-on task; the coordinator repairs it and the task
+resumes.
+
+<picture>
+  <source media="(max-width: 600px)" srcset="images/feature-heal-phone.webp">
+  <img src="images/feature-heal.webp" alt="The coordinator's reply in the project conversation: it restarted the sign-on task's test identity provider, checked a login end to end and resumed the task." width="860">
+</picture>
+
+**Self-improving.** Altitude reviews its own finished work and suggests fixes; one tap makes a fix a
+task.
+
+<picture>
+  <source media="(max-width: 600px)" srcset="images/feature-improve-phone.webp">
+  <img src="images/feature-improve.webp" alt="Improvement suggestions from finished work, each citing the tasks it came from; the first is accepted and the coordinator is opening a task." width="860">
+</picture>
+
 ## Capture source and maintenance
 
 [Example data and capture instructions](../design/readme/README.md) explain how to reproduce the

@@ -1587,6 +1587,10 @@ same project-bound coordinator transport. The task's `ci_recheck` record binds i
 worker/session and lifecycle request identities, selected run, due time, budgets, evidence and L3
 receipt. The existing tick/keyed executor owns IO; `resume_after` and `daemon_request` retain their
 ordinary lifecycle meaning. A lifecycle change invalidates further probe actions.
+L3 reports a schedule in project chat or retains it in project tracking, without a task-message
+acknowledgement that wakes the blocked owner and invalidates its probe. Necessary coordination
+that changes lifecycle replaces the old promise with a named next actor and trigger; a renewed CI
+wait needs registration against the current block and verification of the saved next action/time.
 The daemon prefers a relevant fresh run of the same workflow, branch, event and PR identity from
 the latest twenty runs. Otherwise a probe on a fault-blocked task submits one rerun of the selected
 project-origin run after persisting its baseline attempt and submission intent; a probe on a task
