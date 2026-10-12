@@ -2,9 +2,13 @@
   "title": "Improvement review proposal",
   "proposal": "design/wireframes/improvement-review/PROPOSAL.md",
   "images": [
+    {"title": "Phone: first increment, L3 presents checked suggestions in chat", "path": "design/wireframes/improvement-review/captures/PhoneFirst.png"},
     {"title": "Phone: the card after a run", "path": "design/wireframes/improvement-review/captures/Phone.png"},
-    {"title": "Phone: task opened, one dismissed, one saving", "path": "design/wireframes/improvement-review/captures/PhoneDecided.png"},
+    {"title": "Phone: running with Stop, stopped, stopping, stop failed", "path": "design/wireframes/improvement-review/captures/PhoneRunning.png"},
+    {"title": "Phone: task opened and one dismissed", "path": "design/wireframes/improvement-review/captures/PhoneDecided.png"},
+    {"title": "Phone: nothing to suggest, failures, save failed", "path": "design/wireframes/improvement-review/captures/PhoneEndings.png"},
     {"title": "Phone: a later run with measured changes", "path": "design/wireframes/improvement-review/captures/PhoneLater.png"},
+    {"title": "Desktop: the card in the conversation", "path": "design/wireframes/improvement-review/captures/Desktop.png"},
     {"title": "Desktop: every state", "path": "design/wireframes/improvement-review/captures/States.png"}
   ]
 }

@@ -4,291 +4,316 @@ Status: proposal awaiting the operator's decision. Nothing here is built yet.
 
 ## For the operator
 
-When you ask for it, a cheaper model reads what happened in this project's recent tasks and
-conversations and suggests at most three improvements: some for the project itself (a flaky check,
-a brief that keeps needing correction), some for how the agents work (an owner rule that makes them
-ask you something you already settled, a step that wastes a review round). The suggestions arrive as
-one card in project chat. Each says in plain words what keeps happening, where it was seen and what
-would change it. **Make a task** hands it to L3, which opens an ordinary task (its normal proposal and
-merge checkpoints still apply); **Dismiss** records that you do not want it, so later reviews do not
-repeat it. When an accepted change lands, later reviews show whether the pattern actually went down.
+When you ask for it, a cheaper model reads a code-built summary of this project's recent tasks and
+conversations and proposes up to three improvements: some for the project itself (a flaky check, a
+kind of brief that keeps needing correction), some for how the agents work (an owner rule that makes
+them ask you something you already settled, a step that wastes a review round). L3 checks each
+proposal against the cited records and current work, drops what is wrong or already handled, and
+posts the rest as one card in project chat. Each suggestion says in plain words what keeps happening,
+links to where it happened and what would change it. **Make a task** hands it to L3, which opens an
+ordinary task with its usual proposal and merge checkpoints; **Dismiss** records that you do not want
+it, so later reviews skip it. When an accepted change lands, later reviews show the counted pattern
+before and after.
 
-Nothing starts work on its own, nothing leaves this machine except the model call itself, and the
-reviewer can only read the summary it is handed: it has no tools, no files and no network.
+Nothing starts work on its own. The reviewer has no tools, no files and no network; it only answers.
 
 ### Decisions that are yours
 
 | Decision | Recommendation | Alternatives |
 | --- | --- | --- |
-| Reviewer model and per-run ceiling | Claude Sonnet 5.5 at medium effort, hard stop at $0.50 API-equivalent per run (expected about $0.10–0.15) | Claude Haiku 5.5, under $0.01 a run, noisier suggestions; a Codex model is not offered (see [The reviewer](#the-reviewer)) |
-| What it may read | Task records and the task and project conversations (who said what, questions, reviews, landings, reports) | Also short excerpts of the agents' own working logs around a detected problem (later increment, more insight, more private material sent to the model) |
-| When it runs | Only when you ask ("run an improvement review" in project chat), one run per request | A weekly series you start once, four runs, ending after 30 days |
+| What may be sent to the reviewer's provider | Counted facts from task records plus short paired excerpts of the task and project conversations (your message, the agent message it answered, the reply), each cut to 300 characters | Counted facts only, nothing quoted (the review's first alternative below); or, in a later increment, also short excerpts of the agents' working logs |
+| Reviewer model and cost limit | Claude Sonnet 5.5 at medium effort; capped at about $0.16 per run, expected $0.08–0.12 | Claude Haiku 5.5, capped under $0.01 per run, noisier suggestions |
+| When it runs | Only when you ask ("run an improvement review" in project chat), one run per request | A weekly series you start once: four runs, ending after 30 days |
 
-Approving a model and ceiling authorizes the runs you start with it. It does not start a separate
-model-quality evaluation; that stays deferred under the 2026-09-08 decision.
+The conversations being reviewed were already processed by the engines that took part in them, but
+sending them again to the reviewer is a new disclosure, so it needs your yes. Approving a model and
+limit authorizes the runs you start with it; it does not start a separate model-quality evaluation,
+which stays deferred under the 2026-09-08 decision. Accepting a suggestion authorizes its task, never
+publishing what the review read.
+
+### Two directions the independent review offered
+
+- **Counted facts only.** A small private digest of well-defined event counts with exact links, no
+  model at all, and you ask for tasks in ordinary chat. Nothing is disclosed and nothing is spent, but
+  corrections that only show in words, and causes that span tasks, stay invisible.
+- **Pilot first.** Keep the pilot's conversation sample, swap only its reviewer for the tool-free one,
+  and let L3 present candidates in chat before any card or measurement exists. Fewer new parts at
+  first, but you get suggestions later and only through L3's wording.
+
+The design below takes the second direction's order for its first increment (L3 presents in chat; the
+card comes second) while keeping the task-record signals the pilot lacked.
 
 ## What it reads
 
-Each run reads one project's own records, inside a window: from the end of the previous run (or 14
-days back for the first) to now, at most 14 days. A run needs at least five tasks that finished in
-the window; otherwise it says so without calling a model.
+Each run reads one project's own records inside a window: from the end of the previous run (or 14
+days back for the first) to now, at most 14 days, never before 2026-09-22 07:00 UTC (the pilot's
+limit). A run needs at least five tasks finished in the window; otherwise L3 says so and no model is
+called.
 
 | Source | Used | Why |
 | --- | --- | --- |
-| Task records: state changes, questions and their revisions, answers, holds, reviews and their findings and assessments, landing and CI events, refusals, incidents, token usage, reports | Yes | Most patterns show up here as counted facts, cheaply and precisely |
-| Task conversations: operator, L3 and owner messages | Yes, bounded | Repeated corrections and unclear replies need the words |
-| Project chat: operator messages and L3 replies | Yes, bounded | Questions asked twice, corrections given to L3 |
-| Owner working logs (the engine's session record, tool calls and outputs) | No, unless you choose the alternative above | Megabytes per task, full of file contents and command output; the counted facts already show where time went |
-| L3's own session logs | No | Its chat replies are already in project chat |
-| CI logs, validation logs, terminal output, images, voice audio | No | Large, and the failing check's name is already an event |
-| Other projects' records | Never | Each run is confined to its own project |
+| Task records: state changes, questions with their revisions and answers, holds, reviews with findings and assessments, landing and CI events, refusals, incidents, token usage, reports | Yes, as counts and anchors | Most patterns are counted facts, cheap and exact |
+| Task conversations | Yes, bounded paired excerpts | Corrections and unclear replies need the words and what they answered |
+| Project chat | Yes, bounded paired excerpts | Questions asked twice, corrections given to L3 |
+| Agents' working logs (engine session records: tool calls and output) | No, unless you choose it later | Megabytes per task, full of file contents and command output |
+| L3's own session logs | No | Its replies are already in project chat |
+| CI, validation and terminal logs, images, voice audio | No | Large; the failing check is already an event |
+| Other projects | Never | A run is confined to its project |
 
-The pilot's existing limit stays: nothing before 2026-09-22 07:00 UTC is read.
+### Building the prompt
 
-### Keeping the prompt small
+Code builds the prompt; no summarising model call adds cost or mistakes. The whole prompt stays
+within 64 KiB, as the pilot's does.
 
-The reviewer's whole prompt stays within 64 KiB, as the pilot's does. Code, not a model, builds it in
-three layers, so no summarising model call adds cost or mistakes:
+1. **Signals.** A fixed, versioned catalog of counted predicates per task (below).
+2. **Task sheets**, ranked by their signals and added in that order until 48 KiB, each at most 3 KiB:
+   title, outcome and durations; signal counts, each with the anchors that produced it; every question
+   with its first sentence, revisions, how it was answered or resolved and by whom; each operator
+   message as a paired excerpt (the message it answered, the operator's words, the next reply, 300
+   characters each, at most four pairs); review findings' titles with their dispositions; and the
+   report's verdict. Sheets are built from finished tasks, so later corrections are inside them.
+3. **Coverage.** Tasks that did not fit are listed by title and counts, and the prompt says what was
+   left out. Project chat adds paired excerpts the same way within the remaining room.
+4. **Context.** Titles of current tasks and of earlier suggestions with their outcome, so the reviewer
+   does not repeat dismissed or existing work.
 
-1. **Signals.** A fixed catalog of counted facts per task (below), computed from the records.
-2. **Task sheets.** For each task, at most 1.5 KiB: title, outcome, durations, its signal counts, each
-   question's first sentence with its revision count, and the operator's messages cut to 300
-   characters each (at most five per task). Tasks are ranked by their signals; sheets are added in
-   that order until 48 KiB.
-3. **Coverage.** Every task that did not fit is still listed as one line (title and signal counts),
-   and the prompt states what was left out. Project chat contributes the operator's messages in the
-   window, cut the same way, within the remaining room.
-
-The prompt also carries the titles of current tasks and of earlier suggestions with their outcome,
-so the reviewer does not suggest work that already exists or was dismissed.
+The reviewer returns at most three proposals, each with: target, title, what was observed (with
+anchors), what would change it and where, the signal it would reduce (or none), and its uncertainty.
 
 ### Signals
 
-Each signal is a count the code derives from existing records; each suggestion names the one it
-would reduce (or none), which is what makes the before/after measure possible.
+Each signal is an exact predicate over existing records, versioned so measurements only compare like
+with like. The card names the signal itself, never a narrower claim the predicate cannot tell apart.
 
-| Signal | Counted from |
+| Signal (card wording) | Predicate |
 | --- | --- |
-| Question asked again | A question re-published with a new revision without the operator's input, or marked asked again |
-| Approval refused | `merge-approval-refused`, `l2-action-refused`, `grant-refused` events |
-| Operator correction | An operator message within a day after an owner or L3 reply or report on the same task |
-| Review rounds | `review-requested` events beyond the first per subject; findings left open |
-| CI and landing retries | `ci-recheck` events, reruns and repeated landing attempts on one PR |
-| Resume or dispatch failure | `resume-failed`, `dispatch-failed`, faults |
-| Report rewritten | `report-superseded` events |
-| Escalation | `escalated` events |
-| Time waiting on the operator | Hours a task spent waiting for the operator's answer |
+| Questions re-asked without your input | A question member re-published, or re-parked as `asked_again`, with no operator message to that task since its previous revision |
+| Approvals refused | `merge-approval-refused`, `l2-action-refused`, `grant-refused` or `machine-grant-refused` events |
+| Your messages after a report | Operator messages on a task after its owner reported, before it closed |
+| Extra review rounds | `review-requested` events beyond the first per subject; findings left open at merge |
+| CI and landing retries | `ci-recheck` events, failed-check reruns and repeated landing attempts for one PR |
+| Resume or dispatch failures | `resume-failed`, `dispatch-failed` events and faults |
+| Reports rewritten | `report-superseded` events |
+| Escalations | `escalated` events |
+| Hours waiting on you | Time a task's open question was the operator's turn |
 | Spend | The task's recorded token totals |
+
+"Your messages after a report" counts messages, not corrections: whether a message corrected
+something is the reviewer's reading, shown as such.
 
 ## The two targets
 
 Every suggestion names exactly one target, chosen by where its change would be made:
 
-- **The project** (shown with the project's name): the project's product, code, tests, CI, docs or
-  the way its tasks are briefed. Output is a candidate task or issue for this project.
-- **Agent workflow**: how agents coordinate in every project: the persona instructions, Altitude's
-  role rules, its commands, and its question, review and landing mechanics. Output is a candidate
-  instruction or code change to Altitude.
+- **The project** (chip shows the project's name): its product, code, tests, CI, docs or how its tasks
+  are briefed. Leads to a project task or issue.
+- **Agent workflow**: how agents coordinate everywhere: persona instructions, Altitude's role rules,
+  its commands, and its question, review and landing mechanics. Leads to an instruction or code change
+  to Altitude, under the existing holds for guard and rule changes.
 
-The suggestion must also say what to change and where (for example "the owner instructions'
-merge-approval paragraph"); a suggestion whose stated change is not in its target is dropped. On the
-Altitude project both targets are Altitude's repository, but the label still tells you whether the
-change is to this product or to how agents work.
+The suggestion names what to change and where (for example "the owner instructions' merge-approval
+paragraph"); one whose stated change is outside its target is dropped. On the Altitude project both
+targets are the same repository; the chip still tells you whether the change is to the product or to
+how agents work.
 
 ### Evidence without copying transcripts
 
-A suggestion cites references the code put into the prompt (a task, a question revision, an event,
-a chat row), never quoted text, and the code drops any citation that was not in the prompt. In
-the card these become links to the task conversations you already have. Anything published from a
-suggestion (an issue, a PR, a commit) describes the pattern in general terms and names the private
-review as "improvement review of <date>, suggestion <n>"; transcripts, quotes and private details stay
-in the run's private record, under the existing publication rules.
+Suggestions cite anchors the code placed in the prompt (a question revision, a message, an event),
+never quoted text; citations not in the prompt are dropped. In the card each citation opens its exact
+place: a question opens the task conversation at that question revision, a message at that message,
+an event at the task's Activity & evidence. Anything published later (an issue, a PR, a commit)
+describes the pattern in general terms and names the source only as "improvement review of <date>,
+suggestion <n>"; quotes and private details stay in the run's private record, under the existing
+publication rules.
 
 ## The reviewer
 
-One fresh call per run through the engine seam (`engines.py`), with no tools, an empty working
-directory, no extra directories, no hooks, plugins or MCP servers, a JSON response schema, the
-engine's session timeout and a hard dollar stop. It cannot read files, run commands or reach anything
-but its provider. Its answer is untrusted text: it is size-checked, schema-checked, checked for
-secrets and local paths, and its citations are matched against the prompt before anything is shown.
+One fresh call per run through the engine seam (`engines.py`), using the isolation Altitude already
+uses for its quota read: `--safe-mode` (no CLAUDE.md, skills, plugins, hooks or MCP),
+`--no-session-persistence`, `--tools ""`, `--strict-mcp-config`, an empty temporary working directory,
+no added directories and a JSON response schema. The adapter fails closed: if the session's own start
+record lists any tool, or reports no model, the run stops before its answer is used.
 
-Expected cost per run, from published API prices for a 64 KiB prompt (about 18,000 tokens) and up to
-10,000 output tokens including reasoning:
+**Cost limit.** With no tools there is exactly one model request, so the limit is set by its size, not
+watched afterwards: the prompt is at most 64 KiB (about 18,000 tokens) and output, including
+reasoning, is capped at 12,000 tokens. Claude's own `--max-budget-usd` is passed as well, at the
+computed maximum. A model whose prices are not in the engine seam cannot be chosen, so an unknown cost
+never runs. Expected and maximum per run, at published API prices:
 
-| Model | Price per million tokens (in / out) | Per run | What is lost |
-| --- | --- | --- | --- |
-| Claude Haiku 5.5 | $0.10 / $0.50 | under $0.01 | Weaker judgement: more obvious or duplicate suggestions, more wrong targets |
-| **Claude Sonnet 5.5 (recommended)** | $2 / $10 | about $0.10–0.15 | Close to the owners' model on reading and attribution; misses some subtle cross-task causes |
-| Claude Opus 5.5 (the owners' model, for comparison) | $4 / $20 | about $0.25 | Not cheaper; listed only as the baseline |
+| Model | Per million tokens (in / out) | Expected | Maximum | What is lost |
+| --- | --- | --- | --- | --- |
+| Claude Haiku 5.5 | $0.10 / $0.50 | under $0.01 | under $0.01 | Weaker judgement: more obvious or duplicate proposals, more wrong targets for L3 to drop |
+| **Claude Sonnet 5.5 (recommended)** | $2 / $10 | $0.08–0.12 | about $0.16 | Close to the owners' model on reading and attribution; misses some subtle cross-task causes |
+| Claude Opus 5.5 (the owners' model, for comparison) | $4 / $20 | $0.15–0.25 | about $0.32 | Not cheaper; listed as the baseline |
 
-On this machine the engines run on subscriptions, so these figures are the API-equivalent cost Altitude
-already records for the pilot, not cash; they consume subscription allowance instead. Codex's models
-(for example its "fast and affordable" model) record no dollar cost and draw on the Codex weekly
-allowance. Altitude runs Codex with a command sandbox that can still read the disk, and no tool-free
-Codex mode has been verified, so no Codex model qualifies as the reviewer until the engine seam proves one. If the chosen model is unavailable the run fails and says so; it
-never switches to another model without your recorded decision.
+These are the API-equivalent figures Altitude already records; on this machine the engines run on
+subscriptions, so a run draws subscription allowance, not cash. L3's checking turn is one ordinary
+coordinator turn, like answering a chat message. Codex is not offered: its models record no dollar
+cost, and Altitude runs Codex with a command sandbox that can still read the disk; no tool-free Codex
+mode has been verified. If the chosen model is unavailable the run fails and says so; it never
+switches model without your recorded decision.
 
 ## Run lifecycle
 
-- **Start.** You ask in project chat; L3 starts the run citing your message, and Altitude checks that
-  the message is yours, as it does for grants. The CLI start stays available to you. L3 cannot start a
-  run on its own.
-- **One run per start.** A start authorizes exactly one run (or the four of a weekly series, if you
-  choose it). There is no renewal: another run needs another request.
-- **What stops a run.** Its timeout, its dollar stop, an unavailable model, an invalid answer, or your
-  Stop. Each is recorded and shown on the card's line; nothing retries automatically. A run interrupted
-  by a restart becomes uncertain after its deadline, without replay, as in the pilot.
-- **Ordinary work is never paused** by a run, a failure or a pending suggestion.
+- **Start.** You ask in project chat; L3 starts the run with `alt improve run --message <id>`, and
+  Altitude checks the message is yours, in that project's chat, and newer than the last run's start.
+  The same message cannot start two runs. You can also start one with the CLI. L3 cannot start a run
+  without your message.
+- **One run per start** (or the four of a weekly series, if you choose it). No renewal.
+- **Stop.** **Stop** on the running line, or "stop the review" in chat (L3 runs `alt improve stop`).
+  A stopped run's answer is discarded.
+- **What else ends a run.** Its timeout, an unavailable model, an isolation check that fails, or an
+  answer that does not validate. Each is recorded and shown; nothing retries automatically. A run
+  interrupted by a restart becomes uncertain after its deadline, without replay, as in the pilot.
+- Ordinary work is never paused by a run, a failure or a pending suggestion.
+
+## Checking and posting
+
+When the reviewer's answer validates, Altitude queues one L3 turn with the proposals as untrusted
+candidates. L3 opens each cited anchor, checks current tasks, issues and earlier dispositions, and
+posts what survives with `alt improve post <run> --keep <n,…> --drop <n>:<reason>`. The card shows the
+reviewer's validated wording; L3 does not rewrite it. Dropped proposals and L3's reasons appear under
+**Details**. If L3 keeps none, the run ends with the nothing-to-suggest line.
 
 ## The card in project chat
 
-The run posts one card into project chat when it finishes, in conversation order. It is not a
-question: no Needs you entry, no badge and no notification.
+One card per run, in conversation order. It is not a question: no Needs you entry, badge or
+notification.
 
 ### States and exact text
 
 | State | What appears |
 | --- | --- |
-| Running | A system line with a spinner dot: **Improvement review · reading 14 tasks from Oct 5–12**. No Show yet. |
+| Running | System line with a working dot: **Improvement review · reading 14 tasks from Oct 5–12** and **Stop** (underlined). No Show. |
+| Stop pressed | **Stop** becomes a spinner in place; then the line reads **Improvement review stopped by you**. If the stop cannot be saved: **Not stopped. Try again.** after the line, and Stop returns. |
+| L3 checking | The same line reads **Improvement review · L3 is checking 3 suggestions**. |
 | Finished with suggestions | The card (below). |
-| Finished, nothing to suggest | A system line: **Improvement review · 14 tasks from Oct 5–12 · nothing to suggest** and **Show**, which opens the details. |
-| Not enough new work | L3's ordinary reply to the request: fewer than five tasks finished since the last review. No model call, no line. |
-| Failed | A system line with the danger dot: **Improvement review stopped · <reason>** and **Show** (reason examples: "the reviewer reached its $0.50 limit", "Claude Sonnet 5.5 is unavailable", "the reviewer's answer was not usable"). |
-| Stopped by you | System line: **Improvement review stopped by you**. |
+| Nothing to suggest | System line **Improvement review · 14 tasks from Oct 5–12 · nothing to suggest** and **Show** (the details, including any L3 drops). |
+| Not enough new work | L3's ordinary reply to the request; no line, no model call. |
+| Failed | System line with the danger dot: **Improvement review stopped · <reason>** and **Show**. Reasons: "it reached its $0.16 limit", "Claude Sonnet 5.5 is unavailable", "the reviewer had tools available", "the reviewer's answer was not usable", "it was interrupted by a restart". |
 
 ### The card
 
-```
-Improvement review                                   Oct 12, 09:40
-14 tasks from Oct 5–12
-
-[Agent workflow]
-Owners ask again to approve a merge after a routine rebase
-In 3 of 14 tasks the owner asked you to approve a merge again when only a
-rebase onto main had changed the PR. One sentence in the owner instructions
-would stop it.
-Seen in  Release notes for 0.4 · Tidy the settings page · Add search to the task list
-Measured by  approvals asked again · 3 in 14 tasks
-[ Make a task ]  Dismiss
-
-[altitude]
-...
-
-Claude Sonnet 5.5 · $0.11 · Details
-```
-
-- Header: **Improvement review** with the recorded time (system-line time format), then a muted line
-  **<N> tasks from <window>**. The count of suggestions is not written; the reader sees them.
-- Each suggestion, separated by a hairline: a target chip (**Agent workflow**, or the project's name),
-  then the title in 15px semibold (at most 90 characters, wraps, never cut), then the explanation (at
-  most 300 characters, two sentences: what happens and what would change it; wraps fully).
-- **Seen in** lists at most three linked task titles (underlined; each opens that task conversation and
-  Back returns here), then "and <n> more" as plain text. Titles wrap; they are never cut.
-- **Measured by** names the signal and its count in the window, muted. Absent when the suggestion has no
-  signal.
-- Actions: **Make a task** (bordered primary button) and **Dismiss** (ghost button beside it).
-- Footer, muted: model name · API-equivalent cost · **Details** (underlined). Details opens inline:
-  what was read (tasks, chat window), what was left out and why, and the run's time.
+- Header: **Improvement review** and its time (system-line format); below, muted, **<N> tasks from
+  <window>**. The number of suggestions is not written.
+- Each suggestion, separated by a hairline: target chip (**Agent workflow**, or the project's name);
+  title, 15 px semibold, at most 90 characters, wraps, never cut; explanation, at most 300 characters:
+  what happens and what would change it, wraps fully.
+- **Seen in**: up to three underlined links, each a task title opening its cited place (question,
+  message or event). More citations show **<n> more** (underlined), which expands the rest in place.
+- **Measured by <signal> · <count> in <N> tasks**, muted; absent when the suggestion has no signal.
+- **Make a task** (filled primary) and **Dismiss** (ghost beside it).
+- Footer, muted: model · cost · **Details** (underlined). Details opens in place: what was read, what
+  was left out, what L3 dropped and why, and when it ran.
 
 | Action or state | What appears and disappears |
 | --- | --- |
-| Make a task pressed | Its label becomes a spinner in place, same width; Dismiss disables. |
-| Accepted | Both buttons leave; a check and **Accepted · L3 is opening a task** appear. |
-| Task opened | That line becomes the ordinary compact task card (§3.5) for the new task; when L3 attached the suggestion to an existing task or issue instead, the line names and links it. |
-| Dismiss pressed | Spinner in place, as above. |
-| Dismissed | The suggestion folds to its chip, title in muted text and **Dismissed**; its body, links and buttons leave. |
-| Save failed | The buttons return; below them, in danger text: **Not saved. Try again.** It leaves on the next press. |
-| Typed answer instead | You can reply in chat ("make a task for the first, but only for the owner"); L3 records it with your message and the card changes the same way. |
-| Later run, accepted change landed | The new card opens with **Since earlier changes**: one row per measured accepted suggestion, e.g. **Approvals asked again · 3 in 14 tasks before → 0 in 11 since** with a link to the task that made the change. A row appears once five tasks have finished after the change; until then nothing is shown. |
-| Same pattern seen again after a change | The suggestion carries a muted line **Seen again after <task title>** instead of being treated as new. |
-| Conversation loading, read failure, listening, microphone denied | Unchanged conversation and composer behavior (SPEC §3.3, §3.6); the card asks for no permission. |
+| Make a task pressed | Its label becomes a spinner, same width; Dismiss dims. |
+| Accepted | Buttons leave; a check and **Accepted · L3 is opening a task**. |
+| Task opened | That line becomes the ordinary compact task card (SPEC §3.5); if L3 attached it to an existing task or issue instead, the line names and links that. |
+| Dismiss pressed, then dismissed | Spinner in place; then the suggestion folds to its chip, muted title and **Dismissed**. |
+| Save failed | Buttons return; under them in danger text **Not saved. Try again.**, gone on the next press. |
+| Typed answer | You reply in chat; L3 records it citing your message and the card changes the same way. |
+| Later run, accepted change merged | The card opens with **Since earlier changes**: one row per measured accepted suggestion, e.g. **Questions re-asked without your input · 3 in 14 tasks before → 0 in 11 since**, linking the task that made the change. A row appears once five tasks have finished after the merge. |
+| Pattern found again after a change | A muted **Seen again after <task>** line under the explanation. |
+| Conversation loading, read failure, listening, microphone denied | Unchanged (SPEC §3.3, §3.6); the card asks for no permission. |
 
-Phone (390 px) and desktop use the same card in the conversation column. On the phone the card is full
-width, the buttons stay side by side (they fit at 390 px), and all text wraps.
+Phone (390 px) and desktop use the same card in the conversation column; on the phone it is full width,
+the two buttons stay side by side at 44 px height, and all text wraps.
 
-## Acting on a suggestion
+## Decisions on suggestions
 
-- **Make a task** records the acceptance as your act (the button press is authenticated like any
-  answer) and queues one L3 turn about it. L3 treats the suggestion and its evidence as untrusted
-  candidates: it checks current tasks and issues, then opens one ordinary task linked to the suggestion,
-  steers an existing owner whose scope matches, or files an issue in general terms. Normal proposal,
-  review and merge checkpoints apply to that work; an Agent workflow change to the personas or rules
-  follows the existing guard-change holds.
-- **Dismiss** records it; no L3 turn.
-- A typed answer is ordinary chat; L3 records the outcome with `alt improve resolve`, citing your message.
-- Undecided suggestions stay on their card; they are not repeated by later runs and do not expire into
-  work.
+Each suggestion has at most one disposition: accepted or dismissed, with who, when and from what.
+
+- **Buttons.** A press is the operator's own authenticated act, sent with a request id; a repeat with the
+  same id returns the same receipt. A press on an already decided suggestion is refused and the card
+  refreshes.
+- **Typed answers.** `alt improve resolve <run>/<n> accepted|dismissed --message <id> --reason '…'`
+  requires the operator's own project-chat message sent after the card was posted. L3 records the scope
+  it read from that message (for example "owner instructions only"); that message, not the suggestion,
+  is the new task's source authority. The same message and outcome return the existing receipt; a
+  different outcome for a decided suggestion is refused.
+- **Changing your mind.** A dismissed suggestion can be accepted by a later message. An accepted one
+  with a task cannot be dismissed; reject or stop its task instead.
+- **One task per suggestion.** `alt task new --improvement <run>/<n>` refuses a suggestion that is not
+  accepted or already has a task. Acceptance queues exactly one L3 turn.
+- Undecided suggestions stay on their card, are not offered again by later runs, and never become work.
 
 ## Closing the loop
 
-When a suggestion is accepted, its signal's rate over the run's window is saved as the baseline. When
-the linked task's change merges, later runs compute the same signal over the tasks that started after
-the merge and show both on their card, once at least five such tasks have finished. Suggestions
-without a counted signal are tracked by recurrence: later runs see accepted titles and report the
-pattern again only with new evidence, shown as **Seen again after <task>**. These numbers are counts,
-not proof of cause; the card shows them as observed.
+At acceptance the suggestion's signal count over its run's window is saved with the predicate version.
+After the linked task's change merges, later runs count the same predicate version over tasks started
+after the merge, and the card shows both once five such tasks have finished. Suggestions without a
+signal are tracked by recurrence: later prompts list accepted titles, and the same pattern returns only
+with new evidence, shown as **Seen again after <task>**. These are observed counts, not proof of cause,
+and the card says nothing more than the counts.
 
 ## Where it lives
 
 - `~/.altitude/<project>/improvements/<run>/`: the exact prompt, the raw answer and the run record
-  (usage, cost, model, coverage, dropped suggestions and why). Private, never published, retained like
-  task records.
-- `<project>/improvements.json`: the runs, their suggestions, dispositions (who, when, from which message
-  or button), linked tasks, baselines and later measurements.
-- The card is a project chat row (`trigger: "improvement"`) that refers to its run; its state is read
-  from `improvements.json`, so the conversation never stores a second copy of a decision.
-- v1 covers the Altitude project. Other projects come later; their Agent workflow suggestions will then
-  appear in the Altitude project's chat, because that is where Altitude itself is changed.
+  (usage, cost, model, isolation check, coverage, validation drops, L3 drops). Private, never published,
+  archived like task records.
+- `<project>/improvements.json`: runs, suggestions, dispositions with their source (button request or
+  message), linked tasks, baselines and later counts.
+- The card is a project-chat row (`trigger: "improvement"`) naming its run; its state is read from
+  `improvements.json`, so the conversation stores no second copy of a decision.
+- This covers the Altitude project first. Other projects come later; their Agent workflow suggestions
+  will then appear in the Altitude project's chat, where Altitude itself is changed.
 
 ## Safety
 
-- The reviewer: no tools, empty working directory, no hooks, plugins or MCP, schema-bound answer,
-  timeout and dollar stop. No network beyond its provider.
-- Its answer is untrusted: bounded, validated, citations must come from its prompt, secrets and paths
-  refused, rendered as plain prose with Altitude-made links only.
-- It writes nothing. Altitude writes the records; L3 acts only after your acceptance, and only through
-  ordinary tasks.
-- No agent reads transcripts ad hoc: reading session logs is reserved to this review. The L2 and L3
-  personas say so, and an owner still reads its own task's logs to diagnose its own work.
-- Tests use fictional project records and a scripted engine at the seam: packet bounds and ordering,
-  each signal, the 64 KiB limit, dropped citations, oversized and secret-bearing answers, timeout, dollar
-  stop, unavailable model with no fallback, start authority (operator message, CLI; L3 refused), stop,
-  interrupted runs, accept and dismiss (button and typed), duplicate suppression, the L3 notice on
-  accept, measurement after a merge, and the card's states on phone and desktop. The engine adapter test
-  asserts the tool-free command line. No test calls a provider.
+- The reviewer: tool-free isolation checked on its own start record, empty working directory, schema-
+  bound answer, token caps and a budget at the computed maximum, timeout. No network but its provider.
+- Its answer is untrusted: bounded, validated, citations must come from its prompt, secrets and local
+  paths refused, rendered as plain prose with only Altitude-made links. L3 checks before you see it.
+- It writes nothing. Altitude writes the records; L3 acts only after your acceptance, through ordinary
+  tasks. Nothing auto-dispatches.
+- Reading transcripts is reserved to this review: the L2 and L3 personas say no agent reads session
+  logs or other tasks' conversations ad hoc, except L3 opening a run's cited anchors and an owner
+  reading its own task's logs to diagnose its own work.
+- Tests use fictional project records and a scripted engine at the seam, without providers: each signal
+  predicate and its version, paired excerpts and their cuts, sheet ranking and the 64 KiB bound,
+  coverage, dropped citations, oversized and secret-bearing answers, the isolation check failing closed,
+  token caps and budget arguments, unknown prices refused, timeout, unavailable model with no fallback,
+  start authority (operator message, reuse refused, CLI; L3 alone refused), Stop, interrupted runs,
+  posting with L3 drops, button and typed dispositions with replays and conflicts, one task per
+  suggestion, measurement after merge, and the card's states walked on phone and desktop.
 
 ## What is removed
 
 The conversation-audit pilot was never started on this installation. The improvement review replaces
-it rather than running beside it: `audit.json` and its seven-day/fourteen-attempt scheduler, the
-twice-daily trigger in the daemon tick, `engines.conversation_review` (which ran with the coordinator's
-tools), the once-per-turn injection of candidates into L3's prompt, `alt audit`, the pilot sections of
-the architecture, session lifecycle and CLI docs, and the L3 persona's "conversation-review candidates"
-paragraph. Its useful parts carry over: the 64 KiB prompt, the 2026-09-22 cutoff, private packet and
-result files, durable claim before the provider call, uncertainty without replay, and the engine-seam
-model choice with recorded usage and cost.
+it: `audit.json` and its seven-day/fourteen-attempt scheduler, the twice-daily trigger in the daemon
+tick, `engines.conversation_review` (which ran with the coordinator's tools), the once-per-turn
+injection of candidates into L3's prompt, `alt audit`, the pilot sections of the architecture, session
+lifecycle and CLI docs, and the L3 persona's "conversation-review candidates" paragraph. Carried over
+and covered by the same tests: the 64 KiB prompt, the 2026-09-22 cutoff, private prompt and answer
+files, a durable claim before the provider call, uncertainty without replay, and the engine-seam model
+choice with recorded usage and cost.
 
 ## Rollout
 
 Each increment is its own held PR that you review before it lands.
 
-1. **First run (this week).** `improve.py` replaces the pilot: signals, task sheets and the bounded
-   prompt; the tool-free reviewer in the engine seam with its dollar stop; start by your chat request or
-   the CLI; the private record; the card in project chat with its suggestions, Details and the failed and
-   nothing-to-suggest lines; typed answers recorded by L3. Docs: the architecture, session lifecycle, CLI
-   and persona sections are rewritten in place of the pilot's. Then you run it once on this project.
-2. **Buttons.** Make a task and Dismiss on the card with their pending, saved and failed states, and the
-   L3 turn on acceptance.
-3. **Measurement.** Baselines, the after-change counts and **Since earlier changes**, and **Seen again**.
-4. **Only if you choose them:** the weekly series, the working-log excerpts, and other projects.
+1. **First run (this week).** Replace the pilot with `improve.py`: signals, task sheets and the prompt;
+   the tool-free reviewer with its isolation check and cost limit; start by your chat message or the
+   CLI, Stop, and the private record. L3 receives the candidates, checks them and presents the survivors
+   in its ordinary chat reply, numbered, with links; you answer in words and L3 records them with
+   `alt improve resolve`. No new screen. Docs: the pilot's architecture, session lifecycle, CLI and
+   persona sections are rewritten for the review. Acceptance: one real run on this project with its
+   record, cost and your dispositions. About three to four days of work: the pilot's claim, timeout and
+   record code is reused; new are the signals and sheets (the largest part), the reviewer adapter, three
+   verbs and their tests.
+2. **The card.** The running line with Stop, the card with Make a task and Dismiss, Details, every state
+   above walked on phone and desktop; L3 posts with `alt improve post` instead of its reply.
+3. **Measurement.** Baselines, **Since earlier changes** and **Seen again**.
+4. **Only if you choose them:** the weekly series, working-log excerpts, other projects.
 
 ## Settled by the owner (redirect any of these)
 
-- Code builds the prompt from counted signals; no model summarises transcripts first.
+- Code builds the prompt from counted predicates and paired excerpts; no model summarises transcripts.
 - The reviewer has no tools at all, not read-only tools.
 - At most three suggestions per run.
-- The card is posted directly from the validated answer, without a coordinator pre-screen turn; L3
-  checks a suggestion only when you accept it. This keeps each run to one cheap call and shows you
-  exactly what the reviewer found.
+- L3 checks proposals before you see them, because the reviewer cannot open records or see current
+  work; this costs one ordinary coordinator turn per run.
 - Suggestions are not in Needs you and send no notification.
 - The pilot is removed, not kept beside the new review.
