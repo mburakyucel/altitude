@@ -1724,9 +1724,10 @@ and [CLI times](CLI.md#times).
 ### Improvement review
 
 The approved [improvement suggestions design](../design/wireframes/improvement-review/PROPOSAL.md)
-reads one project's finished work and proposes at most three fixes. A review runs when the operator
-asks L3 for one in the Altitude project's chat; settings and the Monday schedule are later rollout
-steps.
+reads one project's finished work and proposes at most three fixes. It covers the Altitude project. A
+review runs on Monday mornings with Weekly on, when the operator presses Get suggestions now in the
+project's settings, or when they ask L3 in chat; each needs their agreement to the terms the settings
+sheet shows.
 
 `improve.py` builds the evidence in code. Signals are exact, versioned predicates over existing task
 records (`SIGNALS_VERSION`): question revisions with no operator message since the previous one,
@@ -1764,13 +1765,29 @@ timeout, usage limit or unusable answer ends the call with its reason; nothing r
 model. Codex is not offered: no tool-free Codex mode is verified, so without Claude the review is
 unavailable.
 
-A run starts with `alt improve run` on L3's coordinator socket, admitted only during the chat turn that
-answers the operator's own project-chat message; that message is the run's authority, and asking again
-with it returns the same run. It covers only the project whose origin is Altitude's repository. It is
-refused while another run of the project is active, while Altitude waits to activate a change, with
-fewer than five tasks finished since the last review's window, and while Claude's weekly or short
-window is at `config.IMPROVEMENT_RESERVE` (90%) or more or is unknown (`route.improvement_reserve`).
-The claim is durable in `<project>/improvements.json` before the reviewer runs on a daemon thread
+The terms (`improve.terms`) are the sheet's title and text and the What is sent line, versioned by a
+hash of that text with the model, quote length, prompt size and token limits, so a change to what is
+sent, the model or the limit is a new version. The agreement in `<project>/improvements.json` records
+the version, `operator` and when; an agreement to an earlier version does not count. While Weekly is on
+under an earlier version, the next tick turns it off and writes one chat line, "Improvement
+suggestions are off until you agree to the new terms in settings.", linking to the settings section.
+Weekly (`weekly`: on, when and by whom) and every change to it or the agreement (`changes`) live in the
+same record.
+
+A run starts in one of three ways, each with its authority, and a source starts one run: the same
+source again returns it. `alt improve run` on L3's coordinator socket is admitted only during the chat
+turn that answers the operator's own project-chat message, which is its source. Get suggestions now is
+the operator's press with its request id. The Weekly run's source is its week: once 08:00 on Monday,
+machine local time, has passed, the first tick that finds the week unclaimed claims it
+(`improve.weekly`), so a week Altitude was down at 08:00 runs at its first check that week; a week it
+missed entirely is not caught up, and Weekly turned on after that Monday's 08:00 first runs the next
+Monday. Every start covers only the project whose origin is Altitude's repository, and is refused
+without the agreement, while another run of the project is active, with fewer than five tasks
+finished since the last review's window, while Claude's weekly or short window is at
+`config.IMPROVEMENT_RESERVE` (90%) or more or is unknown (`route.improvement_reserve`), and while
+Altitude waits to activate a change. A Monday that meets one of these is recorded as skipped with its
+reason ("3 tasks had finished") and posts nothing; a pending activation instead waits for a later
+tick. The claim is durable in `<project>/improvements.json` before the reviewer runs on a daemon thread
 holding the restart lock as review runs do. Each run reads the tasks finished after the previous
 posted or empty review's window (the first reads 14 days); a stopped or failed run does not advance
 it. The exact prompt and raw answer stay private in `<project>/improvements/<run>/`.
@@ -1819,6 +1836,16 @@ again queued it first. The overview lists under
 `suggestions` every posted run with a suggestion undecided or accepted without its task; Needs you
 shows them under Suggestions, newest first, after what needs the operator and not counted with it,
 each heading linking to its card in the project's chat.
+
+The project's settings show an Improvement suggestions section from `GET /api/improve/<project>`
+(`improve.settings`): the Weekly switch with its line (off; the next Monday, with how many more tasks
+must finish; the week skipped and why; off because the terms changed), Get suggestions now with the
+tasks it would read, or the reason it cannot start as its accessible description, or the running review
+with Stop in its place, and What is sent. Without the agreement to the current terms, turning Weekly
+on or pressing Get suggestions now opens the sheet first; Turn on sends the press with the sheet's
+version (`terms`), which records the agreement and completes the press, and a version that changed
+since is refused. `weekly` and `run` presses on `POST /api/improve` come only from a paired device's
+cookie, never a client holding only the machine key. Projects other than Altitude have no section.
 
 `improve_eval.py` loads fictional scenarios from `tests/fixtures/improvement/` as ordinary task
 folders and project chat, runs the same prompt builder and reviewer, matches suggestions to planted

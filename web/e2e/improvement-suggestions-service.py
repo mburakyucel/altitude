@@ -47,6 +47,8 @@ def main():
     # The run lifecycle is real; the Altitude-project gate and Claude's reserve are unit-tested and fixed here.
     improve._altitude = lambda _project: True
     route.improvement_reserve = lambda: None
+    # The operator agreed to the terms and turned Weekly on in settings before these reviews.
+    improve.set_weekly("alpha", True, agree=improve.terms("alpha")["version"], now=NOW - timedelta(days=9))
     # L3 never runs: a queued task turn stays pending, so a Make a task press reads "L3 is opening a task".
     server.request_l3_drain = lambda _project: False
     answers = [

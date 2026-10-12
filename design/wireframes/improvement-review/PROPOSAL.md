@@ -298,11 +298,10 @@ A switch change shows "Saving…" under the section with its controls disabled; 
 in red under the section and the switch returns to the saved value, as the page's other settings do. On
 the phone the sheet is a bottom sheet with full-width buttons.
 
-The setting is `improvement_review` (`weekly` true or false, and the agreed terms version) in the
-project's settings record. Unlike routing, only the operator can change it: the web request from a
-paired device, or `alt project set <name> --improvement-weekly on|off --reason '…'` run as the
-operator, which refuses until the terms were agreed in the app; L3 and owners are refused. Each change
-is recorded with who and when.
+Weekly and the agreed terms version live in the project's improvement record beside its runs, so the
+Monday claim reads the switch and the agreement under the same lock that records the run. Unlike
+routing, only the operator can change them, with the web request from a paired device; no CLI or
+coordinator verb does, so L3 and owners cannot. Each change is recorded with who and when.
 
 ## Checking and posting
 

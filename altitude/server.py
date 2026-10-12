@@ -1257,6 +1257,8 @@ def tick_project(project: str) -> None:
             spawn(f"finished:{project}:{item['task']['slug']}", on_l2_finished, project, item)
         resume_stranded_reports(project)
         improve.reconcile(project)
+        if receipt := improve.weekly(project):
+            spawn(f"improve:{project}", improve.execute, project, receipt["run"])
         for slug in dispatch.resume_due(project):
             request_task_resume(project, slug)
         dispatch_waiting(project)
@@ -2006,14 +2008,29 @@ class Handler(BaseHTTPRequestHandler):
 
     def _improve_post(self, body: dict) -> None:
         """The operator's presses on improvement suggestions: Stop on the running line, Make a task, Dismiss, Undo
-        and Try again on the card. Each carries a request id, so a repeated press returns its first receipt."""
+        and Try again on the card; Weekly and Get suggestions now in settings, with `terms` when the sheet's Turn on
+        agreed. Each carries a request id, so a repeated press returns its first receipt."""
         try:
-            if body.keys() - {"project", "action", "ref", "request_id"} \
-                    or body.get("action") not in ("stop", "accept", "dismiss", "undo", "retry"):
+            if body.keys() - {"project", "action", "ref", "request_id", "on", "terms"} \
+                    or body.get("action") not in ("stop", "accept", "dismiss", "undo", "retry", "weekly", "run"):
                 raise ValueError("Unsupported improvement request.")
             project, action, ref = str(body.get("project")), body["action"], str(body.get("ref"))
             config.project(project)
             request_id = uuid.UUID(str(body.get("request_id"))).hex
+            if action in ("weekly", "run"):
+                # Agreeing sends the project's conversations to a provider: only the operator's paired device may, never
+                # a client holding the machine key. Every POST already comes from Altitude's own page (_refused).
+                if self._device is None:
+                    return self._json({"error": "Improvement suggestions are turned on only from a paired device."}, 403)
+                terms = body.get("terms")
+                if terms is not None and not isinstance(terms, str) or action == "weekly" and not isinstance(body.get("on"), bool):
+                    raise ValueError("Unsupported improvement request.")
+                if action == "weekly":
+                    return self._json({"ok": True, **improve.set_weekly(project, body["on"], agree=terms)})
+                result = improve.run_now(project, request_id, agree=terms)
+                if not result.get("replayed"):
+                    spawn(f"improve:{project}", improve.execute, project, result["run"])
+                return self._json({"ok": True, **result})
             if action == "stop":
                 result = improve.stop(project, request_id, ref)
             elif action == "retry":
@@ -2223,6 +2240,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": "Project is not managed."}, 404)
             if api == "project" and len(parts) > 2:
                 return self._json(project_view(parts[2]), compress=True)
+            if api == "improve" and len(parts) == 3:
+                try:
+                    config.project(parts[2])
+                    return self._json(improve.settings(parts[2]))
+                except KeyError:
+                    return self._json({"error": "Project is not managed."}, 404)
             if api == "defaults" and len(parts) == 3:
                 try:
                     return self._json(config.defaults_view(parts[2]))

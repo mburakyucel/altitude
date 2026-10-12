@@ -580,6 +580,42 @@ export async function sendImprovement(project: string, action: "stop" | "accept"
   return api<{ ok: boolean }>("/api/improve", { method: "POST", body: JSON.stringify({ project, action, ref, request_id: requestId }) });
 }
 
+/**
+ * A project's Improvement suggestions settings (improve.settings): the sheet's terms, whether the operator agreed to
+ * them, the Weekly switch and its line, and Get suggestions now with its line and any reason it is unavailable, or
+ * the running review in its place. Unavailable projects have no section.
+ */
+export const ImprovementSettingsSchema = z
+  .object({
+    available: z.boolean(),
+    terms: z.object({ version: z.string(), title: z.string(), body: z.string(), sent: z.string() }).optional(),
+    agreed: z.boolean().optional(),
+    weekly: z.boolean().optional(),
+    line: z.string().optional(),
+    now: z.object({ line: z.string(), unavailable: z.string().nullable() }).optional(),
+    running: z.object({ id: z.string(), line: z.string() }).optional(),
+  })
+  .passthrough();
+export type ImprovementSettings = z.infer<typeof ImprovementSettingsSchema>;
+
+/** Kept under the project's key, so the press refetch and the change stream refresh it with the project. */
+export function useImprovementSettings(project: string) {
+  return useQuery({
+    queryKey: ["project", project, "improvement"],
+    queryFn: async () => ImprovementSettingsSchema.parse(await api(`/api/improve/${encodeURIComponent(project)}`)),
+    enabled: Boolean(project),
+    refetchInterval: pollInterval,
+  });
+}
+
+/** Weekly on or off, or Get suggestions now; `terms` is the sheet version the operator's Turn on agreed to. */
+export async function sendImprovementSetting(project: string, change: { action: "weekly"; on: boolean } | { action: "run" }, terms?: string) {
+  return api<{ ok: boolean }>("/api/improve", {
+    method: "POST",
+    body: JSON.stringify({ project, ...change, request_id: crypto.randomUUID().replaceAll("-", ""), ...(terms ? { terms } : {}) }),
+  });
+}
+
 export const TaskMessageSchema = z
   .object({
     id: z.string(),

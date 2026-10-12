@@ -7,6 +7,7 @@ citation can only be a place the code put there.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import uuid
@@ -513,9 +514,10 @@ def _receipt(run: dict) -> dict:
             **({"reason": run["reason"]} if run.get("reason") else {})}
 
 
-def start(project: str, message_id: str, *, now: datetime | None = None) -> dict:
-    """Claim the review the operator asked for in project chat with message `message_id`; Altitude then runs
-    execute() on its own thread. A message starts one review; asking again with it returns that review."""
+def start(project: str, source: str, *, now: datetime | None = None, week: str | None = None) -> dict | None:
+    """Claim a review; Altitude then runs execute() on its own thread. `source` is its authority: the operator's
+    chat message, their Get suggestions now press, or the Monday of `week` for the Weekly run. A source starts one
+    review; the same source again returns it. A week that fails a condition is recorded as skipped and returns None."""
     now = now or datetime.now(timezone.utc)
     if not _altitude(project):
         raise ValueError("Improvement suggestions cover only the Altitude project for now.")
@@ -523,28 +525,186 @@ def start(project: str, message_id: str, *, now: datetime | None = None) -> dict
     items, older = finished(project, now, begin)
     with S.project_lock(project):
         record = _load(project)
-        same = next((r for r in record["runs"] if r["message"] == message_id), None)
+        same = next((r for r in record["runs"] if r["message"] == source), None)
         if same:
             return {**_receipt(same), "replayed": True}
-        if any(r["state"] in ACTIVE for r in record["runs"]):
-            raise ValueError("An improvement review is already running for this project.")
-        if _window_start(record, now) != begin:
-            raise ValueError("Another review just ended; ask again.")
-        if why := route.improvement_reserve():
-            raise ValueError(why)
-        if config.activation_pending():
-            raise ValueError("Altitude restarts soon to activate a change; ask again after it.")
-        if len(items) < MIN_TASKS:
-            raise ValueError(f"{len(items)} tasks finished since {_day(begin.isoformat())}; "
-                             f"a review needs at least {MIN_TASKS}.")
+        # The Weekly authority is read again under the lock that records the claim: a switch turned off since the
+        # tick read it starts nothing.
+        if week is not None and (_due(record, now) != week or not _agreed(record) or _window_start(record, now) != begin):
+            return None
+        why = ("Turn on improvement suggestions in this project's settings first." if not _agreed(record)
+               else "An improvement review is already running for this project."
+               if any(r["state"] in ACTIVE for r in record["runs"])
+               else "Another review just ended; ask again." if _window_start(record, now) != begin
+               else route.improvement_reserve()
+               or ("Altitude restarts soon to activate a change; ask again after it." if config.activation_pending()
+                   else None)
+               or (f"{len(items)} tasks finished since {_day(begin.isoformat())}; a review needs at least {MIN_TASKS}."
+                   if len(items) < MIN_TASKS else None))
         at = now.replace(microsecond=0)
+        if why and week is not None:
+            record.setdefault("weeks", {})[week] = {"at": at.isoformat(), "skipped": _skipped(why, len(items))}
+            S.write_json(_path(project), record)
+            return None
+        if why:
+            raise ValueError(why)
         run = {"id": uuid.uuid4().hex[:12], "state": "reading", "started": at.isoformat(),
-               "deadline": (at + RUN_LIMIT).isoformat(), "ended": None, "reason": None, "message": message_id,
+               "deadline": (at + RUN_LIMIT).isoformat(), "ended": None, "reason": None, "message": source,
                "model": config.IMPROVEMENT_MODEL, "window": {"start": begin.isoformat(), "end": at.isoformat()},
                "tasks": len(items), "older": older, "suggestions": [], "dropped": [], "decisions": []}
         record["runs"].append(run)
+        if week is not None:
+            record.setdefault("weeks", {})[week] = {"at": at.isoformat(), "run": run["id"]}
         _save(project, record)
     return _receipt(run)
+
+
+def _skipped(why: str, count: int) -> str:
+    """A skipped week's reason as the Weekly line says it: "3 tasks had finished"."""
+    if why.startswith(f"{count} tasks finished"):
+        return f"{_tasks(count)} had finished"
+    return "another review was running" if "already running" in why else why.rstrip(".")
+
+
+def _tasks(count: int) -> str:
+    return f"{count} task" if count == 1 else f"{count} tasks"
+
+
+# ---- agreement, Weekly and the Monday run ---------------------------------------------------------------------
+
+#: The Weekly run's time on Monday, in the machine's local time zone: the morning check that writes the digest.
+WEEKLY_HOUR = 8
+
+
+def terms(project: str) -> dict:
+    """The sheet the operator agrees to. Its version covers its text and the limits behind it, so a change to what
+    is sent, the model or the limit is a new version, and an agreement to the old one no longer counts."""
+    model = config.model_label(config.IMPROVEMENT_MODEL)
+    plan = config.ENGINE_LABELS[config.IMPROVEMENT_MODEL.split("-", 1)[0]]
+    body = (f"{model} reads counts from this project's tasks and short quotes from its chats (up to {QUOTE} characters "
+            f"each). It runs on your {plan} plan, capped at far less per run than an ordinary task; one ordinary L3 "
+            f"turn then checks what it finds. With Weekly on, this happens Monday mornings once {MIN_TASKS} tasks have "
+            "finished. Nothing is published, and nothing becomes work until you choose it.")
+    sent = f"Counts and short chat quotes · {model} on your plan · capped per run, plus one L3 check"
+    # What is read and how much: the signals, the window's bounds, the quotes and sizes, the model and its limit.
+    limits = [SIGNALS_VERSION, CUTOFF.isoformat(), FIRST_WINDOW.days, OLDEST.days, QUOTE, PAIRS, SHEET_BYTES,
+              SHEETS_BYTES, PROMPT_BYTES, config.IMPROVEMENT_MODEL, engines.IMPROVEMENT_INPUT_TOKENS,
+              engines.IMPROVEMENT_OUTPUT_TOKENS]
+    version = hashlib.sha256(json.dumps([body, sent, limits]).encode()).hexdigest()[:12]
+    return {"version": version, "title": f"Turn on improvement suggestions for {project}?", "body": body, "sent": sent}
+
+
+def _agreed(record: dict) -> bool:
+    return (record.get("agreement") or {}).get("terms") == terms("")["version"]
+
+
+def _agree_locked(record: dict, version: str | None, at: str) -> None:
+    """Record the operator's Turn on for the sheet version they saw; a sheet that changed since is refused."""
+    if version is None:
+        if not _agreed(record):
+            raise ValueError("Turn on improvement suggestions in this project's settings first.")
+        return
+    if version != terms("")["version"]:
+        raise ValueError("The terms changed while the sheet was open; read them again.")
+    if not _agreed(record):
+        record["agreement"] = {"terms": version, "by": "operator", "at": at}
+        record.setdefault("changes", []).append({"at": at, "by": "operator", "agreed": version})
+
+
+def set_weekly(project: str, on: bool, *, agree: str | None = None, now: datetime | None = None) -> dict:
+    """The operator's Weekly switch. Turning it on needs their agreement to the current terms, given with `agree`
+    (the version the sheet showed) or earlier. Turned on, its first run is the next Monday at WEEKLY_HOUR."""
+    now = now or datetime.now(timezone.utc)
+    if not _altitude(project):
+        raise ValueError("Improvement suggestions cover only the Altitude project for now.")
+    at = now.replace(microsecond=0).isoformat()
+    with S.project_lock(project):
+        record = _load(project)
+        if on:
+            _agree_locked(record, agree, at)
+        if bool((record.get("weekly") or {}).get("on")) != on:
+            record["weekly"] = {"on": on, "at": at, "by": "operator"}
+            record.setdefault("changes", []).append({"at": at, "by": "operator", "weekly": on})
+        S.write_json(_path(project), record)
+    return {"weekly": on}
+
+
+def run_now(project: str, request_id: str, *, agree: str | None = None, now: datetime | None = None) -> dict:
+    """Get suggestions now: the operator's press, agreeing first when the sheet was shown."""
+    now = now or datetime.now(timezone.utc)
+    if not _altitude(project):
+        raise ValueError("Improvement suggestions cover only the Altitude project for now.")
+    if agree is not None:
+        with S.project_lock(project):
+            record = _load(project)
+            _agree_locked(record, agree, now.replace(microsecond=0).isoformat())
+            S.write_json(_path(project), record)
+    return start(project, request_id, now=now)
+
+
+def _monday(now: datetime, weeks: int = 0) -> datetime:
+    """WEEKLY_HOUR on the Monday of `now`'s week, `weeks` later, in the machine's local time."""
+    local = now.astimezone().replace(tzinfo=None)
+    day = local.date() - timedelta(days=local.weekday() - 7 * weeks)
+    return datetime(day.year, day.month, day.day, WEEKLY_HOUR).astimezone()
+
+
+def _due(record: dict, now: datetime) -> str | None:
+    """The week whose Weekly run is due now: WEEKLY_HOUR on its Monday has passed, Weekly was on by then, and the week
+    is unclaimed. A pending activation waits for a later check."""
+    switch, monday = record.get("weekly") or {}, _monday(now)
+    week = monday.date().isoformat()
+    if not switch.get("on") or now < monday or _date(switch["at"]) > monday or week in record.get("weeks", {}) \
+            or config.activation_pending():
+        return None
+    return week
+
+
+def weekly(project: str, now: datetime | None = None) -> dict | None:
+    """The tick's Weekly run: once WEEKLY_HOUR on Monday has passed, the week's one run is claimed, or recorded as
+    skipped, by the first check that finds it unclaimed. A week Altitude missed entirely is not caught up, and a switch
+    turned on after this week's Monday run waits for the next. Returns the receipt of a run it started."""
+    now = now or datetime.now(timezone.utc)
+    if not (week := _due(_load(project), now)):
+        return None
+    return start(project, f"week {week}", now=now, week=week)
+
+
+def settings(project: str, *, now: datetime | None = None) -> dict:
+    """The settings section: the sheet, the Weekly switch and its line, and Get suggestions now with its line, its
+    reason when unavailable, or the running review in its place."""
+    if not _altitude(project):
+        return {"available": False}
+    now = now or datetime.now(timezone.utc)
+    record = _load(project)
+    begin = _window_start(record, now)
+    count = len(finished(project, now, begin)[0])
+    since = _day(begin.isoformat())
+    switch, monday = record.get("weekly") or {}, _monday(now)
+    if switch.get("on"):
+        last = monday if now >= monday else _monday(now, -1)
+        week = record.get("weeks", {}).get(last.date().isoformat())
+        upcoming = monday if now < monday and _date(switch["at"]) <= monday else _monday(now, 1)
+        line = (f"Skipped {_day(last.isoformat())}: {week['skipped']}. " if week and "skipped" in week else "") \
+            + f"Next: {upcoming:%A}, {_day(upcoming.isoformat())}" \
+            + (f", if {MIN_TASKS - count} more {'task finishes' if MIN_TASKS - count == 1 else 'tasks finish'}"
+               if count < MIN_TASKS else "") + "."
+    elif switch.get("off") == "terms":
+        line = "Off: the terms changed. Turn on to see them."
+    else:
+        line = f"Every Monday morning, when at least {MIN_TASKS} tasks have finished."
+    active = next((r for r in record["runs"] if r["state"] in ACTIVE), None)
+    out = {"available": True, "terms": terms(project), "agreed": _agreed(record), "weekly": bool(switch.get("on")),
+           "line": line}
+    if active:
+        out["running"] = {"id": active["id"], "line": f"Reading {_tasks(active['tasks'])}" if active["state"] == "reading"
+                          else f"L3 is checking {len(active['suggestions'])}"}
+    else:
+        out["now"] = {"line": f"Reads the {_tasks(count)} finished since {since}.",
+                      "unavailable": route.improvement_reserve() or (
+                          f"Needs {MIN_TASKS} finished tasks since {since}; {count} so far." if count < MIN_TASKS
+                          else None)}
+    return out
 
 
 def execute(project: str, run_id: str) -> None:
@@ -622,14 +782,17 @@ def _save(project: str, record: dict) -> None:
     appears without its run's receipt. A run's line is Altitude's own turn named by the run, so a line a restart
     interrupted is posted once by the next save."""
     S.write_json(_path(project), record)
-    pending = [run for run in record["runs"] if "line" in run]
+    pending = [(run["id"], run) for run in record["runs"] if "line" in run]
+    if "line" in record:
+        pending.append((f"terms-{record['weekly']['terms']}", record))
     if not pending:
         return
     said = {row.get("improvement") for row in l3.chat_history(project) if row.get("trigger") == "improvement"}
-    for run in pending:
-        text = run.pop("line")
-        if run["id"] not in said:
-            l3.chat_log(project, "assistant", text, trigger="improvement", turn_id=run["id"], improvement=run["id"])
+    for key, owner in pending:
+        text = owner.pop("line")
+        if key not in said:
+            l3.chat_log(project, "assistant", text, trigger="improvement", turn_id=key.removeprefix("terms-"),
+                        improvement=key)
     S.write_json(_path(project), record)
 
 
@@ -896,12 +1059,22 @@ def require_accepted_locked(project: str, ref: str) -> None:
 
 def reconcile(project: str, now: datetime | None = None) -> None:
     """The tick: a run past its deadline ends. Reading then means its call was interrupted; checking means L3's
-    turn failed, was interrupted or never ran. Nothing is retried. A chat line a restart interrupted is posted."""
+    turn failed, was interrupted or never ran. Nothing is retried. Weekly turns off when the terms it was agreed
+    under changed, saying so once in chat. A chat line a restart interrupted is posted."""
     now = now or datetime.now(timezone.utc)
-    if not any(r["state"] in ACTIVE and now > _date(r["deadline"]) or "line" in r for r in _load(project)["runs"]):
+    record = _load(project)
+    if not any(r["state"] in ACTIVE and now > _date(r["deadline"]) or "line" in r for r in record["runs"]) \
+            and "line" not in record and not (record.get("weekly", {}).get("on") and not _agreed(record)):
         return
     with S.project_lock(project):
         record = _load(project)
+        if record.get("weekly", {}).get("on") and not _agreed(record):
+            at = now.replace(microsecond=0).isoformat()
+            record["weekly"] = {"on": False, "at": at, "by": "altitude", "off": "terms",
+                                "terms": record["agreement"]["terms"]}
+            record.setdefault("changes", []).append({"at": at, "by": "altitude", "weekly": False,
+                                                     "reason": "the terms changed"})
+            record["line"] = "Improvement suggestions are off until you agree to the new terms in settings."
         for run in record["runs"]:
             if run["state"] in ACTIVE and now > _date(run["deadline"]):
                 if run["state"] == "checking":
