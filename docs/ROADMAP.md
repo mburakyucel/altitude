@@ -202,11 +202,11 @@ slices, each one task. The durable backlog is GitHub issues selected by the oper
   automation.
 
 [Improvement suggestions](../design/wireframes/improvement-review/PROPOSAL.md) is the approved design
-that replaces the conversation-audit pilot: an opt-in, weekly or on-request review in which a cheaper
-tool-free model reads one project's task counts and short chat quotes and proposes at most three fixes,
-for the project or for how agents work, which L3 checks and the operator accepts or dismisses. It is
-built in held steps: the reviewer proven by a fictional-project eval, a first run on request, the card
-and Needs you, settings and the Monday schedule, then measurement.
+for an opt-in, weekly or on-request review in which a cheaper tool-free model reads one project's
+task counts and short chat quotes and proposes at most three fixes, for the project or for how agents
+work, which L3 checks and the operator accepts or dismisses. Its reviewer and fictional-project eval
+exist; the remaining held steps are a first run on request, the card and Needs you, settings and the
+Monday schedule, then measurement.
 
 New architecture or feature proposals start as conversation or a GitHub issue. L3 decides whether
 to answer directly or delegate one L2; no backlog item is pulled or implemented autonomously.

@@ -10,6 +10,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -181,41 +182,86 @@ def session_timeout(engine: str) -> int:
     return {"claude": config.L3_TURN_TIMEOUT, "codex": config.L3_CODEX_TURN_TIMEOUT}[engine]
 
 
-@config.admitted_provider
-def conversation_review(project: str, prompt: str, *, engine: str, model: str) -> dict:
-    """Fresh private reviewer using ordinary coordinator tools, permissions and native deadline.
+#: The improvement review's usage limit: everything sent counted at one token per byte, plus the output cap.
+IMPROVEMENT_INPUT_TOKENS, IMPROVEMENT_OUTPUT_TOKENS = 74_000, 12_000
+IMPROVEMENT_SENT_BYTES = 72 * 1024
 
-    The caller supplies the review assignment; this never resumes or publishes an L3 turn.
-    Native cost is API-equivalent telemetry, not cash charged or subscription quota consumed.
-    """
-    from . import l3
-    result = {"text": "", "usage": None, "cost": None, "engine_model": None,
-              "session_id": None, "error": None, "engine": engine, "model": model}
-    if engine not in config.ENGINES:
-        return {**result, "error": f"Unknown reviewer engine: {engine}"}
-    installed = installation(engine)
-    if installed.get("available") is False:
-        return {**result, "error": installed["why"]}
-    runtime = l3._l3_runtime(project, engine)
-    started = time.monotonic()
+
+def improvement_budget(model: str) -> float:
+    """Claude Code's budget stop for one review: its token maximum priced at the model's published rates."""
+    if model not in config.IMPROVEMENT_MODELS:
+        raise ValueError(f"no usage figures for {model}")
+    prompt_price, output_price = config.IMPROVEMENT_MODELS[model]
+    return round((IMPROVEMENT_INPUT_TOKENS * prompt_price + IMPROVEMENT_OUTPUT_TOKENS * output_price) / 1e6, 4)
+
+
+@config.admitted_provider
+def improvement_review(prompt: str, instructions: str, schema: dict, *, model: str, timeout: int) -> dict:
+    """One tool-free Claude call with no project, settings or session; fails closed unless its start record proves it.
+
+    The answer is untrusted data for the caller to validate. Usage is the plan's; cost is only the yardstick."""
+    result = {"model": model, "engine_model": None, "usage": None, "cost": None, "answer": None, "error": None}
+    schema_text = json.dumps(schema, separators=(",", ":"))
+    if len((prompt + instructions + schema_text).encode()) > IMPROVEMENT_SENT_BYTES:
+        return {**result, "error": "its prompt exceeds the usage limit"}
     try:
-        body = repository_rule_prompt(config.project_path(project)) + prompt
-        common = {"cwd": runtime, "model": model, "timeout": session_timeout(engine),
-                  "extra_env": l3._l3_env(project, runtime)}
-        if engine == "claude":
-            native = claude_print(body, **common, durable_timeout=True, allowed_tools=L3_ALLOWED_TOOLS,
-                                  tools=l3.L3_TOOLS, permission_mode="dontAsk", permission_prompts="none", restricted=True,
-                                  add_dirs=(config.project_path(project), config.ROOT))
-        else:
-            native = codex_exec(body, **common, sandbox_settings=codex_l3_permissions(runtime, project=project))
-        result.update(text=native.get("final_text", native.get("text")) or "", usage=native.get("usage") or None,
-                      cost=native.get("reported_cost"), engine_model=native.get("engine_model"),
-                      session_id=native.get("session_id"), error=native.get("error"), tools=native.get("tools", []))
-    except (OSError, subprocess.SubprocessError) as exc:
-        result["error"] = str(exc)
-    finally:
-        l3._remove_runtime(runtime)
-    return {**result, "duration_seconds": round(time.monotonic() - started, 3)}
+        budget = improvement_budget(model)
+    except ValueError as exc:
+        return {**result, "error": str(exc)}
+    if installation("claude").get("available") is False or usage_hold():
+        return {**result, "error": f"{model} is unavailable"}
+    cmd = [config.CLAUDE_BIN, "--print", "--output-format", "stream-json", "--verbose", "--safe-mode",
+           "--no-session-persistence", "--tools", "", "--strict-mcp-config", "--model", model,
+           "--system-prompt", instructions, "--json-schema", schema_text, "--max-budget-usd", str(budget)]
+    # The operator runs the review on the plan only: no API key, token or endpoint override reaches the call.
+    env = {**{k: v for k, v in clean_env().items() if not k.startswith("ANTHROPIC_")},
+           "CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(IMPROVEMENT_OUTPUT_TOKENS)}
+    started = time.monotonic()
+    with tempfile.TemporaryDirectory(prefix="altitude-improve-") as empty:
+        try:
+            done = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=timeout, env=env, cwd=empty)
+        except subprocess.TimeoutExpired:
+            return {**result, "error": "it timed out", "duration_seconds": round(time.monotonic() - started, 3)}
+        except OSError as exc:
+            return {**result, "error": str(exc)}
+    result["duration_seconds"] = round(time.monotonic() - started, 3)
+    isolated, text, quota = False, "", None
+    for line in done.stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if event.get("type") == "system" and event.get("subtype") == "init":
+            # The review reads private conversation quotes; a session that could act on them is never used.
+            # Its only tool is Claude Code's own carrier for the schema-bound answer.
+            isolated = event.get("tools") == ["StructuredOutput"] and not event.get("mcp_servers") \
+                and bool(event.get("model")) and event.get("apiKeySource") == "none"
+        elif event.get("type") == "assistant":
+            message = event.get("message") or {}
+            if message.get("model") and message["model"] != "<synthetic>":
+                result["engine_model"] = message["model"]
+            text += "".join(str(c.get("text") or "") for c in message.get("content") or [] if c.get("type") == "text")
+            quota = event.get("quotaLimits") or message.get("quotaLimits") or quota
+        elif event.get("type") == "result":
+            result["usage"] = event.get("usage") or None
+            if event.get("total_cost_usd") is not None:
+                result["cost"] = float(event["total_cost_usd"])
+            result["answer"] = event.get("structured_output")
+            if event.get("is_error"):
+                result["error"] = str(event.get("result") or event.get("subtype") or "it failed")[:300]
+    limit = usage_limit_in(text or result["error"] or done.stderr, quota)
+    if limit:
+        record_usage_limit("claude", limit, text[:200])
+        return {**result, "answer": None, "error": "it went over its usage limit"}
+    if not isolated:
+        return {**result, "answer": None, "error": "it could not run isolated"}
+    if result["error"] is None and (done.returncode or result["answer"] is None):
+        result["error"] = "its answer was not usable"
+    usage = result["usage"] or {}
+    used = sum(int(usage.get(k) or 0) for k in ("input_tokens", "cache_read_input_tokens",
+                                                 "cache_creation_input_tokens", "output_tokens"))
+    result["tokens"], result["over_limit"] = used, used > IMPROVEMENT_INPUT_TOKENS + IMPROVEMENT_OUTPUT_TOKENS
+    return result
 
 
 class ImageInputError(ValueError):

@@ -1,0 +1,459 @@
+{
+ "project": "fernlog",
+ "now": "2026-10-19T08:00:00+00:00",
+ "tasks": [
+  {
+   "slug": "watering-streaks",
+   "title": "Show watering streaks on the plant card",
+   "state": "done",
+   "created": "2026-10-05T09:00:00+00:00",
+   "reported": "2026-10-05T13:00:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-05T13:50:00+00:00",
+   "tokens": 1300000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-05T09:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: the operator wants each plant card to show how many days in a row it was watered on schedule. Card layout stays as is; the streak sits under the plant name."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-05T09:20:00+00:00",
+     "role": "l2",
+     "text": "Plan: compute the streak from the existing watering log in the plant service, return it with the card payload, and render it as a small line under the name (\"Watered on time 6 days running\"). A missed day resets it. Tests cover a fresh plant, a reset and a long streak. Proceeding."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-05T13:00:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #214 merged. Cards now show the streak line; a plant with no log shows nothing rather than \"0 days\"."
+    },
+    {
+     "id": "m4",
+     "at": "2026-10-05T13:20:00+00:00",
+     "role": "operator",
+     "text": "Nice, thanks."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-05T12:20:00+00:00",
+     "kind": "delivery",
+     "number": 214
+    }
+   ]
+  },
+  {
+   "slug": "frost-warning",
+   "title": "Warn before frost for outdoor plants",
+   "state": "done",
+   "created": "2026-10-06T08:30:00+00:00",
+   "reported": "2026-10-06T13:30:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-06T14:00:00+00:00",
+   "tokens": 1700000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-06T08:30:00+00:00",
+     "role": "l3",
+     "text": "Brief: outdoor plants should get a reminder the evening before a forecast frost, using the forecast the app already fetches."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-06T08:55:00+00:00",
+     "role": "l2",
+     "text": "Plan: add a nightly check that reads tomorrow's minimum from the cached forecast and queues one reminder per outdoor plant when it drops below 2 °C. Indoor plants are skipped. One question below about the threshold."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-06T09:40:00+00:00",
+     "role": "operator",
+     "text": "2 °C is fine. Make it per plant later if people ask."
+    },
+    {
+     "id": "m4",
+     "at": "2026-10-06T13:30:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #217 merged. Frost reminders go out at 18:00 local time; the threshold is a constant in the reminder rules for now."
+    }
+   ],
+   "questions": [
+    {
+     "id": "q1",
+     "revision": 1,
+     "asked": "2026-10-06T08:56:00+00:00",
+     "audience": "operator",
+     "text": "Is a fixed 2 °C threshold right for the first version, or should each plant carry its own?",
+     "asked_again": false,
+     "resolution": {
+      "disposition": "answered",
+      "at": "2026-10-06T09:40:00+00:00",
+      "by": "operator",
+      "message": "m3"
+     }
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-06T13:10:00+00:00",
+     "kind": "delivery",
+     "number": 217
+    }
+   ]
+  },
+  {
+   "slug": "photo-upload-heic",
+   "title": "Accept HEIC photos in the plant diary",
+   "state": "done",
+   "created": "2026-10-07T10:00:00+00:00",
+   "reported": "2026-10-07T14:20:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-07T14:50:00+00:00",
+   "tokens": 2100000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-07T10:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: diary photo uploads from some phones fail because they arrive as HEIC. Convert on upload."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-07T10:30:00+00:00",
+     "role": "l2",
+     "text": "Plan: convert HEIC to JPEG in the upload handler before resizing, keep the original out of storage, and add a fixture image to the upload tests."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-07T14:20:00+00:00",
+     "role": "l2",
+     "text": "Review found the converter ran on the request thread for large photos; moved it to the existing image worker. Delivered: PR #219 merged."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-07T14:10:00+00:00",
+     "kind": "delivery",
+     "number": 219
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-10-07T13:20:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "medium",
+       "title": "HEIC conversion blocks the request thread for large images"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Moved to the image worker queue"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "care-guide-links",
+   "title": "Link care guides from the species page",
+   "state": "done",
+   "created": "2026-10-08T13:00:00+00:00",
+   "reported": "2026-10-08T15:00:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-08T15:30:00+00:00",
+   "tokens": 800000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-08T13:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: species pages should link to the matching care guide when one exists."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-08T13:15:00+00:00",
+     "role": "l2",
+     "text": "Plan: match by species id, show a \"Care guide\" link below the description, hide it when no guide exists. Small change, proceeding."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-08T15:00:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #221 merged; 41 of 58 species now show a guide link."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-08T14:50:00+00:00",
+     "kind": "delivery",
+     "number": 221
+    }
+   ]
+  },
+  {
+   "slug": "reminder-snooze",
+   "title": "Let people snooze a watering reminder",
+   "state": "done",
+   "created": "2026-10-09T09:00:00+00:00",
+   "reported": "2026-10-09T14:20:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-09T14:50:00+00:00",
+   "tokens": 1900000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-09T09:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: add a snooze to watering reminders: later today or tomorrow morning."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-09T09:20:00+00:00",
+     "role": "l2",
+     "text": "Plan: two snooze actions on the reminder, stored as a new due time on the reminder row, so the schedule itself is untouched. Snoozing twice is allowed. Tests cover both options and a snooze across midnight."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-09T10:00:00+00:00",
+     "role": "operator",
+     "text": "Good. Tomorrow morning means 8:00 local."
+    },
+    {
+     "id": "m4",
+     "at": "2026-10-09T14:20:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #224 merged. One CI rerun: the first run hit the hosted runner outage that the status page showed this morning; the rerun passed unchanged."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-09T13:10:00+00:00",
+     "kind": "ci-recheck",
+     "reason": "Hosted runner outage during the first run; rerun unchanged"
+    },
+    {
+     "id": "e2",
+     "at": "2026-10-09T14:00:00+00:00",
+     "kind": "delivery",
+     "number": 224
+    }
+   ]
+  },
+  {
+   "slug": "export-diary-csv",
+   "title": "Export the plant diary as CSV",
+   "state": "done",
+   "created": "2026-10-12T11:00:00+00:00",
+   "reported": "2026-10-12T14:20:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-12T14:50:00+00:00",
+   "tokens": 1200000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-12T11:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: people want their diary as a CSV file for their own records."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-12T11:20:00+00:00",
+     "role": "l2",
+     "text": "Plan: an Export button on the diary page that downloads date, plant, note and photo count. Photos are not included. Proceeding."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-12T14:20:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #227 merged. Large diaries stream rather than build in memory."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-12T14:10:00+00:00",
+     "kind": "delivery",
+     "number": 227
+    }
+   ]
+  },
+  {
+   "slug": "species-search-typo",
+   "title": "Tolerate typos in species search",
+   "state": "done",
+   "created": "2026-10-13T09:30:00+00:00",
+   "reported": "2026-10-13T13:00:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-13T13:50:00+00:00",
+   "tokens": 1400000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-13T09:30:00+00:00",
+     "role": "l3",
+     "text": "Brief: species search returns nothing for small misspellings like \"monstra\"."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-13T09:55:00+00:00",
+     "role": "l2",
+     "text": "Plan: use the trigram index the database already has for name search, rank exact prefix matches first. Tests use a few common misspellings."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-13T13:00:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #229 merged. \"monstra\" and \"calathia\" now find their species first."
+    },
+    {
+     "id": "m4",
+     "at": "2026-10-13T13:20:00+00:00",
+     "role": "operator",
+     "text": "Works on my phone too."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-13T12:50:00+00:00",
+     "kind": "delivery",
+     "number": 229
+    }
+   ]
+  },
+  {
+   "slug": "dark-mode-charts",
+   "title": "Fix chart colours in dark mode",
+   "state": "done",
+   "created": "2026-10-15T14:00:00+00:00",
+   "reported": "2026-10-15T16:30:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-15T17:00:00+00:00",
+   "tokens": 900000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-15T14:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: the moisture chart is hard to read in dark mode."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-15T14:15:00+00:00",
+     "role": "l2",
+     "text": "Plan: move the chart to the theme's colour tokens instead of fixed hex values, check both themes on phone and desktop."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-15T16:30:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #232 merged. Chart lines and axis labels follow the theme; walked both themes at both widths."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-15T16:20:00+00:00",
+     "kind": "delivery",
+     "number": 232
+    }
+   ]
+  },
+  {
+   "slug": "remove-legacy-tips",
+   "title": "Remove the old daily tips screen",
+   "state": "done",
+   "created": "2026-10-16T10:00:00+00:00",
+   "reported": "2026-10-16T13:00:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-16T13:40:00+00:00",
+   "tokens": 1000000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-16T10:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: the daily tips screen has been hidden for months; remove it and its data."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-16T10:20:00+00:00",
+     "role": "l2",
+     "text": "Plan: delete the screen, its route, the tips table migration and the seed file; keep the care guides, which used to share the table. Proceeding."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-16T13:00:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #234 merged; about 900 lines removed."
+    },
+    {
+     "id": "m4",
+     "at": "2026-10-16T13:10:00+00:00",
+     "role": "operator",
+     "text": "Great, love a deletion."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-16T12:50:00+00:00",
+     "kind": "delivery",
+     "number": 234
+    }
+   ]
+  }
+ ],
+ "current": [
+  {
+   "slug": "plant-sharing",
+   "title": "Share a plant's care plan with a friend",
+   "state": "running"
+  }
+ ],
+ "chat": [
+  {
+   "id": "c1",
+   "at": "2026-10-11T18:00:00+00:00",
+   "role": "operator",
+   "text": "What's left on fernlog this week?",
+   "turn": "t1"
+  },
+  {
+   "id": "c2",
+   "at": "2026-10-11T18:01:00+00:00",
+   "role": "l3",
+   "text": "Snooze and frost warnings landed; diary export and species search are next, then the dark-mode chart fix.",
+   "turn": "t1"
+  },
+  {
+   "id": "c3",
+   "at": "2026-10-16T09:40:00+00:00",
+   "role": "operator",
+   "text": "Let's remove the old tips screen, nobody sees it.",
+   "turn": "t2"
+  },
+  {
+   "id": "c4",
+   "at": "2026-10-16T09:41:00+00:00",
+   "role": "l3",
+   "text": "Dispatched as a removal task; care guides stay.",
+   "turn": "t2"
+  }
+ ],
+ "earlier": []
+}
