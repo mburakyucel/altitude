@@ -8,9 +8,10 @@ The opening loop and the drawing are the same at every width; the README is laid
 
 The captures come from an ordinary [browser walkthrough](../../docs/DEVELOPMENT.md#browser-walkthroughs):
 `web/e2e/readme.pw.ts` against `web/e2e/readme-service.py`, a disposable service with real handlers and
-storage seeded with an example Atlas project. It holds a project conversation, three search-index
-migration tasks, the compatibility owner's live session and a rollback-retention decision; a second
-project, Harbor, fills the project list. Engine processes are fixtures and every message is authored
+storage seeded with an example Atlas project at working scale. It holds a project conversation,
+twenty-three tasks in flight split between both engines (three of them for a search-index migration),
+128 tasks finished this week, the compatibility owner's live session and a rollback-retention decision;
+a second project, Harbor, fills the project list. Engine processes are fixtures and every message is authored
 example text, never agent output or an operator's data. The app's components and CSS render unchanged.
 
 The journey runs at both widths in every `make check`: it opens the project, the phone Work tab, the
@@ -36,7 +37,8 @@ each capture. No speech recognition or coding agent runs.
 
 The README opens with `docs/images/opening.webp`, a looping animated WebP of three moments from the
 journey's second test: the phone's Needs you shows the backfill question, the recommended seven days is
-chosen, and after sending, the phone clears while the desktop project view shows the task back at work.
+chosen, and after sending, the phone clears while the desktop Work list, scrolled to its end, shows the
+task back at work.
 That test drives a desktop page and a phone page against the same service and checks each moment.
 
 `design/readme/hero.html` holds the layout: the desktop view on a 2240×1360 canvas with the phone in
