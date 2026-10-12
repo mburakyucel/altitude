@@ -1,8 +1,9 @@
 name: Checks
 
-# Every pull request, push to main and manual dispatch runs the full suite on GitHub-hosted runners
-# with a read-only token and no secrets: each `shard` job runs one disjoint slice of `make check` on
-# its own runner, and the `check` job passes only when all of them passed. Altitude requires the PR
+# Every pull request and manual dispatch runs the full suite on GitHub-hosted runners with a read-only
+# token and no secrets: each `shard` job runs one disjoint slice of `make check` on its own runner, and
+# the `check` job passes only when all of them passed. A push to main runs the full suite too, unless
+# `reuse` finds the pull request run that already tested its exact tree. Altitude requires the PR
 # `check` before merging; main runs verify delivery, and release publication requires the push run
 # of the tagged commit.
 on:
@@ -22,7 +23,37 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # #777: merging an up-to-date PR pushes the tree its PR run just tested in full. Only an exact,
+  # same-repository match that leaves the CI setup unchanged sets `run`; any miss or doubt leaves it empty.
+  reuse:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      run: ${{ steps.lookup.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The script first requires that the checkout is the pushed commit.
+      - name: Find the run that tested this tree
+        id: lookup
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+        run: python3 scripts/ci_reuse.py
+
   shard:
+    needs: reuse
+    # Runs unless `reuse` found a run: on every pull request and manual run, and whenever the lookup fails.
+    if: ${{ !cancelled() && needs.reuse.outputs.run == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -107,14 +138,17 @@ jobs:
           retention-days: 7
 
   # Keep the job id `check` and no `name:`: `alt land` and release.yml select this job by id.
-  # It always runs, so a failed, cancelled or skipped shard fails it instead of skipping it.
+  # It always runs, so a failed, cancelled or skipped shard fails it instead of skipping it, unless
+  # `reuse` succeeded with the run that tested this tree.
   check:
-    needs: shard
+    needs: [reuse, shard]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require every shard to pass
+      - name: Require every shard to pass, or the run that tested this tree
         env:
           SHARDS: ${{ needs.shard.result }}
-        run: test "$SHARDS" = success
+          REUSE: ${{ needs.reuse.result }}
+          REUSED: ${{ needs.reuse.outputs.run }}
+        run: test "$SHARDS" = success || { test "$SHARDS" = skipped && test "$REUSE" = success && test -n "$REUSED"; }
