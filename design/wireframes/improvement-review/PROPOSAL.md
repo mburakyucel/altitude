@@ -1,6 +1,8 @@
 # Improvement review: proposal
 
-Status: proposal awaiting the operator's decision. Nothing here is built yet.
+Status: proposal awaiting the operator's decision. Nothing here is built yet. In the interface the
+feature is called **Improvement suggestions**, so it is never confused with the code and proposal
+reviews that Needs you already shows; this document calls one run "a review".
 
 ## What it is for
 
@@ -10,31 +12,34 @@ with. Each instance is small and easy to forget; the repetition is what costs yo
 improves only when you notice a pattern and say so.
 
 The improvement review notices for you. Once a week, when enough work has finished, it looks across a
-project's recent tasks for friction that keeps coming back. It brings you at most three concrete fixes,
-each saying what keeps happening, where and how often. One tap turns a fix into an ordinary task, and
-once that fix lands, later reviews show whether the friction went down.
+project's recent tasks for friction that keeps coming back and brings you at most three concrete fixes,
+each saying what keeps happening, where and how often. One tap turns a fix into an ordinary task; once
+the fix lands, later reviews show whether that friction came back.
 
-It is judged by one thing: whether what it brings is worth your attention. So it stays silent when it
-has nothing worth bringing, never wakes your phone, pauses itself when you stop deciding, and keeps its
-own record (how many suggestions became tasks) beside its switch.
+It is judged by one thing: whether what it brings is worth your attention. So it is optional in every
+sense: it never wakes your phone, never adds to the Needs you count, lets undecided suggestions lapse
+after a week, and keeps its own record (how many suggestions became tasks) beside its switch, so you
+can tell when it has stopped earning its place.
 
 ## How it works
 
-1. **You turn it on for a project** in that project's settings: **Weekly**, or **When I ask**. It is
-   off until you do, because it sends parts of the project's conversations to a model and spends.
-2. **It runs when there is something to look at.** A weekly review runs on the first morning a week
-   after the previous one, once at least five tasks have finished and at least one of them shows
-   counted friction. Otherwise it waits, costing and posting nothing. **Review now** runs one at once.
+1. **You choose it per project**, in that project's settings: turn on **Weekly**, or press **Get
+   suggestions now**. The first time, a sheet says what is sent, to which model, and what it costs; it
+   is off until you agree, because it sends parts of the project's conversations to a model and spends.
+2. **Weekly means Monday morning.** At the 08:00 morning check each Monday, a review runs if at least
+   five tasks have finished since the last one. Otherwise it skips that week silently and costs
+   nothing.
 3. **Code builds the evidence; a cheaper model reads it.** Altitude counts friction from task records
-   and adds short excerpts of the conversations around it. A Claude model with no tools reads that
+   and adds short quotes of the conversations around it. A Claude model with no tools reads that
    summary and proposes up to three fixes, each for the project itself or for how the agents work.
 4. **L3 checks before you see anything.** It opens the cited records, drops what is wrong or already
    being handled, and posts the rest.
-5. **You decide, when it suits you.** The suggestions appear as one card in the project's chat and as
-   one item in Needs you, without an alert. **Make a task** hands one to L3 as an ordinary task, with
-   its usual proposal and merge checkpoints; **Dismiss** records that you do not want it. Suggestions
-   you leave undecided step aside when the next review arrives.
-6. **It closes the loop.** After a fix lands, later reviews show the counted friction before and after.
+5. **You decide when it suits you.** The suggestions appear as one card in the project's chat and
+   under **Suggestions** in Needs you, below anything that does need you. **Make a task** hands one to
+   L3 as an ordinary task, with its usual proposal and merge checkpoints; **Dismiss** records that you
+   do not want it. Suggestions left undecided for a week lapse.
+6. **It closes the loop.** Later reviews say when a pattern you made a task for comes back, and show
+   counts before and after once enough work has finished.
 
 Nothing starts work on its own. The reviewer has no tools, files or network beyond its one answer.
 
@@ -42,53 +47,47 @@ Nothing starts work on its own. The reviewer has no tools, files or network beyo
 
 | Your question | Answer | Why |
 | --- | --- | --- |
-| Is it opt-in? | Yes, per project and off by default. Only you can turn it on, in the project's settings, after a sheet that says what is sent, to which model, and the cost limit. L3 and task owners cannot. | It sends conversation excerpts to a provider and spends allowance; that is your call for each project. |
-| Does it run after every task? | No model call per task. Each finished task's counts are taken from its record when a review runs. | One task rarely shows a pattern. A call per task would spend on every task and post noise. |
-| Is it periodic: daily or weekly? | Weekly at most, never daily. A weekly review becomes due seven days after the previous one started (or after you turned weekly on), and runs at the first morning check from then, at 08:00 local time beside the morning digest, so its card is there when your day starts. | A day rarely holds enough tasks to show repetition, and a daily card would ask for attention daily. Monthly would let friction run for four weeks. |
-| What if little happened? | A due review runs only when at least five tasks have finished since the last one and at least one shows a counted signal. Otherwise it waits, checking each morning, with no model call and nothing posted. | A quiet week costs nothing and says nothing. |
-| Can I run one now? | Yes: **Review now** in its settings, or ask L3 in chat. It needs five finished tasks but no counted signal. Only one review per project runs at a time. | You may want a look before a busy week, or after a change. |
-| Does it ever stop itself? | Weekly reviews pause after two reviews in a row whose suggestions all went undecided. The settings say so, and **Resume** restarts them. | A review you are not reading should not keep spending or keep an item in Needs you. |
-| What else delays it? | When Claude's weekly allowance is inside Altitude's reserve, a due review waits for the next morning. It never waits on, or pauses, ordinary work. | Ordinary work comes first. |
-
-The three settings are:
-
-- **Off** (the default): nothing is reviewed or sent; L3 says where to turn it on if you ask for a
-  review.
-- **When I ask:** runs only from **Review now** or a chat request.
-- **Weekly:** also runs on the schedule above.
-
-Its section in the project's settings shows the setting, when the next review will run (or why it is
-waiting), **Review now**, what is sent and the limit, and the record of past reviews.
+| Is it opt-in? | Yes, per project and off by default. Only you can turn on **Weekly** or press **Get suggestions now**, and the first time either shows what is sent and what it costs. L3 and task owners cannot turn it on. | It sends conversation quotes to a provider and spends allowance; that is your call for each project. |
+| Does it run after every task? | No. Nothing runs per task; each finished task's counts are read from its record when a review runs. | One task rarely shows a pattern. A model call per task would spend on every task and post noise. |
+| Is it periodic: daily or weekly? | Weekly at most, on Monday mornings at the 08:00 check that already writes the morning digest, so the card is there when your week starts. | A day rarely holds enough tasks to show repetition, and a daily card would ask for attention daily. Monthly would let friction run for four weeks. |
+| What if little happened? | A Monday review runs only when at least five tasks have finished since the last review. Otherwise that week is skipped: no model call, nothing posted. | A quiet week costs nothing and says nothing. Five tasks is the least that can show something repeating. |
+| Can I run one now? | Yes: **Get suggestions now** in the project's settings, or ask L3 in chat. Same five-task minimum. One review per project runs at a time. | You may want a look before a busy week, or after a change. |
+| What if I stop looking? | Nothing piles up. Suggestions never count toward Needs you and lapse after a week; turning **Weekly** off stops the schedule. The settings show how many past suggestions became tasks. | A feature you ignore should cost you nothing but its weekly cents, and show you that it is being ignored. |
+| What else delays it? | When Claude's weekly allowance is inside Altitude's reserve, the Monday review is skipped and **Get suggestions now** is refused with that reason. It never waits on, or pauses, ordinary work. | Ordinary work comes first. |
 
 ## Decisions that are yours
 
 The design takes a recommended answer for each. Approving it approves these; any can be changed
-here first.
+first.
 
 | Decision | Recommendation | Alternatives |
 | --- | --- | --- |
-| When it runs | Off until you turn it on per project; then weekly when enough work has finished, or only when you ask | A review after every task; daily; a fixed weekly run whatever happened; monthly |
-| What may be sent to the reviewer's provider | Counted facts from task records plus short paired excerpts of the task and project conversations (your message, the agent message it answered, the reply), each cut to 300 characters | Counted facts only, nothing quoted; or, in a later step, also short excerpts of the agents' working logs |
-| Reviewer model and cost limit | Claude Sonnet 5.5 at medium effort: at most $0.27 a review, usually $0.08–0.12. Weekly, that is about $0.40–0.50 a month per project, at most $1.20 | Claude Haiku 5.5: at most $0.02 a review, noisier suggestions |
-| Where suggestions reach you | One card in the project's chat and one item in Needs you, counted in its badge, with no alert | Chat only (easy to miss once it is weekly); or Needs you with an alert |
+| When it runs | Off until you turn it on per project; then Monday mornings when five tasks have finished, plus whenever you ask | A review after every task; daily; monthly; only when you ask |
+| What may be sent to the reviewer's provider | Counts from task records plus short paired quotes of the task and project conversations (your message, the agent message it answered, the reply), each cut to 300 characters | Counts only, nothing quoted; or, in a later step, also short excerpts of the agents' working logs |
+| Reviewer model and cost limit | Claude Sonnet 5.5 at medium effort: at most $0.27 a review, usually $0.08–0.12, plus one ordinary L3 turn to check. Weekly, about $0.40–0.50 a month per project, at most $1.20 | Claude Haiku 5.5: at most $0.02 a review, noisier suggestions |
+| Where suggestions reach you | One card in the project's chat and a **Suggestions** section in Needs you, not counted and never alerting | Counted in the Needs you badge; or chat only |
 
 The conversations being reviewed were already processed by the engines that took part in them, but
-sending them again to the reviewer is a new disclosure, so it needs your yes, given per project when you
-turn reviews on. Approving a model and limit authorizes the reviews you turn on with it; it does not
-start a separate model-quality evaluation, which stays deferred under the 2026-09-08 decision. Accepting
-a suggestion authorizes its task, never publishing what the review read.
+sending them again to the reviewer is a new disclosure, so it needs your yes, given per project on the
+sheet. Approving a model and limit authorizes the reviews you turn on with it; it does not start a
+separate model-quality evaluation, which stays deferred under the 2026-09-08 decision. Accepting a
+suggestion authorizes its task, never publishing what the review read.
 
 ### Directions the independent reviews offered
 
-- **Counted facts only.** A small private digest of well-defined event counts with exact links, no
-  model at all, and you ask for tasks in ordinary chat. Nothing is disclosed and nothing is spent, but
-  corrections that only show in words, and causes that span tasks, stay invisible.
+- **Counts only, the model on tap.** Code counts friction weekly at no cost and with nothing disclosed;
+  the morning digest gains one line ("4 signs of repeated friction in 9 tasks · Get suggestions"), and
+  the model runs only when you tap. No schedule to explain; a nudge you ignore yields nothing.
+- **Counts only, no model.** A small private digest of well-defined event counts with exact links, and
+  you ask for tasks in ordinary chat. Nothing is disclosed or spent, but corrections that only show in
+  words, and causes that span tasks, stay invisible.
 - **Pilot first.** Keep the pilot's conversation sample, swap only its reviewer for the tool-free one,
-  and let L3 present candidates in chat before any card or measurement exists.
+  and let L3 present candidates in chat before any card or schedule exists.
 
-The rollout takes the second direction's order (the first step is a chat message on request; the card,
-settings and schedule follow once you have seen real suggestions) while keeping the task-record signals
-the pilot lacked.
+The rollout takes the pilot-first order (the first step is a chat message on request; the card,
+settings and schedule follow once you have seen real suggestions) while keeping the task-record counts
+the pilot lacked. The reviews' other proposals are adopted: no friction gate on the schedule, no
+self-pausing, suggestions outside the Needs you count and lapsing after a week.
 
 ## What it reads
 
@@ -99,8 +98,8 @@ otherwise no model is called.
 | Source | Used | Why |
 | --- | --- | --- |
 | Task records: state changes, questions with their revisions and answers, holds, reviews with findings and assessments, landing and CI events, refusals, incidents, token usage, reports | Yes, as counts and anchors | Most patterns are counted facts, cheap and exact |
-| Task conversations | Yes, bounded paired excerpts | Corrections and unclear replies need the words and what they answered |
-| Project chat | Yes, bounded paired excerpts | Questions asked twice, corrections given to L3 |
+| Task conversations | Yes, bounded paired quotes | Corrections and unclear replies need the words and what they answered |
+| Project chat | Yes, bounded paired quotes | Questions asked twice, corrections given to L3 |
 | Agents' working logs (engine session records: tool calls and output) | No, unless you choose it later | Megabytes per task, full of file contents and command output |
 | L3's own session logs | No | Its replies are already in project chat |
 | CI, validation and terminal logs, images, voice audio | No | Large; the failing check is already an event |
@@ -154,7 +153,7 @@ Every suggestion names exactly one target, chosen by where its change would be m
 
 - **The project** (chip shows the project's name): its product, code, tests, CI, docs or how its tasks
   are briefed. Leads to a project task or issue.
-- **Agent workflow**: how agents coordinate everywhere: persona instructions, Altitude's role rules,
+- **How agents work**: how agents coordinate everywhere: persona instructions, Altitude's role rules,
   its commands, and its question, review and landing mechanics. Leads to an instruction or code change
   to Altitude, under the existing holds for guard and rule changes.
 
@@ -209,81 +208,87 @@ switches model without your recorded decision.
 
 ## Run lifecycle
 
-- **Start.** Three ways, each refused while the project's setting is **Off** or another review of the
-  project is running:
-  - **Weekly**, by Altitude's morning check when the review is due and its conditions hold. Its
-    authority is your recorded setting.
-  - **Review now** in the project's settings: your own authenticated press, sent with a request id; a
-    repeat with the same id returns the same run.
+- **Agreement.** A project's reviews need your agreement to the sheet's current text, recorded with
+  who, when and the text's version. A later change to what is sent, the model or the limit is a new
+  version: **Weekly** turns off, and the next **Weekly** or **Get suggestions now** shows the new sheet.
+  Chat names that change in one system line: **Improvement suggestions are off until you agree to the
+  new terms in settings.**
+- **Start.** Three ways, each refused without agreement, while another review of the project runs, with
+  fewer than five tasks finished since the last review, or with Claude's allowance inside Altitude's
+  reserve:
+  - **Weekly**, by the Monday 08:00 morning check (or the first check after it, if Altitude was down).
+    Its authority is your recorded switch and agreement. A Monday that fails a condition is skipped and
+    recorded; nothing is posted.
+  - **Get suggestions now** in the project's settings: your own authenticated press, sent with a
+    request id; a repeat with the same id returns the same run.
   - **In chat**: you ask L3, and L3 starts it with `alt improve run --message <id>`. Altitude checks the
-    message is yours, in that project's chat, and not used by an earlier run. L3 cannot start a review
-    without your message, and never changes the setting.
+    message is yours, in that project's chat, and not used by an earlier run. A refusal comes back as
+    L3's reply with the reason. L3 cannot start a review without your message, and cannot agree or
+    switch **Weekly** on.
 - **States.** Reading (the reviewer call), checking (L3's turn), then exactly one ending: posted,
   nothing to suggest, stopped or failed. A run has one deadline, two hours from its start, covering
   both reading and checking.
-- **Stop.** Works while reading or checking: **Stop** on the running line or in settings, or "stop the
-  review" in chat (L3 runs `alt improve stop`). A stopped run's answer is discarded and never posted.
-  Turning the setting to **Off** stops a running review the same way.
+- **Stop.** Works while reading or checking: **Stop** on the running line in chat or settings, or "stop
+  the suggestions" in chat (L3 runs `alt improve stop`). A stopped run's answer is discarded and never
+  posted.
 - **What else ends a run.** Reading: its timeout, an unavailable model, an isolation check that fails,
   or an answer that does not validate. Checking: L3 not posting before the deadline, whether its turn
   failed, was interrupted or is still queued; the candidates stay in the private record. Each ending is
-  recorded and shown; nothing retries automatically. A failed weekly review is next due a week after it
-  started; **Review now** runs one sooner. A run interrupted by a restart becomes
-  uncertain after its deadline, without replay, as in the pilot.
+  recorded and shown; nothing retries automatically. A run interrupted by a restart becomes uncertain
+  after its deadline, without replay, as in the pilot.
 - **Window.** Each review reads tasks that finished after the previous review's window ended (for the
-  first, the last 14 days), at most 30 days back and never before 2026-09-22 07:00 UTC. A review that
-  ends in nothing to suggest still advances the window; a stopped or failed one does not.
+  first, the last 14 days), never before 2026-09-22 07:00 UTC. Tasks older than 30 days are not read;
+  Details names how many. A review that ends with nothing to suggest still advances the window; a
+  stopped or failed one does not.
 - Ordinary work is never paused by a run, a failure or a pending suggestion.
 
 ## Turning it on: the settings section
 
-A new **Improvement review** section in the project's settings (`/settings/projects/<name>`), between
-**Routing** and **Project**, follows the page's existing section form (heading, one muted line, a card).
+A new **Improvement suggestions** section in the project's settings (`/settings/projects/<name>`),
+between **Routing** and **Project**, follows the page's existing form: heading, one muted line, a card.
 
-- Heading line: **Finds friction that keeps recurring in this project's tasks and suggests fixes.**
-- **Reviews**: a select with **Off**, **When I ask** and **Weekly**. Under its label, one line for the
-  current state:
+- Heading line: **Finds friction that keeps coming back in this project's tasks and suggests fixes.**
+- **Weekly**: a switch, saved in place like the Terminal switch. Its line:
 
-| State | Line under **Reviews** |
+| State | Line under **Weekly** |
 | --- | --- |
-| Off | **Nothing is reviewed or sent.** |
-| When I ask | **Runs when you press Review now or ask L3.** |
-| Weekly, due later | **Next review Oct 19 morning, if 5 tasks have finished (3 so far).** |
-| Weekly, due, waiting for work | **Waiting for 5 finished tasks (3 so far). Checked each morning.** |
-| Weekly, due, waiting for a signal | **Waiting: no repeated friction in the 6 tasks since Oct 12.** |
-| Weekly, waiting for allowance | **Waiting for Claude's weekly allowance; next try tomorrow morning.** |
-| Weekly, paused | **Paused: you decided nothing in the last two reviews.** and an underlined **Resume** |
-| Running | A working dot, **Reviewing 9 tasks** and an underlined **Stop** |
+| Off | **Every Monday morning, when at least 5 tasks have finished.** |
+| On | **Next: Monday, Oct 19.** With fewer than five tasks so far: **Next: Monday, Oct 19, if 2 more tasks finish.** |
+| On, last Monday skipped | **Skipped Oct 12: 3 tasks had finished. Next: Monday, Oct 19, if 2 more tasks finish.** |
+| Running | A working dot, **Reading 9 tasks** and an underlined **Stop** |
+| Off by a change of terms | **Off: the terms changed. Turn on to see them.** |
 
-- **Review now**: a secondary button on its own row, with the line **Reads the tasks finished since
-  Oct 12.** It is disabled while the setting is **Off**, with the line **Turn reviews on first.**, and
-  while a review runs. Fewer than five finished tasks disables it with **Needs 5 finished tasks (3 so
-  far).**
-- **What is sent**, muted, no control: **Counted task facts and 300-character conversation excerpts ·
-  Claude Sonnet 5.5 · at most $0.27 a review**.
-- **Past reviews**, muted, once there is one: **4 reviews · 7 suggestions · 3 became tasks · 2
-  dismissed**, and an underlined **Latest** opening the latest card in the project's chat.
+- **Get suggestions now**: a secondary button with the line **Reads the 6 tasks finished since Oct 12.**
+  While a review runs, the button is replaced by the running line above, so only one place shows it.
+  With fewer than five finished tasks, or the allowance inside the reserve, it looks disabled; its
+  reason (**Needs 5 finished tasks since Oct 12; 3 so far.** or **Claude's weekly allowance is inside
+  Altitude's reserve.**) is its accessible description and appears under it on press, as SPEC §3.8.1
+  does for an unavailable alert switch.
+- **What is sent**, muted, no control: **Counts and short chat quotes · Claude Sonnet 5.5 · up to $0.27
+  a run, plus one L3 check**.
+- **Past suggestions**, muted, once there is one run: **4 runs · 7 suggestions · 3 became tasks · 2
+  dismissed**, and an underlined **Latest** that opens the latest card in the project's chat.
 
-**Turning it on.** Choosing **When I ask** or **Weekly** from **Off** opens a sheet before anything is
-saved:
+**The sheet.** Turning **Weekly** on, or pressing **Get suggestions now**, without agreement to the
+current terms opens a sheet before anything is saved or run:
 
-- Title: **Turn on improvement reviews for altitude?**
-- Body: **Each review sends this project's counted task facts and short excerpts of its conversations
-  (300 characters each) to Claude Sonnet 5.5, at most $0.27 a review from your Claude plan. Nothing is
+- Title: **Turn on improvement suggestions for altitude?**
+- Body: **Claude Sonnet 5.5 reads counts from this project's tasks and short quotes from its chats (up
+  to 300 characters each), using up to $0.27 of your Claude plan a run, plus one L3 turn to check what
+  it finds. With Weekly on, this happens Monday mornings once 5 tasks have finished. Nothing is
   published, and nothing becomes work until you choose it.**
-- Buttons: **Turn on** (primary) and **Cancel**. Cancel or Escape leaves the select on **Off**.
+- Buttons: **Turn on** (primary) and **Cancel**. **Turn on** records the agreement, then completes what
+  was pressed (the switch turns on, or the run starts). Cancel or Escape changes nothing.
 
-Switching between **When I ask** and **Weekly**, or to **Off**, saves at once without a sheet. A change
-shows "Saving…" under the section with its controls disabled; a refusal shows the reason in red under the
-section and the select returns to the saved value, as the page's other settings do. On the phone the
-select wraps under its label at full width and the sheet is a bottom sheet with full-width buttons.
+A switch change shows "Saving…" under the section with its controls disabled; a refusal shows the reason
+in red under the section and the switch returns to the saved value, as the page's other settings do. On
+the phone the sheet is a bottom sheet with full-width buttons.
 
-The setting is `improvement_review` (`off`, `on_request`, `weekly`) in the project's settings record.
-Unlike routing, only the operator can change it: the web request from a paired device or
-`alt project set <name> --improvement-review <value> --reason '…'` run as the operator; L3 and owners are
-refused. Each change is recorded with who and when; turning it on records the sheet's text version as
-the disclosure you agreed to. A later change to what is sent, the model or the limit turns the setting
-back to **Off** until you agree to the new sheet.
+The setting is `improvement_review` (`weekly` true or false, and the agreed terms version) in the
+project's settings record. Unlike routing, only the operator can change it: the web request from a
+paired device, or `alt project set <name> --improvement-weekly on|off --reason '…'` run as the
+operator, which refuses until the terms were agreed in the app; L3 and owners are refused. Each change
+is recorded with who and when.
 
 ## Checking and posting
 
@@ -299,91 +304,104 @@ none, the run ends with the nothing-to-suggest line.
 
 ## Where suggestions appear
 
-One card per review, in the project's chat in conversation order, and the same card as one item in
-Needs you under the project's section, the way an open question appears in both places. It is not a
-question and never alerts a device. While any of its suggestions is undecided it counts as one item
-in the Needs you badge, and the project's summary names it separately (**1 improvement review**).
-Deciding in either place updates both. It leaves Needs you when every suggestion is decided, or when
-the next review of the project posts; its undecided suggestions then fold to **Not decided** and are
-offered again only if later work shows them again.
+One card per review, in the project's chat in conversation order. While any of its suggestions is
+undecided, the same card also appears in Needs you under the project's section, below a muted
+**Suggestions** subheading after anything that needs you. It is not a question: it never alerts a
+device, never adds to the Needs you count or badge, and never changes the summary line; with no
+questions, Needs you still says **Nothing needs you.** above it. Deciding in either place updates both.
+
+A suggestion lapses seven days after its card posted, or earlier when the next review posts
+suggestions: it folds to **Not decided** and the card leaves Needs you once nothing on it is undecided.
+A nothing-to-suggest, stopped or failed review lapses nothing.
 
 ### States and exact text
 
 | State | What appears |
 | --- | --- |
-| Running | System line with a working dot: **Improvement review · reading 14 tasks from Oct 5–12** and **Stop** (underlined). No Show. A weekly review shows the same line; nothing appears in Needs you until it posts. |
-| Stop pressed | **Stop** becomes a spinner in place; then the line reads **Improvement review stopped by you**. If the stop cannot be saved: **Not stopped. Try again.** after the line, and Stop returns. |
-| L3 checking | The same line reads **Improvement review · L3 is checking 3 suggestions**, with **Stop** as while reading. |
+| Running | System line with a working dot: **Improvement suggestions · reading 14 tasks from Oct 5–12** and **Stop** (underlined). No Show. A Monday review shows the same line; nothing appears in Needs you until it posts. |
+| Stop pressed | **Stop** becomes a spinner in place; then the line reads **Improvement suggestions stopped by you**. If the stop cannot be saved: **Not stopped. Try again.** after the line, and Stop returns. |
+| L3 checking | The same line reads **Improvement suggestions · L3 is checking 3**, with **Stop** as while reading. |
 | Finished with suggestions | The card (below). |
-| Nothing to suggest | System line **Improvement review · 14 tasks from Oct 5–12 · nothing to suggest** and **Show** (the details, including any L3 drops). |
-| Not enough new work | A chat request gets L3's ordinary reply; Review now is disabled with its reason; a weekly review just waits. No line, no model call. |
-| Failed | System line with the danger dot: **Improvement review stopped · <reason>** and **Show**. Reasons: "it went over its $0.27 limit", "Claude Sonnet 5.5 is unavailable", "the reviewer had tools available", "the reviewer's answer was not usable", "L3 did not finish checking", "it was interrupted by a restart". |
+| Nothing to suggest | System line **Improvement suggestions · 14 tasks from Oct 5–12 · nothing to suggest** and **Show** (the details, including any L3 drops). |
+| Not started | A Monday skip shows only in settings. **Get suggestions now** is disabled with its reason. A chat request gets L3's reply with the reason. No line, no model call. |
+| Failed | System line with the danger dot: **Improvement suggestions failed · <reason>** and **Show**. Reasons: "it went over its $0.27 limit", "Claude Sonnet 5.5 is unavailable", "it could not run isolated", "its answer was not usable", "L3 did not finish checking", "it was interrupted by a restart". |
+| Terms changed | System line **Improvement suggestions are off until you agree to the new terms in settings.** with an underlined **Settings**. |
 
 ### The card
 
-- Header: **Improvement review** and its time (system-line format); below, muted, **<N> tasks from
-  <window>**. The number of suggestions is not written.
-- Each suggestion, separated by a hairline: target chip (**Agent workflow**, or the project's name);
+- Header: **Improvement suggestions** and its time (system-line format); below, muted, **<N> tasks from
+  <window>**. The number of suggestions is not written. In Needs you the header is an underlined link
+  to the card in the project's chat.
+- Each suggestion, separated by a hairline: target chip (**How agents work**, or the project's name);
   title, 15 px semibold, at most 90 characters, wraps, never cut; explanation, at most 300 characters:
   what happens and what would change it, wraps fully.
 - **Seen in**: up to three underlined links, each a task title opening its cited place (question,
   message or event). More citations show **<n> more** (underlined), which expands the rest in place.
-- **Measured by <signal> · <count> in <N> tasks**, muted; absent when the suggestion has no signal.
-- **Make a task** (filled primary) and **Dismiss** (ghost beside it).
-- Footer, muted: model · reviewer cost · **Details** (underlined). Details opens in place: what was
-  read, what was left out, what L3 dropped and why, the reviewer's cost against its limit and the
-  check's usage, and when it ran.
+- The count, muted, in the signal's own words: **<Signal> in <n> of <N> tasks**, e.g. **Questions
+  re-asked without your input in 3 of 14 tasks**; absent when the suggestion has no signal.
+- **Make a task** (bordered, accent text) and **Dismiss** (ghost beside it). No filled buttons, so the
+  card never competes with a question above it.
+- Footer: an underlined **Details**, opening in place: what was read and left out, what L3 dropped and
+  why, the model, the reviewer's cost against its limit, the check's usage, and when it ran.
 
 | Action or state | What appears and disappears |
 | --- | --- |
 | Make a task pressed | Its label becomes a spinner, same width; Dismiss dims. |
 | Accepted | Buttons leave; a check and **Accepted · L3 is opening a task**. |
 | Task opened | That line becomes the ordinary compact task card (SPEC §3.5); if L3 attached it to an existing task or issue instead, the line names and links that. |
-| Dismiss pressed, then dismissed | Spinner in place; then the suggestion folds to its chip, muted title and **Dismissed**. |
+| Dismiss pressed, then dismissed | Spinner in place; then the suggestion folds to its chip, muted title, **Dismissed** and an underlined **Undo**. |
+| Undo pressed | The suggestion opens again with both buttons. Undo is offered until the suggestion lapses. |
 | Save failed | Buttons return; under them in danger text **Not saved. Try again.**, gone on the next press. |
 | Typed answer | You reply in chat; L3 records it citing your message and the card changes the same way. |
-| Later run, accepted change merged | The card opens with **Since earlier changes**: one row per measured accepted suggestion, e.g. **Questions re-asked without your input · 3 in 14 tasks before → 0 in 11 since**, linking the task that made the change. A row appears once five tasks started after the merge have finished. |
-| Next review posted, suggestions left undecided | Each undecided suggestion folds to its chip, muted title and **Not decided**; the item leaves Needs you. |
-| Pattern found again after a change | A muted **Seen again after <task>** line under the explanation. |
+| Lapsed | The suggestion folds to its chip, muted title and **Not decided**; the card leaves Needs you once nothing on it is undecided. |
+| Pattern found again after a task for it | A muted **Seen again after <task>** line under the explanation. |
+| Later run, enough work since a change | The card opens with **Since earlier changes**: one row per accepted suggestion with a signal, e.g. **Questions re-asked without your input: 3 of 14 tasks before, 0 of 11 since**, linking the task that made the change. |
 | Conversation loading, read failure, listening, microphone denied | Unchanged (SPEC §3.3, §3.6); the card asks for no permission. |
 
 Phone (390 px) and desktop use the same card in the conversation column and in Needs you; on the phone
-it is full width, the two buttons stay side by side at 44 px height, and all text wraps. In Needs you
-the card's header links to the project's chat at the card.
+it is full width, the two buttons stay side by side at 44 px height, and all text wraps. Each step's
+PR walks every state above at both widths.
 
 ## Decisions on suggestions
 
-Each suggestion has at most one disposition: accepted or dismissed, with who, when and from what.
+A suggestion is undecided, accepted, dismissed or not decided, with who, when and from what for each
+change. The allowed changes:
+
+| From | To | How |
+| --- | --- | --- |
+| Undecided | Accepted or dismissed | A button, or your typed answer |
+| Undecided | Not decided | Seven days after posting, or the next review posting suggestions |
+| Dismissed | Undecided | **Undo**, until it would have lapsed |
+| Dismissed or not decided | Accepted | Your typed answer naming it ("make a task for the Oct 12 merge-approval one") |
+| Accepted | (none) | Final: reject or stop its task instead |
 
 - **Buttons.** A press is the operator's own authenticated act, sent with a request id; a repeat with the
-  same id returns the same receipt. A press on an already decided suggestion is refused and the card
-  refreshes.
+  same id returns the same receipt. A press the table does not allow is refused and the card refreshes.
 - **Typed answers.** `alt improve resolve <run>/<n> accepted|dismissed --message <id> --reason '…'`
   requires the operator's own project-chat message sent after the run's presentation receipt, and a
-  number that receipt shows. When more than one run has undecided suggestions, an answer that does not
-  name its review ("the one from Oct 12") is ambiguous: L3 asks rather than guesses. L3 records the scope
-  it read from that message (for example "owner instructions only"); that message, not the suggestion,
-  is the new task's source authority. The same message and outcome return the existing receipt; a
-  different outcome for a decided suggestion is refused.
-- **Changing your mind.** A dismissed suggestion can be accepted by a later message. An accepted one
-  with a task cannot be dismissed; reject or stop its task instead.
+  number that receipt shows. When the answer does not say which run it means and more than one could
+  fit, L3 asks rather than guesses. L3 records the scope it read from that message (for example "owner
+  instructions only"); that message, not the suggestion, is the new task's source authority. The same
+  message and outcome return the existing receipt; a change the table does not allow is refused, and L3
+  replies with the suggestion's current state.
 - **One task per suggestion.** `alt task new --improvement <run>/<n>` refuses a suggestion that is not
   accepted or already has a task. Acceptance queues exactly one L3 turn.
-- Undecided suggestions stay decidable on their card until the next review posts, then fold to **Not
-  decided**. They never become work, and a later review offers one again only with new evidence.
+- Not decided suggestions never become work on their own; a later review offers one again only with new
+  evidence.
 
 ## Closing the loop
 
-Both sides of a measurement count finished tasks with the same predicate version. Before: the tasks
-that finished in the window of the run whose suggestion was accepted, saved at acceptance. Since: the
-tasks started after the linked change merged that have finished by the later run, shown once there are
-five. Suggestions without a
-signal are tracked by recurrence: later prompts list accepted titles, and the same pattern returns only
-with new evidence, shown as **Seen again after <task>**. These are observed counts, not proof of cause,
+Every later review lists accepted suggestions in its prompt. When the same pattern returns with new
+evidence after the task for it finished, the card says **Seen again after <task>**.
+
+Before and after counts come only once there is enough work to mean something: both sides count
+finished tasks with the same predicate version, before being the tasks in the window of the run whose
+suggestion was accepted (saved at acceptance), and since being the tasks started after the linked change
+merged that have finished, shown once there are ten. These are observed counts, not proof of cause,
 and the card says nothing more than the counts.
 
-The settings section's **Past reviews** line is the review's own measure: how many suggestions became
-tasks and how many you dismissed. Two reviews in a row with nothing decided pause the weekly schedule.
+The settings section's **Past suggestions** line is the feature's own measure: how many suggestions
+became tasks and how many you dismissed.
 
 ## Where it lives
 
@@ -391,12 +409,12 @@ tasks and how many you dismissed. Two reviews in a row with nothing decided paus
   (usage, cost, model, isolation check, coverage, validation drops, L3 drops). Private, never published,
   archived like task records.
 - `<project>/improvements.json`: runs, suggestions, dispositions with their source (button request or
-  message), linked tasks, baselines and later counts, the next due date and the pause.
-- The setting lives with the project's other settings; its changes and the agreed disclosure version
-  are in the project's settings events.
+  message), linked tasks, baselines, later counts and the Monday skips.
+- The setting lives with the project's other settings; its changes and the agreed terms version are in
+  the project's settings events.
 - The card is a project-chat row (`trigger: "improvement"`) naming its run; its state is read from
   `improvements.json`, so the conversation stores no second copy of a decision.
-- This covers the Altitude project first. Other projects come later; their Agent workflow suggestions
+- This covers the Altitude project first. Other projects come later; their How agents work suggestions
   will then appear in the Altitude project's chat and Needs you, where Altitude itself is changed.
 
 ## Safety
@@ -411,19 +429,20 @@ tasks and how many you dismissed. Two reviews in a row with nothing decided paus
   logs or other tasks' conversations ad hoc, except L3 opening a run's cited anchors and an owner
   reading its own task's logs to diagnose its own work.
 - Tests use fictional project records and a scripted engine at the seam, without providers: each signal
-  predicate and its version, paired excerpts and their cuts, sheet ranking and the 64 KiB bound,
+  predicate and its version, paired quotes and their cuts, sheet ranking and the 64 KiB bound,
   coverage, dropped citations, oversized and secret-bearing answers, the isolation check failing closed,
-  token caps and budget arguments, unknown prices refused, timeout, unavailable model with no fallback,
-  start authority (setting Off refused; weekly due rule with its five-task, signal, seven-day and
-  allowance conditions; Review now with request-id replay; chat message, reuse refused; L3 alone
-  refused; L3 and owners refused when changing the setting; a changed disclosure turning it off), the pause
-  after two undecided reviews and Resume, the window advancing, Stop while reading and
-  while checking, the check deadline, interrupted runs, posting with L3 drops and kept numbering, post
-  refused for stopped, ended or late runs and replayed for the same post, typed answers before the
-  receipt, for a dropped number, delayed past a later run, ambiguous across runs and replayed, button
-  dispositions with replays and conflicts, one task per suggestion, measurement cohorts after merge,
-  Not decided on the next post, the Needs you item and its count, and every chat, Needs you and settings
-  state walked on phone and desktop.
+  token caps and budget arguments, unknown prices refused, timeout, unavailable model with no fallback;
+  start authority (no agreement refused; the Monday check with its five-task and allowance conditions,
+  a missed Monday after downtime and recorded skips; Get suggestions now with request-id replay; a chat
+  message, reuse refused; L3 alone refused; L3 and owners refused when switching or agreeing; changed
+  terms turning Weekly off with its chat line), the window advancing and its 30-day limit, Stop while
+  reading and while checking, the check deadline, interrupted runs, posting with L3 drops and kept
+  numbering, post refused for stopped, ended or late runs and replayed for the same post, typed answers
+  before the receipt, for a dropped number, delayed past a later run, ambiguous across runs and
+  replayed, every allowed and refused change in the decisions table including Undo and late
+  acceptance, button replays and conflicts, lapsing at seven days and at the next posting, one task per
+  suggestion, measurement cohorts after merge, the Needs you Suggestions section leaving the count and
+  badge unchanged, and every chat, Needs you and settings state walked on phone and desktop.
 
 ## What is removed
 
@@ -438,13 +457,13 @@ choice with recorded usage and cost.
 
 ## Rollout
 
-Each step is its own held PR that you review before it lands. Automatic runs come only after you have
+Each step is its own held PR that you review before it lands. Monday runs come only after you have
 seen real suggestions on request.
 
 1. **First run on request (this week).** Replace the pilot with `improve.py`: signals, task sheets and
    the prompt; the tool-free reviewer with its isolation check and cost limit; start by your chat
    message, Stop by chat, the deadline, and the private record. Your approval of this design is the
-   disclosure consent for the Altitude project only; the setting does not exist yet. L3 checks the
+   agreement for the Altitude project only; the settings section does not exist yet. L3 checks the
    candidates and runs `alt improve post`, which posts them as an ordinary L3 chat message written by
    Altitude: a heading line naming the review and its window, each kept suggestion with its run
    number, target, title, explanation and an underlined link to every cited place (opening like any
@@ -456,24 +475,26 @@ seen real suggestions on request.
    four days of work: the pilot's claim, timeout and record code is reused; new are the signals and
    sheets (the largest part), the reviewer adapter, four verbs (run, stop, post, resolve) and their
    tests.
-2. **The card and Needs you.** The same post renders as the card in project chat and as one item in
-   Needs you: the running line with Stop, Make a task and Dismiss, Details, Not decided, every state
-   walked on phone and desktop.
-3. **The switch and the schedule.** The settings section with **Off**, **When I ask** and **Weekly**, the
-   sheet, **Review now**, the morning check with its conditions, the allowance wait and the pause after
-   two undecided reviews. From here a chat request needs the setting on.
-4. **Measurement.** Baselines, **Since earlier changes**, **Seen again** and the **Past reviews** line.
-5. **Only if you choose them:** other projects (their Agent workflow suggestions then appear in the
+2. **The card and Needs you.** The same post renders as the card in project chat and under
+   **Suggestions** in Needs you: the running line with Stop, Make a task, Dismiss and Undo, Details,
+   lapsing, every state walked on phone and desktop.
+3. **Settings and Mondays.** The settings section with **Weekly**, **Get suggestions now**, the sheet
+   and its recorded agreement, the Monday check and its skips. From here a chat request needs the
+   agreement.
+4. **Measurement.** **Seen again**, **Since earlier changes** and the **Past suggestions** line.
+5. **Only if you choose them:** other projects (their How agents work suggestions then appear in the
    Altitude project's chat and Needs you, where Altitude itself is changed), working-log excerpts.
 
 ## Settled by the owner (redirect any of these)
 
-- Code builds the prompt from counted predicates and paired excerpts; no model summarises transcripts.
+- Code builds the prompt from counted predicates and paired quotes; no model summarises transcripts.
 - The reviewer has no tools at all, not read-only tools.
-- At most three suggestions per review, and at most one review per project per week on the schedule.
-- The schedule rides the existing morning check at 08:00 local time; there are no quiet-hours settings.
+- At most three suggestions per review; at most one scheduled review per project per week, on Mondays
+  at the existing 08:00 morning check. No quiet-hours setting and no weekday choice.
+- Five finished tasks is the minimum for any review; there is no friction threshold, because the signal
+  counts are evidence for the reviewer, not a gate.
 - L3 checks proposals before you see them, because the reviewer cannot open records or see current
   work; this costs one ordinary coordinator turn per review.
-- Suggestions never wake a device. They count in the Needs you badge only while undecided and only
-  until the next review.
+- Suggestions never wake a device or count in Needs you, and lapse after seven days.
+- The feature is called Improvement suggestions in the interface.
 - The pilot is removed, not kept beside the new review.

@@ -3,19 +3,19 @@
   "proposal": "design/wireframes/improvement-review/PROPOSAL.md",
   "images": [
     {
-      "title": "Phone, project settings: the Improvement review section, weekly, with when the next review runs",
+      "title": "Phone, project settings: Improvement suggestions with the Weekly switch on and Get suggestions now",
       "path": "design/wireframes/improvement-review/captures/PhoneSettings.png"
     },
     {
-      "title": "Phone: turning reviews on asks first what is sent, to which model, and the limit",
+      "title": "Phone: the first Weekly or Get suggestions now shows what is sent, to which model, and the cost",
       "path": "design/wireframes/improvement-review/captures/PhoneConsent.png"
     },
     {
-      "title": "Desktop: every settings state, from Off to running, waiting, paused and a refused save",
+      "title": "Desktop: every settings state, from Off and the sheet to running, skipped, refused and saving",
       "path": "design/wireframes/improvement-review/captures/SettingsStates.png"
     },
     {
-      "title": "Phone, Needs you: the review as one item beside a question, counted in the badge",
+      "title": "Phone, Needs you: suggestions below a question, under Suggestions, not counted in the badge",
       "path": "design/wireframes/improvement-review/captures/PhoneNeedsYou.png"
     },
     {
@@ -31,7 +31,7 @@
       "path": "design/wireframes/improvement-review/captures/PhoneDecided.png"
     },
     {
-      "title": "Phone: undecided suggestions fold when the next review posts; nothing to suggest; failures",
+      "title": "Phone: a lapsed suggestion beside an opened task, then a run with nothing to suggest",
       "path": "design/wireframes/improvement-review/captures/PhoneEndings.png"
     },
     {
