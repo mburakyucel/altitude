@@ -35,14 +35,15 @@ service keeps that PATH. With nvm, see [noninteractive toolchain](DEVELOPMENT.md
 
 ## Install the application
 
-Run as the account that will use Altitude, not as root:
+Run one of these as the account that will use Altitude, not as root. Installation saves the
+address Altitude listens on, so choose now. For use only on this computer:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/latest/download/install.sh | sh
 ```
 
-To use Altitude from a phone or another computer, give it the private-network address those devices
-reach (a LAN or VPN address) when you install, and allow its port, 8890, through the firewall:
+To also use it from a phone or another computer, give it the private-network address those devices
+reach (a LAN or VPN address), and allow its port, 8890, through the firewall:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/releases/latest/download/install.sh | ALTITUDE_HOST=<private address> sh
@@ -130,8 +131,11 @@ same on a device that already trusts Altitude.
 
 A CA that Altitude generates can vouch only for loopback and private-network addresses, the private
 names `localhost`, `.local`, `.internal` and `home.arpa`, and a DNS name configured when it was
-created; it cannot vouch for public websites. It is valid for ten years, and Altitude renews its
-server certificate by itself, so a device trusts it once.
+created, with its subdomains. It cannot vouch for other public websites, but if its key leaked it
+could impersonate other devices on your private network, such as a router's page. A CA supplied
+from elsewhere, or created without these limits, keeps its own scope; read the scope `alt doctor`
+reports before trusting a CA, where "No limits" means any website. The CA is valid for ten years,
+and Altitude renews its server certificate by itself, so a device trusts it once.
 
 ### Share with a desktop or phone
 
