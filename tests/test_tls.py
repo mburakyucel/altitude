@@ -83,7 +83,8 @@ class TestTLS(unittest.TestCase):
     def test_doctor_names_the_ca_fingerprint_url_and_device_steps(self):
         self.create()
         with mock.patch.object(installation.shutil, "which", return_value=None), \
-             mock.patch("altitude.platform.status", side_effect=RuntimeError("no service in tests")):
+             mock.patch("altitude.platform.status", side_effect=RuntimeError("no service in tests")), \
+             mock.patch("altitude.platform.lingering", return_value=None):
             trust = installation.doctor()["certificate_trust"]
         self.assertEqual(trust["state"], "unknown", "local certificate validity does not prove device trust")
         self.assertEqual(trust["url"], f"https://localhost:{config.PORT}")
@@ -92,6 +93,7 @@ class TestTLS(unittest.TestCase):
         self.assertIn("Certificate Trust Settings", " ".join(trust["trust_steps"]))
         with mock.patch.object(installation.shutil, "which", return_value=None), \
              mock.patch("altitude.platform.status", side_effect=RuntimeError("no service in tests")), \
+             mock.patch("altitude.platform.lingering", return_value=None), \
              mock.patch.object(tls, "info", side_effect=PermissionError("tls directory unreadable")):
             report = installation.doctor()
         self.assertEqual(report["certificate_trust"], {"state": "unavailable", "detail": "tls directory unreadable"})
