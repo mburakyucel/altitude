@@ -10,7 +10,8 @@ server on this machine's loopback, whose name the root wrapper points here. `upd
 answers for GitHub's release list and downloads, verifies automatic activation of the candidate, then opts out and
 uses the app's Update request for a newer synthetic release.
 `public-install` and `public-update` run docs/SETUP.md's command against GitHub itself (see Lifecycle.public). `mac` runs the whole macOS lifecycle under the throwaway HOME installation_mac.py gives it (see
-MacLifecycle).
+MacLifecycle); `mac-published` updates a published release to a later published one there, keeping the state made
+through the app (see MacLifecycle.published).
 """
 from __future__ import annotations
 
@@ -776,8 +777,8 @@ class MacLifecycle(Lifecycle):
 
     ACCOUNT_LABEL = "dev.altitude.altd"
 
-    def __init__(self, baseline: Path, results: Path, commit: str):
-        super().__init__(baseline, baseline, results, commit)
+    def __init__(self, baseline: Path, results: Path, commit: str, candidate: Path | None = None):
+        super().__init__(baseline, candidate or baseline, results, commit)
         self.result["limits"] = [
             "Same-source synthetic versions under a throwaway HOME of the running account on this Mac, not a fresh Mac "
             "or a second account; no cross-release storage migration",
@@ -818,11 +819,8 @@ class MacLifecycle(Lifecycle):
         fixture.write_text("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/results/fixture-engine.log\"\n"
                            "echo 'Fictional engine: unauthenticated, no provider requests' >&2\nexit 1\n")
         fixture.chmod(0o755)
-        keys = json.loads(self.run("engine-settings", sys.executable, "-B", "-c",
-            "import json,sys; sys.path.insert(0,sys.argv[1]); from altitude import config; "
-            "print(json.dumps([k for k in vars(config) if k.endswith('_BIN')]))", package))
-        assert keys, "Package exposes no engine executable settings"
-        self.env.update({key: str(fixture) for key in keys})
+        self.fixture = fixture
+        self.engines("engine-settings", package)
         self.label = self.run("service-label", sys.executable, "-B", "-c",
             "import sys; sys.path.insert(0,sys.argv[1]); from altitude import platform; print(platform.service_label())",
             package).strip()
@@ -830,6 +828,14 @@ class MacLifecycle(Lifecycle):
         assert self.launchd(self.label) is None, f"{self.label} is already loaded"
         write_json(self.results / "service-label.json", {"label": self.label})
         return archive, checksum, package, release
+
+    def engines(self, label: str, package: Path) -> None:
+        """Every engine executable setting PACKAGE names points at the fixture, so no provider is reached."""
+        keys = json.loads(self.run(label, sys.executable, "-B", "-c",
+            "import json,sys; sys.path.insert(0,sys.argv[1]); from altitude import config; "
+            "print(json.dumps([k for k in vars(config) if k.endswith('_BIN')]))", package))
+        assert keys, "Package exposes no engine executable settings"
+        self.env.update({key: str(self.fixture) for key in keys})
 
     def versions(self, package: Path, release: dict) -> dict:
         """Built baseline, then the next stable patch releases from its package: three healthy ones and one whose startup
@@ -1039,6 +1045,75 @@ class MacLifecycle(Lifecycle):
             "A request left the release addresses"
         self.uninstall(retained)
 
+    def published(self):
+        """The published baseline installed through its public command, state made through the app, then the
+        baseline's own daemon automatically installing the later published candidate, which must keep that state and
+        read it: the same paired device, the operator's name and its machine settings, TLS identity, configuration and
+        data."""
+        archive, checksum, package, before = self.prepare()
+        _, _, candidate, after = self.archive(self.candidate, "candidate")
+        self.engines("candidate-engine-settings", candidate)
+        self.result["limits"] = [
+            "Published releases' own files, served to the offline guest under GitHub's release addresses on this machine, "
+            "not downloaded from GitHub by the guest; the 12-hour check schedule is advanced by rewriting update.json",
+            "Application state is a paired device, a machine setting, configuration, TLS identity and fictional data, "
+            "made under a throwaway HOME with fixture engines; no project, task or live provider",
+            "The app is driven by the requests its page sends, without a browser; no login/logout, restart or sleep",
+        ]
+        repository = re.search(r"^REPOSITORY='https://github\.com/([^']+)'$", (self.baseline / "install.sh").read_text(), re.M)
+        self.repository = repository.group(1)
+        server = ReleaseServer(self.release_authority(*ReleaseServer.HOSTS), self.repository)
+        bundle = str(server.ca)
+        self.env.update(HTTPS_PROXY=server.proxy, NO_PROXY="127.0.0.1,localhost", SSL_CERT_FILE=bundle,
+                        CURL_CA_BUNDLE=bundle)
+        script = f"curl --proto '=https' --tlsv1.2 -fsSL https://github.com/{self.repository}/releases/latest/download/install.sh | sh"
+        try:
+            server.publish(self.baseline, before["version"])
+            installed = self.run("bootstrap", "sh", "-c", script, timeout=300)
+            assert f"Altitude {before['version']} is installed" in installed, installed
+            initial = self.healthy("installed", before)
+            self.doctor("installed", before)
+            self.wait_check(before["version"])
+            self.pair()
+            device = self.request("/api/devices")["current"]
+            operator = "Fictional Operator"
+            assert self.request("/api/operator-name", {"name": operator})["operator"] == operator
+            sentinels = [self.home / ".altitude/fictional/history.jsonl", self.home / "Projects/fictional/worktree/notes.txt"]
+            for path in sentinels:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("Fictional retained installation acceptance data\n")
+            retained = {path: digest(path) for path in [*sentinels, self.settings, *self.tls.glob("*")] if path.is_file()}
+            write_json(self.results / "state-before.json", {"device": device, "machine": self.request("/api/machine")})
+
+            # The baseline's own daemon finds the candidate and installs it at a quiet point, with nothing requested.
+            server.publish(self.candidate, after["version"])
+            self.advance_check(after["version"])
+            self.wait_version(after["version"], timeout=300)
+            attempt = self.wait_attempt(after["version"], "succeeded")
+            assert attempt["automatic"], attempt
+            updated = self.healthy("updated", after)
+            assert updated["pid"] != initial["pid"], "The update did not replace the daemon"
+            self.doctor("updated", after)
+            write_json(self.results / "automatic-update-record.json", self.record())
+            # The candidate reads what the baseline wrote, through the device the baseline paired.
+            devices, machine = self.request("/api/devices"), self.request("/api/machine")
+            write_json(self.results / "state-after.json", {"devices": devices, "machine": machine})
+            assert devices["current"] == device, (devices, device)
+            assert machine["operator"] == operator, machine
+            installed_now = self.request("/api/overview")["update"]["installed"]
+            assert installed_now == {"version": after["version"],
+                                     "notes": f"https://github.com/{self.repository}/releases/tag/{after['version']}"}, installed_now
+            assert all(digest(path) == value for path, value in retained.items()), "The update changed retained data"
+        finally:
+            server.stop()
+            write_json(self.results / "release-requests.json", server.requests)
+        assert not [item for item in server.requests if item.get("status") == 403 or "error" in item], \
+            "A request left the release addresses"
+        downloads = sorted(item["path"].rsplit("/", 1)[1] for item in server.requests
+                           if f"/releases/download/{after['version']}/" in item.get("path", ""))
+        assert downloads == sorted([f"altitude-{after['version']}.tar.gz", f"altitude-{after['version']}.tar.gz.sha256"]), downloads
+        self.uninstall(retained)
+
     def uninstall(self, retained: dict):
         port = int(self.env["ALTITUDE_PORT"])
         removed = json.loads(self.run("uninstall", self.alt, "uninstall"))
@@ -1056,7 +1131,7 @@ class MacLifecycle(Lifecycle):
 
     def execute(self, phase: str = "mac"):
         try:
-            self.mac()
+            {"mac": self.mac, "mac-published": self.published}[phase]()
         except Exception as exc:
             self.result["error"] = f"{type(exc).__name__}: {exc}"
             raise
@@ -1065,7 +1140,8 @@ class MacLifecycle(Lifecycle):
 
 
 if __name__ == "__main__":
-    if sys.argv[5:6] == ["mac"]:
-        MacLifecycle(Path(sys.argv[1]).resolve(), Path(sys.argv[3]).resolve(), sys.argv[4]).execute()
+    if sys.argv[5:6] in (["mac"], ["mac-published"]):
+        MacLifecycle(Path(sys.argv[1]).resolve(), Path(sys.argv[3]).resolve(), sys.argv[4],
+                     Path(sys.argv[2]).resolve()).execute(sys.argv[5])
     else:
         Lifecycle(*(Path(arg).resolve() for arg in sys.argv[1:4]), sys.argv[4]).execute(*sys.argv[5:6])
