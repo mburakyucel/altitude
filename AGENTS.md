@@ -217,3 +217,18 @@ another operator question. Its scope is the Linux container deployment on this m
 creates, and anything executed inside those containers. It excludes the operator's native Altitude
 installation and service, host trust stores and network configuration, host credential directories,
 and every other host resource the launcher did not create. It grants nothing for other projects.
+
+### VM lane runs on this Mac
+
+The operator's project-chat approval of 2026-10-12 06:23 UTC (`8db20389c22e`) stands until the
+operator revokes it: L3 records a VM-lane operator grant on an owner's request without another
+operator question. Its scope is virtual machines this Apple silicon Mac runs through Apple's
+Virtualization framework for Altitude's own checks: the macOS VM lane (`scripts/installation_macos_vm.py`
+and `make installation-macos-vm`, including building its images when they are missing) and throwaway
+Linux guests for the container lane's checks, each kept in its lane's own cache folder. One guest runs
+at a time with at most half of this Mac's CPUs and 8 GiB of memory; each clone or throwaway guest is
+deleted after its run, also after a failure or a stop; and a run stops whenever less than 10 GiB of
+disk would stay free. Runs serve a task's stated purpose and may be retried after a failure, never
+repeated back to back without end. Nothing is installed on the Mac itself. It excludes the operator's
+Altitude installation and service, LaunchAgents, keychains, trust stores, network settings, credential
+directories and every other host resource the lanes did not create. It grants nothing for other projects.
