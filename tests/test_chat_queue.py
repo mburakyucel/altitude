@@ -1948,7 +1948,8 @@ class TestChatQueue(AltitudeCase):
         with mock.patch.object(l3.route, "note_rejection"):
             rejected = run("block", (["task", "new", "--title", "Rerun the rejected check", "-"], "Fictional."),
                            result={**self.claude_result(""), "error": "provider rejected the request",
-                                   "session_id": "", "rejection": "fixture", "safe_to_retry": False})
+                                   "session_id": "", "rejection": {"why": "fixture rejection"},
+                                   "safe_to_retry": False})
         rows = [row for row in self.chat_view()["history"] if row.get("turn_id") == rejected["turn_id"]]
         errors = [row for row in rows if row["role"] == "error"]
         self.assertGreaterEqual(len(errors), 2)
