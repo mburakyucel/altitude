@@ -471,6 +471,50 @@ class TestSetup(SpeechCase):
         self.assertEqual(speech.runtime(), old)
         self.assertNotEqual(speech.installation_id(), identity)
 
+    def test_later_explicit_setup_is_not_deleted_by_an_earlier_remover(self):
+        self.replacement()
+        marked, release = threading.Event(), threading.Event()
+        lock = speech._lock
+
+        def delayed(wait=0):
+            if wait:
+                marked.set()
+                release.wait(5)
+            return lock(wait)
+
+        self.patch(speech, "_lock", new=delayed)
+        failures = []
+
+        def remove():
+            try:
+                speech.remove_runtime()
+            except Exception as exc:
+                failures.append(exc)
+
+        remover = threading.Thread(target=remove)
+        remover.start()
+        try:
+            self.assertTrue(marked.wait(5))
+            new = speech.setup()
+        finally:
+            release.set()
+            remover.join(5)
+        self.assertFalse(remover.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(speech.runtime(), new)
+
+    def test_cancel_during_model_check_preserves_old_runtime(self):
+        old = self.replacement()
+        self.worker_file.write_text('import time; time.sleep(60)\n')
+        host = self.host()
+        host.start_setup()
+        self.wait(lambda: speech.status().get("update", {}).get("state") == "checking")
+        host.cancel_setup()
+        self.wait(lambda: host.setup_attempt is None)
+        self.assertEqual(speech.status()["update"]["state"], "cancelled")
+        self.assertEqual(speech.runtime(), old)
+        self.assertFalse((speech.ROOT / ".staging").exists())
+
     def test_separate_remover_waits_for_the_daemon_worker_to_exit(self):
         old = self.replacement()
         host = self.host()

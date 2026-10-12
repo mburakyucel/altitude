@@ -220,6 +220,31 @@ test("voice update presentation: supported recording survives update outcomes an
   await expect(field).toHaveValue("");
 });
 
+test("voice update handoff: new recording catches up after verification without a connection error", async ({ page, request }, info) => {
+  const project = await fixtureProject(request);
+  await fixtureHost(page, updating({ state: "checking" }));
+  let checking = true;
+  await page.route((url) => url.pathname === "/api/voice/live", async (route) => {
+    if (checking) return route.fulfill({ status: 425, json: { error: "Voice is checking an update. Try again shortly." } });
+    return route.fallback();
+  });
+  const walk = walkthrough(page, info);
+  const field = page.getByRole("main").getByRole("textbox", { name: /^Message L3 about /, includeHidden: true });
+  await walk.open(project.path);
+  await button(page, "Start voice input").click();
+  await walk.state("01-capture-waits-for-verification", {
+    visible: [page.getByText("Catching up…", { exact: true }), button(page, "Stop voice input")],
+    hidden: [page.getByText("Connection lost — still recording. Your words will catch up.", { exact: true })],
+  });
+  checking = false;
+  await expect(field).toHaveValue("check the build", { timeout: 5000 });
+  await button(page, "Stop voice input").click();
+  await expect(field).toHaveValue(/^Heard \d+ chunks\.$/);
+  await walk.state("02-retained-words-land", {
+    visible: [button(page, "Start voice input")], hidden: [button(page, "Stop voice input")],
+  });
+});
+
 test("voice update presentation: disconnected recording replays with the same selection after replacement", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const host = await fixtureHost(page, updating(downloading));
