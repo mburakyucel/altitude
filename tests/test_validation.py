@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import TestCase, mock
@@ -689,6 +690,38 @@ class TestValidationRunner(ClientStop, RunnerCase):
         self.assertEqual(result.stderr, "[altitude] waiting for the validation slot: the validation run of other/task "
                                         f"holds this machine until its limit at {S.local('2026-10-08T02:08:48+00:00')}\n")
         self.assertIn("after\n", result.stdout)
+
+    def test_a_request_activation_turns_away_waits_through_the_restart_and_runs(self):
+        """A request that had waited its turn for up to an hour met a pending activation and exited, losing its
+        wait. The line lives in altd, which restarts, so the client waits and asks again."""
+        self.serving(self.httpd.server_address[1])
+        owner = {"ALTITUDE_PROJECT": self.project, "ALTITUDE_ACTOR": "l2", "ALTITUDE_TASK": self.slug,
+                 "ALTITUDE_ATTEMPT": "1"}
+        flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
+        release, holder, answers = self.holding()
+        done = []
+        client = threading.Thread(target=lambda: done.append(self.alt("task", "validate", "--", "echo", "after",
+                                                                      env=owner)))
+        client.start()
+        self.addCleanup(client.join)
+        wait_for(lambda: validation.LINE._queue, "the request to wait its turn")
+        S.write_json(flag, {"since": S.now(), "head": "merged", "files": ["altitude/dispatch.py"]})
+        release.touch()
+        holder.join()
+        wait_for(lambda: not validation.LINE._queue, "activation to turn the waiting request away")
+        with socket.socket() as down:   # altd restarts: nothing listens
+            down.bind(("127.0.0.1", 0))
+            self.serving(down.getsockname()[1])
+            time.sleep(2.5)   # longer than the client's interval: its process keeps WATCH_SECONDS unpatched
+        flag.unlink()
+        self.serving(self.httpd.server_address[1])
+        client.join(60)
+        [result] = done
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("activating merged changes; this request asks again once it has restarted", result.stderr)
+        self.assertIn("after\n", result.stdout)
+        self.assertEqual(answers[0]["exit"], 0)
+        self.assertEqual([row["exit"] for row in self.rows()], [0, 0], "the turned-away request ran once")
 
     def test_a_failed_cleanup_keeps_the_area_until_a_request_removes_it_and_an_unrecorded_outcome_keeps_its_record(self):
         with mock.patch.object(T, "finish_machine_run", side_effect=OSError("disk full")):
