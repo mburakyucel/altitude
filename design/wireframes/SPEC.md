@@ -953,7 +953,7 @@ box, so whether it was reviewed is visible in Needs you and the conversation wit
 | Question | Box |
 | --- | --- |
 | An open proposal approval: a question showing files, or one its owner marks as a proposal | **Proposal review** |
-| The held PR's **Review before merge** card, or an open operator question naming the held PR | **Implementation review** |
+| The held PR's **Review before merge** card, or an open operator question about the held PR (§3.10) | **Implementation review** |
 | Any other question, and a resolved or withdrawn one | none |
 
 The box sits under the question, the files it shows or the merge card's detail, above the recommendation. Its
@@ -1224,6 +1224,31 @@ its contextual live link. Conversation has no separate live-session/action row a
 Questions, decisions and results stay durable;
 there is no copied preview archive, duplicate reply, summarizer call or hidden reasoning.
 
+Work the worker keeps running beside its stream (a command or helper it put in the background, a
+running command that **Send now** moved to the background, or a command its turn moved past) shows in **In the background**, a tray pinned under the Live session
+stream while the task runs. It does not scroll with the stream and appears only while something runs
+or ended less than 60 seconds ago; a session without background work shows no tray. A 12px muted
+**In the background** heading leads one row per item: a status dot (accent while running, green
+done, red failed, muted stopped; never pulsing, since the pulse means recent output), the tool name
+in the stream's row style (`$` for a command, **Agent** for a helper), the engine's own description
+(or the command) in 13px, wrapping to two lines and then ending in an ellipsis, with the full text as
+its hover title, and the status right-aligned in 12px tabular muted text: "running · 4 min", then
+"done in 4 min", "failed after 4 min" (red) or "stopped after 4 min"; without a recorded start it
+reads "running", "done", "failed" or "stopped". Running items come first, oldest first, then
+outcomes, newest first. More than three rows fold under **Show all 6** (a 44px link), which becomes
+**Show fewer**; the expanded list scrolls inside the tray at no more than 30% of the viewport height,
+so the stream keeps its room. An outcome leaves the tray 60 seconds after it ended, and one without
+a recorded end time never enters it; the item's own call row in the stream keeps the outcome: that
+row's hint reads "background" while it runs, then "background · done", "background · failed" (the
+row in danger tone) or "background · stopped", in place of its output count. The tray is otherwise
+not interactive. The engine seam reports each item from the current worker's records only; work the
+engine stops listing without reporting an end leaves the tray with no outcome, and an unreadable
+source or an engine that reports none shows no tray and no row hint. Conversation, its activity
+preview and task rows are unchanged. `web/e2e/live-background.pw.ts` walks no background work,
+running beside the stream, a helper done, a failed outcome, several folded, Show all with a long
+label in a bounded tray, Show fewer and outcomes leaving after a minute, for each configured engine
+at phone and desktop width.
+
 Below 1280px the live session panel follows the §2.2 rule for the work panel: an overlay from the
 header's panel button, scrim behind, Esc or the scrim closes it; the `live` route opens it on desktop
 too. Its header carries Stop/Continue/Check status while the scrim blocks the task header.
@@ -1272,8 +1297,11 @@ and Needs you; View question stays in task details, useful from Live session. A 
 (#419) shows **Your turn · review before merge** at the end of the chat and in Needs you:
 **Approve merge** sends the operator's own message "Approved: merge PR #N." and the L2 merges
 with it after fresh checks of the current head (the press shows as its pill, §3.8.2, and the chat then shows "Sent · the L2 has your reply."); **View PR #N** opens it; asking below discusses it. A later,
-unrelated question never hides that review; an open operator question that links or names the PR
-supplies its single response surface, with quick options or a freeform field. The separate card stays
+unrelated question never hides that review. An open operator question about the PR supplies its single
+response surface instead: one its owner marks as the merge question, or an unmarked one that links or
+names the PR, with quick options or a freeform field. Beside **Send answers** it offers **View PR #N**,
+as the card does. While the PR waits, Altitude refuses an owner's unmarked question with choices, so a
+question never offers **Approve merge** beside the card. The separate card stays
 away until the owner resolves the question, including while a submitted response waits for interpretation.
 Resolution restores the fallback when merge approval is still needed; a PR mention alone grants no
 approval. Independent questions and ordinary chat remain available. After **Approve merge**, a later park

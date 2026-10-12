@@ -1727,6 +1727,115 @@ def public_message_identity(engine: str, record: dict) -> str | None:
     return str(message["id"]) if isinstance(message, dict) and message.get("id") else None
 
 
+_BACKGROUND_OUTCOMES = {"completed": "completed", "failed": "failed", "killed": "stopped", "stopped": "stopped"}
+
+
+def _epoch_ms(value) -> str | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return None
+    return datetime.fromtimestamp(value / 1000, timezone.utc).isoformat()
+
+
+def background_work(engine: str, records: list[dict]) -> list[dict] | None:
+    """Work one invocation keeps running beside its turn: {id, label, kind (command|agent), call, started_at,
+    status (running|completed|failed|stopped), ended_at}, running work oldest first, then outcomes in the order they
+    ended. None when the engine reports no such work.
+
+    Claude announces background tasks (a backgrounded command or helper) with task_started/background_tasks_changed,
+    marks a running call moved to the background (as Send now does) with task_updated, and ends them with
+    task_updated/task_notification; the start is the time of the tool call that launched it. Background work missing
+    from a later background_tasks_changed set no longer runs. Work it marks awaited or ambient is not background.
+    A Codex command stays in progress until its process exits. Parallel calls start together, so a running command
+    is background once the turn takes a further step: the model writes or reasons, or starts another call after a
+    call ended."""
+    items: dict[str, dict] = {}
+    ended: list[str] = []
+
+    def entry(identity: str, **fields) -> dict:
+        return items.setdefault(identity, {"id": identity, "label": "", "kind": "command", "call": None, "started_at": None,
+                                           "status": "running", "ended_at": None, "background": False, "gone": False,
+                                           "quiet": False, **fields})
+
+    def end(item: dict, status: str, at: str | None) -> None:
+        if item["status"] == "running":
+            ended.append(item["id"])
+        item["status"] = status
+        item["ended_at"] = at or item["ended_at"]
+
+    if engine == "claude":
+        called: dict[str, str] = {}
+        for record in records:
+            subtype = record.get("subtype")
+            content = (record.get("message") or {}).get("content") if isinstance(record.get("message"), dict) else None
+            if record.get("type") == "assistant" and isinstance(content, list) and isinstance(record.get("timestamp"), str):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("id"):
+                        called.setdefault(str(block["id"]), record["timestamp"])
+            if record.get("type") != "system":
+                continue
+            if subtype == "background_tasks_changed" and isinstance(record.get("tasks"), list):
+                listed = [dict(task, is_backgrounded=True) for task in record["tasks"]
+                          if isinstance(task, dict) and True not in (task.get("awaited"), task.get("ambient"))]
+                current = {str(task.get("task_id")) for task in listed}
+                for item in items.values():
+                    if item["background"] and item["status"] == "running" and item["id"] not in current:
+                        item["gone"] = True
+            elif subtype in ("task_started", "task_updated", "task_notification"):
+                listed = [record]
+            else:
+                continue
+            for task in listed:
+                if not task.get("task_id"):
+                    continue
+                item = entry(str(task["task_id"]))
+                patch = task.get("patch") if isinstance(task.get("patch"), dict) else {}
+                if isinstance(task.get("description"), str) and task["description"].strip():
+                    item["label"] = _one_line(task["description"], 120)
+                if isinstance(task.get("task_type"), str):
+                    item["kind"] = "command" if task["task_type"] == "local_bash" else "agent"
+                if isinstance(task.get("tool_use_id"), str) and task["tool_use_id"]:
+                    item["call"] = task["tool_use_id"]
+                item["quiet"] = item["quiet"] or True in (task.get("awaited"), task.get("ambient"))
+                if True in (task.get("is_backgrounded"), patch.get("is_backgrounded")):
+                    item.update(background=True, gone=False)
+                outcome = _BACKGROUND_OUTCOMES.get(str(patch.get("status") or task.get("status") or ""))
+                if outcome:
+                    end(item, outcome, _epoch_ms(patch.get("end_time")))
+        for item in items.values():
+            item["started_at"] = called.get(item["call"] or "")
+    elif engine == "codex":
+        seen: set[str] = set()
+        returned = False  # a call ended since the newest call started: the next call is a further step
+        for record in records:
+            item = record.get("item") if isinstance(record.get("item"), dict) else {}
+            identity = str(item.get("id") or "")
+            if record.get("type") not in ("item.started", "item.completed") or not identity:
+                continue
+            if identity not in seen:
+                seen.add(identity)
+                if returned or item.get("type") in ("agent_message", "reasoning"):
+                    for other in items.values():
+                        if other["status"] == "running":
+                            other["background"] = True
+                returned = False
+            if record["type"] == "item.completed":
+                returned = True
+            if item.get("type") != "command_execution":
+                continue
+            at = record.get("timestamp") if isinstance(record.get("timestamp"), str) else None
+            command = entry(identity, label=_one_line(_shell_command(item.get("command")), 120), call=identity, started_at=at)
+            if record["type"] == "item.completed" and item.get("status") in ("completed", "failed", "declined"):
+                end(command, "completed" if item.get("status") == "completed" and item.get("exit_code") in (None, 0)
+                    else "failed", at)
+    else:
+        return None
+    shown = {identity: item for identity, item in items.items()
+             if item["background"] and not item["quiet"] and not (item["gone"] and item["status"] == "running")}
+    order = [item for item in shown.values() if item["status"] == "running"] + [shown[i] for i in ended if i in shown]
+    return [{key: value for key, value in item.items() if key not in ("background", "gone", "quiet")} for item in order]
+
+
+
 # Passive task accounting reads provider evidence only. Cursors contain offsets and numeric
 # deduplication ledgers, never transcript text; callers persist one cursor per engine per task.
 _TOKEN_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "reasoning_tokens")

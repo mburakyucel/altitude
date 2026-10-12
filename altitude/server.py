@@ -3478,10 +3478,10 @@ def task_view(project: str, slug: str) -> dict:
         activity = transcript.activity(project, slug)
     except transcript.TranscriptAccessError:
         activity = {"generation": t.get("agent_id"), "state": "unavailable", "commentary": None,
-                    "observation": None, "delivered": [], "error": "Activity is unavailable for this task."}
+                    "observation": None, "delivered": [], "background": None, "error": "Activity is unavailable for this task."}
     if activity["generation"] != t.get("agent_id"):
         activity = {"generation": t.get("agent_id"), "state": "unavailable", "commentary": None,
-                    "observation": None, "delivered": [], "error": "The worker changed. Refresh this task."}
+                    "observation": None, "delivered": [], "background": None, "error": "The worker changed. Refresh this task."}
     return {**{k: v for k, v in t.items() if k not in TASK_VIEW_OMITTED},
             "repository": project_repository(project),
             "can_continue": T.reported_continuable(t, report),

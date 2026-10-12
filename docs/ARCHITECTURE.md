@@ -2605,8 +2605,8 @@ open member (or latest receipt), and individual revision history;
 `GET /api/overview` and the project view project the operator's turn: unresolved operator questions
 asked since the operator last wrote to the task (`handed_back`), plus one `review` row for a held
 delivery whose owner stopped in `blocked` or `reported` (#419). An open proposal question (marked
-`"review": "proposal"` or showing files), the `review` row and an open operator question naming the
-held PR also carry `review` from `reviews.status`: the latest proposal or implementation review's id,
+`"review": "proposal"`, or unmarked and showing files), the `review` row and an open operator question about
+the held PR (marked `"review": "changes"`, or unmarked and naming it), which also carries the PR's `pr`, carry `review` from `reviews.status`: the latest proposal or implementation review's id,
 state, who skipped it and why, finding and open counts, assessment and earlier-version coverage, read
 from the saved reviews with the review card's own comparison; `state: none` when there is none (spec
 §3.8.3). `alt task review skip` records the owner's reason as a withdrawn review that never ran. A held PR that Altitude has observed
@@ -2972,7 +2972,8 @@ under day dividers. Each message L3 sent the L2 is one compact line: "L3 ·" and
 without one, with an image count when it carries images. Its Show opens the complete stored text and
 images in place; the task record, the L2's inbox and authority checks keep every word, and the summary
 is stored beside the text as display metadata only. Then come the open question group at the end of the conversation (closed groups
-at their recorded message anchor), a held review card when one waits, no open operator question links its PR and the PR is not already
+at their recorded message anchor), a held review card when one waits, no open operator question is about its PR (marked as its merge question, or
+unmarked and linking or naming it) and the PR is not already
 approved since its hold, and the composer
 while the task is running, blocked, reported with open-PR owner evidence, or queued before its first
 dispatch or with an existing question. Waiting on L3 stays a
@@ -3074,6 +3075,16 @@ new archive or copied conversation replies supply the preview. Conversation and 
 activity cue from its recorded output time: a pulsing dot within 60 seconds of output. Live session
 keeps a still dot and "No new activity for …" after that, and no pulse when activity is unavailable
 or the task is not running; Conversation hides the preview instead.
+The same projection carries `background`: the work the current worker keeps running beside its turn,
+each item with its description, kind (command or agent), launching call, start, status (running,
+completed, failed or stopped) and end. `engines.background_work` reads it from the engine's own records:
+Claude's background-task start and end reports, including a running command that Send now moves to the
+background, and a Codex command still in progress once the turn takes a further step (the model writes or
+reasons, or starts another call after a call ended; parallel calls alone are not one). It holds every
+running item, then the 20 most recent outcomes in the order they ended, and is `null` when a record is
+unreadable or the engine reports no such work. Live session shows it as the **In the background**
+tray under its stream while the task runs, and marks each item's call row in the stream (design spec
+§3.10); Conversation and task rows do not use it.
 
 Runtime files live under `ALTITUDE_HOME`; a task is a directory a person can read. Source-controlled
 personas, schemas, templates, and hooks describe current behaviour: `hooks/` holds the Git hooks

@@ -138,6 +138,66 @@ describe("LiveSession", () => {
     expect(panel.querySelector(".live-pulse")).toHaveAttribute("data-tone", "muted");
   });
 
+  for (const width of [390, 1440]) {
+    it(`lists background work beside the stream and keeps each outcome on its call row at ${width}px`, async () => {
+      const ago = (seconds: number) => new Date(Date.now() - seconds * 1000).toISOString();
+      const background = [
+        { id: "b1", label: "Run the status check", kind: "command", call: "toolu_1", started_at: ago(240), status: "running", ended_at: null },
+        { id: "b2", label: "Review the timer change", kind: "agent", call: null, started_at: ago(200), status: "completed", ended_at: ago(20) },
+        { id: "b3", label: "Build the bundle", kind: "command", call: "item_1", started_at: ago(400), status: "failed", ended_at: ago(120) },
+      ];
+      stub({ task: { ...task, activity: { ...task.activity, background } } });
+      setViewport(width);
+      renderApp({ route });
+      const panel = await screen.findByRole("region", { name: "Live session" });
+      const tray = await within(panel).findByRole("region", { name: "In the background" });
+      const rows = within(tray).getAllByRole("listitem");
+      expect(rows.map((row) => row.textContent)).toEqual(["$Run the status checkrunning · 4 min", "AgentReview the timer changedone in 3 min"]);
+      expect(rows[0]!.querySelector(".dot")).toHaveAttribute("data-state", "running");
+      expect(rows[0]!.querySelector(".dot")).not.toHaveAttribute("data-pulse");
+      expect(within(tray).queryByText("Build the bundle")).toBeNull();
+      const view = within(panel).getByRole("region", { name: "Live transcript" });
+      const status = within(view).getByText("git status").closest("details")!;
+      expect(status).toHaveAttribute("data-background", "running");
+      expect(within(status).getByText("background")).toBeInTheDocument();
+      const build = within(view).getAllByText("make test").find((node) => node.closest("details"))!.closest("details")!;
+      expect(build).toHaveAttribute("data-error", "true");
+      expect(within(build).getByText("background · failed")).toBeInTheDocument();
+    });
+  }
+
+  it("folds more than three background items under Show all", async () => {
+    const background = [1, 2, 3, 4, 5].map((index) => ({ id: `b${index}`, label: `Build part ${index}`, kind: "command", call: null,
+      started_at: null, status: "running", ended_at: null }));
+    stub({ task: { ...task, activity: { ...task.activity, background } } });
+    renderApp({ route });
+    const panel = await openPanel();
+    const tray = await within(panel).findByRole("region", { name: "In the background" });
+    expect(within(tray).getAllByRole("listitem")).toHaveLength(3);
+    expect(within(tray).getAllByText("running")).toHaveLength(3);
+    fireEvent.click(within(tray).getByRole("button", { name: "Show all 5" }));
+    expect(within(tray).getAllByRole("listitem")).toHaveLength(5);
+    fireEvent.click(within(tray).getByRole("button", { name: "Show fewer" }));
+    expect(within(tray).getAllByRole("listitem")).toHaveLength(3);
+  });
+
+  it("shows no tray or row hint without background work, or once the task stops running", async () => {
+    stub({ task: { ...task, activity: { ...task.activity, background: [] } } });
+    const first = renderApp({ route });
+    let panel = await openPanel();
+    const view = await within(panel).findByRole("region", { name: "Live transcript" });
+    expect(within(view).getByText("git status").closest("details")).not.toHaveAttribute("data-background");
+    expect(within(view).getByText("2 lines")).toBeInTheDocument();
+    expect(within(panel).queryByRole("region", { name: "In the background" })).toBeNull();
+    first.unmount();
+    const running = [{ id: "b1", label: "Run the status check", kind: "command", call: "toolu_1", started_at: null, status: "running", ended_at: null }];
+    stub({ task: { ...task, state: "done", activity: { ...task.activity, background: running } } });
+    renderApp({ route });
+    panel = await openPanel();
+    expect(await within(panel).findByText("Session ended")).toBeInTheDocument();
+    expect(within(panel).queryByRole("region", { name: "In the background" })).toBeNull();
+  });
+
   it("claims no activity when the activity record is unavailable", async () => {
     stub({ task: { ...task, activity: { ...task.activity, state: "unavailable" } } });
     renderApp({ route });

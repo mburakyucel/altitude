@@ -58,6 +58,13 @@ def main():
         with minutes_ago(minutes - 1):
             l3.chat_log(PROJECT, "assistant", reply, trigger="chat", turn_id=turn_id, engine=engine)
 
+    turn(240, "Enterprise readiness is this month's priority: SAML single sign-on, audit log export and per-tenant "
+         "API limits. Keep the public API stable.",
+         "I split it into three tasks, each with its own owner. They report with a pull request and green "
+         "checks, and I bring you only what needs your call.", "readme-0a")
+    turn(150, "Billing moves to usage-based pricing next quarter. Start the meter now so we have real data.",
+         "Started **Build the usage-based billing meter**. It records usage per tenant in the existing events "
+         "pipeline and changes no invoices until you approve the pricing table.", "readme-0b")
     turn(65, "Move Atlas to a versioned search index. Keep the v1 API stable and p95 below 200 ms. "
          "Agree the rollout constraints before starting.",
          "Keep the response contract unchanged; bind cursors to an index generation. Backfills use document ID "
@@ -65,15 +72,15 @@ def main():
          "readme-1")
     turn(35, "Agreed. Start compatibility, backfill and the performance baseline independently. "
          "Hold the rollout until we have the results.",
-         "Three L2 owners are working in separate worktrees.\n\n**Compatibility** covers the v1 contract and "
+         "Three L2 owners now work on the migration, each in its own worktree.\n\n**Compatibility** covers the v1 contract and "
          "cursors. **Backfill** implements resumable batches. **Performance** measures the existing index while "
          "those changes are built.\n\nI will use their reports to coordinate rollout readiness. You can steer "
          "each owner directly from its task.", "readme-2")
-    l3.save_info(PROJECT, {"session_id": "readme-l3", "engine_last": engine, "last_turn": S.now(), "turns": 14,
-                           "sessions": {engine: {"session_id": "readme-l3", "turns": 14,
+    l3.save_info(PROJECT, {"session_id": "readme-l3", "engine_last": engine, "last_turn": S.now(), "turns": 41,
+                           "sessions": {engine: {"session_id": "readme-l3", "turns": 41,
                                                  "confinement_version": l3.L3_CONFINEMENT_VERSION}}})
 
-    def owner(title, request, minutes):
+    def owner(title, request, minutes, engine=engine):
         with minutes_ago(minutes):
             slug = T.new(PROJECT, title, request)["slug"]
             T.dispatch(PROJECT, slug, attempt=1, session_id=f"readme-{slug}", agent_id=f"readme-{slug}",
@@ -97,6 +104,19 @@ def main():
     backfill = owner("Build resumable index backfill",
                      "Backfill the versioned index in resumable, revision-aware batches.", 32)
     owner("Measure search latency baseline", "Measure p95 latency on the current index with a replay harness.", 30)
+    # The rest of the project's work in flight, each with its own owner.
+    for minutes, title in enumerate([
+            "Add SAML single sign-on for enterprise accounts", "Export audit logs for admins",
+            "Add per-tenant limits to the public API", "Build the usage-based billing meter",
+            "Add typo tolerance to search", "Rank results by recent engagement", "Stream large CSV exports",
+            "Sign billing webhook payloads", "Shard the ingestion queue by tenant",
+            "Rewrite the query parser on a grammar", "Cache facet counts per index generation",
+            "Cut cold-start time in the mobile app", "Retry failed email digests with backoff",
+            "Localize the dashboard into German and Japanese", "Replace integration polling with webhooks",
+            "Profile memory in the indexing workers", "Add a synonyms editor for search admins",
+            "Scan uploaded files for malware", "Halve the CI test suite's run time",
+            "Upgrade the ORM to its next major version"]):
+        owner(title, f"{title}.", 200 - 9 * minutes, config.ENGINES[minutes % len(config.ENGINES)])
 
     say(compatibility, "l2", "I am covering the v1 response contract and the index-switch boundary. Existing "
         "clients will keep the same request and response shape.", 22)
@@ -142,6 +162,21 @@ def main():
                                                          "session_id": f"readme-{compatibility}", "started_at": at(34)})
     (job / f"readme-{compatibility}.stdout.jsonl").write_text(
         "".join(json.dumps(record) + "\n" for record in records if record["type"] != "attachment"))
+
+    # Work finished this week: each verb and area makes one delivered task.
+    areas = ["the query parser", "billing webhooks", "the ingestion queue", "the admin dashboard", "the search API",
+             "the export job", "the auth middleware", "the rate limiter", "email digests", "the CSV importer",
+             "the cache layer", "mobile sync", "the audit log", "the onboarding flow", "result ranking",
+             "feature flags"]
+    verbs = ["Harden", "Speed up", "Add tests for", "Document", "Refactor", "Fix flaky tests in", "Add metrics to",
+             "Clean up"]
+    for number, (verb, area) in enumerate((verb, area) for verb in verbs for area in areas):
+        with minutes_ago(60 * 24 * 5 * number / (len(verbs) * len(areas)) + 90):
+            slug = T.new(PROJECT, f"{verb} {area}", f"{verb} {area}.")["slug"]
+            finished = S.load_task(PROJECT, slug)
+            finished.update(state="done", finished=S.now())
+            S.save_task(PROJECT, finished)
+            T._archive(PROJECT, slug)
 
     # Later the backfill owner needs a product decision; L3 brings it to the operator.
     T.block(PROJECT, backfill, RETENTION["question"], actor="l2", questions={"questions": [RETENTION]})

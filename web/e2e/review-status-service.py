@@ -96,6 +96,21 @@ def main():
                 {"key": "approve", "label": "Approve merge", "text": "Approved: merge PR #43."},
                 {"key": "changes", "label": "Request changes", "text": "Hold PR #43 for changes."}], "recommended_key": "approve"}]})
 
+    # A merge question its owner marks, whose text never names the held PR, is that PR's one response surface.
+    help_page, worktree = running("Help page copy")
+    T.set_hold_merge("atlas", help_page, "Operator review of the public help page")
+    row = S.load_task("atlas", help_page)
+    row.update(delivery={"number": 44, "head": git("rev-parse", "HEAD", cwd=worktree).strip(), "at": S.now()}, prs=[44])
+    S.save_task("atlas", row)
+    review(help_page, "changes", [finding("tone", "Headline overstates the fix")],
+           [{"finding_id": "tone", "disposition": "fixed", "reason": "The headline states the fix."}])
+    T.block("atlas", help_page, "Merge the new help page?", actor="l2", updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE},
+            questions={"questions": [{"question": "Merge the new help page? It is on the pull request with all checks green.",
+                                      "options": [
+                {"key": "merge", "label": "Approve merge", "text": "Merge the new help page."},
+                {"key": "changes", "label": "Request changes", "text": "Tell me what to change first."}],
+                "recommended_key": "merge", "review": "changes"}]})
+
     # A proposal approval without a design preview, marked by its owner, whose review the owner judged unnecessary.
     queue, _ = running("Queue per project")
     reviews.skip("atlas", queue, actor="l2", subject="proposal", reason="Small, reversible change.", expected_attempt=1)
@@ -116,8 +131,9 @@ def main():
         # The operator's message resumes the settings owner, which revises its question once the resume settles.
         with server._bg_guard:
             resumed = server._bg.get(f"resume:atlas:{settings}")
-        if resumed:
-            resumed.join(10)
+        if not resumed:
+            return  # another task's owner resumed
+        resumed.join(10)
         n = next(revisions)
         T.block("atlas", settings, f"Build settings layout revision {n} as shown?", actor="l2",
                 expected_attempt=S.load_task("atlas", settings)["attempt"], updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE},
