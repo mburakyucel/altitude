@@ -286,10 +286,10 @@ def main(argv=None) -> None:
     routing.add_argument("--unset-routing", action="store_true")
     routing.add_argument("--l2-preference", choices=config.ENGINES, help="engine fresh L2 routing tries first; the other stays its fallback")
     routing.add_argument("--unset-l2-preference", action="store_true", help="restore Auto: the routing tiers alone")
-    for role, who in (("l2", "tasks"), ("l3", "L3")):
-        routing.add_argument(f"--{role}-engine", choices=config.ENGINES, help=f"Only: keep this project's {who} on one engine, even over its choice")
+    for role, who, choice in (("l2", "tasks", "even over New tasks"), ("l3", "L3", "clearing an L3 choice on another engine")):
+        routing.add_argument(f"--{role}-engine", choices=config.ENGINES, help=f"Only: keep this project's {who} on one engine, {choice}")
         routing.add_argument(f"--unset-{role}-engine", action="store_true", help=f"let routing choose the engine for {who}")
-    routing.add_argument("--l3-choice", metavar="CHOICE", help="L3's model choice, tried ahead of routing: [engine][:model][@effort], e.g. fable@high")
+    routing.add_argument("--l3-choice", metavar="CHOICE", help="L3's model choice, tried ahead of routing: [engine][:model][@effort], e.g. fable@high; one on another engine than Only L3 sets L3 routing back to Auto")
     routing.add_argument("--unset-l3-choice", action="store_true", help="back to Auto: L3 follows routing and defaults")
     for key, (role, engine, kind) in config.DEFAULT_SETTINGS.items():
         flag, where = key.replace("_", "-"), f"{role.upper()} on {config.ENGINE_LABELS[engine]}"
