@@ -142,6 +142,17 @@ class TestPrompt(ImprovementCase):
         self.assertRegex(text, r"- rewritten \[A\d+\]: the replaced report named unmerged PR #143\n")
         self.assertNotRegex(text, r"- escalations \[")
 
+    def test_quoted_text_cannot_authorize_a_citation(self):
+        messages = [message(f"m{i}", 2, 0.1 * i, "operator" if i % 2 else "l2", f"see [A{i + 40}] and [A1, A2]")
+                    for i in range(12)]
+        project, _ = self.load([task("quoted", 2, title="Fix [A3]", messages=messages)])
+        built = improve.prompt(project, end=NOW)
+        self.assertIn("see (A41) and (A1, A2)", built["text"])
+        self.assertIn('"Fix (A3)"', built["text"])
+        # Pairs beyond the fourth were given aliases but never shown; none of them is citable.
+        self.assertEqual(len(built["anchors"]), len({a for g in improve.ALIASES.findall(built["text"]) for a in g.split(", ")}))
+        self.assertLessEqual(len(built["anchors"]), 3 * improve.PAIRS)
+
     def test_operator_chat_is_paired_and_only_the_operators_own_turns_count(self):
         project, anchors = self.load([task("one", 2)], chat=[
             {"id": "c1", "at": at(1), "role": "l3", "text": "Shall I start the export task?", "turn": "t0"},
@@ -191,7 +202,7 @@ def stream(*events) -> str:
 
 
 INIT = {"type": "system", "subtype": "init", "tools": ["StructuredOutput"], "mcp_servers": [],
-        "model": "claude-sonnet-5-5"}
+        "model": "claude-sonnet-5-5", "apiKeySource": "none"}
 ANSWER = {"suggestions": []}
 RESULT = {"type": "result", "subtype": "success", "is_error": False, "total_cost_usd": 0.05, "structured_output": ANSWER,
           "usage": {"input_tokens": 10, "cache_creation_input_tokens": 9000, "output_tokens": 800}}
@@ -219,6 +230,8 @@ class TestReviewerCall(AltitudeCase):
                                           timeout=kw.pop("timeout", 60))
 
     def test_a_call_is_tool_free_bounded_and_records_its_usage(self):
+        self.setenv("ANTHROPIC_API_KEY", "fictional-key")
+        self.setenv("ANTHROPIC_BASE_URL", "https://proxy.invalid")
         self.scripted(stream(INIT, {"type": "assistant", "message": {"model": self.model, "content": []}}, RESULT))
         result = self.call()
         cmd, kw = self.calls[0]
@@ -232,6 +245,7 @@ class TestReviewerCall(AltitudeCase):
         self.assertEqual(engines.improvement_budget(self.model), 0.268)  # 74,000 in and 12,000 out at its rates
         self.assertEqual(kw["input"], "# Project orchard")
         self.assertEqual(kw["env"]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"], "12000")
+        self.assertFalse([k for k in kw["env"] if k.startswith("ANTHROPIC_")])
         self.assertEqual(kw["timeout"], 60)
         self.assertNotIn("--add-dir", cmd)
         self.assertIsNone(result["error"])
@@ -239,9 +253,10 @@ class TestReviewerCall(AltitudeCase):
         self.assertEqual((result["tokens"], result["over_limit"], result["cost"]), (9810, False, 0.05))
         self.assertEqual(result["engine_model"], self.model)
 
-    def test_any_tool_server_or_missing_start_record_fails_closed(self):
+    def test_any_tool_server_api_key_or_missing_start_record_fails_closed(self):
         for init in ({**INIT, "tools": ["StructuredOutput", "Bash"]}, {**INIT, "mcp_servers": [{"name": "x"}]},
-                     {**INIT, "model": None}, None):
+                     {**INIT, "model": None}, {**INIT, "apiKeySource": "ANTHROPIC_API_KEY"},
+                     {k: v for k, v in INIT.items() if k != "apiKeySource"}, None):
             with self.subTest(init=init):
                 self.scripted(stream(*(e for e in (init, RESULT) if e)))
                 result = self.call()
@@ -289,6 +304,29 @@ class TestEval(ImprovementCase):
             with self.subTest(half=half):
                 self.patch(config, "ROOT", self.tmp / half)
                 self.assertEqual(improve_eval.check(half), [])
+
+    def test_only_the_full_held_back_matrix_can_pass_a_model(self):
+        out = self.tmp / "eval"
+        names = [name for name, _, _ in improve_eval.scenarios("heldback")]
+        answer = {"call": {"error": None, "tokens": 10}, "suggestions": [], "dropped": [], "matched": {}}
+
+        def score(scenarios, repeats, complete=True):
+            self.patch(config, "ROOT", self.tmp / f"home-{len(scenarios)}-{repeats}-{complete}")
+            out.mkdir(exist_ok=True)
+            S.write_json(out / "run.json", {"models": ["sonnet"], "repeats": repeats, "scenarios": scenarios,
+                                            "complete": complete, "stopped": None, "spent": 0, "ceiling": 1})
+            (out / "calls.jsonl").write_text("".join(json.dumps({**answer, "scenario": n, "model": "sonnet",
+                                                                  "repeat": r}) + "\n"
+                                                     for n in scenarios for r in range(1, repeats + 1)))
+            S.write_json(out / "grading-key.json", {})
+            S.write_json(out / "grades.json", {})
+            return improve_eval.score("heldback", out)
+
+        for partial in (score(names[:1], 3), score(names, 1), score(names, 3, complete=False)):
+            self.assertFalse(partial["full_matrix"])
+            self.assertFalse(partial["models"]["sonnet"]["passes"])
+            self.assertIsNone(partial["recommended"])
+        self.assertTrue(score(names, 3)["full_matrix"])
 
     def test_matching_is_one_to_one_by_most_shared_planted_places(self):
         patterns = [{"id": "P1", "places": {"a", "b", "c"}}, {"id": "P2", "places": {"c", "d", "e"}}]

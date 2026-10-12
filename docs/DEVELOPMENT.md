@@ -1011,7 +1011,9 @@ python3 -m altitude.improve_eval score heldback --out <private-dir>
 `score` writes `score.json`: per model, each run's share of counted and shared-cause patterns caught
 and of words-only patterns caught (counting only patterns whose places reached the prompt), wrong
 suggestions on the controls and elsewhere, invalid answers, tokens, the counts-alone column and the
-recommendation, the least plan use that clears the bar. A pattern is caught when the matcher pairs a
+recommendation, the least plan use that clears the bar. Only a complete held-back run of every
+scenario, at least three repeats each, can pass a model; anything less reports `full_matrix` false
+and no recommendation. A pattern is caught when the matcher pairs a
 suggestion with it by at least two shared planted places and the grader marks it caught. The output
 directory is private evidence; the PR carries the table.
 

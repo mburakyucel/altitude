@@ -192,6 +192,8 @@ MODELS = {config.model_family(model): model for model in sorted(config.IMPROVEME
 #: suggestions outside the controls; invalid answers.
 BAR = {"counted": 0.8, "words": 0.5, "wrong": 1 / 6, "invalid": 1 / 15}
 OUTCOMES = ("caught", "wrong", "sound")
+#: Runs per model the bar is judged on; a model passes only on the full held-back matrix.
+REPEATS = 3
 
 
 def _date(value: str) -> datetime:
@@ -260,7 +262,7 @@ def run(half: str, models: list[str], repeats: int, ceiling: float, out: Path, o
         if stopped:
             break
     summary = {"half": half, "models": models, "repeats": repeats, "ceiling": ceiling, "spent": round(spent, 4),
-               "complete": stopped is None, "stopped": stopped}
+               "scenarios": [p["name"] for p in prepared], "complete": stopped is None, "stopped": stopped}
     S.write_json(out / "run.json", summary)
     grading_sheet(prepared, out)
     return summary
@@ -335,9 +337,13 @@ def score(half: str, out: Path) -> dict:
     keyed, grades = S.read_json(out / "grading-key.json"), S.read_json(out / "grades.json")
     graded = {(k["scenario"], *k["call"]): grades[item] for item, k in keyed.items()}
     rows = [json.loads(line) for line in (out / "calls.jsonl").read_text().splitlines()]
+    # Only the whole held-back half, every repeat, uninterrupted, can recommend a model.
+    full = (half == "heldback" and summary["complete"] and summary["repeats"] >= REPEATS
+            and sorted(summary["scenarios"]) == sorted(prepared))
     table = {}
     for short in summary["models"]:
         mine = [r for r in rows if r["model"] == short]
+        calls = {(r["scenario"], r["repeat"]) for r in mine}
         runs, wrong_controls, wrong, kept, invalid, tokens = [], 0, 0, 0, 0, []
         for repeat in sorted({r["repeat"] for r in mine}):
             caught, reached = Counter(), Counter()
@@ -362,7 +368,7 @@ def score(half: str, out: Path) -> dict:
                 else:
                     kept += 1
                     wrong += outcome == "wrong"
-        passes = (summary["complete"] and runs
+        passes = (full and len(calls) == len(mine) == len(prepared) * summary["repeats"] and runs
                   and all((run["counted"] is None or run["counted"] >= BAR["counted"])
                           and (run["words"] is None or run["words"] >= BAR["words"]) for run in runs)
                   and wrong_controls == 0 and (not kept or wrong / kept <= BAR["wrong"])
@@ -372,7 +378,7 @@ def score(half: str, out: Path) -> dict:
                         "max_tokens": max(tokens, default=0), "passes": bool(passes)}
     patterns = [pattern for p in prepared.values() for pattern in p["patterns"]]
     passing = [m for m in MODELS if table.get(m, {}).get("passes")]
-    result = {"half": half, "complete": summary["complete"], "stopped": summary["stopped"],
+    result = {"half": half, "complete": summary["complete"], "full_matrix": full, "stopped": summary["stopped"],
               "yardstick_spent": summary["spent"], "ceiling": summary["ceiling"], "models": table,
               "counts_alone": f"{sum(p['counts'] for p in patterns)}/{len(patterns)}",
               "reached": f"{sum(p['reached'] for p in patterns)}/{len(patterns)}",

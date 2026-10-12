@@ -198,7 +198,9 @@ def improvement_review(prompt: str, instructions: str, schema: dict, *, model: s
     cmd = [config.CLAUDE_BIN, "--print", "--output-format", "stream-json", "--verbose", "--safe-mode",
            "--no-session-persistence", "--tools", "", "--strict-mcp-config", "--model", model,
            "--system-prompt", instructions, "--json-schema", schema_text, "--max-budget-usd", str(budget)]
-    env = {**clean_env(), "CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(IMPROVEMENT_OUTPUT_TOKENS)}
+    # The operator runs the review on the plan only: no API key, token or endpoint override reaches the call.
+    env = {**{k: v for k, v in clean_env().items() if not k.startswith("ANTHROPIC_")},
+           "CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(IMPROVEMENT_OUTPUT_TOKENS)}
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="altitude-improve-") as empty:
         try:
@@ -218,7 +220,7 @@ def improvement_review(prompt: str, instructions: str, schema: dict, *, model: s
             # The review reads private conversation quotes; a session that could act on them is never used.
             # Its only tool is Claude Code's own carrier for the schema-bound answer.
             isolated = event.get("tools") == ["StructuredOutput"] and not event.get("mcp_servers") \
-                and bool(event.get("model"))
+                and bool(event.get("model")) and event.get("apiKeySource") == "none"
         elif event.get("type") == "assistant":
             message = event.get("message") or {}
             if message.get("model") and message["model"] != "<synthetic>":

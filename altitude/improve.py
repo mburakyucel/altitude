@@ -95,7 +95,9 @@ def _date(value: str) -> datetime:
 
 
 def _cut(text: str, limit: int = QUOTE) -> str:
-    text = " ".join(str(text or "").split())
+    """Record text as it enters the prompt: one line, bounded, and with square brackets made round, so every
+    `[A12]` in the prompt is an alias the code wrote and quoted text can never authorize a citation."""
+    text = " ".join(str(text or "").split()).replace("[", "(").replace("]", ")")
     return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
 
 

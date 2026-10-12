@@ -1725,7 +1725,8 @@ current task titles and earlier suggestions with their outcome. The prompt is at
 
 Every quoted or counted place carries a short alias (`[A12]`) mapped to a canonical place: a task
 message, question revision, event, review finding, report finding or chat row byte offset. Only
-aliases that reach the prompt are valid. `improve.validate` treats the answer as untrusted: at most
+aliases that reach the prompt are valid, and only the code writes them: square brackets in quoted
+text become round ones, so a quote cannot forge a citation. `improve.validate` treats the answer as untrusted: at most
 three suggestions, each with a target (`project` or `agents`), bounded text, a known signal or none,
 and at least two citations from its own prompt; text that looks like a path or credential is
 dropped. Dropped suggestions are kept with their reason.
@@ -1737,7 +1738,8 @@ capped at 12,000 tokens and Claude Code's budget stop at the call's token maximu
 model's published rates from `config.IMPROVEMENT_MODELS`. Everything sent is at most 72 KiB, so a
 call uses at most 86,000 tokens; the recorded usage marks a call that exceeds it. The call fails
 closed unless its own start record lists only Claude Code's carrier for the schema-bound answer
-(`StructuredOutput`), no MCP server and a model. A usage hold, unknown model, oversized prompt,
+(`StructuredOutput`), no MCP server, a model and no API key: the call runs without `ANTHROPIC_*`
+variables, so it uses the signed-in plan and never pay-per-use credentials. A usage hold, unknown model, oversized prompt,
 timeout, usage limit or unusable answer ends the call with its reason; nothing retries or switches
 model. Codex is not offered: no tool-free Codex mode is verified, so without Claude the review is
 unavailable.
