@@ -946,6 +946,10 @@ class _CodexDriver(_Driver):
                        **({"model": self.model} if self.model else {})})
 
     def notify(self, method: str, params: dict) -> None:
+        # The server also streams native helper threads. Only the owner's notifications
+        # describe this worker's activity, steering target, usage and completion (#873).
+        if not self.session_id or params.get("threadId") != self.session_id:
+            return
         if method == "turn/started":
             with self.lock:
                 self.turn = (params.get("turn") or {}).get("id") or self.turn

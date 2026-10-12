@@ -1243,6 +1243,10 @@ Claude helpers inherit session effort unless their agent definition overrides it
 ([agent effort](https://code.claude.com/docs/en/sub-agents)); provider caps still apply.
 Altitude supplies no global L1 effort selector or helper orchestration. These native settings are
 intent, not evidence that every helper used the requested level.
+Owners consume required helper results within their active native session. Helper notifications
+do not complete the owner or redirect messages sent to it; a genuine owner exit retains normal
+recovery, and `alt task stop` still stops the whole worker job. See
+[polling and cleanup](SESSION_LIFECYCLE.md#polling-and-cleanup) for the evidence limits.
 
 ### Lifecycle requests
 
