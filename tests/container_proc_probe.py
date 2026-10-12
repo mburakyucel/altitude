@@ -20,7 +20,7 @@ def observed_tuple(info, network):
 
 def require_tuple(info, network, policy):
     observed=observed_tuple(info, network)
-    if observed!=policy['tuple']:
+    if observed not in policy['tuples']:
         raise RuntimeError('Unreviewed proc inventory tuple; record and review its full exposure: '+str(observed))
     return observed
 

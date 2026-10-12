@@ -35,7 +35,7 @@ def proc_exposure(command, ident: str, evidence: Path):
     observed=observed_tuple(info,controller['HostConfig']['NetworkMode'])
     (evidence/'proc-tuple.json').write_text(json.dumps(observed,indent=2)+'\n')
     # An unreviewed tuple still records both inventories, so its review has the evidence it needs.
-    reviewed=observed==policy['tuple']
+    reviewed=observed in policy['tuples']
     failures=[]
     for uid in ('0','1000'):
         baseline_name='fixture-proc-default-'+uuid.uuid4().hex

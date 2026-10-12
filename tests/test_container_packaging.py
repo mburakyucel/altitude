@@ -227,7 +227,7 @@ class TestImageGate(AltitudeCase):
         evidence = self.tmp / "evidence"
         volumes, containers, calls, images = [], [], [], ["fixture-image"]
         volume_labels = {}
-        reviewed = json.loads((Path(__file__).parent / "fixtures/container-proc-policy.json").read_text())["tuple"]
+        reviewed = json.loads((Path(__file__).parent / "fixtures/container-proc-policy.json").read_text())["tuples"][0]
         def command(args, **kwargs):
             calls.append(args)
             if args == ["info", "--format=json"]:

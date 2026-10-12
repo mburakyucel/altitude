@@ -24,15 +24,16 @@ class ProcPolicy(unittest.TestCase):
 
     def test_another_runtime_or_architecture_cannot_inherit_the_measured_allowlist(self):
         policy=json.loads((Path(__file__).parent/'fixtures/container-proc-policy.json').read_text())
-        value=policy['tuple']
-        info={'host':{'distribution':{'distribution':value['distribution'],'version':value['release']},
-            'arch':value['architecture'],'kernel':value['kernel'],
-            'ociRuntime':{'version':value['crun']+'\nfixture metadata'}},'version':{'Version':value['podman']}}
-        self.assertEqual(require_tuple(info,value['network'],policy),value)
-        info['host']['arch']='arm64'
-        with self.assertRaisesRegex(RuntimeError,'Unreviewed'):require_tuple(info,value['network'],policy)
-        info['host']['arch']=value['architecture'];info['host']['kernel']='another-kernel'
-        with self.assertRaisesRegex(RuntimeError,'Unreviewed'):require_tuple(info,value['network'],policy)
+        self.assertEqual({value['architecture'] for value in policy['tuples']},{'amd64','arm64'})
+        for value in policy['tuples']:
+            info={'host':{'distribution':{'distribution':value['distribution'],'version':value['release']},
+                'arch':value['architecture'],'kernel':value['kernel'],
+                'ociRuntime':{'version':value['crun']+'\nfixture metadata'}},'version':{'Version':value['podman']}}
+            self.assertEqual(require_tuple(info,value['network'],policy),value)
+            info['host']['arch']='riscv64'
+            with self.assertRaisesRegex(RuntimeError,'Unreviewed'):require_tuple(info,value['network'],policy)
+            info['host']['arch']=value['architecture'];info['host']['kernel']='another-kernel'
+            with self.assertRaisesRegex(RuntimeError,'Unreviewed'):require_tuple(info,value['network'],policy)
 
     def test_unknown_default_mask_and_new_subtree_access_fail_closed(self):
         policy=json.loads((Path(__file__).parent/'fixtures/container-proc-policy.json').read_text())
