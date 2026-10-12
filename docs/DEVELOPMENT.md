@@ -240,7 +240,7 @@ The task-read regressions archive a real task between the live status lookup and
 crossing poll and task action response return the archived record, a missing task returns ordinary
 404, and corrupt state still logs a failure.
 Document and event reads hold the archive lock; concurrent archive coverage verifies both snapshots.
-Question-response and failed-setup checkpoints join their owned workflows before observing the
+Question-response, failed-setup and first-conversation retry checkpoints join their owned workflows before observing the
 scripted outcome, so concurrent scheduling cannot inspect a half-finished resume or introduction.
 The change-stream outage fixture reports its captured shutdown targets; connection cleanup cannot
 erase them from the count before the response reaches the browser assertion.
@@ -255,6 +255,12 @@ waits for the previous view to leave, because Playwright counts a view beside th
 The reattachment walkthrough forces an overlapping browser overview read while registration fails.
 It releases the read after the error appears and keeps its route handler until teardown; removing
 the last page route also continues held requests, so their callbacks cannot continue them again.
+Terminal walkthroughs dismiss a notice in the state that shows it, before a fresh shell can outlast
+its dwell. The lost-receipt walkthrough reloads only after the aborted send has settled from the
+record. The project-isolation queued send intercepts the next `/api/chat` only after the running
+request's partial reply streams, so the intercept cannot catch the running request.
+Voice walkthroughs that WebKit also runs override `getUserMedia` on `MediaDevices.prototype`: WebKit
+can collect the `navigator.mediaDevices` wrapper together with an override defined on it.
 
 Both projects run headlessly: phone at 390×844 with touch/mobile user agent and desktop at
 1440×900. With `CI` set, Playwright uses one worker per available CPU; local runs use two workers.
