@@ -1,0 +1,29 @@
+.irc{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-card);padding:14px 18px 12px;display:flex;flex-direction:column;color:var(--text-primary)}
+.irc .hd{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.irc .hd b{font-size:15px;font-weight:600}
+.irc .hd time{font-size:12px;color:var(--text-muted);white-space:nowrap}
+.irc .win{font-size:13px;color:var(--text-muted);margin-top:2px}
+.irc .sg{border-top:1px solid var(--hairline);margin-top:12px;padding-top:12px;display:flex;flex-direction:column;gap:6px}
+.irc .sg .t{font-size:15px;font-weight:600;line-height:1.4}
+.irc .sg p{margin:0;font-size:14px;line-height:1.55;color:var(--text-secondary)}
+.irc .meta{font-size:13px;line-height:1.5;color:var(--text-muted)}
+.irc .meta a{color:var(--text-primary);text-decoration:underline;text-underline-offset:2px}
+.irc .acts{display:flex;gap:8px;align-items:center;margin-top:4px}
+.irc .ok{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--success-text);margin-top:4px}
+.irc .err{font-size:13px;color:var(--danger);margin-top:2px}
+.irc .sg.dim .t{color:var(--text-muted);font-weight:500;font-size:14px}
+.irc .sg.dim{flex-direction:row;align-items:center;gap:10px;flex-wrap:wrap}
+.irc .ft{border-top:1px solid var(--hairline);margin-top:12px;padding-top:10px;font-size:12px;color:var(--text-muted);display:flex;gap:6px;flex-wrap:wrap}
+.irc .ft a{color:var(--text-secondary);text-decoration:underline;text-underline-offset:2px}
+.irc .since{background:var(--page);border-radius:10px;padding:10px 12px;margin-top:12px;display:flex;flex-direction:column;gap:6px}
+.irc .since b{font-size:13px;font-weight:600}
+.irc .since div{font-size:13px;line-height:1.5;color:var(--text-secondary)}
+.irc .since a{color:var(--text-primary);text-decoration:underline;text-underline-offset:2px}
+.irc .det{background:var(--page);border-radius:10px;padding:10px 12px;margin-top:8px;font-size:12.5px;line-height:1.55;color:var(--text-secondary)}
+.irc .det dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 12px;margin:0}
+.irc .det dt{color:var(--text-muted)}.irc .det dd{margin:0}
+.chip.wf{background:var(--chip-claimed-bg);color:var(--chip-claimed-text);border-color:var(--chip-claimed-border)}
+.spin{width:14px;height:14px;border-radius:50%;border:2px solid currentColor;border-right-color:transparent;display:inline-block}
+.sys .d.run{background:transparent;border:1.5px solid var(--accent);width:7px;height:7px}
+.irc .tcard{max-width:none;margin-top:4px}
+.m .irc .acts .btn{height:44px;padding:0 16px;font-size:15px}
