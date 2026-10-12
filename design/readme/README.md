@@ -1,9 +1,11 @@
 # README visuals
 
-The README shows the built web app on desktop and phone together: a full desktop project capture,
-three phone views (project, task and decision), a phone recording and an editable role diagram.
+The README shows the built web app on desktop and phone together: an opening picture of the desktop
+project view with the phone's decision in front of it, three phone views (project, task and decision),
+a phone recording and an editable role diagram.
 [The walkthrough](../../docs/WALKTHROUGH.md) carries the longer scenario and full-size captures.
-The desktop image stays visible on phones; it is not replaced with a phone screenshot.
+Below 600 px width the opening picture gives way to the decision capture alone, so it stays legible on
+a phone.
 
 The captures come from an ordinary [browser walkthrough](../../docs/DEVELOPMENT.md#browser-walkthroughs):
 `web/e2e/readme.pw.ts` against `web/e2e/readme-service.py`, a disposable service with real handlers and
@@ -29,6 +31,16 @@ The run's `images/` folder in the task's validation evidence receives `project`,
 captures for each viewport, plus phone `work` and `session` captures, at 1440×900 and 390×844 with 2× pixel
 density, and `phone-walkthrough.webm`, a silent recording of the phone journey that pauses briefly at
 each capture. No speech recognition or coding agent runs.
+
+## Opening picture
+
+`design/readme/hero.html` places `docs/images/project-desktop.png` and `decision-phone.png` on a
+transparent 2400×1440 canvas. After replacing either capture, render it again from the repository root:
+
+```sh
+google-chrome --headless --hide-scrollbars --default-background-color=00000000 --window-size=2400,1440 \
+  --screenshot=docs/images/hero.png "file://$PWD/design/readme/hero.html"
+```
 
 ## Maintain
 
