@@ -56,7 +56,7 @@ Lumen turns noisy logs into a **timeline** you can [read](docs/guide.md).
 ![In code](docs/images/code-only.png)
 ```
 
-Inline `![span](docs/images/span.png)` code names no image.
+Inline `![span](docs/images/span.png)` code names no image, nor does an escaped \\![example](docs/images/escaped.png).
 
 [logo]: <docs/images/logo.png>
 """
@@ -83,6 +83,7 @@ class TestShownFiles(AltitudeCase):
         (images / "diagram.svg").write_text("<svg onload='alert(1)'/>")
         (images / "code-only.png").write_bytes(png(30))
         (images / "span.png").write_bytes(png(40))
+        (images / "escaped.png").write_bytes(png(45))
         (self.tmp / "outside.png").write_bytes(png(240))
         self.screen = self.worktree / "overview.png"
         self.screen.write_bytes(png(50))
@@ -385,6 +386,8 @@ class TestShownFiles(AltitudeCase):
         answer = T.message(self.project, self.slug, "burak", "Build it.", question_id=question["id"], revision=1)
         self.saved(question["shown"]["images"][0]["name"]).unlink()
         with self.assertRaisesRegex(T.TransitionError, "Preview unavailable"):
+            T.accept_question(self.project, self.slug, question["id"], 1)
+        with self.assertRaisesRegex(T.TransitionError, "Preview unavailable"):
             T.resolve_question(self.project, self.slug, question["id"], 1, answer["id"],
                                disposition="answered", reason="Build it.", expected_attempt=1)
         self.assertEqual(S.load_task(self.project, self.slug)["questions"][-1]["status"], "open")
@@ -401,10 +404,9 @@ class TestShownFiles(AltitudeCase):
         S.save_task(self.project, task)
         self.assertEqual(self.request("GET", self.api(question["id"], 1))[0], 404)
         self.assertFalse(T.question_views(self.project, self.slug)[-1]["shown"]["available"])
-        response = T.accept_question(self.project, self.slug, question["id"], 1)["response"]
-        with self.assertRaises(T.TransitionError):
-            T.resolve_question(self.project, self.slug, question["id"], 1, response["message_id"],
-                               disposition="answered", reason="Build it.", expected_attempt=1)
+        with self.assertRaisesRegex(T.TransitionError, "Preview unavailable"):
+            T.accept_question(self.project, self.slug, question["id"], 1)
+        self.assertNotIn("response", S.load_task(self.project, self.slug)["questions"][-1])
 
     def test_a_preview_saved_before_shown_files_is_a_closed_card_and_cannot_be_accepted(self):
         task = T.block(self.project, self.slug, "Build the rows?", actor="l2", expected_attempt=1,
@@ -416,10 +418,9 @@ class TestShownFiles(AltitudeCase):
         self.assertEqual(view["shown"], {"url": None, "available": False, "images": [], "newer_url": None,
                                          "document": {"name": "Compact rows", "path": "", "heading": "", "excerpt": ""}})
         self.assertNotIn("design", view)
-        response = T.accept_question(self.project, self.slug, question["id"], 1)["response"]
         with self.assertRaisesRegex(T.TransitionError, "Preview unavailable"):
-            T.resolve_question(self.project, self.slug, question["id"], 1, response["message_id"],
-                               disposition="answered", reason="Build", expected_attempt=1)
+            T.accept_question(self.project, self.slug, question["id"], 1)
+        self.assertNotIn("response", S.load_task(self.project, self.slug)["questions"][-1])
         self.assertEqual(self.request("GET", self.api(question["id"], 1))[0], 404)
         current = self.publish()
         self.assertEqual((current["id"], current["revision"]), (question["id"], 2))

@@ -198,6 +198,8 @@ test("a question's files open from Needs you and the task; viewing and a follow-
   const legacy = page.getByText("Compact rows", { exact: true }).locator("xpath=ancestor::div[@data-gone]");
   await legacy.scrollIntoViewIfNeeded();
   await walk.state("03-earlier-preview-unavailable", { visible: [legacy.getByText("Preview unavailable", { exact: true })], hidden: [legacy.getByRole("link")] });
+  // Its question takes no answer until the owner shows files again.
+  await expect(legacy.locator("xpath=ancestor::div[contains(@class,'question-body')]").getByRole("button", { name: "Build", exact: true })).toBeDisabled();
   expect(await record(request, slug)).toEqual(initial);
 
   // A follow-up from the task hands the turn back without answering.

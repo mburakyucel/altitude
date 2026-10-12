@@ -1778,8 +1778,8 @@ approval, so its card shows the proposal review.
 The task keeps fixed, content-named copies. Later edits, branch changes, worktree removal and task
 archive leave a shown set exactly as published. Showing a question's files again with identical bytes
 keeps its revision; changed files advance the same open question, and an answer binds to the
-revision whose files the operator saw. Copies that go missing or change make the card **Preview
-unavailable**, and a question cannot be accepted until the owner shows the same files again, which
+revision whose files the operator saw. Copies that go missing or change show **Preview
+unavailable**, and a question takes no answer until the owner shows the same files again, which
 restores them without changing the revision.
 
 A document shows in the conversation as a page card with its first picture, name and opening lines;

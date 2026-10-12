@@ -1099,7 +1099,7 @@ the gallery to the exact place it was opened from, and the next Back closes the 
 | Card | Cover failed | The card without its cover strip; it still opens. |
 | Card | Thumbnail failed | The tile becomes a bordered button with a broken-image icon over a circular retry icon ("Retry image timeline.png"), its only control. |
 | Card | Earlier | Greyscale, faded cover with **Earlier**; name, excerpt and chevron at full contrast. |
-| Card | Saved files missing or changed | No cover or chevron, a broken-document icon and **Preview unavailable** under the name; not a control. Previews saved before shown files existed show the same card with their title. |
+| Card | Saved files missing or resized | No cover or chevron, a broken-document icon and **Preview unavailable** under the name; not a control. Its question's answers are disabled until the owner shows the files again; the conversation stays open. Previews saved before shown files existed show the same card with their title. A copy whose content changed at its saved size opens to the reader's Unavailable state. |
 | Reader | Loading | A page skeleton (heading bar, text lines, image block), static under reduced motion; "Loading README.md". |
 | Reader | Ready | Header and document. |
 | Reader | Image loading / failed | A grey block at the saved size; on failure an outlined box with a broken-image icon, **Image unavailable** and **Retry**. |

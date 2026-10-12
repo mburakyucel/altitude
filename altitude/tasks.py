@@ -205,8 +205,8 @@ def _raster(data: bytes, kind: str) -> tuple[int, int]:
 
 _CODE = re.compile(r"^ {0,3}(`{3,}|~{3,})[^\n]*\n.*?(?:^ {0,3}\1[`~]*[ \t]*$|\Z)|(`+)(?!`).+?(?<!`)\2(?!`)|<!--.*?-->",
                    re.M | re.S)
-_IMAGE = re.compile(r"!\[(?:[^\]\\]|\\.)*\]\(\s*(<[^>\n]*>|[^\s)]+)")
-_IMAGE_LABEL = re.compile(r"!\[((?:[^\]\\]|\\.)*)\](?:\[((?:[^\]\\]|\\.)*)\])?")
+_IMAGE = re.compile(r"(?<!\\)(?:\\\\)*!\[(?:[^\]\\]|\\.)*\]\(\s*(<[^>\n]*>|[^\s)]+)")
+_IMAGE_LABEL = re.compile(r"(?<!\\)(?:\\\\)*!\[((?:[^\]\\]|\\.)*)\](?:\[((?:[^\]\\]|\\.)*)\])?")
 _DEFINITION = re.compile(r"^ {0,3}\[((?:[^\]\\]|\\.)+)\]:[ \t]*(<[^>\n]*>|\S+)", re.M)
 _IMG_TAG = re.compile(r"<img\b[^>]*?\ssrc\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s\"'>]+))", re.I)
 
@@ -451,8 +451,10 @@ def require_shown(project: str, slug: str, question: dict) -> None:
     """A decision cannot accept missing or changed shown files, or a preview saved before shown files existed."""
     if not question.get("shown") and not question.get("design"):
         return
+    shown = question.get("shown")
     try:
-        _, shown = shown_target(project, slug, question["id"], question["revision"])
+        if not _shown_intact(shown):
+            raise ValueError("shown files unavailable")
         for name in _shown_names(shown):
             shown_file(project, slug, shown, name)
     except (OSError, ValueError, KeyError, TypeError, TransitionError) as exc:
@@ -2546,6 +2548,8 @@ def _accept_questions(project: str, slug: str, answers: list[dict], *,
         if (any(q["status"] != "open" or q["audience"] != "operator" or q.get("response") for q, _ in chosen)
                 or task["state"] not in ("running", "blocked", "queued")):
             raise TransitionError("question is no longer open for responses; refresh the conversation")
+        for question, _ in chosen:
+            require_shown(project, slug, question)
         at, message_id = _conversation_time(), uuid.uuid4().hex
         text = "\n\n".join(f"{q['question']}\n{o['text']}" for q, o in chosen)
         row = {"id": message_id, "at": at, "role": OPERATOR_MESSAGE_ROLE, "by": OPERATOR_MESSAGE_ROLE,

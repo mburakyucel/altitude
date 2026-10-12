@@ -50,7 +50,7 @@ test("saved L2 and L3 links open rendered documents while preserving conversatio
   await expect(popup.getByRole("heading", { name: "commands.md", exact: true })).toBeVisible();
   await expect(popup.getByLabel("Referenced path")).toHaveText(`file://${paths["commands.md"]}`);
   const contents = popup.getByRole("region", { name: "File contents" });
-  await expect(contents.getByRole("heading", { name: "Setup instructions", level: 2 })).toBeVisible();
+  await expect(contents.getByRole("heading", { name: "Setup instructions", level: 1 })).toBeVisible();
   await expect(contents.locator("strong")).toHaveText("carefully");
   await expect(contents.getByRole("listitem")).toHaveCount(2);
   await expect(contents.locator("pre")).toContainText("never executed");

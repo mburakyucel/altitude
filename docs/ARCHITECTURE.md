@@ -2823,9 +2823,9 @@ document's first heading and opening paragraph, and a hash of itself as its iden
 the document text. A question showing identical files keeps its revision, changed files advance it,
 and the answer fence binds the files the operator saw. A question is a proposal approval when it
 shows files, so its card carries the proposal review, and a review whose captured `--show` set differs
-from the latest question's counts as covering an earlier version. `require_shown` refuses first
-acceptance while any copy is missing or altered, or for a question saved with a design preview before
-shown files existed.
+from the latest question's counts as covering an earlier version. `require_shown` refuses both the
+operator's answer and the owner's resolution while any copy is missing or altered, or for a question
+saved with a design preview before shown files existed; the card disables that question's answers.
 
 `message_views` and `question_view` project a `shown` view: the reader URL, whether every copy is
 still present at its recorded size, the document's name, path, heading and excerpt, each image's URL,
@@ -2834,7 +2834,9 @@ document path in the task (reply or question revision) when it is not this one. 
 a design preview shows a closed card named by its title with no URL. The conversation renders a
 document as a page card (cover picture, name, heading and excerpt, an **Earlier** chip when
 `newer_url` is set) and images alone as up to four thumbnails, the fourth counting the rest; a set
-that is no longer available is a card reading **Preview unavailable** that does not open.
+whose copies are gone or resized is a card reading **Preview unavailable** that does not open (the card
+checks presence and size; reads verify each hash, so changed content of the same size shows the
+reader's unavailable state).
 
 The reader lives at `/projects/<project>/tasks/<slug>/view/<message>` for a reply and
 `.../view/<question>/<revision>` for a question. Both routes render the task page itself, so the

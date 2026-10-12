@@ -150,7 +150,8 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
     const draft = drafts[draftKey(question)];
     const custom = !options.length || draft?.text !== undefined;
     const actionable = open.includes(question);
-    const inputDisabled = unavailable || !question.id || question.revision == null;
+    // A question whose shown files are gone takes no answer until the owner shows them again (SPEC.md §3.9.1).
+    const inputDisabled = unavailable || !question.id || question.revision == null || question.shown?.available === false;
     const recommendation = <>
       {question.recommendation?.text ? <p className="decision-approach"><b>Recommended:</b> <InlineProse text={question.recommendation.text} /></p> : null}
       {question.recommendation?.why ? <p className="decision-why"><InlineProse text={question.recommendation.why} /></p> : null}
