@@ -677,6 +677,12 @@ export const TaskViewSchema = z
       state: z.enum(["available", "empty", "unavailable"]),
       commentary: z.object({ id: z.string(), text: z.string(), at: z.string().nullable(), time_kind: z.enum(["source", "unknown"]) }).nullable(),
       observation: z.object({ at: z.string().nullable(), label: z.string() }).nullable(),
+      // Work the worker keeps running beside its turn; null when its engine reports none.
+      background: z.array(z.object({
+        id: z.string(), label: z.string(), kind: z.enum(["command", "agent"]), call: z.string().nullable(),
+        started_at: z.string().nullable(), status: z.enum(["running", "completed", "failed", "stopped"]),
+        ended_at: z.string().nullable(),
+      })).nullish(),
       error: z.string().optional(),
     }).nullish(),
     steering: z.object({

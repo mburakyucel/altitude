@@ -67,9 +67,62 @@ function Message({ event, engineLabel }: { event: TranscriptEvent; engineLabel: 
   );
 }
 
+type Background = NonNullable<NonNullable<TaskView["activity"]>["background"]>[number];
+
+/** A finished background item stays in the tray this long, as recent output keeps the pulse (SPEC.md §3.10). */
+const BACKGROUND_FRESH_SECONDS = 60;
+const BACKGROUND_SHOWN = 3;
+
+/** How a background item reads: running for how long, or its outcome and how long it ran. */
+function backgroundStatus(item: Background, now: number) {
+  if (item.status === "running") {
+    const seconds = elapsed(item.started_at, now);
+    return seconds == null ? "running" : `running · ${duration(seconds)}`;
+  }
+  const word = item.status === "completed" ? "done" : item.status;
+  const start = item.started_at ? Date.parse(item.started_at) : NaN;
+  const end = item.ended_at ? Date.parse(item.ended_at) : NaN;
+  return Number.isFinite(start) && Number.isFinite(end) && end >= start
+    ? `${word} ${item.status === "completed" ? "in" : "after"} ${duration(Math.floor((end - start) / 1000))}` : word;
+}
+
+const BACKGROUND_DOT = { running: "running", completed: "done", failed: "danger", stopped: "idle" } as const;
+
+/** Commands and helpers still running beside the stream, then outcomes from the last minute (SPEC.md §3.10). */
+function BackgroundWork({ items }: { items: Background[] }) {
+  const now = useNow();
+  const [all, setAll] = useState(false);
+  const running = items.filter((item) => item.status === "running");
+  const ended = items.filter((item) => item.status !== "running" && (elapsed(item.ended_at, now) ?? Infinity) < BACKGROUND_FRESH_SECONDS)
+    .reverse();
+  const shown = [...running, ...ended];
+  if (!shown.length) return null;
+  return (
+    <section className="live-background" aria-label="In the background">
+      <h3 className="live-background-title text-meta">In the background</h3>
+      <ul>
+        {(all ? shown : shown.slice(0, BACKGROUND_SHOWN)).map((item) => (
+          <li key={item.id} className="live-background-item" data-status={item.status}>
+            <span className="dot" data-state={BACKGROUND_DOT[item.status]} aria-hidden />
+            <b className="session-tool-name">{item.kind === "command" ? "$" : "Agent"}</b>
+            <span className="live-background-label" title={item.label || undefined}>{item.label || (item.kind === "command" ? "Command" : "Helper")}</span>
+            <span className="live-background-time">{backgroundStatus(item, now)}</span>
+          </li>
+        ))}
+      </ul>
+      {shown.length > BACKGROUND_SHOWN ? (
+        <button type="button" className="link text-meta live-record-control" aria-expanded={all} onClick={() => setAll((value) => !value)}>
+          {all ? "Show fewer" : `Show all ${shown.length}`}
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
 /** One compact row per tool call, its output folded under it (SPEC.md §3.10). The tool's name comes
- *  from the record; a shell command reads as `$`, an engine's file change as Edit. */
-function ToolRow({ event: e, running }: { event: TranscriptEvent; running: boolean }) {
+ *  from the record; a shell command reads as `$`, an engine's file change as Edit. A call that keeps
+ *  running in the background says so in place of its output count, then its outcome. */
+function ToolRow({ event: e, running, background }: { event: TranscriptEvent; running: boolean; background?: Background }) {
   const tool = e.tool ?? "";
   const name = e.kind === "command" ? "$" : tool === "file_change" ? "Edit" : tool || (e.kind === "file" ? "File" : "Tool");
   const summary = e.summary || e.text.split("\n")[0] || e.type;
@@ -78,9 +131,11 @@ function ToolRow({ event: e, running }: { event: TranscriptEvent; running: boole
   const detail = e.text.trim() && e.text.trim() !== summary ? e.text : "";
   const done = e.status === "completed" || output !== "";
   const pending = !done && running;
-  const hint = error ? "error" : output ? `${output.split("\n").filter(Boolean).length} lines` : pending ? <Running at={e.at} /> : "no output";
+  const failed = error || background?.status === "failed";
+  const hint = background ? (background.status === "running" ? "background" : `background · ${background.status === "completed" ? "done" : background.status}`)
+    : error ? "error" : output ? `${output.split("\n").filter(Boolean).length} lines` : pending ? <Running at={e.at} /> : "no output";
   return (
-    <details className="session-tool" data-kind={e.kind} data-error={error || undefined}>
+    <details className="session-tool" data-kind={e.kind} data-error={failed || undefined} data-background={background?.status}>
       <summary>
         <b className="session-tool-name">{name}</b>
         <code className="session-call">{summary}</code>
@@ -124,7 +179,10 @@ function Separator({ text, at, tone }: { text: string; at?: string | null; tone?
   );
 }
 
-function Conversation({ events, engineLabel, running }: { events: TranscriptEvent[]; engineLabel: string; running: boolean }) {
+function Conversation({ events, engineLabel, running, background = [] }: {
+  events: TranscriptEvent[]; engineLabel: string; running: boolean; background?: Background[];
+}) {
+  const calls = new Map(background.filter((item) => item.call).map((item) => [item.call, item]));
   return (
     <section className="session" aria-label="Live transcript">
       {events.map((event) => (
@@ -132,7 +190,7 @@ function Conversation({ events, engineLabel, running }: { events: TranscriptEven
           {event.kind === "boundary" ? <Separator text={event.text} at={event.at} />
             : event.kind === "error" ? <p className="session-error">{event.text}</p>
             : event.kind === "message" ? <Message event={event} engineLabel={engineLabel} />
-            : <ToolRow event={event} running={running} />}
+            : <ToolRow event={event} running={running} background={event.tool_use_id ? calls.get(event.tool_use_id) : undefined} />}
         </div>
       ))}
     </section>
@@ -363,6 +421,7 @@ function ScopedLiveSession({ project, task, engineLabel, waiting, steering, read
   const transcript = useTranscript(hasSession ? project : "", task.slug, engine, sessionId, raw, running, active, attempt, !paused);
   const events = transcript.data?.events ?? [];
   const scope = { project, slug: task.slug, engine, sessionId, attempt };
+  const background = task.activity?.background ?? [];
   const loadOlder = () => {
     if (transcript.data?.has_earlier && !transcript.historyPending && !transcript.historyError && !transcript.reconnecting) void transcript.loadOlder();
   };
@@ -417,7 +476,7 @@ function ScopedLiveSession({ project, task, engineLabel, waiting, steering, read
         {raw ? (
           <RawList rows={events} redaction={transcript.data!.redaction} scope={scope} active={active} />
         ) : (
-          <Conversation events={events} engineLabel={engineLabel} running={running} />
+          <Conversation events={events} engineLabel={engineLabel} running={running} background={background} />
         )}
         {transportStatus ?? <span className="sr-only" role="status">{footer}</span>}
         {running && !transcript.isError && !transcript.reconnecting && !transcript.catchingUp ? <LiveCue activity={task.activity} /> : null}
@@ -462,6 +521,7 @@ function ScopedLiveSession({ project, task, engineLabel, waiting, steering, read
         </div> : null}
         {content}
       </TranscriptBody>
+      {running && hasSession ? <BackgroundWork items={background} /> : null}
     </section>
   );
 }
