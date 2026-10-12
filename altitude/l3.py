@@ -1366,6 +1366,8 @@ def deliver_queued(project: str) -> dict | None:
         _finish_sends(project)
         choice = _select(project)
         if not choice.get("engine"):
+            if any(row.get("trigger") == "chat" for row in queued(project)):
+                _tell_limit(project, choice)
             return None
         while True:
             with S.project_lock(project):
@@ -1571,8 +1573,8 @@ def _select(project: str, engine: str | None = None, *, model: str | None = None
 def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None = None,
          on_text=None, on_start=None, model: str | None = None, slug: str | None = None,
          image_message: dict | None = None, on_split=None, request_id: str | None = None) -> dict:
-    """Run one L3 turn. `engine` pins this turn; otherwise the project pin or the weekly quota selects
-    a provider. Each provider resumes only its own transcript. `slug` keeps the owning task reference on
+    """Run one L3 turn. `engine` pins this turn; otherwise L3's choice, then Auto routing, selects a
+    provider that can run. Each provider resumes only its own transcript. `slug` keeps the owning task reference on
     a task-linked project conversation and its queued turn. `on_split(text, delivery)` follows a Send now message the turn
     took in; the turn then continues under its new id. `request_id` is the page's send id, kept on the
     operator's row or, when the turn queues, as the queue row's id."""
@@ -1671,6 +1673,7 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
 
         while choice.get("engine"):
             tell(choice["engine"])
+            _tell_limit(project, choice, slug)
             try:
                 with S.project_lock(project):
                     resolved = image_store.resolve(project, image_message["images"]) if image_message else []
@@ -1712,6 +1715,8 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
             choice = _select(project, requested, model=model, excluded=tried)
             lapsed.extend(name for name in choice.get("signed_out") or [] if name not in lapsed)
         tell("waits" if keeps else "stopped")
+        if keeps:
+            _tell_limit(project, choice, slug)
         why = f"engine hold: {choice['why']}"
         held = {"text": "", "session_id": "", "usage": {}, "context_tokens": 0, "cost": 0.0,
                 "turns": 0, "structured": None, "error": why, "tools": [], "skipped": False,
@@ -1738,6 +1743,47 @@ def _sign_in_notice(engine: str, outcome: str) -> str:
             "stopped": f"{lapse}, so this turn stopped; Retry it once you are signed in again."}
     step = f"To sign in, run `{engines.SIGN_IN[engine][1]}` on the computer running Altitude."
     return f"{said.get(outcome) or f'{lapse}, so {config.ENGINE_LABELS[outcome]} is answering for now.'} {step}"
+
+
+def _limit_notice(project: str, choice: dict) -> str | None:
+    """The plain line when a usage limit keeps L3 off the engine it would use: which engine answers instead, or
+    that the message waits and when it sends. None when no limit is involved."""
+    limits = [row for row in choice.get("held") or [] if row["limit"]]
+    if not limits:
+        return None
+    if choice.get("engine"):
+        last = info(project).get("engine_last")
+        preferred = (config.project(project).get("l3_choice") or {}).get("engine") or last
+        held = next((row for row in limits if row["engine"] == preferred), None)
+        if not held or (held["engine"], held["model"]) == (choice["engine"], choice["model"]):
+            return None
+        same = held["engine"] == choice["engine"]
+        name = lambda row: (config.model_family(row["model"]) or row["model"]).title() if same else config.ENGINE_LABELS[row["engine"]]
+        until = f" until {held['until']}" if held["until"] else ""
+        return f"{name(held)}'s usage limit is reached{until}, so {name(choice)} is answering for now."
+    # The earliest reported reset is the first time an option can be eligible again; the message is retried
+    # from then, so the line promises the wait, not a delivery time.
+    names = list(dict.fromkeys(config.ENGINE_LABELS[row["engine"]] for row in limits))
+    soonest = min((row["until"] for row in limits if row["until"]), default=None)
+    if len(names) == 1:
+        return (f"{names[0]}'s usage limit is reached" + (f" until {soonest}" if soonest else "") + " and no other engine "
+                "can answer, so your message waits " + ("until then." if soonest else "until it resets."))
+    return (f"{' and '.join(names)}'s usage limits are reached, so your message waits "
+            + (f"until {soonest}." if soonest else "until one resets."))
+
+
+def _tell_limit(project: str, choice: dict, slug: str | None = None) -> None:
+    """One line per change, in the operator's own conversation. Called under the turn lock with each selection:
+    the last line said stays in l3.json until a selection needs none, so a line is not repeated while its limit
+    lasts and the next limit is announced again."""
+    text = _limit_notice(project, choice)
+    data = info(project)
+    if data.get("limit_notice") == text:
+        return
+    save_info(project, {**{k: v for k, v in data.items() if k != "limit_notice"}, **({"limit_notice": text} if text else {})})
+    if text:
+        chat_log(project, "system", text, trigger="fyi", by="altd", heads_up=True, turn_id=uuid.uuid4().hex,
+                 **_slug_meta(slug))
 
 
 def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_start, slug, images=(), on_result=None,

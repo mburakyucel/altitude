@@ -6,7 +6,7 @@ import { walkthrough } from "./walkthrough";
 type Field = { setting: string; value: string | null; default: string };
 type Choice = { engine?: string; model?: string; effort?: string } | null;
 type Defaults = {
-  l3_engine: string | null; l2_engine: string | null; l2_preference: string | null; l3_choice: Choice;
+  l2_engine: string | null; l2_preference: string | null; l3_choice: Choice;
   engines: { value: string; label: string }[];
   models: { engine: string; model: string | null; label: string }[];
   roles: { role: string; engines: { engine: string; label: string; model: Field; effort: Field & { choices: { value: string; label: string }[] } }[] }[];
@@ -55,8 +55,8 @@ test("Settings holds project models and effort; the menu reaches them and the dr
   await walk.state("03-project-settings", {
     action: () => row.click(),
     visible: [section("L3"), section("Auto defaults"), section("Routing"), section("Project"), l3First, l3Second, l2Group,
-      section("L3").getByText(/last reply reported /), main.getByRole("combobox", { name: "L3 routing" })],
-    hidden: [row],
+      section("L3").getByText(/last reply reported /), main.getByRole("combobox", { name: "Tasks routing" })],
+    hidden: [row, main.getByRole("combobox", { name: "L3 routing" })],
   });
   // Tasks come before L3 in the Auto defaults table.
   await expect(main.getByRole("group", { name: /^(Tasks|L3) · / }).first()).toHaveAccessibleName(`Tasks · ${l2First.label}`);
@@ -100,21 +100,17 @@ test("Settings holds project models and effort; the menu reaches them and the dr
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
-test("the L3 choice and L3 routing save from Settings, read back and return to Auto", async ({ page, request }, info) => {
+test("the L3 choice saves from Settings, reads back and returns to Auto", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const main = page.getByRole("main");
   const initial = await defaults(request, project.name);
-  const engine = initial.engines[0]!;
-  const model = initial.models.find((row) => row.engine === engine.value && row.model)!;
+  const model = initial.models.find((row) => row.engine === initial.engines[0]!.value && row.model)!;
   const l3 = main.getByRole("region", { name: "L3", exact: true });
-  const routing = main.getByRole("combobox", { name: "L3 routing" });
   const dialog = page.getByRole("dialog", { name: `Models · L3 · ${project.name} only`, exact: true });
   const back = l3.getByRole("button", { name: "Back to Auto", exact: true });
   await walk.open(`/settings/projects/${encodeURIComponent(project.name)}`);
-  await walk.state("01-auto", { visible: [l3.getByText("Auto", { exact: true }), l3.getByRole("button", { name: "Change…", exact: true }), routing], hidden: [back, dialog] });
-  await expect(routing).toHaveValue("");
-  await expect(routing.locator("option")).toHaveText(["Auto", ...initial.engines.map((e) => `Only ${e.label}`)]);
+  await walk.state("01-auto", { visible: [l3.getByText("Auto", { exact: true }), l3.getByRole("button", { name: "Change…", exact: true })], hidden: [back, dialog] });
 
   await walk.state("02-change-opens-models-on-l3", {
     action: () => l3.getByRole("button", { name: "Change…", exact: true }).click(),
@@ -129,41 +125,13 @@ test("the L3 choice and L3 routing save from Settings, read back and return to A
   await page.reload();
   await expect(l3.getByText(model.label, { exact: true })).toBeVisible();
 
-  await walk.state("04-l3-routing-only", {
-    action: () => routing.selectOption(`only:${engine.value}`),
-    visible: [routing], hidden: [main.getByRole("region", { name: "Routing", exact: true }).getByRole("alert")],
-  });
-  await expect.poll(async () => (await defaults(request, project.name)).l3_engine).toBe(engine.value);
-  await page.reload();
-  await expect(routing).toHaveValue(`only:${engine.value}`);
-  await expect(l3.getByText(model.label, { exact: true })).toBeVisible();
-
-  // The choice and Only never name different engines: the newer save releases the other.
-  const other = initial.engines.find((e) => e.value !== engine.value)!;
-  await walk.state("05-only-elsewhere-clears-the-choice", {
-    action: () => routing.selectOption(`only:${other.value}`),
-    visible: [l3.getByText("Auto", { exact: true })], hidden: [back],
-  });
-  expect(await defaults(request, project.name)).toMatchObject({ l3_engine: other.value, l3_choice: null });
-  const note = dialog.getByText(`L3 is Only ${other.label} here. Using ${model.label} sets L3 routing back to Auto.`, { exact: true });
-  await l3.getByRole("button", { name: "Change…", exact: true }).click();
-  await walk.state("06-models-says-only-ends", {
-    action: () => dialog.getByRole("radio", { name: new RegExp(`^${model.label}`) }).check(), visible: [note], hidden: [],
-  });
-  await walk.state("07-choice-sets-routing-auto", {
-    action: () => dialog.getByRole("button", { name: `Use for L3 in ${project.name}`, exact: true }).click(),
-    visible: [l3.getByText(model.label, { exact: true }), back], hidden: [dialog],
-  });
-  await expect(routing).toHaveValue("");
-  expect(await defaults(request, project.name)).toMatchObject({ l3_engine: null, l3_choice: { engine: model.engine, model: model.model } });
-
-  await walk.state("08-back-to-auto", {
+  await walk.state("04-back-to-auto", {
     action: () => back.click(), visible: [l3.getByText("Auto", { exact: true })], hidden: [back],
   });
   expect((await defaults(request, project.name)).l3_choice).toBeNull();
 });
 
-test("Tasks routing Prefer and Only save, survive reload, leave L3 alone and restore Auto", async ({ page, request }, info) => {
+test("Tasks routing Prefer and Only save, survive reload and restore Auto", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const main = page.getByRole("main");
@@ -171,7 +139,6 @@ test("Tasks routing Prefer and Only save, survive reload, leave L3 alone and res
   const preferred = engines[0]!;
   const card = main.getByRole("region", { name: "Routing", exact: true });
   const select = card.getByRole("combobox", { name: "Tasks routing" });
-  const l3 = card.getByRole("combobox", { name: "L3 routing" });
   let release!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
   let deny = false;
@@ -195,8 +162,6 @@ test("Tasks routing Prefer and Only save, survive reload, leave L3 alone and res
     await card.scrollIntoViewIfNeeded();
     await walk.state("03-persisted-after-reload", { visible: [select], hidden: [card.getByRole("status", { name: "Saving…", exact: true })] });
     await expect(select).toHaveValue(`prefer:${preferred.value}`);
-    await expect(l3).toHaveValue("");
-    expect((await defaults(request, project.name)).l3_engine).toBeNull();
 
     // Only replaces Prefer: both settings are written, so routing never holds both.
     await select.selectOption(`only:${preferred.value}`);
@@ -225,8 +190,8 @@ test("Tasks routing Prefer and Only save, survive reload, leave L3 alone and res
     await expect(select).toHaveValue("");
     await expect.poll(async () => {
       const view = await defaults(request, project.name);
-      return [view.l2_engine, view.l2_preference, view.l3_engine];
-    }).toEqual([null, null, null]);
+      return [view.l2_engine, view.l2_preference];
+    }).toEqual([null, null]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   } finally { release(); }
 });
@@ -238,16 +203,16 @@ test("a routing change made elsewhere is refused and the page shows the current 
   expect(engines.length, "The walkthrough needs two configured engines").toBeGreaterThan(1);
   const [elsewhere, here] = engines;
   const card = page.getByRole("main").getByRole("region", { name: "Routing", exact: true });
-  const select = card.getByRole("combobox", { name: "L3 routing" });
+  const select = card.getByRole("combobox", { name: "Tasks routing" });
   await walk.open(`/settings/projects/${encodeURIComponent(project.name)}`);
   await expect(select).toHaveValue("");
-  // Another window keeps L3 on one engine after this page read Auto.
-  expect((await request.post("/api/defaults", { data: { project: project.name, setting: "l3_engine", value: elsewhere!.value } })).ok()).toBe(true);
+  // Another window keeps tasks on one engine after this page read Auto.
+  expect((await request.post("/api/defaults", { data: { project: project.name, setting: "l2_engine", value: elsewhere!.value } })).ok()).toBe(true);
   await walk.state("01-changed-elsewhere", {
     action: () => select.selectOption(`only:${here!.value}`),
     visible: [card.getByRole("alert").filter({ hasText: "Changed in another window. The page shows the current routing." })], hidden: [card.getByRole("status", { name: "Saving…", exact: true })],
   });
-  expect((await defaults(request, project.name)).l3_engine).toBe(elsewhere!.value);
+  expect((await defaults(request, project.name)).l2_engine).toBe(elsewhere!.value);
   await expect(select).toHaveValue(`only:${elsewhere!.value}`);
 });
 
@@ -275,7 +240,7 @@ test("project settings loading and read failure can retry; the project section s
     fail = false;
     await walk.state("03-recovered", {
       action: () => main.getByRole("button", { name: "Retry", exact: true }).click(),
-      visible: [main.getByLabel("Effort").first(), main.getByRole("combobox", { name: "L3 routing" }), remove], hidden: [main.getByRole("alert")],
+      visible: [main.getByLabel("Effort").first(), main.getByRole("combobox", { name: "Tasks routing" }), remove], hidden: [main.getByRole("alert")],
     });
   } finally { release(); }
 });

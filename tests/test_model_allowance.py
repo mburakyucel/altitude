@@ -113,11 +113,24 @@ class TestModelRouting(AltitudeCase):
 
     def test_explicit_pin_on_an_exhausted_model_stays_strict(self):
         write_quota(fable=100)
-        project = self.policy(l3_engine="claude")
-        choice = route.pick_engine("l3", project=project)
+        project = self.policy()
+        choice = route.pick_engine("l3", forced="claude", project=project)
         self.assertIsNone(choice["engine"])
         self.assertIn("claude:fable unavailable: Fable weekly allowance exhausted", choice["why"])
         self.assertIsNone(route.pick_engine("l2", model="fable", project=project)["engine"])
+
+    def test_an_l3_choice_on_an_exhausted_model_answers_on_the_next_model_and_names_both_once(self):
+        write_quota(fable=100, reset=4070926800.0)
+        self.policy(l3_choice={"engine": "claude", "model": "fable"})
+        with mock.patch.object(engines, "claude_print", return_value={
+                "session_id": "conversation", "text": "Handled", "tools": [], "error": None,
+                "usage": {}, "context_tokens": 1, "cost": 0, "turns": 1}) as execute:
+            self.assertTrue(l3.turn(self.project, "Status?")["completed"])
+            self.assertTrue(l3.turn(self.project, "And now?")["completed"])
+        self.assertEqual([call.kwargs["model"] for call in execute.call_args_list], ["opus", "opus"])
+        self.assertEqual([row["text"] for row in l3.chat_history(self.project) if row["role"] == "system"],
+                         ["Fable's usage limit is reached until 2099-01-01T05:00:00+00:00, so Opus is answering for now."],
+                         "a second answer on Opus while Fable is still limited adds no second line")
 
     def test_a_family_limit_excludes_a_configured_model_id_of_that_family_only(self):
         self.policy()
@@ -144,14 +157,15 @@ class TestModelRouting(AltitudeCase):
         saved = S.load_task(self.project, task["slug"])
         self.assertEqual((saved["state"], saved["model"]), ("queued", "fable"))
 
-    def test_a_pinned_l3_keeps_its_system_event_queued_instead_of_running_a_failing_turn(self):
+    def test_an_l3_with_no_runnable_model_keeps_its_system_event_queued_instead_of_running_a_failing_turn(self):
         write_quota(fable=100)
-        self.policy(l3_engine="claude")
+        self.policy("claude:fable")
         queued = l3.queue_message(self.project, "Report landed for fictional-task", trigger="report-landed")
         with mock.patch.object(engines, "claude_print") as execute:
             self.assertIsNone(l3.deliver_queued(self.project))
         execute.assert_not_called()
         self.assertEqual([item["id"] for item in l3.queued(self.project)], [queued["id"]])
+        self.assertFalse(l3.chat_history(self.project), "automatic work waits quietly")
         write_quota(fable=10)
         with mock.patch.object(engines, "claude_print", return_value={
                 "session_id": "conversation", "text": "Handled", "tools": [], "error": None,

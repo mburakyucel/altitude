@@ -118,14 +118,23 @@ class TestRoutingView(AltitudeCase):
         self.assertTrue(row["why"].startswith(f"Project {self.project}:"))
 
     def test_a_project_pin_shows_as_the_pin_and_an_exhausted_pin_returns_no_engine(self):
-        self.register(self.project, l3_engine="codex")
+        self.register(self.project, l2_engine="codex")
         self.claude = {"known": True, "five_hour": 1, "seven_day": 10}
         self.codex = {"known": True, "primary_used": 100, "primary_window_minutes": route.WEEK_MINUTES}
-        row = self.rows()[("l3", self.project)]
+        row = self.rows()[("l2", self.project)]
         self.assertEqual(row["pin"], "codex")
         self.assertIsNone(row["engine"])
         self.assertIn("forced codex:default is unavailable", row["why"])
         self.assertIn("weekly window exhausted", row["why"])
+
+    def test_an_l3_choice_on_an_exhausted_engine_shows_auto_answering_instead(self):
+        self.register(self.project, l3_choice={"engine": "codex"})
+        self.claude = {"known": True, "five_hour": 1, "seven_day": 10}
+        self.codex = {"known": True, "primary_used": 100, "primary_window_minutes": route.WEEK_MINUTES}
+        row = self.rows()[("l3", self.project)]
+        self.assertIsNone(row["pin"])
+        self.assertEqual(row["engine"], "claude")
+        self.assertIn("codex:default unavailable: weekly window exhausted", row["why"])
 
     def test_no_engine_available_says_so_for_every_role(self):
         self.claude = {"known": True, "five_hour": 100, "seven_day": 100}

@@ -186,7 +186,6 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       }
       await expect(main.getByRole("button", { name: "Change…", exact: true })).toBeEnabled();
       await expect(main.getByRole("combobox", { name: "Tasks routing" })).toHaveValue("");
-      await expect(main.getByRole("combobox", { name: "L3 routing" })).toHaveValue("");
       await expect(main.getByRole("button", { name: "Remove…", exact: true })).toBeEnabled();
       await expect(main.getByRole("link", { name: "‹ Settings", exact: true })).toHaveAttribute("href", "/settings");
       await expect(main.getByRole("status", { name: "Loading settings…", exact: true })).toHaveCount(0);

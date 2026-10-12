@@ -906,8 +906,6 @@ export const ChatViewSchema = z
     queued: z.array(QueuedMessageSchema).nullish(),
     send_now_reason: z.string().nullish(),
     l3: z.record(z.string(), z.unknown()).nullish(),
-    /** The engine the project's L3 routing is Only on; null or absent means Auto. */
-    engine: z.string().nullish(),
   })
   .passthrough();
 
@@ -1661,12 +1659,11 @@ export function useSaveNewTasks() {
   });
 }
 
-/** config.defaults_view(): the project's pins, L3 choice, routing and requested model/effort per role and engine. */
+/** config.defaults_view(): the project's task pin, L3 choice, routing and requested model/effort per role and engine. */
 const DefaultFieldSchema = z.object({
   setting: z.string(), value: z.string().nullable(), default: z.string(),
 });
 const ProjectDefaultsSchema = ChoiceOptionsSchema.extend({
-  l3_engine: z.string().nullish(),
   l2_engine: z.string().nullish(),
   l3_choice: ChoiceSchema.optional().transform((value) => value ?? null),
   l3_unavailable: z.string().nullish(),
@@ -1695,7 +1692,7 @@ export function useProjectDefaults(project: string) {
 }
 
 /** The project settings a page or dialog saves whole, outside the per-engine model/effort table. */
-const PROJECT_FIELDS = ["l2_preference", "l2_engine", "l3_engine", "l3_choice"] as const;
+const PROJECT_FIELDS = ["l2_preference", "l2_engine", "l3_choice"] as const;
 
 /**
  * One saved project setting; each field owns its mutation so its Saving/Saved/error state stays beside it.
@@ -1708,12 +1705,9 @@ export function useSetDefault(project: string) {
       ProjectDefaultsSchema.parse(await post("/api/defaults", { project, ...input })),
     onMutate: () => client.cancelQueries({ queryKey: ["defaults", project] }),
     // Merge only the acknowledged field: a slower response to another field's save must not restore its old value.
-    // The L3 choice and the Only L3 engine are one pair: saving either can release the other, so a pair save also
-    // reads the stored pair back, and a slower response to an earlier pair save cannot keep showing its state.
     onSuccess: (result, { setting }) => client.setQueryData<ProjectDefaults>(["defaults", project], (old) => {
       if (!old) return result;
-      if (setting === "l3_choice" || setting === "l3_engine")
-        return { ...old, l3_choice: result.l3_choice, l3_unavailable: result.l3_unavailable, l3_engine: result.l3_engine };
+      if (setting === "l3_choice") return { ...old, l3_choice: result.l3_choice, l3_unavailable: result.l3_unavailable };
       if ((PROJECT_FIELDS as readonly string[]).includes(setting)) return { ...old, [setting]: result[setting as typeof PROJECT_FIELDS[number]] };
       const saved = result.roles.flatMap((row) => row.engines).flatMap((e) => [e.model, e.effort]).find((f) => f.setting === setting);
       return { ...old, roles: old.roles.map((row) => ({ ...row, engines: row.engines.map((e) => ({
@@ -1722,9 +1716,6 @@ export function useSetDefault(project: string) {
         effort: e.effort.setting === setting ? { ...e.effort, value: saved?.value ?? null } : e.effort,
       })) })) };
     }),
-    onSettled: (_result, _error, { setting }) => {
-      if (setting === "l3_choice" || setting === "l3_engine") void client.invalidateQueries({ queryKey: ["defaults", project] });
-    },
   });
 }
 
