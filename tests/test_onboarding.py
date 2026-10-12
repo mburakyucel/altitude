@@ -169,8 +169,10 @@ class TestPrerequisites(OnboardingCase):
         bin_dir = self.tmp / "bin"
         bin_dir.mkdir()
         log = self.tmp / "commands"
+        # These commands run on Linux, whose mktemp honors TMPDIR; macOS's prefers the user's own temporary folder.
         for name, body in (("sudo", f'echo "sudo $*" >> {log}; [ "$1" = tee ] && cat >> {log}; exit 0'),
-                           ("curl", f'echo "curl $*" >> {log}; [ -n "$FAIL" ] && exit 22; echo key > "$4"')):
+                           ("curl", f'echo "curl $*" >> {log}; [ -n "$FAIL" ] && exit 22; echo key > "$4"'),
+                           ("mktemp", 'exec /usr/bin/mktemp "$TMPDIR/tmp.XXXXXXXXXX"')):
             (bin_dir / name).write_text(f"#!/bin/sh\n{body}\n")
             (bin_dir / name).chmod(0o755)
         keyring = "/etc/apt/keyrings/githubcli-archive-keyring.gpg"

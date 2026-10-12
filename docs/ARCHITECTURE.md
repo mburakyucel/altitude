@@ -1710,47 +1710,52 @@ range) the same way, never adding a date the writer left out, outside code and p
 shows ISO instants in the machine's zone. Formats are in [SPEC.md §4.5](../design/wireframes/SPEC.md#45-copy)
 and [CLI times](CLI.md#times).
 
-### Conversation-audit pilot
+### Improvement review
 
 The approved [improvement suggestions design](../design/wireframes/improvement-review/PROPOSAL.md)
-replaces this pilot in its first rollout step; until then the pilot behaves as described here.
+reads one project's finished work and proposes at most three fixes. Its reviewer and evidence exist
+and are measured on fictional projects; nothing starts a review of a real project yet, and the later
+rollout steps add the run, its record and its card.
 
-`audit.py` owns the finite pilot for the project named in `config.py`. The operator explicitly starts
-it; installation/registration do not enable it. `audit.json` stores reviewer, expiry, attempts,
-reviewed exchange identities and finding-supply receipts. Sessions wait twelve hours and four new
-exchanges mature for thirty minutes. Failed/unanswered exchanges also mature, with incomplete and
-in-flight evidence. Only human chat counts. Seven days or fourteen attempts ends the pilot.
+`improve.py` builds the evidence in code. Signals are exact, versioned predicates over existing task
+records (`SIGNALS_VERSION`): question revisions with no operator message since the previous one,
+refused merge approvals and grants, operator messages after a report, review requests beyond the
+first per subject, findings the final report leaves open, CI rechecks and repeated deliveries for one
+PR, resume and dispatch failures and system faults, superseded reports and escalations. The window is
+tasks finished in the last 14 days, never before 2026-09-22 07:00 UTC and never older than 30 days.
+Task sheets, ranked by signals and operator messages, carry title, outcome, durations and tokens,
+signals with the places that produced them and what each event recorded (its reason or error, or
+the unmerged PRs a replaced report named), questions with how they were settled, review findings
+with their dispositions, and up to four paired quotes (the message answered, the operator's words,
+the reply, 300 characters each). Sheets are at most 3 KiB each and 48 KiB together; tasks that do not
+fit are listed by counts. Operator chat turns fill the remaining room as paired quotes, followed by
+current task titles and earlier suggestions with their outcome. The prompt is at most 64 KiB.
 
-The tick's keyed background executor owns packet construction and provider IO outside ordinary L3
-locks and the timer thread. A short project lock reserves attempts before launch. Failures pause
-the pilot; interrupted execution becomes uncertain after the deadline without automatic replay.
-Stop prevents later sessions; an already claimed session can finish within its timeout. Project
-activity holds preserve the existing detach boundary. None of these states pauses ordinary work.
+Every quoted or counted place carries a short alias (`[A12]`) mapped to a canonical place: a task
+message, question revision, event, review finding, report finding or chat row byte offset. Only
+aliases that reach the prompt are valid, and only the code writes them: square brackets in quoted
+text become round ones, so a quote cannot forge a citation. `improve.validate` treats the answer as untrusted: at most
+three suggestions, each with a target (`project` or `agents`), bounded text, a known signal or none,
+and at least two citations from its own prompt; text that looks like a path or credential is
+dropped. Dropped suggestions are kept with their reason.
 
-Sampling reads at most 2 MiB of the original chat tail, selecting at most twenty unseen exchanges
-within forty-eight hours, never before September 22, 2026 07:00 UTC. Byte offsets, turn IDs and dates
-identify original rows. Complete fitting exchanges take precedence over oversized ones; omissions
-and truncation remain explicit. Later context and four directly referenced task records carry
-current ownership, decisions and canonical messages, including removal markers. The complete starting
-prompt stays within 64 KiB. Sparse/overflowing evidence can expire without review.
+`engines.improvement_review` is one tool-free Claude call on the plan: `--safe-mode`,
+`--no-session-persistence`, `--tools ""`, `--strict-mcp-config`, the instructions as the system
+prompt, the answer schema, the prompt on stdin, an empty temporary working directory, the output
+capped at 12,000 tokens and Claude Code's budget stop at the call's token maximum priced with the
+model's published rates from `config.IMPROVEMENT_MODELS`. Everything sent is at most 72 KiB, so a
+call uses at most 86,000 tokens; the recorded usage marks a call that exceeds it. The call fails
+closed unless its own start record lists only Claude Code's carrier for the schema-bound answer
+(`StructuredOutput`), no MCP server, a model and no API key: the call runs without `ANTHROPIC_*`
+variables, so it uses the signed-in plan and never pay-per-use credentials. A usage hold, unknown model, oversized prompt,
+timeout, usage limit or unusable answer ends the call with its reason; nothing retries or switches
+model. Codex is not offered: no tool-free Codex mode is verified, so without Claude the review is
+unavailable.
 
-`engines.conversation_review` uses a fresh native session, the ordinary coordinator tools/permissions,
-an explicit model and the engine's ordinary session timeout, enforced for the process tree. The
-attempt records that timeout so interrupted-run detection respects it. It does not resume or publish
-an L3 turn. The review assignment leaves implementation, publication and operational decisions with
-L3/L2. Tool reads and reasoning add usage within that deadline; byte/time bounds are not dollar caps.
-Available native model, usage and API-equivalent cost are recorded; missing values remain unknown.
-Provider options stay in the engine seam, with no fallback when the pinned reviewer is unavailable.
-
-Private `audits/<id>/packet.json` and `result.json` retain each attempt. A bounded JSON response carries
-at most three classified findings, expected/observed behavior, impact, uncertainty, corrections,
-ownership and an original selected source. Only unresolved candidates enter the next project chat
-turn, without another L3 queue event. Category/source fingerprints suppress repeated supply. The L3
-turn identity proves supply, not handling; interrupted supply remains inspectable without automatic
-replay. L3 verifies current tasks/issues and later evidence before action. No issue writer, task
-dispatcher or instruction editor belongs to the reviewer. Unavailable optional audit evidence never
-blocks ordinary conversation. Model-quality evaluation is separately authorized and reported;
-deterministic fixtures establish application behavior only.
+`improve_eval.py` loads fictional scenarios from `tests/fixtures/improvement/` as ordinary task
+folders and project chat, runs the same prompt builder and reviewer, matches suggestions to planted
+patterns by shared places and writes a blind grading sheet; [the eval](DEVELOPMENT.md#improvement-review-eval)
+describes the hand run.
 
 ### Image input
 
@@ -2254,7 +2259,7 @@ faded without **Remove** until then. Retries reuse the claim or the individual
 history receipts, and only one group is sent at a time.
 
 Historical assistant rows marked `interrupted` retain their partial reply, possibly empty.
-Fresh-session context, `alt l3 search` results and the chat audit packet keep that marker; those
+Fresh-session context and `alt l3 search` results keep that marker; those
 incomplete turns are never replayed.
 
 A group the turn can no longer take, because it ended first, returns to the queue front and runs next

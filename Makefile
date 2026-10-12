@@ -1,4 +1,4 @@
-.PHONY: run test check check-python check-web web ui ui-shell ui-ios ui-simulator audit-history installation-vm installation-mac installation-macos-vm browser-sandbox restart install-service
+.PHONY: run test check check-python check-web web ui ui-shell ui-ios ui-simulator audit-history installation-vm installation-mac installation-macos-vm container-macos-vm browser-sandbox restart install-service
 run:            ## run altd in the foreground on 127.0.0.1:8890 (ALTITUDE_HOST/PORT override)
 	ALTITUDE_HOST=$${ALTITUDE_HOST:-127.0.0.1} bin/alt serve
 test:           ## Python unit and integration tests (throwaway ALTITUDE_HOME)
@@ -56,6 +56,9 @@ else
 	$(if $(RESULTS),,$(error Set RESULTS to a new directory for the evidence))
 	timeout 1800s python3 scripts/container_vm.py "$(RESULTS)"
 endif
+container-macos-vm: ## The container lanes in a throwaway Ubuntu arm64 guest on this Apple silicon Mac (RESULTS=dir [LANE=--image-workflow|--browser|--logout]); inside a task, through `alt task run` under an operator grant
+	$(if $(RESULTS),,$(error Set RESULTS to a new directory for the evidence))
+	python3.12 scripts/container_vm.py "$(RESULTS)" $(LANE)
 browser-sandbox: ## Playwright's Chromium with its own sandbox against a local fictional page, recording the protections it keeps (RESULT=file); inside a task, through the validation runner
 ifdef ALTITUDE_TASK
 	alt task validate -- make browser-sandbox RESULT=/results/browser-sandbox.json

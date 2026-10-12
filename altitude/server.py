@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import access, audit, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, line, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, validation, verify
+from . import access, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, line, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, validation, verify
 
 
 class ThreadingHTTPServer(http.server.ThreadingHTTPServer):
@@ -1206,8 +1206,6 @@ def self_deploy(project: str) -> None:
 
 
 def tick_project(project: str) -> None:
-    if audit.path(project).exists():
-        spawn(f"audit:{project}", audit.run, project)
     try:
         project_setup.maintain(project)
         _failing_since.pop(f"[{project}] setup check", None)

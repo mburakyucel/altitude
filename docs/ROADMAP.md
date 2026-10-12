@@ -5,7 +5,9 @@
 Linux-first rootless container support retains the full Linux/Mac/onboarding objective. The actual
 native task/coordinator sandbox, launcher lifecycle/recovery and private backup/restore gates pass
 on the recorded Linux tuple. Actual-daemon phone/desktop onboarding, task Stop/resume and queued
-continuation after replacement pass with fictional engines. Real Mac ARM64 evidence remains open.
+continuation after replacement pass with fictional engines. On an Apple silicon Mac, the launcher
+and in-guest logout lanes pass in a throwaway Ubuntu arm64 guest; a Mac-side VM controller and Mac
+logout, restart and sleep/wake remain open.
 The [candidate build and bootstrap gate](CONTAINERS.md) are under validation. Containerized Linux does
 not establish native macOS, Xcode or iOS build support. No container-security advantage is assumed.
 The candidate implements host-side continuation after replacement, preserving ordinary restart
@@ -200,11 +202,11 @@ slices, each one task. The durable backlog is GitHub issues selected by the oper
   automation.
 
 [Improvement suggestions](../design/wireframes/improvement-review/PROPOSAL.md) is the approved design
-that replaces the conversation-audit pilot: an opt-in, weekly or on-request review in which a cheaper
-tool-free model reads one project's task counts and short chat quotes and proposes at most three fixes,
-for the project or for how agents work, which L3 checks and the operator accepts or dismisses. It is
-built in held steps: the reviewer proven by a fictional-project eval, a first run on request, the card
-and Needs you, settings and the Monday schedule, then measurement.
+for an opt-in, weekly or on-request review in which a cheaper tool-free model reads one project's
+task counts and short chat quotes and proposes at most three fixes, for the project or for how agents
+work, which L3 checks and the operator accepts or dismisses. Its reviewer and fictional-project eval
+exist; the remaining held steps are a first run on request, the card and Needs you, settings and the
+Monday schedule, then measurement.
 
 New architecture or feature proposals start as conversation or a GitHub issue. L3 decides whether
 to answer directly or delegate one L2; no backlog item is pulled or implemented autonomously.

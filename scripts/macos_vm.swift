@@ -1,12 +1,17 @@
-// A macOS guest on Apple's Virtualization framework, for scripts/installation_macos_vm.py.
+// Guests on Apple's Virtualization framework: macOS for scripts/installation_macos_vm.py, and Linux for
+// scripts/linux_vm_mac.py.
 //
 //   macos_vm latest                                   Apple's newest restore image this Mac supports, as JSON
 //   macos_vm install IPSW BUNDLE DISK_GIB             a new guest in BUNDLE from the restore image
 //   macos_vm run BUNDLE SOCKET CPUS MEMORY_GIB         boots BUNDLE headless with a NAT network card
-//   macos_vm relay PORT                               inside the guest: host-guest socket PORT to sshd
+//   macos_vm linux KERNEL INITRD COMMAND_LINE DISK SEED CONSOLE SOCKET CPUS MEMORY_GIB
+//                                                     boots a Linux kernel headless with DISK as its first disk,
+//                                                     SEED as a read-only second disk, the console written to
+//                                                     CONSOLE and a NAT network card
+//   macos_vm relay PORT                               inside a macOS guest: host-guest socket PORT to sshd
 //
-// `run` relays each connection to the Unix socket SOCKET to the guest's host-guest (vsock) port 22, so the
-// host reaches the guest without a network. It reads commands on stdin: `unplug` disconnects the network
+// `run` and `linux` relay each connection to the Unix socket SOCKET to the guest's host-guest (vsock) port 22, so
+// the host reaches the guest without a network. It reads commands on stdin: `unplug` disconnects the network
 // card, `stop` powers the guest off; end of input also powers it off. It prints `started <mac>`,
 // `unplugged`, and `stopped` or `failed <reason>` before exiting.
 import Darwin
@@ -31,6 +36,34 @@ struct Bundle {
     var aux: URL { url.appendingPathComponent("aux.img") }
     var model: URL { url.appendingPathComponent("hardware-model") }
     var machine: URL { url.appendingPathComponent("machine-id") }
+}
+
+func linuxConfiguration(kernel: URL, initrd: URL, commandLine: String, disk: URL, seed: URL, console: URL,
+                        cpus: Int, memoryGiB: UInt64) throws -> VZVirtualMachineConfiguration {
+    let boot = VZLinuxBootLoader(kernelURL: kernel)
+    boot.initialRamdiskURL = initrd
+    boot.commandLine = commandLine
+    let config = VZVirtualMachineConfiguration()
+    config.platform = VZGenericPlatformConfiguration()
+    config.bootLoader = boot
+    config.cpuCount = cpus
+    config.memorySize = memoryGiB << 30
+    config.storageDevices = [
+        VZVirtioBlockDeviceConfiguration(attachment: try VZDiskImageStorageDeviceAttachment(url: disk, readOnly: false)),
+        VZVirtioBlockDeviceConfiguration(attachment: try VZDiskImageStorageDeviceAttachment(url: seed, readOnly: true)),
+    ]
+    let serial = VZVirtioConsoleDeviceSerialPortConfiguration()
+    serial.attachment = try VZFileSerialPortAttachment(url: console, append: true)
+    config.serialPorts = [serial]
+    let network = VZVirtioNetworkDeviceConfiguration()
+    network.attachment = VZNATNetworkDeviceAttachment()
+    network.macAddress = VZMACAddress.randomLocallyAdministered()
+    config.networkDevices = [network]
+    config.socketDevices = [VZVirtioSocketDeviceConfiguration()]
+    // No entropy device: Ubuntu 24.04's arm64 kernel panicked reading it ("corrupted stack end detected inside
+    // scheduler" in virtio_rng), and its random pool is ready at boot without it.
+    try config.validate()
+    return config
 }
 
 func configuration(_ bundle: Bundle, cpus: Int, memoryGiB: UInt64) throws -> VZVirtualMachineConfiguration {
@@ -197,9 +230,9 @@ func powerOff() {
     }
 }
 
-func run(bundle: Bundle, socketPath: String, cpus: Int, memoryGiB: UInt64) {
+func run(socketPath: String, _ make: () throws -> VZVirtualMachineConfiguration) {
     let config: VZVirtualMachineConfiguration
-    do { config = try configuration(bundle, cpus: cpus, memoryGiB: memoryGiB) } catch { fail("\(error.localizedDescription)") }
+    do { config = try make() } catch { fail("\(error.localizedDescription)") }
     let vm = VZVirtualMachine(configuration: config)
     machine = vm
     vm.delegate = delegate
@@ -285,12 +318,21 @@ case ("install", 5):
     install(ipsw: URL(fileURLWithPath: arguments[2]), bundle: Bundle(url: URL(fileURLWithPath: arguments[3])),
             diskGiB: UInt64(arguments[4]) ?? 64)
 case ("run", 6):
-    run(bundle: Bundle(url: URL(fileURLWithPath: arguments[2])), socketPath: arguments[3],
-        cpus: Int(arguments[4]) ?? 4, memoryGiB: UInt64(arguments[5]) ?? 4)
+    run(socketPath: arguments[3]) {
+        try configuration(Bundle(url: URL(fileURLWithPath: arguments[2])), cpus: Int(arguments[4]) ?? 4,
+                          memoryGiB: UInt64(arguments[5]) ?? 4)
+    }
+case ("linux", 11):
+    run(socketPath: arguments[8]) {
+        let file = { (index: Int) in URL(fileURLWithPath: arguments[index]) }
+        return try linuxConfiguration(kernel: file(2), initrd: file(3), commandLine: arguments[4], disk: file(5),
+                                      seed: file(6), console: file(7), cpus: Int(arguments[9]) ?? 2,
+                                      memoryGiB: UInt64(arguments[10]) ?? 4)
+    }
 case ("relay", 3):
     relay(port: UInt32(arguments[2]) ?? 22)
 default:
-    FileHandle.standardError.write("usage: macos_vm latest | install IPSW BUNDLE DISK_GIB | run BUNDLE SOCKET CPUS MEMORY_GIB | relay PORT\n".data(using: .utf8)!)
+    FileHandle.standardError.write("usage: macos_vm latest | install IPSW BUNDLE DISK_GIB | run BUNDLE SOCKET CPUS MEMORY_GIB | linux KERNEL INITRD COMMAND_LINE DISK SEED CONSOLE SOCKET CPUS MEMORY_GIB | relay PORT\n".data(using: .utf8)!)
     exit(2)
 }
 dispatchMain()

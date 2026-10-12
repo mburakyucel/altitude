@@ -951,7 +951,7 @@ describe("Task on desktop", () => {
 
   it("reads a done task read-only with its PR in the header", async () => {
     setViewport(1440);
-    stub(done);
+    stub({ ...done, updated: ago(1) }); // the module's fixtures are as old as the run that reaches this case
     const { user } = renderApp({ route });
 
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
