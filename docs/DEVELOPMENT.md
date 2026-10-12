@@ -525,8 +525,9 @@ A process under the profile cannot apply another Seatbelt profile, so these do n
 validation run: browsers that keep their own sandbox (see [browser verification](#browser-verification)),
 Altitude's own worker confinement, and launchd jobs. Candidate application journeys there use the
 suites' local-process job fixtures, and suite cases replace worker confinement at the platform seam,
-so the full suite has the same result in a validation run, inside a confined worker and on Linux. A macOS run establishes the candidate's behavior on this Mac under
-those fixtures; it does not establish native launchd/Seatbelt worker behavior, installation or provider compatibility.
+so the full suite has the same result in a validation run, inside a confined worker and on Linux.
+A macOS run establishes the candidate's behavior on this Mac under those fixtures; it does not
+establish native launchd/Seatbelt worker behavior, installation or provider compatibility.
 The approved fictional browser lane below establishes only the journeys actually run.
 
 The complete required suite runs in a Mac validation run with its dependencies in the run's own folders:
