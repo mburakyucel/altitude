@@ -266,6 +266,11 @@ class TestProjectEffortHTTP(AltitudeCase):
         self.assertEqual(status, 200)
         drain.assert_called_once_with(self.project)
 
+    def test_an_unknown_project_s_conversation_is_refused(self):
+        status, view = self.call("GET", "/api/chat/not-managed?limit=60")
+        self.assertEqual(status, 500)
+        self.assertIn("unknown project 'not-managed'", view["error"])
+
     def test_pending_cli_setting_is_not_overwritten_by_a_different_ui_choice(self):
         dispatch.request_setting(self.project, "l3_effort", "high", "CLI setting", actor="burak")
         status, view = self.call("POST", "/api/defaults", {"project": self.project, "setting": "l3_effort", "value": "low"})

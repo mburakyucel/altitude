@@ -2293,6 +2293,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"text": digest.text()})
             if api == "chat" and len(parts) > 2:
                 project = parts[2]
+                config.project(project)  # a removed or unknown project's conversation is refused
                 lifecycle = l3.chat_state(project, int(q.get("limit", ["60"])[0]))
                 return self._json({**lifecycle, "l3": l3.info(project)})
             return self._json({"error": "unknown api"}, 404)
