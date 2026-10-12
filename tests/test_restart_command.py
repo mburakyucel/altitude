@@ -27,7 +27,7 @@ class TestRestartCommand(AltitudeCase):
         self.assertIn("python3 scripts/restart_altitude.py", restart)
         self.assertIn("`make restart`", (REPO / "docs" / "OPERATIONS.md").read_text())
         helper = SCRIPT.read_text()
-        self.assertIn("fetch_and_require_exact_base", helper)
+        self.assertIn("service_preflight", helper)
         self.assertIn("require_idle()", helper)
         self.assertIn('unit_environment().get("ALTITUDE_HOME"', helper)
 
@@ -176,9 +176,10 @@ class TestRestartCommand(AltitudeCase):
             unit = {"WorkingDirectory": str(restart.ROOT),
                     "Environment": f"ALTITUDE_HOME={config.ROOT} {environment}".strip()}
             with self.subTest(branch=branch), mock.patch.object(restart, "unit_properties", return_value=unit), \
-                    mock.patch.object(restart.git_policy, "fetch_and_require_exact_base") as fetch:
-                restart.require_deployed_checkout()
-                fetch.assert_called_once_with(restart.ROOT, branch)
+                    mock.patch.object(restart.git_policy, "service_preflight",
+                                      return_value=mock.Mock(head="a" * 40)) as preflight:
+                self.assertEqual(restart.require_deployed_checkout(), "a" * 40)
+                preflight.assert_called_once_with(restart.ROOT, branch)
 
     def test_decision_11_script_allows_running_and_blocked_workers_and_waiting_reports(self):
         restart = load_script()
@@ -222,7 +223,7 @@ class TestRestartCommand(AltitudeCase):
         """I-20260924-205802: a 10-second failure surfaced only at altd's ten-minute grace timeout."""
         restart = load_script()
         flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
-        failure = restart.RestartError("cannot prove Altitude is quiet: /api/overview is unreachable: timed out")
+        failure = restart.RestartError("service preflight refused: checkout has uncommitted changes")
         with mock.patch.object(restart, "require_deployed_checkout", side_effect=failure), \
                 mock.patch.object(restart.incidents, "system_fault") as fault:
             self.assertEqual(restart.main(), 1)  # nothing requested: a hand run reports only on its terminal
@@ -237,6 +238,94 @@ class TestRestartCommand(AltitudeCase):
         self.assertEqual(pending["error"], str(failure))
         self.assertFalse(config.restart_in_progress())
 
+    def activate(self, restart, *, heads=("a" * 40, "a" * 40), idle=None, requested=True):
+        """Run the unit, requested by altd or by hand, with fixture checkout heads and quiet probe."""
+        if requested:
+            S.write_json(config.MONITOR_DIR / dispatch.RESTART_PENDING,
+                         {**(S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING) or {"files": ["altitude/server.py"]}),
+                          "requested_at": S.now(), "unit": "u"})
+        checkout = [h if isinstance(h, Exception) else mock.Mock(head=h, behind=1) for h in heads]
+        with mock.patch.object(restart, "unit_properties", return_value={"WorkingDirectory": str(restart.ROOT),
+                                                                         "Environment": f"ALTITUDE_HOME={config.ROOT}"}), \
+                mock.patch.object(restart.git_policy, "service_preflight", side_effect=checkout), \
+                mock.patch.object(restart, "build_bundle", return_value=self.tmp / "staging"), \
+                mock.patch.object(restart, "require_idle", side_effect=idle or restart.require_idle), \
+                mock.patch.object(restart, "publish_and_restart") as publish, \
+                mock.patch.object(restart.incidents, "system_fault") as fault:
+            code = restart.main()
+        return code, publish, fault, S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING)
+
+    def test_a_checkout_behind_origin_activates_the_head_it_built(self):
+        """I-20261010-214654: origin moved during the build and the exact-origin recheck parked activation."""
+        restart = load_script()
+        self.private_ledgers()
+        code, publish, fault, _ = self.activate(restart)
+        self.assertEqual(code, 0)
+        publish.assert_called_once(); fault.assert_not_called()
+
+    def test_a_checkout_that_moved_before_the_gate_closed_retries_instead_of_activating_a_mismatch(self):
+        """A hand run's gate closes only at the quiet check, so a self-deploy can move the checkout until then."""
+        restart = load_script()
+        self.private_ledgers()
+        for requested in (True, False):
+            with self.subTest(requested=requested):
+                (config.MONITOR_DIR / dispatch.RESTART_PENDING).unlink(missing_ok=True)
+                code, publish, fault, pending = self.activate(restart, heads=("a" * 40, "b" * 40), requested=requested)
+                self.assertEqual(code, 1)
+                publish.assert_not_called(); fault.assert_not_called()
+                self.assertNotIn("requested_at", pending); self.assertNotIn("failed", pending)
+                self.assertEqual(pending["retries"], 1)
+                self.assertIn("moved from aaaaaaa to bbbbbbb", pending["error"])
+
+    def test_a_dirty_ahead_or_diverged_checkout_parks_at_once_with_its_fault(self):
+        restart = load_script()
+        self.private_ledgers()
+        for refusal in ("checkout has uncommitted changes", "main is 1 commit(s) ahead of origin/main",
+                        "main has diverged from origin/main", "checkout is on topic, expected main"):
+            with self.subTest(refusal=refusal):
+                error = restart.git_policy.GitPolicyError(f"service preflight refused: {refusal}")
+                code, publish, fault, pending = self.activate(restart, heads=(error,))
+                self.assertEqual(code, 1)
+                publish.assert_not_called()
+                fault.assert_called_once()
+                self.assertIn(refusal, pending["error"]); self.assertTrue(pending["failed"])
+                self.assertNotIn("retries", pending)
+                pending.pop("failed"); S.write_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, pending)
+
+    def test_transient_refusals_retry_until_the_bound_then_file_the_fault_and_park(self):
+        """I-20261010-214654: a slow quiet probe parked activation until the next merge or the Restart button."""
+        restart = load_script()
+        self.private_ledgers()
+        busy = restart.Transient("cannot prove Altitude is quiet: /api/overview is unreachable: timed out")
+        for retry in range(1, restart.RETRIES + 1):
+            code, publish, fault, pending = self.activate(restart, idle=busy)
+            self.assertEqual(code, 1)
+            fault.assert_not_called()
+            self.assertEqual(pending["retries"], retry)
+            self.assertEqual(pending["error"], str(busy))
+            self.assertNotIn("requested_at", pending); self.assertNotIn("failed", pending)
+            self.assertTrue(config.activation_pending()); self.assertFalse(config.restart_in_progress())
+        code, publish, fault, pending = self.activate(restart, idle=busy)
+        fault.assert_called_once_with("restart", f"restart failed: {busy}")
+        self.assertTrue(pending["failed"]); self.assertEqual(pending["files"], ["altitude/server.py"])
+        self.assertFalse(config.activation_pending())
+
+    def test_the_quiet_probe_tolerates_a_slow_daemon_but_not_a_dead_one(self):
+        restart = load_script()
+        self.private_ledgers()
+        slow = restart.RestartError("/api/overview is unreachable: <urlopen error timed out>")
+        answer = b'{"restart":{"waiting_for":[]}}'
+        with mock.patch.object(restart, "unit_properties", return_value={"ActiveState": "active"}), \
+                mock.patch.object(restart.time, "sleep"):
+            with mock.patch.object(restart, "fetch", side_effect=[slow, slow, answer]) as fetch:
+                restart.require_idle()
+            self.assertEqual({call.kwargs["timeout"] for call in fetch.call_args_list}, {restart.QUIET_PROBE_SECONDS})
+            self.assertGreater(restart.QUIET_PROBE_SECONDS, 2)
+            S.write_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, {"files": ["altitude/server.py"]})
+            with mock.patch.object(restart, "fetch", side_effect=slow) as fetch, \
+                    self.assertRaisesRegex(restart.Transient, "cannot prove Altitude is quiet: .*timed out"):
+                restart.require_idle()
+            self.assertEqual(fetch.call_count, restart.QUIET_PROBES)
 
     def test_verification_failure_after_the_replacement_cleared_the_record_is_still_reported(self):
         restart = load_script()
