@@ -17,6 +17,8 @@ class _Input(io.BytesIO):
 
 
 class TestRepositoryInstructions(AltitudeCase):
+    host = "linux"  # systemd fixtures
+
     def setUp(self):
         super().setUp()
         self.private_ledgers()

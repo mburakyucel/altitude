@@ -219,6 +219,8 @@ class TestChatTurns(AltitudeCase):
         os.environ["FAKE_ENGINE_TOOL"] = str(self.tool)
         self.addCleanup(os.environ.pop, "FAKE_ENGINE_TOOL", None)
         self.patch(platform, "job_command", side_effect=lambda unit, command, env, **kw: command)
+        # macOS refuses a Seatbelt profile inside another one, as a confined worker or validation run would apply.
+        self.patch(platform, "confined", side_effect=lambda command, writable: command)
         self.patch(engines, "_codex_session_model", return_value={"engine_model": "fake-model"})
 
     def test_a_delivered_message_splits_the_native_coordinator_reply(self):
