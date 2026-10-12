@@ -56,7 +56,7 @@ class TaskToolCache(AltitudeCase):
                             "   out({'id': message['id'], 'result': {'thread': {'id': 'session'}}})\n"
                             "  elif method == 'turn/start':\n"
                             "   out({'id': message['id'], 'result': {'turn': {'id': 'turn-1'}}})\n"
-                            "   out({'method': 'turn/completed', 'params': {'turn': {'id': 'turn-1', 'status': 'failed',\n"
+                            "   out({'method': 'turn/completed', 'params': {'threadId': 'session', 'turn': {'id': 'turn-1', 'status': 'failed',\n"
                             "        'error': {'message': 'fixture failure'}}}})\n"
                             "else:\n"
                             " sys.stdin.readline()\n"
