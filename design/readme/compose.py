@@ -23,6 +23,7 @@ FEATURES = {
     "feature-review": [("review-findings-phone", "top"), ("review-phone", "top")],
     "feature-heal": [("heal-1-fault-phone", "top"), ("heal-2-repaired-phone", "bottom")],
     "feature-improve": [("improve-phone", "top"), ("improve-accepted-phone", "top")],
+    "feature-terminal": [("terminal-1-command-phone", "bottom"), ("terminal-2-typed-phone", "top")],
 }
 
 
