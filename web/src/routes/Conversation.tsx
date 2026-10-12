@@ -71,6 +71,11 @@ export function turnsOf(history: ChatMessage[]): Turn[] {
       open = turn;
       return;
     }
+    if (row.trigger === "improvement") {
+      // Altitude's own improvement message stands alone: it never answers the message waiting for L3.
+      fresh(id || `row-${index}`, row).assistant = row;
+      return;
+    }
     let turn = id ? byId.get(id) : undefined;
     if (!turn) turn = open ?? fresh(id || `row-${index}`, row);
     if (row.role === "assistant") turn.assistant = row;
@@ -118,7 +123,7 @@ export function itemsOf(turns: Turn[], project: string, activeId: string | null)
     run = [];
   };
   for (const turn of turns) {
-    if (turn.trigger === "chat") {
+    if (turn.trigger === "chat" || turn.trigger === "improvement") {
       flush();
       items.push({ kind: "chat", turn, inProgress: !turn.assistant && !turn.error && turn.id === activeId });
       continue;

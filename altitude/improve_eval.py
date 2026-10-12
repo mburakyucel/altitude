@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import random
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import config, engines, improve, state as S
@@ -133,7 +133,7 @@ def load(scenario: dict) -> dict[str, str]:
             _line(d / "events.log", event)
         S.write_json(d / "status.json", {
             "slug": slug, "title": task["title"], "state": task["state"], "created": task["created"],
-            "attempt": 1, "prs": [], "source": "chat", "questions": questions, "reviews": reviews,
+            "updated": task["finished"], "attempt": 1, "prs": [], "source": "chat", "questions": questions, "reviews": reviews,
             "token_usage": {"status": "observed", "total_tokens": task.get("tokens", 0)}})
         for i, _ in enumerate(task.get("report_review") or []):
             anchors[f"{slug}:report/{i}"] = f"{slug}/report/{i}"
@@ -142,10 +142,20 @@ def load(scenario: dict) -> dict[str, str]:
     for task in scenario.get("current", []):
         S.write_json(S.tasks_dir(project) / task["slug"] / "status.json",
                      {"slug": task["slug"], "title": task["title"], "state": task["state"],
-                      "created": scenario["now"], "attempt": 1, "prs": [], "questions": [], "reviews": []})
+                      "created": scenario["now"], "updated": scenario["now"], "attempt": 1, "prs": [], "questions": [],
+                      "reviews": []})
     if scenario.get("earlier"):
-        S.write_json(base / "improvements.json", {"runs": [{"suggestions": [
-            {"title": e["title"], "state": e["outcome"]} for e in scenario["earlier"]]}]})
+        # One posted review three weeks back whose suggestions the operator decided, as improve.resolve records them.
+        at = (datetime.fromisoformat(scenario["now"]) - timedelta(days=21)).isoformat()
+        numbered = list(enumerate(scenario["earlier"], 1))
+        S.write_json(base / "improvements.json", {"runs": [{
+            "id": "0" * 12, "state": "posted", "started": at, "ended": at, "deadline": at, "reason": None,
+            "message": "0" * 12, "model": config.IMPROVEMENT_MODEL, "window": {"start": at, "end": at}, "tasks": 0,
+            "older": 0, "dropped": [], "post": {"shown": [n for n, _ in numbered], "drops": {}, "at": at},
+            "suggestions": [{"n": n, "target": "agents", "title": e["title"], "explanation": "", "where": "",
+                             "signal": None, "anchors": [], "uncertainty": ""} for n, e in numbered],
+            "decisions": [{"n": n, "from": "undecided", "to": e["outcome"], "at": at, "by": "l3",
+                           "message": "0" * 12, "said": at, "reason": "fixture"} for n, e in numbered]}]})
     for row in scenario.get("chat", []):
         operator = row["role"] == "operator"
         offset = _line(base / "chat.jsonl", {"at": row["at"], "role": "user" if operator else "assistant",
