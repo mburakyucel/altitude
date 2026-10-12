@@ -440,7 +440,8 @@ and leaves queued events queued rather than spending them on failing turns. An e
 unavailable-model rejection excludes that model for thirty minutes; a usage limit that names a model
 family applies to every configured id of that family.
 an authentication rejection excludes the engine for thirty minutes or until an operator coordinator
-message that finds no engine, or a task Resume, attempts it again. Retrying configured alternatives
+message that finds no engine, or a task Resume, attempts it again; a successful quota read or
+coordinator turn on the engine ends the lapse at once. Retrying configured alternatives
 is bounded and requires confirmation that no response output or tool effects occurred. A rejection
 after work starts cannot silently replay the turn. If no option is eligible, the task stays queued
 with an explanation to install/authenticate an engine, wait for the quota reset or change preferences.
@@ -1313,7 +1314,7 @@ rows are excluded. Messages are labeled historical context for the current reque
 new instructions, with at most 800 characters of each text and an explicit `[truncated]` marker
 when longer. Task state remains in `STATE.md`; no tool evidence or generated summaries are replayed.
 
-Every fresh or resumed L3 turn also names `alt l3 search "literal text"` for evidence outside the
+Every fresh or resumed L3 turn also names `alt l3 search "key words"` for evidence outside the
 handoff. Owners use the same lookup through their CLI, bound to their launch project alongside repository,
 PR and tool-summary reads. Both roles share project inspection admission; mutation permissions stay separate.
 The coordinator lookup uses its project-bound transport on either engine. It scans human project chat and active/archived task conversations, reports and digests;
@@ -1672,7 +1673,9 @@ command separate from task conversations. No inference prompt or credential extr
 Codex retains its native `account/rateLimits/read` reader.
 
 Missing login, unsupported CLI/schema, missing account windows, malformed responses, command failure
-or timeout yield unknown quota and replace the prior success. A partial response keeps only its
+or timeout yield unknown quota and replace the prior success. A read refused for sign-in also records
+the engine's sign-in rejection, and a successful read withdraws it, so routing follows a lapsed or
+restored sign-in without a failed turn. A partial response keeps only its
 reported windows. Unknown weekly evidence follows configured tie order, so collection failure can
 still favor one provider; it never claims successful balancing. The native usage-report shape remains
 experimental. Deterministic fixtures verify acquisition, storage, expiry and routing; live CLI/login

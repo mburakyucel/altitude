@@ -151,12 +151,21 @@ the folder only to a place as private as `~/.config`.
 
 ## Engine sign-in recovery
 
-When an engine's login expires, its turns hold with "provider rejected authentication or account
-access; sign in, then Retry or Resume". Sign in with the engine's own CLI, then press **Retry** on the
-coordinator's failed turn (or send it a message) or **Resume** on a held task. That attempt launches;
-once it succeeds, held tasks and report turns on the engine continue on their next tick. While the
-login is still invalid, the attempt records the rejection again and automatic retries keep waiting
-for up to thirty minutes. A usage limit is not cleared this way; it waits for its reset.
+When an engine's login expires or is revoked, Altitude recognizes it from the CLI's own sign-in
+failure, whatever its wording, and the coordinator answers on the other configured engine. Project
+chat says so once per lapse, for example "Claude's sign-in has lapsed, so Codex is answering for now.
+To sign in, run `claude auth login` on the computer running Altitude." With no other engine, or with
+the project set to one engine, the line says your message waits, and it sends once the engine is
+signed in again. The five-minute usage check uses the same sign-in, so a lapse it sees moves the next
+message before any turn fails, and its next successful reading ends the lapse.
+
+Task owners hold with "provider rejected authentication or account access; sign in, then Retry or
+Resume". Sign in with the engine's own CLI (`claude auth login` or `codex login`), then press
+**Resume** on a held task, or **Retry** on a coordinator turn that stopped. That attempt launches;
+once an engine call succeeds, held tasks and report turns on the engine continue on their next tick.
+While the login is still invalid, the attempt records the rejection again and automatic retries keep
+waiting for up to thirty minutes. The CLI cannot refresh a revoked sign-in itself. A usage limit is
+not cleared this way; it waits for its reset.
 
 ## Decision alerts on a device
 

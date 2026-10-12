@@ -185,9 +185,24 @@ def _rejection_path(option: dict, scope: str, model: str | None = None):
 
 def note_rejection(option: dict, rejection: dict) -> None:
     """A confirmed provider denial is a temporary observation, never a subscription inference. A sign-in
-    rejection keeps its own record, so withdrawing it never touches a usage limit on the same engine."""
+    rejection keeps its own record, so withdrawing it never touches a usage limit on the same engine. That record
+    is the engine's sign-in lapse and remembers who was told: it lasts until an engine call succeeds again, and
+    evidence older than the observation window starts a new lapse."""
     scope = "sign-in" if rejection.get("sign_in") else rejection["scope"]
-    S.write_json(_rejection_path(option, scope), {**rejection, "at": S.now()})
+    path = _rejection_path(option, scope)
+    previous = S.read_json(path, {}) or {} if scope == "sign-in" else {}
+    told = previous.get("told", []) if _current(previous) else []
+    S.write_json(path, {**rejection, "at": S.now(), **({"told": told} if told else {})})
+
+
+def _current(data: dict) -> bool:
+    now = datetime.now(timezone.utc)
+    return bool(data) and (now < datetime.fromisoformat(data["until"]) if data.get("until") else
+                           (now - datetime.fromisoformat(data["at"])).total_seconds() < FRESH_SECONDS)
+
+
+def _active(data: dict) -> bool:
+    return _current(data) and not data.get("withdrawn")
 
 
 def _rejected(option: dict, *, retry_sign_in: bool = False) -> str | None:
@@ -198,24 +213,41 @@ def _rejected(option: dict, *, retry_sign_in: bool = False) -> str | None:
              *([_rejection_path(option, "model", family)] if family and family != option.get("model") else [])]
     for path in paths:
         data = S.read_json(path, {})
-        if data:
-            now = datetime.now(timezone.utc)
-            active = (now < datetime.fromisoformat(data["until"]) if data.get("until") else
-                      (now - datetime.fromisoformat(data["at"])).total_seconds() < FRESH_SECONDS)
-            if active:
-                return data["why"] + ("" if data.get("until") else "; availability observation expires after 30 minutes")
+        if _active(data):
+            return data["why"] + ("" if data.get("until") else "; availability observation expires after 30 minutes")
     return None
+
+
+def signed_out(engine: str) -> bool:
+    """Whether the engine's sign-in rejection currently excludes it."""
+    return _active(S.read_json(_rejection_path({"engine": engine}, "sign-in"), {}))
 
 
 def retry_sign_in(engine: str) -> bool:
     """Withdraw the engine's sign-in rejection for an explicit operator Retry or Resume about to launch on it.
 
     Signing in cures it at once, unlike a usage window. Automatic retries still honor it; a credential that
-    is still invalid records it again on the attempt. True when a rejection was withdrawn."""
-    try:
-        _rejection_path({"engine": engine}, "sign-in").unlink()
-    except FileNotFoundError:
+    is still invalid records it again on the attempt, within the same lapse. True when a rejection was withdrawn."""
+    path = _rejection_path({"engine": engine}, "sign-in")
+    data = S.read_json(path, {})
+    if not data or data.get("withdrawn"):
         return False
+    S.write_json(path, {**data, "withdrawn": True})
+    return True
+
+
+def signed_in(engine: str) -> None:
+    """A successful call on the engine ends its sign-in lapse."""
+    _rejection_path({"engine": engine}, "sign-in").unlink(missing_ok=True)
+
+
+def tell_sign_in(engine: str, project: str) -> bool:
+    """True once per lapse and project: the first time this project's conversation learns of the lapse."""
+    path = _rejection_path({"engine": engine}, "sign-in")
+    data = S.read_json(path, {})
+    if not data or project in data.get("told", []):
+        return False
+    S.write_json(path, {**data, "told": [*data.get("told", []), project]})
     return True
 
 
@@ -331,7 +363,8 @@ def pick_engine(role: str, *, forced: str | None = None, model: str | None = Non
     takes the choice's model and effort when they are on it. An explicit launch ``effort`` wins over the choice's,
     which wins over each option's per-role, per-engine project default; an engine that rejects the chosen effort
     uses its default. ``steer=False`` ignores the choice (reviewer selection, explicit engine handoff).
-    ``retry_sign_in`` looks past sign-in rejections for an operator's explicit retry.
+    ``retry_sign_in`` looks past sign-in rejections for an operator's explicit retry; ``signed_out`` lists the
+    engines a sign-in rejection excluded.
     Unknown access/quota is eligible. Tiers outrank headroom; a tied tier compares only
     known named weekly windows. Continuity retains the current option inside that tier.
     """
@@ -348,7 +381,7 @@ def pick_engine(role: str, *, forced: str | None = None, model: str | None = Non
     prefer = project.get(f"{role}_preference")
     readings = _readings()
     usage = _usage(readings)
-    skipped, considered = [], set()
+    skipped, considered, lapsed = [], set(), []
     for priority, tier in enumerate(tiers, 1):
         available = []
         for configured in tier:
@@ -374,6 +407,8 @@ def pick_engine(role: str, *, forced: str | None = None, model: str | None = Non
                            or _model_exhausted(option, readings))
             if unavailable:
                 skipped.append(f"{option_label(option)} unavailable: {unavailable}")
+                if not retry_sign_in and engine not in lapsed and signed_out(engine):
+                    lapsed.append(engine)
             else:
                 available.append(option)
         if not available:
@@ -398,8 +433,8 @@ def pick_engine(role: str, *, forced: str | None = None, model: str | None = Non
                   "forced by task or project policy" if pin else
                   f"Auto tier {priority - chosen_tier}"
                   + (f" (prefers {config.ENGINE_LABELS[prefer]})" if prefer in config.ENGINES else ""))
-        return {**chosen, "pinned": bool(pin), "why": f"{prefix}: {option_label(chosen)}; {why}; "
+        return {**chosen, "pinned": bool(pin), "signed_out": lapsed, "why": f"{prefix}: {option_label(chosen)}; {why}; "
                 + "installation found; model access unverified" + ("; skipped " + "; ".join(skipped) if skipped else "")}
     prefix = f"forced {option_label(pin)} is unavailable" if pin else "no configured option available"
-    return {"engine": None, "model": None, "pinned": bool(pin), "why": prefix + ": " + "; ".join(skipped)
+    return {"engine": None, "model": None, "pinned": bool(pin), "signed_out": lapsed, "why": prefix + ": " + "; ".join(skipped)
             + ". Install/authenticate an engine, wait for the reported quota reset, or change alt project set --routing with --reason."}
