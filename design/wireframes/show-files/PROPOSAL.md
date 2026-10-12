@@ -40,17 +40,27 @@ EOF
 - One document at most: nonempty UTF-8 `.md` or `.txt`, up to 1 MiB.
 - Up to 24 images, 8 MiB each, 32 MiB together, counting the document's own images.
   Image bytes must match their type (PNG, JPEG, GIF, WebP); SVG, HTML, scripts and styles are refused.
-- Symlinks, `..`, absolute paths, special files and files outside the worktree are refused, as today.
-- A markdown document's images are found from `![alt](path)`, reference definitions and `<img src>`.
-  A relative path resolves from the document's folder; a path starting with `/` from the worktree root.
-  A local image that is missing, outside the worktree or of an unsupported type does not stop
-  publication; the command lists it under `not_shown` and the viewer marks its place.
-  Remote images (`https://…`) are never fetched.
+- A `--show` path is written plainly: `..`, `.`, empty parts, absolute paths, symlinks anywhere on the
+  path, special files and files outside the worktree are refused, as today. Every read walks from the
+  worktree root by open directory handles without following links, as the design preview does.
+- A markdown document's images are found from `![alt](path)`, reference definitions
+  (`[id]: path`) and HTML `<img src="path">`. Each reference is percent-decoded, its `?query` and
+  `#fragment` dropped, then resolved: a relative path from the document's folder (`../images/a.png`
+  from `docs/guide.md` is `images/a.png`), a path starting with one `/` from the worktree root. The
+  normalized result must stay inside the worktree; it is then read by the same no-link walk.
+  References with a scheme (`https:`, `data:`, `file:` …), protocol-relative `//host/…` paths, and
+  references that escape the worktree are not copied. A local image that is missing, escapes, or has
+  an unsupported type does not stop publication; the command lists it under `not_shown` and the
+  viewer marks its place. Remote images are never fetched, at publication or in the viewer.
 - Only the current owner attaches files, only on replies to the operator (not `--to l3`).
 - The reply's output includes `view_url`. Inputs may be untracked; publication stages nothing.
 
-On a question, `--show` replaces `--design-file` with the same rules as above: one question, current
-owner only, a changed file set advances the question revision, and an identical one keeps it. A design
+On a question, `--show` replaces `--design-file` and keeps today's design-question rules: one
+question, current owner only; a changed file set advances the question revision and an identical one
+keeps it; answers bind to the revision whose files the operator saw; a first acceptance refuses missing
+or altered saved files; and the question rests on a proposal review (or a recorded review skip), as a
+design question does today. Files that only illustrate go on a reply, which carries none of these
+rules. A design
 spec embeds its screenshots inline (`![Phone, empty state](captures/phone-empty.png)`), so each
 screenshot appears beside the text that describes it.
 
@@ -100,8 +110,10 @@ Inside the document:
 - A web link opens in a new tab.
 - A relative link to another file reads as plain text with its target as the tooltip; only shown
   files are reachable.
-- An embedded image that was copied renders at its natural width, narrowed to the page; selecting it
-  opens it full size in a new tab.
+- An embedded image that was copied renders at its natural width, narrowed to the page, with an
+  underlined **Full size ↗** link under its right edge (a 44 px target on phone) that opens the saved
+  image in a new tab. The image itself is not a link. A copied image inside a link (`[![a](x.png)](url)`)
+  keeps the link on the image as GitHub does and has no Full size link.
 - A remote image is not loaded: its alt text (or its host when there is no alt text) is an underlined
   link that opens, in a new tab, the link around the image when it has one (a badge's page), else the
   image itself.
@@ -138,6 +150,24 @@ The viewer replaces today's **Design unavailable** with **Preview unavailable**,
 with **Loading image…** and **Screenshot unavailable** / **Retry screenshot** with **Image
 unavailable.** / **Retry image**, since the same page now shows any image.
 
+## Rendering boundary
+
+The viewer renders a markdown document in the browser with one fixed pipeline: parse markdown with
+GitHub extensions (`remark-gfm`); convert to HTML nodes keeping embedded HTML; parse that HTML
+(`rehype-raw`); sanitize with GitHub's schema (`rehype-sanitize`), further narrowed: no `srcset`,
+`<picture>`, `<source>`, `<video>`, `<audio>`, `<iframe>`, `<form>`, `<input>` other than task-list
+checkboxes (disabled), `style` or event attributes; then render React elements. After sanitizing, each
+`<img>` source is resolved with the same rule as publication. A source naming a copied image becomes
+that image's saved address on this connection; a remote source becomes the alt-text link described
+above; anything else becomes the **Image not shown** box. No other image source survives, so the page
+can load only saved images. Link targets keep `http:`, `https:`, `mailto:` and `#fragment`; other
+schemes render as plain text. The renderer loads only with the viewer and the task-document reader.
+
+Acceptance includes an adversarial fixture document, rendered on phone and desktop in both the viewer
+and the task-document reader: `<script>`, `onerror`, `javascript:` links, `style`, `srcset`,
+`data:` and protocol-relative images, a remote badge, `<iframe>` and `<form>`. The walkthrough fails
+on any request leaving the Altitude origin or any executed script.
+
 ## Fixed copies and access
 
 - Publication copies the exact bytes. The document and images are saved by content hash in the task
@@ -156,7 +186,9 @@ unavailable.** / **Retry image**, since the same page now shows any image.
 Design previews published before this change keep their question text, answers and approvals, but
 their **View** link opens **Preview unavailable**: they hold the text inside the question record, a
 shape the new viewer does not read. Keeping them readable would need a permanent second reader for
-the old shape, which the project's deletion-first rule excludes. Those questions are all decided.
+the old shape, which the project's deletion-first rule excludes. On this machine they are about a
+hundred question revisions, all decided except one open question in a running task; an owner whose
+open question carries an old preview republishes it with `--show`, which advances its revision.
 
 ## What the operator decides
 

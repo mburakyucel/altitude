@@ -6,6 +6,7 @@
     {"title": "Phone viewer: README.md rendered like GitHub", "path": "design/wireframes/show-files/captures/PhoneViewer.png"},
     {"title": "Phone viewer states: loading, Raw, images only, image loading and failed, earlier version, unavailable, denied", "path": "design/wireframes/show-files/captures/PhoneStates.png"},
     {"title": "Desktop viewer: docs/CLI.md with an extra image", "path": "design/wireframes/show-files/captures/DesktopViewer.png"},
+    {"title": "Desktop viewer states: Raw, earlier version, image failed, unavailable, denied", "path": "design/wireframes/show-files/captures/DesktopStates.png"},
     {"title": "Desktop conversation: reply link and open question card link", "path": "design/wireframes/show-files/captures/DesktopConversation.png"}
   ]
 }

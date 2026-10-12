@@ -91,7 +91,11 @@
 .md blockquote p{margin:0}
 .md hr{border:0;border-top:1px solid var(--border);margin:24px 0}
 .md .center{text-align:center}
-.md .img{display:inline-block;max-width:100%;vertical-align:middle;cursor:zoom-in}
+/* a copied inline image: natural width narrowed to the page, Full size under its right edge */
+.md .inimg{display:inline-flex;flex-direction:column;align-items:flex-end;max-width:100%;vertical-align:middle}
+.md .inimg .img{display:block;width:100%}
+.md .inimg .full{font-size:13px;line-height:1.4;margin-top:6px}
+.mv .md .inimg .full{display:inline-flex;align-items:center;min-height:44px;margin-top:0}
 /* wide tables scroll inside their own block; the scrollbar shown is the one visible while scrolling */
 .md .tw{position:relative}
 .md .tw .sc{overflow:hidden}
@@ -110,3 +114,6 @@
 .frame .lab{font-size:13px;font-weight:600;color:var(--text-primary);white-space:nowrap}
 .frame .lab span{color:var(--text-muted);font-weight:400;margin-left:6px}
 .frame .mv{height:844px;border:1px solid var(--border);border-radius:20px}
+.frames.d{grid-template-columns:repeat(2,960px)}
+.dframe{width:960px;height:600px;border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.dz{width:1280px;height:800px;zoom:.75}

@@ -121,13 +121,18 @@ def rel(path):
     return f'<span class="rel" title="{path}">{path}</span>'
 
 
+def inline_image(img, width):
+    """A copied image the document places: not a link itself; Full size under its right edge."""
+    return f'<span class="inimg" style="width:{width}px"><span class="img">{img}</span><a class="u full" href="#">Full size ↗</a></span>'
+
+
 def not_shown(path):
     return f'<div class="ns">{NOIMG}<span>Image not shown · {path}</span></div>'
 
 
 README = ''.join([
     '<h1>Lumen</h1>',
-    f'<p class="center"><a class="img" style="width:300px" href="#">{hero("hero-a")}</a></p>',
+    f'<p class="center">{inline_image(hero("hero-a"), 300)}</p>',
     '<p class="center"><a href="#">CI</a>&nbsp;&nbsp; <a href="#">License: MIT</a>&nbsp;&nbsp; <a href="#">Release 0.9</a></p>',
     '<p>Lumen turns noisy logs into a timeline you can read. It runs wherever Python 3.10 does and keeps no state of its own.</p>',
     '<p class="center"><a href="#install">Install</a> · <a href="#tour">Two-minute tour</a> · <a href="#config">Configuration</a></p>',
@@ -252,7 +257,7 @@ def esc(s):
 
 
 # 2. PhoneViewer: README.md, ready
-write("PhoneViewer", 390, 2060, phone_viewer(heading("README.md", "shown 2 hours ago") + doc(README)))
+write("PhoneViewer", 390, 2100, phone_viewer(heading("README.md", "shown 2 hours ago") + doc(README)))
 
 # 3. PhoneStates
 IMG3 = [("tour-tail.png", terminal(TAIL_LINES)), ("tour-grep.png", terminal(GREP_LINES, 230, "lumen grep timeout")),
@@ -286,6 +291,61 @@ desk_page = ('<a class="back" href="#">← Back</a>' + heading("CLI.md", "shown 
 write("DesktopViewer", 1280, 1480,
       f'<div style="display:grid;grid-template-columns:260px minmax(0,1fr);height:100%">{RAIL}'
       f'<main class="pane" style="overflow:hidden"><div class="vw" style="max-width:984px">{desk_page}</div></main></div>')
+
+# 6. DesktopStates: five desktop viewer frames at three-quarter size
+
+CLI_RAW = '''# Lumen command line
+
+Every command reads files or standard input and writes to standard output. Nothing on disk changes.
+
+## Commands
+
+| Command | What it does | Common flags |
+| --- | --- | --- |
+| `lumen tail FILE` | Follow a file and print new lines as a timeline | `--since`, `--level` |
+| `lumen grep PATTERN FILE` | Show matching lines with the lines around them | `--context`, `--ignore-case` |
+| `lumen export FILE` | Write a timeline to one standalone HTML file | `--out`, `--title` |
+
+## Examples
+
+Errors from the last hour, then a timeline to attach to a bug report:
+
+```sh
+# errors from the last hour, three lines of context
+lumen grep --level error --since 1h --context 3 app.log
+
+# a timeline for a bug report
+lumen export app.log --since 30m --out timeline.html
+```
+
+## Exit codes
+
+- `0` the command finished
+- `1` nothing matched
+- `2` a file could not be read'''
+
+
+def desktop_viewer(page):
+    return (f'<div style="display:grid;grid-template-columns:260px minmax(0,1fr);height:100%">{RAIL}'
+            f'<main class="pane" style="overflow:hidden"><div class="vw" style="max-width:984px">{page}</div></main></div>')
+
+
+BACKLINK = '<a class="back" href="#">← Back</a>'
+CLI_HEAD = heading("CLI.md", "shown 5 minutes ago", path="docs/CLI.md")
+dframes = [
+    ("Raw on", "the toggle is pressed; the source starts at its top", BACKLINK + CLI_HEAD + doc(esc(CLI_RAW), pressed=True)),
+    ("Earlier version", "a later reply showed the same file", BACKLINK + heading("README.md", "shown yesterday", earlier=True) + doc(README)),
+    ("Image failed", "the image and Full size are hidden; Retry returns to loading",
+     BACKLINK + CLI_HEAD + figure("overview.png", state="failed") + doc(CLI)),
+    ("Unavailable", "missing or altered saved bytes, or a failed read", BACKLINK + unavailable(UNAV)),
+    ("Denied", "the device lost access", BACKLINK + unavailable(DENIED)),
+]
+dcells = ''.join(f'<div class="frame"><div class="lab">{i}. {lab}<span>{note}</span></div><div class="dframe"><div class="dz">{desktop_viewer(page)}</div></div></div>'
+                 for i, (lab, note, page) in enumerate(dframes, 1))
+write("DesktopStates", 2032, 2110,
+      '<div style="padding:32px 40px 22px"><h1 style="font-size:20px;font-weight:600;margin:0">Viewer states on desktop</h1>'
+      '<p class="muted" style="margin:4px 0 0">1280 × 800 frames shown at three-quarter size</p></div>'
+      f'<div class="frames d">{dcells}</div>')
 
 # 1 and 5. Conversations
 
@@ -331,6 +391,7 @@ desk_convo = (f'<div style="display:grid;grid-template-columns:260px minmax(0,1f
               '<div class="hint routine">Reaches the L2 at its next checkpoint.</div></div></main></div>')
 write("DesktopConversation", 1280, 800, desk_convo)
 
-BOARDS = {"PhoneConversation": (390, 844), "PhoneViewer": (390, 2060), "PhoneStates": (1736, 1960),
-          "DesktopViewer": (1280, 1480), "DesktopConversation": (1280, 800)}
+BOARDS = {"PhoneConversation": (390, 844), "PhoneViewer": (390, 2100), "PhoneStates": (1736, 1960),
+          "DesktopViewer": (1280, 1480), "DesktopConversation": (1280, 800),
+          "DesktopStates": (2032, 2110)}
 print("written:", ", ".join(f"{n}.html {w}x{h}" for n, (w, h) in BOARDS.items()))
