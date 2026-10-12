@@ -387,8 +387,10 @@ class TestCard(RunCase):
         improve.execute(self.project, receipt["run"])
         self.assertEqual(improve.view(self.project)[0]["line"], "Improvement suggestions · L3 is checking 1")
         request = "0f" * 16
-        self.assertEqual(improve.stop(self.project, request)["state"], "stopped")
-        self.assertEqual(improve.stop(self.project, request)["state"], "stopped")
+        with self.assertRaisesRegex(ValueError, "That review already ended"):
+            improve.stop(self.project, request, "0" * 12)  # a press from the line of an earlier review
+        self.assertEqual(improve.stop(self.project, request, receipt["run"])["state"], "stopped")
+        self.assertEqual(improve.stop(self.project, request, receipt["run"])["state"], "stopped")
         self.assertEqual((self.queued(), [r["text"] for r in self.chat()]),
                          ([], ["Improvement suggestions stopped by you."]))
         self.assertNotIn("line", improve.view(self.project)[0])
@@ -420,6 +422,40 @@ class TestCard(RunCase):
         self.assertEqual(improve.waiting(self.project, now=NOW), [])
         with self.assertRaisesRegex(ValueError, "already has its task"):
             improve.retry(self.project, ref, "e" * 32, now=NOW)
+
+    def test_two_try_again_presses_at_once_queue_one_turn(self):
+        run = self.posted()
+        ref = f"{run['id']}/1"
+        improve.decide(self.project, ref, "accept", "a" * 32, now=NOW)
+        [turn] = self.tasks()
+        l3.unqueue_locked(self.project, turn["id"])
+        pending, raced = l3.pending, []
+
+        def racing(project, row_id):
+            # The other press runs between this press's read and its lock.
+            if not raced:
+                raced.append(row_id)
+                improve.retry(project, ref, "b" * 32, now=NOW)
+            return pending(project, row_id)
+        self.patch(l3, "pending", racing)
+        with self.assertRaisesRegex(ValueError, "L3 is still opening its task"):
+            improve.retry(self.project, ref, "c" * 32, now=NOW)
+        self.assertEqual(len(self.tasks()), 1)
+
+    def test_a_request_id_makes_one_press_across_runs_and_actions(self):
+        self.posted()
+        record = improve._load(self.project)
+        first = record["runs"][-1]
+        second = {**first, "id": "1" * 12, "decisions": []}
+        record["runs"].append(second)
+        improve._save(self.project, record)
+        improve.decide(self.project, f"{first['id']}/1", "dismiss", "a" * 32, now=NOW)
+        for again in (lambda: improve.decide(self.project, f"{second['id']}/1", "dismiss", "a" * 32, now=NOW),
+                      lambda: improve.decide(self.project, f"{first['id']}/1", "undo", "a" * 32, now=NOW),
+                      lambda: improve.retry(self.project, f"{first['id']}/1", "a" * 32, now=NOW)):
+            with self.assertRaisesRegex(ValueError, "already saved for another change"):
+                again()
+        self.assertEqual(improve.view(self.project, now=NOW)[1]["suggestions"][0]["state"], "undecided")
 
     def test_the_task_turn_running_counts_as_opening(self):
         run = self.posted()
@@ -486,7 +522,7 @@ class TestCard(RunCase):
         self.assertIn("is accepted now", press(409, action="dismiss", ref=ref, request_id="7" * 32)["error"])
         self.assertIn("Unsupported", press(409, action="delete", ref=ref, request_id="7" * 32)["error"])
         self.assertIn("badly formed", press(409, action="dismiss", ref=ref, request_id="no")["error"])
-        self.assertIn("No improvement review is running", press(409, action="stop", request_id="8" * 32)["error"])
+        self.assertIn("That review already ended", press(409, action="stop", ref=run["id"], request_id="8" * 32)["error"])
         overview = server.overview()
         self.assertEqual([(row["project"], row["id"]) for row in overview["suggestions"]], [(self.project, run["id"])])
         self.assertEqual(server.project_view(self.project)["improvements"][0]["id"], run["id"])

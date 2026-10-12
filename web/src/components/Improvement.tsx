@@ -69,7 +69,7 @@ export function ImprovementRunning({ project, run }: { project: string; run: Imp
       <span className="sys-dot" aria-hidden />
       <span className="sys-text">{run.line}</span>
       {busy ? <span className="spinner" role="status" aria-label="Stopping" /> : (
-        <button type="button" className="link" onClick={() => void press("stop", "stop")}>Stop</button>
+        <button type="button" className="link" onClick={() => void press("stop", "stop", run.id)}>Stop</button>
       )}
       {failed ? <span className="text-danger" role="alert">Not stopped. Try again.</span> : null}
     </div>

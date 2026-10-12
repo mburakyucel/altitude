@@ -1806,12 +1806,14 @@ Seen in (each cited task once, opening in place, then the project chat), the cou
 across the run's tasks, and its state. Details name what was read and left out, L3's drops, the model,
 its usage of the call's token limit and when it ran. The presses go to `POST /api/improve` with a
 request id: Make a task (`accept`) and Dismiss on an undecided suggestion, Undo on a dismissed one
-until it lapses, Try again (`retry`) and Stop. The same request id returns its receipt; a press the
-record no longer allows is refused (409) and the card shows the fresh record. Make a task records the
+until it lapses, Try again (`retry`) and Stop, which names the run its line showed. A request id makes
+one press in the project: the same press again returns its receipt and any other is refused. A press
+the record no longer allows is refused (409) and the card shows the fresh record. Make a task records the
 acceptance with the press as its authority and queues one L3 turn (trigger `improvement-task`) naming
 only the suggestion; L3 checks its cited places and creates its task. While that turn, or the chat turn
 of a typed acceptance, is queued or running (`l3.pending`), the suggestion reads "L3 is opening a
-task"; when it ended without a task, Try again queues the same turn once more. The overview lists under
+task"; when it ended without a task, Try again queues the same turn once more, refused when another Try
+again queued it first. The overview lists under
 `suggestions` every posted run with a suggestion undecided or accepted without its task; Needs you
 shows them under Suggestions, newest first, after what needs the operator and not counted with it,
 each heading linking to its card in the project's chat.

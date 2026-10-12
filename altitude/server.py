@@ -2015,7 +2015,7 @@ class Handler(BaseHTTPRequestHandler):
             config.project(project)
             request_id = uuid.UUID(str(body.get("request_id"))).hex
             if action == "stop":
-                result = improve.stop(project, request_id)
+                result = improve.stop(project, request_id, ref)
             elif action == "retry":
                 result = improve.retry(project, ref, request_id)
             else:

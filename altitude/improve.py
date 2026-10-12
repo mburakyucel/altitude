@@ -637,23 +637,37 @@ def _drops(drops: dict) -> str:
     return "".join(f"\n\nDropped {n}: {_plain(why)}" for n, why in sorted(drops.items(), key=lambda d: int(d[0])))
 
 
-def stop(project: str, source: str) -> dict:
+def stop(project: str, source: str, run_id: str | None = None) -> dict:
     """Stop the running review on the operator's chat message or Stop press `source`: its answer is discarded,
-    nothing is posted and the run's line says it stopped. The same source again returns the same receipt."""
+    nothing is posted and the run's line says it stopped. The same source again returns the same receipt. A press
+    names the run its line showed, so it never stops a review that started after it."""
     with S.project_lock(project):
         record = _load(project)
+        if run_id is not None and _pressed(record, source, "stop", run_id):
+            return _receipt(_find(record, run_id))
         same = next((r for r in record["runs"] if r.get("stop") == source), None)
         if same:
             return _receipt(same)
         run = next((r for r in record["runs"] if r["state"] in ACTIVE), None)
-        if not run:
-            raise ValueError("No improvement review is running.")
+        if not run or run_id is not None and run["id"] != run_id:
+            raise ValueError("No improvement review is running." if run_id is None else "That review already ended.")
         if run["state"] == "checking":
             l3.unqueue_locked(project, run["check"])
         _end(project, run, "stopped", "stopped by you")
         run["stop"] = source
+        if run_id is not None:
+            record["presses"][source] = ["stop", run_id]
         _save(project, record)
     return _receipt(run)
+
+
+def _pressed(record: dict, request_id: str, action: str, ref: str) -> bool:
+    """Whether web press `request_id` was already saved: the receipts are project-wide, so an id made one press on
+    one run or suggestion, and reusing it for any other is refused."""
+    done = record.setdefault("presses", {}).get(request_id)
+    if done and done != [action, ref]:
+        raise ValueError("this press was already saved for another change")
+    return bool(done)
 
 
 def post(project: str, run_id: str, keep: list[int], drop: list[tuple[int, str]], *,
@@ -798,19 +812,17 @@ def decide(project: str, ref: str, action: str, request_id: str, *, now: datetim
         run = _find(record, run_id)
         if not run.get("post") or n not in run["post"]["shown"]:
             raise ValueError(f"suggestion {n} of that review was not shown to the operator")
-        same = next((d for d in run["decisions"] if d.get("request") == request_id), None)
-        if same:
-            if (same["n"], same["to"]) != (n, to):
-                raise ValueError("this press was already saved for another change")
+        if _pressed(record, request_id, action, ref):
             return _decision(project, run, n, now)
         current = suggestion_state(run, n, now)
         if current != start or action == "undo" and _lapsed(run, now):
             raise ValueError(f"This suggestion is {current} now.")
         decision = {"n": n, "from": current, "to": to, "at": now.replace(microsecond=0).isoformat(),
-                    "by": "operator", "request": request_id}
+                    "by": "operator"}
         if to == "accepted":
             decision["turn"] = l3.queue_locked(project, task_turn(run, n), trigger="improvement-task")["id"]
         run["decisions"].append(decision)
+        record["presses"][request_id] = [action, ref]
         _save(project, record)
     return _decision(project, run, n, now)
 
@@ -821,22 +833,24 @@ def retry(project: str, ref: str, request_id: str, *, now: datetime | None = Non
     now = now or datetime.now(timezone.utc)
     run_id, n = _ref(ref)
     accepted = next((d for d in _find(_load(project), run_id)["decisions"] if d["n"] == n and d["to"] == "accepted"), None)
-    # Read before the lock: a turn leaves the queue under L3's own guards, which are never taken inside it.
-    opening = bool(accepted and accepted.get("turn") and l3.pending(project, accepted["turn"]))
+    # Read before the lock: a turn leaves the queue under L3's own guards, which are never taken inside it. Under the
+    # lock the turn must still be the one read, or another Try again has queued a newer one.
+    seen = accepted and accepted.get("turn")
+    opening = bool(seen and l3.pending(project, seen))
     with S.project_lock(project):
         record = _load(project)
         run = _find(record, run_id)
-        accepted = next((d for d in run["decisions"] if d["n"] == n and d["to"] == "accepted"), None)
-        if accepted and request_id in accepted.get("retries", []):
+        if _pressed(record, request_id, "retry", ref):
             return _decision(project, run, n, now)
+        accepted = next((d for d in run["decisions"] if d["n"] == n and d["to"] == "accepted"), None)
         if not accepted:
             raise ValueError(f"suggestion {ref} is not accepted")
         if suggestion_task(project, ref):
             raise ValueError(f"suggestion {ref} already has its task")
-        if opening:
+        if opening or accepted.get("turn") != seen:
             raise ValueError("L3 is still opening its task.")
         accepted["turn"] = l3.queue_locked(project, task_turn(run, n), trigger="improvement-task")["id"]
-        accepted.setdefault("retries", []).append(request_id)
+        record["presses"][request_id] = ["retry", ref]
         _save(project, record)
     return _decision(project, run, n, now)
 

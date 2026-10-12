@@ -189,7 +189,7 @@ describe.each([390, 1440])("improvement suggestions at %ipx", (width) => {
     fail = false;
     await user.click(within(line).getByRole("button", { name: "Stop" }));
     await waitFor(() => expect(screen.queryByText("Improvement suggestions · reading 14 tasks from Oct 5–12")).toBeNull());
-    expect(presses(fetchMock).map((press) => press.action)).toEqual(["stop", "stop"]);
+    expect(presses(fetchMock).map((press) => [press.action, press.ref])).toEqual([["stop", "feedfacecafe"], ["stop", "feedfacecafe"]]);
   });
 
   it("endings are system lines: nothing to suggest and failed open their details, stopped has none", async () => {
