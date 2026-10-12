@@ -666,6 +666,10 @@ background-task payload. It acts only while the task is running; explicit blocks
 retain their exit paths. It creates no job registry, automatic retry or alternative completion path.
 Report freshness and delivery verification remain authoritative; native coverage limits are explicit
 in [polling and cleanup](SESSION_LIFECYCLE.md#polling-and-cleanup).
+The engine adapter accepts worker activity and completion only from the launched owner session.
+Helper notifications on a shared transport cannot finish the owner, change its steering target or
+become its output or usage. This uses native session identity, without supervising helper lifecycles;
+genuine owner exits retain the shared recovery and descendant-cleanup contract.
 
 ### Adversarial review
 
