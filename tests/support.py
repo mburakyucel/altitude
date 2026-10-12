@@ -546,14 +546,17 @@ def local_terminal_stop(unit: str) -> None:
     term = next((t for t in list(terminal._terminals.values()) if t.unit == unit), None)
     if term is None:
         return
+    # Each look reads every process on the machine, so a session already gone is looked at once.
+    members = terminal_session(term.proc.pid)
     for sig in (signal.SIGHUP, signal.SIGKILL):
-        for pid in terminal_session(term.proc.pid):
+        for pid in members:
             try:
                 os.kill(pid, sig)
             except OSError:
                 continue
         deadline = time.monotonic() + terminal.CLOSE_GRACE_SECONDS
-        while terminal_session(term.proc.pid) and time.monotonic() < deadline:
+        while members and time.monotonic() < deadline:
             time.sleep(.02)
-    if terminal_session(term.proc.pid):
+            members = terminal_session(term.proc.pid)
+    if members:
         raise RuntimeError("Fixture terminal session is still running after SIGKILL")
