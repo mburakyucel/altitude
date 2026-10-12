@@ -19,7 +19,7 @@ import type { ImageSubmission } from "../components/ImageDraft";
 import { MessageImages, PendingImages } from "../components/MessageImages";
 import { SystemGroup, SystemLine, notable, subjectOf } from "../components/SystemLine";
 import { TaskCards } from "../components/TaskCard";
-import { ImprovementCard, ImprovementEnding, ImprovementRunning } from "../components/Improvement";
+import { ImprovementCard, ImprovementEnding, ImprovementRunning, ImprovementTermsLine } from "../components/Improvement";
 import { ChoiceError, CreateTask } from "../components/Choice";
 import type { ChoiceState } from "../components/Choice";
 import type { SystemTurn } from "../components/SystemLine";
@@ -403,8 +403,12 @@ export default function Conversation({
     divide(itemAt(item));
     if (item.kind === "improvement") {
       // The row names its review; the card or line reads the review's record, so it appears once that has loaded.
-      const run = runs.get(item.turn.assistant?.improvement ?? "");
-      if (run) rows.push(
+      const key = item.turn.assistant?.improvement ?? "";
+      const run = runs.get(key);
+      if (key.startsWith("terms-")) rows.push(
+        <div key={item.turn.id} className="turn" data-turn={item.turn.id}><ImprovementTermsLine project={name} at={item.turn.assistant?.at} /></div>,
+      );
+      else if (run) rows.push(
         <div key={item.turn.id} className="turn" data-turn={item.turn.id}>
           {run.state === "posted" ? <ImprovementCard project={name} run={run} tasks={tasks} /> : <ImprovementEnding run={run} />}
         </div>,
