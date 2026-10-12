@@ -125,16 +125,16 @@ test("a marked merge question that never names its held PR is the one Approve me
     hidden: [chat.getByText("Your turn · review before merge", { exact: true })],
   });
 
-  // Answering keeps one surface: the choice shows as sent and no review card appears while the L2 reads it.
+  // Answering keeps one surface: the choice goes to the L2 as the operator's reply and no review card appears.
   await question.getByRole("button", { name: /^Approve merge/ }).click();
   await walk.state("11-conversation-approve-selected", {
     visible: [question.getByRole("button", { name: "Send 1 answer", exact: true }), viewPr(question)], hidden: [],
   });
   await question.getByRole("button", { name: "Send 1 answer", exact: true }).click();
-  await expect(question.getByRole("button", { name: "Send 1 answer", exact: true })).toHaveCount(0);
   await walk.state("12-conversation-approval-sent", {
-    visible: [question.getByText("Approve merge", { exact: true })],
-    hidden: [chat.getByText("Your turn · review before merge", { exact: true }), viewPr(question), question.getByRole("button", { name: "Request changes", exact: true })],
+    visible: [chat.getByText("Sent · the L2 has your reply.", { exact: true })],
+    hidden: [chat.getByText("Your turn · review before merge", { exact: true }), viewPr(chat),
+      chat.getByRole("button", { name: /^(Approve merge|Request changes)$/ })],
   });
 });
 
