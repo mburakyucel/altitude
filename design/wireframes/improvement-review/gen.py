@@ -146,7 +146,7 @@ print("written")
 desk = ('<div style="display:grid;grid-template-columns:240px 1fr;height:900px;background:var(--surface)">'
         '<aside style="border-right:1px solid var(--hairline);padding:20px 16px;font-size:14px;display:flex;flex-direction:column;gap:6px;background:var(--page)">'
         '<b style="font-size:13px;color:var(--text-muted);font-weight:500;margin-bottom:6px">Projects</b>'
-        '<div style="padding:8px 10px;border-radius:8px;background:var(--bubble);font-weight:600">altitude</div><div style="padding:8px 10px">demo</div><div style="padding:8px 10px">voice-tutor</div></aside>'
+        '<div style="padding:8px 10px;border-radius:8px;background:var(--bubble);font-weight:600">altitude</div><div style="padding:8px 10px">demo</div><div style="padding:8px 10px">harbor</div></aside>'
         '<main style="display:grid;grid-template-rows:64px minmax(0,1fr) auto;min-height:0">'
         '<div class="ph"><div><h1>altitude</h1><div class="sub">L3 · Ready</div></div></div>'
         '<div style="overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;padding:0 28px">'
