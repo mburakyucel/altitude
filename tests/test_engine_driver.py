@@ -8,7 +8,7 @@ import time
 from unittest import mock
 
 from tests.support import REPO, AltitudeCase
-from altitude import config, engines, platform, state as S, tasks as T
+from altitude import config, dispatch, engines, platform, server, state as S, tasks as T
 
 FAKE = REPO / "tests" / "fake_engine.py"
 TEXT = "Use the staging copy."
@@ -21,13 +21,14 @@ class TestEngineDriver(AltitudeCase):
         for path in (self.log, self.tool):
             path.unlink(missing_ok=True)
 
-    def drive(self, engine, *, tool=True, ask=False, task=None):
+    def drive(self, engine, *, tool=True, ask=False, task=None, helpers=False, end="completed", output=None):
         command = [sys.executable, str(FAKE), *(["app-server"] if engine == "codex" else [])]
         spec = {"engine": engine, "command": command, "input": engines._engine_input(engine, "Start the work.", ()),
                 "cwd": str(self.repo), "sends": str(self.sends), "worker_id": "worker", "task": task}
         env = {**os.environ, "FAKE_ENGINE_LOG": str(self.log), **({"FAKE_ENGINE_TOOL": str(self.tool)} if tool else {}),
-               **({"FAKE_ENGINE_ASK": "1"} if ask else {})}
-        proc = subprocess.Popen(engines._driver_command(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+               **({"FAKE_ENGINE_ASK": "1"} if ask else {}),
+               **({"FAKE_ENGINE_HELPERS": str(helpers)} if helpers else {}), "FAKE_ENGINE_END": end}
+        proc = subprocess.Popen(engines._driver_command(), stdin=subprocess.PIPE, stdout=output or subprocess.PIPE,
                                 stderr=subprocess.PIPE, env=env)
         proc.stdin.write(engines._driver_input(spec).encode())
         proc.stdin.close()
@@ -54,7 +55,7 @@ class TestEngineDriver(AltitudeCase):
         for engine in ("claude", "codex"):
             with self.subTest(engine=engine):
                 self.setUp()
-                proc = self.drive(engine)
+                proc = self.drive(engine, helpers=True)
                 self.wait_for_tool(proc)
                 os.kill(int(self.tool.with_suffix(".pid").read_text()), 0)
                 self.assertFalse(self.tool.with_suffix(".completed").exists())
@@ -100,6 +101,90 @@ class TestEngineDriver(AltitudeCase):
                 replies = [event for event in events if event["type"] == "stream_event"
                            and event["event"]["delta"]["text"] == f"Next turn: {TEXT}"]
                 self.assertEqual(len(replies), 1 if engine == "claude" else 0)
+
+    def test_helper_results_do_not_end_or_steer_the_waiting_owner(self):
+        """#873: interleaved helper results must not close the server and discard the owner's wait."""
+        proc = self.drive("codex", helpers="completed")
+        self.wait_for_tool(proc)
+        engines.send_into_turn(self.sends, "m1", TEXT)
+        events = self.finish(proc)
+        self.assertEqual(engines.recover_send(self.sends, "m1"), "delivered")
+        steer = next(row for row in self.received() if row.get("method") == "turn/steer")
+        self.assertEqual((steer["params"]["threadId"], steer["params"]["expectedTurnId"]),
+                         ("fake-thread", "turn-1"))
+        self.assertEqual(sum(row["type"] == "turn.started" for row in events), 1)
+        self.assertEqual([row for row in events if row["type"] in ("error", "turn.failed")], [])
+        self.assertNotIn("Helper", json.dumps(events))
+        self.assertEqual(events[-1], {"type": "turn.completed", "usage": {"input_tokens": 5, "output_tokens": 2}})
+        self.assertIn(f"Read: {TEXT}", json.dumps(events))
+        self.assertEqual(self.tool.with_suffix(".completed").read_text(), "completed")
+
+    def test_helper_success_does_not_mask_owner_abort_failure_or_eof(self):
+        for end in ("failed", "interrupted", "eof"):
+            with self.subTest(end=end):
+                self.setUp()
+                proc = self.drive("codex", tool=False, helpers="completed", end=end)
+                stdout, stderr = proc.communicate(timeout=30)
+                self.assertEqual(proc.returncode, 1, stderr.decode())
+                events = [json.loads(line) for line in stdout.decode().splitlines()]
+                self.assertNotIn("turn.completed", [row["type"] for row in events])
+                failures = [row for row in events if row["type"] == "turn.failed"]
+                self.assertEqual(failures, [] if end == "eof" else [
+                    {"type": "turn.failed", "error": {"message": f"Codex turn {end}"}}])
+
+    def test_helper_notifications_leave_owner_identity_usage_and_output_intact(self):
+        driver = object.__new__(engines._CodexDriver)
+        driver.session_id, driver.turn = "owner", "owner-turn"
+        driver.usage = {"input_tokens": 7}
+        driver.emit = mock.Mock()
+        for thread in ("helper", None):
+            for method in ("turn/started", "turn/completed", "item/started", "item/completed",
+                           "thread/tokenUsage/updated", "error"):
+                driver.notify(method, {"threadId": thread, "turn": {"id": "other-turn", "status": "completed"},
+                                       "item": {"type": "agentMessage", "text": "Other output"},
+                                       "tokenUsage": {"total": {"inputTokens": 999}},
+                                       "error": {"message": "Other failure"}, "willRetry": False})
+        self.assertEqual((driver.session_id, driver.turn, driver.usage), ("owner", "owner-turn", {"input_tokens": 7}))
+        driver.emit.assert_not_called()
+
+    def test_poll_keeps_waiting_owner_then_recovers_its_actual_clean_exit(self):
+        self.private_ledgers()
+        task = T.new(self.project, "Waiting owner", "Consume the helper review.")
+        task.update(state="running", attempt=1, l2_engine="codex", agent_id="worker", session_id="fake-thread",
+                    hold_merge="Review before merge")
+        S.save_task(self.project, task)
+        root = dispatch.l2_job_root(self.project, task["slug"])
+        paths = engines._codex_paths(root, "worker")
+        S.write_json(paths["record"], {"id": "worker", "engine": "codex", "unit": "fixture.service",
+                                      "session_id": "fake-thread", "started_at": S.now()})
+        paths["stderr"].write_text("")
+        with paths["stdout"].open("wb") as output:
+            proc = self.drive("codex", helpers=True, output=output)
+            deadline = time.monotonic() + 20
+            while '"command_execution"' not in paths["stdout"].read_text():
+                self.assertIsNone(proc.poll())
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(.02)
+            with mock.patch.object(platform, "job_active", side_effect=lambda *_: proc.poll() is None), \
+                 mock.patch.object(platform, "job_stop") as stop, \
+                 mock.patch.object(server, "request_task_resume") as resume:
+                self.assertEqual(dispatch.poll(self.project), [])
+                saved = S.load_task(self.project, task["slug"])
+                self.assertEqual((saved["state"], saved["agent_id"], saved["session_id"], saved["hold_merge"]),
+                                 ("running", "worker", "fake-thread", "Review before merge"))
+                self.assertFalse(saved.get("nudged"))
+                self.assertEqual(T.pending(self.project, task["slug"]), [])
+                stop.assert_not_called()
+                engines.send_into_turn(self.sends, "m1", TEXT)
+                _, stderr = proc.communicate(timeout=30)
+                self.assertEqual(proc.returncode, 0, stderr.decode())
+                item, = dispatch.poll(self.project)
+                self.assertTrue(item["died"])
+                server.on_l2_finished(self.project, item)
+                saved = S.load_task(self.project, task["slug"])
+                self.assertTrue(saved["nudged"], "a genuine message-only owner exit still earns its one nudge")
+                self.assertEqual(saved["hold_merge"], "Review before merge")
+                resume.assert_called_once_with(self.project, task["slug"])
 
     def test_a_message_after_the_job_ended_is_withdrawn_for_the_next_turn(self):
         for engine in ("claude", "codex"):

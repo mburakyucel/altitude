@@ -155,8 +155,8 @@ class TestToolchain(AltitudeCase):
                 "    elif method == 'turn/start':\n"
                 "        assert 'continue' in params['input'][0]['text']\n"
                 "        out({'id': message['id'], 'result': {'turn': {'id': 'turn-1'}}})\n"
-                "        out({'method': 'turn/started', 'params': {'turn': {'id': 'turn-1'}}})\n"
-                "        out({'method': 'turn/completed', 'params': {'turn': {'id': 'turn-1', 'status': 'failed',\n"
+                "        out({'method': 'turn/started', 'params': {'threadId': 'session', 'turn': {'id': 'turn-1'}}})\n"
+                "        out({'method': 'turn/completed', 'params': {'threadId': 'session', 'turn': {'id': 'turn-1', 'status': 'failed',\n"
                 "            'error': {'message': 'fixture failure'}}}})\n"),
         }
         for engine in ("claude", "codex"):
