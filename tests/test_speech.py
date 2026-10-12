@@ -386,6 +386,8 @@ def _wheel(entries: dict[str, bytes], link: str | None = None) -> bytes:
 class TestSetup(SpeechCase):
     def setUp(self):
         super().setUp()
+        self.patch(speech, "WORKER", self.worker_file)
+        self.patch(platform, "available_memory", return_value=8_000_000_000)
         self.served: dict[str, bytes] = {}
         self.fetched: list[str] = []
         self.patch(speech.urllib.request, "urlopen", new=self.urlopen)
@@ -423,6 +425,109 @@ class TestSetup(SpeechCase):
         self.fetched.clear()
         speech.setup()
         self.assertEqual(self.fetched, [])
+
+    def replacement(self):
+        old = speech.setup()
+        key, _ = platform.speech_runtime()
+        self.patch(speech, "SUPPORTED", {key: (old.name.removeprefix("runtime-"),)})
+        self.install({"model/encoder.onnx": b"weights" * 100,
+                      "wheels/lib.whl": _wheel({"lib/__init__.py": b"VALUE = 2\n"})})
+        self.fetched.clear()
+        return old
+
+    def test_replacement_reuses_verified_model_and_preserves_selection(self):
+        old = self.replacement()
+        identity = speech.installation_id()
+        self.assertEqual(speech.runtime(), old)
+        new = speech.setup()
+        self.assertEqual(self.fetched, ["https://files.example/wheels/lib.whl"])
+        self.assertEqual(speech.installation_id(), identity)
+        self.assertFalse(old.exists())
+        self.assertEqual(speech.runtime(), new)
+
+    def test_corrupt_retained_model_is_downloaded_again(self):
+        old = self.replacement()
+        (old / "model/encoder.onnx").write_bytes(b"changed" * 100)
+        speech.setup()
+        self.assertIn("https://files.example/model/encoder.onnx", self.fetched)
+
+    def test_failed_verification_preserves_serving_runtime(self):
+        old = self.replacement()
+        self.worker_file.write_text('import sys; sys.exit(1)\n')
+        with self.assertRaisesRegex(speech.SpeechError, "could not run"):
+            speech.setup()
+        self.assertEqual(speech.runtime(), old)
+        self.assertEqual(speech.status()["state"], "ready")
+        self.assertEqual(speech.status()["update"]["state"], "failed")
+        self.assertEqual(speech._runtimes(), [old])
+
+    def test_start_during_verification_is_retryable_without_allocating_a_recording(self):
+        self.replacement()
+        host = self.host()
+        with speech._lease(True):
+            with self.assertRaises(speech.SpeechError) as caught:
+                host.open(None)
+            self.assertEqual(caught.exception.status, 425)
+            self.assertEqual(host.recordings, {})
+        ident = host.open(None)["id"]
+        self.assertEqual(self.text(host, ident, 0, 100, final=True)["text"], "100 samples.")
+
+    def test_active_recording_delays_promotion_and_final_replay_survives(self):
+        old = self.replacement()
+        host = self.host()
+        ident = host.open("phone")["id"]
+        self.text(host, ident, 0, 800, "phone")
+        host.start_setup()
+        self.wait(lambda: speech.status().get("update", {}).get("state") == "waiting")
+        self.assertTrue(old.exists())
+        self.assertEqual(speech.runtime(), old)
+        final = self.text(host, ident, 1, 200, "phone", final=True)
+        self.wait(lambda: host.setup_cancel is None)
+        self.assertFalse(old.exists())
+        self.assertEqual(self.text(host, ident, 1, 200, "phone", final=True), final)
+        next_id = host.open("phone")["id"]
+        self.assertEqual(self.text(host, next_id, 0, 100, "phone", final=True)["text"], "100 samples.")
+
+    def test_cancel_while_waiting_preserves_active_recording_and_requires_retry(self):
+        old = self.replacement()
+        self.patch(config, "voice_setting", return_value={"backend": "host"})
+        host = self.host()
+        ident = host.open(None)["id"]
+        host.update_installed()
+        self.wait(lambda: speech.status().get("update", {}).get("state") == "waiting")
+        host.cancel_setup()
+        self.wait(lambda: host.setup_cancel is None)
+        self.assertEqual(speech.status()["update"]["state"], "cancelled")
+        self.assertEqual(speech.runtime(), old)
+        self.assertEqual(self.text(host, ident, 0, 100, final=True)["text"], "100 samples.")
+        restarted = self.host()
+        restarted.update_installed()
+        self.assertIsNone(restarted.setup_cancel)
+        restarted.start_setup()
+        self.wait(lambda: restarted.setup_cancel is None)
+        self.assertNotEqual(speech.runtime(), old)
+
+    def test_automatic_update_never_installs_absent_voice_or_retries_interruption(self):
+        self.patch(config, "voice_setting", return_value={"backend": "host"})
+        host = self.host()
+        host.update_installed()
+        self.assertIsNone(host.setup_cancel)
+        self.assertEqual(self.fetched, [])
+        old = self.replacement()
+        speech._begin(threading.Event(), automatic=True)
+        self.assertEqual(speech.status()["update"]["state"], "failed")
+        host.update_installed()
+        self.assertIsNone(host.setup_cancel)
+        self.assertEqual(speech.runtime(), old)
+
+    def test_unapproved_runtime_is_not_served_but_its_verified_model_can_be_reused(self):
+        old = self.replacement()
+        self.patch(speech, "SUPPORTED", {})
+        self.assertIsNone(speech.runtime())
+        self.assertEqual(speech.status()["state"], "outdated")
+        speech.setup()
+        self.assertEqual(self.fetched, ["https://files.example/wheels/lib.whl"])
+        self.assertFalse(old.exists())
 
     def test_a_file_that_does_not_match_its_checksum_is_refused_and_remembered(self):
         self.install({"model/encoder.onnx": b"tampered" * 100, "wheels/lib.whl": self.served["https://files.example/wheels/lib.whl"]},
@@ -475,17 +580,31 @@ class TestSetup(SpeechCase):
             return io.BytesIO(self.served[url])
 
         self.patch(speech.urllib.request, "urlopen", new=slow)
-        worker = threading.Thread(target=speech.setup)
+        errors = []
+
+        def setup():
+            try:
+                speech.setup()
+            except speech.SpeechError as exc:
+                errors.append(str(exc))
+
+        worker = threading.Thread(target=setup)
         worker.start()
         started.wait(5)
         self.assertEqual(speech.status()["state"], "setting-up")
         with self.assertRaisesRegex(speech.SpeechError, "already being set up"):
             speech.setup()
-        with self.assertRaisesRegex(speech.SpeechError, "Cancel setup first"):
-            speech.remove_runtime()
+        remover = threading.Thread(target=speech.remove_runtime)
+        remover.start()
+        self.wait(lambda: speech._state().get("removed"))
         release.set()
         worker.join(5)
-        self.assertEqual(speech.status()["state"], "ready")
+        remover.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(remover.is_alive())
+        self.assertTrue(any("cancelled" in reason for reason in errors))
+        self.assertEqual(speech.status()["state"], "absent")
+        self.assertEqual(speech._runtimes(), [])
 
     def test_setup_replaces_an_outdated_runtime(self):
         (speech.ROOT / "runtime-0000").mkdir(parents=True)
@@ -620,8 +739,12 @@ class TestHostVoiceRoutes(SpeechCase):
         self.assertEqual((status, payload["error"]), (409, "Voice settings changed. Record again with the new setting."))
         S.write_json(config.ROOT / "settings.json", {"voice": "host"})
         self.patch(speech, "runtime", return_value=speech.ROOT / "runtime-updated")
-        self.assertNotEqual(server.voice_view()["selection"], selection, "a new runtime is a new selection")
+        self.assertEqual(server.voice_view()["selection"], selection, "supported replacement preserves replay")
         self.assertEqual(self.post(f"/api/voice/live/{ident}/audio?seq=1", b"", "application/octet-stream",
+                                   **chunk)[0], 200)
+        server.SPEECH.remove()
+        self.assertNotEqual(server.voice_view()["selection"], selection, "removal invalidates recordings")
+        self.assertEqual(self.post(f"/api/voice/live/{ident}/audio?seq=2", b"", "application/octet-stream",
                                    **chunk)[0], 409)
 
     def test_a_replay_stays_with_the_device_that_opened_the_first_recording(self):

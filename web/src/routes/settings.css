@@ -21,6 +21,8 @@
 .voice-host { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
 .voice-host .btn { align-self: flex-start; min-height: 44px; }
 .voice-host progress { width: 100%; height: 8px; accent-color: var(--accent); }
+.voice-host-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.voice-update-phase { display: flex; align-items: center; gap: 8px; }
 .choice-fields { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
 .choice-fields label { display: flex; flex-direction: column; gap: 4px; font-size: var(--text-meta); }
 .choice-fields input { min-width: 0; width: 100%; min-height: 44px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--surface); color: var(--text-primary); }

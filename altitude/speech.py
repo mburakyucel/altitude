@@ -2,7 +2,7 @@
 
 Setup downloads a pinned runtime once — the speech model and the wheels of the libraries that run it — checks
 each file against the SHA-256 written here, unpacks it into a staging folder and moves the finished runtime into
-place in one step. Only a runtime whose completion record matches this release's manifest is ever used.
+place in one step. A release explicitly names the completed runtimes it can safely keep serving during updates.
 
 A recording streams from the browser as 16 kHz mono 16-bit samples, one numbered request at a time. The daemon
 hands the samples to one speech worker process (`speech_worker.py`), shared by every recording, and answers each
@@ -144,14 +144,55 @@ def _complete(path: Path, digest: str) -> bool:
         return False
 
 
+def _state() -> dict:
+    return S.read_json(ROOT / "installation.json", {})
+
+
+def _write_state(value: dict) -> None:
+    S.write_json(ROOT / "installation.json", value)
+
+
+def _guard():
+    ROOT.mkdir(parents=True, exist_ok=True)
+    handle = open(ROOT / ".control", "a")
+    fcntl.flock(handle, fcntl.LOCK_EX)
+    return handle
+
+
+# Release-owned support, including the worker/model protocol. Never infer support from folder age.
+# The preceding Linux 1.22 runtimes use the same pinned model and current worker protocol.
+SUPPORTED = {
+    "linux-x86_64-cp312": ("910ae4820b60ac64", "a99b5413cbe7fbf9"),
+    "linux-x86_64-cp313": ("2b2c68c4b467af35", "ecfca085ff6ad628"),
+    "macos-arm64-cp312": ("5ba9fbd6e40b8a1a",),
+    "macos-arm64-cp313": ("52b728ea58d49b57",),
+}
+
+
+def _installed() -> list[Path]:
+    return [p for p in _runtimes() if _complete(p, p.name.removeprefix("runtime-"))]
+
+
 def runtime() -> Path | None:
-    """The finished runtime for this release, or None."""
+    """A completed runtime explicitly supported by this release; prefer its target."""
     files, _ = manifest()
-    if files is None:
+    if files is None or _state().get("removed"):
         return None
-    digest = _digest(files)
-    path = ROOT / f"runtime-{digest}"
-    return path if _complete(path, digest) else None
+    key, _ = platform.speech_runtime()
+    for digest in dict.fromkeys([_digest(files), *SUPPORTED.get(key, ())]):
+        path = ROOT / f"runtime-{digest}"
+        if _complete(path, digest):
+            return path
+    return None
+
+
+def installation_id() -> str:
+    """Stable across supported replacements; removal/reinstallation invalidates retained audio."""
+    state = _state()
+    if state.get("generation"):
+        return state["generation"]
+    installed = _installed()
+    return installed[0].name if installed else ""
 
 
 def _setting_up() -> bool:
@@ -162,32 +203,87 @@ def _setting_up() -> bool:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return True
-        fcntl.flock(handle, fcntl.LOCK_UN)
     return False
 
 
 def status() -> dict:
-    """Where host voice stands: unavailable (with why), absent, setting-up (with progress), failed, outdated or
-    ready. The download size is always known, so Settings can say what setup costs."""
+    """Serving availability and replacement progress are independent."""
     files, reason = manifest()
     if files is None:
         return {"state": "unavailable", "reason": reason}
     total = sum(size for _, _, size, _ in files)
+    state = _state()
+    update = state.get("update", {})
+    if update.get("target") != _digest(files) or state.get("removed"):
+        update = {}
+    running = _setting_up()
+    if update and update["state"] not in ("failed", "cancelled") and not running:
+        update = {**update, "state": "failed", "reason": "The update was interrupted. Try again."}
     view = {"download_bytes": total}
-    if _setting_up():
-        progress = S.read_json(ROOT / ".staging" / "progress.json", None) or {}
-        return {**view, "state": "setting-up", "done_bytes": min(int(progress.get("done", 0)), total)}
     if runtime() is not None:
-        return {**view, "state": "ready"}
-    failure = S.read_json(ROOT / "failure.json", None)
-    if failure:
-        return {**view, "state": "failed", "reason": failure.get("reason", "")}
-    return {**view, "state": "outdated" if _runtimes() else "absent"}
+        view["state"] = "ready"
+    elif not state.get("removed") and _installed():
+        view["state"] = "outdated"
+    elif running:
+        return {**view, "state": "setting-up", "done_bytes": update.get("done_bytes", 0), "update": update}
+    elif update.get("state") == "failed":
+        return {**view, "state": "failed", "reason": update.get("reason", "")}
+    else:
+        view["state"] = "absent"
+    if update and view["state"] != "absent":
+        view["update"] = {k: v for k, v in update.items() if k not in ("id", "target", "cancel")}
+    return view
+
+
+class _Attempt:
+    def __init__(self, ident: str, event: threading.Event, automatic: bool = False):
+        self.ident, self.event, self.automatic = ident, event, automatic
+
+    def is_set(self) -> bool:
+        state = _state()
+        update = state.get("update", {})
+        return (self.event.is_set() or state.get("removed", False) or update.get("id") != self.ident
+                or update.get("cancel", False)
+                or (self.automatic and config.voice_setting()["backend"] != "host"))
+
+    def check(self) -> None:
+        if self.is_set():
+            raise SpeechError("Setup was cancelled.", 409)
+
+    def progress(self, phase: str, **fields) -> None:
+        with _guard():
+            self.check()
+            state = _state()
+            state["update"].update(state=phase, **fields)
+            _write_state(state)
+
+
+def _begin(event: threading.Event, automatic: bool = False) -> _Attempt:
+    files, reason = manifest()
+    if files is None:
+        raise SpeechError(f"Voice isn't available on this computer: {reason}.", 409)
+    with _guard():
+        state = _state()
+        if state.get("removing"):
+            raise SpeechError("Voice is being removed.", 409)
+        target = _digest(files)
+        if automatic and (state.get("removed") or not _installed()
+                          or config.voice_setting()["backend"] != "host"
+                          or state.get("update", {}).get("target") == target
+                          or _complete(ROOT / f"runtime-{target}", target)):
+            raise SpeechError("No automatic voice update is needed.", 409)
+        ident = uuid.uuid4().hex
+        state.update(generation=installation_id() or uuid.uuid4().hex, removed=False,
+                     update={"id": ident, "target": target, "state": "preparing"})
+        _write_state(state)
+        return _Attempt(ident, event, automatic)
 
 
 def _download(url: str, target: Path, size: int, digest: str, advance: Callable[[int], None],
-              cancel: threading.Event) -> None:
+              cancel) -> None:
     hashed, seen = hashlib.sha256(), 0
+    if cancel.is_set():
+        raise SpeechError("Setup was cancelled.", 409)
     with urllib.request.urlopen(url, timeout=60) as response, open(target, "wb") as out:
         while block := response.read(BLOCK):
             if cancel.is_set():
@@ -203,7 +299,7 @@ def _download(url: str, target: Path, size: int, digest: str, advance: Callable[
 
 
 def _unpack(wheel: Path, site: Path) -> int:
-    """Unpack one verified wheel with the installer's path rules: no absolute, parent, backslash or link entries."""
+    """Unpack one verified wheel with the installer's path rules."""
     total = 0
     with zipfile.ZipFile(wheel) as bundle:
         for member in bundle.infolist():
@@ -218,46 +314,118 @@ def _unpack(wheel: Path, site: Path) -> int:
     return total
 
 
-def _lock():
-    """Take the setup lock, which `status()` reads as setting-up; a second setup is refused."""
+def _lock(wait: float = 0):
     ROOT.mkdir(parents=True, exist_ok=True)
     handle = open(ROOT / ".lock", "a")
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return handle
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                handle.close()
+                raise SpeechError("Voice is already being set up.", 409) from None
+            time.sleep(0.05)
+
+
+def _lease(exclusive: bool, cancel=None, timeout: float | None = None):
+    """Workers inherit shared use; verification, promotion and deletion need exclusive use."""
+    handle = open(ROOT / ".use", "a")
+    deadline = time.monotonic() + timeout if timeout is not None else None
     try:
-        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
+        while True:
+            if cancel is not None:
+                cancel.check()
+            try:
+                fcntl.flock(handle, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+                return handle
+            except BlockingIOError:
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise SpeechError("Voice is checking an update. Try again shortly.", 425)
+                time.sleep(0.05)
+    except BaseException:
         handle.close()
-        raise SpeechError("Voice is already being set up.", 409) from None
-    return handle
+        raise
 
 
-def setup(cancel: threading.Event | None = None, lock=None) -> Path:
-    """Download, verify and activate this release's runtime under `lock` (taken here when not given). One setup
-    runs at a time across the daemon and the CLI; a second one is refused. Cancel or any failure leaves no staging
-    behind and the previous state unchanged, and a failure (not a cancel) is remembered for Settings until the
-    next setup."""
-    cancel = cancel or threading.Event()
+def _environment() -> dict:
+    return {name: os.environ[name] for name in ("PATH", "HOME", "LANG", "TMPDIR") if name in os.environ}
+
+
+def _verify(path: Path, cancel: _Attempt) -> None:
+    """Load and warm the real model in isolation, bounded and cancellable, before promotion."""
+    memory = platform.available_memory()
+    if memory is not None and memory < MEMORY_NEEDED:
+        raise SpeechError("Voice needs 2.5 GB of free memory to check the update.")
+    with open(ROOT / "verification.log", "w") as errors:
+        worker = subprocess.Popen([sys.executable, "-I", str(WORKER), str(path)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=errors, text=True, env=_environment())
+        try:
+            deadline = time.monotonic() + LOAD_S
+            while True:
+                cancel.check()
+                try:
+                    # EOF after model warmup makes this the same executable path as a real recording.
+                    output, _ = worker.communicate(input="", timeout=min(0.2, max(0.01, deadline - time.monotonic())))
+                    break
+                except subprocess.TimeoutExpired:
+                    if time.monotonic() >= deadline:
+                        raise SpeechError("The speech model did not finish checking in time.") from None
+            if worker.returncode or json.loads(output.strip() or "{}") != {"ready": True}:
+                raise SpeechError("The speech model could not run. Try again.")
+        finally:
+            if worker.poll() is None:
+                worker.kill()
+            worker.wait()
+
+
+def setup(cancel: threading.Event | None = None, lock=None, attempt: _Attempt | None = None) -> Path:
+    """Stage alongside working voice, then verify/switch/clean only with exclusive worker use."""
     with lock or _lock():
-        files, reason = manifest()
-        if files is None:
-            raise SpeechError(f"Voice isn't available on this computer: {reason}.", 409)
-        staging = ROOT / ".staging"
+        attempt = attempt or _begin(cancel or threading.Event())
+        files, _ = manifest()
+        digest = _digest(files)
+        staging, target = ROOT / ".staging", ROOT / f"runtime-{digest}"
         shutil.rmtree(staging, ignore_errors=True)
         try:
-            digest = _digest(files)
-            target = ROOT / f"runtime-{digest}"
             if not _complete(target, digest):
-                _stage(files, staging, digest, cancel)
-                shutil.rmtree(target, ignore_errors=True)
-                os.replace(staging, target)
-            for old in _runtimes():
-                if old != target:
-                    shutil.rmtree(old, ignore_errors=True)
-            (ROOT / "failure.json").unlink(missing_ok=True)
+                # Copying model bytes preserves the runtime serving recordings. Budget also includes wheels.
+                needed = sum(size for _, _, size, _ in files) + sum(UNPACKED_LIMIT for name, *_ in files if name.startswith("wheels/"))
+                if shutil.disk_usage(ROOT).free < needed:
+                    raise SpeechError(f"Voice needs {needed / 1e9:.1f} GB of free disk space to prepare the update.")
+                _stage(files, staging, digest, attempt)
+                attempt.progress("waiting")
+                with _lease(True, attempt):
+                    attempt.progress("checking")
+                    _verify(staging, attempt)
+                    with _guard():
+                        attempt.check()
+                        S.write_json(staging / "complete.json", {"digest": digest, "at": S.now()})
+                        shutil.rmtree(target, ignore_errors=True)
+                        os.replace(staging, target)
+                        _finish_setup(target)
+            elif any(old != target for old in _runtimes()):
+                attempt.progress("waiting")
+                with _lease(True, attempt), _guard():
+                    attempt.check()
+                    _finish_setup(target)
+            else:
+                # A no-op setup need not drain working dictation merely to clean up old files.
+                with _guard():
+                    attempt.check()
+                    state = _state()
+                    state.pop("update", None)
+                    _write_state(state)
             return target
         except BaseException as exc:
-            if not cancel.is_set():
-                reason = str(exc) if isinstance(exc, SpeechError) else "Setup stopped: a download failed. Try again."
-                S.write_json(ROOT / "failure.json", {"reason": reason, "at": S.now()})
+            with _guard():
+                state = _state()
+                if state.get("update", {}).get("id") == attempt.ident:
+                    cancelled = attempt.is_set() or isinstance(exc, KeyboardInterrupt)
+                    reason = str(exc) if isinstance(exc, SpeechError) else "A download failed. Try again."
+                    state["update"].update(state="cancelled" if cancelled else "failed", reason="" if cancelled else reason)
+                    _write_state(state)
             if isinstance(exc, (OSError, ValueError, zipfile.BadZipFile)) and not isinstance(exc, SpeechError):
                 raise SpeechError("Setup stopped: a download failed. Try again.") from exc
             raise
@@ -265,38 +433,90 @@ def setup(cancel: threading.Event | None = None, lock=None) -> Path:
             shutil.rmtree(staging, ignore_errors=True)
 
 
-def _stage(files, staging: Path, digest: str, cancel: threading.Event) -> None:
+def _finish_setup(target: Path) -> None:
+    # Callers hold exclusive worker use and the control lock; no reader or remover can cross promotion.
+    for old in _runtimes():
+        if old != target:
+            shutil.rmtree(old)
+    state = _state()
+    state.pop("update", None)
+    _write_state(state)
+    (ROOT / "failure.json").unlink(missing_ok=True)
+
+
+def _stage(files, staging: Path, digest: str, cancel: _Attempt) -> None:
     (staging / "model").mkdir(parents=True)
     (staging / "wheels").mkdir()
-    total, done, reported = sum(size for _, _, size, _ in files), 0, 0
+    missing = []
+    for name, url, size, sha in files:
+        cancel.check()
+        copied = False
+        if name.startswith("model/"):
+            for old in _installed():
+                source = old / name
+                if not source.is_file() or source.is_symlink() or source.stat().st_size != size:
+                    continue
+                hashed = hashlib.sha256()
+                with source.open("rb") as inp, (staging / name).open("wb") as out:
+                    while block := inp.read(BLOCK):
+                        cancel.check()
+                        hashed.update(block)
+                        out.write(block)
+                if hashed.hexdigest() == sha:
+                    copied = True
+                    break
+        if not copied:
+            missing.append((name, url, size, sha))
+    total, done, reported = sum(size for _, _, size, _ in missing), 0, 0
 
     def advance(count: int) -> None:
         nonlocal done, reported
         done += count
         if done - reported >= 8 * BLOCK or done == total:
             reported = done
-            S.write_json(staging / "progress.json", {"done": done, "total": total})
+            cancel.progress("downloading", done_bytes=done, download_bytes=total)
 
-    advance(0)
-    for name, url, size, sha in files:
+    cancel.progress("downloading", done_bytes=0, download_bytes=total)
+    for name, url, size, sha in missing:
         _download(url, staging / name, size, sha, advance, cancel)
     for wheel in sorted((staging / "wheels").iterdir()):
+        cancel.check()
         _unpack(wheel, staging / "site")
     shutil.rmtree(staging / "wheels")
-    (staging / "progress.json").unlink()
-    S.write_json(staging / "complete.json", {"digest": digest, "at": S.now()})
+
+
+def cancel_setup() -> None:
+    """Cancellation is shared by browser, CLI and the automatic updater."""
+    with _guard():
+        state = _state()
+        if state.get("update"):
+            state["update"]["cancel"] = True
+            _write_state(state)
+    with _lock(wait=70):
+        pass
 
 
 def remove_runtime() -> None:
-    """Delete every runtime and the remembered failure; a setup in progress must be stopped first."""
+    """Invalidate recording identity first; cancel and drain all users before deleting files."""
     unavailable = platform.container_unavailable("Voice")
     if unavailable:
         raise SpeechError(unavailable, 403)
-    if _setting_up():
-        raise SpeechError("Voice is being set up. Cancel setup first.", 409)
-    for path in _runtimes():
-        shutil.rmtree(path, ignore_errors=True)
-    (ROOT / "failure.json").unlink(missing_ok=True)
+    with _guard():
+        state = _state()
+        state.update(removed=True, removing=True, generation=uuid.uuid4().hex)
+        _write_state(state)
+    try:
+        with _lock(wait=70), _lease(True, timeout=10), _guard():
+            for path in _runtimes():
+                shutil.rmtree(path)
+            shutil.rmtree(ROOT / ".staging", ignore_errors=True)
+            _write_state({"removed": True, "generation": state["generation"]})
+            (ROOT / "failure.json").unlink(missing_ok=True)
+    finally:
+        with _guard():
+            state = _state()
+            state.pop("removing", None)
+            _write_state(state)
 
 
 class _Recording:
@@ -362,13 +582,15 @@ class Host:
                 raise SpeechError("Voice stopped: this recording has ended.", 410)
             if recording.device != device:
                 raise SpeechError("Voice stopped: this recording belongs to another device.", 403)
+            if recording.error is not None:
+                raise recording.error
+            if runtime() is None:
+                raise SpeechError("Voice needs an update on this computer.", 409)
             recording.seen = time.monotonic()
             if seq == recording.seq:
                 if final and recording.final is None and recording.error is None:
                     return self._finish(ident, recording)
                 return recording.answer
-            if recording.error is not None:
-                raise recording.error
             if seq != recording.seq + 1 or recording.final is not None:
                 recording.error = SpeechError("Voice stopped: part of the recording was lost.", 409)
                 self._send({"op": "close", "id": ident})
@@ -414,17 +636,23 @@ class Host:
 
     # --- setup and removal --------------------------------------------------------------------------------
 
-    def start_setup(self) -> None:
+    def start_setup(self, automatic: bool = False) -> None:
         """Set up in the background; Settings follows `status()`."""
         with self.changed:
             if self.setup_cancel is not None:
                 raise SpeechError("Voice is already being set up.", 409)
             lock = _lock()  # held before answering, so Settings reads setting-up at once
-            self.setup_cancel = cancel = threading.Event()
+            cancel = threading.Event()
+            try:
+                attempt = _begin(cancel, automatic)
+            except BaseException:
+                lock.close()
+                raise
+            self.setup_cancel = cancel
 
         def run() -> None:
             try:
-                setup(cancel, lock)
+                setup(cancel, lock, attempt)
                 self.log("voice: host runtime set up")
             except SpeechError as exc:
                 self.log(f"voice: setup ended: {exc}")
@@ -436,15 +664,26 @@ class Host:
 
         threading.Thread(target=run, name="speech-setup", daemon=True).start()
 
+    def update_installed(self) -> None:
+        """One durable automatic attempt for this target, only at daemon startup."""
+        try:
+            self.start_setup(automatic=True)
+        except SpeechError as exc:
+            if exc.status != 409:
+                self.log(f"voice: automatic update unavailable: {exc}")
+        else:
+            self.log("voice: automatic runtime update started at release startup")
+
     def cancel_setup(self) -> None:
         with self.changed:
             if self.setup_cancel is not None:
                 self.setup_cancel.set()
+        cancel_setup()
 
     def remove(self) -> None:
         with self.changed:
             if self.setup_cancel is not None:
-                raise SpeechError("Voice is being set up. Cancel setup first.", 409)
+                self.setup_cancel.set()
             self._stop("Voice stopped: voice was removed from this computer.")
         remove_runtime()
 
@@ -461,10 +700,15 @@ class Host:
         if memory is not None and memory < MEMORY_NEEDED:
             raise SpeechError(f"Voice isn't available right now: this computer has {memory / 1e9:.1f} GB of free "
                               "memory and voice needs 2.5 GB.", 503)
-        environment = {name: os.environ[name] for name in ("PATH", "HOME", "LANG", "TMPDIR") if name in os.environ}
-        with open(ROOT / "worker.log", "w") as errors:
-            self.worker = subprocess.Popen(self.command(path), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                           stderr=errors, text=True, env=environment, close_fds=True)
+        # Answer before the browser's request deadline; it retains samples and retries a busy handoff.
+        with _lease(False, timeout=0.5) as lease, _guard():
+            path = runtime()
+            if path is None:
+                raise SpeechError("Voice needs an update on this computer.", 409)
+            with open(ROOT / "worker.log", "w") as errors:
+                self.worker = subprocess.Popen(self.command(path), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                               stderr=errors, text=True, env=_environment(), close_fds=True,
+                                               pass_fds=(lease.fileno(),))
         self.ready, self.started, self.path = False, time.monotonic(), path
         self.outbox = queue.SimpleQueue()
         threading.Thread(target=self._read, args=(self.worker,), name="speech-reader", daemon=True).start()
@@ -558,8 +802,11 @@ class Host:
                         if self.worker is not None and recording.final is None:
                             self._send({"op": "close", "id": ident})
                 if self.worker is not None:
-                    if self.path is not None and not (self.path / "complete.json").exists():
+                    if _state().get("removed") or (self.path is not None and not (self.path / "complete.json").exists()):
                         self._stop("Voice stopped: voice was removed from this computer.")
+                    elif (_state().get("update", {}).get("state") == "waiting"
+                          and not any(r.final is None and r.error is None for r in self.recordings.values())):
+                        self._stop("voice update ready to check")
                     elif not self.ready and now - self.started > LOAD_S:
                         self._stop("Voice stopped: the speech process did not start in time.")
                     elif self.ready and any(r.waiting_since and now - r.waiting_since > UPDATE_S

@@ -259,7 +259,7 @@ export class HostCapture {
     } catch (error) {
       if (this.state === "inactive") return;
       // During a replay, a busy host frees a slot once the lost recording idles out; keep asking until the deadline.
-      if (this.reopening && error instanceof ApiError && error.status === 429 || lost(error)) this.again(error);
+      if (error instanceof ApiError && (error.status === 425 || this.reopening && error.status === 429) || lost(error)) this.again(error);
       else this.fail(message(error), error);
     } finally {
       this.finish(request);

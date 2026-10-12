@@ -28,44 +28,70 @@ const queryKey = ["voice-settings"];
 
 function voiceSummary(settings: VoiceSettings) {
   if (settings.backend === "browser") return labels.browser;
-  return settings.host.state === "ready" ? labels.host : `${labels.host} · not set up`;
+  return settings.host.state === "ready" ? labels.host
+    : `${labels.host} · ${settings.host.state === "outdated" ? "update required" : "not set up"}`;
 }
 type SaveState = { status: "idle" } | { status: "saving" | "saved" } | { status: "failed"; value: VoiceUpdate; error: Error };
 
 const megabytes = (bytes: number) => `${Math.round(bytes / 1e6)} MB`;
 
-/** Host voice's one-time setup on this computer: its state, progress and the one action that fits. */
+/** Availability and replacement progress are independent: supported voice still serves during updates. */
 function HostVoicePanel({ host, onChange }: { host: HostVoice; onChange: (value: VoiceSettings) => void }) {
-  const [busy, setBusy] = useState(false);
+  const client = useQueryClient();
+  const [busy, setBusy] = useState<"setup" | "cancel" | "remove" | null>(null);
   const [error, setError] = useState("");
   const act = async (action: "setup" | "cancel" | "remove") => {
-    setBusy(true);
+    setBusy(action);
     setError("");
     try {
+      await client.cancelQueries({ queryKey });
       onChange(await changeHostVoice(action));
     } catch (failure) {
       setError((failure as Error).message);
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
   if (host.state === "unavailable") return <UnavailableAction label="Set up voice" reason={`Not available on this computer: ${host.reason}.`} />;
   const size = megabytes(host.download_bytes);
+  const update = host.update;
+  const installed = host.state === "ready" || host.state === "outdated";
+  const updating = update && update.state !== "failed" && update.state !== "cancelled";
+  const button = (action: "setup" | "cancel" | "remove", label: string, working: string, style = "") =>
+    <button type="button" className={`btn ${style}`} disabled={busy !== null} onClick={() => void act(action)}>
+      <BusyLabel busy={busy === action} label={label} working={working} />
+    </button>;
   return <div className="voice-host">
     {host.state === "setting-up" ? <>
       <progress max={host.download_bytes} value={host.done_bytes ?? 0} aria-label="Voice setup" />
       <p role="status" className="text-meta text-muted"><span className="sr-only">Setting up… </span>{megabytes(host.done_bytes ?? 0)} of {size}</p>
-      <button type="button" className="btn" disabled={busy} onClick={() => void act("cancel")}>Cancel setup</button>
-    </> : host.state === "ready" ? <>
-      <p className="text-meta text-muted">While you dictate, the speech process uses about 2 GB of memory.</p>
-      <button type="button" className="btn" disabled={busy} onClick={() => void act("remove")}>Remove voice ({size})</button>
+      {button("cancel", "Cancel setup", "Cancelling setup")}
+    </> : installed ? <>
+      {host.state === "outdated" ? <p className="text-meta text-muted">Voice needs an update.</p> : null}
+      <div role={update?.state === "failed" && host.state !== "ready" ? "alert" : "status"}
+        className={`text-meta ${update?.state === "failed" && host.state !== "ready" ? "text-danger" : "text-muted"}`}>
+        {update?.state === "downloading" ? <>
+          <progress max={update.download_bytes} value={update.done_bytes ?? 0} aria-label="Updating voice" />
+          <p>Updating voice · {megabytes(update.done_bytes ?? 0)} of {megabytes(update.download_bytes ?? 0)}</p>
+        </> : update?.state === "preparing" || update?.state === "checking" ?
+          <p className="voice-update-phase"><StatusMark label={update.state === "preparing" ? "Preparing update…" : "Checking update…"} announce={false} />
+            {update.state === "preparing" ? "Preparing update…" : "Checking update…"}</p>
+          : update?.state === "waiting" ? <p>The update will finish after dictation.</p>
+            : update?.state === "failed" ? <p>Update did not finish. {update.reason}</p>
+              : update?.state === "cancelled" ? <p>Update cancelled.</p>
+                : host.state === "ready" ? <p>While you dictate, the speech process uses about 2 GB of memory.</p> : null}
+      </div>
+      <div className="voice-host-actions">
+        {updating ? button("cancel", "Cancel update", "Cancelling update")
+          : update || host.state === "outdated" ? button("setup", update ? "Retry update" : "Update voice", "Starting update", update?.state === "cancelled" ? "" : "btn-primary") : null}
+        {button("remove", "Remove voice", "Removing voice", "btn-outline-danger")}
+      </div>
     </> : <>
       <p className={`text-meta ${host.state === "failed" ? "text-danger" : "text-muted"}`} role={host.state === "failed" ? "alert" : undefined}>
         {host.state === "failed" ? `Setup did not finish. ${host.reason ?? ""}`
-          : host.state === "outdated" ? `Voice needs an update: a one-time download of about ${size}.`
-            : `Needs a one-time download of about ${size}, checked against this release.`}
+          : `Needs a one-time download of about ${size}, checked against this release.`}
       </p>
-      <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void act("setup")}>{host.state === "failed" ? "Retry" : "Set up voice"}</button>
+      {button("setup", host.state === "failed" ? "Retry" : "Set up voice", "Starting setup", "btn-primary")}
     </>}
     {error ? <p role="alert" className="text-meta text-danger">{error}</p> : null}
     <p className="text-meta text-muted">Speech model: NVIDIA Parakeet TDT 0.6B v2, licensed CC-BY-4.0.</p>
@@ -75,12 +101,14 @@ function HostVoicePanel({ host, onChange }: { host: HostVoice; onChange: (value:
 function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void }) {
   const client = useQueryClient();
   const committed = useRef(saved);
+  const [host, setHost] = useState(saved.host);
   const [choice, setChoice] = useState(saved.backend);
   useEffect(() => {
     // A new reading of host voice's setup state never resets a choice being saved.
     if (saved === committed.current) return;
     const unchanged = saved.backend === committed.current.backend && saved.selection === committed.current.selection;
     committed.current = saved;
+    setHost(saved.host);
     if (!unchanged) setChoice(saved.backend);
   }, [saved]);
   const [save, setSave] = useState<SaveState>({ status: "idle" });
@@ -92,9 +120,11 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
       // Use the cache's structurally shared value so its later notification cannot reset a new edit.
       committed.current = client.setQueryData<VoiceSettings>(queryKey, value)!;
       updateVoiceSettings(value);
+      setHost(value.host);
       setChoice(value.backend);
       setSave({ status: "saved" });
     } catch (error) {
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) setChoice(committed.current.backend);
       setSave({ status: "failed", value: update, error: error as Error });
     }
   };
@@ -105,6 +135,7 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
   const stale = save.status === "failed" && save.error instanceof ApiError && save.error.status === 409;
   const hostChanged = (value: VoiceSettings) => {
     committed.current = client.setQueryData<VoiceSettings>(queryKey, value)!;
+    setHost(committed.current.host);
     updateVoiceSettings(value);
   };
   return <>
@@ -118,7 +149,7 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
             <span>{labels[backend]}</span>
           </label>
           <p className="text-muted text-meta">{explanations[backend]}</p>
-          {backend === "host" && (choice === "host" || saved.host.state !== "absent") ? <HostVoicePanel host={saved.host} onChange={hostChanged} /> : null}
+          {backend === "host" && (choice === "host" || host.state !== "absent") ? <HostVoicePanel host={host} onChange={hostChanged} /> : null}
         </div>)}
       </fieldset>
       {save.status === "saving" || save.status === "saved" ? <StatusMark busy={save.status === "saving"} label={save.status === "saving" ? "Saving…" : "Saved."} /> : null}
@@ -620,9 +651,13 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
   const location = useLocation();
   const navigate = useNavigate();
   const overview = useOverview();
-  // While host voice sets up, its progress is read every second.
+  // Follow first-time setup and replacement phases until they settle.
   const settings = useQuery({ queryKey, queryFn: readVoiceSettings, refetchOnWindowFocus: false,
-    refetchInterval: (query) => query.state.data?.host.state === "setting-up" ? 1000 : false });
+    refetchInterval: (query) => {
+      const host = query.state.data?.host;
+      if (!host || host.state === "unavailable") return false;
+      return host.state === "setting-up" || (host.update && !["failed", "cancelled"].includes(host.update.state)) ? 1000 : false;
+    } });
   const [reloadKey, setReloadKey] = useState(0);
   const state = location.state as { settingsFrom?: string } | null;
   const machine = useMachine();

@@ -312,7 +312,7 @@ def main(argv=None) -> None:
     one.add_argument("--unset-new-tasks", action="store_true", help="back to Auto: each project's routing and defaults")
     sub.add_parser("state")
     v = sub.add_parser("voice", help="host voice: the speech model on this computer")
-    v.add_argument("vcmd", choices=("status", "setup", "remove"))
+    v.add_argument("vcmd", choices=("status", "setup", "cancel", "remove"))
     t = sub.add_parser("task"); ts = t.add_subparsers(dest="tcmd", required=True)
     n = ts.add_parser("new"); n.add_argument("--title", required=True); n.add_argument("--hold-merge", metavar="WHY"); n.add_argument("--source", choices=("chat", "recovery"), default="chat"); n.add_argument("text", nargs="?", default="-"); n.add_argument("--file"); n.add_argument("--engine", choices=config.ENGINES, help="pin this L2; otherwise configured Auto tiers route it"); n.add_argument("--model", help="provider model override"); n.add_argument("--paths", help="comma-separated paths this task will touch"); n.add_argument("--improvement", metavar="RUN/N", help="the accepted improvement suggestion this task carries out")
     n.add_argument("--effort", choices=config.TASK_EFFORTS, help="override the project L2 effort defaults for this task")
@@ -1021,6 +1021,8 @@ def main(argv=None) -> None:
                 speech.setup()
             elif args.vcmd == "remove":
                 speech.remove_runtime()
+            elif args.vcmd == "cancel":
+                speech.cancel_setup()
         except speech.SpeechError as exc:
             sys.exit(f"alt voice {args.vcmd}: {exc}")
         out(speech.status())

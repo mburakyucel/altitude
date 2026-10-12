@@ -32,7 +32,9 @@ function hostFixture(host: Record<string, unknown>, backend = "browser") {
     if (path === "/api/voice/host") {
       const { action } = JSON.parse(String(init?.body));
       actions.push(action);
-      const next = action === "setup" ? { state: "setting-up", download_bytes: 698435338, done_bytes: 0 }
+      const installed = setting.host.state === "ready" || setting.host.state === "outdated";
+      const next = installed && action !== "remove" ? { ...setting.host, update: { state: action === "setup" ? "preparing" : "cancelled" } }
+        : action === "setup" ? { state: "setting-up", download_bytes: 698435338, done_bytes: 0 }
         : action === "cancel" ? { state: "absent", download_bytes: 698435338 } : { state: "absent", download_bytes: 698435338 };
       setting = { ...setting, host: next };
       return json(setting);
@@ -74,7 +76,7 @@ describe("Host voice settings", () => {
     const host = hostFixture({ state: "ready", download_bytes: 698435338 }, "host");
     const { user } = renderApp({ route: "/settings/voice" });
     expect(await screen.findByRole("button", { name: /Remove voice/ })).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Remove voice (698 MB)" }));
+    await user.click(screen.getByRole("button", { name: "Remove voice" }));
     expect(await screen.findByRole("button", { name: "Set up voice" })).toBeVisible();
     expect(host.actions).toEqual(["remove"]);
   });
@@ -84,6 +86,81 @@ describe("Host voice settings", () => {
     renderApp({ route: "/settings/voice" });
     expect(await screen.findByRole("alert")).toHaveTextContent("Setup did not finish. Setup stopped: encoder-model.int8.onnx did not match its checksum.");
     expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+  });
+
+  it("keeps supported voice distinct from update progress, cancellation, retry and removal", async () => {
+    const host = hostFixture({ state: "ready", download_bytes: 701000000,
+      update: { state: "downloading", done_bytes: 12000000, download_bytes: 40000000 } }, "host");
+    const { user } = renderApp({ route: "/settings/voice" });
+    const progress = await screen.findByRole("progressbar", { name: "Updating voice" });
+    expect(progress).toHaveAttribute("value", "12000000");
+    expect(progress).toHaveAttribute("max", "40000000");
+    expect(screen.getByText("Updating voice · 12 MB of 40 MB")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Remove voice" })).toHaveClass("btn-outline-danger");
+    await user.click(screen.getByRole("button", { name: "Cancel update" }));
+    expect(await screen.findByText("Update cancelled.")).toBeVisible();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(screen.getByRole("button", { name: "Retry update" })).not.toHaveClass("btn-primary");
+    expect(screen.queryByRole("alert")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Retry update" }));
+    expect(await screen.findByRole("img", { name: "Preparing update…" })).toBeVisible();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    host.advance({ state: "ready", download_bytes: 701000000, update: { state: "waiting" } });
+    expect(await screen.findByText("The update will finish after dictation.")).toBeVisible();
+    host.advance({ state: "ready", download_bytes: 701000000, update: { state: "checking" } });
+    expect(await screen.findByRole("img", { name: "Checking update…" }, { timeout: 2000 })).toBeVisible();
+    host.advance({ state: "ready", download_bytes: 701000000 });
+    expect(await screen.findByText("While you dictate, the speech process uses about 2 GB of memory.", {}, { timeout: 2000 })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Cancel update" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Remove voice" }));
+    expect(await screen.findByRole("button", { name: "Set up voice" })).toBeVisible();
+    expect(host.actions).toEqual(["cancel", "setup", "remove"]);
+  });
+
+  it.each(["ready", "outdated"])("update failure keeps the reason and only alerts when voice is unusable (%s)", async (state) => {
+    hostFixture({ state, download_bytes: 701000000, update: { state: "failed", reason: "Download failed." } }, "host");
+    renderApp({ route: "/settings/voice" });
+    const failure = await screen.findByText("Update did not finish. Download failed.");
+    expect(failure.closest('[role]')).toHaveAttribute("role", state === "ready" ? "status" : "alert");
+    expect(screen.getByRole("button", { name: "Retry update" })).toHaveClass("btn-primary");
+    expect(screen.getByRole("button", { name: "Remove voice" })).toBeEnabled();
+    expect(screen.queryByText("Voice needs an update.") !== null).toBe(state === "outdated");
+  });
+
+  it.each(["cancel", "setup", "remove"])("locks update actions through authoritative response when %s is pending", async (action) => {
+    hostFixture({ state: "ready", download_bytes: 701000000, update: { state: action === "setup" ? "cancelled" : "preparing" } }, "host");
+    const original = globalThis.fetch;
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/voice/host") await gate;
+      return original(input, init);
+    }));
+    const { user } = renderApp({ route: "/settings/voice" });
+    const label = action === "cancel" ? "Cancel update" : action === "setup" ? "Retry update" : "Remove voice";
+    await user.click(await screen.findByRole("button", { name: label }));
+    expect(screen.getByRole("button", { name: action === "cancel" ? "Cancelling update" : action === "setup" ? "Starting update" : "Removing voice" })).toBeDisabled();
+    for (const control of document.querySelectorAll('.voice-host button')) expect(control).toBeDisabled();
+    release();
+    expect(await screen.findByRole("button", { name: action === "cancel" ? "Retry update" : action === "setup" ? "Cancel update" : "Set up voice" })).toBeEnabled();
+  });
+
+  it("a denied update action keeps the authoritative voice state and allows another action", async () => {
+    hostFixture({ state: "ready", download_bytes: 701000000, update: { state: "preparing" } }, "host");
+    const original = globalThis.fetch;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input) === "/api/voice/host" ? json({ error: "Action denied." }, 403) : original(input, init)));
+    const { user } = renderApp({ route: "/settings/voice" });
+    await user.click(await screen.findByRole("button", { name: "Cancel update" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Action denied.");
+    expect(screen.getByRole("button", { name: "Cancel update" })).toBeEnabled();
+    expect(screen.getByRole("radio", { name: "This computer" })).toBeChecked();
+  });
+
+  it.each(["ready", "outdated"])("overview separates installed availability from update status (%s)", async (state) => {
+    hostFixture({ state, download_bytes: 701000000, update: { state: "downloading", done_bytes: 12, download_bytes: 40 } }, "host");
+    renderApp({ route: "/settings" });
+    expect(await screen.findByRole("link", { name: state === "ready" ? "Voice input This computer" : "Voice input This computer · update required" })).toBeVisible();
   });
 
   it("a computer that cannot run voice says why and cannot choose it", async () => {

@@ -141,9 +141,9 @@ class VoiceInputError(RuntimeError):
 
 
 def _voice_selection(setting: dict) -> str:
-    """Bind a recording to its backend and host runtime: a changed choice, setup or removal ends it."""
-    path = speech.runtime() if setting["backend"] == "host" else None
-    return hashlib.sha256(json.dumps([setting["backend"], path.name if path else ""]).encode()).hexdigest()
+    """Supported runtime replacement preserves replay; backend changes and removal invalidate it."""
+    identity = speech.installation_id() if setting["backend"] == "host" else ""
+    return hashlib.sha256(json.dumps([setting["backend"], identity]).encode()).hexdigest()
 
 
 def voice_view() -> dict:
@@ -3612,6 +3612,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
     if os.environ.get("ALTITUDE_SERVICE") and config.RELEASE is None:
         (config.MONITOR_DIR / dispatch.RESTART_PENDING).unlink(missing_ok=True)
     if os.environ.get("ALTITUDE_TIMERS", "1") != "0":
+        SPEECH.update_installed()
         restart_notice()
         settle_interrupted_machine_commands()
         threading.Thread(target=timer_loop, args=(context, certificate_host), name="timers", daemon=True).start()
