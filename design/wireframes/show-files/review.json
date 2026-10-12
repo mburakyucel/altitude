@@ -1,12 +1,12 @@
 {
-  "title": "Show files proposal",
+  "title": "Show files proposal, visual first",
   "proposal": "design/wireframes/show-files/PROPOSAL.md",
   "images": [
-    {"title": "Phone conversation: a reply and a question card each with their View link, unsent draft kept", "path": "design/wireframes/show-files/captures/PhoneConversation.png"},
-    {"title": "Phone viewer: README.md rendered like GitHub", "path": "design/wireframes/show-files/captures/PhoneViewer.png"},
-    {"title": "Phone viewer states: loading, Raw, images only, image loading and failed, earlier version, unavailable, denied", "path": "design/wireframes/show-files/captures/PhoneStates.png"},
-    {"title": "Desktop viewer: docs/CLI.md with an extra image", "path": "design/wireframes/show-files/captures/DesktopViewer.png"},
-    {"title": "Desktop viewer states: Raw, earlier version, image failed, unavailable, denied", "path": "design/wireframes/show-files/captures/DesktopStates.png"},
-    {"title": "Desktop conversation: reply link and open question card link", "path": "design/wireframes/show-files/captures/DesktopConversation.png"}
+    {"title": "Desktop: the reader panel beside the live conversation, README.md open from its page card, a reply being typed", "path": "design/wireframes/show-files/captures/DesktopSplit.png"},
+    {"title": "Phone conversation: README.md page card under the reply, the earlier card dimmed with Earlier, three image thumbnails and +2, unsent draft kept", "path": "design/wireframes/show-files/captures/PhoneConversation.png"},
+    {"title": "Phone reader: README.md full screen with close, inline images with expand badges, remote badges, a not-copied image box, wide table", "path": "design/wireframes/show-files/captures/PhoneReader.png"},
+    {"title": "Phone states: reader skeleton, Newer, image failed, image viewer, unavailable, denied; card and thumbnail loading, cover failed, saved files missing", "path": "design/wireframes/show-files/captures/PhoneStates.png"},
+    {"title": "Desktop: an earlier CLI.md in the panel with Newer, an extra image above the document, table and code", "path": "design/wireframes/show-files/captures/DesktopSplitEarlier.png"},
+    {"title": "Desktop question card: the PROPOSAL.md page card inside the open question, options below", "path": "design/wireframes/show-files/captures/DesktopQuestion.png"}
   ]
 }

@@ -17,15 +17,15 @@ After this change:
 - **Where it is attached** is either an owner reply (`alt task reply --show PATH`) or a question
   (`alt task block --show PATH`). The proposal review takes the same `--show PATH` list
   (`alt task review run --subject proposal --show PATH`), so the reviewer reads what the operator sees.
-- **How it is read** is one viewer page for both, with markdown rendered like GitHub.
+- **How it is read** is one reader for both, with markdown rendered like GitHub.
 
 Removed: the `--design-file` JSON selection (on `block` and `review run`), the `design/wireframes/`
 path restriction, the 64 KiB text limit, and the separate markdown-lite document mode of the reply
 renderer. The task-document reader (links to `.md` files in task folders) uses the same markdown
-renderer as the viewer.
+renderer as the reader.
 
 Validation-run captures (`alt task reply --capture RUN`) keep their own GIF page in this change: they
-are task-folder evidence with playback details, not worktree files. Folding them into the viewer is a
+are task-folder evidence with playback details, not worktree files. Folding them into the reader is a
 possible later step.
 
 ## Owner command
@@ -51,7 +51,7 @@ EOF
   References with a scheme (`https:`, `data:`, `file:` …), protocol-relative `//host/…` paths, and
   references that escape the worktree are not copied. A local image that is missing, escapes, or has
   an unsupported type does not stop publication; the command lists it under `not_shown` and the
-  viewer marks its place. Remote images are never fetched, at publication or in the viewer.
+  reader marks its place. Remote images are never fetched, at publication or in the reader.
 - Only the current owner attaches files, only on replies to the operator (not `--to l3`).
 - The reply's output includes `view_url`. Inputs may be untracked; publication stages nothing.
 
@@ -64,95 +64,102 @@ rules. A design
 spec embeds its screenshots inline (`![Phone, empty state](captures/phone-empty.png)`), so each
 screenshot appears beside the text that describes it.
 
-## Conversation entry
+## In the conversation
 
-An owner reply with shown files has one underlined link under its text:
+Shown files appear as what they are, under the owner's reply text and inside a question card (in the
+conversation and in Needs you). There is no text link.
 
-- **View README.md** for a document (the document's file name),
-- **View overview.png** for one image alone,
-- **View 3 images** for several images without a document.
+**Images only.** Thumbnails in one row, the way the operator's own photos appear in chat: 96 px tall
+on phone, 120 px on desktop, rounded, each cropped to its own aspect up to 4:3. At most three show;
+a fourth tile reads **+N** over a dimmed thumbnail. Tapping a thumbnail opens that image in Altitude's
+existing full-screen image viewer (zoom and close). The **+N** tile opens the reader with every image.
 
-A question card in the conversation and in Needs you shows the same link for its files. The link is at
-least 44 px tall on phone. It opens the viewer in the same tab. A reply without files has no link.
+**A document** (with or without images) is one page card, as wide as a reply (full width on phone,
+at most 420 px on desktop), bordered and with a press state:
 
-## Viewer
+- a cover strip, 120 px tall, cropped from the document's first copied image (or the first shown
+  image) when there is one;
+- a document icon and the file name in bold (`README.md`), and a chevron at the right edge;
+- two muted lines: the document's first heading, an em dash, then its first paragraph as plain text,
+  cut with an ellipsis.
 
-Route: `/projects/:name/tasks/:slug/view/:messageId` for a reply and
-`/projects/:name/tasks/:slug/view/:questionId/:revision` for a question.
+The whole card is one control (accessible name "Open README.md"). The heading and excerpt are taken
+at publication, so the card needs no download.
 
-From top to bottom:
+**Versions.** When a later reply in the task shows the same document (same worktree path), the older
+card dims and gains a small **Earlier** chip in its top-right corner. The newest card has no chip.
 
-1. **Back.** Desktop: **← Back** above the heading. Phone: the header's back control. Back returns to
-   the place the viewer was opened from (the conversation at that reply or question, or Needs you)
-   with any unsent reply or answer still in place. Without app history (a pasted link or a new tab)
-   Back opens the task conversation.
-2. **Heading.** The title (the link's name: `README.md`, `overview.png`, `3 images`) as the page
-   heading. Below it one meta line: the document's worktree path when it differs from the title
-   (`docs/CLI.md`), then **shown 2 hours ago** (exact time on hover), joined by ` · `. The path wraps
-   at any character on phone.
-3. **Earlier version.** When a later reply in this task showed the same document (the same worktree
-   path), a status line reads **Earlier version.** followed by the link **Open latest**. A replaced question
-   keeps today's **Earlier preview.** with **Open current question**.
-4. **Images the document does not place.** Each image named with `--show` that the document does not
-   embed appears as a figure: its file name as the caption, **Full size ↗** at the caption's end, and
-   the image narrowed to the page. Selecting the image or Full size opens the saved image in a new
-   browser tab for native zoom.
-5. **The document.** A markdown document renders as GitHub does: headings, paragraphs, emphasis,
-   lists and task lists, block quotes, tables, fenced code, horizontal rules, links, inline images and
-   GitHub's safe HTML subset (for example `<p align="center">`, `<details>`, `<img>`). Scripts,
-   styles, event attributes, forms and frames never render. A **Raw** toggle above the document
-   switches to the exact source text and back. A `.txt` document shows as wrapped monospaced text
-   with no toggle.
+## Reader
+
+Tapping a card opens the reader. Its address is
+`/projects/:name/tasks/:slug/view/:messageId` for a reply and
+`/projects/:name/tasks/:slug/view/:questionId/:revision` for a question; the task page stays mounted
+underneath, so its scroll position and unsent draft are untouched.
+
+**Desktop** (a main area at least 960 px wide): the reader is a panel on the right of the task page,
+about 55% of the width, beside the conversation, which narrows but stays live: the operator reads and
+types a reply at the same time. Opening another card swaps the panel's content; the card whose document is open carries an accent border. The panel header holds
+the file name, a **Newer** pill when a later version exists, and a close **×**. Escape or × closes
+it. Opened from Needs you, the task page opens with the panel already showing.
+
+**Phone** (and narrow desktop windows): the reader covers the screen. Its header holds a close **×**
+on the left, the file name, and the **Newer** pill on the right; the tab bar is hidden while reading.
+Close, the browser's Back or the system back gesture returns to the conversation at the same place,
+with the draft intact.
+
+**Newer** opens the latest version in place (replacing the history entry). There is no meta line, no
+path line and no Raw toggle: the reader is the document.
+
+Content, top to bottom:
+
+1. Images named with `--show` that the document does not embed, each full width with rounded
+   corners. Tapping one opens the full-screen image viewer.
+2. The document, rendered as GitHub does: headings, paragraphs, emphasis, lists and task lists,
+   block quotes, tables, fenced code, horizontal rules, links, inline images and GitHub's safe HTML
+   subset (for example `<p align="center">`, `<details>`, `<img>`). A `.txt` document shows as wrapped
+   monospaced text.
 
 Inside the document:
 
-- A heading link (`#install`) scrolls within the page.
-- A web link opens in a new tab.
-- A relative link to another file reads as plain text with its target as the tooltip; only shown
-  files are reachable.
-- An embedded image that was copied renders at its natural width, narrowed to the page, with an
-  underlined **Full size ↗** link under its right edge (a 44 px target on phone) that opens the saved
-  image in a new tab. The image itself is not a link. A copied image inside a link (`[![a](x.png)](url)`)
-  keeps the link on the image as GitHub does and has no Full size link.
-- A remote image is not loaded: its alt text (or its host when there is no alt text) is an underlined
-  link that opens, in a new tab, the link around the image when it has one (a badge's page), else the
-  image itself.
-- A local image that was not copied shows a muted outlined box with a crossed-out image icon:
-  **Image not shown · path**.
-- Wide tables and code blocks scroll sideways inside their own block on phone; the page never
-  scrolls sideways, and the block's own scrollbar shows that more is to the side. Code blocks have no
-  Copy or terminal action.
-
-**Raw**, **Retry** and **Retry image** are bordered buttons (Raw takes the accent tint while pressed),
-at least 44 px tall on phone. The phone header keeps the task title and state with its back chevron,
-and the tab bar stays.
-
-The page has no composer, microphone, approval control or banner. Replying happens in the
-conversation after Back.
+- A copied image renders at its natural width, narrowed to the column, with a small expand icon in
+  its bottom-right corner; the image is a button (accessible name "Open image overview.png") that
+  opens the full-screen image viewer. Desktop shows the zoom-in cursor. A copied image inside a link
+  keeps the link, as GitHub does, and has no expand icon.
+- A remote image is not loaded: a small image icon and its alt text (or its host) form an underlined
+  link to the link around it (a badge's page) or else to the image, in a new tab.
+- A local image that was not copied is an outlined box with a broken-image icon and its path in
+  muted monospace.
+- A heading link (`#install`) scrolls within the reader; a web link opens in a new tab; a relative
+  link to another file is plain text with its target as the tooltip.
+- Wide tables and code scroll sideways inside their own block; the reader never scrolls sideways.
+  Code blocks have no Copy or terminal action.
 
 ## States (phone and desktop)
 
-| State | What shows |
-| --- | --- |
-| Loading | **Loading preview…** with the spinner; no heading. |
-| Ready, document only | Heading, meta line, Raw toggle, rendered document. |
-| Ready, images only | Heading, meta line, one figure per image; no Raw toggle. |
-| Ready, document and extra images | Heading, meta line, figures, then Raw toggle and document. |
-| Raw on | The toggle is pressed; the source text replaces the rendering; scroll position resets to the document's top. |
-| Image loading | The figure shows **Loading image…**; its Full size link is hidden. |
-| Image failed | **Image unavailable.** with **Retry image**; the figure's image and Full size are hidden. Retry returns to loading. |
-| Inline image not shown | Outlined box **Image not shown · path** in the image's place. |
-| Earlier version | **Earlier version.** **Open latest** under the meta line. |
-| Unavailable | Heading **Preview unavailable**; text "This saved preview could not be loaded. Return to the conversation for an update, or try again."; **Retry**; Back. |
-| Denied | Heading **Preview unavailable**; text "Access to this preview is unavailable. Retry after access is restored."; **Retry**; Back. |
+| Where | State | What shows |
+| --- | --- | --- |
+| Card | Ready | Cover, icon, name, chevron, excerpt. |
+| Card | Cover or thumbnail loading | A flat grey block of the same size; no text. |
+| Card | Cover or thumbnail failed | A broken-image icon centred in the block and a small circular retry button (accessible name "Retry image"). |
+| Card | Earlier | Dimmed card, **Earlier** chip. |
+| Card | Saved files missing | The card stays, without cover or chevron, with a broken-document icon; it is not a control. Its excerpt line reads **Preview unavailable**. |
+| Reader | Loading | A skeleton of the page: a heading bar, five text lines and an image block; static under reduced motion. Accessible name "Loading README.md". |
+| Reader | Ready | Header and document as above. |
+| Reader | Image loading | A grey block at the image's saved size. |
+| Reader | Image failed | An outlined box with a broken-image icon, **Image unavailable** and a bordered **Retry**. |
+| Reader | Earlier | **Newer** pill in the header. |
+| Reader | Unavailable | A broken-document icon, **Preview unavailable**, "It could not be loaded. Try again, or ask in the conversation.", a bordered **Retry**; the header's × still closes. |
+| Reader | Denied | A lock icon, **Preview unavailable**, "This device has no access right now.", a bordered **Retry**. |
 
-The viewer replaces today's **Design unavailable** with **Preview unavailable**, **Loading screenshot…**
-with **Loading image…** and **Screenshot unavailable** / **Retry screenshot** with **Image
-unavailable.** / **Retry image**, since the same page now shows any image.
+Saved files missing for a card is known from the conversation data (the server checks the saved files
+when it lists the reply), so the operator never opens a dead preview. This also covers previews
+published before this change.
+
+The page has no approval control or banner; the question card keeps its own controls.
 
 ## Rendering boundary
 
-The viewer renders a markdown document in the browser with one fixed pipeline: parse markdown with
+The reader renders a markdown document in the browser with one fixed pipeline: parse markdown with
 GitHub extensions (`remark-gfm`); convert to HTML nodes keeping embedded HTML; parse that HTML
 (`rehype-raw`); sanitize with GitHub's schema (`rehype-sanitize`), further narrowed: no `srcset`,
 `<picture>`, `<source>`, `<video>`, `<audio>`, `<iframe>`, `<form>`, `<input>` other than task-list
@@ -161,9 +168,9 @@ checkboxes (disabled), `style` or event attributes; then render React elements. 
 that image's saved address on this connection; a remote source becomes the alt-text link described
 above; anything else becomes the **Image not shown** box. No other image source survives, so the page
 can load only saved images. Link targets keep `http:`, `https:`, `mailto:` and `#fragment`; other
-schemes render as plain text. The renderer loads only with the viewer and the task-document reader.
+schemes render as plain text. The renderer loads only with the reader and the task-document reader.
 
-Acceptance includes an adversarial fixture document, rendered on phone and desktop in both the viewer
+Acceptance includes an adversarial fixture document, rendered on phone and desktop in both the reader
 and the task-document reader: `<script>`, `onerror`, `javascript:` links, `style`, `srcset`,
 `data:` and protocol-relative images, a remote badge, `<iframe>` and `<form>`. The walkthrough fails
 on any request leaving the Altitude origin or any executed script.
@@ -174,27 +181,28 @@ on any request leaving the Altitude origin or any executed script.
   folder; the reply or question records only their names, paths and sizes, so a 1 MiB document never
   enters the conversation record, L3's context or a review's captured context. Later worktree edits,
   commits or cleanup do not change what the operator sees.
-- Each publication is its own version: a reply's link always opens that reply's copy, and a newer
-  reply showing the same document marks the older one **Earlier version**.
-- The viewer's data and images are served only to paired devices, like the rest of the task. Images
+- Each publication is its own version: a card always opens its own copy, and a newer reply showing
+  the same document marks the older card **Earlier**.
+- The reader's data and images are served only to paired devices, like the rest of the task. Images
   are served with `nosniff` and a sandboxing content policy. Missing or altered saved bytes show
   **Preview unavailable**; nothing else is ever served at that address.
 - Viewing records nothing. Approval still happens through the question's own controls.
 
 ## Earlier previews
 
-Design previews published before this change keep their question text, answers and approvals, but
-their **View** link opens **Preview unavailable**: they hold the text inside the question record, a
-shape the new viewer does not read. Keeping them readable would need a permanent second reader for
+Design previews published before this change keep their question text, answers and approvals. Their
+card shows **Preview unavailable** and does not open: they hold the text inside the question record, a
+shape the new reader does not read. Keeping them readable would need a permanent second reader for
 the old shape, which the project's deletion-first rule excludes. On this machine they are about a
 hundred question revisions, all decided except one open question in a running task; an owner whose
 open question carries an old preview republishes it with `--show`, which advances its revision.
 
 ## What the operator decides
 
-1. One mechanism (the design preview widened and its JSON selection removed) rather than a separate
-   show verb beside it.
-2. Markdown rendered like GitHub with its safe HTML subset, using a widely used open-source renderer
-   loaded only by the viewer, instead of extending Altitude's own small reply formatter.
-3. Same-tab viewer with Back, matching today's preview, rather than a new tab.
-4. Earlier design previews become unavailable rather than keeping a reader for their old format.
+1. Visual attachments in the conversation (thumbnails and a page card) that open a reader: a panel
+   beside the conversation on desktop, full screen on phone.
+2. One mechanism: the design preview widened, its JSON selection removed.
+3. Markdown rendered like GitHub with its safe HTML subset, using a widely used open-source renderer
+   loaded only with the reader.
+4. Earlier design previews show **Preview unavailable** rather than keeping a reader for their old
+   format.
