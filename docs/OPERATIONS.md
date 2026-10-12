@@ -505,8 +505,8 @@ is never affected.
 
 | `alt machine set --voice …` | How it works | Words appear | Where audio goes | Needs |
 | --- | --- | --- | --- | --- |
-| `host` (default where it can run) | [Host voice](#host-voice): the browser streams the microphone to this computer, which transcribes it with its own speech model after a one-time setup. | while you speak, with punctuation and capitals; the last words may still change | to this computer only, over Altitude's own connection; kept in memory for the recording, never stored | `alt voice setup`, Linux x86_64 with Python 3.12 or 3.13, about 2.5 GB free memory while dictating |
-| `browser` (default elsewhere, including macOS for now) | The browser's speech recognition (Safari on iPhone and Mac, Chrome, Edge). The server is not involved. | while you speak; the last phrase may still change until it is final | Safari recognizes on the device when it can, otherwise through Apple; Chrome and Edge send audio to Google or Microsoft speech services. Firefox and Chromium builds without a vendor key have no recognition and show a typing hint. | HTTPS and a supported browser |
+| `host` (default where it can run) | [Host voice](#host-voice): the browser streams the microphone to this computer, which transcribes it with its own speech model after a one-time setup. | while you speak, with punctuation and capitals; the last words may still change | to this computer only, over Altitude's own connection; kept in memory for the recording, never stored | `alt voice setup`, Linux x86_64 or a Mac with Apple silicon, Python 3.12 or 3.13, about 2.5 GB free memory while dictating |
+| `browser` (default elsewhere) | The browser's speech recognition (Safari on iPhone and Mac, Chrome, Edge). The server is not involved. | while you speak; the last phrase may still change until it is final | Safari recognizes on the device when it can, otherwise through Apple; Chrome and Edge send audio to Google or Microsoft speech services. Firefox and Chromium builds without a vendor key have no recognition and show a typing hint. | HTTPS and a supported browser |
 
 ```sh
 alt machine show
@@ -536,7 +536,7 @@ Host voice runs NVIDIA's Parakeet TDT 0.6B v2 speech model (English, CC-BY-4.0) 
 CPU. Set it up once, from first run, **Settings → Voice input → This computer → Set up voice** or:
 
 ```sh
-alt voice setup    # downloads about 698 MB once, checks every file, then reports "ready"
+alt voice setup    # downloads about 700 MB once, checks every file, then reports "ready"
 alt voice status   # unavailable (with why), absent, setting-up, ready, failed (with why) or outdated
 alt voice remove   # stops dictation and frees the disk space
 alt machine set --voice host --reason 'Transcribe on this computer'
@@ -550,12 +550,12 @@ runtime shows "Voice needs an update" with the same button. Only the operator ru
 and `alt voice remove`; Altitude's agents cannot.
 
 The first recording starts a speech process in about 1–3 seconds; speech during startup is kept. While
-you dictate it uses about 1.5–2 GB of memory and under one CPU core; it exits after fifteen minutes
+you dictate it uses about 1.3–2 GB of memory and one to two CPU cores; it exits after fifteen minutes
 without voice. It needs about 2.5 GB of free memory to start, and says so when there is less. Words
 appear about a second behind speech; Stop or Send lands the final text in about half a second. The
 phone sends about 1.9 MB of audio per minute of speech. Host voice runs on Linux x86_64 with glibc 2.28
-or newer and Python 3.12 or 3.13; elsewhere, including macOS for now, Settings and the composer say it
-is not available and why. At most two recordings run at once; a third device is told voice is busy.
+or newer and on Macs with Apple silicon, with Python 3.12 or 3.13; elsewhere, such as an Intel Mac,
+Settings and the composer say it is not available and why. At most two recordings run at once; a third device is told voice is busy.
 
 A recording survives a lost connection. The microphone keeps recording and the composer says
 "Connection lost — still recording. Your words will catch up."; the page keeps the recording's audio

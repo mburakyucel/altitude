@@ -87,10 +87,10 @@ describe("Host voice settings", () => {
   });
 
   it("a computer that cannot run voice says why and cannot choose it", async () => {
-    hostFixture({ state: "unavailable", reason: "voice runs on Linux x86_64 only for now" });
+    hostFixture({ state: "unavailable", reason: "voice runs on Linux x86_64 and on Macs with Apple silicon" });
     renderApp({ route: "/settings/voice" });
     expect(await screen.findByRole("radio", { name: "This computer" })).toBeDisabled();
-    expect(screen.getByText("Not available on this computer: voice runs on Linux x86_64 only for now.")).toBeVisible();
+    expect(screen.getByText("Not available on this computer: voice runs on Linux x86_64 and on Macs with Apple silicon.")).toBeVisible();
   });
 });
 
