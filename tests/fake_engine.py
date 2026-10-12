@@ -60,6 +60,12 @@ def claude() -> None:
     first = next(lines)
     out({"type": "system", "subtype": "init", "session_id": SESSION or "fake-session", "model": MODEL})
     out({"type": "user", "isReplay": True, "uuid": first["uuid"], "message": first["message"]})
+    if os.environ.get("FAKE_ENGINE_HELPERS"):
+        for status in ("completed", "failed"):
+            out({"type": "system", "subtype": "task_started", "task_id": f"helper-{status}",
+                 "description": "Fictional helper review", "session_id": SESSION or "fake-session"})
+            out({"type": "system", "subtype": "task_notification", "task_id": f"helper-{status}",
+                 "status": status, "summary": "Helper review ended.", "session_id": SESSION or "fake-session"})
     if TOOL:
         out({"type": "assistant", "message": {"model": MODEL, "content": [
             {"type": "tool_use", "id": "tool-1", "name": "Bash", "input": {"command": "sleep 3600"}}]}})
@@ -92,29 +98,51 @@ def claude() -> None:
 
 def codex() -> None:
     active = None
+    thread = SESSION or "fake-thread"
 
     def reply(identity, result=None, error=None):
         out({"id": identity, **({"error": error} if error else {"result": result or {}})})
 
     def notify(method, params):
-        out({"method": method, "params": params})
+        out({"method": method, "params": {"threadId": thread, **params}})
+
+    def helpers():
+        # A helper finishes while the owner is still awaiting its results (#873).
+        statuses = (("completed",) if os.environ["FAKE_ENGINE_HELPERS"] == "completed"
+                    else ("failed", "interrupted", "completed"))
+        for status in statuses:
+            identity = {"threadId": f"helper-{status}", "turnId": f"helper-turn-{status}"}
+            notify("turn/started", {**identity, "turn": {"id": identity["turnId"], "status": "inProgress"}})
+            for method in ("item/started", "item/completed"):
+                notify(method, {**identity, "item": {"type": "agentMessage", "id": "helper-answer",
+                                                     "text": "Helper review finished."}})
+            notify("thread/tokenUsage/updated", {**identity, "tokenUsage": {"total": {"inputTokens": 999}}})
+            if status == "failed":
+                notify("error", {**identity, "willRetry": False, "error": {"message": "Helper failed."}})
+            notify("turn/completed", {**identity, "turn": {"id": identity["turnId"], "status": status}})
 
     def complete(text):
+        status = os.environ.get("FAKE_ENGINE_END", "completed")
+        if status == "eof":
+            raise SystemExit(0)
         notify("item/completed", {"item": {"type": "agentMessage", "id": "message", "text": text}})
         notify("thread/tokenUsage/updated", {"tokenUsage": {"total": {"inputTokens": 5, "outputTokens": 2}}})
-        notify("turn/completed", {"turn": {"id": "turn-1", "status": "completed"}})
+        notify("turn/completed", {"turn": {"id": "turn-1", "status": status}})
 
     for message in read():
         method, identity, params = message.get("method"), message.get("id"), message.get("params") or {}
         if method == "initialize":
             reply(identity, {"userAgent": "fake"})
         elif method in ("thread/start", "thread/resume"):
-            reply(identity, {"thread": {"id": params.get("threadId") or SESSION or "fake-thread"}, "model": MODEL})
+            thread = params.get("threadId") or thread
+            reply(identity, {"thread": {"id": thread}, "model": MODEL})
         elif method == "turn/start":
             if os.environ.get("FAKE_ENGINE_ASK"):
                 out({"id": "ask-1", "method": "item/commandExecution/requestApproval", "params": {"command": "ls"}})
             reply(identity, {"turn": {"id": "turn-1", "status": "inProgress"}})
             notify("turn/started", {"turn": {"id": "turn-1"}})
+            if os.environ.get("FAKE_ENGINE_HELPERS"):
+                helpers()
             if TOOL:
                 active = "turn-1"
                 notify("item/started", {"item": {"type": "commandExecution", "id": "tool-1", "command": "sleep 3600",
