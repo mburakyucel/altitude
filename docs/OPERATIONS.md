@@ -415,7 +415,8 @@ and verifies API and UI health from another new process. The failure retains the
 and states whether recovery is verified or fails; restored files alone do not establish healthy
 recovery. The replacement backend keeps running either way, so the failure leaves the attempt's web build
 inputs in `monitor/restart-pending.json`, marked `failed` with the error; `alt repo` and the web app's
-notice show the served web app is older than main, and Restart or the next merge activates it.
+notice show the served web app is older than main, and Restart or the next merge activates it. A merge or
+request recorded meanwhile keeps its own record, whose activation builds the current bundle.
 Without a prior bundle, it reports that recovery is unavailable. There is
 no separate web service and no `sudo` is required. Node 22.22.2+ (22.x), 24.15+ (24.x) or 26+ and `pnpm` are required; dependency
 retrieval may be needed when the local pnpm store is cold. Refresh the browser after it succeeds.

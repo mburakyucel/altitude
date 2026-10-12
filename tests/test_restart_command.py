@@ -202,6 +202,24 @@ class TestRestartCommand(AltitudeCase):
                     self.assertEqual([call.args[0] for call in fetch.call_args_list], ["/api/overview", "/"])
                     self.assertEqual({call.kwargs["timeout"] for call in fetch.call_args_list}, {restart.PROBE_SECONDS})
 
+    def test_no_health_probe_starts_or_waits_past_the_bound(self):
+        restart = load_script()
+        clock = [0.0]
+        timeouts = []
+
+        def answer(path, timeout):
+            timeouts.append((clock[0], timeout))
+            clock[0] = 40.0 if clock[0] < 40 else 45.0  # the second overview answers at the bound
+            return b'{"projects":null}' if len(timeouts) == 1 else b'{"projects":[]}'
+
+        with mock.patch.object(restart, "unit_properties", return_value={"MainPID": "20", "ActiveState": "active"}), \
+                mock.patch.object(restart, "fetch", side_effect=answer), \
+                mock.patch.object(restart.time, "monotonic", side_effect=lambda: clock[0]), \
+                mock.patch.object(restart.time, "sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)):
+            with self.assertRaisesRegex(restart.RestartError, "within 45s: no time was left to probe /$"):
+                restart.wait_healthy(10)
+        self.assertEqual(timeouts, [(0.0, restart.PROBE_SECONDS), (41.0, 4.0)])
+
     def test_a_healthy_replacement_that_answers_the_overview_slowly_passes_verification(self):
         """I-20261012-101803: a healthy replacement answered the overview after about 2.2 s and failed both checks."""
         restart = load_script()
@@ -421,7 +439,7 @@ class TestRestartCommand(AltitudeCase):
                 def replacement_starts_then_fails(_staging):
                     flag.unlink()  # the replacement daemon clears the record once it binds
                     if merged:
-                        S.write_json(flag, merged)  # its deployment tick records a later merge
+                        S.write_json(flag, merged)  # its deployment tick or a request records something newer
                     raise restart.RestartError("restart verification failed: timed out; restored the prior web bundle")
 
                 with mock.patch.object(restart, "require_deployed_checkout"), \
@@ -432,10 +450,12 @@ class TestRestartCommand(AltitudeCase):
                     self.assertEqual(restart.main(), 1)
                 fault.assert_called_once()
                 pending = S.read_json(flag)
-                self.assertEqual(pending["files"], sorted(["web/package.json", "web/src/App.tsx"]
-                                                          + (merged["files"] if merged else [])))
-                self.assertEqual(pending["head"], (merged or attempt)["head"])
-                self.assertEqual(pending["since"], (merged or attempt)["since"])
+                if merged:  # the later record is kept as written and activates the current bundle at a quiet point
+                    self.assertEqual(pending, merged)
+                    self.assertTrue(config.activation_pending())
+                    continue
+                self.assertEqual(pending["files"], ["web/src/App.tsx", "web/package.json"])
+                self.assertEqual((pending["since"], pending["head"]), (attempt["since"], attempt["head"]))
                 self.assertTrue(pending["failed"])
                 self.assertIn("timed out", pending["error"])
                 self.assertNotIn("requested_at", pending)

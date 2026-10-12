@@ -1682,7 +1682,7 @@ allowing each answer ten seconds on the scheme the service's environment names; 
 restores the prior bundle and verifies recovery API/UI health from another new process, retaining
 both the activation failure and recovery outcome. The replacement daemon cleared the pending record when it
 started and runs the new backend, so the failure records the attempt's web files as a `failed` pending
-activation, which the notice and `alt repo` show. With no prior bundle, recovery is unavailable.
+activation, which the notice and `alt repo` show, unless a later merge or request already recorded its own. With no prior bundle, recovery is unavailable.
 On macOS, service Stop/restart confirms coalition cleanup and waits up to 45 seconds for launchd
 to remove the label before completing Stop or bootstrapping again; unreadable removal fails explicitly.
 Independent worker jobs retain their own coalitions. Monitor's Restart button runs the same path sooner by hand: it appears

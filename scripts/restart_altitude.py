@@ -179,8 +179,11 @@ def wait_healthy(old_pid: int, timeout: int = 45) -> None:
     deadline = time.monotonic() + timeout
     last = "service did not start"
 
-    def probe(path: str) -> bytes:  # one probe never outlasts the bound
-        return fetch(path, timeout=max(min(PROBE_SECONDS, deadline - time.monotonic()), 1))
+    def probe(path: str) -> bytes:  # no probe starts or waits past the bound
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RestartError(f"no time was left to probe {path}")
+        return fetch(path, timeout=min(PROBE_SECONDS, remaining))
 
     while time.monotonic() < deadline:
         try:
@@ -272,18 +275,28 @@ def record_failure(attempt: dict, exc: RestartError) -> None:
             pending.update(error=str(exc), retries=retries + 1, retry_at=retry_at.isoformat())
             S.write_json(flag, pending)
             return
-    elif not pending.get("requested_at") and (
-            web := [path for path in attempt.get("files", []) if dispatch.activation_component(path) == "web"]):
-        # A merge recorded since the replacement started keeps its own files, head and time; a newer request builds
-        # the current bundle itself.
-        pending = {**{key: attempt[key] for key in ("since", "head") if key in attempt}, **pending,
-                   "files": sorted(set(pending.get("files", [])) | set(web))}
-    else:
-        pending = None
-    if pending is not None:
         pending.update(failed=S.now(), error=str(exc))
         S.write_json(flag, pending)
+    elif web := [path for path in attempt.get("files", []) if dispatch.activation_component(path) == "web"]:
+        create_absent(flag, {**{key: attempt[key] for key in ("since", "head") if key in attempt},
+                             "files": web, "failed": S.now(), "error": str(exc)})
     incidents.system_fault("restart", f"restart failed: {exc}")
+
+
+def create_absent(path: Path, record: dict) -> None:
+    """Write `record` only where no record exists. A merge or restart request the replacement recorded meanwhile keeps
+    its own record and activates the current bundle itself; nothing here reads and rewrites another writer's record."""
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as stream:
+            json.dump(record, stream, indent=2, sort_keys=True)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(temporary, path)
+    except FileExistsError:
+        pass
+    finally:
+        os.unlink(temporary)
 
 
 def main() -> int:
