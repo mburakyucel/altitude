@@ -223,7 +223,7 @@ class TestPosting(RunCase):
             improve.post(self.project, run["id"], [1, 2], [], now=NOW + timedelta(hours=3))
         improve.stop(self.project, self.operator("Stop the suggestions", 0.5))
         self.assertEqual(self.queued(), [])
-        with self.assertRaisesRegex(ValueError, "is stopped"):
+        with self.assertRaisesRegex(ValueError, "was stopped; nothing can be posted"):
             improve.post(self.project, run["id"], [1, 2], [], now=NOW)
 
     def test_the_deadline_ends_an_unchecked_run_and_its_queued_turn(self):

@@ -439,6 +439,8 @@ LAPSE = timedelta(days=7)
 ACTIVE = ("reading", "checking")
 REASON = 200
 REF = re.compile(r"([0-9a-f]{12})/([1-9])")
+ENDED = {"reading": "is still reading", "nothing": "ended with nothing to suggest", "stopped": "was stopped",
+         "failed": "failed"}
 
 
 def _path(project: str):
@@ -653,7 +655,7 @@ def post(project: str, run_id: str, keep: list[int], drop: list[tuple[int, str]]
                 raise ValueError(f"The review of {_day(run['started'])} is already posted differently.")
             return {**_receipt(run), "post": done}
         if run["state"] != "checking":
-            raise ValueError(f"The review of {_day(run['started'])} is {run['state']}; nothing can be posted.")
+            raise ValueError(f"The review of {_day(run['started'])} {ENDED[run['state']]}; nothing can be posted.")
         if now > _date(run["deadline"]):
             raise ValueError(f"The review of {_day(run['started'])} is past its deadline; nothing can be posted.")
         numbers = {s["n"] for s in run["suggestions"]}
