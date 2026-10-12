@@ -1677,9 +1677,12 @@ verification and bounded validation runs (including evidence recording and clean
 the one guarded restart script as a transient user unit outside its own cgroup. It installs the
 pnpm-locked dependencies, builds and validates the checked-out head's bundle in staging, rechecks that the
 checkout is clean, not ahead or diverged and still at that head (behind origin is fine: the deployment tick pends
-the rest) and the quiet point, swaps the bundle, restarts safely, and verifies both API and UI; verification failure
+the rest) and the quiet point, swaps the bundle, restarts safely, and verifies both API and UI within 45 seconds,
+allowing each answer ten seconds on the scheme the service's environment names; verification failure
 restores the prior bundle and verifies recovery API/UI health from another new process, retaining
-both the activation failure and recovery outcome. With no prior bundle, recovery is unavailable.
+both the activation failure and recovery outcome. The replacement daemon cleared the pending record when it
+started and runs the new backend, so the failure records the attempt's web files as a `failed` pending
+activation, which the notice and `alt repo` show, unless a later merge or request already recorded its own. With no prior bundle, recovery is unavailable.
 On macOS, service Stop/restart confirms coalition cleanup and waits up to 45 seconds for launchd
 to remove the label before completing Stop or bootstrapping again; unreadable removal fails explicitly.
 Independent worker jobs retain their own coalitions. Monitor's Restart button runs the same path sooner by hand: it appears
