@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useParams, useSearchParams } from "react-router";
 import { z } from "zod";
 import { StatusMark } from "../components/StatusMark";
 import { api, ApiError } from "../data/api";
-import { Prose } from "../components/Prose";
 import "./task-file.css";
+
+const MarkdownDocument = lazy(() => import("../components/MarkdownDocument"));
 
 const TaskFileSchema = z.object({
   name: z.string(), path: z.string(), current_path: z.string(), text: z.string(), markdown: z.boolean(),
@@ -51,7 +52,9 @@ function FileReader({ project, path }: { project: string; path: string }) {
       <button className="link" onClick={() => void file.refetch()}>Retry</button>
     </section> : data ? <section className="task-file-content" aria-label="File contents">
       {data.markdown ? <button className="link task-file-raw-toggle" aria-pressed={raw} onClick={() => setRaw(!raw)}>Raw</button> : null}
-      {!data.text ? <p className="text-muted">This file is empty.</p> : data.markdown && !raw ? <Prose text={data.text} document /> : <pre className="task-file-raw">{data.text}</pre>}
+      {!data.text ? <p className="text-muted">This file is empty.</p> : data.markdown && !raw ? <Suspense fallback={<p className="text-muted"><StatusMark label="Loading file…" /></p>}>
+        <MarkdownDocument text={data.text} />
+      </Suspense> : <pre className="task-file-raw">{data.text}</pre>}
     </section> : null}
   </div>;
 }

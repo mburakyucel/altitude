@@ -713,12 +713,12 @@ is dropped or summarized; beyond the bound capture refuses with the size and whe
 alone exceed it. Proposal capture
 also binds the exact original L2 message and text against the committed head's source tree, even before
 code differs from main. That text is captured once, as `proposal.md` with its own 64 KiB bound, and
-`context.json` names the proposal message and points to the file. A UI proposal's design preview
-selection adds its spec as `design.md`, captured by the same checks as the preview, with the screenshots
+`context.json` names the proposal message and points to the file. A UI proposal's `--show` files add
+the document as `design.md`, captured by the same checks as [shown files](#shown-files), with the images
 named in `context.json` and copied into the snapshot's `design/` folder. The engine attaches them natively
 to the reviewer's first prompt in that order: Codex with its image option, Claude as titled image blocks
-in its stream-json input. The receipt keeps the design identity the preview shares and names the
-screenshots given; an engine CLI without image input gets none, and the capture's limitations say so. Identity and freshness hash the
+in its stream-json input. The receipt keeps the shown set's identity, which the question shares when it
+shows the same files, and names the images given; an engine CLI without image input gets none, and the capture's limitations say so. Identity and freshness hash the
 logical context, independent of this representation; the input hash covers every captured file. Changes reviews capture the merge-candidate tree and diff; a branch that conflicts with main is
 refused with its conflicted files. Missing proposal input prevents invocation. Images attached to
 messages need a textual account and stay outside the reviewer's coverage.
@@ -2504,24 +2504,23 @@ Unknown overview reads never imply zero attention. Failed refreshes identify sav
 status as stale; Work links stay available, while Needs you disables answers until a fresh read.
 App Back and browser history preserve the originating Work or Needs you view.
 
-### From model judgment to a task question or preview
+### From model judgment to a task question
 
 The L2 persona and repository instructions teach the owner when to ask a question, how to publish
-visual evidence, and which commands are available. The model judges whether a decision is needed,
-chooses the question/options and selects proposal files. It invokes `alt task block` through its
-engine's execution tool, with ordinary command arguments and, for a preview, `--design-file` pointing
-to an explicit JSON selection. There is no automatic interpretation of arbitrary model prose as
+files, and which commands are available. The model judges whether a decision is needed,
+chooses the question/options and names any files to show. It invokes `alt task block` through its
+engine's execution tool, with ordinary command arguments and, for files, repeated `--show` paths. There is no automatic interpretation of arbitrary model prose as
 a question or an approval. The engine's own tool-call display is separate from the task dilemma
 that Altitude renders in its web conversation.
 
 `bin/alt` checks the role and owner environment; `tasks.block` verifies the current attempt under
-the project lock. It captures selected preview files, publishes the question/revision in
+the project lock. It copies any shown files, publishes the question/revision in
 `status.json`, and blocks the task through the existing transition. Question messages are projected
 from those durable records into the same human conversation as `conversation.jsonl` replies.
 The app reads `/api/task` for that conversation, `/api/overview` for unresolved operator questions
-in Needs you, and the fixed preview API for the selected proposal. The CLI's design publication
-response includes `design_url`; the task question exposes the same link. The detailed capture and
-serving contract follows below, and [CLI examples](CLI.md#task-design-previews) show actual inputs.
+in Needs you, and the shown-files API for the files a question shows. The question's `shown` view
+carries the reader link. The capture and serving contract is in [shown files](#shown-files), and
+[CLI examples](CLI.md#showing-files) show actual inputs.
 
 ```mermaid
 sequenceDiagram
@@ -2530,9 +2529,9 @@ sequenceDiagram
     participant State as Task records and captured files
     participant App as Altitude API and browser
     participant Daemon as altd
-    Owner->>CLI: block with question and optional design selection
+    Owner->>CLI: block with question and optional shown files
     CLI->>State: Validate owner/attempt; save capture and question revision
-    App->>State: Read conversation, question and fixed preview
+    App->>State: Read conversation, question and shown copies
     App->>State: Selected/custom responses or chat message with viewed revision
     State->>Daemon: Durable inbox / resume request
     Daemon->>Owner: Deliver at checkpoint or resume the same session
@@ -2544,14 +2543,14 @@ execution tool. A Codex L3 uses the `altitude` coordinator stdio MCP tool: struc
 `kind`, argument arrays and stdin, and its adapter forwards them to the project-bound altd socket.
 A Claude L3's runtime command shims use that same broker. The broker fixes project authority and
 checks allowed coordinator verbs. MCP transports coordinator requests; it does not own dilemma,
-preview or decision state, and that L3 transport restriction does not apply to the L2 CLI path.
+shown-file or decision state, and that L3 transport restriction does not apply to the L2 CLI path.
 
 Selected choices and custom responses send the question/revision (and group revision when applicable)
 to `POST /api/decide`, which validates and saves one ordinary operator message. Ordinary chat uses
 `POST /api/l2/message`. Both remain messages until the owner interprets a clear answer and records
 `alt task resolve` against the original source message. Both use the durable inbox and
 daemon wake mechanism described in [session lifecycle](SESSION_LIFECYCLE.md#messages-resume-and-stop).
-Opening a preview performs reads only; neither viewing, a follow-up nor a resume accepts a proposal.
+Opening shown files performs reads only; neither viewing, a follow-up nor a resume accepts a proposal.
 
 A dilemma (spec §3.8–3.10) lives in the owning task conversation. The task record's `questions`
 contains versioned question text, zero to three explicit options and a recommendation key,
@@ -2562,7 +2561,7 @@ open member (or latest receipt), and individual revision history;
 `GET /api/overview` and the project view project the operator's turn: unresolved operator questions
 asked since the operator last wrote to the task (`handed_back`), plus one `review` row for a held
 delivery whose owner stopped in `blocked` or `reported` (#419). An open proposal question (marked
-`"review": "proposal"` or carrying a design), the `review` row and an open operator question naming the
+`"review": "proposal"` or showing files), the `review` row and an open operator question naming the
 held PR also carry `review` from `reviews.status`: the latest proposal or implementation review's id,
 state, who skipped it and why, finding and open counts, assessment and earlier-version coverage, read
 from the saved reviews with the review card's own comparison; `state: none` when there is none (spec
@@ -2815,57 +2814,66 @@ that project's boards alone, on the day it is made and the next, and only while 
 paired, so removing a device ends its links too. Only the redirect for a paired browser mints one,
 and the boards are sent with `Referrer-Policy: no-referrer` so it stays off other sites.
 
-Pending task designs use captured screenshots and text, bound to the existing question revision.
-The current L2 supplies an explicit selection through `alt task block --design-file`, optionally
-with a `--questions-file` naming exactly one new or existing open member. Other members stay unchanged;
-ambiguous group attachment is refused. Ignored and untracked files need no Git changes. The task and
-attempt checks apply, and the CLI also binds the project. `tasks.py` reads only that task's registered
-worktree under the project's `design/wireframes/` subtree, walking directory descriptors without
-following symlinks. Publication accepts one UTF-8 `.md`/`.txt` proposal up to 64 KiB and one to twelve
-PNG/JPEG screenshots, up to 8 MiB each and 32 MiB together. Raster signatures must match the selected
-type. Directories, special files, traversal, symlinks and unsupported types refuse publication.
-No directory is recursively published, and no submitted HTML, SVG, script or stylesheet is served.
+### Shown files
 
-The existing question stores the captured text, titles and a hashed manifest; content-named image
-files live in its task folder's `designs/` directory and follow task archival. The task worktree can
-change or disappear without changing that evidence. Repeating an identical publication retains its
-question revision; changing any selected content or label advances it, preserving the prior question
-and design. A normal block without design inputs retains the attached capture. There is no separate
-review conversation, approval state or artifact registry.
+An owner shows the operator worktree files with `--show` on `alt task reply`, `alt task block` or a
+proposal review's `run` ([CLI](CLI.md#showing-files)). `tasks.capture_shown` reads only the named paths
+inside the task's registered worktree, walking directory descriptors without following symlinks, and
+the document's own local image references, which `tasks.shown_reference` resolves from the document's
+folder or the worktree root as GitHub does. One `.md`/`.txt` document up to 1 MiB and up to 24 PNG,
+JPEG, GIF or WebP images (8 MiB each, 32 MiB together) are accepted; raster signatures must match the
+type, and the record keeps each image's width and height. Traversal, special files, symlinks and other
+types refuse the whole set, so nothing is published. References that cannot be copied stay listed as
+`not_shown`; remote images are never fetched.
 
-`question_view` exposes `design_url` and the captured `design_title` for **View preview · saved title**
-in Needs you and the owning question. Links and viewer headings identify the saved proposal by its
-title; the question revision is an identity and answer fence, not a displayed proposal version.
-The conversation's offscreen-question jump reaches that question, where its preview opens.
-Within a group it follows an open member with a preview, then another open member, including after
-partial answers. It uses that question's exact URL, never an earlier proposal's capture. Work reaches the same
-question through its task row. Preview headings use the captured title to distinguish a proposal
-from an implementation review.
-`/projects/<project>/tasks/<slug>/design/<question>/<revision>` opens in the same tab with the saved
-screenshots, full-size image links (a new tab, for native zoom) and explanation. Its Back control (the
-phone header's, or the page's own on desktop) steps back through the router's history while its entry
-index is above zero, so it matches browser Back and returns to the conversation or Needs you it came
-from. At index zero (a pasted link, a new tab, a message link's own document) it replaces the preview with
-the exact captured question revision; **Open current question** likewise replaces it, so the task's Back
-then opens the owning project conversation. Pages keep what the operator leaves behind in
-`visitMemory.ts`: unsent answers (keyed by project, task, question and revision), the task's unsent
-message, and the question whose preview was opened. It lives in tab memory only, under the router's
-history entry key, and returns on each Back/Forward to that same entry; the task conversation then jumps to
-that question and Needs you scrolls its card into view. Answers whose revision is no longer open and
-operator-facing are dropped, and sends keep the server's revision fence. Reloading, closing the tab or
-pairing again clears it.
-The preview reads
-`GET /api/design/<project>/<slug>/<question>/<revision>`; image bytes use
-`/design/<project>/tasks/<slug>/<question>/<revision>/<content-hash>.png` (or `.jpg`). These reads
-require a registered project, resolve the owning task and exact question revision, and verify the
-saved content hashes. Raster responses use explicit image types, `nosniff`, a restrictive CSP and
-no-store caching. Source paths and arbitrary task files are never URL inputs. Missing, altered,
-unsupported or inaccessible evidence returns **Design unavailable**, with no fallback to another
-version. Loading, Retry and Back remain in the ordinary preview page. Superseded captures say
-**Earlier preview** and link back to their historical question; current question metadata is polled without
-replacing the displayed capture. First acceptance also verifies the saved evidence; identical retries
-of an already recorded decision retain their receipt. Viewing and follow-ups do not decide anything,
-and neither design acceptance nor publication releases a merge hold.
+The copies are content-named files in the task folder's `shown/` directory and follow task archival.
+The record on the reply row or question revision holds paths, content names, sizes and dimensions, the
+document's first heading and opening paragraph, and a hash of itself as its identity; it never holds
+the document text. A question showing identical files keeps its revision, changed files advance it,
+and the answer fence binds the files the operator saw. A question is a proposal approval when it
+shows files, so its card carries the proposal review, and a review whose captured `--show` set differs
+from the latest question's counts as covering an earlier version. `require_shown` refuses both the
+operator's answer and the owner's resolution while any copy is missing or altered, or for a question
+saved with a design preview before shown files existed; the card disables that question's answers.
+
+`message_views` and `question_view` project a `shown` view: the reader URL, whether every copy is
+still present at its recorded size, the document's name, path, heading and excerpt, each image's URL,
+name, dimensions and whether the document embeds it, and `newer_url`, the latest publication of the same
+document path in the task (reply or question revision) when it is not this one. A question saved with
+a design preview shows a closed card named by its title with no URL. The conversation renders a
+document as a page card (cover picture, name, heading and excerpt, an **Earlier** chip when
+`newer_url` is set) and images alone as up to four thumbnails, the fourth counting the rest; a set
+whose copies are gone or resized is a card reading **Preview unavailable** that does not open (the card
+checks presence and size; reads verify each hash, so changed content of the same size shows the
+reader's unavailable state).
+
+The reader lives at `/projects/<project>/tasks/<slug>/view/<message>` for a reply and
+`.../view/<question>/<revision>` for a question. Both routes render the task page itself, so the
+conversation, its scroll position and any unsent message stay mounted underneath. Where the live
+session panel sits inline (a window at least 1280 px wide), the reader takes the panel's place;
+elsewhere it covers the screen and the task page underneath is inert. Close, Escape and browser Back
+return to the conversation; **Newer** replaces the entry with the latest version. Opening from Needs
+you keeps that page's unsent answers in `visitMemory.ts`, as other task links do, and its Back returns
+there. The conversation's offscreen-question jump prefers an open member that shows files.
+The reader reads `GET /api/shown/<project>/<slug>/<message>` or `.../<question>/<revision>`, which
+returns the view with the document's text, and serves each listed file at `.../files/<content-name>`.
+These reads are ordinary paired-device API reads: they resolve only that reply or question revision,
+verify the record's identity and each file's size and hash, and answer anything else with a plain
+404. Files are sent with their own image or text type, `nosniff`, `Content-Security-Policy:
+default-src 'none'; sandbox`, `no-store` and `no-referrer`. Viewing is a read and changes no task
+state; a follow-up is an ordinary message, so neither viewing, discussion nor a resume approves,
+releases a hold or changes a question.
+
+Markdown renders through `MarkdownDocument`, which the file reader and the coordinator's message cards
+also use: GitHub-flavoured Markdown with raw HTML parsed and then sanitised to GitHub's allowlist,
+narrowed further so that no script, style, frame, form, `picture`/`source` or event attribute
+survives and images take only their source. After sanitising, an image that names a shown copy loads
+that copy and opens the gallery; a remote image becomes a link with its alt text; any other image is
+an **Image not shown** box with its path. Web and mail links open in a new tab without a referrer,
+a `#heading` link scrolls within the document, and other relative links stay text with their target
+as a title. Headings carry GitHub's `user-content-` anchors. The gallery (`ImageViewerHost`) adds one
+history entry while open, so Back closes it; it moves between a set's images with buttons, arrow keys
+and a horizontal swipe, zooms, and shows **Image unavailable** with Retry when a copy fails to load.
 
 Validation captures follow the same fixed-evidence path ([validation captures](DEVELOPMENT.md#validation-captures)).
 `alt task reply --capture <run>` reads that run's GIFs from the task's own `validation/` evidence through

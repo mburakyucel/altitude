@@ -268,6 +268,16 @@ export const RoutingRowSchema = z
   })
   .passthrough();
 
+/** Files an owner showed on a reply or question revision (altitude/tasks.py shown_view): what its card shows,
+ * whether its saved files are all there, and the reader address of a later version of the same document. */
+export const ShownSchema = z.object({
+  url: z.string().nullable(), available: z.boolean(), newer_url: z.string().nullable(),
+  document: z.object({ name: z.string(), path: z.string(), heading: z.string(), excerpt: z.string() }).nullable(),
+  images: z.array(z.object({ name: z.string(), path: z.string(), url: z.string(), width: z.number(), height: z.number(), embedded: z.boolean() })),
+});
+export type Shown = z.infer<typeof ShownSchema>;
+export type ShownImage = Shown["images"][number];
+
 /** The same durable dilemma is projected into Needs you and the owning task conversation. */
 export const DecisionSchema = z
   .object({
@@ -278,8 +288,7 @@ export const DecisionSchema = z
     title: z.string().nullish(),
     id: z.string().nullish(),
     revision: z.number().nullish(),
-    design_url: z.string().nullish(),
-    design_title: z.string().nullish(),
+    shown: ShownSchema.nullish(),
     anchor_id: z.string().nullish(),
     group_id: z.string().nullish(),
     group_revision: z.number().nullish(),
@@ -499,6 +508,7 @@ export const MessageImageSchema = z.object({
   source_task: z.string().nullish(),
 }).passthrough();
 export type MessageImage = z.infer<typeof MessageImageSchema>;
+
 export interface ImageUpload { name: string; data: string }
 export interface ImageSend { request_id: string; images?: ImageUpload[]; image_ids?: string[] }
 export const ImageCapabilitySchema = z.object({
@@ -544,6 +554,7 @@ export const TaskMessageSchema = z
     /** An L2 reply's GIFs from one validation run, opened on the task's captures page. */
     captures: z.array(z.object({ name: z.string(), title: z.string() }).passthrough()).nullish(),
     capture_run: z.number().nullish(),
+    shown: ShownSchema.nullish(),
   })
   .passthrough();
 
@@ -1062,18 +1073,20 @@ export function useTask(project: string, slug: string) {
   });
 }
 
-const TaskDesignSchema = z.object({
-  title: z.string(), revision: z.number(), text: z.string(),
-  images: z.array(z.object({ title: z.string(), url: z.string() })),
-  current_question_url: z.string().nullable(), superseded: z.boolean(),
+const ShownFilesSchema = ShownSchema.extend({
+  document: ShownSchema.shape.document.unwrap().extend({ text: z.string(), markdown: z.boolean() }).nullable(),
 });
+export type ShownFiles = z.infer<typeof ShownFilesSchema>;
 
-export function useTaskDesign(project: string, slug: string, question: string, revision: string) {
+/** One shown set for the reader, read while it is open and not kept after it closes: saved files never change. */
+export function useShownFiles(project: string, slug: string, identity: string, revision?: string) {
+  const path = [project, slug, identity, ...(revision ? [revision] : [])].map(encodeURIComponent).join("/");
   return useQuery({
-    queryKey: ["task-design", project, slug, question, revision],
-    queryFn: async () => TaskDesignSchema.parse(await api(`/api/design/${project}/${slug}/${question}/${revision}`)),
-    refetchInterval: 2_000,
+    queryKey: ["shown", path],
+    queryFn: async ({ signal }) => ShownFilesSchema.parse(await api(`/api/shown/${path}`, { signal })),
+    gcTime: 0,
     retry: false,
+    refetchOnWindowFocus: false,
   });
 }
 

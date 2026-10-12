@@ -5,15 +5,16 @@ import { describe, expect, it } from "vitest";
 import { DecisionSchema } from "../data/api";
 import { ToastProvider } from "../data/Toast";
 import { QuestionSet, ReviewDecision } from "./DecisionCard";
+import { ImageViewerHost } from "./MessageImages";
 import { ProseScope } from "./Prose";
 
 const installer = "Approve the report root?\n\nRun this once on the host:\n\n```sh\nsudo install -d /srv/reports\nalt ci reports --root /srv/reports\n```\n\nThen `alt task recheck-ci` reads it; see PR #12.";
 const base = { project: "atlas", slug: "gate", title: "Gate merges", id: "q1", revision: 1, status: "open", audience: "operator", asked_by: "l2", asked: "2026-09-23T22:00:00Z" };
 function mount(node: React.ReactNode) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(<QueryClientProvider client={queryClient}><ToastProvider><MemoryRouter>
+  return render(<QueryClientProvider client={queryClient}><ToastProvider><MemoryRouter><ImageViewerHost scope="/">
     <ProseScope project="atlas" repository="https://github.com/example/atlas">{node}</ProseScope>
-  </MemoryRouter></ToastProvider></QueryClientProvider>);
+  </ImageViewerHost></MemoryRouter></ToastProvider></QueryClientProvider>);
 }
 
 describe("question and review text", () => {
@@ -82,7 +83,9 @@ describe("question and review text", () => {
 });
 
 describe("review status on proposal and merge questions (SPEC.md §3.8.3)", () => {
-  const design = DecisionSchema.parse({ ...base, question: "Build the settings layout as shown?", design_url: "/projects/atlas/tasks/gate/design/q1/1", design_title: "Settings layout" });
+  const shown = { url: "/projects/atlas/tasks/gate/view/q1/1", available: true, newer_url: null, images: [],
+    document: { name: "settings.md", path: "design/settings.md", heading: "Settings layout", excerpt: "One page, three sections." } };
+  const design = DecisionSchema.parse({ ...base, question: "Build the settings layout as shown?", shown });
   const merge = DecisionSchema.parse({ ...base, id: null, revision: null, kind: "review", pr: 7, question: "Review PR #7 before merge" });
   const done = { id: "r1", state: "completed", reconciled: true };
   const states: [string, Record<string, unknown>, string, string][] = [
@@ -107,8 +110,8 @@ describe("review status on proposal and merge questions (SPEC.md §3.8.3)", () =
     // A review opens its card in the task conversation; no review is plain text, never a request.
     if (review.id) expect(screen.getByRole("link", { name: `Proposal review · ${text}` })).toHaveAttribute("href", `/projects/atlas/tasks/gate?review=${review.id}`);
     else expect(line.tagName).toBe("P");
-    // The line sits between the preview link and the recommendation's choices.
-    expect(container.querySelector(".question-preview + .question-review")).toBe(line);
+    // The line sits between the shown files and the recommendation's choices.
+    expect(container.querySelector(".shown-card + .question-review")).toBe(line);
   });
   it.each(states)("the merge card's implementation review: %s", (_name, review, text, tone) => {
     const { container } = mount(<ReviewDecision decision={{ ...merge, review: DecisionSchema.shape.review.parse({ subject: "changes", ...review }) }} />);
@@ -121,7 +124,16 @@ describe("review status on proposal and merge questions (SPEC.md §3.8.3)", () =
     const question = DecisionSchema.parse({ ...base, question: "Adopt the queue-per-project design?", review: { subject: "proposal", id: "p1", state: "withdrawn", skipped_by: "l2", reason: "Small, reversible change." } });
     const { container } = mount(<QuestionSet decisions={[question]} chat />);
     expect(screen.getByRole("link", { name: "Proposal review · skipped by L2 · Small, reversible change." })).toHaveAttribute("href", "/projects/atlas/tasks/gate?review=p1");
-    expect(container.querySelector(".question-preview")).toBeNull();
+    expect(container.querySelector(".shown-card")).toBeNull();
+  });
+  it("a design question opens its shown files in the reader; an earlier preview is a card that does not open", () => {
+    const earlier = DecisionSchema.parse({ ...base, id: "q2", question: "Build the old layout?",
+      shown: { url: null, available: false, newer_url: null, images: [], document: { name: "Old layout", path: "", heading: "", excerpt: "" } } });
+    mount(<QuestionSet decisions={[design, earlier]} chat />);
+    expect(screen.getByRole("link", { name: "Open settings.md" })).toHaveAttribute("href", "/projects/atlas/tasks/gate/view/q1/1");
+    expect(screen.getByText("Settings layout — One page, three sections.")).toBeVisible();
+    expect(screen.getByText("Old layout").closest("a")).toBeNull();
+    expect(screen.getByText("Preview unavailable")).toBeVisible();
   });
   it("a question naming the held PR shows the implementation review", () => {
     const question = DecisionSchema.parse({ ...base, question: "Merge PR #7?", review: { subject: "changes", ...done, findings: 0 } });

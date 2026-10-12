@@ -1214,7 +1214,7 @@ Archive and worktree cleanup retain the image with the conversation.
 
 ### Conversational decisions
 
-Before republishing a question or preview, the owner reads original answers and later guidance.
+Before republishing a question, the owner reads original answers and later guidance.
 Wording-only clarification of approved scope belongs in the conversation/docs without a new approval
 checkpoint. If republication races an answer, the owner compares scope, cites the original source
 in its reply/checkpoint, and withdraws only the redundant current question with that citation in
@@ -1249,7 +1249,7 @@ alt task block "$ALTITUDE_TASK" --reason 'Should the old index remain available 
 
 This writes a durable plain question for L3 triage; escalation or the operator-audience flag in the
 synopsis brings it to Needs you. It is Altitude's task UI, separate from the engine's own tool-call
-display. [Architecture and transport flow](ARCHITECTURE.md#from-model-judgment-to-a-task-question-or-preview)
+display. [Architecture and transport flow](ARCHITECTURE.md#from-model-judgment-to-a-task-question)
 explains the owner CLI and coordinator MCP/broker paths.
 
 For up to three independent questions upfront, pass `--questions-file <file>` to `block` or
@@ -1632,8 +1632,8 @@ alt task review request --source-message <message-id>
 alt task review run --review-id <id>
 # A proposal review requires the exact original L2 proposal message:
 alt task review run --review-id <proposal-review-id> --proposal-message <message-id>
-# A UI proposal also passes its design preview's selection, giving the reviewer the design spec:
-alt task review run --review-id <proposal-review-id> --proposal-message <message-id> --design-file design/wireframes/review.json
+# A UI proposal also shows the reviewer the files its question shows: the spec and its screenshots:
+alt task review run --review-id <proposal-review-id> --proposal-message <message-id> --show design/wireframes/PROPOSAL.md
 alt task review assess --review-id <id> --file /tmp/assessment.json
 # Select a deliberately revised proposal when assessing its later version:
 alt task review assess --review-id <proposal-review-id> --proposal-message <revised-message-id> --file /tmp/assessment.json
@@ -1673,15 +1673,14 @@ fails explicitly beyond 256 KiB, naming its size; when authority, corrections an
 the bound, the refusal says selection cannot help and the owner reports a capture fault. A changes review
 that needs an approved proposal selects that L2 message with `--context-message`. A proposal review
 captures the exact proposal text separately as `proposal.md`, bounded to 64 KiB, so the proposal never
-competes with retained authority. `--design-file` takes the same selection JSON as
-[design previews](#task-design-previews), with the same path, type and size checks: the selection's
-spec becomes `design.md`, the captured context names the screenshots by title, and the reviewer
-receives the screenshots themselves as images attached to its first prompt, in that order. The review
-record's `snapshot.design.images` lists each screenshot the reviewer was given. When the reviewer's
-installed engine CLI cannot attach images, that list is empty and the capture's limitations say the
-screenshots are named, not viewed. The receipt keeps the design's identity, which equals the preview's when the same selection is published with
-the design question; when the task's latest published design differs, the review shows as covering an
-earlier version. A changes review refuses `--design-file`.
+competes with retained authority. `--show` takes the same paths as [showing files](#showing-files),
+with the same checks: the document becomes `design.md`, the captured context names the screenshots by
+path, and the reviewer receives the images themselves attached to its first prompt, in their shown
+order. The review record's `snapshot.design.images` lists each image the reviewer was given. When the
+reviewer's installed engine CLI cannot attach images, that list is empty and the capture's limitations
+say the screenshots are named, not viewed. The receipt keeps the shown set's identity, which equals the
+question's when the same files are shown with it; when the task's latest question shows other files,
+the review shows as covering an earlier version. A changes review refuses `--show`.
 For image context, supply an L2 textual account and select that message explicitly; the capture
 records that original image bytes are not reviewed. The reviewer cannot run tests.
 The snapshot holds the candidate's ordinary tracked files and the patch from `origin/main`; links and
@@ -1716,83 +1715,54 @@ assessed or authorized for withdrawal before merge, including earlier changes re
 assessment stays separate from original findings; proposal evidence never establishes implementation
 acceptance, transfers ownership or access, or releases an approval question or merge hold.
 
-### Task design previews
+### Showing files
 
-Before requesting visual approval, the current L2 publishes the proposal's selected screenshots and
-explanation with its ordinary question. The resulting **View preview · saved title** link in Needs you and the task
-conversation opens the preview in the same tab over Altitude's normal connection. Use a title that identifies
-whether the captures show a proposal or an implementation review. Phone and desktop readers can
-inspect the screenshots at full size and use Back to return to the question, with any unsent answer
-still in place, for feedback or the existing quick answer. A local filesystem link is not a review entry.
-
-Create a selection JSON file, for example `design/wireframes/review.json`:
-
-```json
-{
-  "title": "Compact chat proposal",
-  "proposal": "design/wireframes/PROPOSAL.md",
-  "images": [
-    {"title": "Phone reading", "path": "design/wireframes/captures/phone-reading.png"},
-    {"title": "Phone typing", "path": "design/wireframes/captures/phone-typing.png"}
-  ]
-}
-```
-
-Then publish it with the question:
+An owner shows the operator a worktree document or images, rendered in Altitude, before anything is
+committed or published. A document is the way to show a spec, a proposal or a README draft; images
+are screenshots and captures. Showing approves nothing: it releases no hold and changes no question.
 
 ```sh
-alt task block "$ALTITUDE_TASK" --reason 'Approve the compact chat proposal?' \
-  --recommendation 'Use the layout and behavior shown in the saved proposal.' \
-  --label 'Use this design' --why 'Keeps more of the conversation visible.' \
-  --design-file design/wireframes/review.json
+# Under a reply: the README as GitHub renders it, its own pictures included, plus one extra screenshot.
+alt task reply --show README.md --show captures/overview.png 'The README draft is ready to read.'
+# With a question: the operator reads the proposal beside the question before answering.
+alt task block "$ALTITUDE_TASK" --reason 'Build the compact chat layout as proposed?' \
+  --recommendation 'Build the layout shown in the proposal.' --label 'Build as proposed' \
+  --show design/wireframes/PROPOSAL.md
 ```
 
-`--design-file` requires the current L2's own project, task and attempt. It accompanies one ordinary
-question or a `--questions-file` selecting exactly one new or existing open member; other members
-stay unchanged. It cannot accompany `--fault` or an ambiguous multi-member selection. Select paths
-relative to the recorded task worktree under `design/wireframes/`: one nonempty UTF-8 `.md`/`.txt`
-file up to 64 KiB and one to twelve
-PNG/JPEG screenshots up to 8 MiB each, 32 MiB total. Titles have 1–160 characters, and the selection
-JSON is at most 64 KiB. Only named files are copied. Symlinks, traversal, special files and unsupported
-types are refused. Use the existing browser harness to capture interactive wireframe states;
-submitted HTML, SVG, JavaScript and CSS are not preview inputs.
+`--show PATH` repeats. Paths are plain paths inside the task's registered worktree; untracked and
+ignored files are fine, and nothing is staged or committed. At most one document (`.md` or `.txt`,
+nonempty UTF-8, up to 1 MiB) and up to 24 images (PNG, JPEG, GIF or WebP, 8 MiB each, 32 MiB in
+total) can be shown, counting the images the document itself references. A Markdown document's local
+image references resolve as GitHub resolves them, from the document's folder or, for a leading `/`,
+the worktree root; those images are copied with it. A reference that leaves the worktree, names
+another type or is missing is listed as not shown and renders as **Image not shown** with its path;
+remote images are never fetched. Symlinks, traversal, special files and unsupported types are refused,
+and a refused set adds no reply or question.
 
-The selected `.md`/`.txt` file is the design spec: precise enough to review and build against without
+Only the current owner attempt shows files. A reply with `--show` goes to the operator's conversation
+and cannot use `--to l3`. A block with `--show` carries one ordinary question or a `--questions-file`
+selecting exactly one member; it cannot accompany `--fault`. A question showing files is a proposal
+approval, so its card shows the proposal review.
+
+The task keeps fixed, content-named copies. Later edits, branch changes, worktree removal and task
+archive leave a shown set exactly as published. Showing a question's files again with identical bytes
+keeps its revision; changed files advance the same open question, and an answer binds to the
+revision whose files the operator saw. Copies that go missing or change show **Preview
+unavailable**, and a question takes no answer until the owner shows the same files again, which
+restores them without changing the revision.
+
+A document shows in the conversation as a page card with its first picture, name and opening lines;
+images alone show as thumbnails. A later publication of the same document path marks earlier cards
+**Earlier**, and their reader offers **Newer**. Questions saved with a design preview before shown
+files existed show **Preview unavailable** and cannot be accepted; the owner republishes with
+`--show`. The [architecture](ARCHITECTURE.md#shown-files) describes the reader and its serving rules.
+
+For a UI proposal, write the spec as the document: precise enough to review and build against without
 the screenshots, covering each state, exact text and line formats, links, wrapping and truncation, on
-phone and desktop. Pass the same selection to the [proposal review](#adversarial-review) before
-publishing the question, so the reviewer reads the spec the operator sees.
-
-Inputs may be ignored or untracked: capture does not stage or commit them. Keep review screenshots
-in ignored `design/wireframes/captures/` or `design/wireframes/shots/`; the explicit selection can
-publish them before any repository commit. Follow the [capture guidance](../AGENTS.md#ui).
-
-The response includes `design_url`, for example
-`/projects/example/tasks/chat-layout/design/<question-id>/1`. This is a path on the current Altitude
-connection, not a filesystem path or an external upload. Use the returned reference; the same
-**View preview · Compact chat proposal** entry is rendered in Needs you and beside the question in
-its conversation. The offscreen question jump returns to that entry. The link and viewer heading use
-the captured title, not the question revision as a proposal version. Publication follows
-the ordinary L3-first audience rules unless explicitly directed to the operator.
-
-The question contains the captured text and titles, and the task retains the selected image bytes.
-Source edits and worktree cleanup leave the saved version intact. Repeating identical inputs keeps
-the revision; publishing changed screenshots, text or labels advances the same pending question.
-For an existing design question, use its same reason and add `--design-file`; its choices stay intact
-when replacement recommendation flags are omitted. An ordinary block with no design file parks the
-existing question and retains its saved preview.
-
-Old links retain their captured title and content, say **Earlier preview** when superseded, and
-identify a newer question when one exists. Missing or
-altered saved content shows **Design unavailable**, with Retry and Back; it never serves
-different content at that version. First acceptance refuses unavailable evidence. Feedback remains a
-normal message, and explicit acceptance uses the existing question/revision checks. Neither viewing,
-publication nor design acceptance releases a merge hold. A held implementation PR becomes available
-only after merge and normal activation; its owner reports that availability before another owner
-is asked to publish working proposal links in its existing session.
-
-To restore a missing or damaged regular capture, the same owner republishes the original selection.
-Verified source bytes restore the same content hash without changing the question revision; an actual
-content change creates a replacement revision. Symlinked saved paths still refuse publication.
+phone and desktop. Show the same files to the [proposal review](#adversarial-review)
+(`alt task review run --show ...`) before publishing the question, so the reviewer reads the spec the
+operator sees. Keep captures in ignored folders, following the [capture guidance](../AGENTS.md#ui).
 
 ### Adopt an existing PR
 

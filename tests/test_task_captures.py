@@ -5,12 +5,12 @@ import os
 
 from tests.support import AltitudeCase, add_worktree, make_repo
 from tests.test_capture import gif
-from tests import test_task_design as design
+from tests import test_shown_files as shown
 from altitude import capture as C, state as S, tasks as T
 
 
 class TestTaskCaptures(AltitudeCase):
-    request, stop_server = design.TestTaskDesign.request, design.TestTaskDesign.stop_server
+    request, stop_server = shown.TestShownFiles.request, shown.TestShownFiles.stop_server
 
     def setUp(self):
         super().setUp()

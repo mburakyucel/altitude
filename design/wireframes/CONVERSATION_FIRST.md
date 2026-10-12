@@ -80,8 +80,8 @@ application walkthroughs stay in ignored `web/ui-artifacts/`; see [development](
 | Situation | Visible behavior |
 | --- | --- |
 | Open any member | Focus the group's stable discussion anchor with preceding explanation. Back returns to the originating Needs you or project tab. |
-| Later activity arrives | Keep the reading position; **Latest messages** follows the bottom and **View question** returns to an offscreen question, where its **View preview · saved title** attachment remains reachable. |
-| Preview attached | Needs you and the owning question expose **View preview · saved title**; Work opens that question. A new tab preserves the original view and draft. Captured titles distinguish proposal from implementation review; historical questions retain their own attachments. |
+| Later activity arrives | Keep the reading position; **Latest messages** follows the bottom and **View question** returns to an offscreen question, where the files it shows remain one tap away. |
+| Files shown | Needs you and the owning question carry the page card or thumbnails; Work opens that question. The reader opens over the same page and closes back to it with the draft intact. Earlier versions say **Earlier**; historical questions keep their own files. |
 | Phone Conversation/Live switch | Replace the same history entry and preserve its draft. Leaving the task clears the draft. |
 | Initial loading or read failure | Skeleton then Retry; no inferred count, enabled decision or writable composer from an unknown read. |
 | Cached read failure | Retain saved content, show refresh notice and disable writing until a successful read. |
