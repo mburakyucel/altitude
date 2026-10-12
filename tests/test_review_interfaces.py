@@ -102,17 +102,13 @@ class TestReviewInterfaces(AltitudeCase):
                                                            **({"context_ids": ["source"], "proposal_id": proposal_id}
                                                               if proposal_id else {})})
                 self.assertIsNone(transport.call_args.kwargs["timeout"])
-        # The design preview's selection travels as data; the daemon captures the files it names.
-        selection = {"title": "Compact rows", "proposal": "design/wireframes/spec.md",
-                     "images": [{"title": "Phone", "path": "design/wireframes/phone.png"}]}
-        manifest = self.tmp / "selection.json"
-        manifest.write_text(json.dumps(selection))
+        # Shown paths travel as data; the daemon copies the files they name.
         response = mock.MagicMock()
         response.__enter__.return_value = io.BytesIO(b'{"ok":true,"review":{"id":"review","state":"completed"}}')
         with mock.patch("urllib.request.urlopen", return_value=response) as transport:
             self.cli("task", "review", "run", "--review-id", "review", "--proposal-message", "proposal",
-                     "--design-file", str(manifest))
-            self.assertEqual(json.loads(transport.call_args.args[0].data)["design"], selection)
+                     "--show", "docs/spec.md", "--show", "docs/phone.png")
+            self.assertEqual(json.loads(transport.call_args.args[0].data)["show"], ["docs/spec.md", "docs/phone.png"])
 
     def test_streamed_execution_error_is_not_a_success_receipt(self):
         self.serving(8890)  # the transport is replaced; nothing listens
@@ -160,16 +156,15 @@ class TestReviewInterfaces(AltitudeCase):
             request.assert_not_called()
             run.assert_not_called()
             assess.assert_not_called()
-        selection = {"title": "Compact rows", "proposal": "design/wireframes/spec.md", "images": []}
-        for proposal_id, design in ((None, None), ("original-proposal", None), ("original-proposal", selection)):
-            fields = {**({"proposal_id": proposal_id} if proposal_id else {}), **({"design": design} if design else {})}
-            with self.subTest(proposal_id=proposal_id, design=bool(design)), \
+        for proposal_id, show in ((None, None), ("original-proposal", None), ("original-proposal", ["docs/spec.md"])):
+            fields = {**({"proposal_id": proposal_id} if proposal_id else {}), **({"show": show} if show else {})}
+            with self.subTest(proposal_id=proposal_id, show=bool(show)), \
                     mock.patch.object(reviews, "run", return_value={"id": "review"}) as run:
                 status, value = self.post({**base, "attempt": "2", "review_id": "review", "context_ids": ["source"], **fields},
                                           "/api/task/review/run")
                 self.assertEqual((status, value), (200, {"ok": True, "review": {"id": "review"}}))
                 run.assert_called_once_with(self.project, self.slug, "review", actor="l2", expected_attempt=2,
-                                            context_ids=["source"], proposal_id=proposal_id, design=design, on_wait=mock.ANY)
+                                            context_ids=["source"], proposal_id=proposal_id, show=show, on_wait=mock.ANY)
 
     def test_http_repeat_names_the_review_it_replaces_and_wake_failure_keeps_receipt(self):
         task = S.load_task(self.project, self.slug)

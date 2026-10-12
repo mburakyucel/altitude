@@ -82,6 +82,8 @@ DESIGN_TYPES = {
     ".jpg": "image/jpeg",
     ".woff2": "font/woff2",
 }
+# Shown images keep their checked type; a shown document crosses only inside its set's JSON.
+SHOWN_TYPES = {"png": "image/png", "jpg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"}
 
 
 def design_viewer_url(project: str) -> str | None:
@@ -1443,10 +1445,6 @@ class Handler(BaseHTTPRequestHandler):
         edit the browser draws. A project without boards, a directory, and an escape attempt are all
         the same plain 404. Each file is served in a sandbox, so a board's scripts cannot act as Altitude, and
         its path carries the read pass (`access.design_pass`) that lets the sandboxed boards load their files."""
-        if len(parts) > 2 and parts[2] == "tasks":
-            if len(parts) != 7:
-                return self._plain("Design unavailable", 404)
-            return self._task_design([parts[1], *parts[3:6]], asset=unquote(parts[6]))
         requested = unquote(parts[1]) if len(parts) > 1 else ""
         # The registered name, never the request's own text, names the project from here on: it reaches a redirect header.
         project = next((name for name in config.load_projects() if name == requested), "")
@@ -1479,31 +1477,36 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _task_design(self, parts: list[str], *, asset: str | None = None) -> None:
-        """The question owns the fixed review; only its captured raster bytes cross this route."""
+    def _shown(self, parts: list[str]) -> None:
+        """A reply's or question revision's shown files: the record lists them by digest, and only those saved bytes
+        cross this route. `project/slug/reply` or `project/slug/question/revision`, then `files/<name>` for one file."""
+        asset = unquote(parts[-1]) if len(parts) > 2 and parts[-2] == "files" else None
         try:
-            project, slug, identity, revision_text = [unquote(part) for part in parts]
-            revision = int(revision_text)
-            task, question = T.task_design(project, slug, identity, revision)
-            design = question["design"]
+            target = [unquote(part) for part in (parts[:-2] if asset is not None else parts)]
+            if len(target) not in (3, 4):
+                raise ValueError("shown files unavailable")
+            project, slug, identity, *revision = target
+            revision = int(revision[0]) if revision else None
+            task, shown = T.shown_target(project, slug, identity, revision)
+            if asset is None:
+                document = shown.get("document")
+                text = T.shown_file(project, slug, shown, document["name"]).decode("utf-8") if document else None
+                view = T.shown_view(project, slug, shown, identity, revision, T.shown_versions(project, slug, task))
+                if not view["available"]:
+                    raise ValueError("shown files unavailable")
+                return self._json({**view, "not_shown": shown.get("not_shown", []),
+                                   "document": {**view["document"], "text": text,
+                                                "markdown": document["name"].endswith(".md")} if document else None,
+                                   "conversation_url": f"/projects/{quote(project, safe='')}/tasks/{slug}"})
+            if asset.rsplit(".", 1)[-1] not in SHOWN_TYPES:
+                raise ValueError("documents are read through their shown set")
+            data = T.shown_file(project, slug, shown, asset)
+        except (T.TransitionError, OSError, ValueError, KeyError, TypeError, UnicodeError):
             if asset is not None:
-                data = T.design_image(project, slug, design, asset)
-            else:
-                T.require_design(project, slug, question)
-                latest = next(q for q in reversed(task["questions"]) if q["id"] == identity)
-                base = f"/projects/{quote(project, safe='')}/tasks/{slug}"
-                superseded = latest["revision"] != revision
-                prefix = f"/design/{quote(project, safe='')}/tasks/{slug}/{identity}/{revision}"
-                return self._json({"title": design["title"], "revision": revision, "text": design["text"],
-                    "images": [{"title": img["title"], "url": f"{prefix}/{img['name']}"} for img in design["images"]],
-                    "superseded": superseded,
-                    "current_question_url": f"{base}?question={identity}&revision={latest['revision']}" if superseded else None})
-        except (T.TransitionError, OSError, ValueError, KeyError, TypeError):
-            if asset is not None:
-                return self._plain("Design unavailable", 404)
-            return self._json({"error": "Design unavailable"}, 404)
+                return self._plain("Preview unavailable", 404)
+            return self._json({"error": "Preview unavailable"}, 404)
         self.send_response(200)
-        self.send_header("Content-Type", "image/png" if asset.endswith(".png") else "image/jpeg")
+        self.send_header("Content-Type", SHOWN_TYPES[asset.rsplit(".", 1)[1]])
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -2123,8 +2126,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(T.task_file(unquote(parts[2]), query["path"][0]))
                 except T.TaskFileError as exc:
                     return self._json({"error": str(exc)}, exc.status)
-            if api == "design":
-                return self._task_design(parts[2:])
+            if api == "shown":
+                return self._shown(parts[2:])
             if api == "captures":
                 return self._captures(parts[2:])
             if api == "images":
@@ -2242,7 +2245,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             review = reviews.run(body["project"], body["slug"], body["review_id"], actor="l2",
                                  expected_attempt=int(body["attempt"]), context_ids=body.get("context_ids"),
-                                 proposal_id=body.get("proposal_id"), design=body.get("design"),
+                                 proposal_id=body.get("proposal_id"), show=body.get("show"),
                                  on_wait=heartbeat)
             result, code = {"ok": True, "review": review}, 200
         except (T.TransitionError, ValueError, KeyError) as exc:
@@ -2287,7 +2290,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._validation_post(o)
             if parts == ["api", "task", "review", "run"]:
                 try:
-                    if o.keys() - {"project", "slug", "attempt", "review_id", "context_ids", "proposal_id", "design"}:
+                    if o.keys() - {"project", "slug", "attempt", "review_id", "context_ids", "proposal_id", "show"}:
                         raise ValueError("Unsupported review execution fields.")
                     if not isinstance(o.get("attempt"), (str, int)) or isinstance(o["attempt"], bool):
                         raise ValueError("The current L2 attempt is required.")
