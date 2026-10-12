@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
-import { expect } from "@playwright/test";
+import { devices, expect, type Page } from "@playwright/test";
 import { test } from "./fixtures";
 
 // The README and walkthrough illustrations (design/readme/README.md). With ALTITUDE_README_IMAGES naming a
@@ -76,4 +76,48 @@ test("project, work, task steering, live session and a decision", async ({ page 
     await page.close();
     await video.saveAs(resolve(images, "phone-walkthrough.webm"));
   }
+});
+
+// The README's opening loop: the phone answers the backfill decision while the desktop project view watches the
+// task go back to work. One run drives both screens on the same service; ALTITUDE_README_IMAGES receives
+// `opening-<frame>-desktop.png` and `opening-<frame>-phone.png` for design/readme/opening.py.
+test("the phone answers a decision and the desktop sees the task resume", async ({ page, browser, altitude }, info) => {
+  test.skip(info.project.name === "phone", "one run drives the desktop and the phone together");
+  const errors: string[] = [];
+  const phoneContext = await browser.newContext({
+    ...devices["Pixel 7"], viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, baseURL: altitude.url,
+    locale: "en-US", timezoneId: "UTC", colorScheme: "light",
+  });
+  await phoneContext.addCookies([{ name: "altitude_device", value: altitude.device, url: altitude.url }]);
+  await phoneContext.route(/^https?:\/\/(?!127\.0\.0\.1[:/])/, route => route.abort());
+  const phone = await phoneContext.newPage();
+  for (const each of [page, phone]) each.on("pageerror", (error) => errors.push(error.message));
+  async function frame(name: string) {
+    for (const [view, each] of [["desktop", page], ["phone", phone]] as [string, Page][]) {
+      await each.evaluate(() => document.fonts.ready);
+      if (images) {
+        await mkdir(images, { recursive: true });
+        await each.screenshot({ path: resolve(images, `opening-${name}-${view}.png`), animations: "disabled" });
+      }
+    }
+  }
+  const backfill = page.getByRole("region", { name: "Work", exact: true })
+    .locator('a[href^="/projects/atlas/tasks/build-resumable-index-backfill"]').first();
+  const decision = phone.getByRole("article", { name: "Build resumable index backfill", exact: true });
+
+  await page.goto("/projects/atlas");
+  await expect(backfill).toContainText("Your turn");
+  await phone.goto("/");
+  await expect(decision).toContainText("How long should we keep the old index for rollback?");
+  await frame("1-question");
+  await decision.getByRole("button", { name: "7 days", exact: true }).click();
+  await expect(phone.getByRole("button", { name: "Send 1 answer", exact: true })).toBeEnabled();
+  await frame("2-chosen");
+  await phone.getByRole("button", { name: "Send 1 answer", exact: true }).click();
+  await expect(phone.getByText("Nothing needs you.", { exact: true })).toBeVisible();
+  await expect(backfill).not.toContainText("Your turn");
+  await expect(backfill).toContainText("L2 replying to you");
+  await frame("3-resumed");
+  expect(errors).toEqual([]);
+  await phoneContext.close();
 });
