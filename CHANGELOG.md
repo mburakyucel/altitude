@@ -3,6 +3,89 @@
 Release notes describe user-visible behavior, compatibility and recovery. The project is an early
 preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is not a published release.
 
+## v0.4.0 — 2026-10-12
+
+Feature release of the early preview. Altitude keeps running where it used to stop, shows more of
+what its agents are doing, and starts suggesting how it could work better for you.
+
+Updating: copies on `v0.1.2`, `v0.2.0` or `v0.3.0` install this release automatically at a quiet
+point, or offer it in the app and through `alt update` when automatic updates are off. Copies on
+`v0.1.0` or `v0.1.1` need one manual update. Configuration, TLS identity and data are kept; nothing
+needs migrating. Three things to know:
+
+- On Linux, an update leaves lingering as it is. To keep an existing installation running after
+  logout and at boot, run `sudo loginctl enable-linger <account>` once; `alt doctor` shows whether
+  it is on.
+- On a Mac, Altitude stays out of Desktop, Documents, Downloads, iCloud Drive and the other places
+  macOS guards. A project kept in one of them can no longer be worked on; move it to another folder
+  and add it again.
+- Host voice installs a newer speech runtime, so an existing one reads "Voice needs an update" once.
+
+Watching and steering work:
+
+- Live session shows work an agent keeps running in the background, such as a long command or a
+  helper, in a small tray under the stream: what it is, how long it has run, and whether it finished,
+  failed or was stopped.
+- An agent can show you a document or images from its task before anything is published. The
+  conversation shows a page card or thumbnails; the document opens beside the conversation on a wide
+  screen and full screen on a phone, rendered as GitHub does, and a set of images opens as a gallery.
+  An answer applies to the files you saw; an older version is marked Earlier.
+- A pull request waiting for your review shows exactly one Approve merge, on the agent's question or
+  on the review card, never both.
+- Ask the coordinator for improvement suggestions in the Altitude project's chat. It reviews the
+  finished tasks for recurring friction, checks each suggestion against the records it cites and posts
+  the ones worth your time as a card: each suggestion says what it would change, where it was seen and
+  how often, with Make a task and Dismiss. Make a task has the coordinator open the task; Details shows
+  what the review read and left out. Suggestions still waiting for you are listed under Suggestions in
+  Needs you, without adding to its count. The review runs on Claude's plan, starts only after five
+  finished tasks, can be stopped while it runs and stays out of Claude's reserve.
+
+Engines:
+
+- When an engine's sign-in lapses, the coordinator answers on the other engine and project chat says
+  so once, in plain words, with the command that signs you back in. The provider's error text never
+  appears as a reply. With no other engine, your message waits under that line.
+
+Running Altitude:
+
+- On Linux, a first installation turns on lingering, so Altitude keeps running after you log out
+  and starts at boot with nobody logged in, which a host you reach only over SSH needs. When the
+  system refuses, installation still completes and prints the one command to run.
+- Host voice runs on Macs with Apple silicon and is the default there, with the same model and
+  privacy as on Linux. Its newer speech runtime brings the final words in sooner after Stop.
+- On a Mac, Altitude never asks for access to your private places: every sandbox it applies refuses
+  them, and the folder browser leaves them out. If macOS still asks, click Don't Allow; nothing
+  depends on the answer. Confined agents also cannot script other running apps.
+- The setup and operations guides say plainly that a Mac runs Altitude after someone logs in, why
+  macOS allows nothing earlier, and what automatic login changes.
+- Activating merged changes retries by itself when it was refused for a passing reason, such as a
+  slow answer on a busy host, and parks with a fault only when the problem persists. A failed
+  activation keeps showing that the web app is out of date, and its fault names the real cause.
+- On a phone, a touch right after a swipe between Conversation and Terminal goes to the view the
+  swipe settled on.
+
+Task agents and the coordinator:
+
+- Pull requests merge in the order they became ready. A waiting pull request keeps its green check
+  and catches up with main only at its turn, so each one needs at most two checks. A merge to main
+  whose files a pull request's check already tested reuses that check instead of running the full
+  suite again.
+- A validation run waits through an activation instead of giving up its place in line.
+- History search finds records containing every word of the query, in any order.
+- On a Mac, the full test suite passes inside Altitude's confinement, the container lanes run in a
+  throwaway Linux guest, and a standing approval covers bounded runs of both VM lanes.
+
+Documentation:
+
+- The README opens with a short loop of a decision answered on the phone and explains the team in
+  one drawing.
+- The setup guide is a short walk a new operator follows top to bottom on Linux or macOS. Running
+  from a source checkout and the configuration settings are in the operations guide.
+
+Known limits: native macOS behavior still being confirmed on another Mac (#225), relaxed host
+checks (#818) and notification preferences on a real iPhone (#829) stay tracked on their issues.
+Live providers are not part of release testing.
+
 ## v0.3.0 — 2026-10-11
 
 Feature release of the early preview. It is mostly about reading Altitude at a glance: decisions
