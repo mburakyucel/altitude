@@ -1,14 +1,25 @@
 {
   "basis": "Approved v5 whole-container exposure; validation/129 enumerates eleven ACPI/SCSI descendant read predicates for both UIDs, with no content reads or extra writes. Independently reviewed reconciliation retains exact matches. This measured tuple must not be inherited by Mac/ARM64 or other runtimes; re-derive and review the complete inventory there.",
-  "tuple": {
-    "distribution": "ubuntu",
-    "release": "24.04",
-    "architecture": "amd64",
-    "kernel": "6.8.0-142-generic",
-    "podman": "4.9.3",
-    "crun": "crun version 1.14.1",
-    "network": "slirp4netns"
-  },
+  "tuples": [
+    {
+      "distribution": "ubuntu",
+      "release": "24.04",
+      "architecture": "amd64",
+      "kernel": "6.8.0-142-generic",
+      "podman": "4.9.3",
+      "crun": "crun version 1.14.1",
+      "network": "slirp4netns"
+    },
+    {
+      "distribution": "ubuntu",
+      "release": "24.04",
+      "architecture": "arm64",
+      "kernel": "6.8.0-142-generic",
+      "podman": "4.9.3",
+      "crun": "crun version 1.14.1",
+      "network": "slirp4netns"
+    }
+  ],
   "readable": [
     "/proc/acpi",
     "/proc/acpi/wakeup",

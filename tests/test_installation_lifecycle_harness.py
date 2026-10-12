@@ -908,3 +908,93 @@ class TestInstallationMacosVm(AltitudeCase):
         self.assertIn("needs a Mac with Apple silicon", stderr.getvalue())
         lock.assert_not_called()
         self.assertFalse((self.tmp / "results").exists())
+
+
+class TestLinuxVmMac(AltitudeCase):
+    def test_guest_starts_its_clock_and_ssh_relay_before_system_initialization(self):
+        from scripts import linux_vm_mac as vm
+        with mock.patch.object(vm.time, "time", return_value=1_791_000_000.5):
+            data = vm.user_data("ssh-ed25519 FIXTURE")
+        bootcmd = [json.loads(line[4:]) for line in data.splitlines() if line.startswith("  - [")]
+        self.assertEqual(bootcmd[0], ["date", "-u", "-s", "@1791000000"])
+        self.assertEqual(bootcmd[2][:3], ["systemd-run", "--no-block", "--property=DefaultDependencies=no"])
+        # The line scripts/container_vm.py extends with the container packages.
+        self.assertIn("\npackages: [git, gh, openssl]\n", data)
+
+    def image(self, files: dict, published: dict | None = None):
+        """A fixture of Ubuntu's published folder; returns the fetched URLs."""
+        from scripts import linux_vm_mac as vm
+        published = published or files
+        sums = {"": "", "unpacked/": ""}
+        for name, data in published.items():
+            sums["" if name == vm.ROOT else "unpacked/"] += f"{hashlib.sha256(data).hexdigest()} *{name}\n"
+        fetched = []
+        def fetch(url, path):
+            fetched.append(url)
+            relative = url.removeprefix(vm.IMAGES)
+            path.write_bytes(sums[relative.removesuffix("SHA256SUMS")].encode() if relative.endswith("SHA256SUMS")
+                             else files[relative.removeprefix("unpacked/")])
+        with mock.patch.object(vm, "fetch", fetch), mock.patch.object(vm, "need"):
+            return fetched, vm.base_image(self.tmp)
+
+    def files(self) -> dict:
+        from scripts import linux_vm_mac as vm
+        import gzip, tarfile
+        root = io.BytesIO()
+        with tarfile.open(fileobj=root, mode="w:gz") as archive:
+            member = tarfile.TarInfo("noble-server-cloudimg-arm64.img")
+            member.size = 6
+            archive.addfile(member, io.BytesIO(b"rootfs"))
+        return {vm.ROOT: root.getvalue(), vm.KERNEL: gzip.compress(b"kernel"), vm.INITRD: b"initrd"}
+
+    def test_base_image_is_unpacked_from_checked_downloads_and_kept_until_they_change(self):
+        from scripts import linux_vm_mac as vm
+        files = self.files()
+        fetched, record = self.image(files)
+        folder = self.tmp / vm.IMAGE
+        self.assertEqual({name: (folder / name).read_bytes() for name in ("rootfs.img", "vmlinux", "initrd")},
+                         {"rootfs.img": b"rootfs", "vmlinux": b"kernel", "initrd": b"initrd"})
+        self.assertFalse(any((folder / name).exists() for name in files))
+        self.assertEqual(len(fetched), 5)
+        self.assertEqual(record["signature"], "not verified on a Mac; checksums over HTTPS")
+        fetched, _ = self.image(files)
+        self.assertEqual([url.rsplit("/", 1)[1] for url in fetched], ["SHA256SUMS", "SHA256SUMS"])
+
+    def test_a_download_that_does_not_match_its_published_checksum_is_refused_and_removed(self):
+        from scripts import linux_vm_mac as vm
+        files = self.files()
+        with self.assertRaisesRegex(RuntimeError, f"{vm.KERNEL} does not match"):
+            self.image({**files, vm.KERNEL: b"tampered"}, published=files)
+        self.assertFalse((self.tmp / vm.IMAGE / vm.KERNEL).exists())
+        self.assertFalse((self.tmp / vm.IMAGE / "image.json").exists())
+
+    def test_one_virtual_machine_at_a_time_and_failed_setups_release_the_lock(self):
+        from scripts import linux_vm_mac as vm
+        image = self.tmp / "image"
+        image.mkdir()
+        (image / "rootfs.img").write_bytes(b"rootfs")
+        def work(name):
+            folder = self.tmp / name
+            folder.mkdir()
+            (folder / "id_ed25519.pub").write_text("ssh-ed25519 FIXTURE\n")
+            return folder
+        with mock.patch.object(vm.macos, "CACHE", self.tmp / "lane"), \
+                mock.patch.object(vm.subprocess, "run"), mock.patch.object(vm.os, "truncate"):
+            first = vm.Machine(work("first"), image)
+            # The macOS installation lane's lock: a second guest, or its downloads, wait for the first.
+            with self.assertRaisesRegex(vm.macos.Stop, "another run"):
+                vm.Machine(work("second"), image)
+            with self.assertRaisesRegex(vm.macos.Stop, "another run"):
+                vm.base_image(self.tmp / "other-cache")
+            first.stop()
+            with mock.patch.object(vm.shutil, "disk_usage", return_value=types.SimpleNamespace(free=vm.FLOOR)):
+                with self.assertRaisesRegex(RuntimeError, "at least 10 GiB must stay free"):
+                    vm.Machine(work("third"), image)
+            # A helper that cannot be built or started still lets the guest's setup be stopped.
+            broken = vm.Machine(work("fourth"), image)
+            with mock.patch.object(vm.macos, "helper", side_effect=subprocess.CalledProcessError(1, "swiftc")):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    broken.start()
+            broken.stop()
+            self.assertTrue(broken.log.closed)
+            vm.Machine(work("fifth"), image).stop()

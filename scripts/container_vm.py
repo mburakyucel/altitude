@@ -1,18 +1,24 @@
-"""Build and test the container launcher in a disposable Ubuntu 24.04 amd64 VM.
+"""Build and test the container launcher in a disposable Ubuntu 24.04 VM.
 
-Run `make container-vm RESULTS=DIR`; task owners use the validation runner.
+On Linux the guest is amd64 under KVM: run `make container-vm RESULTS=DIR`; task
+owners use the validation runner. On an Apple silicon Mac the guest is arm64 under
+Apple's Virtualization framework (scripts/linux_vm_mac.py): run
+`make container-macos-vm RESULTS=DIR`, inside a task through `alt task run`.
 The actual image, launcher, systemd and Podman run with fictional state. Sender
 metadata and service-manager monitoring stay entirely inside the guest. The VM
 needs internet for distribution/image packages, but receives no host credentials.
-This lane proves no Mac, provider authentication or physical-device behavior.
+This lane proves Linux guest behavior only: no Mac host lifecycle, provider
+authentication or physical-device behavior.
 """
 import argparse
 import concurrent.futures
 import hashlib
 import json
 from pathlib import Path
+import platform
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -20,7 +26,10 @@ import time
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-from scripts import installation_vm as vm
+if sys.platform == 'darwin':
+    from scripts import linux_vm_mac as vm
+else:
+    from scripts import installation_vm as vm
 
 
 def run(results, cache, *, image_workflow=False, native_binary=None, browser=False, logout=False):
@@ -61,6 +70,7 @@ def run(results, cache, *, image_workflow=False, native_binary=None, browser=Fal
         machine.start()
         machine.wait_ready(time.monotonic() + 600)
         record['guest'] = machine.ssh('uname -a; podman --version; crun --version').stdout
+        record['host'] = {'system': sys.platform, 'machine': platform.machine(), 'release': platform.mac_ver()[0] or platform.release()}
         source = work / 'source.tar'
         subprocess.run(['git', '-C', str(REPO), 'archive', '--format=tar', '-o', str(source), 'HEAD'], check=True)
         record['source_sha256'] = hashlib.sha256(source.read_bytes()).hexdigest()
@@ -103,7 +113,8 @@ def run(results, cache, *, image_workflow=False, native_binary=None, browser=Fal
                                    timeout=600, check=False)
             if prepared.returncode:
                 machine.copy('ubuntu@127.0.0.1:input/product-result', str(results))
-                raise RuntimeError('Logout fixture preparation failed: ' + prepared.stderr[-4000:])
+                raise RuntimeError(f'Logout fixture preparation failed ({prepared.returncode}): '
+                                   + (prepared.stdout + prepared.stderr)[-4000:])
             run = machine.ssh('python3 input/source/tests/container_logout_probe.py verify',
                               timeout=300, check=False)
         elif browser:
@@ -158,7 +169,10 @@ def run(results, cache, *, image_workflow=False, native_binary=None, browser=Fal
             except subprocess.TimeoutExpired:
                 forwarding.kill(); forwarding.wait(timeout=5)
         if machine:
-            machine.stop()
+            try:
+                machine.stop()
+            except Exception as error:  # the run fails, but its folder and record still go
+                record.update(passed=False, stop_error=repr(error))
             record['vm_stopped'] = machine.process is None or machine.process.poll() is not None
         if monitor:
             try:
@@ -167,7 +181,7 @@ def run(results, cache, *, image_workflow=False, native_binary=None, browser=Fal
             except Exception as error:
                 record['monitor_error'] = repr(error)
         pool.shutdown(wait=True)
-        for name in ('console.log', 'qemu.log'):
+        for name in ('console.log', 'qemu.log', 'helper.log'):
             if (work / name).is_file():
                 shutil.copyfile(work / name, results / name)
         shutil.rmtree(work)
@@ -186,6 +200,8 @@ def main():
     parser.add_argument('--browser', action='store_true', help='actual published HTTPS daemon onboarding with fictional engine on phone/desktop')
     parser.add_argument('--logout', action='store_true', help='user-manager shutdown and new-login recovery of the actual launcher')
     args = parser.parse_args()
+    # A stop request (a command time limit) still stops the guest, deletes its disk and writes the record.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     if args.native_sandbox_binary and not args.image_workflow:
         parser.error('--native-sandbox-binary needs --image-workflow')
     if sum((args.browser, args.image_workflow, args.logout)) > 1:
