@@ -244,6 +244,7 @@ class TestPrerequisites(OnboardingCase):
                     mock.patch.object(installation, "_gh_lacks", return_value=lacks), \
                     mock.patch.object(installation, "_gh_signed_in", return_value=False), \
                     mock.patch.object(platform, "status", side_effect=RuntimeError("no service in tests")), \
+                    mock.patch.object(platform, "lingering", return_value=None), \
                     mock.patch("altitude.tls.info", side_effect=OSError("fixture: no certificate")):
                 checks = {check["name"]: check for check in installation.doctor()["checks"]}
             self.assertEqual(checks["gh"]["state"], "configured")

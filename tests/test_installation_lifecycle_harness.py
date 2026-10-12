@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -156,6 +157,24 @@ class TestLifecycleHarness(AltitudeCase):
             run.assert_not_called()
         self.assertFalse(json.loads((results / "reboot-verify-result.json").read_text())["passed"])
 
+
+    def test_logout_verify_fails_when_the_service_stopped_with_the_installing_login(self):
+        results = self.tmp / "results"
+        results.mkdir()
+        harness = Lifecycle(self.tmp / "baseline", self.tmp / "candidate", results, "a" * 40)
+        harness.home = self.tmp / "altitude-installation.fixture/alt-install-1"
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            closed = sock.getsockname()[1]
+        (results / "reboot-state.json").write_text(json.dumps({"env": {"ALTITUDE_PORT": str(closed)}, "release": {},
+                                                                "pid": "1", "manager": "2", "boot_id": "fixture-boot"}))
+        with mock.patch("scripts.installation_lifecycle.pwd.getpwuid") as user, \
+                mock.patch("scripts.installation_lifecycle.subprocess.run") as run:
+            user.return_value.pw_name = "alt-install-1"
+            with self.assertRaisesRegex(AssertionError, "stopped when the installing login closed"):
+                harness.execute("logout-verify")
+            run.assert_not_called()
+        self.assertFalse(json.loads((results / "logout-verify-result.json").read_text())["passed"])
 
     def test_recovery_refuses_a_failed_installation_that_kept_nothing_to_retain(self):
         # Without settings and a TLS identity left behind, "installing over it keeps them" proves nothing.

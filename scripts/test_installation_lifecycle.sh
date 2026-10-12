@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Only on an explicitly disposable Ubuntu VM. Never run on a development host.
-# PHASE reboot-install keeps the installed account for the machine to restart; reboot-verify then
-# checks it and removes it. PHASE bootstrap points the release host, and PHASE update also its api. host, at this
+# PHASE reboot-install installs inside an SSH login of an account that does not linger, closes the login, checks the
+# service kept running with nobody logged in and keeps the account for the machine to restart; reboot-verify then
+# checks it and removes it. Every other phase turns lingering on itself, so its account needs no login. PHASE bootstrap points the release host, and PHASE update also its api. host, at this
 # machine's loopback for the duration of the test. PHASE public-install and public-update download from GitHub itself.
 # Each phase writes to RESULTS_DIR/PHASE.
 set -euo pipefail
@@ -105,8 +106,15 @@ else
     cp -a "$candidate/." "$test_home/candidate/"
     cp "$script_dir/installation_lifecycle.py" "$test_home/"
     chown -R "$account:$account" "$test_home"
-    timeout 30 loginctl enable-linger "$account"
-    timeout 30 systemctl start "user@$test_uid.service"
+    if [[ $phase == reboot-install ]]; then
+        # A key for this account's own SSH login, which starts its user manager as on a host reached only over SSH.
+        ssh-keygen -q -t ed25519 -N '' -C "$account" -f "$scratch/login-key"
+        install -d -m 700 -o "$account" -g "$account" "$test_home/.ssh"
+        install -m 600 -o "$account" -g "$account" "$scratch/login-key.pub" "$test_home/.ssh/authorized_keys"
+    else
+        timeout 30 loginctl enable-linger "$account"
+        timeout 30 systemctl start "user@$test_uid.service"
+    fi
 fi
 if [[ $phase == bootstrap || $phase == update ]]; then
     # The test account serves the release over HTTPS on 127.0.0.1:443 under the release's own host name,
@@ -121,9 +129,23 @@ if [[ $phase == bootstrap || $phase == update ]]; then
     sysctl -qw net.ipv4.ip_unprivileged_port_start=443
 fi
 # No runner token, credentials, Python path or owner runtime enters the test.
-timeout --signal=TERM --kill-after=10s 8m runuser -u "$account" -- env -i \
-    HOME="$test_home" USER="$account" LOGNAME="$account" PATH=/usr/bin:/bin \
-    XDG_RUNTIME_DIR="/run/user/$test_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$test_uid/bus" \
-    /usr/bin/python3 "$test_home/installation_lifecycle.py" "$test_home/baseline" "$test_home/candidate" "$test_home/results" "$5" "$phase"
-[[ $phase == reboot-install ]] && keep=true
+body=(env -i HOME="$test_home" USER="$account" LOGNAME="$account" PATH=/usr/bin:/bin
+      XDG_RUNTIME_DIR="/run/user/$test_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$test_uid/bus"
+      /usr/bin/python3 "$test_home/installation_lifecycle.py" "$test_home/baseline" "$test_home/candidate" "$test_home/results" "$5")
+if [[ $phase != reboot-install ]]; then
+    timeout --signal=TERM --kill-after=10s 8m runuser -u "$account" -- "${body[@]}" "$phase"
+    exit 0
+fi
+timeout --signal=TERM --kill-after=10s 8m ssh -i "$scratch/login-key" -o BatchMode=yes -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR "$account@127.0.0.1" "$(printf '%q ' "${body[@]}" reboot-install)"
+# The login has closed. Without lingering, logind stops the user manager UserStopDelaySec (10 s by default) after the
+# account's last session ends.
+for _ in $(seq 30); do
+    [[ -z $(loginctl show-user "$test_uid" --property=Sessions --value 2>/dev/null) ]] && break
+    sleep 1
+done
+loginctl list-sessions --no-legend > "$results/sessions-after-logout.log" 2>&1 || true
+sleep 30
+timeout --signal=TERM --kill-after=10s 2m runuser -u "$account" -- "${body[@]}" logout-verify
+keep=true
 exit 0

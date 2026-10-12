@@ -580,6 +580,10 @@ def doctor() -> dict:
         checks.append({"name": "user service", "state": "tested", "detail": native})
     except RuntimeError as exc:
         checks.append({"name": "user service", "state": "unavailable", "detail": str(exc)})
+    lingering = platform.lingering()
+    if lingering:
+        checks.append({"name": "runs without a login", "state": "configured" if lingering["enabled"] else "unavailable",
+                       "detail": lingering["detail"]})
     if shutil.which("gh"):
         lacks = _gh_lacks()
         checks.append({"name": "GitHub CLI pull request fields",
@@ -845,7 +849,8 @@ def _activate(stage: Path, release: dict, prefix: Path, settings: Path, *, newer
         time.sleep(0.25)
     return {"version": release["version"], "prefix": str(prefix), "url": tls.url(),
             "service": "running" if previous_service is None or receipt["active"] else "stopped",
-            "trust": tls.info(), "retained": "previous versions and all user data", "next": "Follow trust.trust_steps in each desktop or phone browser. Use the public ca_cert file locally, or alt tls-share on a configured private network. Compare the CA name and full fingerprint before trusting it, then verify the exact HTTPS URL without a warning and pair with the code `alt pair` prints."}
+            # The first installation keeps the service running without a login; an update leaves the account's choice.
+            "lingering": platform.lingering(enable=previous_service is None), "trust": tls.info(), "retained": "previous versions and all user data", "next": "Follow trust.trust_steps in each desktop or phone browser. Use the public ca_cert file locally, or alt tls-share on a configured private network. Compare the CA name and full fingerprint before trusting it, then verify the exact HTTPS URL without a warning and pair with the code `alt pair` prints."}
 
 
 def uninstall() -> dict:
@@ -885,8 +890,11 @@ def uninstall() -> dict:
             shutil.rmtree(prefix / "launchers")
             shutil.rmtree(prefix / "hooks")
             (prefix / "current").unlink()
+        lingering = platform.lingering()
         return {"uninstalled": True, "application_retained_for_project_hooks": retained,
-                "retained": "configuration, certificate trust, histories, provider sessions and project worktrees"}
+                "retained": "configuration, certificate trust, histories, provider sessions and project worktrees",
+                **({"lingering": "left on for this account; loginctl disable-linger turns it off if nothing else needs it"}
+                   if lingering and lingering["enabled"] else {})}
 
 
 def main() -> None:
