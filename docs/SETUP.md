@@ -175,8 +175,10 @@ ran the installer, and starts it only at your next login. A first installation t
 `loginctl enable-linger` for your own account, without a password prompt, so Altitude keeps running
 after logout and starts at boot with nobody logged in. On a desktop, where your graphical session
 already keeps the manager running, this adds the start at boot. systemd's default policy lets an
-account turn on its own lingering. Where a system requires an administrator, installation still
-completes and prints why lingering stayed off and the one command that turns it on:
+account turn on its own lingering, but logind applies that policy through polkit, and minimal and
+cloud images (Fedora, Arch and openSUSE's among them) ship without polkit, so logind refuses. Where
+lingering cannot be turned on unattended, installation still completes and prints the reason and
+the one command that turns it on:
 
 ```sh
 sudo loginctl enable-linger <account>
