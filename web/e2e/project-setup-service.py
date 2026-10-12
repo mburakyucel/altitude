@@ -85,9 +85,11 @@ def main():
                 # Observe the scripted outcome after both real workflows persist their results.
                 for key in ("setup:new-project", "start:new-project"):
                     with server._bg_guard:
-                        worker = server._bg[key]
-                    worker.join(10)
-                    assert not worker.is_alive(), f"The fixture workflow did not finish: {key}"
+                        # A finished setup run leaves the registry, so a later request starts a new one.
+                        worker = server._bg.get(key) if key.startswith("setup:") else server._bg[key]
+                    if worker:
+                        worker.join(10)
+                    assert not (worker and worker.is_alive()), f"The fixture workflow did not finish: {key}"
                 return self._json({"ok": True})
             if self.path == "/fixture/retry-intro":
                 fail_intro = False

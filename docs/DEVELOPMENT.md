@@ -229,7 +229,10 @@ The service serves this checkout's `web/dist` and real application HTTP handlers
 service URL or active worker is needed. Tests clean up their owned service processes and temporary
 storage, with bounded termination. Never point routine acceptance at operator data.
 Cleanup releases fixture gates and finishes HTTP requests and background work before closing L3
-broker sockets; unfinished work or logged background failures fail the walkthrough.
+broker sockets; unfinished work or logged background failures fail the walkthrough. A service that
+does not start within ten seconds, or exits while starting, fails with that startup error and its
+output. Playwright starts a test's service before evaluating its skip conditions, so a test that
+only one project runs is tagged `@phone-only` or `@desktop-only`, which the other project excludes.
 The image stream/admission walkthrough holds a real admission receipt until a history poll shows
 its image, then holds later reads while verifying that receipt cannot recreate a queued copy.
 The image selection/viewer/reload journey holds completion after the active turn clears and before
@@ -240,21 +243,27 @@ The task-read regressions archive a real task between the live status lookup and
 crossing poll and task action response return the archived record, a missing task returns ordinary
 404, and corrupt state still logs a failure.
 Document and event reads hold the archive lock; concurrent archive coverage verifies both snapshots.
-Question-response and failed-setup checkpoints join their owned workflows before observing the
+Question-response, failed-setup and first-conversation retry checkpoints join their owned workflows before observing the
 scripted outcome, so concurrent scheduling cannot inspect a half-finished resume or introduction.
 The change-stream outage fixture reports its captured shutdown targets; connection cleanup cannot
 erase them from the count before the response reaches the browser assertion.
 The lost-queue-receipt test waits for the initial streamed reply before installing its overlay,
 so the intended queued request is the only send it interrupts.
-The live-loading measurement waits for the service to finish the transcript read its navigation
-abandoned before measuring the task switch, so that read neither shares the next phase's CPU nor
-outlives the test.
+The live-loading measurement waits for the service to finish the reads its navigations abandoned
+before measuring the warm open and the task switch, so those reads neither share the next phase's
+CPU nor outlive the test.
 The phone swipe walkthrough touches a view only once its switch has committed. A completed swipe
 commits its view together with its URL; a tab click commits in a transition, so the walkthrough
 waits for the previous view to leave, because Playwright counts a view beside the screen as visible.
 The reattachment walkthrough forces an overlapping browser overview read while registration fails.
 It releases the read after the error appears and keeps its route handler until teardown; removing
 the last page route also continues held requests, so their callbacks cannot continue them again.
+Terminal walkthroughs dismiss a notice in the state that shows it, before a fresh shell can outlast
+its dwell. The lost-receipt walkthrough reloads only after the aborted send has settled from the
+record. The project-isolation queued send intercepts the next `/api/chat` only after the running
+request's partial reply streams, so the intercept cannot catch the running request.
+Voice walkthroughs that WebKit also runs override `getUserMedia` on `MediaDevices.prototype`: WebKit
+can collect the `navigator.mediaDevices` wrapper together with an override defined on it.
 
 Both projects run headlessly: phone at 390×844 with touch/mobile user agent and desktop at
 1440×900. With `CI` set, Playwright uses one worker per available CPU; local runs use two workers.
