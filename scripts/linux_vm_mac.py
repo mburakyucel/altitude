@@ -5,10 +5,10 @@ on a Mac: the guest boots through Apple's Virtualization framework (the helper i
 Ubuntu's published root filesystem image, kernel and initial ramdisk, each checked against Ubuntu's SHA256SUMS
 over HTTPS. cloud-init provisions it from a read-only seed disk. SSH reaches the guest through the host-guest
 (vsock) socket, relayed to its sshd, so `ubuntu@127.0.0.1` with any port names it; the guest's NAT network card
-serves only its own downloads. Downloads live in CACHE/linux-arm64; each run boots a copy-on-write clone there
-that is deleted when the run stops. One guest runs at a time, and a guest stops when less than 10 GiB of disk
-would stay free. Virtual machines cannot start inside a worker sandbox: run this through `alt task run` under an
-operator grant.
+serves only its own downloads. Downloads live in CACHE/linux-arm64; each run boots a copy-on-write clone of the
+root filesystem in its own folder, deleted with it. One guest runs at a time, and a guest stops when less than
+10 GiB of disk would stay free. Virtual machines cannot start inside a worker sandbox: run this through
+`alt task run` under an operator grant.
 """
 from __future__ import annotations
 
@@ -153,12 +153,15 @@ class Machine:
         except BlockingIOError:
             self.lock.close()
             raise RuntimeError("another Linux guest from this cache is running") from None
-        need(image, DISK_GIB * GIB - (image / "rootfs.img").stat().st_size, "the guest's disk")
-        self.clone = image / "runs" / work.name
-        self.clone.mkdir(parents=True)
-        self.disk = self.clone / "disk.img"
-        subprocess.run(["cp", "-c", str(image / "rootfs.img"), str(self.disk)], check=True, timeout=300)
-        os.truncate(self.disk, DISK_GIB * GIB)  # sparse: only what the guest writes takes space
+        # A copy-on-write clone in the run's folder, which the lane deletes whatever happens.
+        self.disk = work / "disk.img"
+        try:
+            need(work, DISK_GIB * GIB - (image / "rootfs.img").stat().st_size, "the guest's disk")
+            subprocess.run(["cp", "-c", str(image / "rootfs.img"), str(self.disk)], check=True, timeout=300)
+            os.truncate(self.disk, DISK_GIB * GIB)  # sparse: only what the guest writes takes space
+        except BaseException:
+            self.lock.close()
+            raise
 
     def start(self) -> None:
         self.log = (self.work / "helper.log").open("w")
@@ -193,7 +196,7 @@ class Machine:
     def _watch_disk(self) -> None:
         """Stops the guest, and with it the lane's next step, when the disk falls under the floor."""
         while self.process.poll() is None:
-            if shutil.disk_usage(self.image).free < FLOOR:
+            if shutil.disk_usage(self.work).free < FLOOR:
                 self.log.write("less than 10 GiB free; stopping the guest\n")
                 self.halt()
                 return
@@ -242,5 +245,4 @@ class Machine:
         if self.log:
             self.reader.join(10)  # the helper's last lines, then its log
             self.log.close()
-        shutil.rmtree(self.clone, ignore_errors=True)
         self.lock.close()

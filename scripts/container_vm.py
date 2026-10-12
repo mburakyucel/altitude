@@ -113,7 +113,8 @@ def run(results, cache, *, image_workflow=False, native_binary=None, browser=Fal
                                    timeout=600, check=False)
             if prepared.returncode:
                 machine.copy('ubuntu@127.0.0.1:input/product-result', str(results))
-                raise RuntimeError('Logout fixture preparation failed: ' + prepared.stderr[-4000:])
+                raise RuntimeError(f'Logout fixture preparation failed ({prepared.returncode}): '
+                                   + (prepared.stdout + prepared.stderr)[-4000:])
             run = machine.ssh('python3 input/source/tests/container_logout_probe.py verify',
                               timeout=300, check=False)
         elif browser:
