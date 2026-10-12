@@ -321,7 +321,8 @@ service PID, HTTPS health and built UI. An already stopped installation stays st
 Use `alt service start` or `alt service stop` only when deliberately changing its lifecycle;
 independent task workers are not stopped with the daemon. On Linux the user manager runs the service
 after logout and at boot only while the account lingers; a first installation turns lingering on and
-`alt doctor` reports it ([keep running after logout](SETUP.md#keep-running-after-logout)). On a Mac the service is the LaunchAgent
+`alt doctor` reports it ([keep running after logout](SETUP.md#keep-running-after-logout)). On a Mac
+Altitude runs only while you are logged in and is back after a restart once someone logs in. The service is the LaunchAgent
 `dev.altitude.altd` (an installation under another `HOME` gets a label derived from that home, so it
 never addresses the account's own service): `alt service stop` boots it out until the next login or `alt service start`,
 and `alt service logs` reads `~/Library/Logs/altitude/altd.log`; an in-app update logs to
