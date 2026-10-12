@@ -332,11 +332,11 @@ An abandoned job is marked failed after thirty minutes only when the installatio
 a slow live update keeps its admission fence. Manual updates and activation share that lock
 through download, verification, activation and recovery, so automatic work cannot overlap them.
 
-Automatic updates first ship in `v0.1.2`. Copies on `v0.1.0` or `v0.1.1` require one manual
-update to reach them. Source deployments and containers keep their existing source/image lifecycle.
-The release lookup remains one anonymous GitHub request every twelve hours; installation also
-downloads the release archive and checksum. Automatic updates trust the same release publisher
-to supply daemon code with repository access; turn them off if each release needs your review.
+Source deployments and containers keep their source/image lifecycle; the
+[changelog](../CHANGELOG.md) notes how each release updates from earlier ones. The release lookup
+is one anonymous GitHub request every twelve hours; installation also downloads the release archive
+and checksum. Automatic updates trust the same release publisher to supply daemon code with
+repository access; turn them off if each release needs your review.
 
 `alt update` makes one anonymous request to `api.github.com` for the repository the installed
 release was built from and picks the newest release the installation follows. A stable copy follows
@@ -345,11 +345,11 @@ copy installed from a `-rc.N` candidate also follows newer candidates: it reads 
 releases and takes the highest version that is not a draft. It does nothing when no followed
 release is newer than the installed version. Otherwise it downloads that release's archive and its `.sha256`
 from the release, then installs it exactly as an archive update does. `alt update --version
-v0.1.1` installs a named newer published release, including a `-rc.N` candidate, without the
+<version>` installs a named newer published release, including a `-rc.N` candidate, without the
 lookup; it refuses an older version, which `alt recover` restores. Every download hop stays on
 HTTPS, the verified archive must be the requested version, and the version is compared with the
 installed one again under the installation lock, so a concurrent update cannot cause a downgrade.
-`alt update --archive altitude-v0.1.1.tar.gz --sha256 '<release SHA-256>'` installs an archive
+`alt update --archive altitude-<version>.tar.gz --sha256 '<release SHA-256>'` installs an archive
 you already have, with no network access. The service keeps the `HTTPS_PROXY`, `NO_PROXY` and
 `SSL_CERT_FILE` settings of the shell that installed it, so the lookup and downloads work behind an
 HTTPS proxy. Installation checks the archive and manifest before
@@ -598,48 +598,6 @@ select it and click **−**. `tccutil` is not needed and is best avoided: these 
 program rather than an app bundle, and `tccutil reset` without a bundle identifier clears that
 permission for every app on the Mac.
 
-## Preserve source TLS before upgrading
-
-An existing source deployment that relies on implicit certificate discovery needs an explicit TLS
-setting before upgrading. Keep its current certificate directory and trust; this is not an archive
-migration. Run as the operator from a supported Linux host with visibility into its own `/proc`
-process/socket records. This operation handles legacy external certificate pairs, a concrete IP binding and a direct
-source `bin/alt serve` unit (optionally invoked with Python 3). Managed Altitude CA directories,
-wildcard/DNS bindings, environment files and foreign drop-ins require separate reconciliation.
-
-Obtain the reviewed installer, archive and verified checksum, then inspect:
-
-```sh
-python3.12 install.py --archive altitude-v0.1.0-rc.2.tar.gz --sha256 '<release SHA-256>' \
-  --prepare-source-tls /absolute/path/to/existing-certificates
-```
-
-The version is illustrative. The command verifies the archive and checks the active source unit,
-effective process settings, listener ownership and the exact served certificate. It prints the
-single service override without writing it. After reviewing that output, repeat with `--apply`.
-With a CLI containing this operation, the equivalent is:
-
-```sh
-alt service prepare-tls --directory /absolute/path/to/existing-certificates
-alt service prepare-tls --directory /absolute/path/to/existing-certificates --apply
-```
-
-Apply reloads the unit definition and verifies the loaded TLS-directory setting, unchanged daemon
-PID and HTTPS identity. It does not restart the service, change binding or certificates, install
-the archive, or alter device trust. Changed/ambiguous ownership or identity refuses preparation;
-failed reload/verification restores only the unchanged owned override and reports any unconfirmed
-restoration. Existing custom overrides need deliberate reconciliation. Save the successful result
-privately and verify normal activation after the separately authorized upgrade. L2 and L3 cannot
-run preparation, and a passing fixture test is not evidence that a production unit is prepared.
-Verification compares the configured command and live process identity; command execution-history
-timestamps can reset during a definition reload. On failure, the message names changed fields
-without printing environment values and includes the original failure if restoration is uncertain.
-Do not retry an uncertain restoration until the loaded unit and running identity are inspected.
-If interrupted after writing the override, inspect that file and any other pending unit changes
-before running `systemctl --user daemon-reload` from the operator terminal. This reloads definitions
-without restarting services. Repeat check-only preparation and then `--apply`; an ambiguous state
-never counts as successful preservation.
-
 ## Validation runs
 
 Task owners run installation VMs, containers and ordinary sandboxed-browser checks through the
@@ -697,10 +655,6 @@ save immediately. A Settings read or save updates the next capture in that brows
 documents and CLI changes are picked up when opening Settings, on reload or after a recording is
 refused for a changed setting. Recordings identify their backend and host runtime; changing either
 cannot silently reroute unfinished audio. Altitude keeps no recordings.
-
-Altitude no longer sends recordings to a speech service of your own. On the first start after an
-update, it deletes a saved speech-service URL and key from the settings and request files and logs only
-that the option was removed; the voice setting then follows the default.
 
 ### Host voice
 

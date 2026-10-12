@@ -205,8 +205,9 @@ slices, each one task. The durable backlog is GitHub issues selected by the oper
 for an opt-in, weekly or on-request review in which a cheaper tool-free model reads one project's
 task counts and short chat quotes and proposes at most three fixes, for the project or for how agents
 work, which L3 checks and the operator accepts or dismisses. Its reviewer, fictional-project eval, runs
-on request in the Altitude project's chat, and the card in chat and under Suggestions in Needs you
-exist; the remaining held steps are settings and the Monday schedule, then measurement.
+on request, the card in chat and under Suggestions in Needs you, and the settings section with Weekly,
+Get suggestions now and the operator's agreement exist for the Altitude project; the remaining held
+step is measurement.
 
 New architecture or feature proposals start as conversation or a GitHub issue. L3 decides whether
 to answer directly or delegate one L2; no backlog item is pulled or implemented autonomously.

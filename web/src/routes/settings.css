@@ -104,3 +104,12 @@ button.settings-row:disabled { cursor: default; opacity: .7; }
 .remove-actions .btn { min-height: 44px; }
 .shell[data-phone] .remove-actions { flex-direction: column; }
 .overlay:has(.remove-dialog) .overlay-panel { width: min(480px, 100%); }
+.improve-now { justify-content: flex-start; }
+.improve-now > .btn, .improve-unavailable > .btn { flex: none; min-height: 44px; }
+.improve-now small { margin-top: 0; }
+.improve-unavailable { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.improve-running .sys-line { padding: 0; }
+.settings-group > .improve-sent { min-height: 0; }
+.shell[data-phone] .improve-sheet .remove-actions { flex-direction: column-reverse; }
+.overlay:has(.improve-sheet) .overlay-panel { width: min(480px, 100%); }
+.improve-now:hover, .improve-running:hover, .improve-sent:hover { border-color: var(--hairline); background: var(--surface); }

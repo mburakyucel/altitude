@@ -261,7 +261,8 @@ are left-aligned prose with no bubble (15px, line-height 1.65): paragraphs, list
 links; no headings, no tables. A task card (§3.5) sits under an L3 reply whose turn created a task,
 and Create task (below) under the latest reply that offered one. An improvement review shows at its
 run's row as a line or one card, and a running review as a line with Stop at the end
-([improvement suggestions](improvement-review/PROPOSAL.md#where-suggestions-appear)).
+([improvement suggestions](improvement-review/PROPOSAL.md#where-suggestions-appear)). When a change of
+terms turns Weekly off, one line says so and links to the project's settings (§3.15).
 System turns render as system lines (§3.4). Hovering a row shows its time in the gutter; on the
 phone a long-press shows it. The phone layout is portrait 390 wide only; landscape is unsupported.
 The conversation scrolls inside the fixed shell, shrinks above the keyboard, and follows its newest
@@ -1869,8 +1870,8 @@ next capture; a recording keeps the selection it started with and stops when it 
 | Failed/denied save | Server explanation and Retry; the saved choice is preserved. A choice changed elsewhere offers Reload settings. |
 
 The project page `/settings/projects/<name>` has a labelled **Settings** back button, the line
-"Applies to this project only. A model or effort L3 sets for one task wins over these." and four
-sections, in the order a choice is applied:
+"Applies to this project only. A model or effort L3 sets for one task wins over these." and its
+sections, model choices in the order they are applied:
 
 - **L3**: the closed L3 choice ("Fable · Low", "Auto", or "Fable unavailable · Auto meanwhile" with
   the reason), and what L3's last reply
@@ -1888,6 +1889,25 @@ sections, in the order a choice is applied:
   unavailable, and when a preferred engine is missing from custom routing. A change saves on choice
   with the value shown as `expected`; one changed elsewhere says "Changed in another window." and
   the page shows the current routing.
+- **Improvement suggestions** (`#improvement`, the Altitude project only;
+  [design](improvement-review/PROPOSAL.md#turning-it-on-the-settings-section)): "Finds friction that
+  keeps coming back in this project's tasks and suggests fixes." over one card. **Weekly** is a switch
+  whose line reads "Every Monday morning, when at least 5 tasks have finished." when off, "Next:
+  Monday, Oct 19." when on (", if 2 more tasks finish" while fewer than five have), "Skipped Oct 12: 3
+  tasks had finished. Next: …" after a skipped Monday, and "Off: the terms changed. Turn on to see
+  them." **Get suggestions now** is a secondary button beside "Reads the 6 tasks finished since Oct
+  12."; with too few tasks or Claude's allowance inside the reserve it looks disabled and its reason
+  ("Needs 5 finished tasks since Oct 12; 3 so far.") is its accessible description, shown under it on
+  press. While a review runs, its line ("Reading 6 tasks") with an underlined **Stop** replaces the
+  button. A muted last row says what is sent: "Counts and short chat quotes · Claude Sonnet 5.5 on your
+  plan · capped per run, plus one L3 check". Before the operator agrees to the current terms, turning
+  Weekly on or pressing Get suggestions now opens a sheet (bottom at 390px with full-width buttons,
+  Turn on above Cancel; centered at 1440px): **Turn on improvement suggestions for <name>?**, what the
+  model reads and how much of the plan it uses, then **Cancel** (focused) and the primary **Turn on**,
+  which agrees and completes the press. Cancel, Escape and the scrim change nothing. A switch change
+  shows Saving… under the card with the controls disabled; a refusal shows its reason in red and the
+  switch returns to its saved value. When the terms change, chat says "Improvement suggestions are off
+  until you agree to the new terms in settings.", linking here.
 - **Project**: **Setup** with its status, opening §3.12, and **Remove project** ("Detach L3. Files
   and history stay; its settings here don't.") with an outlined red **Remove…**. This section stays
   usable when the model settings cannot be read.
@@ -1923,7 +1943,10 @@ typed draft preservation, all three choices, key replacement/removal and loading
 All projects, independent default saves, reload persistence, restoring Default, routing (Prefer,
 Only, a change made elsewhere), loading/read failure and saving/denied states at both sizes, with the
 project draft preserved. `web/e2e/project-lifecycle.pw.ts` walks the Remove dialog's cancel, refused,
-lost-response and removed outcomes. `web/e2e/models.pw.ts` walks §3.6.1.
+lost-response and removed outcomes. `web/e2e/improvement-settings.pw.ts` walks the Improvement
+suggestions section: the sheet, Cancel, Escape, Turn on and saving, Weekly on and off, running with
+Stop, a refusal, a skipped week, the unavailable reason and the change-of-terms line.
+`web/e2e/models.pw.ts` walks §3.6.1.
 Composer listening, denied, unavailable, cancellation and transcript states remain §3.6.
 
 ### 3.16 Pair this device
