@@ -67,7 +67,7 @@ first.
 | What may be sent to the reviewer's provider | Counts from task records plus short paired quotes of the task and project conversations (your message, the agent message it answered, the reply), each cut to 300 characters | Counts only, nothing quoted; or, in a later step, also short excerpts of the agents' working logs |
 | Reviewer model and cost limit | Claude Sonnet 5.5 at medium effort: at most $0.27 a review, usually $0.08–0.12, plus one ordinary L3 turn to check. Weekly, about $0.40–0.50 a month per project, at most $1.20 | Claude Haiku 5.5: at most $0.02 a review, noisier suggestions |
 | Where suggestions reach you | One card in the project's chat and a **Suggestions** section in Needs you, not counted and never alerting | Counted in the Needs you badge; or chat only |
-| Proving it works | An eval on fictional projects with planted friction before any real conversation is read (below): about $6 at API prices, at most $25; a later rerun after a prompt, signal or model change at most $5 | Judge it only by real suggestions and your dispositions |
+| Proving it works | An eval on fictional projects with planted friction before any real conversation is read (below): about $8 at API prices, at most $35; a later rerun after a prompt, signal or model change at most $5 on Sonnet | Judge it only by real suggestions and your dispositions |
 
 The conversations being reviewed were already processed by the engines that took part in them, but
 sending them again to the reviewer is a new disclosure, so it needs your yes, given per project on the
@@ -415,75 +415,97 @@ became tasks and how many you dismissed.
 ## Proving it works
 
 Before the review reads any real conversation, it runs against fictional projects whose friction is
-known, to show what it catches, what it invents, and which model is worth its cost. This is an eval: a
-fixed set of scenarios, an answer key, and a score computed by code.
+known, to show what it catches, whether what it suggests is right, what it invents, and which model is
+worth its cost. This is a small eval: a fixed set of scenarios, an answer key, a grading rubric and a
+table. It shows the review can find planted friction and stay quiet when there is none; with this few
+scenarios it is a smoke test, not proof that it generalises.
 
-**Scenarios.** Each scenario is a fictional project of 8 to 14 finished tasks, written as a compact
+**Scenarios.** Each scenario is a fictional project of 8 to 20 finished tasks, written as a compact
 scenario file that the loader turns into ordinary task and chat records. The eval therefore runs the
 same signals, sheets, prompt and reviewer as a real review; nothing in the review knows it is an eval.
 A scenario holds:
 
-- **Planted patterns**, each with its key: the anchors it was planted in, its target and the change
-  that would fix it. Three kinds:
+- **Planted patterns**, each with its key: the anchors it was planted in, its target, the problem and
+  the change that would remove it. Three kinds:
   - *Counted*: friction a signal fires on, such as a question re-asked without the operator's input
     in three tasks, or the same check rerun in four.
   - *Words-only*: friction no signal counts, such as the operator correcting the same kind of brief in
-    different words across three tasks. These show whether the model finds what counting cannot;
-    without that, the counts-only direction would do as well for nothing.
-  - *Shared cause*: different symptoms with one cause across tasks, such as owners asking how to run
-    the tests and CI failing on the command they guessed.
+    different words across three tasks, placed in quiet tasks that compete with louder ones for room
+    in the prompt.
+  - *Shared cause*: different symptoms with one cause across tasks, beside a plausible wrong
+    explanation that the evidence rules out, such as owners asking how to run the tests and CI failing
+    on the command they guessed, while the CI runner was also slow that week.
 - **Decoys** that must not be suggested: a one-off that looks like a pattern, a re-asked question the
-  operator did answer in between, a pattern a current task already handles, and one dismissed in an
-  earlier review.
+  operator did answer in between, a pattern a current task already handles, one dismissed in an
+  earlier review, and friction that was justified (a hold the operator asked for).
 
-There are eight scenarios: six with one to three planted patterns among decoys (about twelve patterns,
-at least a third words-only), one of decoys only, and one clean project with nothing to suggest. All of
-it is fiction, written to the repository's rules for examples.
+There are ten scenarios: six with one to three planted patterns among decoys (about fifteen patterns,
+at least a third words-only and three shared-cause), two of decoys only, and two clean projects with
+nothing to suggest. Two of the planted scenarios are larger than the prompt's room, so some evidence is
+cut; the key records which planted anchors reached the prompt, and a pattern whose evidence was cut is
+reported as a loss in the prompt builder, not counted against the model. All of it is fiction, written
+to the repository's rules for examples.
 
-**Scoring.** Code scores each answer against its key, with no judge model:
+**Grading.** Code checks what it can; judgement is graded against a rubric:
 
-- **Caught**: a suggestion cites at least two of the pattern's planted anchors and names its target.
-  Citations can only be anchors the code placed in the prompt, so a match cannot be invented.
-- **False alarm**: a suggestion whose citations are mostly decoys, any suggestion on the clean project,
-  or one repeating handled or dismissed work.
-- **Unexpected**: a suggestion matching neither. A fictional project can hold real friction nobody
-  planted, so these are read and graded by hand as useful, harmless or wrong, and the grades are part
-  of the results.
-- Per model also: answers that failed validation, cost from recorded usage, and time.
+- Code validates each answer, checks that every citation is an anchor the prompt contained, and
+  proposes matches: each suggestion is paired with at most one planted pattern, by the most shared
+  planted anchors.
+- Every suggestion is then graded on the rubric: is the observation supported by its citations, is the
+  cause and target right, and would the stated change remove the friction? A suggestion matched to a
+  pattern and passing all three is **caught**. One that fails, cites decoys, repeats handled or
+  dismissed work, or appears on a clean project is **wrong**. One matching no pattern but passing the
+  rubric is **unplanted but sound**, since fiction can hold friction nobody planted.
+- The grader is a helper that did not write the prompt and sees each answer with its model's name
+  replaced by a code. The owner checks every case where the grade disagrees with the code's match, and
+  the table links a sample of graded suggestions for you to check.
+- **Counts alone** is a column beside the models: for each pattern, whether a signal fired on its
+  anchors. It costs nothing and shows what the model adds over counting.
 
-**Honest numbers.** The owner who writes the prompt would be tempted to tune it to the scenarios. So a
-separate helper writes the scenarios from a brief naming only the pattern kinds, the keys sit in their
-own files, and the set is split: four scenarios for developing the prompt (on Sonnet only), four held
-back and run once at the end for the reported numbers. With this few patterns the results show counts
-("caught 5 of 6"), not percentages.
+**Honest numbers.** A separate helper writes the scenarios from a brief naming only the pattern kinds,
+the keys sit in their own files, and the set is split in two halves that each hold a clean project, a
+decoys-only project and three planted ones with words-only and shared-cause patterns. One half is for
+developing the prompt (on Sonnet only); the other is held back and run once at the end for the
+reported numbers. If the prompt is revised after the held-back run, the next reported run uses fresh
+held-back scenarios written the same way, since the old half has become tuning data. Results show
+counts ("caught 5 of 7"), not percentages.
 
 **Runs and cost.** The held-back half runs three times on each model the engine seam offers the
 reviewer (today Claude Haiku 5.5, Sonnet 5.5 and Opus 5.5), because one prompt can give different
-answers: 36 runs. With prompt development and one possible rerun, the eval costs about $6 at API
-prices and at most $25, drawn from the Claude plan like other work.
+answers: 45 calls. With prompt development (at most 30 Sonnet calls) and one fresh held-back run if the
+first fails, the eval costs about $8 at API prices and at most $35, drawn from the Claude plan like
+other work. Before every call the harness adds that call's maximum to what is spent and stops if it
+would pass the approved total; an eval stopped short is reported as incomplete, never as passing.
 
-**The bar** for reading real conversations, on the held-back half: a model catches at least four in
-five counted and shared-cause patterns and half the words-only ones, says nothing on the clean project
-in at least two of three runs, and averages under one false alarm a run. The recommendation is the
-cheapest model that clears it; Sonnet stays the default only if Haiku does not. If none clears it, the
-prompt is revised and the held-back half rerun once; if still none clears it, you get the results
-instead of the next step.
+**The bar** for reading real conversations, on the held-back half, per model:
 
-**What it does not prove.** Fiction is cleaner than real work. The first real run is also compared with
-the friction already filed as incident issues in its window, and your dispositions on real suggestions
-remain the measure that counts.
+- In each of the three runs, it catches at least four in five counted and shared-cause patterns whose
+  evidence reached the prompt, and at least half the words-only ones.
+- Across all runs, its clean project and decoys-only project get no suggestion graded wrong.
+- Elsewhere, at most one suggestion in six is wrong.
+- At most one of its fifteen answers fails validation; a failed answer counts as a run that caught
+  nothing.
 
-**Afterwards.** The scenarios and scorer stay in the repository. `make check` runs them with a scripted
-reviewer and no model: the scenarios load, signals fire on counted patterns and not on decoys, and the
-scorer grades known answers correctly. The live eval runs only by hand, by the owner of a later change
-to the prompt, signals or model, on the held-back half and the chosen model, within the limit you
-approve, and its table goes in that PR.
+The recommendation is the cheapest model that clears the bar; Sonnet stays the default only if Haiku
+does not. If none clears it, the prompt is revised on the development half and fresh held-back
+scenarios are run once; if still none clears it, you get the results instead of the next step. The
+controls are reported on their own rows, so a quiet failure on them is never averaged away.
+
+**What it does not prove.** Fiction is cleaner than real work, and fifteen patterns are few. Your
+decisions on the first real suggestions are the measure that counts.
+
+**Afterwards.** The scenarios, keys and matcher stay in the repository. `make check` runs them with a
+scripted reviewer and no model: the scenarios load, signals fire on counted patterns and not on decoys,
+the key's record of what reached the prompt is right, and the code's matching and validation handle
+scripted answers correctly. The live eval runs only by hand, by the owner of a later change to the
+prompt, signals or model, on the held-back half and the chosen model: at most $5 on Sonnet ($9 if
+Opus is chosen). Its table goes in that PR, and a failure it finds becomes a new scenario.
 
 **Its own small harness.** What is under test is Altitude's prompt builder and its tool-free call
 through the engine seam on the plan. Open-source eval frameworks such as Inspect or promptfoo would
-need an adapter around that same call and add a dependency, for a few dozen runs scored by citation
-overlap. The harness is a scenario loader, a loop and a scorer. If evals later need a judge model or
-many more models, Inspect is the one to adopt.
+need an adapter around that same call and add a dependency, for a few dozen calls graded by a rubric.
+The harness is a scenario loader, a loop, the matcher and a grading sheet. If evals later need many
+more models or scenarios, Inspect is the one to adopt.
 
 ## Where it lives
 
@@ -496,8 +518,8 @@ many more models, Inspect is the one to adopt.
   the project's settings events.
 - The card is a project-chat row (`trigger: "improvement"`) naming its run; its state is read from
   `improvements.json`, so the conversation stores no second copy of a decision.
-- The eval: scenarios and keys in `tests/fixtures/improvement/`, the loader, loop and scorer beside
-  the review; results of each live eval in the running task's folder and as a table in its PR.
+- The eval: scenarios and keys in `tests/fixtures/improvement/`, the loader, loop and matcher beside
+  the review; each live eval's answers and grades in the running task's folder, its table in its PR.
 - This covers the Altitude project first. Other projects come later; their How agents work suggestions
   will then appear in the Altitude project's chat and Needs you, where Altitude itself is changed.
 
@@ -529,8 +551,8 @@ many more models, Inspect is the one to adopt.
   suggestions-only Needs you with the badge hidden, one task per
   suggestion, measurement cohorts after merge, the Needs you Suggestions section leaving the count and
   badge unchanged, and every chat, Needs you and settings state walked on phone and desktop. The
-  eval's scenarios load, their counted patterns fire and decoys do not, and the scorer grades
-  scripted caught, false-alarm, unexpected and invalid answers correctly.
+  eval's scenarios load, their counted patterns fire and decoys do not, the key records what reached
+  the prompt, and matching, validation and the spend stop handle scripted answers correctly.
 
 ## What is removed
 
@@ -550,8 +572,8 @@ the eval has shown a model that clears the bar, and Monday runs come only after 
 suggestions on request.
 
 1. **The reviewer, proven on fiction (this week).** `improve.py` with the signals, task sheets and
-   prompt; the tool-free reviewer with its isolation check and cost limit; the scenarios, keys and
-   scorer; the pilot removed. The live eval runs within the limit you approve, and the PR carries its
+   prompt; the tool-free reviewer with its isolation check and cost limit; the scenarios, keys,
+   matcher and grading sheet; the pilot removed. The live eval runs within the limit you approve, and the PR carries its
    table and a model recommendation. No real conversation is read. About three to four days: the
    signals and sheets are the largest part, the scenarios about a day.
 2. **First run on request.** Start by your chat message, Stop by chat, the deadline and the private
@@ -564,7 +586,7 @@ suggestions on request.
    in words; L3 records them with `alt improve resolve` against that message. No new screen or
    component. Docs: the pilot's architecture, session lifecycle, CLI and persona sections are rewritten
    for the review. Acceptance: one real run on this project with its record, cost and your
-   dispositions, compared with the incident issues in its window.
+   dispositions.
 3. **The card and Needs you.** The same post renders as the card in project chat and under
    **Suggestions** in Needs you: the running line with Stop, Make a task, Dismiss and Undo, Details,
    lapsing, every state walked on phone and desktop.
@@ -599,5 +621,5 @@ suggestions on request.
 - Suggestions never wake a device or count in Needs you, and lapse after seven days.
 - The feature is called Improvement suggestions in the interface.
 - The pilot is removed, not kept beside the new review.
-- The eval is Altitude's own small harness, scored by code against planted anchors, with a held-back
-  half for the reported numbers.
+- The eval is Altitude's own small harness: code validates and matches, a blind helper grades against
+  a rubric, and a held-back half gives the reported numbers.
