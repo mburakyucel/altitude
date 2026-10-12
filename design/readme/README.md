@@ -4,8 +4,7 @@ The README shows the built web app on desktop and phone together: an opening pic
 project view with the phone's decision in front of it and the "work at any altitude" drawing of the
 coordinator, task agents and helpers.
 [The walkthrough](../../docs/WALKTHROUGH.md) carries the longer scenario and full-size captures.
-Below 600 px width the opening picture gives way to the decision capture alone, so it stays legible on
-a phone.
+The opening picture is the same at every width; the README is laid out for a computer screen first.
 
 The captures come from an ordinary [browser walkthrough](../../docs/DEVELOPMENT.md#browser-walkthroughs):
 `web/e2e/readme.pw.ts` against `web/e2e/readme-service.py`, a disposable service with real handlers and
@@ -35,10 +34,10 @@ each capture. No speech recognition or coding agent runs.
 ## Opening picture
 
 `design/readme/hero.html` places `docs/images/project-desktop.png` and `decision-phone.png` on a
-transparent 2400×1440 canvas. After replacing either capture, render it again from the repository root:
+transparent 2240×1360 canvas. After replacing either capture, render it again from the repository root:
 
 ```sh
-google-chrome --headless --hide-scrollbars --default-background-color=00000000 --window-size=2400,1440 \
+google-chrome --headless --hide-scrollbars --default-background-color=00000000 --window-size=2240,1360 \
   --screenshot=docs/images/hero.png "file://$PWD/design/readme/hero.html"
 ```
 

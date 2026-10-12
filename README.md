@@ -13,10 +13,7 @@ Altitude runs Claude Code and Codex like an engineering team on your computer.
 
 **Early preview · Linux · macOS · [Get started](#get-started)**
 
-<picture>
-  <source media="(max-width: 600px)" srcset="docs/images/decision-phone.png">
-  <img src="docs/images/hero.png" alt="The project view on a computer, with the coordinator's plan and three tasks at work; in front of it, a phone shows the one question that needs you, with its recommended answer." width="1200">
-</picture>
+<img src="docs/images/hero.png" alt="The project view on a computer, with the coordinator's plan and three tasks at work; in front of it, a phone shows the one question that needs you, with its recommended answer." width="1200">
 
 ## Work at any altitude
 
