@@ -186,19 +186,23 @@ def _rejection_path(option: dict, scope: str, model: str | None = None):
 def note_rejection(option: dict, rejection: dict) -> None:
     """A confirmed provider denial is a temporary observation, never a subscription inference. A sign-in
     rejection keeps its own record, so withdrawing it never touches a usage limit on the same engine. That record
-    is the engine's sign-in lapse: it lasts until an engine call succeeds again, and remembers who was told."""
+    is the engine's sign-in lapse and remembers who was told: it lasts until an engine call succeeds again, and
+    evidence older than the observation window starts a new lapse."""
     scope = "sign-in" if rejection.get("sign_in") else rejection["scope"]
     path = _rejection_path(option, scope)
-    told = (S.read_json(path, {}) or {}).get("told", []) if scope == "sign-in" else []
+    previous = S.read_json(path, {}) or {} if scope == "sign-in" else {}
+    told = previous.get("told", []) if _current(previous) else []
     S.write_json(path, {**rejection, "at": S.now(), **({"told": told} if told else {})})
 
 
-def _active(data: dict) -> bool:
-    if not data or data.get("withdrawn"):
-        return False
+def _current(data: dict) -> bool:
     now = datetime.now(timezone.utc)
-    return (now < datetime.fromisoformat(data["until"]) if data.get("until") else
-            (now - datetime.fromisoformat(data["at"])).total_seconds() < FRESH_SECONDS)
+    return bool(data) and (now < datetime.fromisoformat(data["until"]) if data.get("until") else
+                           (now - datetime.fromisoformat(data["at"])).total_seconds() < FRESH_SECONDS)
+
+
+def _active(data: dict) -> bool:
+    return _current(data) and not data.get("withdrawn")
 
 
 def _rejected(option: dict, *, retry_sign_in: bool = False) -> str | None:

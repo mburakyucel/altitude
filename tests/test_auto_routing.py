@@ -464,6 +464,17 @@ class TestAutoIntegration(AltitudeCase):
         notice = next(row for row in l3.chat_history(self.project) if row["role"] == "system")
         self.assertEqual((notice["trigger"], notice["heads_up"]), ("fyi", True))
 
+    def test_a_rejection_long_after_the_last_evidence_is_a_new_lapse(self):
+        sign_in = engines.rejection("claude", {"error": "authentication_failed"})
+        route.note_rejection({"engine": "claude"}, sign_in)
+        self.assertTrue(route.tell_sign_in("claude", self.project))
+        route.note_rejection({"engine": "claude"}, sign_in)
+        self.assertFalse(route.tell_sign_in("claude", self.project))
+        path = route._rejection_path({"engine": "claude"}, "sign-in")
+        S.write_json(path, {**S.read_json(path), "at": "2000-01-01T00:00:00+00:00"})
+        route.note_rejection({"engine": "claude"}, sign_in)
+        self.assertTrue(route.tell_sign_in("claude", self.project))
+
     def test_a_lapse_seen_by_the_usage_check_moves_the_next_message_without_a_failed_turn(self):
         self.policy("claude:opus > codex")
         route.note_rejection({"engine": "claude"}, engines.rejection("claude", {"error": "authentication_failed"}))
