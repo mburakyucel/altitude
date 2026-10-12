@@ -27,7 +27,7 @@ class TestEngineDriver(AltitudeCase):
                 "cwd": str(self.repo), "sends": str(self.sends), "worker_id": "worker", "task": task}
         env = {**os.environ, "FAKE_ENGINE_LOG": str(self.log), **({"FAKE_ENGINE_TOOL": str(self.tool)} if tool else {}),
                **({"FAKE_ENGINE_ASK": "1"} if ask else {}),
-               **({"FAKE_ENGINE_HELPERS": "1"} if helpers else {}), "FAKE_ENGINE_END": end}
+               **({"FAKE_ENGINE_HELPERS": str(helpers)} if helpers else {}), "FAKE_ENGINE_END": end}
         proc = subprocess.Popen(engines._driver_command(), stdin=subprocess.PIPE, stdout=output or subprocess.PIPE,
                                 stderr=subprocess.PIPE, env=env)
         proc.stdin.write(engines._driver_input(spec).encode())
@@ -55,7 +55,7 @@ class TestEngineDriver(AltitudeCase):
         for engine in ("claude", "codex"):
             with self.subTest(engine=engine):
                 self.setUp()
-                proc = self.drive(engine)
+                proc = self.drive(engine, helpers=True)
                 self.wait_for_tool(proc)
                 os.kill(int(self.tool.with_suffix(".pid").read_text()), 0)
                 self.assertFalse(self.tool.with_suffix(".completed").exists())
@@ -104,7 +104,7 @@ class TestEngineDriver(AltitudeCase):
 
     def test_helper_results_do_not_end_or_steer_the_waiting_owner(self):
         """#873: interleaved helper results must not close the server and discard the owner's wait."""
-        proc = self.drive("codex", helpers=True)
+        proc = self.drive("codex", helpers="completed")
         self.wait_for_tool(proc)
         engines.send_into_turn(self.sends, "m1", TEXT)
         events = self.finish(proc)
@@ -123,7 +123,7 @@ class TestEngineDriver(AltitudeCase):
         for end in ("failed", "interrupted", "eof"):
             with self.subTest(end=end):
                 self.setUp()
-                proc = self.drive("codex", tool=False, helpers=True, end=end)
+                proc = self.drive("codex", tool=False, helpers="completed", end=end)
                 stdout, stderr = proc.communicate(timeout=30)
                 self.assertEqual(proc.returncode, 1, stderr.decode())
                 events = [json.loads(line) for line in stdout.decode().splitlines()]
