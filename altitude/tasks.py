@@ -2684,17 +2684,21 @@ def approved_pr(project: str, task: dict) -> int | None:
 
 
 def _references_held_pr(task: dict, question: dict) -> bool:
-    """The owning PR question supplies the response surface, including a freeform field."""
+    """The held PR's question supplies its response surface: an operator question naming the PR, freeform
+    included, or one with published options that is no proposal go or design, which on a task holding a PR
+    asks to merge it whether or not its text names the PR."""
     number = (task.get("prs") or [None])[-1]
-    return bool(number and task.get("hold_merge") and question["audience"] == "operator"
-                and _names_pr(number).search(" ".join([question["detail"], *(
+    if not (number and task.get("hold_merge") and question["audience"] == "operator"):
+        return False
+    return bool(question.get("options") and question.get("review") != "proposal" and not question.get("shown")
+                or _names_pr(number).search(" ".join([question["detail"], *(
                     f"{o['label']} {o['text']}" for o in question_choices(question))])))
 
 
 def review_pr(project: str, task: dict) -> int | None:
     """#419: a held delivery whose owner has stopped waits for the operator's review, question or not.
-    An open operator question naming the PR supplies its single response surface, with quick choices
-    or a freeform field. Its submitted response stays there until the owner resolves the question.
+    An open question about the PR supplies its single response surface, with quick choices or a freeform
+    field. Its submitted response stays there until the owner resolves the question.
     The question does not supply merge authority; recorded approval keeps its separate rules (#451).
     A PR observed closed without merging asks for no review (#575)."""
     number = _held_pr(task, S.read_events(project, task["slug"]))

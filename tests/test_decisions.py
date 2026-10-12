@@ -206,6 +206,40 @@ class TestDecisions(AltitudeCase):
                            reason="Asked in the review instead.", expected_attempt=S.load_task(self.project, slug)["attempt"])
         self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"])
 
+    def test_a_merge_question_without_the_pr_number_is_the_single_surface(self):
+        # A merge question saying "the pull request" without its number showed beside a second Approve merge
+        # card. Published options on a task holding a PR ask to merge it; a proposal go or a shown design does not.
+        task = self.blocked("Readme section", "Choose the next section.")
+        slug, name = task["slug"], config.operator_label()
+        held = S.load_task(self.project, slug)
+        held.update(hold_merge="Operator review of the public page", prs=[42],
+                    delivery={"number": 42, "head": "a" * 40, "at": S.now()})
+        S.save_task(self.project, held)
+        T.resolve_question(self.project, slug, held["questions"][-1]["id"], 1, None, disposition="withdrawn",
+                           reason="The section is chosen.", expected_attempt=1)
+        options = [{"key": "merge", "label": "Approve merge", "text": "Merge the second part."},
+                   {"key": "changes", "label": "Request changes", "text": "Tell me what to change first."}]
+        merge = {"question": "Merge the new section? It is on the pull request with all checks green.",
+                 "options": options, "recommended_key": "merge"}
+        T.resume(self.project, slug)
+        T.block(self.project, slug, merge["question"], actor="l2", updates={"waiting_on": "burak"},
+                questions={"questions": [merge]})
+        [row] = T.decisions(self.project)
+        self.assertEqual(row["kind"], "asks", "one merge control for one held PR")
+        self.assertEqual(row["review"]["subject"], "changes", "the question carries the implementation review")
+        self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), f"{name}'s turn · 1 question")
+        question = S.load_task(self.project, slug)["questions"][-1]
+        T.resolve_question(self.project, slug, question["id"], 1, None, disposition="withdrawn",
+                           reason="Asking in the review instead.", expected_attempt=1)
+        self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"])
+        T.resume(self.project, slug)
+        go = {"question": "Build the next section?", "options": options, "recommended_key": "merge", "review": "proposal"}
+        T.block(self.project, slug, go["question"], actor="l2", updates={"waiting_on": "burak"}, questions={"questions": [go]})
+        self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["asks", "review"],
+                         "a proposal go keeps the merge review")
+        design = {**S.load_task(self.project, slug)["questions"][-1], "review": None, "shown": {"id": "d"}}
+        self.assertFalse(T._references_held_pr(S.load_task(self.project, slug), design), "so does a shown design")
+
     def test_submitted_pr_question_keeps_one_surface_until_owner_resolution(self):
         # The freeform answer is delivered, not classified as merge permission. An independent
         # question stays usable; resolving discussion restores the held review when still needed.

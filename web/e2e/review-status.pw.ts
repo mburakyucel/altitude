@@ -101,6 +101,29 @@ test("a question's review line in its conversation opens the review card and Bac
   await expect(line).toBeInViewport();
 });
 
+test("a merge question that never names its held PR is the one Approve merge control", async ({ page }, info) => {
+  const walk = walkthrough(page, info);
+  const review = "Implementation review · done, 1 finding resolved";
+  await walk.open("/");
+  const needs = page.getByRole("article", { name: "Help page copy", exact: true });
+  await expect(needs).toHaveCount(1);
+  await needs.scrollIntoViewIfNeeded();
+  await walk.state("09-needs-you-one-merge-control", {
+    visible: [needs.getByRole("link", { name: review, exact: true }), needs.getByRole("button", { name: /^Approve merge/ })],
+    hidden: [page.getByText("Review PR #44 before merge", { exact: true })],
+  });
+
+  await walk.open("/projects/atlas/tasks/help-page-copy");
+  const chat = conversation(page);
+  const question = chat.locator(".conversation-question").last();
+  await expect(chat.getByRole("button", { name: /^Approve merge/ })).toHaveCount(1);
+  await walk.state("10-conversation-one-merge-control", {
+    visible: [question.getByText("Merge the new help page? It is on the pull request with all checks green.", { exact: true }),
+      question.getByRole("link", { name: review, exact: true })],
+    hidden: [chat.getByText("Your turn · review before merge", { exact: true })],
+  });
+});
+
 test("Back after the question is revised while its review is open returns to the latest revision", async ({ page }, info) => {
   const walk = walkthrough(page, info);
   // While reading the review the operator messages the L2, which revises the question.
