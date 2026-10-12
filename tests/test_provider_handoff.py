@@ -374,6 +374,72 @@ class TestProviderHandoff(AltitudeCase):
             response = self.alt(*prefix, *flags, "--reason", "Invalid", env={"ALTITUDE_ACTOR": "l3"})
             self.assertNotEqual(response.returncode, 0)
 
+    def test_target_refusal_returns_owner_to_saved_work_with_durable_correction(self):
+        task = self.running_owner()
+        request = self.request(task)["request"]
+        dispatch.run_task_operation(self.project, task["slug"])
+        self.policy("claude:fable")
+        result = dispatch.run_task_operation(self.project, task["slug"])
+        self.assertEqual(result["request"]["status"], "refused")
+        correction = next(row for row in T.pending(self.project, task["slug"]) if row["id"] == request["id"] + "-cancel")
+        self.assertIn("Stop waiting", correction["text"])
+        self.assertTrue(correction["wake"])
+
+    def test_cancel_after_ready_and_exit_reaches_saved_session_inbox(self):
+        task = self.running_owner()
+        request = self.request(task)["request"]
+        dispatch.run_task_operation(self.project, task["slug"])
+        self.ready(task, request)
+        self.engine.workers[task["agent_id"]].update(state="done", status="exited")
+        dispatch.handoff_control(self.project, task["slug"], request["id"], "cancel", actor="l3", reason="Cancel")
+        T.settle_send_now(self.project, task["slug"], request["id"] + "-cancel", "returned", agent_id=task["agent_id"])
+        self.assertTrue(any("Stop waiting" in row["text"] for row in T.pending(self.project, task["slug"])))
+        with mock.patch.object(server, "request_task_resume") as resume:
+            server._on_l2_finished(self.project, {"task": S.load_task(self.project, task["slug"]),
+                                   "agent": self.engine.workers[task["agent_id"]], "died": True})
+        resume.assert_called_once()
+        self.assertTrue(any("Stop waiting" in row["text"] for row in T.pending(self.project, task["slug"])))
+
+    def test_fresh_report_during_preparation_is_not_requeued(self):
+        task = self.running_owner()
+        self.request(task)
+        dispatch.run_task_operation(self.project, task["slug"])
+        report = S.task_dir(self.project, task["slug"]) / "report.json"
+        report.write_text('{"landed": {"prs": []}, "review": [], "blocked": ""}')
+        self.engine.workers[task["agent_id"]].update(state="done", status="exited")
+        result = dispatch.run_task_operation(self.project, task["slug"])
+        self.assertEqual(result["request"]["status"], "refused")
+        self.assertIn("report", result["request"]["note"])
+        self.assertFalse(S.load_task(self.project, task["slug"]).get("next_engine"))
+        self.assertFalse(any(row.get("wake", True) for row in T.pending(self.project, task["slug"])))
+
+    def test_owner_question_and_operator_stop_supersede_preparation(self):
+        for action in ("question", "stop", "reject"):
+            task = self.running_owner("Interrupt preparation " + action)
+            self.request(task)
+            dispatch.run_task_operation(self.project, task["slug"])
+            if action == "question":
+                T.block(self.project, task["slug"], "Which scope?", actor="l2", expected_attempt=task["attempt"])
+                current = S.load_task(self.project, task["slug"])
+                self.assertEqual(current["daemon_request"]["status"], "cancelled")
+                self.assertEqual(current["questions"][-1]["status"], "open")
+            else:
+                result = dispatch.request_task_operation(self.project, task["slug"], action, "Operator interruption",
+                                                         actor=config.OPERATOR_ACTOR)
+                self.assertEqual(result["request"]["operation"], action)
+                current = dispatch.run_task_operation(self.project, task["slug"])
+                self.assertEqual(current["request"]["status"], "done")
+
+    def test_checkpoint_note_is_not_reused_for_a_later_unrelated_attempt(self):
+        task = self.owner()
+        self.request(task)
+        self.execute(task)
+        self.assertIn("handoff note was not refreshed", dispatch.build_brief(self.project, task["slug"]))
+        current = S.load_task(self.project, task["slug"])
+        current["attempt"] += 1
+        S.save_task(self.project, current)
+        self.assertNotIn("handoff note was", dispatch.build_brief(self.project, task["slug"]))
+
     def test_decision_only_other_fault_unlaunched_and_finished_tasks_are_ineligible(self):
         for state, fault, attempt in (("blocked", None, 1), ("blocked", "external-ci", 1),
                                       ("blocked", "l2-died", 0), ("reported", "l2-died", 1),

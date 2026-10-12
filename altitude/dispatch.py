@@ -309,6 +309,8 @@ def handoff(project: str, slug: str, request: dict) -> dict:
         ready = _handoff_ready(project, slug, request)
         worker = engines.worker(l2_engine(task), task, job_root=job_root)
         ended = worker and worker.get("state") in ("done", "failed", "stopped")
+        if task["state"] == "running" and ended and T.report_current(task, S.task_dir(project, slug) / "report.json"):
+            raise T.TransitionError("owner finished its report; verify that delivery instead of transferring it")
         exhausted = bool(task.get("usage_limit"))
         stopped = T.stopped_by(task) in DAEMON_REQUEST_ACTORS
         if not (ready or ended or exhausted or stopped or request.get("now") or request.get("phase") == "stopping"):
@@ -356,11 +358,13 @@ def _send_handoff_checkpoint(project: str, task: dict, request: dict, job_root: 
             "Finish or safely stop pending work and record anything unfinished as unverified. "
             f"Then atomically write {folder / ('handoff-' + request['id'] + '.ready.json')} containing exactly "
             f"{json.dumps(receipt)}. This signals readiness; stop doing task work and wait for transfer. "
-            "A later cancellation instruction overrides this request: continue the same authorized work. "
+            f"This instruction belongs only to transfer {request['id']}. A later correction ending this "
+            "transfer overrides it; always respect newer task instructions, questions and Stop actions. "
             "No elapsed-time cutoff applies. Pending questions and merge holds stay in force.")
-    engines.send_into_turn_once(sends, request["id"], text)
+    request["checkpoint_requested"] = True
     request["note"] = "Waiting for the owner's handoff note; switch now or cancel explicitly."
     S.save_task(project, task)
+    engines.send_into_turn_once(sends, request["id"], text)
 
 
 def handoff_control(project: str, slug: str, request_id: str, action: str, *, actor: str, reason: str) -> dict:
@@ -393,17 +397,31 @@ def handoff_control(project: str, slug: str, request_id: str, action: str, *, ac
 
 
 def _notify_handoff_cancelled(project: str, task: dict) -> None:
-    """Reconcile a cancellation interrupted before its correction was handed to the driver."""
+    """End checkpoint instructions durably, including if the old turn has already exited."""
     request = task["daemon_request"]
     if request.get("cancel_notified"):
         return
-    if all(request.get(key) == task.get(key) for key in ("attempt", "agent_id", "session_id")):
+    if (request.get("checkpoint_requested")
+            and all(request.get(key) == task.get(key) for key in ("attempt", "agent_id", "session_id"))):
+        folder = S.task_dir(project, task["slug"])
+        row_id = request["id"] + "-cancel"
+        row = next((row for row in T._rows(folder / "conversation.jsonl", "task conversation") if row["id"] == row_id), None)
+        if row is None:
+            row = {"id": row_id, "at": S.now(), "role": "system", "by": "altd",
+                   "text": f"Engine transfer {request['id']} ended ({request['status']}). Stop waiting for that transfer. "
+                           "Continue the same authorized work only as the current task state permits; newer transfer "
+                           "requests, unanswered questions, Stop actions and merge holds remain in force.",
+                   "wake": task["state"] == "running" and not T.report_current(task, folder / "report.json")}
+            T._append_jsonl(folder / "conversation.jsonl", row)
+        delivered = row_id in task.get("message_deliveries", {})
+        if not delivered and not any(item["id"] == row_id for item in T._rows(folder / "inbox.jsonl", "task inbox")):
+            T._append_jsonl(folder / "inbox.jsonl", row)
         sends = engines.worker_sends(task["agent_id"], job_root=l2_job_root(project, task["slug"]))
         if sends:
             engines.recover_send(sends, request["id"])
-            engines.send_into_turn_once(sends, request["id"] + "-cancel",
-                                        "[altitude] Engine transfer cancelled. Ignore its checkpoint request "
-                                        "and continue the same authorized work, preserving questions and holds.")
+            if not delivered and task["state"] == "running" and (not task.get("send_now")
+                    or task["send_now"]["id"] == row_id):
+                T.claim_send_now(project, task, [row], sends, once=True)
     request["cancel_notified"] = True
     S.save_task(project, task)
 
@@ -448,6 +466,10 @@ def _request_task_operation(project: str, slug: str, operation: str, reason: str
                 if view["state"] not in ("stopped", "resuming"):
                     raise T.TransitionError("Refresh the stopped task before continuing this session.")
         previous = task.get("daemon_request") or {}
+        if (operation in ("stop", "reject") and previous.get("operation") == "handoff"
+                and previous.get("status") in ("pending", "executing") and previous.get("phase") != "stopping"):
+            _finish_task_operation_locked(project, task, previous["id"], "cancelled", f"Superseded by {operation}")
+            previous = task["daemon_request"]
         same = (previous.get("operation"), previous.get("reason"), previous.get("actor"),
                 previous.get("engine"), previous.get("attempt") if operation == "handoff" else None,
                 bool(previous.get("now")) if operation == "handoff" else False,
@@ -702,7 +724,7 @@ def pending_task_operations(project: str) -> list[str]:
     pending = [task for task in S.list_tasks(project, include_archive=True)
                if ((task.get("daemon_request") or {}).get("status") in ("pending", "executing")
                    or ((task.get("daemon_request") or {}).get("operation") == "handoff"
-                       and (task.get("daemon_request") or {}).get("status") == "cancelled"
+                       and (task.get("daemon_request") or {}).get("status") in ("cancelled", "refused", "failed")
                        and not (task.get("daemon_request") or {}).get("cancel_notified")))
                and not ((task.get("daemon_request") or {}).get("operation") == "resume"
                         and (task.get("resume_after") or "") > now)]
@@ -740,6 +762,8 @@ def _finish_task_operation_locked(project: str, task: dict, request_id: str | No
             request.get(key) == task.get(key) for key in ("block_id", "resume_request")):
         task.pop("resume_after", None)
     S.save_task(project, task)
+    if request.get("operation") == "handoff" and status in ("cancelled", "refused", "failed"):
+        _notify_handoff_cancelled(project, task)
     return {"request": request, "state": task.get("state")}
 
 
@@ -758,7 +782,7 @@ def _run_task_operation(project: str, slug: str, *, admission_held: str | None =
         task = S.load_task(project, slug)
         request = dict(task.get("daemon_request") or {})
         status = request.get("status")
-        if request.get("operation") == "handoff" and status == "cancelled":
+        if request.get("operation") == "handoff" and status in ("cancelled", "refused", "failed"):
             _notify_handoff_cancelled(project, task)
         if status not in ("pending", "executing"):
             return {"idempotent": True, "request": request, "state": task.get("state")}
@@ -1008,8 +1032,10 @@ def build_brief(project: str, slug: str) -> str:
         request += (f"\n\n---\n\nAttempt {task['attempt']} stopped before finishing. Its worktree and branch are "
                     "kept; its `progress.md` follows.\n\n" + progress.read_text().rstrip() + "\n")
     transfer = task.get("daemon_request") or {}
-    if transfer.get("operation") == "handoff" and transfer.get("status") == "done":
-        request += ("\n\nThe previous owner's handoff note was " + transfer.get("checkpoint", "not refreshed")
+    if (transfer.get("operation") == "handoff" and transfer.get("status") == "done"
+            and transfer.get("attempt") == task.get("attempt")):
+        request += ("\n\nThe previous owner's handoff note was "
+                    + ("refreshed" if transfer.get("checkpoint") == "ready" else "not refreshed")
                     + ". Treat saved context as a checkpoint, not current verification; inspect unfinished work.\n")
     worktree = config.project_path(project) / config.WORKTREE_ROOT / slug
     text = (config.TEMPLATES / "brief.md").read_text().format(

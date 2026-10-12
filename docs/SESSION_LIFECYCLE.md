@@ -921,6 +921,11 @@ explicit `--now` allows saved-context transfer without a new note; silence and n
 Once the daemon records its stopping phase, cancellation refuses. The daemon stops the entire owned
 job and requires confirmed termination before requeue. A restart retains the request and readiness
 identity, does not resend a claimed checkpoint instruction, and recognizes a completed requeue.
+Workers without native message delivery expose that limitation and wait for explicit switch-now or
+cancel. Cancellation/refusal/failure leaves a correction in the task inbox, steered into the current
+turn when possible and retained for its next turn otherwise. Owner blocks and explicit Stop/Reject
+supersede preparation; a newly finished report proceeds to verification. Pending native commands
+may move to background when the checkpoint is delivered; their unfinished status stays explicit.
 The daemon fences worker/session and block identity, refuses in-flight claims and active reviews,
 finished tasks and decision-only waits, and checks task/project pins and target availability. It retains
 the old worker records and requeues the same task with a one-attempt `next_engine`. Requeue clears the

@@ -1245,7 +1245,7 @@ def send_now_ids(task: dict) -> set[str]:
     return set((task.get("send_now") or {}).get("ids", []))
 
 
-def claim_send_now(project: str, task: dict, rows: list[dict], sends: Path) -> None:
+def claim_send_now(project: str, task: dict, rows: list[dict], sends: Path, *, once: bool = False) -> None:
     """Called under the project lock: the running worker's driver takes the messages into its current turn, in order,
     as one hand-off named by the first (see `engines._Driver`). They stay in the inbox, out of the owner's notices,
     until the driver settles them."""
@@ -1253,7 +1253,7 @@ def claim_send_now(project: str, task: dict, rows: list[dict], sends: Path) -> N
     task["send_now"] = {"id": ids[0], "ids": ids, "agent_id": task["agent_id"], "sends": str(sends), "at": S.now()}
     S.save_task(project, task)
     from . import engines
-    engines.send_into_turn(sends, ids[0], render_inbox(rows))
+    (engines.send_into_turn_once if once else engines.send_into_turn)(sends, ids[0], render_inbox(rows))
 
 
 def settle_send_now(project: str, slug: str, message_id: str, outcome: str, *, agent_id: str | None,
@@ -1626,6 +1626,17 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
     with S.project_lock(project):
         task = S.load_task(project, slug)
         published = {(q["id"], q["revision"]) for q in task.get("questions", [])}
+        request = task.get("daemon_request") or {}
+        if (actor == "l2" and expected_daemon_request is None
+                and (expected_attempt is None or expected_attempt == task.get("attempt"))
+                and (expected_state is None or expected_state == task.get("state"))
+                and (expected_agent_id is _UNSET or expected_agent_id == task.get("agent_id"))
+                and (expected_session_id is _UNSET or expected_session_id == task.get("session_id"))
+                and (expected_block_id is _UNSET or expected_block_id == task.get("block_id"))
+                and request.get("operation") == "handoff" and request.get("phase") != "stopping"
+                and request.get("status") in ("pending", "executing")):
+            from . import dispatch
+            dispatch._finish_task_operation_locked(project, task, request["id"], "cancelled", "Owner needs to block")
         _require_daemon_fence(task, slug, expected_daemon_request=expected_daemon_request,
                               expected_agent_id=expected_agent_id, expected_session_id=expected_session_id,
                               expected_block_id=expected_block_id)

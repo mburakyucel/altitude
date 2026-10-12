@@ -151,7 +151,10 @@ worker/session identity and be running, stopped by L3 or the operator, or blocke
 with its current work, completed checks, unfinished work and next steps, then write the exact
 request-scoped readiness receipt supplied in that instruction. Existing workers use their file tools;
 they do not need an updated CLI. The transfer waits for readiness without a time cutoff. A slow
-command, silence or network interruption does not force a switch. A confirmed ended worker, a
+command, silence or network interruption does not force a switch. Workers launched without native
+message delivery show that the note cannot be requested; use switch-now or cancel explicitly.
+Injected instructions can move pending commands into native background work; the note must distinguish
+finished checks from work still pending. A confirmed ended worker, a
 recorded usage limit or an explicit Stop permits transfer using saved context without a fresh note.
 
 The request ID in task status identifies the waiting transfer. Switch immediately or cancel it explicitly:
@@ -163,7 +166,10 @@ alt task handoff blocked-owner --request <request-id> --cancel --reason 'Keep th
 
 `--now` also works on the initial request with `--engine` and `--attempt`. Cancellation is accepted
 until stopping begins; it cannot retract an instruction the engine already read. It keeps the current
-owner and sends a correction, but does not claim an already-ended worker is running. The daemon stops
+owner and leaves a durable correction for its current or next turn. Refusals and failures after
+checkpoint preparation also end that instruction. An owner's new question/block cancels preparation;
+Stop or Reject supersedes it. A report finished during preparation proceeds to ordinary verification,
+not a fresh attempt. The daemon stops
 the worker and its descendants and confirms termination before queuing any replacement. Unknown
 termination refuses the transfer. The new brief says whether the handoff note was refreshed; saved
 context is not current verification and does not include the complete previous native conversation.
