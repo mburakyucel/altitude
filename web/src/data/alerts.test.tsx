@@ -166,6 +166,7 @@ afterEach(() => {
   Reflect.deleteProperty(navigator, "serviceWorker");
   Reflect.deleteProperty(globalThis, "caches");
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe("decision alerts", () => {
@@ -485,6 +486,9 @@ describe("this device's alert preferences", () => {
   });
 
   it("with a pace, holds what arrives before it has passed and then shows it in one banner", async () => {
+    // The clock stands still until the pace has passed, however long rendering takes; timers stay real.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 9, 12, 9, 0));
     const browser = alreadyOn([]);
     deviceStore({ every: 900 });
     localStorage.setItem(ALERTS_LAST_KEY, String(Date.now() - 900_000 + 1_000)); // the pace ends in a second
@@ -497,7 +501,8 @@ describe("this device's alert preferences", () => {
     expect(browser.shown).not.toHaveBeenCalled();
     expect(JSON.parse(localStorage.getItem(ALERTS_SEEN_KEY)!)).toEqual([]); // held, not recorded
 
-    await waitFor(() => expect(browser.shown).toHaveBeenCalledTimes(1), { timeout: 3_000 });
+    vi.setSystemTime(Date.now() + 1_000);
+    await waitFor(() => expect(browser.shown).toHaveBeenCalledTimes(1));
     expect(browser.shown).toHaveBeenCalledWith("2 decisions need you", {
       body: "altitude · Choose backup retention\naltitude · Run a restore drill",
       tag: question.alert_key, data: { url: "/" }, silent: false,
