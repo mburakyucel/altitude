@@ -78,6 +78,15 @@ class TestAvailability(AltitudeCase):
         for engine in ("claude", "codex"):
             self.assertIsNone(engines.rejection(engine, {"raw_stdout": stream(
                 {"type": "result", "is_error": True, "api_error_status": 403, "result": "Forbidden"})}))
+        # A tool or MCP server's own authentication diagnostic is not the engine's sign-in.
+        for engine, result in (
+            ("claude", {"raw_stderr": "Failed to authenticate with MCP server fixture-docs", "raw_stdout": stream(
+                {"type": "result", "is_error": False, "result": "Answered"})}),
+            ("claude", {"error": "claude exit 1: MCP server fixture-docs: Failed to authenticate"}),
+            ("codex", {"raw_stderr": "mcp client fixture-docs: unexpected status 401 Unauthorized"}),
+        ):
+            with self.subTest(engine=engine, result=result):
+                self.assertIsNone(engines.rejection(engine, result))
 
     def test_a_coordinator_turn_failing_on_a_revoked_sign_in_is_a_safe_sign_in_rejection(self):
         process = mock.Mock(pid=123, returncode=1, stdout=io.StringIO(revoked_stream()), stderr=io.StringIO(""),

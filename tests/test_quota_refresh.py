@@ -169,11 +169,18 @@ class TestRefreshRouting(QuotaFixture):
                 self.refresh()
                 self.assertFalse(route.signed_out("claude"))
                 self.assertFalse(route._rejection_path({"engine": "claude"}, "sign-in").exists())
-        self.talk.return_value = [json.dumps({"id": 2, "error": {"code": -32000, "message":
-            "Your access token could not be refreshed because your refresh token was revoked."}})]
-        self.refresh()
-        self.assertTrue(route.signed_out("codex"))
-        self.assertNotIn("rejection", state.read_json(config.MONITOR_DIR / route.QUOTA_CODEX))
+        for error in ({"code": -32000, "message": "Your access token could not be refreshed because your refresh "
+                                                  "token was revoked."},
+                      {"code": -32000, "message": "Not logged in"},
+                      {"code": "authentication_failed", "message": "Fixture refusal secret-value"}):
+            with self.subTest(error=error):
+                route.signed_in("codex")
+                self.talk.return_value = [json.dumps({"id": 2, "error": error})]
+                self.refresh()
+                self.assertTrue(route.signed_out("codex"))
+                stored = state.read_json(config.MONITOR_DIR / route.QUOTA_CODEX)
+                self.assertNotIn("rejection", stored)
+                self.assertNotIn("error", stored)
 
     def test_both_readers_persist_current_evidence_and_weekly_headroom_selects_fresh_tasks(self):
         self.output = usage(limit("weekly_all", 5), limit("session", 90))

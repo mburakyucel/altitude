@@ -89,7 +89,7 @@ def refresh_quotas(min_interval: float = 300) -> None:
     _last_quota_refresh = now
     for engine, path, read in (("codex", route.QUOTA_CODEX, quota_codex.read), ("claude", route.QUOTA_CLAUDE, _claude_quota)):
         reading = read()
-        rejected = reading.pop("rejection", None) or rejection(engine, {"error": reading.get("why")})
+        rejected = reading.pop("rejection", None) or rejection(engine, {"error": reading.pop("error", None)})
         S.write_json(config.MONITOR_DIR / path, reading)
         if reading.get("known"):
             route.signed_in(engine)
@@ -304,6 +304,13 @@ def _event_error(engine: str, event: dict):
     return None
 
 
+def _strings(value) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    items = value.values() if isinstance(value, dict) else value if isinstance(value, list) else ()
+    return [text for item in items for text in _strings(item)]
+
+
 #: The authentication codes the CLIs attach to a sign-in failure (Claude marks its message "authentication_failed").
 AUTH_CODES = frozenset({"authentication_error", "authentication_failed", "invalid_api_key"})
 
@@ -316,9 +323,13 @@ def rejection(engine: str, result: dict, model: str | None = None) -> dict | Non
     sign-in prompts cover failures reported before any request. Capacity, transport errors, plan names, and
     a generic permission/404 failure prove no model entitlement.
     """
-    errors = [result.get(key) for key in ("error", "stderr", "raw_stderr", "detail", "synthetic")]
-    errors.extend(_event_error(engine, event) for event in _codex_parse(result.get("raw_stdout") or ""))
+    envelope = [result.get(key) for key in ("error", "detail", "synthetic")]
+    envelope.extend(_event_error(engine, event) for event in _codex_parse(result.get("raw_stdout") or ""))
+    errors = [*envelope, result.get("stderr"), result.get("raw_stderr")]
     text = "\n".join(value if isinstance(value, str) else json.dumps(value) for value in errors if value)
+    # Sign-in wording counts only where one of the CLI's own failure messages begins with it, so a tool or
+    # MCP server diagnostic that mentions authentication never signs a healthy engine out.
+    said = [message.strip() for value in envelope for message in _strings(value)]
     codes = set(re.findall(r'"(?:code|type|error)"\s*:\s*"([a-z_]+)"', text))
     if text.strip() in ("model_not_found", *AUTH_CODES):
         codes.add(text.strip())
@@ -329,12 +340,12 @@ def rejection(engine: str, result: dict, model: str | None = None) -> dict | Non
             r"There's an issue with the selected model \([^\n]+\)\. It may not exist or you may not have access to it\.", text))
         if model:
             model_missing |= bool(re.search(r"The model " + re.escape(model) + r" is not available on your [^\n]+ deployment\.", text))
-        auth |= bool(re.search(r"Failed to authenticate|Not logged in|Invalid (?:API key|auth token)", text))
+        auth |= any(re.match(r"Failed to authenticate|Not logged in|Invalid (?:API key|auth token)", message)
+                    for message in said)
     elif engine == "codex":
-        auth |= bool(re.search(r"unexpected status 401\b|Your access token could not be refreshed|"
-                               r"You do not have access to Codex|"
-                               r"This account is not currently authorized to use Codex in this workspace", text)) \
-            or text.strip() == "Not logged in"
+        auth |= any(re.match(r"unexpected status 401\b|Not logged in$", message) for message in said) or bool(re.search(
+            r"Your access token could not be refreshed|You do not have access to Codex|"
+            r"This account is not currently authorized to use Codex in this workspace", text))
     else:
         raise ValueError(f"unknown engine {engine!r}")
     if auth:
