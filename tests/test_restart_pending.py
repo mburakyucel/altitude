@@ -156,6 +156,40 @@ class TestRestartPending(AltitudeCase):
             server.dispatch_waiting(self.project)
         run.assert_called_once()
 
+    def test_a_transient_refusal_retries_at_a_later_quiet_point(self):
+        """I-20261010-214654: the unit withdrew its request with a pause; altd requests it again when quiet."""
+        later = (datetime.now(timezone.utc) + timedelta(minutes=5)).replace(microsecond=0).isoformat()
+        S.write_json(self.flag, {"since": S.now(), "files": ["altitude/server.py"], "unit": "first",
+                                 "error": "cannot prove Altitude is quiet", "retries": 1, "retry_at": later})
+        busy = T.new(self.project, "claims the quiet point", "request", actor="burak")
+        with mock.patch.object(server, "_request_restart_unit", return_value={"ok": True, "unit": "second"}) as unit:
+            server.auto_restart()
+            unit.assert_not_called()  # still pausing
+            pending = S.read_json(self.flag)
+            pending["retry_at"] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+            S.write_json(self.flag, pending)
+            busy["dispatching"] = S.now(); S.save_task(self.project, busy)
+            server.auto_restart()
+            unit.assert_not_called()  # not a quiet point
+            busy["dispatching"] = None; S.save_task(self.project, busy)
+            server.auto_restart()
+        unit.assert_called_once()
+        pending = S.read_json(self.flag)
+        self.assertEqual((pending["unit"], pending["retries"]), ("second", 1))
+        self.assertNotIn("retry_at", pending)
+        self.assertTrue(config.restart_in_progress())
+
+    def test_a_parked_activation_waits_for_the_restart_button_which_restores_the_retry_bound(self):
+        S.write_json(self.flag, {"since": S.now(), "files": ["altitude/server.py"], "requested_at": S.now(),
+                                 "unit": "u", "failed": S.now(), "error": "timed out", "retries": 3})
+        with mock.patch.object(server, "_request_restart_unit", return_value={"ok": True, "unit": "manual"}) as unit:
+            server.auto_restart()
+            unit.assert_not_called()
+            server.restart_service()
+        unit.assert_called_once()
+        pending = S.read_json(self.flag)
+        self.assertNotIn("failed", pending); self.assertNotIn("retries", pending)
+
 
 if __name__ == "__main__":
     unittest.main()

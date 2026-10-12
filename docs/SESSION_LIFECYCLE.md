@@ -1397,7 +1397,9 @@ in-flight work drains to the quiet point within one validation run. The regular 
 tick discovers merged changes independently of worker completion. Dispatch, resume, L3 turns
 and report verification wait only from the restart unit request until the replacement daemon is
 ready; a failing restart unit releases the window at once with its reason, and the ten-minute restart
-fault releases a window whose unit died silently. altd runs the guarded build-and-restart
+fault releases a window whose unit died silently. A transient refusal (quiet probe unanswered, work claimed
+the quiet point, checkout moved during the build) is retried at a quiet point five minutes later, up to three
+times, before it parks with a fault like any other failure. altd runs the guarded build-and-restart
 script itself. On macOS, service Stop/restart confirms its coalition cleanup and label removal before
 returning Stop or bootstrapping the replacement, with a 45-second removal limit. Independent workers
 remain in their own jobs. Failed activation restores an available prior web bundle and verifies the
