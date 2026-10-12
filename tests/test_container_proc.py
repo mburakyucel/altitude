@@ -1,6 +1,7 @@
 """#543: the exposure gate must refuse a newly readable or writable kernel interface."""
 import json
 from pathlib import Path
+import tempfile
 import unittest
 
 from tests.container_proc_probe import differences, require_tuple
@@ -24,15 +25,38 @@ class ProcPolicy(unittest.TestCase):
 
     def test_another_runtime_or_architecture_cannot_inherit_the_measured_allowlist(self):
         policy=json.loads((Path(__file__).parent/'fixtures/container-proc-policy.json').read_text())
-        value=policy['tuple']
+        self.assertEqual({value['architecture'] for value in policy['tuples']},{'amd64','arm64'})
+        for value in policy['tuples']:
+            info={'host':{'distribution':{'distribution':value['distribution'],'version':value['release']},
+                'arch':value['architecture'],'kernel':value['kernel'],
+                'ociRuntime':{'version':value['crun']+'\nfixture metadata'}},'version':{'Version':value['podman']}}
+            self.assertEqual(require_tuple(info,value['network'],policy),value)
+            info['host']['arch']='riscv64'
+            with self.assertRaisesRegex(RuntimeError,'Unreviewed'):require_tuple(info,value['network'],policy)
+            info['host']['arch']=value['architecture'];info['host']['kernel']='another-kernel'
+            with self.assertRaisesRegex(RuntimeError,'Unreviewed'):require_tuple(info,value['network'],policy)
+
+    def test_an_unreviewed_tuple_records_both_inventories_before_it_fails(self):
+        from scripts.container_acceptance import proc_exposure
+        policy=json.loads((Path(__file__).parent/'fixtures/container-proc-policy.json').read_text())
+        value=dict(policy['tuples'][0],architecture='riscv64')
         info={'host':{'distribution':{'distribution':value['distribution'],'version':value['release']},
             'arch':value['architecture'],'kernel':value['kernel'],
-            'ociRuntime':{'version':value['crun']+'\nfixture metadata'}},'version':{'Version':value['podman']}}
-        self.assertEqual(require_tuple(info,value['network'],policy),value)
-        info['host']['arch']='arm64'
-        with self.assertRaisesRegex(RuntimeError,'Unreviewed'):require_tuple(info,value['network'],policy)
-        info['host']['arch']=value['architecture'];info['host']['kernel']='another-kernel'
-        with self.assertRaisesRegex(RuntimeError,'Unreviewed'):require_tuple(info,value['network'],policy)
+            'ociRuntime':{'version':value['crun']}},'version':{'Version':value['podman']}}
+        inventory={'uid':0,'rows':[{'path':'/proc/kcore','readable':True,'writable':False}]}
+        def command(arguments,timeout=None):
+            if arguments[0]=='inspect':
+                return json.dumps([{'Image':'fixture','HostConfig':{'NetworkMode':value['network'],
+                                                                     'CgroupParent':'fixture.slice'}}])
+            return json.dumps(info) if arguments[0]=='info' else json.dumps(inventory)
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaisesRegex(RuntimeError,'Unreviewed'):
+                proc_exposure(command,'fixture',Path(folder))
+            self.assertEqual(json.loads((Path(folder)/'proc-tuple.json').read_text()),value)
+            for uid in ('0','1000'):
+                recorded=json.loads((Path(folder)/f'proc-exposure-{uid}.json').read_text())
+                self.assertEqual((recorded['rows'],recorded['unexpected_exposure']),(inventory['rows'],None))
+                self.assertTrue((Path(folder)/f'proc-default-{uid}.json').is_file())
 
     def test_unknown_default_mask_and_new_subtree_access_fail_closed(self):
         policy=json.loads((Path(__file__).parent/'fixtures/container-proc-policy.json').read_text())
