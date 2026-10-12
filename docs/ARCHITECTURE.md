@@ -2969,7 +2969,8 @@ under day dividers. Each message L3 sent the L2 is one compact line: "L3 ·" and
 without one, with an image count when it carries images. Its Show opens the complete stored text and
 images in place; the task record, the L2's inbox and authority checks keep every word, and the summary
 is stored beside the text as display metadata only. Then come the open question group at the end of the conversation (closed groups
-at their recorded message anchor), a held review card when one waits, no open operator question links its PR and the PR is not already
+at their recorded message anchor), a held review card when one waits, no open operator question is about its PR (one linking or naming it, or one
+with options that is neither a proposal go nor a design) and the PR is not already
 approved since its hold, and the composer
 while the task is running, blocked, reported with open-PR owner evidence, or queued before its first
 dispatch or with an existing question. Waiting on L3 stays a

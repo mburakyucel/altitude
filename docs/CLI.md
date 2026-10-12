@@ -1301,8 +1301,9 @@ payload has this form:
 ```
 
 Options have stable keys, short button labels and explicit answer text. `"review": "proposal"` marks a
-proposal approval, so the question shows its proposal review (spec §3.8.3); a design question and a
-question naming the held PR are recognised without it, and revisions keep the mark. A question may omit options;
+proposal approval, so the question shows its proposal review (spec §3.8.3); a design question is
+recognised without it, and revisions keep the mark. On a task holding a PR, an unmarked question with
+options or one naming the PR asks to merge it and shows its implementation review. A question may omit options;
 multiple options require a recommendation key. Nothing becomes an operator answer by default.
 Include an existing question `id` to revise that member. Omitted unresolved members remain open;
 close obsolete questions explicitly rather than dropping them from a later publication. A group
@@ -1322,8 +1323,10 @@ judges its meaning and uses `resolve` for an actual decision. Submitted members 
 count. To explicitly ask a responded member again, include its ID in `--questions-file`; publication
 creates a new revision and restores its answer field even when wording is unchanged. Ordinary
 unchanged re-parking retains the response. Independent unanswered members remain available.
-An open operator question linking or naming the held PR replaces its generated review card,
-including a freeform question and one with a submitted response awaiting owner interpretation.
+An open operator question about the held PR replaces its generated review card: one linking or
+naming the PR, including a freeform question, and any question with options that is neither marked
+as a proposal nor shows files, whether or not its text names the PR. This holds while a submitted
+response awaits owner interpretation.
 After resolution the fallback returns if merge approval is still needed. A held PR closed without
 merging asks for no review: `alt task block` by the owner reads the PR's state from the checkout origin's repository and records the closure
 as a `pr-closed` task event, or a later reopening as `pr-reopened`; when that read fails, the block
