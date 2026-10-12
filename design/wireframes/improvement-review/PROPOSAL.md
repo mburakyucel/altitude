@@ -1,8 +1,9 @@
 # Improvement review: proposal
 
-Status: proposal awaiting the operator's decision. Nothing here is built yet. In the interface the
-feature is called **Improvement suggestions**, so it is never confused with the code and proposal
-reviews that Needs you already shows; this document calls one run "a review".
+Status: the operator approved this design; the eval in **Proving it works** awaits their decision on
+its spend. Nothing here is built yet. In the interface the feature is called **Improvement
+suggestions**, so it is never confused with the code and proposal reviews that Needs you already
+shows; this document calls one run "a review".
 
 ## What it is for
 
@@ -66,11 +67,13 @@ first.
 | What may be sent to the reviewer's provider | Counts from task records plus short paired quotes of the task and project conversations (your message, the agent message it answered, the reply), each cut to 300 characters | Counts only, nothing quoted; or, in a later step, also short excerpts of the agents' working logs |
 | Reviewer model and cost limit | Claude Sonnet 5.5 at medium effort: at most $0.27 a review, usually $0.08–0.12, plus one ordinary L3 turn to check. Weekly, about $0.40–0.50 a month per project, at most $1.20 | Claude Haiku 5.5: at most $0.02 a review, noisier suggestions |
 | Where suggestions reach you | One card in the project's chat and a **Suggestions** section in Needs you, not counted and never alerting | Counted in the Needs you badge; or chat only |
+| Proving it works | An eval on fictional projects with planted friction before any real conversation is read (below): about $6 at API prices, at most $25; a later rerun after a prompt, signal or model change at most $5 | Judge it only by real suggestions and your dispositions |
 
 The conversations being reviewed were already processed by the engines that took part in them, but
 sending them again to the reviewer is a new disclosure, so it needs your yes, given per project on the
-sheet. Approving a model and limit authorizes the reviews you turn on with it; it does not start a
-separate model-quality evaluation, which stays deferred under the 2026-09-08 decision. Accepting a
+sheet. Approving a model and limit authorizes the reviews you turn on with it. The eval below is the one
+live-provider evaluation this design asks for; it is run by hand, never in CI or unattended, and the
+2026-09-08 deferral of live-provider testing otherwise stands. Accepting a
 suggestion authorizes its task, never publishing what the review read.
 
 ### Directions the independent reviews offered
@@ -409,6 +412,79 @@ and the card says nothing more than the counts.
 The settings section's **Past suggestions** line is the feature's own measure: how many suggestions
 became tasks and how many you dismissed.
 
+## Proving it works
+
+Before the review reads any real conversation, it runs against fictional projects whose friction is
+known, to show what it catches, what it invents, and which model is worth its cost. This is an eval: a
+fixed set of scenarios, an answer key, and a score computed by code.
+
+**Scenarios.** Each scenario is a fictional project of 8 to 14 finished tasks, written as a compact
+scenario file that the loader turns into ordinary task and chat records. The eval therefore runs the
+same signals, sheets, prompt and reviewer as a real review; nothing in the review knows it is an eval.
+A scenario holds:
+
+- **Planted patterns**, each with its key: the anchors it was planted in, its target and the change
+  that would fix it. Three kinds:
+  - *Counted*: friction a signal fires on, such as a question re-asked without the operator's input
+    in three tasks, or the same check rerun in four.
+  - *Words-only*: friction no signal counts, such as the operator correcting the same kind of brief in
+    different words across three tasks. These show whether the model finds what counting cannot;
+    without that, the counts-only direction would do as well for nothing.
+  - *Shared cause*: different symptoms with one cause across tasks, such as owners asking how to run
+    the tests and CI failing on the command they guessed.
+- **Decoys** that must not be suggested: a one-off that looks like a pattern, a re-asked question the
+  operator did answer in between, a pattern a current task already handles, and one dismissed in an
+  earlier review.
+
+There are eight scenarios: six with one to three planted patterns among decoys (about twelve patterns,
+at least a third words-only), one of decoys only, and one clean project with nothing to suggest. All of
+it is fiction, written to the repository's rules for examples.
+
+**Scoring.** Code scores each answer against its key, with no judge model:
+
+- **Caught**: a suggestion cites at least two of the pattern's planted anchors and names its target.
+  Citations can only be anchors the code placed in the prompt, so a match cannot be invented.
+- **False alarm**: a suggestion whose citations are mostly decoys, any suggestion on the clean project,
+  or one repeating handled or dismissed work.
+- **Unexpected**: a suggestion matching neither. A fictional project can hold real friction nobody
+  planted, so these are read and graded by hand as useful, harmless or wrong, and the grades are part
+  of the results.
+- Per model also: answers that failed validation, cost from recorded usage, and time.
+
+**Honest numbers.** The owner who writes the prompt would be tempted to tune it to the scenarios. So a
+separate helper writes the scenarios from a brief naming only the pattern kinds, the keys sit in their
+own files, and the set is split: four scenarios for developing the prompt (on Sonnet only), four held
+back and run once at the end for the reported numbers. With this few patterns the results show counts
+("caught 5 of 6"), not percentages.
+
+**Runs and cost.** The held-back half runs three times on each model the engine seam offers the
+reviewer (today Claude Haiku 5.5, Sonnet 5.5 and Opus 5.5), because one prompt can give different
+answers: 36 runs. With prompt development and one possible rerun, the eval costs about $6 at API
+prices and at most $25, drawn from the Claude plan like other work.
+
+**The bar** for reading real conversations, on the held-back half: a model catches at least four in
+five counted and shared-cause patterns and half the words-only ones, says nothing on the clean project
+in at least two of three runs, and averages under one false alarm a run. The recommendation is the
+cheapest model that clears it; Sonnet stays the default only if Haiku does not. If none clears it, the
+prompt is revised and the held-back half rerun once; if still none clears it, you get the results
+instead of the next step.
+
+**What it does not prove.** Fiction is cleaner than real work. The first real run is also compared with
+the friction already filed as incident issues in its window, and your dispositions on real suggestions
+remain the measure that counts.
+
+**Afterwards.** The scenarios and scorer stay in the repository. `make check` runs them with a scripted
+reviewer and no model: the scenarios load, signals fire on counted patterns and not on decoys, and the
+scorer grades known answers correctly. The live eval runs only by hand, by the owner of a later change
+to the prompt, signals or model, on the held-back half and the chosen model, within the limit you
+approve, and its table goes in that PR.
+
+**Its own small harness.** What is under test is Altitude's prompt builder and its tool-free call
+through the engine seam on the plan. Open-source eval frameworks such as Inspect or promptfoo would
+need an adapter around that same call and add a dependency, for a few dozen runs scored by citation
+overlap. The harness is a scenario loader, a loop and a scorer. If evals later need a judge model or
+many more models, Inspect is the one to adopt.
+
 ## Where it lives
 
 - `~/.altitude/<project>/improvements/<run>/`: the exact prompt, the raw answer and the run record
@@ -420,6 +496,8 @@ became tasks and how many you dismissed.
   the project's settings events.
 - The card is a project-chat row (`trigger: "improvement"`) naming its run; its state is read from
   `improvements.json`, so the conversation stores no second copy of a decision.
+- The eval: scenarios and keys in `tests/fixtures/improvement/`, the loader, loop and scorer beside
+  the review; results of each live eval in the running task's folder and as a table in its PR.
 - This covers the Altitude project first. Other projects come later; their How agents work suggestions
   will then appear in the Altitude project's chat and Needs you, where Altitude itself is changed.
 
@@ -450,7 +528,9 @@ became tasks and how many you dismissed.
   acceptance, button replays and conflicts, lapsing at seven days only, an accepted suggestion whose task turn fails and its Try again,
   suggestions-only Needs you with the badge hidden, one task per
   suggestion, measurement cohorts after merge, the Needs you Suggestions section leaving the count and
-  badge unchanged, and every chat, Needs you and settings state walked on phone and desktop.
+  badge unchanged, and every chat, Needs you and settings state walked on phone and desktop. The
+  eval's scenarios load, their counted patterns fire and decoys do not, and the scorer grades
+  scripted caught, false-alarm, unexpected and invalid answers correctly.
 
 ## What is removed
 
@@ -465,33 +545,46 @@ choice with recorded usage and cost.
 
 ## Rollout
 
-Each step is its own held PR that you review before it lands. Monday runs come only after you have
-seen real suggestions on request.
+Each step is its own held PR that you review before it lands. Nothing reads a real conversation until
+the eval has shown a model that clears the bar, and Monday runs come only after you have seen real
+suggestions on request.
 
-1. **First run on request (this week).** Replace the pilot with `improve.py`: signals, task sheets and
-   the prompt; the tool-free reviewer with its isolation check and cost limit; start by your chat
-   message, Stop by chat, the deadline, and the private record. Your approval of this design is the
-   agreement for the Altitude project only; the settings section does not exist yet. L3 checks the
-   candidates and runs `alt improve post`, which posts them as an ordinary L3 chat message written by
-   Altitude: a heading line naming the review and its window, each kept suggestion with its run
-   number, target, title, explanation and an underlined link to every cited place (opening like any
-   task link in chat; Back returns to the conversation), and the dropped numbers with L3's reasons.
-   Endings are one short message each with the card's wording. You answer in words; L3 records them
-   with `alt improve resolve` against that message. No new screen or component. Docs: the pilot's
-   architecture, session lifecycle, CLI and persona sections are rewritten for the review.
-   Acceptance: one real run on this project with its record, cost and your dispositions. About three to
-   four days of work: the pilot's claim, timeout and record code is reused; new are the signals and
-   sheets (the largest part), the reviewer adapter, four verbs (run, stop, post, resolve) and their
-   tests.
-2. **The card and Needs you.** The same post renders as the card in project chat and under
+1. **The reviewer, proven on fiction (this week).** `improve.py` with the signals, task sheets and
+   prompt; the tool-free reviewer with its isolation check and cost limit; the scenarios, keys and
+   scorer; the pilot removed. The live eval runs within the limit you approve, and the PR carries its
+   table and a model recommendation. No real conversation is read. About three to four days: the
+   signals and sheets are the largest part, the scenarios about a day.
+2. **First run on request.** Start by your chat message, Stop by chat, the deadline and the private
+   record. Your approval of this design is the agreement for the Altitude project only; the settings
+   section does not exist yet. L3 checks the candidates and runs `alt improve post`, which posts them as
+   an ordinary L3 chat message written by Altitude: a heading line naming the review and its window,
+   each kept suggestion with its run number, target, title, explanation and an underlined link to every
+   cited place (opening like any task link in chat; Back returns to the conversation), and the dropped
+   numbers with L3's reasons. Endings are one short message each with the card's wording. You answer
+   in words; L3 records them with `alt improve resolve` against that message. No new screen or
+   component. Docs: the pilot's architecture, session lifecycle, CLI and persona sections are rewritten
+   for the review. Acceptance: one real run on this project with its record, cost and your
+   dispositions, compared with the incident issues in its window.
+3. **The card and Needs you.** The same post renders as the card in project chat and under
    **Suggestions** in Needs you: the running line with Stop, Make a task, Dismiss and Undo, Details,
    lapsing, every state walked on phone and desktop.
-3. **Settings and Mondays.** The settings section with **Weekly**, **Get suggestions now**, the sheet
+4. **Settings and Mondays.** The settings section with **Weekly**, **Get suggestions now**, the sheet
    and its recorded agreement, the Monday check and its skips. From here a chat request needs the
    agreement.
-4. **Measurement.** **Seen again**, **Since earlier changes** and the **Past suggestions** line.
-5. **Only if you choose them:** other projects (their How agents work suggestions then appear in the
-   Altitude project's chat and Needs you, where Altitude itself is changed), working-log excerpts.
+5. **Measurement.** **Seen again**, **Since earlier changes** and the **Past suggestions** line.
+6. **Only if you choose them:** other projects (their How agents work suggestions then appear in the
+   Altitude project's chat and Needs you, where Altitude itself is changed), working-log excerpts, and
+   the later directions below.
+
+### Later directions
+
+- **Owners noting friction.** An owner's report gains an optional line for friction it hit and could
+  not fix in its task (a confusing rule, a tool that failed). The next review reads those lines beside
+  the counts, at no extra model cost, and the eval gains scenarios for them. Recommended first, since
+  owners see friction no record shows.
+- **L3 starting a review on its own judgment**, for example after an incident. Not recommended: it
+  would spend and send quotes without your yes for that run, and **Weekly** already covers the
+  schedule. Asking L3 in chat already starts one (step 2).
 
 ## Settled by the owner (redirect any of these)
 
@@ -506,3 +599,5 @@ seen real suggestions on request.
 - Suggestions never wake a device or count in Needs you, and lapse after seven days.
 - The feature is called Improvement suggestions in the interface.
 - The pilot is removed, not kept beside the new review.
+- The eval is Altitude's own small harness, scored by code against planted anchors, with a held-back
+  half for the reported numbers.
