@@ -353,7 +353,7 @@ class TestPlatformSeam(SpeechCase):
             system, _, python = key.split("-")
             tag = "manylinux_2_28_x86_64" if system == "linux" else "macosx_1"
             names = [name.split("/")[1] for name, _, _, _ in wheels]
-            self.assertEqual([name.split("-")[:2] for name in names], [["onnxruntime", "1.22.0"], ["numpy", "2.5.3"]])
+            self.assertEqual([name.split("-")[:2] for name in names], [["onnxruntime", "1.28.0"], ["numpy", "2.5.3"]])
             for name in names:
                 self.assertIn(f"-{python}-{python}-", name)
                 self.assertIn(tag, name)

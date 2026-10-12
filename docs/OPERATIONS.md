@@ -534,7 +534,7 @@ runtime shows "Voice needs an update" with the same button. Only the operator ru
 and `alt voice remove`; Altitude's agents cannot.
 
 The first recording starts a speech process in about 1–3 seconds; speech during startup is kept. While
-you dictate it uses about 1.5–2 GB of memory and under one CPU core; it exits after fifteen minutes
+you dictate it uses about 1.3–2 GB of memory and one to two CPU cores; it exits after fifteen minutes
 without voice. It needs about 2.5 GB of free memory to start, and says so when there is less. Words
 appear about a second behind speech; Stop or Send lands the final text in about half a second. The
 phone sends about 1.9 MB of audio per minute of speech. Host voice runs on Linux x86_64 with glibc 2.28

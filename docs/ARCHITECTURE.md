@@ -2713,7 +2713,8 @@ the CPU by the MIT `onnx-asr` decoder with onnxruntime and numpy. It always punc
 
 `platform.speech_runtime()` names the runtime this host and interpreter can run: Linux x86_64 with
 glibc 2.28 or newer, or macOS on Apple silicon, with CPython 3.12 or 3.13. Both use the same model,
-decoder and library versions; only the onnxruntime and numpy wheels differ by host. Anything else, such
+decoder and library versions; only the onnxruntime and numpy wheels differ by host. onnxruntime stays at
+1.28, the newest release whose library has no usage-reporting client. Anything else, such
 as an Intel Mac, reads as `unavailable` with its reason. `speech.status()` is `unavailable`, `absent`, `setting-up`
 (with bytes done), `ready`, `failed` (with the reason) or `outdated`, with the download size.
 
