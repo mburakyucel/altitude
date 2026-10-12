@@ -3,6 +3,7 @@ import io
 import json
 import os
 import subprocess
+from datetime import datetime
 from unittest import mock
 
 from tests.support import AltitudeCase
@@ -27,6 +28,27 @@ def public(engine, text, *, at=None, identity="message-1"):
 
 def write_rows(path, rows):
     path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+
+def started(engine, call, label, *, at=START, background=True):
+    """A call that keeps running: Claude announces a background task; Codex leaves the command in progress."""
+    if engine == "codex":
+        return [{"type": "item.started", "timestamp": at, "item": {"id": call, "type": "command_execution",
+                                                                   "command": label, "status": "in_progress"}}]
+    return [{"type": "assistant", "timestamp": at, "message": {"id": f"m-{call}", "content": [
+                {"type": "tool_use", "id": call, "name": "Bash", "input": {"command": label, "run_in_background": background}}]}},
+            {"type": "system", "subtype": "task_started", "task_id": f"task-{call}", "tool_use_id": call,
+             "description": label, "task_type": "local_bash", "is_backgrounded": background}]
+
+
+def ended(engine, call, label, status, *, at=AFTER):
+    if engine == "codex":
+        return [{"type": "item.completed", "timestamp": at, "item": {
+            "id": call, "type": "command_execution", "command": label, "status": status,
+            "exit_code": 0 if status == "completed" else 1, "aggregated_output": ""}}]
+    end = int(datetime.fromisoformat(at).timestamp() * 1000)
+    return [{"type": "system", "subtype": "task_updated", "task_id": f"task-{call}", "patch": {"status": status, "end_time": end}},
+            {"type": "system", "subtype": "task_notification", "task_id": f"task-{call}", "tool_use_id": call, "status": status}]
 
 
 class TestL2Activity(AltitudeCase):
@@ -125,6 +147,133 @@ class TestL2Activity(AltitudeCase):
                     result = self.activity()
                 self.assertEqual(result["state"], "unavailable")
                 self.assertNotIn("private path", json.dumps(result))
+
+    def test_background_work_runs_beside_the_turn_and_ends_with_its_outcome(self):
+        for engine in ("claude", "codex"):
+            with self.subTest(engine=engine):
+                self.select(engine)
+                rows = [*started(engine, "call-suite", "make check"), public(engine, "Updating the docs meanwhile.", at=AFTER)]
+                write_rows(self.output, rows)
+                running = {"id": "task-call-suite" if engine == "claude" else "call-suite", "label": "make check",
+                           "kind": "command", "call": "call-suite", "started_at": START, "status": "running", "ended_at": None}
+                self.assertEqual(self.activity()["background"], [running])
+                self.assertEqual(self.activity()["commentary"]["text"], "Updating the docs meanwhile.")
+                write_rows(self.output, [*rows, *ended(engine, "call-suite", "make check", "failed")])
+                self.assertEqual(self.activity()["background"], [{**running, "status": "failed", "ended_at": AFTER}])
+
+    def test_foreground_calls_and_sessions_without_background_work_report_none_running(self):
+        for engine in ("claude", "codex"):
+            with self.subTest(engine=engine):
+                self.select(engine)
+                write_rows(self.output, [*started(engine, "call-diff", "git diff", background=False),
+                                         *ended(engine, "call-diff", "git diff", "completed"),
+                                         public(engine, "Reading the diff.", at=AFTER)])
+                self.assertEqual(self.activity()["background"], [])
+                self.output.unlink()
+                self.assertIsNone(self.activity()["background"])
+
+    def test_claude_background_set_and_helpers_come_from_the_engine_s_own_reports(self):
+        self.select("claude")
+        write_rows(self.output, [
+            {"type": "assistant", "timestamp": START, "message": {"id": "m", "content": [
+                {"type": "tool_use", "id": "call-review", "name": "Agent", "input": {"prompt": "Review"}}]}},
+            # A foreground call moved to the background appears only in the engine's background set.
+            {"type": "system", "subtype": "background_tasks_changed", "tasks": [
+                {"task_id": "task-review", "task_type": "local_agent", "description": "Review the change ghp_abcdefghijklmnop"}]},
+            {"type": "system", "subtype": "task_notification", "task_id": "task-review", "tool_use_id": "call-review",
+             "status": "killed"}])
+        self.assertEqual(self.activity()["background"], [{
+            "id": "task-review", "label": "Review the change [REDACTED]", "kind": "agent", "call": "call-review",
+            "started_at": START, "status": "stopped", "ended_at": None}])
+
+    def test_claude_command_moved_to_the_background_by_send_now_runs_beside_the_turn(self):
+        self.select("claude")
+        rows = [*started("claude", "call-suite", "Run the full test suite", background=False),
+                # Send now asks the engine to move running calls to the background before the operator's message.
+                {"type": "system", "subtype": "task_updated", "task_id": "task-call-suite", "patch": {"is_backgrounded": True}},
+                {"type": "system", "subtype": "background_tasks_changed", "tasks": [
+                    {"task_id": "task-call-suite", "task_type": "local_bash", "description": "Run the full test suite"},
+                    {"task_id": "task-wait", "task_type": "local_bash", "description": "Wait for the build", "awaited": True}]},
+                {"type": "system", "subtype": "task_started", "task_id": "task-tail", "tool_use_id": "call-tail",
+                 "description": "Follow the log", "task_type": "local_bash", "is_backgrounded": True, "ambient": True},
+                public("claude", "Reading the operator's message.")]
+        write_rows(self.output, rows)
+        self.assertEqual(self.activity()["background"], [{
+            "id": "task-call-suite", "label": "Run the full test suite", "kind": "command", "call": "call-suite",
+            "started_at": START, "status": "running", "ended_at": None}])
+        write_rows(self.output, [*rows, *ended("claude", "call-suite", "Run the full test suite", "completed")])
+        self.assertEqual([(item["status"], item["ended_at"]) for item in self.activity()["background"]],
+                         [("completed", datetime.fromisoformat(AFTER).isoformat())])
+
+        # A foreground call the engine never moves stays out of the background.
+        write_rows(self.output, [*started("claude", "call-check", "make check", background=False),
+                                 *ended("claude", "call-check", "make check", "completed")])
+        self.assertEqual(self.activity()["background"], [])
+
+    def test_claude_work_its_engine_stopped_listing_without_an_end_leaves_no_running_claim(self):
+        self.select("claude")
+        rows = [*started("claude", "call-a", "make serve"), *started("claude", "call-b", "make watch"),
+                {"type": "system", "subtype": "background_tasks_changed", "tasks": [
+                    {"task_id": "task-call-a", "task_type": "local_bash"}, {"task_id": "task-call-b", "task_type": "local_bash"}]}]
+        write_rows(self.output, rows)
+        self.assertEqual([item["status"] for item in self.activity()["background"]], ["running", "running"])
+        write_rows(self.output, [*rows, {"type": "system", "subtype": "background_tasks_changed", "tasks": [
+            {"task_id": "task-call-b", "task_type": "local_bash"}]}])
+        self.assertEqual([item["label"] for item in self.activity()["background"]], ["make watch"])
+
+    def test_every_running_item_and_only_the_newest_outcomes_are_kept(self):
+        self.select("claude")
+        rows = [*started("claude", "call-0", "make serve")]
+        for index in range(1, 26):
+            rows += [*started("claude", f"call-{index}", f"make part-{index}"),
+                     *ended("claude", f"call-{index}", f"make part-{index}", "completed")]
+        write_rows(self.output, rows)
+        work = self.activity()["background"]
+        self.assertEqual(work[0]["label"], "make serve")
+        self.assertEqual([item["label"] for item in work[1:]], [f"make part-{index}" for index in range(6, 26)])
+        self.assertEqual(len(work), 1 + transcript.BACKGROUND_OUTCOMES)
+
+    def test_codex_parallel_calls_are_background_only_once_the_turn_takes_a_further_step(self):
+        self.select("codex")
+        rows = [*started("codex", "call-a", "make check"), *started("codex", "call-b", "git status"),
+                *ended("codex", "call-b", "git status", "completed")]
+        write_rows(self.output, [*rows, *ended("codex", "call-a", "make check", "completed"), public("codex", "Both passed.")])
+        self.assertEqual(self.activity()["background"], [])
+        write_rows(self.output, [*rows, public("codex", "The status is clean; the check still runs.")])
+        self.assertEqual([(item["label"], item["status"]) for item in self.activity()["background"]], [("make check", "running")])
+        # A call started right after one ended is a further step too.
+        write_rows(self.output, [*rows, *started("codex", "call-c", "git diff")])
+        self.assertEqual([item["label"] for item in self.activity()["background"]], ["make check"])
+
+    def test_an_unreadable_record_clears_background_claims_but_an_unfinished_last_line_does_not(self):
+        self.select("claude")
+        rows = [*started("claude", "call-a", "make serve")]
+        write_rows(self.output, rows)
+        with self.output.open("a") as stream:
+            stream.write('{"type": "system", "subtype": "task_upd')
+        self.assertEqual([item["label"] for item in self.activity()["background"]], ["make serve"])
+        with self.output.open("a") as stream:
+            stream.write("\n" + json.dumps(public("claude", "Still working.")) + "\n")
+        activity = self.activity()
+        self.assertEqual(activity["state"], "unavailable")
+        self.assertIsNone(activity["background"])
+
+    def test_claude_background_sets_apply_in_order(self):
+        self.select("claude")
+        write_rows(self.output, [*started("claude", "call-a", "make serve"),
+                                 {"type": "system", "subtype": "background_tasks_changed", "tasks": []},
+                                 *started("claude", "call-b", "make watch")])
+        self.assertEqual([item["label"] for item in self.activity()["background"]], ["make watch"])
+
+    def test_outcomes_follow_the_order_work_ended_and_running_work_never_displaces_them(self):
+        self.select("claude")
+        rows = [*started("claude", "call-old", "make soak"), *started("claude", "call-new", "make lint")]
+        rows += [row for index in range(21) for row in started("claude", f"call-{index}", f"make serve-{index}")]
+        rows += [*ended("claude", "call-new", "make lint", "completed"), *ended("claude", "call-old", "make soak", "failed")]
+        write_rows(self.output, rows)
+        work = self.activity()["background"]
+        self.assertEqual(len(work), 23)
+        self.assertEqual([item["label"] for item in work[-2:]], ["make lint", "make soak"])
 
     def test_worker_identity_and_session_mismatch_fail_closed(self):
         self.select("codex")

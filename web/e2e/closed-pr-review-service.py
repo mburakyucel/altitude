@@ -9,7 +9,7 @@ from altitude import config, engines, server, state as S, tasks as T
 REGION = {"question": "Which region should the installer default to?",
           "options": [{"key": "west", "label": "West", "text": "Default the installer to west."},
                       {"key": "east", "label": "East", "text": "Default the installer to east."}],
-          "recommended_key": "west", "why": "West is nearest to the fixture users."}
+          "recommended_key": "west", "why": "West is nearest to the fixture users.", "review": "none"}
 
 
 def main():

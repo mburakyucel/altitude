@@ -329,8 +329,10 @@ def main(argv=None) -> None:
             x.add_argument("--questions-file", help="JSON with one to three questions; '-' reads stdin. Shape: "
                            '{"questions":[{"question":"...","options":[{"key":"a","label":"Short action","text":"Chosen approach"}],'
                            '"recommended_key":"a","why":"..."}]}; a plain question omits options and recommended_key; '
-                           'add an existing "id" to revise that member; "review":"proposal" marks a proposal approval '
-                           '(a question showing files or naming the held PR is recognised without it)')
+                           'add an existing "id" to revise that member; "review" marks what an approval rests on: '
+                           '"proposal" a proposal go (a question showing files is one unmarked), "changes" the held PR\'s '
+                           'merge question (one naming the PR is one unmarked), "none" any other; while a PR waits for '
+                           'review, an unmarked question with choices must name it or carry a mark')
             x.add_argument("--show", action="append", metavar="PATH",
                            help="current L2: show this worktree file with the one question (repeat; one .md/.txt, images)")
             x.add_argument("--recommendation"); x.add_argument("--label"); x.add_argument("--why")

@@ -10,16 +10,14 @@ coordinator (L3); each task has an owner (L2) responsible for investigation thro
 An owner can delegate bounded work to native helpers (L1) and remains responsible for the result.
 You can talk to an owner directly as well as through the project conversation.
 
-<picture>
-  <source media="(max-width: 600px)" srcset="images/orchestration-phone.svg">
-  <img src="images/orchestration.svg" alt="The operator directs the project coordinator and can steer task owners directly. Each owner chooses and integrates its own native helpers." width="1200">
-</picture>
+<img src="images/altitude.svg" alt="You make the executive decisions. Below you, the coordinator (L3) orchestrates the project: it plans with you, starts tasks and answers from your decisions. Each task has its own agent (L2) that takes it from idea to production, and each task agent runs its own helper agents (L1) for focused work such as reading API docs, running tests or profiling latency." width="1000">
 
 ## Keep the project direction in one conversation
 
 In **Atlas**, discuss the migration with L3, the project's persistent orchestrator. Preserve the
 v1 API and pagination contract, make backfill retries safe, and keep p95 latency below 200 ms.
-After agreeing those constraints, ask L3 to dispatch three independent tasks:
+Atlas already has twenty tasks in flight. After agreeing those constraints, ask L3 to dispatch three
+more for the migration:
 
 | L2 owner | Its scope | Why it can proceed now |
 | --- | --- | --- |
@@ -34,7 +32,7 @@ not imply an automatic dependency scheduler. Rollout waits for the results.
 
 <picture>
   <source media="(max-width: 600px)" srcset="images/project-phone.png">
-  <img src="images/project-desktop.png" alt="Atlas: agreed migration constraints in the L3 conversation alongside three active tasks." width="1440">
+  <img src="images/project-desktop.png" alt="Atlas: agreed migration constraints in the L3 conversation alongside twenty-three active tasks and 128 finished this week." width="1440">
 </picture>
 
 [Full-size desktop](images/project-desktop.png) · [Phone conversation](images/project-phone.png)

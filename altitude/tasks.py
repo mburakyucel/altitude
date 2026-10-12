@@ -1675,6 +1675,7 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
         if actor == "l2" and not task.get("fault"):
             _publish_block_questions(task, reason, actor, questions, recommendation,
                                      recommendation_label, recommendation_why, shown=captured)
+            _require_merge_mark(project, task, published)
             if not task.get("resume_after"):  # a message queued for the next turn keeps it the L2's
                 _take_turn(task)
         if files:
@@ -2026,6 +2027,10 @@ def _recommended_key(question: dict) -> str | None:
     return question.get("recommended_key", "recommended" if question.get("recommendation") else None)
 
 
+# The review an approval question rests on: a proposal go, the held PR's merge question, or none.
+REVIEW_MARKS = ("proposal", "changes", "none")
+
+
 def _validate_questions(payload: dict) -> list[dict]:
     if not isinstance(payload, dict) or set(payload) != {"questions"}:
         raise TransitionError('questions JSON must contain only a "questions" array')
@@ -2036,8 +2041,9 @@ def _validate_questions(payload: dict) -> list[dict]:
     for item in items:
         if not isinstance(item, dict) or set(item) - {"id", "question", "options", "recommended_key", "why", "review"}:
             raise TransitionError("question fields are id, question, options, recommended_key, why and review")
-        if item.get("review", "proposal") != "proposal":
-            raise TransitionError('"review": "proposal" marks a proposal approval; merge questions name the held PR')
+        if item.get("review", "proposal") not in REVIEW_MARKS:
+            raise TransitionError('"review" is "proposal" for a proposal go, "changes" for the held PR\'s merge question '
+                                  'or "none" for any other question')
         text = item.get("question")
         if not isinstance(text, str) or not text.strip():
             raise TransitionError("every question needs nonempty text")
@@ -2089,7 +2095,7 @@ def _publish_question(task: dict, text: str, actor: str, *, recommendation: str 
         previous = questions[-1] if questions else None
     if shown is _UNSET:
         shown = previous.get("shown") if previous and (previous["status"] == "open" or force_revision) else None
-    # A revision stays a proposal approval; the mark is never removed by rewording.
+    # A revision keeps its review mark; rewording never removes it.
     review = review or (previous.get("review") if previous and (previous["status"] == "open" or force_revision) else None)
     groups = _store_groups(task)
     audience = audience or ("l3" if task.get("waiting_on") == "l3" else "operator")
@@ -2292,12 +2298,12 @@ def open_questions(task: dict) -> str:
 
 
 def _question_review(project: str, task: dict, question: dict) -> dict | None:
-    """An open proposal approval (marked, or with shown files) rests on the proposal review and one naming the held
-    PR on the implementation review."""
+    """An open proposal approval (marked, or unmarked with shown files) rests on the proposal review and the held PR's
+    question on the implementation review."""
     from . import reviews
     if question["status"] != "open":
         return None
-    if question.get("review") == "proposal" or question.get("shown"):
+    if question.get("review") == "proposal" or not question.get("review") and question.get("shown"):
         return reviews.status(project, task, "proposal")
     return reviews.status(project, task, "changes") if _references_held_pr(task, question) else None
 
@@ -2311,6 +2317,8 @@ def question_view(project: str, task: dict, question: dict) -> dict:
                                      shown_versions(project, task["slug"], task))}
                if shown else {"shown": _earlier_preview(question)} if question.get("design") else {}),
             "review": _question_review(project, task, question),
+            # The held PR's open question links the PR it asks to merge.
+            "pr": task["prs"][-1] if question["status"] == "open" and _references_held_pr(task, question) else None,
             "options": question_choices(question), "recommended_key": _recommended_key(question),
             "response": question.get("response"),
             "group_id": group["id"], "group_revision": group["revision"], "group_anchor_id": group["anchor_id"],
@@ -2684,17 +2692,36 @@ def approved_pr(project: str, task: dict) -> int | None:
 
 
 def _references_held_pr(task: dict, question: dict) -> bool:
-    """The owning PR question supplies the response surface, including a freeform field."""
+    """The held PR's question supplies its response surface: an operator question its owner marks as the merge
+    question, or an unmarked one naming the PR, freeform included."""
     number = (task.get("prs") or [None])[-1]
-    return bool(number and task.get("hold_merge") and question["audience"] == "operator"
-                and _names_pr(number).search(" ".join([question["detail"], *(
-                    f"{o['label']} {o['text']}" for o in question_choices(question))])))
+    if not (number and task.get("hold_merge") and question["audience"] == "operator"):
+        return False
+    if question.get("review"):
+        return question["review"] == "changes"
+    return bool(_names_pr(number).search(" ".join([question["detail"], *(
+        f"{o['label']} {o['text']}" for o in question_choices(question))])))
+
+
+def _require_merge_mark(project: str, task: dict, published: set) -> None:
+    """While the task's PR waits for the operator's review, a newly published operator question with choices says
+    whether it is that PR's merge question: unmarked, it showed a second Approve merge beside the review card.
+    An approved PR shows no card, so nothing needs the mark."""
+    number = _held_pr(task, S.read_events(project, task["slug"]))
+    if not (number and (task.get("delivery") or task.get("adopted_pr"))) or approved_pr(project, task):
+        return
+    if any(q["status"] == "open" and (q["id"], q["revision"]) not in published and q["audience"] == "operator"
+           and question_choices(q) and not q.get("review") and not _references_held_pr(task, q)
+           for q in task.get("questions", [])):
+        raise TransitionError(f'PR #{number} waits for the operator\'s review: publish a question with choices through '
+                              '--questions-file with "review": "changes" when it asks to merge the PR, '
+                              '"proposal" for a proposal go, or "none"')
 
 
 def review_pr(project: str, task: dict) -> int | None:
     """#419: a held delivery whose owner has stopped waits for the operator's review, question or not.
-    An open operator question naming the PR supplies its single response surface, with quick choices
-    or a freeform field. Its submitted response stays there until the owner resolves the question.
+    An open question about the PR supplies its single response surface, with quick choices or a freeform
+    field. Its submitted response stays there until the owner resolves the question.
     The question does not supply merge authority; recorded approval keeps its separate rules (#451).
     A PR observed closed without merging asks for no review (#575)."""
     number = _held_pr(task, S.read_events(project, task["slug"]))

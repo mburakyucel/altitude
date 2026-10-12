@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError, sendL2Message, useDecide, useProject } from "../data/api";
@@ -9,7 +9,7 @@ import { ageText, exactTime } from "../data/observed";
 import { setSelectedProject } from "../shell/scope";
 import { Choice, deliveryChoice } from "./Choice";
 import type { ChoiceState } from "./Choice";
-import { InlineProse, Prose, ProseScope, QuestionProse } from "./Prose";
+import { InlineProse, Prose, ProseRepository, ProseScope, QuestionProse } from "./Prose";
 import { ReviewStatus, reviewLine } from "./TaskReview";
 import { ShownFiles } from "./Shown";
 import { keepForVisit, useVisitMemory } from "./visitMemory";
@@ -80,6 +80,7 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
   const toast = useToast();
   const navigate = useNavigate();
   const location = useLocation();
+  const repository = useContext(ProseRepository);
   // Unsent answers return with Back/Forward to this history entry; the signature below drops any whose revision closed.
   const kept: Record<string, Draft> = useVisitMemory<Draft>(decisions.map((q) => `answer:${draftKey(q)}`), (item): Draft | undefined => {
     const draft: Draft | undefined = drafts[item.slice("answer:".length)];
@@ -95,6 +96,8 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
   const first = decisions[0];
   if (!first) return null;
   const grouped = decisions.length > 1;
+  // The held PR's merge question links the PR beside Send, as the review card does (#419).
+  const pr = open.find((q) => q.pr != null)?.pr;
   const shown = chat ? decisions : decisions.filter((q) => q.status !== "resolved");
   // While a member is open, closed members fold into one collapsed row so the card leads with what is current.
   const earlier = shown.some((q) => q.status !== "resolved") ? shown.filter((q) => q.status === "resolved") : [];
@@ -210,6 +213,7 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
       {shown.filter((question) => !earlier.includes(question)).map(render)}
       {open.length ? <div className="question-batch">
         <button type="button" className="btn btn-primary" aria-busy={decide.isPending || undefined} disabled={unavailable || !selected.length} onClick={() => submit(selected)}>{decide.isPending ? <span className="spinner" aria-hidden /> : null}{selected.length ? `Send ${selected.length} answer${selected.length === 1 ? "" : "s"}` : "Send answers"}</button>
+        {repository && pr != null ? <a className="btn btn-ghost" href={`${repository}/pull/${pr}`} target="_blank" rel="noopener noreferrer">View PR #{pr}</a> : null}
         {selected.length ? <p className="text-meta text-muted">Only these answers will be sent. You can answer the rest later.</p> : null}
       </div> : null}
       {decide.isError ? <p className="text-meta text-danger" role="alert">

@@ -206,6 +206,83 @@ class TestDecisions(AltitudeCase):
                            reason="Asked in the review instead.", expected_attempt=S.load_task(self.project, slug)["attempt"])
         self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"])
 
+    def test_a_marked_merge_question_is_the_single_surface_without_naming_the_pr(self):
+        # A merge question saying "the pull request" without its number showed beside a second Approve merge card.
+        # While the PR waits for review, a question with choices says what it is; the owner's mark decides.
+        options = [{"key": "merge", "label": "Approve merge", "text": "Merge the second part."},
+                   {"key": "changes", "label": "Request changes", "text": "Tell me what to change first."}]
+        ask = lambda text, **mark: {"questions": [{"question": text, "options": options, "recommended_key": "merge", **mark}]}
+        task = self.blocked("Readme section", "Choose the next section.")
+        slug, name = task["slug"], config.operator_label()
+        T.resolve_question(self.project, slug, task["questions"][-1]["id"], 1, None, disposition="withdrawn",
+                           reason="The section is chosen.", expected_attempt=1)
+        T.resume(self.project, slug)
+        held = S.load_task(self.project, slug)
+        held.update(hold_merge="Operator review of the public page", prs=[42],
+                    delivery={"number": 42, "head": "a" * 40, "at": S.now()})
+        S.save_task(self.project, held)
+        merge = "Merge the new section? It is on the pull request with all checks green."
+        park = lambda payload: T.block(self.project, slug, merge, actor="l2", updates={"waiting_on": "burak"}, questions=payload)
+        with self.assertRaisesRegex(T.TransitionError, '"review": "changes"'):
+            park(ask(merge))
+        self.assertEqual(S.load_task(self.project, slug)["state"], "running", "a refused question publishes nothing")
+        park(ask(merge, review="changes"))
+        [row] = T.decisions(self.project)
+        self.assertEqual((row["kind"], row["pr"], row["review"]["subject"]), ("asks", 42, "changes"),
+                         "one merge control, linking its PR and carrying the implementation review")
+        self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), f"{name}'s turn · 1 question")
+        question = S.load_task(self.project, slug)["questions"][-1]
+        T.resolve_question(self.project, slug, question["id"], 1, None, disposition="withdrawn",
+                           reason="Asking in the review instead.", expected_attempt=1)
+        self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"])
+        for mark, text in (("none", "Allow the release script to tag PR #420?"), ("proposal", "Build the next section?")):
+            with self.subTest(mark=mark):
+                T.resume(self.project, slug)
+                park(ask(text, review=mark))
+                rows = T.decisions(self.project)
+                self.assertEqual([row["kind"] for row in rows], ["asks", "review"], "an unrelated question keeps the review")
+                self.assertIsNone(rows[0]["pr"])
+                current = S.load_task(self.project, slug)["questions"][-1]
+                T.resolve_question(self.project, slug, current["id"], 1, None, disposition="withdrawn",
+                                   reason="Not needed.", expected_attempt=1)
+        held = S.load_task(self.project, slug)
+        shown = {**question, "status": "open", "review": None, "shown": {"id": "d"}}
+        self.assertFalse(T._references_held_pr(held, shown), "an unmarked design is a proposal")
+        self.assertTrue(T._references_held_pr(held, {**shown, "review": "changes"}), "a merge question may show files")
+
+    def test_the_merge_mark_is_required_only_while_the_review_card_could_show(self):
+        # An unchanged re-park, a PR not yet delivered and a PR the operator already approved show no second
+        # Approve merge, so an unmarked question with choices still publishes.
+        options = [{"key": "west", "label": "West", "text": "Use the west region."},
+                   {"key": "east", "label": "East", "text": "Use the east region."}]
+        region = {"questions": [{"question": "Where should the backup live?", "options": options, "recommended_key": "west"}]}
+        task = self.blocked("Backup move", "Choose the backup region.")
+        slug = task["slug"]
+        T.resolve_question(self.project, slug, task["questions"][-1]["id"], 1, None, disposition="withdrawn",
+                           reason="Asked with choices instead.", expected_attempt=1)
+        T.resume(self.project, slug)
+        held = S.load_task(self.project, slug)
+        held.update(hold_merge="Operator review before merge", prs=[42])
+        S.save_task(self.project, held)
+        park = lambda: T.block(self.project, slug, "Choose the backup region.", actor="l2",
+                               updates={"waiting_on": "burak"}, questions=region)
+        park()  # not yet delivered
+        S.save_task(self.project, {**S.load_task(self.project, slug),
+                                   "delivery": {"number": 42, "head": "a" * 40, "at": S.now()}})
+        T.resume(self.project, slug)
+        park()  # unchanged re-park of the published question
+        self.assertEqual(len(S.load_task(self.project, slug)["questions"]), 2)
+        question = S.load_task(self.project, slug)["questions"][-1]
+        T.resolve_question(self.project, slug, question["id"], 1, None, disposition="withdrawn",
+                           reason="Asking later.", expected_attempt=1)
+        T.resume(self.project, slug)
+        with self.assertRaises(T.TransitionError):
+            park()
+        time.sleep(1.1)  # records keep whole seconds; the approval comes after the hold
+        T.message(self.project, slug, "burak", "Approved: merge PR #42.")
+        park()
+        self.assertEqual(S.load_task(self.project, slug)["questions"][-1]["status"], "open")
+
     def test_submitted_pr_question_keeps_one_surface_until_owner_resolution(self):
         # The freeform answer is delivered, not classified as merge permission. An independent
         # question stays usable; resolving discussion restores the held review when still needed.

@@ -28,6 +28,8 @@ from . import config, dispatch, engines, state as S, tasks
 from .engines import _shell_command  # Shared projection formatter used by the coordinator tool log.
 
 MAX_DEFAULT_TEXT = 4000
+BACKGROUND_OUTCOMES = 20  # finished background items the activity keeps beside every running one
+PARTIAL_RECORD = "partial record; waiting for completion"
 _SECRET_KEY = re.compile(r"(authorization|cookie|password|passwd|secret|token|api[_-]?key|credential)", re.I)
 _SECRET_VALUE = re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{12,}|\b(?:sk|gh[oprsu])_[A-Za-z0-9_-]{12,}")
 BOUNDARIES = {"state", "stopped", "resume-held", "resume-failed", "dispatch-failed"}
@@ -81,7 +83,7 @@ def _read_jsonl(path: Path) -> list[tuple[dict | None, str | None]]:
     out = []
     for index, raw in enumerate(lines, 1):
         if index == len(lines) and not raw.endswith((b"\n", b"\r")):
-            out.append((None, "partial record; waiting for completion"))
+            out.append((None, PARTIAL_RECORD))
             continue
         try:
             value = json.loads(raw)
@@ -143,11 +145,13 @@ def _turn_prompt(project: str, slug: str, task: dict, turn: dict) -> str:
 
 
 def activity(project: str, slug: str) -> dict:
-    """Replaceable public output for this worker, with source time and positive message receipts."""
+    """Replaceable public output for this worker, with source time, positive message receipts and the work it keeps
+    running in the background (None when its engine reports none)."""
     _require_task_access(project, slug)
     task = S.load_task(project, slug)
     generation = task.get("agent_id") or None
-    result = {"generation": generation, "state": "empty", "commentary": None, "observation": None, "delivered": []}
+    result = {"generation": generation, "state": "empty", "commentary": None, "observation": None, "delivered": [],
+              "background": None}
     engine = engines.transcript_engine(task)
     worktree = str(task.get("worktree") or "")
     source = engines.activity_source(task, job_root=dispatch.l2_job_root(project, slug))
@@ -183,6 +187,12 @@ def activity(project: str, slug: str) -> dict:
         return result
     path, _ = source
     records = _read_jsonl(path)
+    work = engines.background_work(engine, [_redact(record) for record, _ in records if record is not None])
+    # A record that cannot be read may be the end of running work; an unfinished final line is only not yet written.
+    if work is not None and all(record is not None or error == PARTIAL_RECORD for record, error in records):
+        # Every running item, then the newest outcomes: an invocation's finished work is history, not status.
+        running = [item for item in work if item["status"] == "running"]
+        result["background"] = running + [item for item in work if item["status"] != "running"][-BACKGROUND_OUTCOMES:]
     for index, (record, error) in enumerate(records):
         if error:
             result.update(state="unavailable", error="Activity records are incomplete or unreadable.")
@@ -385,7 +395,7 @@ def _projection(project: str, slug: str, task: dict, engine: str, raw: bool, sou
             error = None
             record = None
             if not line.endswith((b"\n", b"\r")):
-                error = "partial record; waiting for completion"
+                error = PARTIAL_RECORD
             else:
                 try:
                     record = json.loads(line)
