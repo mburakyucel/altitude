@@ -66,7 +66,9 @@ def user_data(public_key: str) -> str:
     # The same packages line as installation_vm.user_data, which scripts/container_vm.py extends.
     return "\n".join(["#cloud-config", "ssh_pwauth: false", "ssh_authorized_keys:", f"  - {public_key}",
                       "bootcmd:", "  - " + json.dumps(["modprobe", "vmw_vsock_virtio_transport"]),
-                      "  - " + json.dumps(["systemd-run", "--unit=altitude-vsock-ssh", "python3", "-c", RELAY]),
+                      # bootcmd runs before sysinit.target, so the relay must not wait for it.
+                      "  - " + json.dumps(["systemd-run", "--no-block", "--property=DefaultDependencies=no",
+                                           "--unit=altitude-vsock-ssh", "python3", "-c", RELAY]),
                       "package_update: true", "packages: [git, gh, openssl]", ""])
 
 
