@@ -2735,3 +2735,59 @@ button.choice-button::after { content: ""; position: absolute; left: -1px; right
 .unavailable-reason { display: block; margin-block-start: 8px; }
 @media (prefers-reduced-motion: reduce) { .status-mark .spinner, .composer-hint .spinner { animation: none; } }
 button[aria-disabled="true"] { opacity: .5; }
+
+/* Work the worker keeps running beside the Live session stream (SPEC.md §3.10): pinned under it. */
+.live-background {
+  flex: none;
+  padding: 8px 16px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.live-background-title {
+  margin: 0 0 4px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.live-background ul {
+  /* Show all never takes the stream: the list scrolls inside a bounded tray. */
+  max-height: 30vh;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.live-background-item {
+  display: flex;
+  min-height: 28px;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 13px;
+}
+.live-background-item .dot {
+  /* On the first line's centre, also when the label wraps. */
+  align-self: flex-start;
+  margin-top: 6px;
+}
+.live-background-label {
+  display: -webkit-box;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.live-background-time {
+  flex: none;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.live-background-item[data-status="failed"] .live-background-time {
+  color: var(--danger);
+}
+.dot[data-state="done"] {
+  background: var(--success-text);
+}
