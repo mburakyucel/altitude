@@ -539,7 +539,9 @@ alt task validate -- sh -c 'export PLAYWRIGHT_BROWSERS_PATH="$HOME/browsers" MAC
 A Mac shared with running tasks runs the suite several times slower than an idle one, and workers' and
 runs' timers are coalesced there: a 16 ms sleep has been measured at over 100 ms. Suite time limits are
 therefore failure bounds that end a stall, never budgets a passing test has to meet: Vitest allows 30 s
-per test and 10 s per `findBy`/`waitFor`, and walkthrough gestures carry their own touch times. Headless
+per test and 10 s per `findBy`/`waitFor`, and walkthrough gestures carry their own touch times. A case
+whose outcome depends on elapsed time holds its clock still and moves it itself, as the landing
+contention cases and the alert pace case do, and computes relative times when it runs. Headless
 Chromium there has no display to pace its GPU compositor, which stops animation frames after the first,
 so `web/playwright.config.ts` composites in software on macOS, as Chromium does on Linux.
 

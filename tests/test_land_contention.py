@@ -47,9 +47,10 @@ def run_owner(project, slug, worktree, fixture, output, options):
     land._note = note
     land.LAND_WAIT_TIMEOUT = options.pop('lock_timeout', land.LAND_WAIT_TIMEOUT)
     land.CHECK_POLL_SECONDS = .05
-    clock_path = options.pop('clock_path', None)
-    if clock_path:
-        land.time = types.SimpleNamespace(monotonic=lambda: float(Path(clock_path).read_text()), sleep=time.sleep)
+    # Landing's clock moves only when the case moves it (`advance`), so however slowly a busy machine runs the
+    # owners, no wait expires that the case did not expire on purpose.
+    clock = fixture / 'clock'
+    land.time = types.SimpleNamespace(monotonic=lambda: float(clock.read_text()), sleep=time.sleep)
     if options.pop('required_check', False):
         (fixture / 'required-pr-check').touch()
         (fixture / 'hosted-barrier').touch()
@@ -129,6 +130,7 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         fixture.mkdir()
         (fixture / 'checks.json').write_text('[]')
         (fixture / 'merge_git.txt').touch()
+        (fixture / 'clock').write_text('0')
         (fixture / 'pr.json').write_text(json.dumps({
             'number': number, 'state': 'OPEN', 'url': f'https://example.invalid/pr/{number}',
             'headRefName': 'worktree-' + slug, 'baseRefName': 'main',
@@ -180,6 +182,13 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.await_condition(lambda: (output / 'notes').exists()
                              and 'waiting' in (output / 'notes').read_text().lower(), 'landing wait')
         self.assertTrue(process.is_alive())
+
+    def advance(self, slug, seconds):
+        """Move an owner's landing clock whole, so its reader never sees a partial number."""
+        clock = self.owners[slug][1] / 'clock'
+        moved = clock.with_name('clock-next')
+        moved.write_text(str(float(clock.read_text()) + seconds))
+        moved.replace(clock)
 
     def release(self, slug):
         (self.owners[slug][1] / 'release').touch()
@@ -261,16 +270,12 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         # PR #748 waited behind other owners' full CI runs; PR #718: a CI wait must outlast 600 seconds.
         self.ship_check_workflow()
         first_fixture = self.owners['first'][1]
-        clock = first_fixture / 'clock'
-        clock.write_text('0')
-        first = self.start('first', required_check=True, wait=None, clock_path=str(clock))
+        first = self.start('first', required_check=True, wait=None)
         self.checked('first')
         (first_fixture / 'checks.json').write_text('[{"bucket": "pending"}]')
         self.release('first')
         self.await_condition(lambda: 'PR checks pending' in (first[1] / 'notes').read_text(), 'pending check')
-        # Past the old 600-second default on landing's clock, within its hour, however long the other owner takes.
-        (first_fixture / 'clock-next').write_text('900')
-        (first_fixture / 'clock-next').replace(clock)
+        self.advance('first', 900)  # Past the old 600-second default, within its hour.
         time.sleep(.5)  # several polls at the advanced clock
         self.assertTrue(first[0].is_alive())
         self.release('second')
@@ -388,7 +393,7 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         call = self.start('first', wait=.1)
         self.checked('first')
         T.message(self.project, 'first', 'l3', 'Inspect this correction before merging.')
-        time.sleep(.2)  # The local suite uses the existing file barrier past --wait.
+        self.advance('first', 1)  # The local suite uses the existing file barrier past --wait.
         self.release('first')
         self.assertIn('assessment wait timed out', self.finish(call)['error'])
         self.assertEqual(self.calls('first', ['pr', 'merge']), [])
@@ -431,6 +436,8 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
     def test_assessment_timeout_releases_turn_and_keeps_published_candidate(self):
         self.stale_review()
         first = self.start('first', wait=.2)
+        self.assessment_wait(first)
+        self.advance('first', 1)
         payload = self.finish(first)
         self.assertIn('assessment wait timed out', payload['error'])
         self.assertEqual(self.calls('first', ['pr', 'merge']), [])
@@ -444,9 +451,7 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
 
     def test_assessment_wait_leaves_the_turn_to_a_competing_owner(self):
         self.stale_review()
-        clock = self.owners['first'][1] / 'clock'
-        clock.write_text('0')  # the wait outlasts the other owner's landing, however long it takes
-        first = self.start('first', wait=20, clock_path=str(clock))
+        first = self.start('first', wait=20)
         self.assessment_wait(first)
         self.release('second')
         self.merged('second', self.finish(self.start('second')))
@@ -628,6 +633,8 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         first = self.start('first')
         self.checked('first')
         second = self.start('second', lock_timeout=.05)
+        self.waiting(second)
+        self.advance('second', 1)
         payload = self.finish(second)
         self.assertEqual(payload['type'], 'LandError')
         self.assertIn('timed out; the candidate remains published and unmerged', payload['error'])
@@ -805,8 +812,6 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
 
     def test_repeated_external_main_changes_exhaust_the_original_deadline(self):
         fixture = self.owners['first'][1]
-        clock = fixture / 'clock'
-        clock.write_text('0')
         # Each real candidate check moves the bare remote from an independent checkout.
         # A reset deadline incorrectly admits a fourth candidate, which would merge successfully.
         advance = f'''
@@ -827,7 +832,7 @@ if count <= 3:
         (self.tmp / 'bin/fixture-candidate-check').write_text(
             RUNNER.replace("print('Ran 1 test", advance + "\nprint('Ran 1 test"))
         self.release('first')
-        first = self.start('first', wait=10, clock_path=str(clock))
+        first = self.start('first', wait=10)
         payload = self.finish(first)
         self.assertEqual(payload['type'], 'LandError')
         self.assertIn('remains published and unmerged', payload['error'])
