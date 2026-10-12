@@ -155,8 +155,7 @@ def _identity(project, task, *, fetch=False, candidate=True, proposal_id=None):
     if _git(root, "status", "--porcelain", "--untracked-files=no"):
         raise T.TransitionError("Commit the selected task changes before capturing or assessing review.")
     if fetch:
-        # In-turn assessment must not overwrite landing's fetch receipt in this worktree.
-        _git(root, "fetch", "--no-write-fetch-head", "--no-tags", "origin", "main")
+        _git(root, "fetch", "--no-tags", "origin", "main")
     head = _git(root, "rev-parse", "HEAD")
     base = _git(root, "rev-parse", "origin/main")
     tree = (_git(root, "rev-parse", head + "^{tree}") if proposal_id else
@@ -753,7 +752,10 @@ def skip(project, slug, *, actor, subject, reason, expected_attempt=None):
         return _project_review(row, task, None)
 
 
-def require_merge(project, slug, pair):
+def require_merge(project, slug, pair, *, strict=True):
+    """Current, resolved review evidence for the landing's pinned pair. Before its merge turn a landing passes
+    `strict=False`: a waiting candidate is judged on its own head and context, so main moving under it asks for
+    no reassessment until its turn integrates main (#777)."""
     task = _load(project, slug)
     current = [review for review in _current_reviews(task) if review["state"] != "withdrawn"]
     for review in current:
@@ -766,10 +768,13 @@ def require_merge(project, slug, pair):
                                     "and reassess before merging.")
     stale = []
     for review in current:
-        identity, _ = _identity(project, task, proposal_id=review["reconciled"].get("proposal_id"))
-        if identity["base"] != pair["base_sha"] or identity["head"] != pair["head_sha"]:
+        proposal_id = review["reconciled"].get("proposal_id")
+        identity, _ = _identity(project, task, candidate=strict or bool(proposal_id), proposal_id=proposal_id)
+        if identity["head"] != pair["head_sha"] or strict and identity["base"] != pair["base_sha"]:
             raise T.TransitionError("Review candidate differs from the pinned landing base or head; re-run alt land.")
-        if changes := _changed_evidence(review["reconciled"], identity):
+        ignored = () if strict else ("base",) if proposal_id else ("base", "tree")
+        if changes := {key: change for key, change in _changed_evidence(review["reconciled"], identity).items()
+                       if key not in ignored}:
             stale.append({"id": review["id"], "subject": review.get("subject", "changes"),
                           "assessed_at": review["reconciled"]["at"], "changes": changes})
     if stale:

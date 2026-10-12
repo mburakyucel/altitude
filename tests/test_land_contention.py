@@ -50,7 +50,11 @@ def run_owner(project, slug, worktree, fixture, output, options):
     # Landing's clock moves only when the case moves it (`advance`), so however slowly a busy machine runs the
     # owners, no wait expires that the case did not expire on purpose.
     clock = fixture / 'clock'
-    land.time = types.SimpleNamespace(monotonic=lambda: float(clock.read_text()), sleep=time.sleep)
+    # The merge line's heartbeats read one wall clock shared by every owner (`advance_wall`).
+    wall = fixture.parent / 'wall'
+    land.time = types.SimpleNamespace(monotonic=lambda: float(clock.read_text()), sleep=time.sleep,
+                                      time=lambda: float(wall.read_text()))
+    land.LINE_BEAT_SECONDS = .05
     if options.pop('required_check', False):
         (fixture / 'required-pr-check').touch()
         (fixture / 'hosted-barrier').touch()
@@ -113,6 +117,7 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         git('add', 'web/package.json', cwd=self.repo)
         git('commit', '-q', '-m', 'web placeholder', cwd=self.repo)
         git('push', '-q', 'origin', 'main', cwd=self.repo)
+        (self.tmp / 'wall').write_text('1000000')
         self.owners = {}
         self.processes = []
         self.addCleanup(self.stop_processes)
@@ -274,7 +279,7 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.checked('first')
         (first_fixture / 'checks.json').write_text('[{"bucket": "pending"}]')
         self.release('first')
-        self.await_condition(lambda: 'PR checks pending' in (first[1] / 'notes').read_text(), 'pending check')
+        self.await_condition(lambda: 'PR checks pending' in self.notes(first), 'pending check')
         self.advance('first', 900)  # Past the old 600-second default, within its hour.
         time.sleep(.5)  # several polls at the advanced clock
         self.assertTrue(first[0].is_alive())
@@ -282,24 +287,23 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         second = self.start('second', required_check=True)
         second_result = self.merged('second', self.finish(second))
         self.assertEqual((second_result['checks'], second_result['waited']), ('pass', 0))
-        self.assertNotIn('waiting for another merge', (second[1] / 'notes').read_text())
+        self.assertNotIn('waiting in the merge line', self.notes(second))
         second_merge = json.loads((self.owners['second'][1] / 'pr.json').read_text())['mergeCommit']['oid']
-        # Main moved under the first candidate: it integrates main and waits for its own fresh check.
-        self.await_condition(lambda: (first[1] / 'notes').read_text().count('pushed head') == 2,
-                             'integrated head published')
-        self.assertTrue(first[0].is_alive())
-        self.assertEqual(self.calls('first', ['pr', 'merge']), [])
+        # #777: main moved under the first candidate's pending check; it keeps that run and does not push.
+        time.sleep(.5)
+        self.assertEqual(self.notes(first).count('pushed head'), 1)
+        self.assertNotIn('integrating current', self.notes(first))
+        # Its check passes; its turn integrates main once and runs one fresh check.
         (first_fixture / 'checks.json').write_text('[{"bucket": "pass"}]')
         result = self.merged('first', self.finish(first))
-        notes = (first[1] / 'notes').read_text()
-        self.assertIn(f'to {second_merge}', notes)
-        self.assertIn("integrating it and checking the new head within the same wait", notes)
+        notes = self.notes(first)
         self.assertEqual(notes.count('integrating current'), 1)
+        self.assertEqual(notes.count('pushed head'), 2)
         self.assertEqual(git('merge-base', second_merge, result['head'], cwd=self.repo).strip(), second_merge)
         evidence = json.loads((first_fixture / 'last_check_evidence.json').read_text())['pullRequest']
         self.assertEqual((evidence['headRefOid'], evidence['baseRef']['target']['oid']), (result['head'], second_merge))
 
-    def test_reviewed_owner_reassesses_integrated_head_outside_the_turn(self):
+    def test_reviewed_owner_reassesses_integrated_head_inside_its_turn(self):
         self.ship_check_workflow()
         self.reviewed('second', proposal=True)
         self.hold_a_second_ago(self.project, 'second', 'Operator approval of this delivery')
@@ -311,36 +315,39 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.checked('first')
         second = self.start('second', required_check=True, wait=60, approval=approval['id'])
         self.await_condition(lambda: (second[1] / 'notes').exists()
-                             and 'pushed head' in (second[1] / 'notes').read_text(), 'second publication')
+                             and 'pushed head' in self.notes(second), 'second publication')
         T.message(self.project, 'second', 'l3', 'Preserve both independent results after integration.')
         self.release('first')
         self.merged('first', self.finish(first))
         self.release('second')
+        # Before its turn the owner reassesses only what changed for its own head: the task context.
         self.assessment_wait(second)
-        notice = (second[1] / 'notes').read_text()
+        notice = self.notes(second)
         self.assertIn('review proposal-second (proposal)', notice)
         self.assertIn('review review-second (changes)', notice)
         self.assertIn('context_hash:', notice)
-        self.assertIn('head:', notice)
-        self.assertIn('base:', notice)
+        self.assertNotIn('base:', notice)
+        self.assertNotIn('integrating current', notice)
         worktree, fixture = self.owners['second']
-        integrated = git('rev-parse', 'HEAD', cwd=worktree).strip()
-        self.assertNotEqual(integrated, old_review['reconciled']['head'])
-        self.assertEqual(git('diff', '--name-only', 'origin/main', 'HEAD', cwd=worktree).strip(), 'second.txt')
-        self.assertEqual(self.calls('second', ['pr', 'merge']), [])
-        self.assertEqual(S.load_task(self.project, 'second')['reviews'][0]['reconciled'], old_review['reconciled'])
-        # The owner's assessment wait holds no turn: a third owner merges meanwhile.
+        self.assertEqual(git('rev-parse', 'HEAD', cwd=worktree).strip(), old_review['reconciled']['head'])
+        # Its assessment wait holds no turn: a third owner merges meanwhile.
         self.owner('third', 103)
         git('merge', '-q', '--ff-only', 'origin/main', cwd=self.owners['third'][0])
         self.release('third')
         self.merged('third', self.finish(self.start('third', required_check=True)))
         third_merge = json.loads((self.owners['third'][1] / 'pr.json').read_text())['mergeCommit']['oid']
-        self.await_condition(lambda: (second[1] / 'notes').read_text().count('pushed head') == 3,
-                             'second integrates the third merge')
-        self.await_condition(lambda: (second[1] / 'notes').read_text().count('waiting for owner assessment') >= 2,
-                             'renewed assessment wait')
+        self.assertEqual(self.notes(second).count('pushed head'), 1)
+        self.assess('second')
+        self.assess('second', review_id='proposal-second')
+        # Its turn integrates current main once; the integrated head needs the owner again, within the turn.
+        self.await_condition(lambda: self.notes(second).count('waiting for owner assessment') >= 2,
+                             'assessment of the integrated head')
+        self.assertIn('head:', self.notes(second).rsplit('waiting for owner assessment', 1)[1])
+        self.assertEqual(self.notes(second).count('pushed head'), 2)
         integrated = git('rev-parse', 'HEAD', cwd=worktree).strip()
         self.assertEqual(git('merge-base', third_merge, integrated, cwd=self.repo).strip(), third_merge)
+        self.assertEqual(git('diff', '--name-only', 'origin/main', 'HEAD', cwd=worktree).strip(), 'second.txt')
+        self.assertEqual(self.line(), [102])  # the integrated head keeps its turn while its owner reassesses
         self.assess('second')
         self.assertEqual(S.load_task(self.project, 'second')['hold_merge'], 'Operator approval of this delivery')
         self.assertEqual(self.calls('second', ['pr', 'merge']), [])
@@ -357,6 +364,7 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         finished = S.load_task(self.project, 'second')
         self.assertIsNone(finished['hold_merge'])
         self.assertEqual(finished['merge_approval']['approval'], approval['id'])
+        self.assertEqual(self.line(), [])
 
     def late_context(self, *, hosted):
         if hosted:
@@ -537,16 +545,17 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.release('first')
         self.merged('first', self.finish(self.start('first')))
 
-    def test_main_change_during_assessment_is_integrated_and_assessed(self):
+    def test_main_change_during_assessment_waits_for_the_turn_to_integrate(self):
         self.stale_review()
         first = self.start('first', wait=20)
         self.assessment_wait(first)
-        (self.repo / 'external.txt').write_text('External main update\n')
-        git('add', 'external.txt', cwd=self.repo)
-        git('commit', '-qm', 'External main update', cwd=self.repo)
-        git('push', '-q', 'origin', 'main', cwd=self.repo)
-        self.await_condition(lambda: 'integrating current' in (first[1] / 'notes').read_text(), 'integration')
-        self.await_condition(lambda: (first[1] / 'notes').read_text().count('waiting for owner assessment') >= 2,
+        self.outside_merge()
+        time.sleep(.5)  # several polls after main moved
+        self.assertNotIn('integrating current', self.notes(first))
+        self.assertEqual(self.notes(first).count('waiting for owner assessment'), 1)
+        self.assess('first')
+        self.await_condition(lambda: 'integrating current' in self.notes(first), 'integration in the turn')
+        self.await_condition(lambda: self.notes(first).count('waiting for owner assessment') >= 2,
                              'assessment of the integrated head')
         self.assertEqual(self.calls('first', ['pr', 'merge']), [])
         self.assess('first')
@@ -600,14 +609,17 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
     def test_concurrent_same_owner_retry_does_not_merge_twice(self):
         first = self.start('first')
         self.checked('first')
+        # One landing per PR: the retry takes over the PR's place in line, so the first cannot merge.
         retry = self.start('first')
-        self.waiting(retry)
+        self.await_condition(lambda: (retry[1] / 'notes').exists()
+                             and 'heads the merge line' in self.notes(retry), 'retry takes over the turn')
         self.release('first')
-        self.merged('first', self.finish(first))
-        # The retry's pinned PR is no longer open when it reaches the turn; a later run reports it merged.
-        self.assertIn('base or head moved', self.finish(retry)['error'])
+        payload = self.finish(first)
+        self.assertIn('lost its merge turn', payload['error'])
+        self.merged('first', self.finish(retry))
         self.assertEqual(len(self.calls('first', ['pr', 'merge'])), 1)
         self.assertEqual(self.finish(self.start('first'))['result']['checks'], 'merged')
+        self.assertEqual(self.line(), [])
 
     def test_hosted_head_checks_use_integrated_head_after_main_moves(self):
         for _, fixture in self.owners.values():
@@ -634,11 +646,13 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.checked('first')
         second = self.start('second', lock_timeout=.05)
         self.waiting(second)
+        self.assertEqual(self.line(), [101, 102])
         self.advance('second', 1)
         payload = self.finish(second)
         self.assertEqual(payload['type'], 'LandError')
-        self.assertIn('timed out; the candidate remains published and unmerged', payload['error'])
+        self.assertIn('merge line wait timed out with 1 candidate(s) ahead', payload['error'])
         self.assertEqual(self.calls('second', ['pr', 'merge']), [])
+        self.assertEqual(self.line(), [101])
         self.release('first')
         self.merged('first', self.finish(first))
 
@@ -676,14 +690,33 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.release('third')
         self.merged('third', self.finish(self.start('third')))
 
-    def test_terminated_holder_releases_os_lock_and_next_owner_finishes(self):
+    def test_killed_holder_leaves_the_line_once_its_heartbeat_is_stale(self):
         first, second = self.contending()
         os.killpg(first[0].pid, signal.SIGKILL)
         first[0].join(5)
         self.assertEqual(first[0].exitcode, -signal.SIGKILL)
-        self.assertEqual(self.calls('first', ['pr', 'merge']), [])
+        time.sleep(.5)  # the waiter keeps waiting while the head's last heartbeat is recent
+        self.assertEqual(self.line(), [101, 102])
+        self.assertTrue(second[0].is_alive())
+        self.advance_wall(land.LINE_STALE_SECONDS + 1)
         self.release('second')
         self.merged('second', self.finish(second))
+        self.assertIn('PR #101 heads the merge line without a heartbeat', self.notes(second))
+        self.assertEqual(self.calls('first', ['pr', 'merge']), [])
+        self.assertEqual(self.line(), [])
+
+    def test_paused_holder_that_lost_its_turn_cannot_merge(self):
+        first, second = self.contending()
+        os.killpg(first[0].pid, signal.SIGSTOP)
+        self.advance_wall(land.LINE_STALE_SECONDS + 1)
+        self.await_condition(lambda: 'its turn starts' in self.notes(second), 'next owner takes the turn')
+        self.release('first')
+        self.release('second')
+        self.merged('second', self.finish(second))
+        os.killpg(first[0].pid, signal.SIGCONT)
+        payload = self.finish(first)
+        self.assertIn('lost its merge turn', payload.get('error', ''))
+        self.assertEqual(self.calls('first', ['pr', 'merge']), [])
 
     def test_cancelled_waiter_does_not_merge_and_holder_finishes(self):
         first, second = self.contending()
@@ -703,10 +736,15 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         task = S.load_task(self.project, 'second')
         task['hold_merge'] = 'Operator review still required'
         S.save_task(self.project, task)
+        published = git('rev-parse', 'worktree-second', cwd=self.remote).strip()
         self.release('first')
         self.merged('first', self.finish(first))
         self.assertIn('merge hold', self.finish(second)['error'])
         self.assertEqual(self.calls('second', ['pr', 'merge']), [])
+        # A held candidate never integrates main or pushes at its turn.
+        self.assertNotIn('integrating current', self.notes(second))
+        self.assertEqual(git('rev-parse', 'worktree-second', cwd=self.remote).strip(), published)
+        self.assertEqual(self.line(), [])
 
     def test_replaced_waiter_cannot_merge(self):
         first, second = self.contending()
@@ -764,19 +802,19 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
             self.assertNotIn('waiting for another merge', (call[1] / 'notes').read_text())
             self.assertEqual(self.calls(slug, ['pr', 'merge']), [])
 
-    def test_nonmerging_publication_stops_published_when_main_moves(self):
+    def test_nonmerging_publication_reports_its_own_check_when_main_moves(self):
         self.ship_check_workflow()
         first = self.start('first', merge=False, required_check=True)
         self.checked('first')
-        (self.repo / 'external.txt').write_text('external\n')
-        git('add', 'external.txt', cwd=self.repo)
-        git('commit', '-qm', 'external main movement', cwd=self.repo)
-        git('push', '-q', 'origin', 'main', cwd=self.repo)
+        self.outside_merge()
         self.release('first')
-        self.assertRegex(self.finish(first)['error'], 'origin/main moved .* remains published and unmerged')
+        result = self.finish(first)['result']
+        self.assertEqual((result['checks'], result['merged']), ('pass', False))
         head = S.load_task(self.project, 'first')['delivery']['head']
         self.assertEqual(git('rev-parse', 'worktree-first', cwd=self.remote).strip(), head)
+        self.assertEqual(self.notes(first).count('pushed head'), 1)
         self.assertEqual(self.calls('first', ['pr', 'merge']), [])
+        self.assertEqual(self.line(), [])
 
     def test_nonmerge_publication_does_not_wait_for_another_candidate(self):
         first = self.start('first')
@@ -799,6 +837,160 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
 
     def notes(self, call):
         return (call[1] / 'notes').read_text()
+
+    def advance_wall(self, seconds):
+        """Move the wall clock every owner's merge line heartbeats read."""
+        wall = self.tmp / 'wall'
+        moved = wall.with_name('wall-next')
+        moved.write_text(str(float(wall.read_text()) + seconds))
+        moved.replace(wall)
+
+    def line(self, *, entries=False):
+        """The merge line on the shared remote: its PR numbers in order, or its entries."""
+        found = git('for-each-ref', '--format=%(objectname)', land.LINE_REF, cwd=self.remote).strip()
+        if not found:
+            return []
+        rows = json.loads(git('log', '-1', '--format=%B', found, cwd=self.remote))['entries']
+        return rows if entries else [row['pr'] for row in rows]
+
+    def write_line(self, rows):
+        """Another installation's landing writes the shared line directly."""
+        if not rows:
+            git('update-ref', '-d', land.LINE_REF, cwd=self.remote)
+            return
+        tree = git('hash-object', '-t', 'tree', '-w', os.devnull, cwd=self.remote).strip()
+        commit = git('commit-tree', tree, '-m', json.dumps({'entries': rows}), cwd=self.remote).strip()
+        git('update-ref', land.LINE_REF, commit, cwd=self.remote)
+
+    def foreign_head(self, *, beat=None):
+        """A landing on another installation holds the turn with a recent heartbeat."""
+        wall = float((self.tmp / 'wall').read_text())
+        self.write_line([{'pr': 900, 'token': 'other-installation', 'ready': wall, 'beat': wall if beat is None else beat},
+                         *self.line(entries=True)])
+
+    def ready_in_line(self, slug, number, position):
+        call = self.start(slug, required_check=True, wait=60)
+        self.await_condition(lambda: (call[1] / 'notes').exists()
+                             and f'{position} ready candidate(s) ahead of PR #{number}' in self.notes(call),
+                             f'{slug} waiting in line')
+        return call
+
+    def test_three_ready_candidates_merge_in_order_with_at_most_two_checks_each(self):
+        # #777: ten ready PRs re-integrated and re-ran their checks on every merge, cancelling their own runs.
+        self.ship_check_workflow()
+        self.owner('third', 103)
+        git('merge', '-q', '--ff-only', 'origin/main', cwd=self.owners['third'][0])
+        for slug in ('first', 'second', 'third'):
+            self.release(slug)
+        self.foreign_head()
+        calls = [self.ready_in_line('first', 101, 1), self.ready_in_line('second', 102, 2),
+                 self.ready_in_line('third', 103, 3)]
+        self.assertEqual(self.line(), [900, 101, 102, 103])
+        outside = self.outside_merge()  # the other installation's head merges, then leaves the line
+        self.write_line(self.line(entries=True)[1:])
+        merges = []
+        for slug, call in zip(('first', 'second', 'third'), calls):
+            result = self.merged(slug, self.finish(call))
+            merges.append(json.loads((self.owners[slug][1] / 'pr.json').read_text())['mergeCommit']['oid'])
+            notes = self.notes(call)
+            # Published once, then integrated once in its turn: two checks, none cancelled by its own push.
+            self.assertEqual(notes.count('pushed head'), 2)
+            self.assertEqual(notes.count('integrating current'), 1)
+            self.assertEqual(git('merge-base', merges[-2] if len(merges) > 1 else outside, result['head'],
+                                 cwd=self.repo).strip(), merges[-2] if len(merges) > 1 else outside)
+            self.assertLess(notes.index('its turn starts'), notes.index('integrating current'))
+        self.assertEqual(git('rev-list', '--first-parent', '--max-count=3', 'main', cwd=self.remote).split(),
+                         merges[::-1])
+        self.assertEqual(self.line(), [])
+
+    def test_ready_candidate_on_current_main_merges_on_its_existing_check(self):
+        self.ship_check_workflow()
+        self.release('first')
+        result = self.merged('first', self.finish(self.start('first', required_check=True)))
+        self.assertEqual(self.notes(self.processes[-1]).count('pushed head'), 1)
+        self.assertNotIn('integrating current', self.notes(self.processes[-1]))
+        self.assertEqual(result['waited'], 0)
+
+    def test_outside_merge_during_the_turns_fresh_check_integrates_again_in_the_turn(self):
+        self.ship_check_workflow()
+        fixture = self.owners['first'][1]
+        self.release('first')
+        self.foreign_head()
+        first = self.ready_in_line('first', 101, 1)
+        self.outside_merge()
+        (fixture / 'checks.json').write_text('[{"bucket": "pending"}]')
+        self.write_line(self.line(entries=True)[1:])
+        self.await_condition(lambda: 'PR checks pending' in self.notes(first), "the turn's fresh check")
+        self.assertEqual(self.notes(first).count('pushed head'), 2)
+        (self.repo / 'external.txt').write_text('A second outside merge\n')
+        git('commit', '-qam', 'Second outside merge', cwd=self.repo)
+        git('push', '-q', 'origin', 'main', cwd=self.repo)
+        second_outside = git('rev-parse', 'HEAD', cwd=self.repo).strip()
+        self.await_condition(lambda: self.notes(first).count('pushed head') == 3, 'integrated again within the turn')
+        self.assertIn('within the turn', self.notes(first))
+        (fixture / 'checks.json').write_text('[{"bucket": "pass"}]')
+        result = self.merged('first', self.finish(first))
+        evidence = json.loads((fixture / 'last_check_evidence.json').read_text())['pullRequest']
+        self.assertEqual((evidence['headRefOid'], evidence['baseRef']['target']['oid']), (result['head'], second_outside))
+
+    def test_foreign_head_without_a_heartbeat_is_removed_and_the_line_moves_on(self):
+        self.ship_check_workflow()
+        self.release('first')
+        self.foreign_head()
+        first = self.ready_in_line('first', 101, 1)
+        time.sleep(.5)
+        self.assertEqual(self.line(), [900, 101])
+        self.advance_wall(land.LINE_STALE_SECONDS + 1)
+        self.merged('first', self.finish(first))
+        self.assertIn('PR #900 heads the merge line without a heartbeat', self.notes(first))
+        self.assertEqual(self.line(), [])
+
+    def test_waiting_candidate_leaves_the_line_when_its_wait_is_zero(self):
+        self.ship_check_workflow()
+        self.release('first')
+        self.foreign_head()
+        payload = self.finish(self.start('first', required_check=True, wait=0))
+        self.assertIn('merge line wait timed out with 1 candidate(s) ahead', payload['error'])
+        self.assertEqual(self.line(), [900])
+        self.assertEqual(self.calls('first', ['pr', 'merge']), [])
+
+    def test_invalid_approval_refuses_before_integrating_main(self):
+        self.ship_check_workflow()
+        self.release('first')
+        published = self.finish(self.start('first', merge=False, required_check=True))['result']
+        self.outside_merge()
+        self.hold_a_second_ago(self.project, 'first', 'Operator approval required')
+        call = self.start('first', required_check=True, approval='not-an-operator-message')
+        self.assertIn('recorded merge approval refused', self.finish(call)['error'])
+        self.assertNotIn('integrating current', self.notes(call))
+        self.assertEqual(git('rev-parse', 'worktree-first', cwd=self.remote).strip(), published['head'])
+        self.assertEqual(self.line(), [])
+
+    def test_a_turn_that_was_taken_over_cannot_push(self):
+        worktree = self.owners['first'][0]
+        git('commit', '-qm', 'publishable', cwd=worktree)
+        git('push', '-q', 'origin', 'worktree-first', cwd=worktree)
+        published = git('rev-parse', 'HEAD', cwd=worktree).strip()
+        (worktree / 'later.txt').write_text('integrated later\n')
+        git('add', 'later.txt', cwd=worktree)
+        git('commit', '-qm', 'integration in a lost turn', cwd=worktree)
+        clock = [1000000.0]
+        with mock.patch.object(land, 'time', types.SimpleNamespace(time=lambda: clock[0], sleep=time.sleep,
+                                                                   monotonic=time.monotonic)):
+            paused, waiter = land._Line(worktree, 101), land._Line(self.owners['second'][0], 102)
+            paused.join()
+            waiter.join()
+            read_before_takeover = paused._read()
+            clock[0] += land.LINE_STALE_SECONDS + 1
+            self.assertEqual(waiter.position(), 0)
+            # The paused head read the line just before the takeover: its branch push and heartbeat fail together.
+            reads = iter([read_before_takeover])
+            real_read = paused._read
+            with mock.patch.object(paused, '_read', side_effect=lambda: next(reads, None) or real_read()), \
+                    self.assertRaisesRegex(land.LandError, 'lost its merge turn'):
+                paused.beat(push=('refs/heads/worktree-first:refs/heads/worktree-first',))
+        self.assertEqual(git('rev-parse', 'worktree-first', cwd=self.remote).strip(), published)
+        self.assertEqual(self.line(), [102])
 
 
     def test_external_main_change_refuses_green_candidate_once_the_wait_is_spent(self):
@@ -838,7 +1030,7 @@ if count <= 3:
         self.assertIn('remains published and unmerged', payload['error'])
         self.assertEqual((fixture / 'candidate-count').read_text(), '3')
         self.assertEqual(self.notes(first).count('pushed head'), 3)
-        self.assertEqual(self.notes(first).count('within the same wait'), 2)
+        self.assertEqual(self.notes(first).count('within the turn'), 2)
         self.assertEqual(self.calls('first', ['pr', 'merge']), [])
         self.assertEqual(json.loads((fixture / 'pr.json').read_text())['state'], 'OPEN')
         (self.tmp / 'bin/fixture-candidate-check').write_text(RUNNER)
@@ -846,7 +1038,7 @@ if count <= 3:
         self.merged('second', self.finish(self.start('second')))
 
 
-    def test_outside_merge_during_a_pending_required_check_is_integrated(self):
+    def test_outside_merge_during_a_pending_first_check_waits_for_the_turn(self):
         self.ship_check_workflow()
         fixture = self.owners['first'][1]
         first = self.start('first', required_check=True, wait=20)
@@ -855,12 +1047,13 @@ if count <= 3:
         self.release('first')
         self.await_condition(lambda: 'PR checks pending' in self.notes(first), 'pending check')
         outside = self.outside_merge()
-        self.await_condition(lambda: self.notes(first).count('pushed head') == 2, 'integrated head')
+        time.sleep(.5)  # several polls after main moved: the pending run is kept, nothing is pushed
+        self.assertEqual(self.notes(first).count('pushed head'), 1)
         (fixture / 'checks.json').write_text('[{"bucket": "pass"}]')
         result = self.merged('first', self.finish(first))
+        self.assertEqual(self.notes(first).count('pushed head'), 2)
         evidence = json.loads((fixture / 'last_check_evidence.json').read_text())['pullRequest']
         self.assertEqual((evidence['headRefOid'], evidence['baseRef']['target']['oid']), (result['head'], outside))
-
 
     def test_foreign_push_with_a_moved_main_refuses_without_integrating(self):
         first = self.start('first', wait=20)
