@@ -22,7 +22,8 @@ exercises the packaged application on disposable Ubuntu 24.04 GitHub runners wit
 and fixture engines. It has not executed on GitHub; the same harness runs in a
 [local VM](DEVELOPMENT.md#local-vm-run) or on any disposable developer VM. Neither is an
 installation command for your own machine. It covers real user-service activation, HTTPS, update/recovery and uninstall retention (the local VM
-also checks the service starts again after a restart and runs the built `install.sh` against a
+also checks the service keeps running once the SSH login that installed it closes and starts again
+after a restart with nobody logged in, and runs the built `install.sh` against a
 release server inside the VM; its public run installs the latest release with the command below and
 updates `v0.1.0-rc.2` to it, both from GitHub itself),
 without establishing browser/device certificate trust, live provider readiness or a minimal OS install.
@@ -35,7 +36,8 @@ See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](D
 ## Prerequisites
 
 - Linux with a working systemd **user** manager (`systemctl --user status`) and support for the
-  selected engine's sandbox. Both task integrations launch through transient user units, even
+  selected engine's sandbox. Installation turns on [lingering](#keep-running-after-logout) so the
+  service runs with nobody logged in. Both task integrations launch through transient user units, even
   with a foreground Altitude server. Ubuntu 24.04/Python 3.12 is the CI environment; a broader
   compatibility matrix is not established. [Host voice](OPERATIONS.md#host-voice) needs x86_64.
 - Or macOS 15 or newer, with the account logged in (the screen may stay locked).
@@ -108,8 +110,8 @@ the package manager it finds (apt, dnf, pacman, zypper or Homebrew). On a host o
 x86_64 or an Apple silicon Mac it installs and prints one line saying the host is not yet validated.
 Releases before `v0.1.0` stop on a Mac before downloading anything. It then downloads that release's archive and `install.py`, checks
 each against the SHA-256 written into the script when the release was built, runs
-`install.py --archive … --sha256 …` and prints the address, the certificate fingerprint and the next
-steps: put `~/.local/bin` on PATH, run `alt doctor`, trust the certificate and open the address.
+`install.py --archive … --sha256 …` and prints the address, the certificate fingerprint, whether
+Altitude keeps running after logout and the next steps: put `~/.local/bin` on PATH, run `alt doctor`, trust the certificate and open the address.
 Nothing is run from a download that does not match, and nothing runs as root. The script is one
 function called on its last line, so a download cut off midway does nothing.
 
@@ -164,6 +166,26 @@ For engines outside their default locations, the existing `CODEX_BIN` or `CLAUDE
 select absolute paths. [Configuration](#configuration-and-limits) describes saved settings.
 For nvm installations, Altitude discovers the installed default when Node is absent from PATH;
 enable its Corepack pnpm shim for project builds. See [noninteractive toolchain setup](DEVELOPMENT.md#noninteractive-toolchain).
+
+### Keep running after logout
+
+On Linux the service runs in your account's systemd user manager. Without lingering, systemd stops
+that manager about ten seconds after your last login session ends, including the SSH session that
+ran the installer, and starts it only at your next login. A first installation therefore runs
+`loginctl enable-linger` for your own account, without a password prompt, so Altitude keeps running
+after logout and starts at boot with nobody logged in. On a desktop, where your graphical session
+already keeps the manager running, this adds the start at boot. systemd's default policy lets an
+account turn on its own lingering. Where a system requires an administrator, installation still
+completes and prints why lingering stayed off and the one command that turns it on:
+
+```sh
+sudo loginctl enable-linger <account>
+```
+
+`alt doctor` shows the same in its **runs without a login** row, for a source service too. Updates
+leave lingering as it is, so `loginctl disable-linger` keeps Altitude to your login sessions, and
+uninstalling leaves it on. A Mac is unaffected: its LaunchAgent belongs to your desktop login and
+starts again at the next login.
 
 ### Install by hand
 

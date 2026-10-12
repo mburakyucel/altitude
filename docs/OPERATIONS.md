@@ -319,7 +319,9 @@ selecting an immutable version. Activation waits for dispatch,
 resume, L3 and report verification to be quiet, then verifies the selected version/commit, native
 service PID, HTTPS health and built UI. An already stopped installation stays stopped on update.
 Use `alt service start` or `alt service stop` only when deliberately changing its lifecycle;
-independent task workers are not stopped with the daemon. On a Mac the service is the LaunchAgent
+independent task workers are not stopped with the daemon. On Linux the user manager runs the service
+after logout and at boot only while the account lingers; a first installation turns lingering on and
+`alt doctor` reports it ([keep running after logout](SETUP.md#keep-running-after-logout)). On a Mac the service is the LaunchAgent
 `dev.altitude.altd` (an installation under another `HOME` gets a label derived from that home, so it
 never addresses the account's own service): `alt service stop` boots it out until the next login or `alt service start`,
 and `alt service logs` reads `~/Library/Logs/altitude/altd.log`; an in-app update logs to
@@ -341,7 +343,8 @@ further mutation. Retain the failing archive/version and sanitized error for dia
 disabled record for the label. It refuses unfinished tasks
 that still own worker inputs. Registered projects keep installed hook resources; otherwise
 application versions are removed. Configuration, certificate trust, histories, provider sessions
-and project worktrees remain. Updates do not prune prior versions. Removing retained data or
+and project worktrees remain. On Linux it leaves the account's lingering on and says so;
+`loginctl disable-linger` turns it off when nothing else needs it. Updates do not prune prior versions. Removing retained data or
 device trust is a separate deliberate action, not part of uninstall or recovery. Code restoration
 does not roll back data; incompatible state needs the [release recovery procedure](RELEASING.md#recovery).
 
