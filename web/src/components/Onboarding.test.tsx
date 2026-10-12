@@ -174,9 +174,9 @@ describe("First run onboarding", () => {
   });
 
   it("says when voice cannot run on this computer and keeps browser recognition", async () => {
-    mockFetch({ host: { state: "unavailable", reason: "voice runs on Linux x86_64 only for now" } });
+    mockFetch({ host: { state: "unavailable", reason: "voice runs on Linux x86_64 and on Macs with Apple silicon" } });
     const { user } = renderApp({ route: "/projects?step=voice" });
-    expect(await screen.findByText("Voice to text can’t run on this computer: voice runs on Linux x86_64 only for now.")).toBeInTheDocument();
+    expect(await screen.findByText("Voice to text can’t run on this computer: voice runs on Linux x86_64 and on Macs with Apple silicon.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Set up voice|Use browser recognition/ })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Continue" }));
     await screen.findByRole("heading", { name: "Add your projects" });

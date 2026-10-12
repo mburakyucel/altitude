@@ -1488,7 +1488,7 @@ describe("Composer", () => {
   });
 
   it.each([
-    [{ state: "unavailable", reason: "voice runs on Linux x86_64 only for now" }, "Voice isn't available on this computer: voice runs on Linux x86_64 only for now. Typing works."],
+    [{ state: "unavailable", reason: "voice runs on Linux x86_64 and on Macs with Apple silicon" }, "Voice isn't available on this computer: voice runs on Linux x86_64 and on Macs with Apple silicon. Typing works."],
     [{ state: "failed", download_bytes: 698_000_000, reason: "a download failed" }, "Voice setup did not finish. Retry in Settings. Typing works."],
   ] as const)("host voice that cannot run here (%o) explains the unavailable mic on press", async (host, hint) => {
     installVoiceBrowser({ backend: "host", host });

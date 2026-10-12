@@ -86,8 +86,9 @@ class Worker:
         options.intra_op_num_threads = THREADS
         options.inter_op_num_threads = 1
         self.np = numpy
-        self.model = onnx_asr.load_model(MODEL, str(runtime / "model"), quantization="int8",
-                                         sess_options=options).with_timestamps()
+        # The CPU provider on every host: onnxruntime would otherwise pick an accelerator its build lists first.
+        self.model = onnx_asr.load_model(MODEL, str(runtime / "model"), quantization="int8", sess_options=options,
+                                         providers=["CPUExecutionProvider"]).with_timestamps()
         self.model.recognize(numpy.zeros(RATE, dtype=numpy.float32))  # the first call pays one-time setup
         self.recordings: dict[str, Recording] = {}
 

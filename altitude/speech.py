@@ -49,27 +49,48 @@ MODEL_FILES = [
 _DECODER = ("wheels/onnx_asr-0.12.0-py3-none-any.whl",
             _PYPI + "6a/60/2fa469a2ee674c35ab48821a1039762ae7b9d0b88188ac1012e779477f76/onnx_asr-0.12.0-py3-none-any.whl",
             3980006, "5e7ceca454609819ea7833f61e2302e0c8f6ece4f8a78b66c5daba53cb51de4a")
-#: The wheels for each runtime `platform.speech_runtime` names: onnxruntime 1.22.0 and numpy 2.5.3.
+#: The wheels for each runtime `platform.speech_runtime` names: onnxruntime 1.28.0 and numpy 2.5.3. onnxruntime 1.28
+#: is the newest release whose library has no usage-reporting client (1.29 adds one).
 WHEELS = {
     "linux-x86_64-cp312": [
-        ("wheels/onnxruntime-1.22.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
-         _PYPI + "8c/60/16d219b8868cc8e8e51a68519873bdb9f5f24af080b62e917a13fff9989b/"
-         "onnxruntime-1.22.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
-         16406377, "6964a975731afc19dc3418fad8d4e08c48920144ff590149429a5ebe0d15fb3c"),
+        ("wheels/onnxruntime-1.28.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+         _PYPI + "95/df/5486ab03e9be288d5268867054c8b04bebcf95bfd12e801c05cc67703dab/"
+         "onnxruntime-1.28.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+         19214257, "0a83bdb70d143cede762b677789bf2a7acca54b3fb82565601d5c30695aa933c"),
         ("wheels/numpy-2.5.3-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
          _PYPI + "65/af/aa78d1a88805456e212b65461354cd943197fb9acecc4c90fd12295123a3/"
          "numpy-2.5.3-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
          16717410, "b7e18c623bb5c95acb3b3328861272816ba199fb531921c5d6d0b675f1fde9e3"),
     ],
     "linux-x86_64-cp313": [
-        ("wheels/onnxruntime-1.22.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
-         _PYPI + "1e/70/342514ade3a33ad9dd505dcee96ff1f0e7be6d0e6e9c911fe0f1505abf42/"
-         "onnxruntime-1.22.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
-         16406707, "9fe45ee3e756300fccfd8d61b91129a121d3d80e9d38e01f03ff1295badc32b8"),
+        ("wheels/onnxruntime-1.28.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+         _PYPI + "78/b6/8c5396e7894e77c5a7d1e026f3acb9dd39c4b5644e412e37a0055eaa3bc5/"
+         "onnxruntime-1.28.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+         19214329, "54fa221d669282bd8f582708ce4c96010a7e9fb0661f9006b37fe2fedafb73fe"),
         ("wheels/numpy-2.5.3-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
          _PYPI + "3a/1b/3b16a9bc514a440a7a0883684111dcb1ef1aee960af2ca95da8fc775f124/"
          "numpy-2.5.3-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
          16708577, "a5fa86b80fd24bcd1aff83ad23be44ea323de3f787be8f8b15d4a65621e25321"),
+    ],
+    "macos-arm64-cp312": [
+        ("wheels/onnxruntime-1.28.0-cp312-cp312-macosx_14_0_arm64.whl",
+         _PYPI + "98/f8/dcbe7700dca82fa540035abd3c868fe5ad0f86af00b9a3db7c2e27d15c7d/"
+         "onnxruntime-1.28.0-cp312-cp312-macosx_14_0_arm64.whl",
+         19141362, "26ff0fdd06efb6c155bae95387a09db1a2be89c7a03e4d0bffd5a171cc2826da"),
+        ("wheels/numpy-2.5.3-cp312-cp312-macosx_14_0_arm64.whl",
+         _PYPI + "9c/59/a312e95696e5f601914dd8b6dd844692ba61670807417e24b68e337b5c70/"
+         "numpy-2.5.3-cp312-cp312-macosx_14_0_arm64.whl",
+         5445405, "a72f874bc9e10e4b8f80426fb49716d5141f64442a0c8418065093ec8017fbb0"),
+    ],
+    "macos-arm64-cp313": [
+        ("wheels/onnxruntime-1.28.0-cp313-cp313-macosx_14_0_arm64.whl",
+         _PYPI + "9c/12/3807e2b17d9eb71d3cb78ed2ba76869b05c637c9b9d6112e636098b0c97a/"
+         "onnxruntime-1.28.0-cp313-cp313-macosx_14_0_arm64.whl",
+         19141759, "31410f544674f534c2f27348af52ef81682ca9c8719154bf4d48f0ef23823b1e"),
+        ("wheels/numpy-2.5.3-cp313-cp313-macosx_14_0_arm64.whl",
+         _PYPI + "ab/2a/98282aa5b8f58b1157d440bb6282eed47e3632a5de53a714fbab17e659fe/"
+         "numpy-2.5.3-cp313-cp313-macosx_14_0_arm64.whl",
+         5439695, "f9a2353b37a1a9e78fd82b27ad7e2a32a2d036604d18f02b05e3136c62ca3b09"),
     ],
 }
 #: The unpacked wheels are about 110 MB; anything far larger is not the pinned content.

@@ -302,8 +302,9 @@ class TestRecordings(SpeechCase):
 
 class TestAvailability(SpeechCase):
     def test_an_unsupported_host_is_unavailable_with_its_reason(self):
-        self.patch(platform, "speech_runtime", return_value=(None, "voice runs on Linux x86_64 only for now"))
-        self.assertEqual(speech.status(), {"state": "unavailable", "reason": "voice runs on Linux x86_64 only for now"})
+        reason = "voice runs on Linux x86_64 and on Macs with Apple silicon"
+        self.patch(platform, "speech_runtime", return_value=(None, reason))
+        self.assertEqual(speech.status(), {"state": "unavailable", "reason": reason})
         with self.assertRaisesRegex(speech.SpeechError, "isn't available on this computer: voice runs on Linux"):
             self.host().open(None)
 
@@ -323,6 +324,51 @@ class TestAvailability(SpeechCase):
             self.assertEqual(key.rsplit("-", 1)[1], f"cp{sys.version_info.major}{sys.version_info.minor}")
         else:
             self.assertTrue(reason)
+
+
+class TestPlatformSeam(SpeechCase):
+    """The runtime each host gets, decided at the platform seam with the host faked."""
+
+    def host(self, system: str, machine: str, libc: str = "glibc 2.39") -> tuple[str | None, str]:
+        self.patch(platform.sys, "platform", system)
+        self.patch(platform.host_platform, "machine", return_value=machine)
+        self.patch(platform, "container_unavailable", return_value=None)
+        self.patch(platform.os, "confstr", create=True, return_value=libc)
+        return platform.speech_runtime()
+
+    def test_linux_x86_64_and_apple_silicon_get_their_pinned_runtime(self):
+        python = f"cp{sys.version_info.major}{sys.version_info.minor}"
+        self.assertEqual(self.host("linux", "x86_64"), (f"linux-x86_64-{python}", ""))
+        self.assertEqual(self.host("darwin", "arm64"), (f"macos-arm64-{python}", ""))
+
+    def test_other_hosts_say_where_voice_runs(self):
+        for system, machine in (("darwin", "x86_64"), ("linux", "aarch64")):
+            self.assertEqual(self.host(system, machine), (None, "voice runs on Linux x86_64 and on Macs with Apple silicon"))
+        self.assertEqual(self.host("linux", "x86_64", "glibc 2.17"), (None, "voice needs glibc 2.28 or newer"))
+
+    def test_each_runtime_pins_the_same_libraries_built_for_its_host(self):
+        self.assertEqual(sorted(speech.WHEELS), ["linux-x86_64-cp312", "linux-x86_64-cp313",
+                                                 "macos-arm64-cp312", "macos-arm64-cp313"])
+        for key, wheels in speech.WHEELS.items():
+            system, _, python = key.split("-")
+            tag = "manylinux_2_28_x86_64" if system == "linux" else "macosx_1"
+            names = [name.split("/")[1] for name, _, _, _ in wheels]
+            self.assertEqual([name.split("-")[:2] for name in names], [["onnxruntime", "1.28.0"], ["numpy", "2.5.3"]])
+            for name in names:
+                self.assertIn(f"-{python}-{python}-", name)
+                self.assertIn(tag, name)
+
+    def test_an_unpinned_python_on_a_mac_says_which_it_needs(self):
+        self.patch(platform, "speech_runtime", return_value=("macos-arm64-cp311", ""))
+        self.assertEqual(speech.status(), {"state": "unavailable", "reason": "voice needs Python 3.12 or 3.13"})
+
+    def test_free_memory_on_a_mac_is_its_available_share(self):
+        self.patch(platform.sys, "platform", "darwin")
+        run = self.patch(platform.subprocess, "run")
+        run.return_value.stdout = "71\n17179869184\n"
+        self.assertEqual(platform.available_memory(), 17179869184 * 71 // 100)
+        run.side_effect = platform.subprocess.CalledProcessError(1, "sysctl")
+        self.assertIsNone(platform.available_memory())
 
 
 def _wheel(entries: dict[str, bytes], link: str | None = None) -> bytes:
@@ -488,6 +534,31 @@ class TestWorkerCuts(AltitudeCase):
         starts = [0.0, 0.2, 0.5, 11.0, 11.5]
         self.assertEqual(speech_worker.word_cut(tokens, starts, 12.0), (3, 10.96))
         self.assertIsNone(speech_worker.word_cut([" one", " two"], [11.5, 11.8], 12.0))
+
+    def test_the_model_runs_on_the_cpu_provider_on_every_host(self):
+        """onnxruntime's macOS build lists CoreML first, which splits the model and doubles its memory."""
+        site = self.tmp / "runtime" / "site"
+        site.mkdir(parents=True)
+        (site / "numpy.py").write_text("float32 = 'float32'\ndef zeros(count, dtype): return [0.0] * count\n")
+        (site / "onnxruntime.py").write_text("class SessionOptions: pass\n")
+        (site / "onnx_asr.py").write_text(
+            "loaded = []\n"
+            "class Model:\n"
+            "    def with_timestamps(self): return self\n"
+            "    def recognize(self, audio): return None\n"
+            "def load_model(*args, **options): loaded.append(options); return Model()\n")
+        names = ("numpy", "onnxruntime", "onnx_asr")
+        saved = {name: sys.modules.pop(name) for name in names if name in sys.modules}
+
+        def restore() -> None:
+            for name in names:
+                sys.modules.pop(name, None)
+            sys.modules.update(saved)
+
+        self.addCleanup(restore)
+        self.addCleanup(sys.path.remove, str(site))
+        speech_worker.Worker(site.parent)
+        self.assertEqual(sys.modules["onnx_asr"].loaded[0]["providers"], ["CPUExecutionProvider"])
 
 
 class TestHostVoiceRoutes(SpeechCase):

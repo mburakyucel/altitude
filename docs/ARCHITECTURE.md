@@ -2692,7 +2692,7 @@ There is no project inbox file and no `fyis` in the digest or overview.
 
 Voice transcription sits behind the capability seam as one machine setting, `voice`, in the private
 settings file: `host` or `browser`. Without a saved choice the backend is `host` when this release's
-speech manifest names a runtime this computer can run, and `browser` elsewhere (macOS for now).
+speech manifest names a runtime this computer can run, and `browser` elsewhere.
 `GET /api/voice` reports the backend, an opaque selection identity over the backend and, for `host`,
 the pinned runtime, and `host`, where host voice stands on this computer. `alt machine set --voice`
 requests a change through the same durable request that carries `wip`; `--unset-voice` returns to the
@@ -2723,13 +2723,15 @@ speech worker, and the page streams samples to it. The model is NVIDIA Parakeet 
 CC-BY-4.0) as the int8 ONNX export `istupakov/parakeet-tdt-0.6b-v2-onnx` at a pinned revision, run on
 the CPU by the MIT `onnx-asr` decoder with onnxruntime and numpy. It always punctuates and capitalizes.
 
-`platform.speech_runtime()` names the runtime this host and interpreter can run (Linux x86_64, glibc
-2.28 or newer, CPython 3.12 or 3.13). Anything else, including macOS until native evidence is recorded,
-reads as `unavailable` with its reason. `speech.status()` is `unavailable`, `absent`, `setting-up`
+`platform.speech_runtime()` names the runtime this host and interpreter can run: Linux x86_64 with
+glibc 2.28 or newer, or macOS on Apple silicon, with CPython 3.12 or 3.13. Both use the same model,
+decoder and library versions; only the onnxruntime and numpy wheels differ by host. onnxruntime stays at
+1.28, the newest release whose library has no usage-reporting client. Anything else, such
+as an Intel Mac, reads as `unavailable` with its reason. `speech.status()` is `unavailable`, `absent`, `setting-up`
 (with bytes done), `ready`, `failed` (with the reason) or `outdated`, with the download size.
 
 Setup (`alt voice setup`, or Settings through `POST /api/voice/host` with `setup`) downloads the
-manifest in `speech.py`: five model files from Hugging Face and three wheels from PyPI, about 698 MB.
+manifest in `speech.py`: five model files from Hugging Face and three wheels from PyPI, about 700 MB.
 Each file streams into `~/.altitude/speech/.staging` with a size cap and must match its pinned
 SHA-256. The wheels are unpacked with the release installer's path rules (no absolute, parent,
 backslash or link entries, a total size cap) into `site/`, not installed with pip. A completion record
@@ -2741,7 +2743,8 @@ any failure deletes staging; a failure, not a cancel, is remembered for Settings
 worker within a second when its runtime disappears under it (`alt voice remove`).
 
 The worker (`altitude/speech_worker.py`) runs as `python -I` with the daemon's interpreter and a
-minimal environment, imports only the runtime's unpacked wheels, and reads one JSON request per line:
+minimal environment, imports only the runtime's unpacked wheels, runs the model on onnxruntime's CPU
+provider on every host (onnxruntime would pick CoreML first on macOS), and reads one JSON request per line:
 `open`, `audio` (base64 samples), `finish` and `close`. It answers `ready` once the model is loaded,
 then each changed recording's text so far, finishing recordings first. It commits text at pauses once
 eight seconds are pending: the audio up to the middle of the last quiet run (quiet is relative to the
@@ -2750,7 +2753,8 @@ started at least a second before the end are kept, except the last. No read cove
 twelve seconds of audio. It exits on stdin EOF, so it ends with the daemon.
 
 `speech.Host` supervises it. The first recording starts the worker, after checking that about 2.5 GB
-of memory is available; every recording shares it, and it exits after fifteen minutes unused. Requests
+of memory is available (`platform.available_memory()`: MemAvailable on Linux, the kernel's available
+share of physical memory on macOS); every recording shares it, and it exits after fifteen minutes unused. Requests
 reach it through a writer thread, so a worker that is loading or hung never holds up a request. A
 watchdog kills it when it takes more than 30 seconds to load, then 10 seconds to answer new audio or
 15 seconds to finish; every unfinished recording then fails with a plain reason, and the next recording
