@@ -3071,6 +3071,16 @@ new archive or copied conversation replies supply the preview. Conversation and 
 activity cue from its recorded output time: a pulsing dot within 60 seconds of output. Live session
 keeps a still dot and "No new activity for …" after that, and no pulse when activity is unavailable
 or the task is not running; Conversation hides the preview instead.
+The same projection carries `background`: the work the current worker keeps running beside its turn,
+each item with its description, kind (command or agent), launching call, start, status (running,
+completed, failed or stopped) and end. `engines.background_work` reads it from the engine's own records:
+Claude's background-task start and end reports, including a running command that Send now moves to the
+background, and a Codex command still in progress once the turn takes a further step (the model writes or
+reasons, or starts another call after a call ended; parallel calls alone are not one). It holds every
+running item, then the 20 most recent outcomes in the order they ended, and is `null` when a record is
+unreadable or the engine reports no such work. Live session shows it as the **In the background**
+tray under its stream while the task runs, and marks each item's call row in the stream (design spec
+§3.10); Conversation and task rows do not use it.
 
 Runtime files live under `ALTITUDE_HOME`; a task is a directory a person can read. Source-controlled
 personas, schemas, templates, and hooks describe current behaviour: `hooks/` holds the Git hooks
