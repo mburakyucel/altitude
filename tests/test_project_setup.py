@@ -350,6 +350,35 @@ class ProjectSetup(AltitudeCase):
         self.assertEqual(stored["guards"]["action"], "installed")
         self.assertIn("Installed and verified", self.step("guards")["detail"])
 
+    def test_repair_accepted_while_a_finished_check_exits_still_runs(self):
+        self.perform()
+        git("config", "--local", "--unset-all", "core.hooksPath", cwd=self.repo)
+        finishing, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+        original = S.project_log
+
+        def paused(project, kind, **data):
+            original(project, kind, **data)
+            if kind == "project-setup" and data.get("action") == "check":
+                finishing.set()
+                self.assertTrue(release.wait(10))
+
+        self.patch(S, "project_log", paused)
+        server.request_project_setup(self.project, "check", actor="operator")
+        self.assertTrue(finishing.wait(10))
+        with server._bg_guard:
+            worker = server._bg[f"setup:{self.project}"]
+        # The check is complete and its run is still exiting when the operator presses Repair.
+        self.assertEqual(setup.read(self.project)["operation"]["state"], "complete")
+        repair = server.request_project_setup(self.project, "repair", actor="operator")
+        self.assertEqual(repair["operation"]["state"], "pending")
+        release.set()
+        worker.join(10)
+        self.assertFalse(worker.is_alive())
+        stored = setup.read(self.project)["operation"]
+        self.assertEqual((stored["id"], stored["state"]), (repair["operation"]["id"], "complete"))
+        self.assertIn("Installed and verified", self.step("guards")["detail"])
+
     def test_failure_keeps_coordinator_reachable_and_retry_reuses_completed_steps(self):
         with mock.patch.object(git_policy, "repair_hooks", side_effect=git_policy.GitPolicyError("Cannot write Git configuration")):
             failed = self.perform()

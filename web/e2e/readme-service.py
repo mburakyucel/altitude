@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 import json
 
 from service_support import configure, serve
-from tests.support import SUITE, add_worktree, make_repo
+from tests.support import SUITE, git, make_repo
 from tests.fakes import FakeL2
 from altitude import config, engines, l3, project_setup, route, state as S, tasks as T
 
@@ -52,6 +52,11 @@ def seed() -> dict:
         pass
     with config.add_project("harbor", path=make_repo(repos / "harbor" / "harbor")):
         pass
+    # Setup is complete before any owner starts, as on a configured machine, so it inspects no task checkouts
+    # (a pass over 23 of them took the service past its start limit on a loaded runner).
+    for name in (PROJECT, "harbor"):
+        project_setup.request(name, "repair", actor="operator")
+        project_setup.run(name)
 
     def turn(minutes, prompt, reply, turn_id):
         with minutes_ago(minutes):
@@ -81,11 +86,18 @@ def seed() -> dict:
                            "sessions": {engine: {"session_id": "readme-l3", "turns": 41,
                                                  "confinement_version": l3.L3_CONFINEMENT_VERSION}}})
 
+    def checkout(slug):
+        """The dispatcher's worktree layout. The seed's own Git commands skip the guards' hooks, which would run a
+        Python process at every stage of each ref update."""
+        path = repo / config.WORKTREE_ROOT / slug
+        git("-c", "core.hooksPath=/dev/null", "worktree", "add", "-q", "-b", f"worktree-{slug}", str(path), cwd=repo)
+        return path
+
     def owner(title, request, minutes, engine=engine):
         with minutes_ago(minutes):
             slug = T.new(PROJECT, title, request)["slug"]
             T.dispatch(PROJECT, slug, attempt=1, session_id=f"readme-{slug}", agent_id=f"readme-{slug}",
-                       worktree=str(add_worktree(repo, slug)), branch=f"worktree-{slug}", l2_engine=engine)
+                       worktree=str(checkout(slug)), branch=f"worktree-{slug}", l2_engine=engine)
         fake.workers[f"readme-{slug}"] = {"id": f"readme-{slug}", "sessionId": f"readme-{slug}",
                                           "state": "working", "status": "busy", "input_delivered": True}
         return slug
@@ -182,9 +194,6 @@ def seed() -> dict:
     # Later the backfill owner needs a product decision; L3 brings it to the operator.
     T.block(PROJECT, backfill, RETENTION["question"], actor="l2", questions={"questions": [RETENTION]})
     T.escalate(PROJECT, backfill, RETENTION["question"], questions={"questions": [RETENTION]})
-    for name in (PROJECT, "harbor"):  # Setup is complete, as on a configured machine
-        project_setup.request(name, "repair", actor="operator")
-        project_setup.run(name)
     # Weekly allowance readings are illustrative; no provider is asked.
     readings = {"claude": 42, "codex": 36}
     route.engine_readouts = lambda: [{"engine": name, "label": config.ENGINE_LABELS[name], "week": readings[name],

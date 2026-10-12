@@ -17,7 +17,7 @@ export default defineConfig({
     {
       // Named "phone" so specs apply their phone layout and @phone-only walkthroughs.
       name: "phone",
-      grepInvert: /@chromium/,
+      grepInvert: /@chromium|@desktop-only/,
       use: {
         ...devices["iPhone 15"],
         browserName: "webkit",

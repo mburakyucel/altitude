@@ -575,7 +575,8 @@ test("immediate navigation preserves ordered L3 admission, queue and active hist
   await walk.open(`${service}/projects/alpha`);
   await v.field("alpha").fill("Alpha running request");
   await v.send.click();
-  await expect(v.queue).toBeVisible();
+  // The streamed reply proves the running request reached L3 before the next /api/chat is intercepted.
+  await expect(v.text("Alpha partial reply.")).toBeVisible();
 
   for (const [index, text] of [first, second].entries()) {
     const arrived = deferred();

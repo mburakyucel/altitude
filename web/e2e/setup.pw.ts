@@ -178,7 +178,11 @@ test("a failed first conversation exposes Retry and completes the existing setup
   const coordinator = step(panel, "Coordinator");
   await walk.state("01-first-conversation-failed", { visible: [coordinator.getByText("Failed", { exact: true }), coordinator.getByRole("button", { name: "Retry", exact: true })], hidden: [] });
   await request.post(`${service}/fixture/retry-intro`);
+  const accepted = page.waitForResponse((response) => response.url().endsWith("/api/project/setup"));
   await coordinator.getByRole("button", { name: "Retry", exact: true }).click();
+  expect((await accepted).ok()).toBe(true);
+  // The retried setup and first turn write real state; the page then shows their saved result.
+  expect((await request.post(`${service}/fixture/wait-intro`)).ok()).toBe(true);
   await walk.state("02-first-conversation-recovered", { visible: [coordinator.getByText("Complete", { exact: true }), summary(panel, "Ready")], hidden: [coordinator.getByRole("button", { name: "Retry", exact: true })] });
   const evidence = await (await request.get(`${service}/fixture/evidence`)).json();
   expect(evidence.calls.filter((call: { project: string }) => call.project === "new-project")).toHaveLength(2);
