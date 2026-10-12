@@ -75,8 +75,8 @@ class TestCodexAdapter(AltitudeCase):
         self.assertTrue(all(Path(r).is_dir() for r in roots), "Codex bind-mounts writable roots; they must exist")
         self.assertTrue(all(profile["workspace_roots"].values()))
         self.assertEqual(profile["extends"], ":workspace", "retain native protected paths and temporary roots")
-        self.assertEqual(profile["filesystem"], {":root": "read",
-                         **{str(path): "deny" for path in platform.job_control_paths()}})
+        self.assertEqual(profile["filesystem"], {":root": "read", **{str(path): "deny" for path in (
+                         *platform.job_control_paths(), *platform.private_places())}})
         self.assertTrue(profile["network"]["enabled"])
         self.assertNotIn("sandbox_mode", parsed, "legacy selection must not override the named profile")
         self.assertNotIn("sandbox_workspace_write", parsed)
@@ -88,17 +88,20 @@ class TestCodexAdapter(AltitudeCase):
         self.assertEqual(parsed["permissions"]["altitude-task"]["workspace_roots"],
                          {str(config.ROOT.resolve()): True})
 
-    def test_control_socket_denials_cover_both_endpoints_without_two_file_masks(self):
+    def test_control_socket_and_private_place_denials_cover_workers_and_the_coordinator(self):
+        """The service-manager sockets, and macOS's private places, whose reads macOS charges to the job's Python."""
         runtime = Path(f"/run/user/{os.getuid()}")
         endpoints = (runtime / "bus", runtime / "systemd/private")
-        with mock.patch.object(config, "project_path", return_value=self.repo):
+        private = ("/Users/fictional/Desktop", "/Volumes")
+        with mock.patch.object(config, "project_path", return_value=self.repo), \
+                mock.patch.object(platform, "private_places", return_value=private):
             profiles = [engines.codex_sandbox(self.worktree),
                         engines.codex_l3_permissions(self.worktree, project=PROJECT)]
         for settings in profiles:
             parsed = tomllib.loads("\n".join(settings))
             rules = parsed["permissions"][parsed["default_permissions"]]["filesystem"]
             denied = {Path(path) for path, access in rules.items() if access == "deny"}
-            self.assertEqual(denied, {runtime / "bus", runtime / "systemd"})
+            self.assertEqual(denied, {runtime / "bus", runtime / "systemd", *map(Path, private)})
             self.assertTrue(all(any(endpoint.is_relative_to(root) for root in denied) for endpoint in endpoints))
             self.assertFalse(any((runtime / "unrelated").is_relative_to(root) for root in denied))
 
@@ -162,7 +165,7 @@ class TestCodexAdapter(AltitudeCase):
         settings = [spec["command"][i + 1] for i, arg in enumerate(spec["command"]) if arg == "-c"]
         rules = tomllib.loads("\n".join(settings))["permissions"]["altitude-task"]["filesystem"]
         self.assertEqual({path for path, access in rules.items() if access == "deny"},
-                         {str(path) for path in platform.job_control_paths()})
+                         {str(path) for path in (*platform.job_control_paths(), *platform.private_places())})
         # In the job's environment, without the bus, GitHub accepts the engine only after the driver exports the
         # token; an ambient token never reaches it, and the engine reads its turn, not the token.
         driver = command[2:]

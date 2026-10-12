@@ -4,6 +4,7 @@ import subprocess
 import time
 import unittest
 from datetime import datetime
+from pathlib import Path
 
 from tests.support import AltitudeCase
 from tests.test_quota_codex import transcript
@@ -62,7 +63,9 @@ class TestNativeQuota(QuotaFixture):
         for flag in ("--safe-mode", "--no-session-persistence", "--strict-mcp-config"):
             self.assertIn(flag, command)
         self.assertEqual(command[command.index("--tools") + 1], "")
-        self.assertEqual(self.process.call_args.kwargs["cwd"], config.HOME)
+        cwd = Path(self.process.call_args.kwargs["cwd"])
+        self.assertTrue(cwd.name.startswith("altitude-usage-") and not cwd.exists(),
+                        "an empty folder that is removed, never the home with its private places")
 
     def test_partial_windows_are_not_fabricated_and_model_scopes_are_not_account_quota(self):
         for kind, field, absent in (("weekly_all", "seven_day", "five_hour"),

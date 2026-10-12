@@ -1645,6 +1645,69 @@ SERVICE_ESCAPES = ('(deny mach-lookup (global-name-prefix "com.apple.CoreSimulat
 CAFFEINATE = "/usr/bin/caffeinate"
 #: launchctl's status when the domain has no such job.
 NOT_FOUND = 113
+#: The home folder's places macOS keeps private behind a consent prompt (Files and Folders, Photos, Media, Full Disk
+#: Access data, Calendars, Reminders, Contacts, other apps' data, iCloud Drive and file providers, and the consent
+#: records themselves). macOS charges a job's reads to the Python that launchd started for it, so a worker's search
+#: of the home once asked the operator about "Python 3.12".
+PRIVATE_HOME = ("Desktop", "Documents", "Downloads", "Pictures", "Music", "Movies", "Library/Mail", "Library/Messages",
+                "Library/Safari", "Library/Cookies", "Library/Calendars", "Library/Reminders",
+                "Library/Application Support/AddressBook", "Library/Application Support/com.apple.TCC",
+                "Library/Containers", "Library/Group Containers", "Library/Mobile Documents", "Library/CloudStorage")
+#: Mounted volumes (removable, disk images, network shares) outside the home.
+PRIVATE_VOLUMES = ("/Volumes", "/Network")
+DATA_VOLUME = "/System/Volumes/Data"
+
+
+def private_places() -> tuple[str, ...]:
+    """The places macOS asks the operator about before any process reads them, as Seatbelt matches them: each home
+    place through the resolved home and through the data volume's other name, then the mounted volumes. Altitude never
+    reads them and every sandbox it applies refuses them. Linux has none."""
+    if not _darwin():
+        return ()
+    home = os.path.realpath(Path.home())
+    homes = dict.fromkeys((home, home.removeprefix(DATA_VOLUME), DATA_VOLUME + home.removeprefix(DATA_VOLUME)))
+    return (*(os.path.join(root, place) for root in homes for place in PRIVATE_HOME), *PRIVATE_VOLUMES)
+
+
+def private(path: str | Path) -> bool:
+    """Whether `path` is in one of macOS's private places, judged without looking inside one. Components are taken in
+    the order the disk resolves them: each link on the way is read, and its target judged, before it is followed, and
+    `..` leaves the folder a link led to. Names compare case-insensitively, as macOS's disk does."""
+    places = [place.casefold() for place in private_places()]
+    if not places:
+        return False
+    remaining, current, links = list(Path(os.path.join(os.getcwd(), path)).parts[1:]), "/", 0
+    while True:
+        if any(current.casefold() == place or current.casefold().startswith(place + "/") for place in places):
+            return True
+        if not remaining:
+            return False
+        part = remaining.pop(0)
+        if part == "..":
+            current = os.path.dirname(current)
+            continue
+        candidate = os.path.join(current, part)
+        if not os.path.islink(candidate):
+            current = candidate
+            continue
+        links += 1
+        if links > 32:  # the kernel's own link limit: such a path resolves nowhere, and refusing it touches nothing
+            return True
+        target = Path(os.readlink(candidate))
+        if target.is_absolute():  # its anchor may be "//", which the disk reads as "/"
+            current, target = "/", target.relative_to(target.anchor)
+        remaining = [*target.parts, *remaining]
+
+
+def _filters(kind: str, values) -> list[str]:
+    return [f'({kind} "' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '")' for value in values]
+
+
+def private_rule() -> str:
+    """Seatbelt's refusal of every private place. A profile puts it after its own file rules, so no root it admits
+    can reopen one."""
+    places = private_places()
+    return f"(deny file-read* file-write* {' '.join(_filters('subpath', places))})" if places else ""
 
 
 def logs_dir() -> Path:
@@ -1822,9 +1885,9 @@ def _fd_path(fd: int) -> str | None:
 def seatbelt_profile(writable: list[str]) -> str:
     """Altitude's Seatbelt profile. The job may signal only processes in its own sandbox, never its supervisor, and
     write only under `writable` (a root ending in * admits every path that starts with it), the user's temporary and
-    cache directories, /private/tmp and devices. Seatbelt matches resolved paths. launchd refuses service control to
-    every sandboxed process, and the profile refuses the services and Apple Events that would run a program outside
-    it."""
+    cache directories, /private/tmp and devices, and neither read nor write macOS's private places. Seatbelt matches
+    resolved paths. launchd refuses service control to every sandboxed process, and the profile refuses the services
+    and Apple Events that would run a program outside it."""
     user = str(Path(os.path.realpath(_user_temp())).parent)
     rules = []
     for root in dict.fromkeys((*writable, user, "/private/tmp", "/private/var/tmp", "/dev")):
@@ -1832,9 +1895,9 @@ def seatbelt_profile(writable: list[str]) -> str:
             prefix = os.path.join(os.path.realpath(os.path.dirname(root)), os.path.basename(root)[:-1])
             rules.append('(regex #"^' + re.escape(prefix).replace('"', '\\"') + '")')
         else:
-            rules.append('(subpath "' + os.path.realpath(root).replace("\\", "\\\\").replace('"', '\\"') + '")')
+            rules.extend(_filters("subpath", [os.path.realpath(root)]))
     return ("(version 1)(allow default)(deny signal)(allow signal (target same-sandbox))"
-            f"(deny file-write*)(allow file-write* {' '.join(rules)}){SERVICE_ESCAPES}")
+            f"(deny file-write*)(allow file-write* {' '.join(rules)}){private_rule()}{SERVICE_ESCAPES}")
 
 
 def confined(command: list[str], writable: tuple[Path, ...]) -> list[str]:
@@ -2480,16 +2543,13 @@ def validation_profile(roots: tuple[Path, ...], output: Path, port: int) -> str:
     own `roots` (clone, results, home and temporary folder) and devices, and append to its runner's `output` log
     through the descriptor it inherits (Seatbelt checks that descriptor's writes and status by path too); read nothing else in the operator's home or
     the shared temporary folders, where Altitude's records, credentials, checkouts, caches and other processes' files
-    and sockets live; reach Unix sockets only in its roots and the system's DNS and log services, and nothing on
-    Altitude's `port`, on any address; ask nothing of the keychain, the Simulator service or LaunchServices; send no
-    Apple Event; and signal only its own processes. launchd refuses service control to every sandboxed process, so the
+    and sockets live; touch none of macOS's private places, such as mounted volumes; reach Unix sockets only in its
+    roots and the system's DNS and log services, and nothing on Altitude's `port`, on any address; ask nothing of the
+    keychain, the Simulator service or LaunchServices; send no Apple Event; and signal only its own processes. launchd refuses service control to every sandboxed process, so the
     run cannot start, stop or change a service. It reads, never writes, xcrun's lookup cache: without it every call to
     a /usr/bin xcrun shim takes over a second."""
-    def filters(kind: str, values) -> list[str]:
-        return [f'({kind} "' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '")' for v in values]
-
     def paths(kind: str, values) -> str:
-        return " ".join(filters(kind, values))
+        return " ".join(_filters(kind, values))
     home = os.path.realpath(Path.home())
     # A root's own name is never resolved: a worker may replace a folder in /private/tmp with a link, and Seatbelt
     # matches the link's target, which no root then admits.
@@ -2510,10 +2570,10 @@ def validation_profile(roots: tuple[Path, ...], output: Path, port: int) -> str:
         f'(deny network-bind (local ip "*:{port}"))(deny network-outbound (remote ip "*:{port}"))',
         # Seatbelt honors only the first path filter of a (remote unix-socket ...), so each path has its own (#695).
         "(deny network-outbound (remote unix-socket))(allow network-outbound " + " ".join(
-            f"(remote unix-socket {path})" for path in [*filters("subpath", own), *filters(
+            f"(remote unix-socket {path})" for path in [*_filters("subpath", own), *_filters(
                 "path-literal", ("/private/var/run/mDNSResponder", "/private/var/run/syslog"))]) + ")",
         '(deny mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd.xpc"))',
-        SERVICE_ESCAPES])
+        private_rule(), SERVICE_ESCAPES])
 
 
 def validation_command(roots: tuple[Path, ...], output: Path, port: int, argv: list[str],

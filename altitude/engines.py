@@ -36,10 +36,11 @@ def _claude_quota() -> dict:
         release = re.match(r"(\d+)\.(\d+)\.(\d+)", version.stdout)
         if not release or tuple(map(int, release.groups())) < (2, 1, 277):
             return unknown
-        result = subprocess.run(
-            [config.CLAUDE_BIN, "--print", "/usage", "--output-format", "stream-json", "--verbose",
-             "--safe-mode", "--no-session-persistence", "--tools", "", "--strict-mcp-config"],
-            capture_output=True, text=True, timeout=20, check=True, env=clean_env(), cwd=config.HOME)
+        with tempfile.TemporaryDirectory(prefix="altitude-usage-") as empty:  # never the home, with its private places
+            result = subprocess.run(
+                [config.CLAUDE_BIN, "--print", "/usage", "--output-format", "stream-json", "--verbose",
+                 "--safe-mode", "--no-session-persistence", "--tools", "", "--strict-mcp-config"],
+                capture_output=True, text=True, timeout=20, check=True, env=clean_env(), cwd=empty)
         reading, models = {}, {}
         for event in map(json.loads, result.stdout.splitlines()):
             if event.get("type") == "result" and event.get("is_error"):
@@ -2255,14 +2256,16 @@ def codex_sandbox(cwd: Path, *, extra_roots: list[Path] = ()) -> list[str]:
     Writable roots must exist because Codex bind-mounts them: the working directory, any extra root (a worker's
     Git directories so it can fetch, commit, and push), and the Altitude home so `alt` can record what the turn
     reports. The workspace base retains protected configuration paths and temporary directories.
-    Network stays on for `git push`, `gh`, and the repository's own tests; user-manager sockets stay denied.
+    Network stays on for `git push`, `gh`, and the repository's own tests; user-manager sockets and macOS's private
+    places stay denied.
     The sandboxed shell inherits the launch environment, so the identity variables reach `alt` and a worker's
     GitHub token (`github_token`) reaches `gh` unchanged.
     """
     roots = dict.fromkeys([Path(cwd).resolve(), *(Path(root).resolve() for root in extra_roots), config.ROOT.resolve()])
     profile = "altitude-task"
     workspace_roots = "{" + ",".join(f"{json.dumps(str(root))}=true" for root in roots) + "}"
-    denied = ",".join(f'{json.dumps(str(path))}="deny"' for path in platform.job_control_paths())
+    denied = ",".join(f'{json.dumps(str(path))}="deny"' for path in (*platform.job_control_paths(),
+                                                                       *platform.private_places()))
     return [f'default_permissions="{profile}"', f'permissions.{profile}.extends=":workspace"',
             f"permissions.{profile}.workspace_roots={workspace_roots}",
             f'permissions.{profile}.filesystem={{":root"="read",{denied}}}',
@@ -2281,7 +2284,7 @@ def codex_l3_permissions(cwd: Path, *, project: str) -> list[str]:
     broker = verb_socket_path(project).resolve()
     rules = {":root": "read", str(Path(cwd).resolve()): "write",
              str(config.project_path(project).resolve()): "read",
-             **{str(path): "deny" for path in platform.job_control_paths()}}
+             **{str(path): "deny" for path in (*platform.job_control_paths(), *platform.private_places())}}
     filesystem = "{" + ",".join(f"{json.dumps(path)}={json.dumps(access)}"
                                    for path, access in rules.items()) + "}"
     # Sept 7 coordinator outage: Linux proxy-mode seccomp denies socket(AF_UNIX), and the proxy's
