@@ -44,6 +44,8 @@ class InstallationCase(unittest.TestCase):
         self.enabled = "disabled"
         self.failures = {}
         self.probes = []
+        self.lingers = False
+        self.linger_requests = []
         for target, name, value in (
             (Path, "home", mock.Mock(return_value=self.home)),
             (config, "ROOT", self.runtime),
@@ -65,7 +67,7 @@ class InstallationCase(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         for target, name, value in (
-            (platform, "control", self.control), (platform, "status", self.status),
+            (platform, "control", self.control), (platform, "status", self.status), (platform, "lingering", self.lingering),
             (tls, "initialize", self.initialize_tls), (tls, "info", lambda: {"trust": "fixture"}),
             (installation, "_probe", self.probe),
         ):
@@ -79,6 +81,13 @@ class InstallationCase(unittest.TestCase):
                 "SubState": "running" if self.active == "active" else "dead",
                 "UnitFileState": self.enabled, "FragmentPath": str(self.unit) if self.unit.exists() else "",
                 "MainPID": "1234" if self.active == "active" else "0"}
+
+    def lingering(self, *, enable=False):
+        self.linger_requests.append(enable)
+        if self.HOST == "darwin":
+            return None
+        self.lingers = self.lingers or enable
+        return {"enabled": self.lingers, "detail": "fixture lingering"}
 
     def control(self, action):
         self.actions.append(action)
@@ -174,6 +183,38 @@ class Installation(InstallationCase):
         self.assertEqual((self.certificates / "ca.key").read_bytes(), certificate)
         for path, data in retained.items():
             self.assertEqual(path.read_bytes(), data)
+
+    def test_first_install_keeps_running_without_a_login_and_updates_leave_the_accounts_choice(self):
+        first = self.install()
+        self.lingers = False  # the account turned lingering off after installing
+        updated = self.install("v0.1.1", edited=True)
+        kept = installation.uninstall()
+        self.assertEqual(self.linger_requests, [True, False, False])
+        if self.HOST == "darwin":
+            self.assertEqual((first["lingering"], updated["lingering"]), (None, None))
+            self.assertNotIn("lingering", kept)
+            return
+        self.assertTrue(first["lingering"]["enabled"])
+        self.assertFalse(updated["lingering"]["enabled"])
+        self.assertNotIn("lingering", kept)
+        self.lingers = True
+        self.install()
+        self.assertIn("left on for this account", installation.uninstall()["lingering"])
+
+    def test_doctor_reports_whether_the_service_runs_without_a_login(self):
+        for lingers in (True, False):
+            self.lingers = lingers
+            with self.subTest(lingers=lingers), \
+                    mock.patch.object(installation, "_gh_signed_in", return_value=False), \
+                    mock.patch.object(installation.shutil, "which", return_value=None), \
+                    mock.patch.object(tls, "info", side_effect=OSError("fixture: no certificate")):
+                checks = {check["name"]: check for check in installation.doctor()["checks"]}
+            if self.HOST == "darwin":
+                self.assertNotIn("runs without a login", checks)
+                continue
+            self.assertEqual(checks["runs without a login"],
+                             {"name": "runs without a login", "state": "configured" if lingers else "unavailable",
+                              "detail": "fixture lingering"})
 
     def test_install_persists_application_choices_without_worker_authority(self):
         network = {"HTTPS_PROXY": "http://127.0.0.1:3128", "NO_PROXY": "127.0.0.1,localhost",
@@ -629,6 +670,44 @@ class Platform(unittest.TestCase):
         with mock.patch.object(platform, "require_supported"), \
                 self.assertRaisesRegex(ValueError, "Unknown application service operation"):
             platform.control("mask")
+
+    def test_lingering_is_read_turned_on_without_a_prompt_or_explained_with_its_command(self):
+        def loginctl(linger, enable=(0, "")):
+            calls = []
+
+            def run(argv, **kwargs):
+                calls.append(argv)
+                self.assertEqual(argv[:2], ["loginctl", "--no-ask-password"])
+                if argv[2] == "show-user":
+                    return subprocess.CompletedProcess(argv, *linger)
+                return subprocess.CompletedProcess(argv, enable[0], "", enable[1])
+            return calls, mock.patch.object(platform.subprocess, "run", side_effect=run)
+
+        user = platform.pwd.getpwuid(os.getuid()).pw_name
+        calls, patch = loginctl((0, "yes\n", ""))
+        with patch:
+            self.assertTrue(platform.lingering(enable=True)["enabled"])
+        self.assertEqual([argv[2] for argv in calls], ["show-user"], "an account that lingers is left as it is")
+        calls, patch = loginctl((0, "no\n", ""))
+        with patch:
+            self.assertFalse(platform.lingering()["enabled"])
+            self.assertEqual(calls[-1][2], "show-user", "reading never turns lingering on")
+            enabled = platform.lingering(enable=True)
+        self.assertTrue(enabled["enabled"])
+        self.assertEqual(calls[-1], ["loginctl", "--no-ask-password", "enable-linger"])
+        self.assertIn("keeps running after logout and starts at boot", enabled["detail"])
+        calls, patch = loginctl((0, "no\n", ""), (1, "Access denied"))
+        with patch:
+            refused = platform.lingering(enable=True)
+        self.assertFalse(refused["enabled"])
+        self.assertIn(f"stops when {user}'s last login session ends", refused["detail"])
+        self.assertIn("(loginctl: Access denied)", refused["detail"])
+        self.assertTrue(refused["detail"].endswith(f"run: sudo loginctl enable-linger {user}"))
+        with mock.patch.object(platform.subprocess, "run", side_effect=FileNotFoundError("loginctl")):
+            self.assertIn("(loginctl: loginctl)", platform.lingering()["detail"])
+        with mock.patch.object(platform.sys, "platform", "darwin"), mock.patch.object(platform.subprocess, "run") as run:
+            self.assertIsNone(platform.lingering(enable=True))
+        run.assert_not_called()
 
     def test_detached_update_keeps_dollar_expressions_in_paths_literal(self):
         with mock.patch.object(platform, "require_supported"), mock.patch.object(platform, "run", return_value="") as run:

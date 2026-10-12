@@ -3,8 +3,8 @@
 
 Application commands run from verified archives, outside the source checkout.
 Only engine executables are fixtures; service control, TLS and recovery are real.
-The whole lifecycle runs in one invocation; `reboot-install` and `reboot-verify` split an install from
-its check after the VM restarts. `recovery` installs the candidate over a baseline whose installation
+The whole lifecycle runs in one invocation; `reboot-install`, `logout-verify` and `reboot-verify` split an install
+over an SSH login from its checks once that login has closed and after the VM restarts. `recovery` installs the candidate over a baseline whose installation
 failed, after the documented cleanup. `bootstrap` runs the built install.sh through its public curl | sh command against a release
 server on this machine's loopback, whose name the root wrapper points here. `update` installs the baseline while that server
 answers for GitHub's release list and downloads, verifies automatic activation of the candidate, then opts out and
@@ -104,7 +104,7 @@ class Lifecycle:
             "Published-release baseline updated to the candidate; the guest runs the published files offline, not its own GitHub download; "
             "no storage migration (no application state is created)"
             if published else "Same-source version transition; no cross-release storage migration",
-            "No public download/bootstrap, minimal OS, login/logout or device trust acceptance",
+            "No public download/bootstrap, minimal OS, desktop login or device trust acceptance; only reboot-install logs in, over SSH",
             "No live provider, native worker confinement or macOS acceptance",
         ]}
         self.sequence = 0
@@ -342,14 +342,45 @@ class Lifecycle:
         assert all(digest(path) == value for path, value in retained.items()), "Uninstall changed retained data"
         self.result["retained_files"] = [str(path.relative_to(self.home)) for path in retained]
         self.result["passed"] = True
+        return removed
+
+    def login(self, label: str) -> dict:
+        """This account's logind record: its open sessions and whether it lingers."""
+        shown = self.run(label + "-logind", "loginctl", "show-user", os.getuid(), "--property=Sessions", "--property=Linger")
+        return dict(line.split("=", 1) for line in shown.splitlines() if "=" in line)
+
+    def manager(self, label: str) -> str:
+        return self.run(label + "-manager", "systemctl", "show", f"user@{os.getuid()}.service", "--property=MainPID",
+                        "--value").strip()
 
     def reboot_install(self):
-        """Install and leave the service running for the machine to restart."""
-        old, old_sha, _, before, *_ = self.prepare()
-        self.install(old, old_sha)
-        initial = self.healthy("installed", before)
-        self.doctor("installed", before)
-        write_json(self.state, {"env": self.env, "release": before, "pid": initial["pid"], "boot_id": boot_id()})
+        """Inside an SSH login of an account that does not linger, install the candidate, which turns lingering on,
+        and leave its service running for the login to close and the machine to restart."""
+        *_, new, new_sha, _, after = self.prepare()
+        before = self.login("before-install")
+        assert before["Sessions"] and before["Linger"] == "no", f"Needs a login of an account that does not linger: {before}"
+        installed = json.loads(self.run("install", "/usr/bin/python3", "-B", self.candidate / "install.py",
+                                        "--archive", new, "--sha256", new_sha))
+        assert installed["lingering"]["enabled"] and self.login("installed")["Linger"] == "yes", installed["lingering"]
+        initial = self.healthy("installed", after)
+        checks = {item["name"]: item for item in self.doctor("installed", after)["checks"]}
+        assert checks["runs without a login"]["state"] == "configured", checks["runs without a login"]
+        write_json(self.state, {"env": self.env, "release": after, "pid": initial["pid"], "manager": self.manager("installed"),
+                                "boot_id": boot_id()})
+        self.result["passed"] = True
+
+    def logout_verify(self):
+        """With the installing login closed and nobody logged in, the same user manager still runs the same service."""
+        self.disposable()
+        state = json.loads(self.state.read_text())
+        self.env.update(state["env"])
+        with socket.socket() as sock:
+            assert sock.connect_ex(("127.0.0.1", int(self.env["ALTITUDE_PORT"]))) == 0, \
+                "Altitude stopped when the installing login closed"
+        login = self.login("logged-out")
+        assert not login["Sessions"] and login["Linger"] == "yes", login
+        assert self.manager("logged-out") == state["manager"], "The user manager was restarted"
+        assert self.healthy("logged-out", state["release"])["pid"] == state["pid"], "The service was restarted"
         self.result["passed"] = True
 
     def reboot_verify(self):
@@ -366,8 +397,9 @@ class Lifecycle:
             time.sleep(1)
         started = self.healthy("rebooted", state["release"])
         assert started["pid"] != state["pid"]
+        assert not self.login("rebooted")["Sessions"], "Someone logged in to this account"
         self.doctor("rebooted", state["release"])
-        self.uninstall({})
+        assert "left on for this account" in self.uninstall({})["lingering"]
         self.result["passed"] = True
 
     def recovery(self):
@@ -643,7 +675,7 @@ class Lifecycle:
     def execute(self, phase: str = "all"):
         try:
             {"all": self.exercise, "bootstrap": self.bootstrap, "update": self.update, "reboot-install": self.reboot_install,
-             "reboot-verify": self.reboot_verify, "recovery": self.recovery,
+             "logout-verify": self.logout_verify, "reboot-verify": self.reboot_verify, "recovery": self.recovery,
              "public-install": lambda: self.public(update=False), "public-update": lambda: self.public(update=True)}[phase]()
         except Exception as exc:
             self.result["error"] = f"{type(exc).__name__}: {exc}"
@@ -1020,6 +1052,7 @@ class MacLifecycle(Lifecycle):
         assert all(digest(path) == value for path, value in retained.items()), "Uninstall changed retained data"
         self.result["retained_files"] = [str(path.relative_to(self.home)) for path in retained]
         self.result["passed"] = True
+        return removed
 
     def execute(self, phase: str = "mac"):
         try:

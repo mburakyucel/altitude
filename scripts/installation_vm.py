@@ -14,9 +14,9 @@ forward, so during the tests the guest reaches neither the internet nor this hos
 After the lifecycle passes, another disposable account installs through the built install.sh from a
 release server inside the guest. A third installs the baseline while that server answers for GitHub's
 release lookup and downloads: the baseline's own daemon installs the candidate automatically, then an
-explicit opt-out and app Update request install a newer synthetic release. Another installs the baseline,
-the VM restarts and the harness checks that the service came back
-on its own before removing it. --recovery instead runs only the
+explicit opt-out and app Update request install a newer synthetic release. Another logs in over SSH to an account
+that does not linger and installs the candidate there; once that login has closed the service must still run with
+nobody logged in, and after the VM restarts it must come back on its own before the harness removes it. --recovery instead runs only the
 recovery phase: the published baseline's installation must fail, and after the documented cleanup the
 candidate installed over it must start and keep its settings, TLS identity and data.
 --public instead builds nothing: the candidate is the release GitHub's releases/latest names, the guest keeps
@@ -324,7 +324,8 @@ def harness(machine: Machine, commit: str, phase: str, log: Path) -> int:
 
 
 def lifecycle(machine: Machine, commits: str, results: Path, record: dict) -> None:
-    """The lifecycle, then install.sh's bootstrap, the offered update, and an install that must survive the VM's restart."""
+    """The lifecycle, then install.sh's bootstrap, the offered update, and an install that must survive its login
+    closing and the VM's restart."""
     exits = record["harness_exit"]
     for phase in ("all", "bootstrap", "update", "reboot-install"):
         note(f"running the {phase} phase")

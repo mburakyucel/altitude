@@ -1019,6 +1019,39 @@ def control(action: str) -> str:
     return run("systemctl", "--user", action, SERVICE)
 
 
+def lingering(*, enable: bool = False) -> dict | None:
+    """Whether the service keeps running with nobody logged in. A systemd user manager, and the service with it, runs
+    after the account's last session ends and starts at boot only while logind keeps the account lingering. `enable`
+    turns that on for this account without a password prompt, which logind's default policy allows for one's own
+    account; a system that requires an administrator gets the command to run instead. None on macOS, whose
+    LaunchAgent belongs to the desktop login, and in a container, whose image runs its own manager."""
+    if _darwin() or containerized():
+        return None
+
+    def loginctl(*args: str) -> tuple[bool, str]:
+        try:
+            result = subprocess.run(["loginctl", "--no-ask-password", *args], capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return False, str(exc)
+        return result.returncode == 0, (result.stdout if result.returncode == 0 else result.stderr or result.stdout).strip()
+
+    user = pwd.getpwuid(os.getuid()).pw_name
+    shown, linger = loginctl("show-user", str(os.getuid()), "--property=Linger", "--value")
+    if shown and linger == "yes":
+        return {"enabled": True,
+                "detail": f"Lingering is on for {user}: Altitude keeps running after logout and starts at boot."}
+    reason = None if shown and linger == "no" else linger
+    if enable:
+        enabled, reason = loginctl("enable-linger")
+        if enabled:
+            return {"enabled": True, "detail": f"Lingering is now on for {user}: Altitude keeps "
+                    "running after logout and starts at boot. Uninstalling leaves it on."}
+    return {"enabled": False,
+            "detail": f"Altitude stops when {user}'s last login session ends and starts again only at the next login"
+            + (f" (loginctl: {reason})" if reason else "") + ". To keep it running after logout and start it at boot, "
+            f"run: sudo loginctl enable-linger {shlex.quote(user)}"}
+
+
 def detach(name: str, argv: list[str], environment: dict[str, str]) -> str:
     """Run one command as its own short-lived user unit, so it outlives a restart of the Altitude service."""
     require_supported()

@@ -30,9 +30,11 @@ class InstallScript(unittest.TestCase):
         (self.release / "install.py").write_text(textwrap.dedent(f"""\
             import json, pathlib, sys
             pathlib.Path({str(self.tmp / 'installer-args.json')!r}).write_text(json.dumps(sys.argv[1:]))
-            print(json.dumps({{"version": "v0.1.0", "service": "running", "url": "https://localhost:8443",
+            lingering = json.loads(pathlib.Path({str(self.tmp / 'lingering.json')!r}).read_text() or "null")
+            print(json.dumps({{"version": "v0.1.0", "service": "running", "url": "https://localhost:8443", "lingering": lingering,
                               "trust": {{"ca_cert": {str(self.tmp / 'home/.altitude/tls/ca.crt')!r}, "ca_sha256": {FINGERPRINT!r}}}}}))
             """))
+        (self.tmp / "lingering.json").write_text("")
         digest = {name: hashlib.sha256((self.release / name).read_bytes()).hexdigest()
                   for name in ("altitude-v0.1.0.tar.gz", "install.py")}
         self.script = self.tmp / "install.sh"
@@ -94,6 +96,16 @@ class InstallScript(unittest.TestCase):
         on_path = self.run_script(PATH=f"{self.bin}:{self.tmp}/home/.local/bin")
         self.assertNotIn("Put alt on your PATH", on_path.stdout)
         self.assertIn("1. Run: alt doctor", on_path.stdout)
+
+    def test_says_whether_altitude_keeps_running_without_a_login(self):
+        refused = ("Altitude stops when alice's last login session ends and starts again only at the next login. "
+                   "To keep it running after logout and start it at boot, run: sudo loginctl enable-linger alice")
+        (self.tmp / "lingering.json").write_text(json.dumps({"enabled": False, "detail": refused}))
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"\n{refused}\n\nNext:", result.stdout)
+        (self.tmp / "lingering.json").write_text("")  # a Mac: its LaunchAgent belongs to the desktop login
+        self.assertNotIn("login session", self.run_script().stdout)
 
     def test_mismatched_download_runs_nothing(self):
         (self.release / "altitude-v0.1.0.tar.gz").write_bytes(b"substituted archive")

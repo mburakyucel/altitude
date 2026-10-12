@@ -143,6 +143,8 @@ print(f"  Address: {result['url']}")
 if trust.get("ca_sha256"):
     print(f"  Certificate authority: {tilde(trust['ca_cert'])}")
     print(f"  Its fingerprint: {trust['ca_sha256'].split('=', 1)[-1]}")
+if result.get("lingering"):
+    print(f"\n{result['lingering']['detail']}")
 print("\nNext:")
 EOF
     step=1
