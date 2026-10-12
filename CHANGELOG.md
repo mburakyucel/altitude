@@ -3,6 +3,13 @@
 Release notes describe user-visible behavior, compatibility and recovery. The project is an early
 preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is not a published release.
 
+## Unreleased
+
+- Repair or Check again pressed in project setup just as a previous check finishes now runs at once,
+  instead of waiting up to half a minute for the next scheduled pass.
+- A task with a long session opens faster: its activity records are redacted once per read instead of
+  twice.
+
 ## v0.4.0 — 2026-10-12
 
 Feature release of the early preview. Altitude keeps running where it used to stop, shows more of

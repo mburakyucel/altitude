@@ -44,6 +44,7 @@ export default defineConfig({
   projects: [
     {
       name: "phone",
+      grepInvert: /@desktop-only/,
       use: {
         ...devices["Pixel 7"],
         defaultBrowserType: "chromium",

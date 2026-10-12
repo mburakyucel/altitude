@@ -187,7 +187,9 @@ def activity(project: str, slug: str) -> dict:
         return result
     path, _ = source
     records = _read_jsonl(path)
-    work = engines.background_work(engine, [_redact(record) for record, _ in records if record is not None])
+    # Every task read walks the whole source, so both readings below share one redaction of each record.
+    redacted = [None if record is None else _redact(record) for record, _ in records]
+    work = engines.background_work(engine, [record for record in redacted if record is not None])
     # A record that cannot be read may be the end of running work; an unfinished final line is only not yet written.
     if work is not None and all(record is not None or error == PARTIAL_RECORD for record, error in records):
         # Every running item, then the newest outcomes: an invocation's finished work is history, not status.
@@ -200,7 +202,7 @@ def activity(project: str, slug: str) -> dict:
         if result["state"] != "unavailable":
             result["state"] = "available"
         identity = engines.public_message_identity(engine, record)
-        for block, row in enumerate(engines.transcript_rows(engine, _redact(record), worktree)):
+        for block, row in enumerate(engines.transcript_rows(engine, redacted[index], worktree)):
             if row["role"] != "assistant" or row["kind"] != "message" or not row["text"]:
                 continue
             at = row.get("at") if _when(row.get("at")) is not None else native_text.get((identity, block, row["text"]))

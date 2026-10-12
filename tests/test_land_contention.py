@@ -340,9 +340,10 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.assertEqual(self.notes(second).count('pushed head'), 1)
         self.assess('second')
         self.assess('second', review_id='proposal-second')
-        # Its turn integrates current main once; the integrated head needs the owner again, within the turn.
-        self.await_condition(lambda: self.notes(second).count('waiting for owner assessment') >= 2,
-                             'assessment of the integrated head')
+        # Its turn integrates current main once; the integrated head needs the owner again, within the turn. A poll
+        # between the two assessments above notes the one still waiting, so the wait reads after the second push.
+        self.await_condition(lambda: 'waiting for owner assessment'
+                             in ''.join(self.notes(second).split('pushed head')[2:]), 'assessment of the integrated head')
         self.assertIn('head:', self.notes(second).rsplit('waiting for owner assessment', 1)[1])
         self.assertEqual(self.notes(second).count('pushed head'), 2)
         integrated = git('rev-parse', 'HEAD', cwd=worktree).strip()
