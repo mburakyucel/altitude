@@ -22,12 +22,12 @@ Altitude runs Claude Code and Codex like an engineering team on your computer.
 
 <picture>
   <source media="(max-width: 600px)" srcset="docs/images/altitude-phone.svg">
-  <img src="docs/images/altitude.svg" alt="Three levels. At the top, the coordinator runs the project with you and answers the agents for you. In the middle, one agent per task carries it from idea to production. At the bottom, helpers take focused pieces of a task. You can step in at any level: talk it through, message an agent or watch the work live." width="1200">
+  <img src="docs/images/altitude.svg" alt="You set the goal and make the calls. Below you, the coordinator (L3) plans with you and runs the project; task agents (L2), one per task, take each from idea to production; helpers (L1) handle research, tests and benchmarks on demand." width="1200">
 </picture>
 
-Altitude works in levels, and you choose yours. The coordinator (L3) keeps the whole project in
-view, task agents (L2) each own one task in its own worktree, and helpers (L1) take focused pieces.
-Complex work gets an independent review, by your other engine when you use both.
+Altitude works in levels, and you choose yours: set the goal with the coordinator, or step straight
+into any task. Each task agent works in its own worktree, and complex work gets an independent review,
+by your other engine when you use both.
 
 One engine is enough, and each integration is
 [replaceable by design](docs/ARCHITECTURE.md#engine-integration-boundary).
