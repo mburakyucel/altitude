@@ -910,13 +910,22 @@ No eligible alternative leaves the task blocked. Only a provider-reported reset 
 unknown reset times create no timer. The existing thirty-minute routing observation expiry is an
 availability recheck, not a reset claim. Ordinary resume preserves the provider conversation and launch model.
 
-For an already exited owner blocked by worker death or a recognized usage limit, L3 or the operator
+For a running owner, an operator/L3-stopped owner, or one blocked by worker death or a recognized usage limit, L3 or the operator
 uses [`alt task handoff`](CLI.md#explicit-provider-handoff) with the observed attempt, target engine
-and reason. The daemon fences worker/session and block identity, refuses live workers, in-flight claims,
+and reason. A running owner gets one native checkpoint instruction to refresh `progress.md` and write a
+request-specific readiness file identifying its attempt and worker/session. This works with workers
+whose immutable CLI predates handoff. Readiness does not depend on file modification time or a send receipt.
+There is no automatic timeout. Confirmed engine exit, a recorded usage limit, an existing Stop or an
+explicit `--now` allows saved-context transfer without a new note; silence and network failure do not.
+`--request <id> --cancel` cancels while the request waits and sends a correction to the same owner.
+Once the daemon records its stopping phase, cancellation refuses. The daemon stops the entire owned
+job and requires confirmed termination before requeue. A restart retains the request and readiness
+identity, does not resend a claimed checkpoint instruction, and recognizes a completed requeue.
+The daemon fences worker/session and block identity, refuses in-flight claims and active reviews,
 finished tasks and decision-only waits, and checks task/project pins and target availability. It retains
 the old worker records and requeues the same task with a one-attempt `next_engine`. Requeue clears the
 current verification snapshot; prior reports and delivery history remain. Dispatch checks pins
-and configured target options again, preserves committed and uncommitted work in the existing worktree,
+and configured target options again, ignores new-task model choices, preserves committed and uncommitted work in the existing worktree,
 validates isolation and adopted ancestry, and increments the attempt only when the fresh worker binds. The target is then
 consumed. Task identity, PRs, expected files, saved messages, unanswered questions, decisions and merge holds
 survive; continuation supplies no missing approval. L3 verifies activation and fresh task state before

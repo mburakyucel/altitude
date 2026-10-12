@@ -360,9 +360,13 @@ def main(argv=None) -> None:
     x = ts.add_parser("status"); x.add_argument("slug", nargs="?"); x.add_argument("--brief", action="store_true"); x.add_argument("--json", action="store_true", dest="as_json")
     rs = ts.add_parser("resume", help="continue a blocked L2 or reported/open-PR owner; L3 can also return a contradicted report")
     rs.add_argument("slug"); rs.add_argument("--reason", required=True)
-    ho = ts.add_parser("handoff", help="L3/operator: continue an exited, fault/limit-blocked owner as a fresh attempt on another configured engine")
-    ho.add_argument("slug"); ho.add_argument("--engine", required=True, choices=config.ENGINES)
-    ho.add_argument("--attempt", required=True, type=int); ho.add_argument("--reason", required=True)
+    ho = ts.add_parser("handoff", help="L3/operator: transfer an owner to another engine after its handoff note")
+    ho.add_argument("slug"); ho.add_argument("--engine", choices=config.ENGINES)
+    ho.add_argument("--attempt", type=int); ho.add_argument("--reason", required=True)
+    ho.add_argument("--request", help="observed pending transfer ID for switch-now or cancellation")
+    mode = ho.add_mutually_exclusive_group()
+    mode.add_argument("--now", action="store_true", help="explicitly transfer using saved context without waiting for a new note")
+    mode.add_argument("--cancel", action="store_true", help="cancel the observed transfer before stopping begins")
     ms = ts.add_parser("message", help="message the existing L2; resumes blocked/open-PR owners or L3 correction of a contradicted report")
     ms.add_argument("slug"); ms.add_argument("text", nargs="?", default="-"); ms.add_argument("--file")
     ms.add_argument("--image", action="append", dest="image_ids", help="committed image ID from this project; repeat to attach")
@@ -768,8 +772,17 @@ def main(argv=None) -> None:
             out(T.release(p, args.slug, args.reason, actor=ACTOR))
         elif tc in ("reject", "resume", "stop", "preserve-checkout", "handoff"):
             from altitude import dispatch
-            options = {"engine": args.engine, "expected_attempt": args.attempt} if tc == "handoff" else {}
-            out(dispatch.request_task_operation(p, args.slug, tc, args.reason, actor=ACTOR, **options))
+            if tc == "handoff" and args.request:
+                if not (args.now or args.cancel) or args.engine or args.attempt is not None:
+                    ap.error("handoff --request requires --now or --cancel, without --engine/--attempt")
+                out(dispatch.handoff_control(p, args.slug, args.request, "now" if args.now else "cancel",
+                                             actor=ACTOR, reason=args.reason))
+            else:
+                if tc == "handoff" and (args.cancel or not args.engine or args.attempt is None):
+                    ap.error("new handoff requires --engine and --attempt; cancellation requires --request")
+                options = {"engine": args.engine, "expected_attempt": args.attempt,
+                           "handoff_now": args.now} if tc == "handoff" else {}
+                out(dispatch.request_task_operation(p, args.slug, tc, args.reason, actor=ACTOR, **options))
         elif tc == "recheck-ci":
             out(T.recheck_ci(p, args.slug, args.run, args.at, args.reason, actor=ACTOR))
         elif tc == "block":

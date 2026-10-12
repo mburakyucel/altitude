@@ -138,13 +138,20 @@ state and worker/session identity, refuses a stale target, and treats a retry of
 request as idempotent while the terminal receipt still matches; an intervening lifecycle gets a new
 identity-fenced request before altd relaunches, stops, or removes a worker.
 `alt task handoff <slug> --engine <engine> --attempt <N> --reason '…'` uses this same coordinator
-transport and daemon request for an exited owner blocked by worker death or a recognized usage
-limit. It fences the observed attempt, worker/session and block, refuses live workers, active claims
-and explicit pins, and requeues the same task. Its `next_engine` confines the next launch to that
+transport and daemon request for a running owner, an operator/L3-stopped owner, or one blocked by
+worker death or a recognized usage limit. The running owner receives a native instruction to refresh
+`progress.md` and write a request/attempt/worker-bound readiness file; no updated owner CLI is required.
+The daemon waits without a timeout. Confirmed exit, a recorded usage limit, existing Stop or explicit
+`--now` permits transfer using saved context. `--request <id> --cancel` keeps the current owner until
+the stopping phase commits. Neither silence nor network failure forces a switch. The entire worker
+job must be confirmed stopped before requeue. The durable request fences the observed attempt,
+worker/session and block, refuses active claims/reviews and explicit pins, and retains its receipt
+across restart. Its `next_engine` confines the next launch to that
 engine's configured options and is consumed when dispatch binds the fresh attempt. Pins and
 availability are checked again before execution and launch. `route.pick_task` supplies the same
 target-aware availability and pin explanation to dispatch and the queue. A fresh attempt clears current
-verification while retaining prior reports and delivery history. Ordinary resume remains unchanged.
+verification while retaining prior reports and delivery history. Handoff ignores new-task model choices
+and reports whether a fresh handoff note was obtained. Ordinary resume remains unchanged.
 The attempt number fences every L2 command to the current attempt: an L2 may reply, block, complete,
 resolve a dilemma against its source message, and land only its own task.
 

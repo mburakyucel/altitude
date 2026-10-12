@@ -135,7 +135,7 @@ policy. L3 still verifies the actual cause and recovery before resuming work.
 
 ### Explicit provider handoff
 
-L3 or the operator can continue an exited owner as a fresh attempt on another configured engine:
+L3 or the operator can transfer a running or stopped owner to a fresh attempt on another configured engine:
 
 ```sh
 alt task status blocked-owner --json
@@ -146,14 +146,35 @@ alt task status blocked-owner --json
 The coordinator transport takes the same argument list:
 `{"kind":"alt","args":["task","handoff","blocked-owner","--engine","<engine>","--attempt","2","--reason","Continue the authorized work"]}`.
 The CLI persists a daemon request; it launches no worker. The task must have a prior attempt and
-worker/session identity and be blocked by worker death (`l2-died`) or a recognized usage limit.
-The daemon checks the attempt, worker/session and block again. Live workers, active lifecycle claims,
+worker/session identity and be running, stopped by L3 or the operator, or blocked by worker death
+(`l2-died`) or a recognized usage limit. A running owner receives a request to refresh `progress.md`
+with its current work, completed checks, unfinished work and next steps, then write the exact
+request-scoped readiness receipt supplied in that instruction. Existing workers use their file tools;
+they do not need an updated CLI. The transfer waits for readiness without a time cutoff. A slow
+command, silence or network interruption does not force a switch. A confirmed ended worker, a
+recorded usage limit or an explicit Stop permits transfer using saved context without a fresh note.
+
+The request ID in task status identifies the waiting transfer. Switch immediately or cancel it explicitly:
+
+```sh
+alt task handoff blocked-owner --request <request-id> --now --reason 'Use saved context now'
+alt task handoff blocked-owner --request <request-id> --cancel --reason 'Keep the current owner'
+```
+
+`--now` also works on the initial request with `--engine` and `--attempt`. Cancellation is accepted
+until stopping begins; it cannot retract an instruction the engine already read. It keeps the current
+owner and sends a correction, but does not claim an already-ended worker is running. The daemon stops
+the worker and its descendants and confirms termination before queuing any replacement. Unknown
+termination refuses the transfer. The new brief says whether the handoff note was refreshed; saved
+context is not current verification and does not include the complete previous native conversation.
+
+The daemon checks the attempt, worker/session and block again. Active lifecycle claims and reviews,
 decision-only waits, reported/completed tasks, explicit task/project pins and unavailable or unconfigured
 targets refuse. A changed block or replacement worker invalidates the request. An identical retry reuses
 its receipt while the resulting lifecycle still matches.
 
 Successful handoff queues the same task for ordinary dispatch, constrained to the requested engine's
-configured options for one fresh attempt. Configuration and availability are checked again at launch;
+configured options for one fresh attempt, ignoring model choices for new tasks. Configuration and availability are checked again at launch;
 an unavailable target does not fall through to another engine, and the queue shows that target's
 availability or pin conflict using the same routing decision as dispatch. The worktree, uncommitted edits, branch,
 PRs, expected files, progress, messages, provider history, questions and merge holds remain. Prior reports remain
