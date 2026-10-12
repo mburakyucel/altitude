@@ -60,7 +60,8 @@ func linuxConfiguration(kernel: URL, initrd: URL, commandLine: String, disk: URL
     network.macAddress = VZMACAddress.randomLocallyAdministered()
     config.networkDevices = [network]
     config.socketDevices = [VZVirtioSocketDeviceConfiguration()]
-    config.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
+    // No entropy device: Ubuntu 24.04's arm64 kernel panicked reading it ("corrupted stack end detected inside
+    // scheduler" in virtio_rng), and its random pool is ready at boot without it.
     try config.validate()
     return config
 }
