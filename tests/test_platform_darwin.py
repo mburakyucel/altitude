@@ -621,11 +621,11 @@ class Confinement(DarwinCase):
                      '(subpath "/private/var/folders/ab/cd")', '(subpath "/dev")'):
             self.assertIn(root, text)
 
-    def test_profile_refuses_the_services_that_start_programs_outside_it(self):
+    def test_profile_refuses_the_paths_that_run_programs_outside_it(self):
         self.patch(platform, "_user_temp", return_value="/private/var/folders/ab/cd/T/")
         text = platform.seatbelt_profile(["/private/tmp/work"])
         for rule in ('(deny mach-lookup (global-name-prefix "com.apple.CoreSimulator.")'
-                     ' (xpc-service-name-prefix "com.apple.CoreSimulator."))', "(deny lsopen)"):
+                     ' (xpc-service-name-prefix "com.apple.CoreSimulator."))', "(deny lsopen)", "(deny appleevent-send)"):
             self.assertIn(rule, text)
         self.assertTrue(text.endswith(platform.SERVICE_ESCAPES), "a later allow would reopen them")
 
