@@ -105,7 +105,7 @@ class TestAdoption(AltitudeCase):
         self.assertEqual(self.git("rev-parse", "origin/main^{tree}"), self.git("rev-parse", f"{second['head']}^{{tree}}"))
         self.assertEqual(S.load_task("demo", "fix-x")["adoption_history"], [first])
         for args in commands:
-            if args[:2] == ["git", "push"]:
+            if args[:2] == ["git", "push"] and land.LINE_REF not in args[-1]:
                 self.assertIn("refs/heads/worktree-fix-x:refs/heads/proposal/second", args)
                 self.assertFalse(any("--force" in arg for arg in args))
 
@@ -238,7 +238,7 @@ class TestAdoption(AltitudeCase):
         self.assertEqual(self.git("branch", "--show-current").strip(), "worktree-fix-x")
         self.assertIn("proposal/external", git("branch", cwd=self.remote))
         self.assertNotIn("worktree-fix-x", git("branch", cwd=self.remote))
-        pushes = [a for a in commands if a[:2] == ["git", "push"]]
+        pushes = [a for a in commands if a[:2] == ["git", "push"] and land.LINE_REF not in a[-1]]
         self.assertTrue(pushes)
         self.assertFalse(any("--force" in arg for args in pushes for arg in args))
         merges = [a for a in self.gh_log() if a[:2] == ["pr", "merge"]]
@@ -444,21 +444,23 @@ print('3 passed')
         self.assertEqual(len(tested), 2)
         self.assertNotEqual(tested[0], tested[1])
         self.assertEqual(tested[-1], self.git("rev-parse", "origin/main^{tree}").strip())
-        pushes = [args for args in commands if args[:2] == ["git", "push"]]
+        pushes = [args for args in commands if args[:2] == ["git", "push"] and land.LINE_REF not in args[-1]]
         self.assertEqual(len(pushes), 2)
         self.assertTrue(all("refs/heads/worktree-fix-x:refs/heads/proposal/external" in args for args in pushes))
-        self.assertFalse(any("force" in arg or arg == "--delete" for args in pushes for arg in args))
+        # The turn's push leases only the merge line; the adopted branch only fast-forwards.
+        self.assertFalse(any("force" in arg and land.LINE_REF not in arg or arg == "--delete"
+                             for args in pushes for arg in args))
         merges = [args for args in self.gh_log() if args[:2] == ["pr", "merge"]]
         self.assertEqual(len(merges), 1)
         self.assertNotIn("--delete-branch", merges[0])
 
     def test_hold_set_during_checks_is_reloaded_before_merge(self):
         original = land._checks_evidence
-        def hold(*args):
+        def hold(*args, **kwargs):
             task = S.load_task("demo", "fix-x")
             task["hold_merge"] = "Late operator hold"
             S.save_task("demo", task)
-            return original(*args)
+            return original(*args, **kwargs)
         with mock.patch.object(land, "_checks_evidence", side_effect=hold), self.assertRaisesRegex(
                 land.LandError, "Late operator hold"):
             self.adopt(merge=True)
@@ -467,9 +469,9 @@ print('3 passed')
     def test_retarget_to_same_sha_base_during_checks_refuses_merge(self):
         self.git("push", "-q", "origin", "origin/main:refs/heads/release")
         original = land._checks_evidence
-        def retarget(*args):
+        def retarget(*args, **kwargs):
             self.write_pr(baseRefName="release")
-            return original(*args)
+            return original(*args, **kwargs)
         with mock.patch.object(land, "_checks_evidence", side_effect=retarget), self.assertRaisesRegex(
                 land.LandError, "base or head moved"):
             self.adopt(merge=True)

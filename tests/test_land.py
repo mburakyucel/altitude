@@ -10,6 +10,7 @@ import os
 import stat
 import subprocess
 import sys
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -70,6 +71,11 @@ class TestLand(AltitudeCase):
         path.write_text(json.dumps(task))
         self.setenv("ALTITUDE_ACTOR", "l2")
         self.setenv("ALTITUDE_ATTEMPT", str(attempt))
+
+    @staticmethod
+    def branch_pushes(commands):
+        """Pushes that publish a branch; merge line writes push only its own ref."""
+        return [a for a in commands if a[:2] == ["git", "push"] and not any(land.LINE_REF in arg for arg in a)]
 
     def record_commands(self, answer=None):
         """Record every command land runs; `answer(args)` may return a CompletedProcess in place of one."""
@@ -160,7 +166,8 @@ class TestLand(AltitudeCase):
         corrected = []
         def correct_during_validation(root, target):
             result = original_view(root, target)
-            if sys._getframe(1).f_code.co_name == "check_before_merge" and not corrected:
+            # The correction arrives in the turn's final validation, after the candidate's tests.
+            if sys._getframe(2).f_code.co_name == "before_merge" and not corrected:
                 corrected.append(T.message("demo", "fix-x", T.OPERATOR_MESSAGE_ROLE, "Correction: preserve empty results too."))
             return result
         with mock.patch.object(land, "_pr_view", new=correct_during_validation):
@@ -829,9 +836,10 @@ class TestLand(AltitudeCase):
         self.assertEqual((result["checks"], result["merged"]), ("pass", True))
         self.assertEqual(sleeps, [15, 30, 60, 60])
         calls = self.gh_log()
-        # Five polls and the merge turn's confirmation; whole-PR reads do not repeat with the polls.
+        # Five polls and the turn's exact read; whole-PR reads do not repeat with the polls: the branch's PR, the
+        # readiness check before joining the merge line and again as its turn starts, and the final validation.
         self.assertEqual(len([a for a in calls if a[:2] == ["api", "graphql"]]), 6)
-        self.assertEqual(len([a for a in calls if a[:2] == ["pr", "view"]]), 4)
+        self.assertEqual(len([a for a in calls if a[:2] == ["pr", "view"]]), 5)
         self.assertFalse(any(a[:2] == ["pr", "checks"] for a in calls))
 
     def test_rate_limit_refusal_waits_and_the_landing_resumes(self):
@@ -896,7 +904,7 @@ class TestLand(AltitudeCase):
         self.assertTrue(result["merged"])
         self.assertIn("GitHub confirms PR #101 merged", stderr.getvalue())
         self.assertEqual(len([a for a in commands if a[:3] == ["gh", "pr", "merge"]]), 1)
-        self.assertEqual(len([a for a in commands if a[:2] == ["git", "push"]]), 1)
+        self.assertEqual(len(self.branch_pushes(commands)), 1)
         self.assertEqual(S.load_task("demo", "fix-x")["review_merged_head"], result["head"])
 
     def test_pr_retargeted_and_merged_during_a_refused_merge_is_not_recorded_as_delivered(self):
@@ -948,7 +956,7 @@ class TestLand(AltitudeCase):
         self.assertEqual(len([a for a in commands if a[:3] == ["gh", "pr", "merge"]]), 1)
         # A refused tree read, then a confirmation and a refused tree read again, then a confirmation and the tree.
         self.assertEqual(reads["after_merge"], 6)
-        self.assertEqual(len([a for a in commands if a[:2] == ["git", "push"]]), 1)
+        self.assertEqual(len(self.branch_pushes(commands)), 1)
 
     def test_refused_merge_is_attempted_again_only_after_every_gate_is_read_again(self):
         # #814: a refused merge did nothing; the next attempt re-reads the candidate, its checks and its gates.
@@ -1317,19 +1325,17 @@ class TestLand(AltitudeCase):
         self.fake_runner("make", 0, "Ran 12 tests in 0.4s\n\nOK\n")
         real, added = land._checks_value, []
 
-        def classify_then_add_workflow(root, number, pair):
-            state = real(root, number, pair)
+        def classify_then_add_workflow(root, number, pair, **kwargs):
+            state = real(root, number, pair, **kwargs)
             if not added:
                 self.advance_base(".github/workflows/late.yml", "on: [pull_request]\n")
                 added.append(pair["base_sha"])
             return state
 
         self.patch(land, "_checks_value", side_effect=classify_then_add_workflow)
-        with self.assertRaisesRegex(land.LandError, "origin/main moved"):
-            land.land("fix: classification race", cwd=self.repo, wait=0, merge=True)
-        self.assertEqual(self.runner_log(), [])
-        # With time left the integrated head is classified again: the base now ships CI, so no local suite runs.
-        result = land.land("fix: classification race", cwd=self.repo, wait=1, merge=True)
+        # The turn integrates the moved main and classifies that head again: the base now ships CI, so no local
+        # suite runs.
+        result = land.land("fix: classification race", cwd=self.repo, wait=0, merge=True)
         self.assertEqual(result["checks"], "skipped")
         self.assertFalse(result["merged"])
         self.assertEqual(self.runner_log(), [])
@@ -1376,8 +1382,8 @@ class TestLand(AltitudeCase):
         self.staged_change()
         real = land._checks_evidence
 
-        def adopt_after_checks(root, pair):
-            result = real(root, pair)
+        def adopt_after_checks(root, pair, **kwargs):
+            result = real(root, pair, **kwargs)
             task = S.load_task("demo", "fix-x")
             task["adopted_pr"] = {"number": 102, "branch": "proposal/other"}
             S.save_task("demo", task)
@@ -2614,14 +2620,13 @@ class TestRequiredPrCheck(AltitudeCase):
             self.classify()
         self.assert_not_merged()
 
-    def test_required_check_is_refreshed_inside_merge_lock(self):
-        import fcntl
+    def test_green_candidate_waits_for_the_merge_line_head(self):
         self.classify()
-        common = Path(self.git("rev-parse", "--git-common-dir").strip())
-        with (common / "altitude-land.lock").open("w") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            with mock.patch.object(land, "LAND_WAIT_TIMEOUT", 0), self.assertRaisesRegex(land.LandError, "landing wait timed out"):
-                land.land("another owner is merging", cwd=self.repo, wait=0, merge=True)
+        tree = self.git("hash-object", "-t", "tree", "-w", os.devnull).strip()
+        line = json.dumps({"entries": [{"pr": 900, "token": "another-owner", "ready": time.time(), "beat": time.time()}]})
+        self.git("push", "-q", "origin", self.git("commit-tree", tree, "-m", line).strip() + ":" + land.LINE_REF)
+        with self.assertRaisesRegex(land.LandError, "merge line wait timed out with 1 candidate"):
+            land.land("another owner is merging", cwd=self.repo, wait=0, merge=True)
         self.assert_not_merged()
 
     def test_two_owners_serialize_merges_and_reject_the_second_stale_candidate(self):
@@ -2669,7 +2674,7 @@ class TestRequiredPrCheck(AltitudeCase):
             if args[:3] == ["gh", "pr", "merge"] and cwd == self.repo:
                 # Yield at the external merge boundary while the first owner holds the real lock.
                 with mock.patch.dict(os.environ, second_env):
-                    with mock.patch.object(land, "LAND_WAIT_TIMEOUT", 0), self.assertRaisesRegex(land.LandError, "landing wait timed out"):
+                    with self.assertRaisesRegex(land.LandError, "merge line wait timed out"):
                         land.land("second owner overlaps first merge", cwd=second, wait=0, merge=True)
                 competing_attempts.append(True)
             return real(args, cwd, timeout=timeout)
@@ -2701,7 +2706,7 @@ class TestRequiredPrCheck(AltitudeCase):
                 self.classify()
                 calls = 0
 
-                def recheck(root, pair):
+                def recheck(root, pair, **kwargs):
                     nonlocal calls
                     calls += 1
                     if calls == 2:
@@ -2712,7 +2717,7 @@ class TestRequiredPrCheck(AltitudeCase):
                             task = S.load_task("demo", "fix-x")
                             task["hold_merge"] = "operator review"
                             S.save_task("demo", task)
-                    return real(root, pair)
+                    return real(root, pair, **kwargs)
 
                 with mock.patch.object(land, "_checks_evidence", side_effect=recheck):
                     if late == "hold":
@@ -2729,10 +2734,10 @@ class TestRequiredPrCheck(AltitudeCase):
         real = land._checks_evidence
         calls = 0
 
-        def move_main(root, pair):
+        def move_main(root, pair, **kwargs):
             nonlocal calls
             calls += 1
-            value = real(root, pair)
+            value = real(root, pair, **kwargs)
             if calls == 1:
                 self.advance_base("late-main.txt")
             return value

@@ -929,15 +929,14 @@ CLI, and the backend applies the identity, clean-Git, isolation, and merge-polic
 command and effect boundary. Claude hooks add telemetry, coordination delivery and the operator-message notice;
 they are not the backend authority check. Claude launches with images stream the prompt as one user message
 marked as the human's.
-A merging landing fetches the base, incorporates it into the task branch, publishes and waits for that
-head's own checks and owner assessment, keeping the owner session alive. Only the final
-confirm-and-merge takes the repository turn, which waits at most one hour and reports seconds waited;
-external runner executions do not share it. When another merge moves main first, the same command
-integrates it, pushes and waits for fresh checks within its original publication deadline, repeating
-ownership, review, hold, approval and issue-closure gates. Head or PR identity movement refuses;
-adopted PR pushes remain fast-forward only. Nonmerging invocations never take the turn. Task messages
-and Stop use their ordinary lifecycle while it waits. Failure, timeout or process exit releases the
-turn; a later invocation validates the current candidate and checks afresh.
+A merging landing publishes its head and waits for that head's own check and owner assessment,
+keeping the owner session alive, then waits in the repository's [merge line](CLI.md#concurrent-landings)
+and reports seconds waited. At its turn it integrates main if main moved, pushes, waits for that fresh
+check and merges, repeating ownership, review, hold, approval and issue-closure gates. Head or PR
+identity movement refuses; adopted PR pushes remain fast-forward only. Nonmerging invocations never
+join the line. Task messages and Stop use their ordinary lifecycle while it waits. Failure, timeout or
+process exit leaves the line (a killed landing's entry expires after five minutes without a
+heartbeat); a later invocation validates the current candidate and checks afresh.
 An owner whose branch needs manual conflict reconciliation updates it in the worktree; a conflict
 they cannot resolve goes to L3 through an ordinary `alt task block`, without `--fault`.
 The delivery gate requires Python, web, build and phone/desktop browser checks. Review captures stay
@@ -1359,7 +1358,7 @@ after a clean exit, and its commands end with it. Background-task and status not
 Send now message the driver returns or cannot confirm; a delivered one joins or starts a turn. A successful turn
 waiting on its own background work keeps running. Resume, handoff and cleanup treat a worker as live while anything still runs in its job.
 An `alt land` waiting on checks or owner assessment ends with that job: on SIGTERM it leaves the
-candidate published and unmerged, the process releases the repository turn, and the owner's
+candidate published and unmerged, the process leaves the merge line, and the owner's
 next turn receives an automatic notice naming the PR and the published head to assess before
 re-running `alt land`. A merged change
 to Altitude's backend, launch source or served web bundle inputs activates at a narrow quiet point: no dispatch

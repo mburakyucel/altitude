@@ -3052,11 +3052,13 @@ def finish_machine_run(project: str, slug: str, row: dict) -> dict:
 
 
 def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, head: str,
-                         reason: str, actor: str, source: str = "task") -> dict:
+                         reason: str, actor: str, source: str = "task", validate_only: bool = False) -> dict:
     """Release a merge hold on the operator's own approval of the task's current PR.
 
     The owner applies an approval from the task chat; L3 applies one from project chat. Either judges that the
     message approves the current scope; altd binds that original message, sent after this hold, to this PR head.
+    `validate_only` checks the approval without releasing the hold, so a landing refuses an invalid approval
+    before it integrates main or joins the merge line.
     """
     if actor not in ("l2", "l3") or not reason.strip() or (actor == "l2" and source != "task"):
         raise TransitionError("the owner applies task-chat approval; L3 applies project-chat approval")
@@ -3109,6 +3111,8 @@ def apply_merge_approval(project: str, slug: str, approval: str, pull: dict, *, 
                    "hold": task["hold_merge"], "hold_event": generation, "hold_at": hold["at"],
                    "hold_id": task.get("hold_merge_id"),
                    "pr": pull["number"], "url": pull["url"], "head": head, "at": S.now()}
+        if validate_only:
+            return receipt
         task.update(hold_merge=None, merge_approval=receipt)
         S.save_task(project, task)
         S.append_event(project, slug, "release-merge", **receipt)

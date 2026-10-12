@@ -975,7 +975,7 @@ when the observable behavior breaks. Keep the expected result independent of the
 | Adversarial review | `test_review_engines.py`, `test_reviews.py`, `test_review_interfaces.py`: the captured-input adapter over real stdio (list/read/search, long-line continuation, refused private paths, read marker), the first JSON object accepted from a prose-wrapped answer and no object refused, both engines' confinement flags, unit lifecycle without a duration cutoff, cancellation, unknown termination, and a reviewer that read nothing failing instead of completing with no coverage. Startup/nonzero/capture-overflow fixtures retain bounded sanitized stderr and exit status. Structured stdout-only failures with empty stderr retain fixed error categories in owner-readable receipts across explicit retries for both engines; an unrecognized Claude result retains its allowlisted failure facts there. Unknown, malformed, incomplete and truncated output stays explicit; private prose/source and unknown values are omitted. Fixtures preserve original task ownership through cancellation/retry and keep successful reviews intact. | Fixture processes stand in for the CLIs; whether the installed Codex exposes MCP tools through its code-mode host, and whether the installed Claude connects the adapter without safe mode while loading no hooks, plugins or instructions, is established by recorded reviewer runs, not by the suite. Failure diagnostics do not establish provider compatibility, historical crash cause or recovery; live-provider testing remains deferred. |
 | Improvement review | `test_improvement_review.py`: every signal predicate on fictional records, the window and its limits, the 64 KiB prompt with 3 KiB sheets and counted overflow, operator-only chat pairs, citations limited to places in the prompt, untrusted answers (unknown places, bad targets and signals, paths and credentials, too many suggestions), the reviewer's flags and token limit, isolation failing closed, refusals before launch, timeouts, usage limits and unusable answers; every eval scenario loads with a consistent key; one-to-one matching. | The reviewer CLI is scripted; whether a model finds planted friction is the [eval](#improvement-review-eval), run by hand on the plan. |
 | Routing/failures | `test_route.py`, `test_direct_dispatch.py`, `test_temporary_capacity.py`, composed journeys: pins, availability, fallback, backoff and failure without duplicate completion. | Deterministic availability/quota input does not prove real authentication, entitlement or current provider compatibility. |
-| Landing | `test_land.py`, `test_land_contention.py`, `test_git_policy_integration.py`: real Git/bare origins, concurrent owner processes (merging and required-check turns, timeouts, terminated holders), ordinary and assigned histories without trailer repair, selected index content, unrelated working edits, task/PR ownership, adopted ancestry, holds, failed/skipped/absent checks, changing base/head, candidate validation and cleanup. | Fake GitHub cannot establish remote API/permission/check-association compatibility. Owners review outgoing history and diffs for scope and privacy; tests do not establish semantic content screening. |
+| Landing | `test_land.py`, `test_land_contention.py`, `test_git_policy_integration.py`: real Git/bare origins, concurrent owner processes (merge-line order, at most two checks per candidate, held waiters, stale heads, takeover fencing, timeouts, terminated holders), ordinary and assigned histories without trailer repair, selected index content, unrelated working edits, task/PR ownership, adopted ancestry, holds, failed/skipped/absent checks, changing base/head, candidate validation and cleanup. | Fake GitHub cannot establish remote API/permission/check-association compatibility. Owners review outgoing history and diffs for scope and privacy; tests do not establish semantic content screening. |
 | Merge approval | `test_recorded_merge_approval.py`, `test_merge_approval_journey.py`: original task/project/UI authority, intervening discussion, Git integration and scoped follow-up delivery; invalid sources, renewed holds and wrong PR identity refuse. | Scope, revocation and conditions are explicit coordinator judgments in fixtures; these tests do not establish live model interpretation. |
 | Isolation | `test_isolation.py`, `test_codex_door.py`, `test_l3_privilege.py`, `test_service_lifecycle.py`: isolated storage, ownership, denied paths and simulated restart/adoption. | Test guards prevent accidental external effects; they are not a security sandbox for hostile test code. Actual OS confinement/service restart is separate host evidence. |
 | API/UI streaming and projects | `project-isolation.pw.ts`, `project-lifecycle.pw.ts`: concurrent streams in both completion orders, accepted/refused errors and retry, queue/history, cross-project ownership and reattachment/session retention. | External engine output is deterministic. |
@@ -1390,29 +1390,32 @@ publishes that checked commit's release; see [publish a release](RELEASING.md#pu
 CI verifies that it tests the exact commit and, for a pull request, that GitHub's merge commit has
 the event's base and head as parents, that the head includes that base and that the tested merge
 tree equals the head tree. Landing requires the specific successful PR
-job on the current head, verifies that current main is an ancestor of that head, and serializes
-only the final confirm-and-merge across Altitude owners; publication and CI waits run side by side.
-For reviewed merging candidates, CI and explicit owner reassessment share one bounded wait outside
-the repository turn. When another merge moves main first, the same invocation integrates it and waits
-for the new head's fresh check. Concurrent worktrees can race to update a remote-tracking ref;
+job on the current head and verifies that current main is an ancestor of that head at merge time.
+Merges go through one ordered [merge line](CLI.md#concurrent-landings) per repository, first ready,
+first merged; publication, first checks and assessment run side by side. A waiting candidate keeps
+its green check and is not pushed while main moves; only the head of the line integrates main, runs
+one fresh check and merges, so a candidate uses at most two checks (#777). Concurrent worktrees can race to update a remote-tracking ref;
 landing repeats that specific failed fetch once and requires a successful fresh fetch, sharing
 dispatch's collision classification. Other fetch failures still refuse delivery.
 Landing fetches only the requested branches, without tags, and reports a collision retry.
 `tests/test_fetch_concurrency.py` forces this race during a real Git transfer.
 `tests/test_land_contention.py` drives real competing
-landing processes, Git and fixture reviewers: a green candidate on current main merging while
-another owner's check is pending (for more than ten minutes on a scaled landing clock), main moving
-during a check or an assessment, concurrent nonmerging publications, timeout,
-termination, ownership loss and material-edit refusal. Proposal followed by implementation review
+landing processes, Git and fixture reviewers: three ready candidates merging in order with at most
+two checks each, a candidate on current main merging on its existing check, a green candidate merging
+while another owner's check is pending (for more than ten minutes on a scaled landing clock), main
+moving during a first check, an assessment or the head's fresh check, a held candidate staying
+untouched in line, a foreign head without a heartbeat being removed, a takeover fencing the earlier
+landing's push, concurrent nonmerging publications, timeout, termination, ownership loss and
+material-edit refusal. Proposal followed by implementation review
 reports both stale assessments together; messages during admission, hosted CI or local validation
 require explicit assessment in the same landing invocation. Invalid dispositions
 leave the candidate unmerged and its operator hold intact, and final validation does not restart the
 assessment deadline. `tests/test_reviews.py` checks the review identity and changed evidence in refusals.
 Original review receipts remain unchanged. Fixtures establish the application protocol, not live engine support for
 background tool sessions or provider compatibility.
-CI runs outside the command and other installations do not share its turn. If only main moves after
-candidate pinning, a merging invocation integrates it, pushes and waits for fresh checks within
-the original publication deadline. Ownership, reviews, holds, recorded approval and issue-closure
+CI runs outside the command. Other installations share the line through its ref on origin. If an
+outside merge moves main during the head's fresh check, the head integrates it again within its turn.
+Ownership, reviews, holds, recorded approval and issue-closure
 gates repeat for each candidate. Adopted PR pushes remain fast-forward only. Head or PR identity
 movement refuses; no stale check or review assessment transfers. A later invocation can reuse the
 successful head when main is already an
@@ -1432,16 +1435,15 @@ on main can fail a PR that never touches its line: a browser-walkthrough fixture
 document genuine false positives for operator dismissal without changing accepted behavior.
 Every other workflow run must come from a push or pull request event of this PR's branch.
 Review and task/UX holds remain enforced by Altitude. This repository's strict GitHub up-to-date
-required-check rule rejects a merge if another installation moves main between final validation and
-merge; the process-owned turn cannot provide that protection. A base-only merge refusal repeats
-integration and checks under the same deadline. No repository move, plan upgrade or settings change
+required-check rule rejects a merge if a merge made outside the line moves main between final
+validation and merge; the head then integrates again within its turn. No repository move, plan upgrade or settings change
 is needed. GitHub web/API merges do not enforce Altitude's task holds or review protocol.
 
 Other projects retain their configured hosted/no-CI gates. Shared hosted-check handling ignores
 completed nonrequired skips without parsing workflow conditions; failed or pending checks still
 block, and at least one hosted check must actually pass. Requiredness and candidate association
-must be established. Their local turn covers only cooperating landings sharing the common Git
-directory; protection against outside writers requires a strict GitHub up-to-date rule.
+must be established. Their merge line orders cooperating landings that share the origin;
+protection against outside writers requires a strict GitHub up-to-date rule.
 Projects without CI retain the full local candidate suite and `--test-cmd`
 (one argv command, see [dry run and gate selection](CLI.md#dry-run-and-gate-selection));
 neither provides an outage bypass for this repository.

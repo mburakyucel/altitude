@@ -1393,75 +1393,94 @@ resolution remains an operation of the running or blocked owning L2.
 
 ### Concurrent landings
 
-`alt land --merge` publishes its candidate and waits for that candidate's own checks and owner
-assessment without any repository-wide lock, so concurrent owners' hosted checks run side by side.
-Only the final step takes the repository turn: confirming that the candidate is still current
-(main unmoved, head, checks, ownership and holds), then merging. A green candidate on current main
-therefore takes the next available turn without waiting for another owner's hosted CI run.
-Landing prints when it waits for the turn and when it starts, and returns seconds waited as `waited`
-(zero without a wait). Admission waits at most 3600 seconds; a timeout leaves the published
-candidate unmerged. Nonmerging invocations never take the turn.
+Merging landings share one ordered **merge line** per repository: first ready, first merged. A
+candidate publishes and runs its check once, then waits without touching its branch. Only the
+candidate at the head of the line integrates main, runs one fresh check and merges, so each candidate
+uses at most two checks and never cancels its own run by re-integrating (#777).
+
+1. **Publication.** `alt land --merge` checks ownership and holds; a held task needs `--approval`, and
+   the approval is validated (not yet applied) against the PR before main is integrated; a held task
+   without a PR yet publishes its head as it is, and the approval is validated before it joins the
+   line. When the landing has new
+   commits to publish, or no open PR carries its head yet, it fetches main, merges it into the task
+   branch when needed, pushes and opens or reuses the PR. A head that is already published with its own
+   check is not integrated again. Nonmerging landings never integrate.
+2. **First check and assessment.** The candidate is judged on its own head: its head commit's check
+   runs, bound to this PR, the hosted workflow and the head tree, as described in
+   [CI and candidate identity](DEVELOPMENT.md#ci-and-candidate-identity). Main moving meanwhile
+   neither interrupts the wait nor makes review assessments stale; reviews compare head, context and
+   proposal only. When a head without current main fails its check, the landing integrates main and
+   publishes once more.
+3. **The line.** A ready candidate (passed check, current reviews, no hold or a valid approval)
+   joins the line and waits, reading only; it makes no pushes. Landing prints its position.
+4. **The turn.** At the head of the line, landing rechecks ownership, holds, approval and reviews. A
+   head that already contains current main merges on its existing check, without a new run.
+   Otherwise landing integrates main once, pushes and waits for that fresh check, keeping the turn
+   through any reassessment the new head needs, then merges under the exact base/head checks. Failure,
+   conflict, a new hold, a timeout or the session's end leaves the line, and the next candidate goes.
+   A merge made outside the line during the turn's fresh check (GitHub's web merge, an older Altitude)
+   moves main again; the head integrates again within its turn.
+
+The line is the ref `refs/altitude/merge-line` on origin. It points to a parentless commit whose
+message lists the entries (PR number, a random per-landing token, ready time and heartbeat). It is not
+a branch or tag, so it starts no workflow and appears in no branch or PR list. Every change is a
+compare-and-swap push (`--force-with-lease` on the ref), so landings on every installation of the
+repository share one order. The head heartbeats once a minute; any landing removes a head whose
+heartbeat is over five minutes old, and the next entry's turn starts then. The head's branch push
+and its heartbeat travel in one `--atomic` push, so a landing that lost its turn while paused cannot
+publish; it ends without merging. The merge request itself cannot carry the line: a head paused for
+over five minutes inside that one call can still merge the exact head it validated, out of order.
+GitHub's strict up-to-date rule refuses it if main has moved, and a turn that finds main moved
+integrates again within that turn. A landing killed outside its waits leaves its entry for at most
+those five minutes at the head. One landing holds a PR's entry: re-running `alt land --merge` for the
+same PR takes over its place, and the earlier landing ends without merging. Heartbeats compare
+wall-clock times across installations, so their clocks stay synchronized.
+
+`--wait` bounds each phase separately (default and maximum 3600 seconds): the first check and owner
+assessment, time in the line, and the turn. The wait polls after 15 seconds, doubling to once a
+minute, and spends one GraphQL read per poll on the exact check evidence; other PR reads use GitHub's
+REST API and line reads use Git. A timeout leaves the published candidate unmerged; a line timeout
+also leaves the line, and a later `alt land --merge` joins at its end. With `--wait 0` a candidate
+that is not at the head leaves at once. Landing returns its seconds in line as `waited`. When GitHub
+refuses a command for the account's rate limit, landing prints so and waits a minute. Then, within the
+same phase bound, it starts the candidate again and repeats every gate before merging; when the merge
+command had already run, it first asks GitHub whether the PR merged. A refusal with a minute or less
+left leaves the candidate published and unmerged. GitHub registers a head's checks one at a time, so
+a required check absent from the head is waited for within the bound rather than read as skipped;
+landing names it and the checks that have registered. A required check that never registers within
+the bound ends the wait as `missing` and does not merge.
 
 Keep the command and owner session alive; ordinary contention needs no L3 landing-window request.
 Run one landing command per task worktree; collect or cancel an existing command before retrying.
-The repository turn does not serialize publication in the same worktree.
-CI and owner assessment share a 3600-second bound after publication; `--wait` only shortens it.
-The wait polls after 15 seconds, doubling to once a minute, and spends one GraphQL read per poll on the
-exact check evidence. Other PR reads use GitHub's REST API. When GitHub refuses a command for the account's
-rate limit, landing prints so and waits a minute. Then, within the same bound, it starts the candidate again
-and repeats every gate before merging; when the merge command had already run, it first asks GitHub whether
-the PR merged. A refusal with a minute or less left in the bound leaves the candidate published and unmerged.
-An exhausted deadline leaves the published candidate unmerged, without another integration.
-GitHub registers
-a head's checks one at a time, so a required check absent from the head is waited for within the same
-bound rather than read as skipped; landing names it and the checks that have registered, such as a
-skipped nonrequired job. Landing prints the remaining bound when it first sees pending or
-unregistered required checks. A required check that never registers within the bound ends the wait as
-`missing` with that observation and does not merge.
+Conflicts abort integration and retain local work for the owner; dirty edits are not stashed. Adopted
+PRs retain their history and accept only fast-forward pushes. Head or PR identity movement refuses
+instead of retrying. Review assessments never transfer automatically; review, hold, approval and
+`--closes-issue` gates repeat in the turn. Task messages and Stop remain available. Repeating a
+completed merge creates no duplicate PR.
 
-A merging invocation rechecks ownership and holds, fetches current main, and merges it into
-the task branch when needed before pushing and checking the fresh candidate. This preserves
-adopted history. Conflicts abort integration and retain local work for the owner; dirty edits are
-not stashed. If only main moves after publication, the merging command incorporates it, pushes a
-new head and waits for fresh checks within the original publication deadline. It checks current
-ownership and the adopted target before integrating and publishing each candidate, and repeats review, hold, approval and
-`--closes-issue` gates; review assessments never transfer
-automatically. Head or PR identity movement refuses instead of retrying. Adopted PRs retain their
-history and accept only fast-forward pushes. Required checks and original approval sources still
-govern delivery.
-Failure or cancellation releases the turn; the next owner proceeds with its own candidate.
-Task messages and Stop remain available. Repeating a completed merge creates no duplicate PR.
+When task context or the turn's integration makes completed review assessments stale, a merging L2
+invocation waits while the owner explicitly assesses the pinned candidate: before the line within the
+first phase's bound, or within its turn after integrating. Failed or unavailable checks end the wait.
+Keep landing alive in a native background/tool session and read its partial output. Inspect the printed
+head (and base, in the turn) and current conversation, post any explanation for all affected reviews,
+then run `alt task review assess --review-id <id> --file <assessment.json>` in a separate command for
+each. The notice lists all stale review IDs and subjects together, with the assessment timestamp and
+assessed/current values of each changed head, base, tree, proposal or context hash. Context includes
+the request, brief, messages and decisions; inspect the current task conversation when its hash
+changes. Assess every stale request, including proposals, before posting further explanations, and
+collect the original landing result. A changes assessment does not retire a proposal assessment or its
+findings. If code needs edits or another review, cancel landing and prepare a new candidate. Missing or
+unfinished review, changed local/remote head or PR identity, and lost ownership refuse; `--wait 0` and
+operator-run landings refuse stale assessment immediately. Context changes detected during final merge
+validation use the same assessment wait within the turn. Final review/context, CI, holds and approval
+checks run again after assessment; review refusal leaves the merge hold intact.
 
-When integration or task context makes completed review assessments stale, a merging L2 invocation
-waits, outside the turn, while the owner explicitly assesses the pinned candidate. CI and assessment share the same `--wait`
-deadline; failed or unavailable checks end the wait. Keep landing alive in a native background/tool
-session and read its partial output. Inspect the printed head/base and current conversation, post any
-explanation for all affected reviews, then run `alt task review assess --review-id <id> --file <assessment.json>`
-in a separate command for each. The notice lists all stale review IDs and subjects together, with the
-assessment timestamp and assessed/current values of each changed head, base, tree, proposal or context
-hash. Context includes the request, brief, messages and decisions; inspect the current task conversation
-when its hash changes.
-Assess every stale request, including proposals, before posting further explanations, and collect the
-original landing result. A changes assessment does not retire a proposal assessment or its findings.
-No assessment or finding disposition is carried forward automatically. If code needs edits or another
-review, cancel landing and prepare a new candidate. Missing or unfinished review, changed local/remote
-head or PR identity, and lost ownership refuse; `--wait 0` and operator-run landings refuse stale assessment
-immediately. Timeout or termination releases the turn with the pushed candidate retained and unmerged.
-Context changes detected during final merge validation release the turn and use the same assessment
-wait and original deadline. Final review/context, CI, holds and approval checks
-run again after assessment; review refusal leaves the merge hold intact.
-
-The turn is a process-owned repository lock, not a durable or FIFO queue. CI runs and a `make check`
-run by hand outside
-`alt land` do not share it; a hand run without `CI` set uses two browser workers. Without hosted
-CI, the full local candidate suite runs inside the turn because it uses this machine. External
-writers, older landing versions and other installations do not share it. This repository's strict
-GitHub up-to-date required-check rule closes the race between final validation and merge across
-installations; the local lock alone does not. A base-only refusal repeats integration and checks
-within the original deadline; stale evidence never authorizes a merge. No GitHub setting change is
-needed. Hosted CI runs outside the turn, bounded by GitHub capacity: each check
-uses 11 jobs against the plan's 20 concurrent-job limit. A newer PR push cancels that PR's superseded
-check run; main and manual runs are never cancelled.
+Without hosted CI, the full local candidate suite runs inside the turn. CI runs and a `make check` run
+by hand outside `alt land` do not take part in the line; a hand run without `CI` set uses two browser
+workers. This repository's strict GitHub up-to-date required-check rule still guards every merge,
+including one made outside the line. No GitHub setting change is needed. Hosted CI is bounded by GitHub
+capacity: each check uses 11 jobs against the plan's 20 concurrent-job limit. A newer PR push cancels
+that PR's superseded check run; main and manual runs are never cancelled.
 
 After its push, landing pins the candidate from the fetched `origin/<branch>` tip, which must be
 the revision it pushed; any other tip is a head the landing did not push and refuses at once
@@ -1484,10 +1503,10 @@ alt land --message "fix: describe the change" --merge
 ```
 
 Landing publishes the PR and waits for its required `check` on the current head; it does not
-run the full suite locally. The task branch includes current main. A branch missing current main
-is integrated automatically by `--merge`, followed by a push and fresh PR checks on the new head.
-Final validation and merge are serialized across Altitude owners sharing the common Git directory;
-each candidate's hosted CI runs outside that turn. The merged tree must equal the tested tree.
+run the full suite locally. A published head includes main as of its push. `--merge` then waits in
+the [merge line](#concurrent-landings): at its turn, a head missing current main is integrated, pushed
+and checked once more. Merges are serialized across every owner and installation of the repository;
+hosted checks run side by side. The merged tree must equal the tested tree.
 Failed, pending, missing, skipped,
 cancelled, stale or unrelated required runs block. GitHub-managed scans on the head, such as CodeQL
 default setup, need no PR identity but must pass like any other check: a failing scan blocks and a
@@ -1868,7 +1887,8 @@ pushes; rejected pushes never retry with force. `--merge` squashes the PR into o
 as ordinary landing does, and requests no branch deletion; the PR keeps its original commits.
 Host-side branch deletion settings remain the repository operator's policy.
 
-`--merge` incorporates current main into the task branch before publishing, and again whenever main moves before the merge. If
+`--merge` incorporates current main into the task branch before publishing new commits, and again at
+its turn in the merge line when main has moved. If
 that integration conflicts, reconcile manually while preserving the adopted commits with a merge
 commit:
 
@@ -1879,8 +1899,8 @@ git merge --no-ff origin/main -m "Merge main for validation"
 
 Resolve conflicts in the task worktree, rerun applicable checks and review, and land again.
 Landing pins current origin main and the PR head and confirms GitHub's authoritative base target.
-Base-only movement repeats integration and fresh checks within the original deadline; head or PR
-identity movement refuses. A lagging PR `baseRefOid` alone does not block that pair.
+Base-only movement waits for the turn, which integrates it and checks afresh; head or PR identity
+movement refuses. A lagging PR `baseRefOid` alone does not block that pair.
 Task merge holds, recorded operator approval and the normal report/archive workflow also apply
 to adopted PRs.
 
