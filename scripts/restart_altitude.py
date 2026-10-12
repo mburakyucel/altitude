@@ -14,7 +14,6 @@ import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 
@@ -38,8 +37,10 @@ class Transient(RestartError):
     """A refusal a later quiet point can clear: altd requests the unit again (I-20261010-214654)."""
 
 
-QUIET_PROBES = 3  # I-20261010-214654: a loaded host answered the overview slower than the old two-second probe
-QUIET_PROBE_SECONDS = 10.0
+# I-20261010-214654, I-20261012-101803: a loaded host, then a healthy replacement, answered the overview slower than the
+# old two-second probe. Both the quiet and the health probe wait this long for one answer.
+PROBE_SECONDS = 10.0
+QUIET_PROBES = 3
 RETRIES = 3  # transient refusals altd retries before the activation parks with a fault
 RETRY_SECONDS = 300
 
@@ -104,7 +105,7 @@ def require_idle() -> None:
     if unit_properties().get("ActiveState") == "active":
         for probe in range(QUIET_PROBES):
             try:
-                status = json.loads(fetch("/api/overview", timeout=QUIET_PROBE_SECONDS)).get("restart") or {}
+                status = json.loads(fetch("/api/overview")).get("restart") or {}
                 break
             except (RestartError, ValueError) as exc:
                 if probe + 1 == QUIET_PROBES:
@@ -152,33 +153,35 @@ def build_bundle() -> Path:
         raise
 
 
-def service_address() -> tuple[str, int]:
-    values = unit_environment()
-    return values.get("ALTITUDE_HOST", config.HOST), int(values.get("ALTITUDE_PORT", config.PORT))
+def service() -> dict:
+    """Where the service listens and whether it serves HTTPS, from its own environment."""
+    return config.network(unit_environment())
 
 
-def fetch(path: str, *, timeout: float = 2.0) -> bytes:
-    host, port = service_address()
-    schemes = ("https", "http") if config.TLS else ("http", "https")
-    context = ssl._create_unverified_context()  # local CA may not be in Python's trust store
-    last_error: Exception | None = None
-    for scheme in schemes:
-        try:
-            # The address is this machine's own, so the key never leaves it.
-            request = Request(f"{scheme}://{host}:{port}{path}", headers={access.KEY_HEADER: access.machine_key() or ""})
-            with urlopen(request, timeout=timeout,
-                         context=context if scheme == "https" else None) as response:
-                if response.status != 200:
-                    raise RestartError(f"{path} returned HTTP {response.status}")
-                return response.read()
-        except (OSError, URLError, RestartError) as exc:
-            last_error = exc
-    raise RestartError(f"{path} is unreachable: {last_error}")
+def fetch(path: str, *, timeout: float = PROBE_SECONDS) -> bytes:
+    network = service()
+    scheme = "https" if network["tls"] else "http"
+    # The local CA may not be in Python's trust store.
+    context = ssl._create_unverified_context() if network["tls"] else None
+    try:
+        # The address is this machine's own, so the key never leaves it.
+        request = Request(f"{scheme}://{network['host']}:{network['port']}{path}",
+                          headers={access.KEY_HEADER: access.machine_key() or ""})
+        with urlopen(request, timeout=timeout, context=context) as response:
+            if response.status != 200:
+                raise RestartError(f"{path} returned HTTP {response.status}")
+            return response.read()
+    except OSError as exc:
+        raise RestartError(f"{path} is unreachable over {scheme}: {exc}") from exc
 
 
 def wait_healthy(old_pid: int, timeout: int = 45) -> None:
     deadline = time.monotonic() + timeout
     last = "service did not start"
+
+    def probe(path: str) -> bytes:  # one probe never outlasts the bound
+        return fetch(path, timeout=max(min(PROBE_SECONDS, deadline - time.monotonic()), 1))
+
     while time.monotonic() < deadline:
         try:
             props = unit_properties()
@@ -187,10 +190,10 @@ def wait_healthy(old_pid: int, timeout: int = 45) -> None:
                 raise RestartError(
                     f"the service is {props.get('ActiveState')}/{props.get('SubState')} with PID {pid}"
                 )
-            overview = json.loads(fetch("/api/overview"))
+            overview = json.loads(probe("/api/overview"))
             if not isinstance(overview.get("projects"), list):
                 raise RestartError("/api/overview returned an invalid payload")
-            page = fetch("/").decode("utf-8", "replace")
+            page = probe("/").decode("utf-8", "replace")
             if 'id="root"' not in page:
                 raise RestartError("web root did not return the SPA shell")
             return
@@ -244,21 +247,22 @@ def publish_and_restart(staging: Path) -> None:
         shutil.rmtree(backup)
 
 
-def requested_at() -> str | None:
-    return (S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, {}) or {}).get("requested_at")
+def requested() -> dict:
+    return S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, {}) or {}
 
 
-def record_failure(attempt: str | None, exc: RestartError) -> None:
+def record_failure(attempt: dict, exc: RestartError) -> None:
     """File this unit's own reason at once and reopen entry (I-20260924-205802: altd learned of a 10-second
     failure only at its ten-minute grace timeout, which now covers just a unit that dies without reporting).
     A transient refusal instead withdraws the request for altd to retry at a quiet point after RETRY_SECONDS, at
-    most RETRIES times, before it too is filed (I-20261010-214654). A replacement daemon that failed verification
-    has already cleared the record; the fault is still filed."""
-    if not attempt:
+    most RETRIES times, before it too is filed (I-20261010-214654). A replacement daemon that started has already
+    cleared the record and runs the new backend with the prior web bundle restored, so the attempt's web files
+    return as a failed pending activation (I-20261012-101803: the stale UI went unrecorded)."""
+    if not attempt.get("requested_at"):
         return
     flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
     pending = S.read_json(flag, {}) or {}
-    if pending.get("requested_at") == attempt:
+    if pending.get("requested_at") == attempt["requested_at"]:
         if pending.get("failed"):
             return
         retries = pending.get("retries", 0)
@@ -268,6 +272,15 @@ def record_failure(attempt: str | None, exc: RestartError) -> None:
             pending.update(error=str(exc), retries=retries + 1, retry_at=retry_at.isoformat())
             S.write_json(flag, pending)
             return
+    elif not pending.get("requested_at") and (
+            web := [path for path in attempt.get("files", []) if dispatch.activation_component(path) == "web"]):
+        # A merge recorded since the replacement started keeps its own files, head and time; a newer request builds
+        # the current bundle itself.
+        pending = {**{key: attempt[key] for key in ("since", "head") if key in attempt}, **pending,
+                   "files": sorted(set(pending.get("files", [])) | set(web))}
+    else:
+        pending = None
+    if pending is not None:
         pending.update(failed=S.now(), error=str(exc))
         S.write_json(flag, pending)
     incidents.system_fault("restart", f"restart failed: {exc}")
@@ -276,7 +289,7 @@ def record_failure(attempt: str | None, exc: RestartError) -> None:
 def main() -> int:
     platform.require_native_application()
     staging: Path | None = None
-    attempt = requested_at()
+    attempt = requested()
     try:
         print("Checking the deployed checkout...")
         head = require_deployed_checkout()
@@ -284,7 +297,7 @@ def main() -> int:
         staging = build_bundle()
         print("Checking that Altitude is idle...")
         require_idle()
-        attempt = requested_at()
+        attempt = requested()
         # With the gate closed no self-deploy moves the checkout again, so the bundle and the backend the service
         # exports at startup are the same commit.
         if (moved := require_deployed_checkout()) != head:

@@ -115,7 +115,7 @@ def _capacity(task):
 
 def _git(root, *args, binary=False, stdin=None, conflict_ok=False):
     result = subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-c", "diff.external=", *args],
-                            cwd=root, input=stdin, capture_output=True, timeout=120, env=config.subprocess_env())
+                            cwd=root, input=stdin, capture_output=True, timeout=120)
     if result.returncode and not (conflict_ok and result.returncode == 1):
         reason = (result.stderr.strip() or result.stdout.strip()).decode(errors="replace")[-300:].strip()
         raise T.TransitionError(f"Review checkpoint unavailable: git {args[0]} failed: "

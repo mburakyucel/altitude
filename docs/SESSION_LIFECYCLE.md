@@ -1374,9 +1374,11 @@ the quiet point, checkout moved after the build began) is retried at a quiet poi
 times, before it parks with a fault like any other failure. altd runs the guarded build-and-restart
 script itself. On macOS, service Stop/restart confirms its coalition cleanup and label removal before
 returning Stop or bootstrapping the replacement, with a 45-second removal limit. Independent workers
-remain in their own jobs. Failed activation restores an available prior web bundle and verifies the
+remain in their own jobs. Health verification allows each overview and page answer ten seconds within its
+45-second bound. Failed activation restores an available prior web bundle and verifies the
 recovery service's API/UI health from a new process; its error retains both activation failure and
-recovery outcome. An absent prior bundle is explicit, and no recovery is attempted without one.
+recovery outcome, and the attempt's web files stay recorded as a failed pending activation beside the new
+backend. An absent prior bundle is explicit, and no recovery is attempted without one.
 Unexpected daemon exit or host
 reboot leaves an interrupted validation record and retained log/results at startup; failed evidence
 delivery keeps the original run area for recovery.

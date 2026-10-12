@@ -133,11 +133,11 @@ class TestAccess(AltitudeCase):
 
     def test_the_restart_check_reaches_the_gated_server_with_the_machine_key(self):
         restart = load_script()
-        self.patch(restart, "service_address", new=lambda: self.httpd.server_address)
-        self.patch(restart.config, "TLS", False)
+        host, port = self.httpd.server_address
+        self.patch(restart, "service", new=lambda: {"host": host, "port": port, "tls": False})
         self.assertEqual(json.loads(restart.fetch("/api/overview")), {"state": "ready"})
         self.patch(access, "machine_key", new=lambda: None)
-        with self.assertRaises(restart.RestartError):  # refused with 401 over HTTP; HTTPS is not served here
+        with self.assertRaises(restart.RestartError):  # refused with 401
             restart.fetch("/api/overview")
 
     def test_lockout_recovery_needs_only_a_shell_on_the_machine(self):

@@ -1,8 +1,13 @@
 """The operator restart stays one guarded, repository-owned command."""
 import importlib.util
+import socket
 import subprocess
 import tempfile
+import threading
+import time
 import unittest
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
@@ -18,6 +23,31 @@ def load_script():
     assert spec.loader
     spec.loader.exec_module(module)
     return module
+
+
+@contextmanager
+def slow_service(delay: float):
+    """A fictional replacement daemon that answers the overview after `delay` seconds."""
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/api/overview":
+                time.sleep(delay)
+            body = b'{"projects":[]}' if self.path == "/api/overview" else b'<div id="root"></div>'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield {"host": "127.0.0.1", "port": server.server_address[1], "tls": False}
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 class TestRestartCommand(AltitudeCase):
@@ -157,18 +187,49 @@ class TestRestartCommand(AltitudeCase):
                                         ("10", b'{"projects":[]}', b'<div id="root"></div>', "PID 10"),
                                         ("20", b'{"projects":null}', b'<div id="root"></div>', "invalid payload"),
                                         ("20", b'{"projects":[]}', b'not the app', "SPA shell")):
+            clock = [0]
             with self.subTest(pid=pid, api=api, page=page), \
                     mock.patch.object(restart, "unit_properties", return_value={"MainPID": pid,
                                                                                "ActiveState": "active"}), \
-                    mock.patch.object(restart, "fetch", side_effect=lambda path: api if path == "/api/overview" else page) as fetch, \
-                    mock.patch.object(restart.time, "monotonic", side_effect=[0, 0, 46]), \
-                    mock.patch.object(restart.time, "sleep"):
+                    mock.patch.object(restart, "fetch", side_effect=lambda path, timeout: api if path == "/api/overview" else page) as fetch, \
+                    mock.patch.object(restart.time, "monotonic", side_effect=lambda: clock[0]), \
+                    mock.patch.object(restart.time, "sleep", side_effect=lambda _: clock.__setitem__(0, 46)):
                 if failure:
                     with self.assertRaisesRegex(restart.RestartError, failure):
                         restart.wait_healthy(10)
                 else:
                     restart.wait_healthy(10)
                     self.assertEqual([call.args[0] for call in fetch.call_args_list], ["/api/overview", "/"])
+                    self.assertEqual({call.kwargs["timeout"] for call in fetch.call_args_list}, {restart.PROBE_SECONDS})
+
+    def test_a_healthy_replacement_that_answers_the_overview_slowly_passes_verification(self):
+        """I-20261012-101803: a healthy replacement answered the overview after about 2.2 s and failed both checks."""
+        restart = load_script()
+        with slow_service(2.5) as service, mock.patch.object(restart, "service", return_value=service), \
+                mock.patch.object(restart, "unit_properties", return_value={"MainPID": "20", "ActiveState": "active"}):
+            restart.wait_healthy(10)
+
+    def test_a_failed_probe_names_the_cause_on_the_scheme_the_service_serves(self):
+        """I-20261012-101803: the HTTPS timeout was reported as the plain-HTTP fallback's closed connection."""
+        restart = load_script()
+        with socket.socket() as stalled:  # accepts the connection but never completes a TLS handshake
+            stalled.bind(("127.0.0.1", 0))
+            stalled.listen()
+            service = {"host": "127.0.0.1", "port": stalled.getsockname()[1], "tls": True}
+            with mock.patch.object(restart, "service", return_value=service), \
+                    mock.patch.object(restart, "unit_properties", return_value={"MainPID": "20", "ActiveState": "active"}), \
+                    mock.patch.object(restart.time, "sleep"), \
+                    self.assertRaisesRegex(restart.RestartError, r"within 1s: /api/overview is unreachable over https: .*timed out"):
+                restart.wait_healthy(10, timeout=1)
+
+    def test_the_probe_reads_the_scheme_and_address_from_the_service_environment(self):
+        restart = load_script()
+        for environment, expected in (("ALTITUDE_HOST=10.0.0.5 ALTITUDE_PORT=9000", ("10.0.0.5", 9000, True)),
+                                      ("ALTITUDE_TLS=0", ("127.0.0.1", 8890, False))):
+            with self.subTest(environment=environment), \
+                    mock.patch.object(restart, "unit_properties", return_value={"Environment": environment}):
+                service = restart.service()
+                self.assertEqual((service["host"], service["port"], service["tls"]), expected)
 
     def test_the_checkout_is_checked_against_the_branch_the_service_runs(self):
         restart = load_script()
@@ -317,10 +378,10 @@ class TestRestartCommand(AltitudeCase):
         answer = b'{"restart":{"waiting_for":[]}}'
         with mock.patch.object(restart, "unit_properties", return_value={"ActiveState": "active"}), \
                 mock.patch.object(restart.time, "sleep"):
-            with mock.patch.object(restart, "fetch", side_effect=[slow, slow, answer]) as fetch:
+            with mock.patch.object(restart, "fetch", side_effect=[slow, slow, answer]):
                 restart.require_idle()
-            self.assertEqual({call.kwargs["timeout"] for call in fetch.call_args_list}, {restart.QUIET_PROBE_SECONDS})
-            self.assertGreater(restart.QUIET_PROBE_SECONDS, 2)
+            self.assertEqual(restart.fetch.__kwdefaults__["timeout"], restart.PROBE_SECONDS)
+            self.assertGreater(restart.PROBE_SECONDS, 2)
             S.write_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, {"files": ["altitude/server.py"]})
             with mock.patch.object(restart, "fetch", side_effect=slow) as fetch, \
                     self.assertRaisesRegex(restart.Transient, "cannot prove Altitude is quiet: .*timed out"):
@@ -345,6 +406,41 @@ class TestRestartCommand(AltitudeCase):
         fault.assert_called_once()
         self.assertIn("unhealthy", fault.call_args.args[1])
         self.assertIsNone(S.read_json(flag))  # a running replacement's open entry is not reclosed
+
+    def test_a_failed_activation_that_restored_the_prior_bundle_leaves_the_web_files_pending(self):
+        """I-20261012-101803: the replacement cleared the record, so nothing showed the served UI was older."""
+        restart = load_script()
+        flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
+        self.addCleanup(flag.unlink, missing_ok=True)
+        attempt = {"since": "2026-10-12T10:15:30+00:00", "head": "a" * 40, "unit": "u",
+                   "files": ["altitude/server.py", "web/src/App.tsx", "web/package.json"]}
+        for merged in (None, {"since": "2026-10-12T10:17:40+00:00", "head": "b" * 40, "files": ["web/src/Chat.tsx"]}):
+            with self.subTest(merged_meanwhile=bool(merged)):
+                S.write_json(flag, {**attempt, "requested_at": S.now()})
+
+                def replacement_starts_then_fails(_staging):
+                    flag.unlink()  # the replacement daemon clears the record once it binds
+                    if merged:
+                        S.write_json(flag, merged)  # its deployment tick records a later merge
+                    raise restart.RestartError("restart verification failed: timed out; restored the prior web bundle")
+
+                with mock.patch.object(restart, "require_deployed_checkout"), \
+                        mock.patch.object(restart, "build_bundle", return_value=self.tmp / "staging"), \
+                        mock.patch.object(restart, "require_idle"), \
+                        mock.patch.object(restart, "publish_and_restart", side_effect=replacement_starts_then_fails), \
+                        mock.patch.object(restart.incidents, "system_fault") as fault:
+                    self.assertEqual(restart.main(), 1)
+                fault.assert_called_once()
+                pending = S.read_json(flag)
+                self.assertEqual(pending["files"], sorted(["web/package.json", "web/src/App.tsx"]
+                                                          + (merged["files"] if merged else [])))
+                self.assertEqual(pending["head"], (merged or attempt)["head"])
+                self.assertEqual(pending["since"], (merged or attempt)["since"])
+                self.assertTrue(pending["failed"])
+                self.assertIn("timed out", pending["error"])
+                self.assertNotIn("requested_at", pending)
+                self.assertFalse(config.restart_in_progress())  # entry stays open
+                self.assertFalse(config.activation_pending())  # no automatic retry until the Restart button or a merge
 
 
 if __name__ == "__main__":

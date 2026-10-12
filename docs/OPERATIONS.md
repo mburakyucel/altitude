@@ -404,14 +404,19 @@ head it built, and the deployment tick fast-forwards and marks the rest pending.
 so workers survive and are adopted after restart. Dispatch and
 L3 turns wait only from the restart request until the replacement daemon is ready.
 It installs the locked web dependencies, builds and validates a staged bundle, swaps it into the
-ignored runtime `web/dist`, restarts the user-level `altitude.service`, and waits for both its API and
-web page to answer from a new process. On macOS, Stop and restart confirm that the service's processes
+ignored runtime `web/dist`, restarts the user-level `altitude.service`, and waits up to 45 seconds for both
+its overview API and web page to answer from a new process, allowing each answer ten seconds. It probes on
+the address and scheme in the service's own environment, so a failure names the real cause, such as an
+HTTPS timeout. On macOS, Stop and restart confirm that the service's processes
 end and its launchd label disappears before completing Stop or bootstrapping a replacement; removal
 has a 45-second limit and unreadable state fails explicitly. Independent worker jobs retain their
 own coalitions. The prior bundle is restored if verification fails, then recovery restarts the service
 and verifies API and UI health from another new process. The failure retains the activation error
 and states whether recovery is verified or fails; restored files alone do not establish healthy
-recovery. Without a prior bundle, it reports that recovery is unavailable. There is
+recovery. The replacement backend keeps running either way, so the failure leaves the attempt's web build
+inputs in `monitor/restart-pending.json`, marked `failed` with the error; `alt repo` and the web app's
+notice show the served web app is older than main, and Restart or the next merge activates it.
+Without a prior bundle, it reports that recovery is unavailable. There is
 no separate web service and no `sudo` is required. Node 22.22.2+ (22.x), 24.15+ (24.x) or 26+ and `pnpm` are required; dependency
 retrieval may be needed when the local pnpm store is cold. Refresh the browser after it succeeds.
 
