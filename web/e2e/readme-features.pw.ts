@@ -31,18 +31,15 @@ test("review before merge, a repaired fault and improvement suggestions", async 
   await expect(conversation).toContainText("Per-tenant limits are ready in PR #214");
   await expect(conversation.getByRole("button", { name: "Approve merge", exact: true })).toBeVisible();
   await expect(conversation).toContainText("2 findings, both resolved");
-  if (phone) {  // the phone shows the same review in Needs you, where its Approve merge stays in view
-    await nav.getByRole("link", { name: /Needs you/ }).click();
-    const review = page.getByRole("article", { name: "Add per-tenant limits to the public API", exact: true });
-    await expect(review).toContainText("Review PR #214 before merge");
-    await review.evaluate((card) => card.scrollIntoView({ block: "end" }));
-  } else {  // the conversation alone, with the review's findings open: this owner's session has finished
-    await conversation.getByRole("button", { name: "Show implementation review details", exact: true }).click();
-    await expect(conversation).toContainText("alternate engine");
-    const panel = page.getByRole("button", { name: "Live session", exact: true });
-    if (await panel.getAttribute("aria-pressed") === "true") await panel.click();
-    await conversation.getByRole("button", { name: "Approve merge", exact: true }).scrollIntoViewIfNeeded();
-  }
+  // The review's findings, open, then the same PR in Needs you with its Approve merge.
+  await conversation.getByRole("button", { name: "Show implementation review details", exact: true }).click();
+  await expect(conversation).toContainText("alternate engine");
+  await conversation.locator(`[data-review-id="readme-limits-changes"]`).evaluate((card) => card.scrollIntoView({ block: "start" }));
+  await capture("review-findings");
+  await nav.getByRole("link", { name: /Needs you/ }).click();
+  const review = page.getByRole("article", { name: "Add per-tenant limits to the public API", exact: true });
+  await expect(review).toContainText("Review PR #214 before merge");
+  await review.evaluate((card) => card.scrollIntoView({ block: "end" }));
   await capture("review");
 
   // A machine problem pauses the sign-on task; the coordinator repairs it and the task resumes.
@@ -70,5 +67,8 @@ test("review before merge, a repaired fault and improvement suggestions", async 
   await expect(suggestions.getByRole("button", { name: "Make a task" })).toHaveCount(3);
   await suggestions.evaluate((card) => card.scrollIntoView({ block: "start" }));
   await capture("improve");
+  await suggestions.getByRole("button", { name: "Make a task" }).first().click();
+  await expect(suggestions).toContainText("L3 is opening a task");
+  await capture("improve-accepted");
   expect(errors).toEqual([]);
 });
