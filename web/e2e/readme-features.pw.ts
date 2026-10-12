@@ -56,6 +56,11 @@ test("review before merge, a repaired fault and improvement suggestions", async 
   const screen = page.locator(".terminal-screen .xterm-rows");
   await expect(screen).toContainText("atlas $ make deploy ENV=staging");
   await page.waitForTimeout(1_000);  // longer than the page's settle time: nothing more arrives
+  // Ctrl+L clears the line naming the fixture's temporary folder; the typed command stays at the prompt.
+  await page.locator(".terminal-screen").click();
+  await page.keyboard.press("Control+l");
+  await expect(screen).not.toContainText("Runs as you");
+  await expect(screen).toContainText("atlas $ make deploy ENV=staging");
   await capture("terminal-2-typed");
 
   // A machine problem pauses the sign-on task; the coordinator repairs it and the task resumes.
