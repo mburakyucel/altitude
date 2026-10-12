@@ -19,7 +19,7 @@ Altitude runs Claude Code and Codex like an engineering team on your computer.
 
 <picture>
   <source media="(max-width: 600px)" srcset="docs/images/altitude-phone.svg">
-  <img src="docs/images/altitude.svg" alt="You make the executive decisions. Below you, the coordinator (L3) orchestrates the project: it plans with you, starts tasks and answers from your decisions. Each task has its own agent (L2) that takes it from idea to production, and each task agent runs its own helper agents (L1) for focused work such as reading API docs, building tests or profiling latency." width="1200">
+  <img src="docs/images/altitude.svg" alt="You make the executive decisions. Below you, the coordinator (L3) orchestrates the project: it plans with you, starts tasks and answers from your decisions. Each task has its own agent (L2) that takes it from idea to production, and each task agent runs its own helper agents (L1) for focused work such as reading API docs, running tests or profiling latency." width="1000">
 </picture>
 
 Altitude works in levels, and you choose yours: steer the whole project with the coordinator, or step
