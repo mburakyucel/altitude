@@ -365,10 +365,14 @@ harness. This sacrifices separate renderer protection; shared Mach and network e
 CPU/memory/process quotas remain limitations. It is neither private/live-content verification nor
 native worker, installation, Simulator or GUI acceptance. Linux validation keeps the container
 and Chromium sandbox. No new operator-facing mode, runtime patch or lifecycle trial is installed.
-The custom runtime preparation and trial route are retired, having never been adopted; their
-historical delivery does not repair the stock runtime's recorded nested metadata limitation.
-[Issue 625](https://github.com/mburakyucel/altitude/issues/625) and native runtime tracking retain that
-separate enforcement concern and original failure evidence.
+The custom runtime preparation and trial route are retired, having never been adopted. Stock Codex's
+Seatbelt rules keep a writable root's protected metadata names (`.git`, `.agents`, `.codex` and the
+like) out of that root's own write rule only, so a broader root admits them: a Codex worker can
+write those names inside its linked worktree's Git directory, which the common Git directory's rule
+covers. Neither Git nor the engines read them there, and the worker writes the common Git directory
+by design; the emitted rules belong to Codex, so Altitude has no seam that changes them.
+[Issue 625](https://github.com/mburakyucel/altitude/issues/625) holds the original evidence and
+native runtime tracking keeps the limitation.
 
 A pass requires the actual daemon receipt's candidate tree/profile identity, native job context
 where applicable, finite browser evidence and successful process/area cleanup. The environment
@@ -520,7 +524,8 @@ one nested in a later folder, as a run's temporary folder is.
 A process under the profile cannot apply another Seatbelt profile, so these do not run in a macOS
 validation run: browsers that keep their own sandbox (see [browser verification](#browser-verification)),
 Altitude's own worker confinement, and launchd jobs. Candidate application journeys there use the
-suites' local-process job fixtures. A macOS run establishes the candidate's behavior on this Mac under
+suites' local-process job fixtures, and suite cases replace worker confinement at the platform seam,
+so the full suite has the same result in a validation run, inside a confined worker and on Linux. A macOS run establishes the candidate's behavior on this Mac under
 those fixtures; it does not establish native launchd/Seatbelt worker behavior, installation or provider compatibility.
 The approved fictional browser lane below establishes only the journeys actually run.
 
