@@ -1,10 +1,10 @@
 # README visuals
 
-The README shows the built web app on desktop and phone together: an opening picture of the desktop
-project view with the phone's decision in front of it and the "work at any altitude" drawing of the
-coordinator, task agents and helpers.
+The README shows the built web app on desktop and phone together: an opening loop of the desktop
+project view with the phone answering a decision in front of it, and the "work at any altitude" drawing
+of the coordinator, task agents and helpers.
 [The walkthrough](../../docs/WALKTHROUGH.md) carries the longer scenario and full-size captures.
-Both pictures are the same at every width; the README is laid out for a computer screen first.
+The opening loop and the drawing are the same at every width; the README is laid out for a computer screen first.
 
 The captures come from an ordinary [browser walkthrough](../../docs/DEVELOPMENT.md#browser-walkthroughs):
 `web/e2e/readme.pw.ts` against `web/e2e/readme-service.py`, a disposable service with real handlers and
@@ -15,8 +15,9 @@ example text, never agent output or an operator's data. The app's components and
 
 The journey runs at both widths in every `make check`: it opens the project, the phone Work tab, the
 compatibility task and its live session, sends a task message and checks that the composer clears, then
-answers the decision with seven days from Needs you and checks that it leaves the list. Page errors and
-horizontal overflow fail it.
+answers the decision with seven days from Needs you and checks that it leaves the list. A second test,
+on the desktop run only, answers the same decision on a phone page while a desktop page shows the task
+resume. Page errors and horizontal overflow fail the journey.
 
 ## Reproduce
 
@@ -28,17 +29,22 @@ alt task validate -- sh -c 'ALTITUDE_README_IMAGES="$VALIDATION_RESULTS/images" 
 
 The run's `images/` folder in the task's validation evidence receives `project`, `task` and `decision`
 captures for each viewport, plus phone `work` and `session` captures, at 1440×900 and 390×844 with 2× pixel
-density, and `phone-walkthrough.webm`, a silent recording of the phone journey that pauses briefly at
+density, the opening loop's `opening-*` frames, and `phone-walkthrough.webm`, a silent recording of the phone journey that pauses briefly at
 each capture. No speech recognition or coding agent runs.
 
-## Opening picture
+## Opening loop
 
-`design/readme/hero.html` places `docs/images/project-desktop.png` and `decision-phone.png` on a
-transparent 2240×1360 canvas. After replacing either capture, render it again from the repository root:
+The README opens with `docs/images/opening.webp`, a looping animated WebP of three moments from the
+journey's second test: the phone's Needs you shows the backfill question, the recommended seven days is
+chosen, and after sending, the phone clears while the desktop project view shows the task back at work.
+That test drives a desktop page and a phone page against the same service and checks each moment.
+
+`design/readme/hero.html` holds the layout: the desktop view on a 2240×1360 canvas with the phone in
+front of its sidebar. After a validation run, compose the loop from its `images/` folder with Google
+Chrome and ffmpeg:
 
 ```sh
-google-chrome --headless --hide-scrollbars --default-background-color=00000000 --window-size=2240,1360 \
-  --screenshot=docs/images/hero.png "file://$PWD/design/readme/hero.html"
+python3 design/readme/opening.py <validation results>/images
 ```
 
 ## Maintain
