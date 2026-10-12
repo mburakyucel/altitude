@@ -264,6 +264,8 @@ record. The project-isolation queued send intercepts the next `/api/chat` only a
 request's partial reply streams, so the intercept cannot catch the running request.
 Voice walkthroughs that WebKit also runs override `getUserMedia` on `MediaDevices.prototype`: WebKit
 can collect the `navigator.mediaDevices` wrapper together with an override defined on it.
+The push-wake walkthroughs read the worker's banners only once the browser records the push event
+as completed: Chromium drops a banner's record when `getNotifications()` runs while it is being shown.
 
 Both projects run headlessly: phone at 390×844 with touch/mobile user agent and desktop at
 1440×900. With `CI` set, Playwright uses one worker per available CPU; local runs use two workers.
