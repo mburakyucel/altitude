@@ -133,7 +133,7 @@ def load(scenario: dict) -> dict[str, str]:
             _line(d / "events.log", event)
         S.write_json(d / "status.json", {
             "slug": slug, "title": task["title"], "state": task["state"], "created": task["created"],
-            "attempt": 1, "prs": [], "source": "chat", "questions": questions, "reviews": reviews,
+            "updated": task["finished"], "attempt": 1, "prs": [], "source": "chat", "questions": questions, "reviews": reviews,
             "token_usage": {"status": "observed", "total_tokens": task.get("tokens", 0)}})
         for i, _ in enumerate(task.get("report_review") or []):
             anchors[f"{slug}:report/{i}"] = f"{slug}/report/{i}"
@@ -142,7 +142,8 @@ def load(scenario: dict) -> dict[str, str]:
     for task in scenario.get("current", []):
         S.write_json(S.tasks_dir(project) / task["slug"] / "status.json",
                      {"slug": task["slug"], "title": task["title"], "state": task["state"],
-                      "created": scenario["now"], "attempt": 1, "prs": [], "questions": [], "reviews": []})
+                      "created": scenario["now"], "updated": scenario["now"], "attempt": 1, "prs": [], "questions": [],
+                      "reviews": []})
     if scenario.get("earlier"):
         # One posted review three weeks back whose suggestions the operator decided, as improve.resolve records them.
         at = (datetime.fromisoformat(scenario["now"]) - timedelta(days=21)).isoformat()

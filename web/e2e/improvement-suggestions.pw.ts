@@ -13,7 +13,7 @@ test("posted suggestions read as one reply with run numbers, task links and drop
   test.setTimeout(60_000);
   const walk = walkthrough(page, info);
   const chat = page.getByRole("region", { name: "Conversation", exact: true });
-  const heading = chat.getByText(/^Improvement suggestions of \w{3} \d+ · 5 tasks from \w{3} \d+/);
+  const heading = chat.getByText(/^Improvement suggestions of \w{3} \d+ · 5 tasks from [^·]+$/);
   const post = heading.locator("xpath=ancestor::div[contains(@class, 'turn')][1]");
   const first = post.getByText("1. Owners re-ask merge questions you already answered", { exact: true });
   const third = post.getByText("3. Reports name checks that never ran", { exact: true });
