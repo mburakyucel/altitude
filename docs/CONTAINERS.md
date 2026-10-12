@@ -10,8 +10,10 @@ and fails on unexpected management requests, including cleanup. See [evidence](#
 reproducible commands and their limits.
 
 Daemon-driven onboarding and task continuation pass at phone and desktop viewports with fictional
-engines. Real provider sessions, physical-device routing/trust, Mac/Apple Silicon, Docker, other
-runtime versions, host project binds and emulation are unverified.
+engines. On an Apple silicon Mac, the launcher lane passes inside a throwaway Ubuntu 24.04 arm64
+guest: Linux arm64 evidence on Mac hardware, with no Mac-side controller. Real provider sessions,
+physical-device routing/trust, Mac logout/restart and sleep/wake, Docker, other runtime versions,
+host project binds and emulation are unverified.
 The tested payload reports AppArmor and SELinux disabled; no payload LSM protection is claimed.
 Containerized Linux does not provide native macOS, Xcode or iOS builds. The Mac stage needs its own
 reviewed VM/control transport and native host evidence before a support claim.
@@ -410,6 +412,18 @@ Stop/recreation and state-recovery fixtures in that VM. Add `--native-sandbox-bi
 existing actual-profile diagnostic matrix. That executable is copied only into the disposable
 guest/image; the lane makes no authenticated provider calls. It complements the actual launcher lane.
 
+On an Apple silicon Mac, `make container-macos-vm RESULTS=<new-directory> [LANE=…]` runs the same
+lanes in a throwaway Ubuntu 24.04 arm64 guest under Apple's Virtualization framework, with 4 CPUs,
+6 GiB of memory and a 24 GiB sparse disk. It boots Ubuntu's published root filesystem, kernel and
+initial ramdisk, checked against Ubuntu's SHA256SUMS over HTTPS (the signature is not verified on a
+Mac), and builds the image for linux/arm64 inside the guest. Each run's disk is a copy-on-write clone
+deleted with the run; one guest runs at a time, and the guest stops when less than 10 GiB of disk
+would stay free. A virtual machine cannot start inside a worker sandbox, so an owner runs the target
+through `alt task run` under an operator grant. The launcher lane passes on candidate `bb7e0d1`
+(Ubuntu 24.04 arm64, kernel 6.8.0-142, Podman 4.9.3, crun 1.14.1, macOS 26.6.2 on Apple M3). This
+is Linux guest behavior: the Mac side owns only the guest process, and a Mac-side controller and Mac
+logout/restart and sleep/wake stay open in [#643](https://github.com/mburakyucel/altitude/issues/643).
+
 The VM observes system-manager calls independently of the launcher's environment, before their result
 is known. Beginning and ending fictional denied Stop controls prove coverage. Unexpected management
 calls fail, regardless of the unit's name. The permitted mutating calls are root logind's fictional
@@ -433,8 +447,11 @@ The reviewed Ubuntu tuple additionally permits these exact readable predicates f
 `/proc/acpi/wakeup`, `/proc/scsi/device_info`, `/proc/scsi/scsi`, `/proc/scsi/sg`, and
 `/proc/scsi/sg/{allow_dio,debug,def_reserved_size,device_hdr,device_strs,devices,version}`.
 The expanded inventory measured these descendants without reading their contents; none adds a
-writable predicate. The acceptance policy rejects another kernel/runtime/network/architecture
-tuple rather than inheriting this list. Mac and other tuples require full remeasurement and review.
+writable predicate. The same Ubuntu tuple on arm64, measured in the Mac's guest, adds no predicate
+for either UID; it lacks `/proc/acpi`, `/proc/asound` and root's `kernel/cad_pid` and `kernel/pid_max`
+writes. The acceptance policy accepts these two reviewed tuples and rejects any other
+kernel/runtime/network/architecture tuple rather than inheriting this list; other tuples require
+full remeasurement and review.
 
 `scripts/container_acceptance.py --archive … --sha256 … --results <new-directory>` is the finite
 image-bootstrap gate. It uses isolated rootless storage, fresh volumes, the reviewed `slirp4netns` network,
