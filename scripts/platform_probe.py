@@ -209,10 +209,13 @@ LSREGISTER = ("/System/Library/Frameworks/CoreServices.framework/Frameworks/Laun
 
 
 def fixture_app(app: Path, marker: Path) -> None:
-    """A background app that LaunchServices would start outside any sandbox; it creates `marker` when it runs."""
+    """A background app that LaunchServices would start outside any sandbox; it creates `marker` when it runs. Its
+    executable is a script, which names no architecture: without one LaunchServices asks for Rosetta and, on a Mac
+    without it, starts nothing."""
     (app / "Contents/MacOS").mkdir(parents=True)
     (app / "Contents/Info.plist").write_bytes(plistlib.dumps({
-        "CFBundleExecutable": "fixture", "CFBundleIdentifier": f"dev.altitude.probe-{NONCE}", "LSBackgroundOnly": True}))
+        "CFBundleExecutable": "fixture", "CFBundleIdentifier": f"dev.altitude.probe-{NONCE}", "LSBackgroundOnly": True,
+        "LSArchitecturePriority": [os.uname().machine]}))
     (app / "Contents/MacOS/fixture").write_text(f"#!/bin/sh\ntouch {shlex.quote(str(marker))}\n")
     (app / "Contents/MacOS/fixture").chmod(0o755)
 

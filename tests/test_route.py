@@ -200,13 +200,14 @@ class TestPickEngine(AltitudeCase):
         self.assertEqual(route.pick_engine("l2", forced="codex", project=project)["model"], "chosen-model")
         self.assertEqual(config.pinned_option("l2", {**project, "l2_engine": "claude"}), {"engine": "claude", "model": "fable"})
 
-    def test_l3_model_keys_are_preferences_too_and_only_the_engine_key_pins(self):
+    def test_l3_model_keys_are_preferences_and_only_a_turn_engine_pins(self):
         for project in ({"l3_model": "opus"}, {"l3_codex_model": "chosen-model"}):
             with self.subTest(project=project):
                 self.assertIsNone(config.pinned_option("l3", project))
                 choice = route.pick_engine("l3", project=project)
                 self.assertEqual((choice["engine"], choice["pinned"]), (config.PRIMARY_DEFAULT_ENGINE, False))
-        pinned = route.pick_engine("l3", project={"l3_engine": "claude", "l3_model": "opus"})
+        # L3 has no project pin; a turn's own engine still pins it, taking the project's model on that engine.
+        pinned = route.pick_engine("l3", forced="claude", project={"l3_model": "opus"})
         self.assertEqual((pinned["engine"], pinned["model"], pinned["pinned"]), ("claude", "opus", True))
 
     def test_both_exhausted_returns_no_engine(self):

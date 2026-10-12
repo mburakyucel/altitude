@@ -9,7 +9,7 @@ class TestRotationIsPersistedBeforeTheTurn(AltitudeCase):
     def setUp(self):
         super().setUp()
         self.quiet_engines()
-        self.register(self.project, l3_engine="claude")
+        self.register(self.project, l3_choice={"engine": "claude"})
 
     def test_a_restart_mid_turn_does_not_rotate_the_same_session_again(self):
         l3.save_info(self.project, {

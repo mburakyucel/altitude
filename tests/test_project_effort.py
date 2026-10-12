@@ -26,7 +26,7 @@ class TestProjectEffort(AltitudeCase):
         self.quiet_engines()
 
     def test_each_role_and_engine_default_is_independent_and_resets(self):
-        self.register(self.project, l3_engine="codex", l2_engine="claude", routing=config.parse_routing("codex > claude:opus"))
+        self.register(self.project, l2_engine="claude", routing=config.parse_routing("codex > claude:opus"))
         original = config.project(self.project)
         values = {"l3_model": "sonnet", "l3_effort": "low", "l3_codex_model": "codex-model", "l3_codex_effort": "ultra",
                   "l2_model": "fable", "l2_effort": "xhigh", "l2_codex_model": "other-model", "l2_codex_effort": "medium"}
@@ -62,7 +62,7 @@ class TestProjectEffort(AltitudeCase):
         self.assertEqual({k: v for k, v in config.project(self.project).items() if k != "routing"}, saved)
 
     def test_invalid_settings_leave_storage_unchanged_and_the_engine_pin_is_independent(self):
-        self.register(self.project, l3_engine="claude", l2_engine="claude", l2_effort="high")
+        self.register(self.project, l2_engine="claude", l2_effort="high")
         original = config.project(self.project)
         for setting, value in (("l1_effort", "high"), ("l3_effort", "invalid"), ("l2_effort", ""), ("l3_effort", "ultra"),
                                ("l2_effort", "ultra"), ("l3_model", "two words"), ("l2_codex_model", "")):
@@ -70,10 +70,12 @@ class TestProjectEffort(AltitudeCase):
                 set_default(self.project, setting, value)
             self.assertEqual(config.project(self.project), original)
         set_default(self.project, "l3_codex_effort", "ultra")
-        set_default(self.project, "l3_engine", "claude")
-        set_default(self.project, "l3_engine", None)
+        set_default(self.project, "l2_engine", "codex")
+        set_default(self.project, "l2_engine", None)
         self.assertEqual(config.project(self.project)["l3_codex_effort"], "ultra")
-        self.assertNotIn("l3_engine", config.project(self.project))
+        self.assertNotIn("l2_engine", config.project(self.project))
+        with self.assertRaisesRegex(T.TransitionError, "unknown project setting"):
+            set_default(self.project, "l3_engine", "claude")
 
     def test_auto_filters_an_unsupported_explicit_choice_and_never_lowers_effort(self):
         self.register(self.project, routing=config.parse_routing("claude:opus > codex"))
@@ -86,7 +88,7 @@ class TestProjectEffort(AltitudeCase):
             self.assertIn("ultra", unavailable["why"])
 
     def test_cli_queues_each_default_and_reset_through_real_daemon_storage(self):
-        self.register(self.project, l3_engine="codex", l2_engine="codex")
+        self.register(self.project, l2_engine="codex")
         for setting, (role, engine, kind) in config.DEFAULT_SETTINGS.items():
             value = "chosen-model" if kind == "model" else config.ENGINE_EFFORTS[engine][-1]
             result = self.alt("project", "set", self.project, "--" + setting.replace("_", "-"), value, "--reason", "Set default")
@@ -102,7 +104,7 @@ class TestProjectEffort(AltitudeCase):
         dispatch.run_settings(self.project)
         saved = config.project(self.project)
         self.assertNotIn("l3_codex_effort", saved)
-        self.assertEqual((saved["l3_effort"], saved["l2_codex_effort"], saved["l3_engine"]), ("max", "ultra", "codex"))
+        self.assertEqual((saved["l3_effort"], saved["l2_codex_effort"], saved["l2_engine"]), ("max", "ultra", "codex"))
 
     def test_cli_sets_only_engines_and_the_l3_choice(self):
         for flags, setting, value in ((("--l3-choice", "fable@high"), "l3_choice", {"engine": "claude", "model": "fable", "effort": "high"}),
@@ -115,55 +117,10 @@ class TestProjectEffort(AltitudeCase):
         refused = self.alt("project", "set", self.project, "--l3-choice", "claude@ultra", "--reason", "Claude has no Ultra")
         self.assertNotEqual(refused.returncode, 0)
 
-    def test_l3_choice_and_only_l3_release_each_other_and_routing_follows_the_newer(self):
-        engine, other = config.ENGINES
-        self.register(self.project, l3_engine=engine, l2_engine=engine)
-        self.assertEqual(route.pick_engine("l3", project=config.project(self.project))["engine"], engine)
-        for kept in ({"engine": engine, "model": "kept"}, {"effort": "high"}):
-            set_default(self.project, "l3_choice", kept)  # on the Only engine, or an effort alone: Only stays
-            self.assertEqual(config.project(self.project)["l3_engine"], engine)
-        view = set_default(self.project, "l3_choice", {"engine": other})
-        self.assertEqual((view["l3_choice"], view["l3_engine"], view["l2_engine"]), ({"engine": other}, None, engine))
-        request = json.loads((config.project_dir(self.project) / "l3_choice-request.json").read_text())
-        self.assertEqual((request["status"], request["released"]), ("done", {"l3_engine": engine}))
-        picked = route.pick_engine("l3", project=config.project(self.project))
-        self.assertEqual((picked["engine"], picked["pinned"]), (other, False))
-        self.assertTrue(picked["why"].startswith("chosen for L3"), picked["why"])
-        # L3 may save project settings too: its Only clears the operator's choice, recorded with actor and reason.
-        result = self.alt("project", "set", self.project, "--l3-engine", engine, "--reason", "Keep L3 on one engine",
-                          env={"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": self.project})
-        self.assertEqual(result.returncode, 0, result.stderr)
-        dispatch.run_settings(self.project)
-        saved = config.project(self.project)
-        self.assertEqual((saved["l3_engine"], "l3_choice" in saved), (engine, False))
-        events = [json.loads(row) for row in (config.project_dir(self.project) / "events.jsonl").read_text().splitlines()]
-        self.assertEqual({k: events[-1].get(k) for k in ("actor", "reason", "l3_engine", "released")},
-                         {"actor": "l3", "reason": "Keep L3 on one engine", "l3_engine": engine,
-                          "released": {"l3_choice": {"engine": other}}})
-        self.assertEqual(route.pick_engine("l3", project=saved)["engine"], engine)
-
-    def test_a_release_is_recorded_when_altd_stops_after_saving_and_replays(self):
-        engine, other = config.ENGINES
-        self.register(self.project, l3_engine=engine)
-        dispatch.request_setting(self.project, "l3_choice", {"engine": other}, "Use the other engine", actor="burak")
-        write = dispatch.S.atomic_write
-        def stop_at_event(path, *args, **kwargs):
-            if path.name == "events.jsonl":
-                raise RuntimeError("stopped before the event")
-            return write(path, *args, **kwargs)
-        with mock.patch.object(dispatch.S, "atomic_write", side_effect=stop_at_event):
-            with self.assertRaises(RuntimeError):
-                dispatch._run_setting(self.project, "l3_choice")
-        self.assertNotIn("l3_engine", config.project(self.project))
-        request = dispatch._run_setting(self.project, "l3_choice")
-        self.assertEqual((request["status"], request["released"]), ("done", {"l3_engine": engine}))
-        event = json.loads((config.project_dir(self.project) / "events.jsonl").read_text().splitlines()[-1])
-        self.assertEqual((event["request_id"], event["released"]), (request["id"], {"l3_engine": engine}))
-
     def test_l3_changes_next_turn_with_same_session_and_distinct_observation(self):
         for engine in config.ENGINES:
             with self.subTest(engine=engine):
-                set_default(self.project, "l3_engine", engine)
+                set_default(self.project, "l3_choice", {"engine": engine})
                 setting = config.role_setting("l3", engine, "effort")
                 set_default(self.project, setting, "high")
                 calls = []
@@ -230,9 +187,10 @@ class TestProjectEffortHTTP(AltitudeCase):
             connection.close()
 
     def test_defaults_api_reads_saves_resets_and_reports_invalid_requests(self):
-        self.register(self.project, l3_engine="claude", l2_effort="medium")
+        self.register(self.project, l2_engine="claude", l2_effort="medium")
         status, view = self.call("GET", f"/api/defaults/{self.project}")
-        self.assertEqual((status, view["l3_engine"]), (200, "claude"))
+        self.assertEqual((status, view["l2_engine"]), (200, "claude"))
+        self.assertNotIn("l3_engine", view)
         self.assertEqual([row["role"] for row in view["roles"]], ["l3", "l2"])
         self.assertEqual(field(view, "l2", "claude", "effort")["value"], "medium")
         self.assertEqual(field(view, "l3", "claude", "model"), {"setting": "l3_model", "value": None, "default": "fable",
@@ -276,13 +234,12 @@ class TestProjectEffortHTTP(AltitudeCase):
 
     def test_only_pins_and_l3_choice_save_through_the_settings_api_and_refuse_a_stale_page(self):
         engine, other = config.ENGINES
-        for setting in ("l2_engine", "l3_engine"):
-            status, view = self.call("POST", "/api/defaults", {"project": self.project, "setting": setting, "value": engine})
-            self.assertEqual((status, view[setting]), (200, engine))
-            status, view = self.call("POST", "/api/defaults", {"project": self.project, "setting": setting, "value": "gemini"})
-            self.assertEqual(status, 400); self.assertIn("Only engine", view["error"])
-            status, view = self.call("POST", "/api/defaults", {"project": self.project, "setting": setting, "value": None})
-            self.assertEqual((status, view[setting]), (200, None))
+        status, view = self.call("POST", "/api/defaults", {"project": self.project, "setting": "l2_engine", "value": engine})
+        self.assertEqual((status, view["l2_engine"]), (200, engine))
+        status, view = self.call("POST", "/api/defaults", {"project": self.project, "setting": "l2_engine", "value": "gemini"})
+        self.assertEqual(status, 400); self.assertIn("Only engine", view["error"])
+        status, view = self.call("POST", "/api/defaults", {"project": self.project, "setting": "l2_engine", "value": None})
+        self.assertEqual((status, view["l2_engine"]), (200, None))
         choice = {"engine": other, "model": "chosen", "effort": "high"}
         status, view = self.call("POST", "/api/defaults", {"project": self.project, "setting": "l3_choice", "value": choice,
                                                            "expected": None})
@@ -298,6 +255,21 @@ class TestProjectEffortHTTP(AltitudeCase):
                                                            "expected": choice})
         self.assertEqual((status, view["l3_choice"]), (200, None))
         self.assertNotIn("l3_choice", config.project(self.project))
+
+    def test_a_saved_setting_retries_a_waiting_message_at_once(self):
+        with mock.patch.object(server, "request_l3_drain") as drain:
+            self.call("POST", "/api/defaults", {"project": self.project, "setting": "l3_effort", "value": "high"})
+            drain.assert_not_called()
+            l3.queue_message(self.project, "Is my message going?", trigger="chat", role=config.OPERATOR_ACTOR)
+            status, _ = self.call("POST", "/api/defaults", {"project": self.project, "setting": "l3_choice",
+                                                            "value": {"engine": config.ENGINES[1]}})
+        self.assertEqual(status, 200)
+        drain.assert_called_once_with(self.project)
+
+    def test_an_unknown_project_s_conversation_is_refused(self):
+        status, view = self.call("GET", "/api/chat/not-managed?limit=60")
+        self.assertEqual(status, 500)
+        self.assertIn("unknown project 'not-managed'", view["error"])
 
     def test_pending_cli_setting_is_not_overwritten_by_a_different_ui_choice(self):
         dispatch.request_setting(self.project, "l3_effort", "high", "CLI setting", actor="burak")

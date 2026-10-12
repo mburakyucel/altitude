@@ -145,7 +145,7 @@ export function ModelsDialog({ project, tab: initial, onClose }: { project?: str
           : state.loading || !state.options ? <p className="text-muted"><StatusMark label="Loading models…" /></p>
             : <Choices key={tab} tab={tab} project={project} state={state as TabState & { options: ChoiceOptions }} draft={draft}
               setDraft={(next) => { save.reset(); if (next && !draft) setBase(state.saved); setDraft(next); }} saving={saving}
-              l3Only={defaults.data?.l3_engine ?? null} only={tasks?.only ?? []}
+              only={tasks?.only ?? []}
               lastReply={projectView.data?.l3 ?? undefined}
               error={save.error} onUse={commit} onReload={reload} onRetry={() => save.variables && commit(save.variables.value as Choice)} />}
       </div>
@@ -153,9 +153,9 @@ export function ModelsDialog({ project, tab: initial, onClose }: { project?: str
   </Overlay>;
 }
 
-function Choices({ tab, project, state, draft, setDraft, saving, l3Only, only, lastReply, error, onUse, onReload, onRetry }: {
+function Choices({ tab, project, state, draft, setDraft, saving, only, lastReply, error, onUse, onReload, onRetry }: {
   tab: ModelsTab; project?: string; state: TabState & { options: ChoiceOptions }; draft: Draft | null;
-  setDraft: (draft: Draft | null) => void; saving: boolean; l3Only: string | null; only: { project: string; engine: string }[];
+  setDraft: (draft: Draft | null) => void; saving: boolean; only: { project: string; engine: string }[];
   lastReply: Record<string, unknown> | undefined; error: Error | null;
   onUse: (value: Choice) => void; onReload: () => void; onRetry: () => void;
 }) {
@@ -178,7 +178,6 @@ function Choices({ tab, project, state, draft, setDraft, saving, l3Only, only, l
   const current = shown.other ? "other" : optionId(shown.engine, shown.model);
   const otherEngines = [...new Set(options.models.map((m) => m.engine))];
   const keptOnly = tab === "tasks" && shown.engine ? only.filter((row) => row.engine !== shown.engine) : [];
-  const l3Kept = tab === "l3" && shown.engine && l3Only && l3Only !== shown.engine;
   const text = (key: string) => typeof lastReply?.[key] === "string" ? lastReply[key] as string : "";
   const lastModel = text("engine_model"), launched = text("launch_effort"), reported = text("engine_reasoning_effort");
 
@@ -224,10 +223,9 @@ function Choices({ tab, project, state, draft, setDraft, saving, l3Only, only, l
       </div>
     </fieldset> : null}
     {tab === "l3" ? <p className="text-meta text-muted">
-      Applies from L3's next reply.{text("engine_last") ? ` Last reply: ${[lastModel || "model not reported", launched ? effortLabel(launched, options) : "default effort",
+      Applies from L3's next reply.{value?.engine ? ` When ${name} is unavailable, Auto answers instead.` : ""}{text("engine_last") ? ` Last reply: ${[lastModel || "model not reported", launched ? effortLabel(launched, options) : "default effort",
         reported ? `reported ${effortLabel(reported, options)}` : "effort not reported"].join(" · ")}.` : ""}
     </p> : value?.engine ? <p className="text-meta text-muted">When {name} is unavailable, each project's Auto picks instead.</p> : null}
-    {l3Kept ? <p className="models-kept">L3 is Only {engineLabel(l3Only)} here. Using {name} sets L3 routing back to Auto.</p> : null}
     {keptOnly.map((row) => <p key={row.project} className="models-kept">
       <strong>{row.project}</strong> runs tasks only on {engineLabel(row.engine)}, so it keeps its {engineLabel(row.engine)} model.{" "}
       <Link to={`/settings/projects/${row.project}#routing`}>Change</Link></p>)}

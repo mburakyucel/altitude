@@ -11,7 +11,7 @@ def main():
     configure()
     for project in ("atlas", "lab"):
         repo = make_repo(config.PROJECT_ROOTS[0] / project / "repo")
-        with config.add_project(project, path=repo, l3_engine=config.ENGINES[0]):
+        with config.add_project(project, path=repo):
             pass
     def execute(_prompt, **options):
         text = ("Fictional ordinary answer survives receipt failure." if _prompt.endswith("Receipt failure probe")
