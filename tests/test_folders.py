@@ -117,8 +117,9 @@ class TestPrivatePlaces(FolderCase):
         self.documents = self.home.resolve() / "Documents"
         self.patch(platform, "private_places", return_value=(str(self.documents), str(self.home.resolve() / "Desktop")))
         self.touched = []
-        for module, name in ((server.os, "scandir"), (server.os.path, "exists"), (config.Path, "exists"),
-                             (config.Path, "is_dir"), (config.Path, "iterdir")):
+        for module, name in ((server.os, "scandir"), (server.os, "lstat"), (server.os, "readlink"),
+                             (server.os.path, "exists"), (config.Path, "exists"), (config.Path, "is_dir"),
+                             (config.Path, "iterdir")):
             real = getattr(module, name)
             def spy(path, *args, real=real, **kwargs):
                 self.touched.append(str(path))
@@ -126,15 +127,17 @@ class TestPrivatePlaces(FolderCase):
             self.patch(module, name, spy)
 
     def assert_untouched(self):
-        inside = [path for path in self.touched if Path(os.path.abspath(path)).is_relative_to(self.documents)
-                  or Path(os.path.abspath(path)).is_relative_to(self.home.resolve() / "Desktop")]
-        self.assertEqual(inside, [], "nothing inside a private place is listed or checked")
+        places = (self.documents, self.home.resolve() / "Desktop")
+        inside = [path for path in self.touched for place in places
+                  if Path(os.path.abspath(path)).is_relative_to(place) and Path(os.path.abspath(path)) != place]
+        self.assertEqual(inside, [], "nothing inside a private place is listed, checked or resolved")
 
     def test_the_browser_omits_private_places_and_refuses_to_open_one(self):
         self.assertEqual([row["name"] for row in server.folders(None)["folders"]], ["code", "Projects"])
         self.assertEqual([row["name"] for row in server.folders(str(self.home / "code"))["folders"]],
                          ["atlas", "notes"], "a link into a private place is left out too")
-        for path in (self.home / "Documents", self.home / "documents" / "atlas", self.home / "code" / "shortcut"):
+        for path in (self.home / "Documents", self.home / "documents" / "atlas", self.home / "code" / "shortcut",
+                     self.home / "code" / "shortcut" / ".." / "other"):
             with self.subTest(path=path), self.assertRaises(server.FolderError) as caught:
                 server.folders(str(path))
             self.assertEqual((caught.exception.status, str(caught.exception)), (403, config.PRIVATE_FOLDER))

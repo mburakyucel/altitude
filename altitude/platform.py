@@ -1670,24 +1670,33 @@ def private_places() -> tuple[str, ...]:
 
 
 def private(path: str | Path) -> bool:
-    """Whether `path` is in one of macOS's private places, judged without looking inside one: each link on the way is
-    read, and its target judged, before it is followed. Names compare case-insensitively, as macOS's disk does."""
+    """Whether `path` is in one of macOS's private places, judged without looking inside one. Components are taken in
+    the order the disk resolves them: each link on the way is read, and its target judged, before it is followed, and
+    `..` leaves the folder a link led to. Names compare case-insensitively, as macOS's disk does."""
     places = [place.casefold() for place in private_places()]
     if not places:
         return False
-    remaining, current = list(Path(os.path.abspath(path)).parts[1:]), "/"
-    for _ in range(256):  # the same bound as the kernel's own link limit, with room for every component
+    remaining, current, links = list(Path(os.path.join(os.getcwd(), path)).parts[1:]), "/", 0
+    while True:
         if any(current.casefold() == place or current.casefold().startswith(place + "/") for place in places):
             return True
         if not remaining:
             return False
-        candidate = os.path.join(current, remaining.pop(0))
-        if os.path.islink(candidate):
-            target = os.path.normpath(os.path.join(current, os.readlink(candidate)))
-            remaining, current = [*Path(target).parts[1:], *remaining], "/"
-        else:
+        part = remaining.pop(0)
+        if part == "..":
+            current = os.path.dirname(current)
+            continue
+        candidate = os.path.join(current, part)
+        if not os.path.islink(candidate):
             current = candidate
-    return True  # a loop of links resolves nowhere; refusing it touches nothing
+            continue
+        links += 1
+        if links > 32:  # the kernel's own link limit: such a path resolves nowhere, and refusing it touches nothing
+            return True
+        target = Path(os.readlink(candidate)).parts
+        if target[:1] == ("/",):
+            current, target = "/", target[1:]
+        remaining = [*target, *remaining]
 
 
 def _filters(kind: str, values) -> list[str]:

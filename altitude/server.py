@@ -2931,7 +2931,8 @@ def folders(raw: str | None) -> dict:
         entries = sorted(os.scandir(target), key=lambda entry: entry.name.lower())
     except PermissionError:
         return {**view, "readable": False}
-    managed = {str(Path(entry["path"]).expanduser().resolve()): name for name, entry in config.load_projects().items()}
+    managed = {str(Path(entry["path"]).expanduser().resolve()): name for name, entry in config.load_projects().items()
+               if not platform.private(Path(entry["path"]).expanduser())}
     for entry in entries:
         try:
             if entry.name.startswith(".") or platform.private(entry.path) or not entry.is_dir():

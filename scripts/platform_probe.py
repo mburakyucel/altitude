@@ -257,18 +257,22 @@ def apple_event_verdict():
     return check(os.getpid(), b"appleevent-send", 4, *[None] * len(pad), b"com.apple.Terminal")
 """
 
-# A read of a private place from inside the profile, after Seatbelt's own verdict on it (filter 1 is a path): when the
-# profile would allow it the read is skipped, since macOS could then ask the operator. Prints the read's outcome.
-PRIVATE_READ = APPLE_EVENT + r"""
-import errno, sys
-if check(os.getpid(), b"file-read-data", 1, *[None] * len(pad), sys.argv[1].encode()) != 1:
-    print("allowed")
-else:
+# Reads of private places from inside a profile, each after Seatbelt's own verdict on it (filter 1 is a path): when
+# the profile would allow one the read is skipped, since macOS could then ask the operator. Gives each read's outcome.
+SAFE_READ = APPLE_EVENT + r"""
+import errno
+def safe_read(path):
+    if check(os.getpid(), b"file-read-data", 1, *[None] * len(pad), path.encode()) != 1:
+        return "allowed"
     try:
-        os.listdir(sys.argv[1])
-        print("read")
+        os.listdir(path)
+        return "read"
     except OSError as error:
-        print(errno.errorcode.get(error.errno, error.errno))
+        return errno.errorcode.get(error.errno, str(error.errno))
+"""
+PRIVATE_READ = SAFE_READ + r"""
+import sys
+print(" ".join(safe_read(path) for path in sys.argv[1:]))
 """
 
 
@@ -315,13 +319,14 @@ def confinement():
                   f"{shlex.quote(sys.executable)} -I -c {shlex.quote(APPLE_EVENT + 'print(apple_event_verdict())')}"
                   " | sed 's/^/apple-event=/'; "
                   f"{shlex.quote(sys.executable)} -I -c {shlex.quote(PRIVATE_READ)} {shlex.quote(str(private_place()))}"
-                  " | sed 's/^/private=/'; ls /Volumes >/dev/null 2>&1 && echo volumes; "
+                  " /Volumes | sed 's/^/private=/;s/ /,/'; "
                   f"xcrun simctl list runtimes >/dev/null 2>'{root}/simctl.err' && echo simulator")
         result = subprocess.run(platform.job_command(job, ["/bin/sh", "-c", script], env(), writable=(root,), runtime_max=60),
                                 stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=90)
         written, ran = outside.exists(), app_ran(root / "fixture.app", marker)
         outside.unlink(missing_ok=True)
-        check(result.stdout.split() == ["write-inside", "signal-own-child", "git", "apple-event=1", "private=EPERM"]
+        check(result.stdout.split() == ["write-inside", "signal-own-child", "git", "apple-event=1",
+                                        "private=EPERM,EPERM"]
               and not written and not ran,
               f"confinement: {result.stdout.split()} home written: {written}; fixture app ran: {ran}")
         evidence = refusal(simulator, root / "simctl.err")
@@ -374,8 +379,6 @@ attempt("link-runner-file", lambda: os.symlink("/etc/hosts", os.path.join(outsid
 attempt("read-runner-log", lambda: open(os.path.join(outside, "run.log")).read())
 attempt("read-home", lambda: open(os.path.join(outside, "secret")).read())
 attempt("list-home", lambda: os.listdir(home))
-attempt("list-private", lambda: os.listdir(os.path.join(home, "Desktop")))
-attempt("list-volumes", lambda: os.listdir("/Volumes"))
 attempt("read-system", lambda: open("/etc/hosts").read())
 attempt("list-shared-temp", lambda: os.listdir("/private/tmp"))
 attempt("list-user-temp", lambda: os.listdir(os.path.dirname(user_temp.rstrip("/"))))
@@ -404,9 +407,10 @@ def simulator():
     listed.check_returncode()
 attempt("simulator", simulator)
 attempt("signal-supervisor", lambda: os.kill(os.getppid(), 18))
+verdicts = {"apple-event": apple_event, "private": [safe_read(os.path.join(home, "Desktop")), safe_read("/Volumes")]}
 with open(os.path.join(area, "seen.json"), "w") as stream:
-    json.dump({**seen, "apple-event": apple_event}, stream)
-print(json.dumps({**seen, "apple-event": apple_event}))
+    json.dump({**seen, **verdicts}, stream)
+print(json.dumps({**seen, **verdicts}))
 """
 
 
@@ -437,7 +441,7 @@ def validation_confinement():
             listener.listen()
         port, other = (listener.getsockname()[1] for listener in listeners[:2])
         log, status = outside / "run.log", outside / "run.exit"
-        command = platform.validation_command((area, outside / "linked", temp), log, port, [sys.executable, "-I", "-c", APPLE_EVENT + ATTEMPTS, str(area),
+        command = platform.validation_command((area, outside / "linked", temp), log, port, [sys.executable, "-I", "-c", SAFE_READ + ATTEMPTS, str(area),
                                                               str(outside), str(Path.home()), str(port), str(other),
                                                               label, platform._user_temp(), str(temp)],
                                               {"HOME": str(area), "PATH": "/opt/homebrew/bin:/usr/bin:/bin", "LANG": "C"})
@@ -452,7 +456,8 @@ def validation_confinement():
         check(saved == seen, f"output reached the runner's log: {bool(lines)}; attempts saved in the area {saved}")
         allowed = {"write-area", "read-system", "resolve", "bind-other", "connect-other", "unix-area", "unix-temp",
                    "unix-system", "git"}
-        check(seen.get("apple-event") == 1 and all(seen[key] == (key in allowed) for key in seen if key != "apple-event"),
+        check(seen.get("apple-event") == 1 and seen.get("private") == ["EPERM", "EPERM"]
+              and all(seen[key] == (key in allowed) for key in seen if key not in ("apple-event", "private")),
               f"attempts {seen}; status {status.read_text() if status.exists() else None}; output {output[-500:]!r}")
         check(not (outside / "written").exists(), "the home folder was written")
         check(not app_ran(area / "fixture.app", outside / "launched"), "the fixture app ran")

@@ -676,7 +676,8 @@ def project_dir(name: str) -> Path:
 def discover_projects() -> list[dict]:
     """The immediate subfolders of the projects folder, marked managed/unmanaged, and managed projects elsewhere."""
     managed = load_projects()
-    by_path = {str(Path(v["path"]).expanduser().resolve()): k for k, v in managed.items()}
+    by_path = {str(Path(v["path"]).expanduser().resolve()): k for k, v in managed.items()
+               if not platform.private(Path(v["path"]).expanduser())}
     out, seen = [], set()
     for root in project_roots():
         try:
@@ -693,6 +694,6 @@ def discover_projects() -> list[dict]:
                         "git": (p / ".git").exists(), **(managed.get(name, {}) if name else {})})
     for k, v in managed.items():  # managed projects outside the roots
         if k not in seen:
-            git = not platform.private(v["path"]) and (Path(v["path"]) / ".git").exists()
+            git = not platform.private(Path(v["path"]).expanduser()) and (Path(v["path"]) / ".git").exists()
             out.append({"name": k, "folder": Path(v["path"]).name, "managed": True, "git": git, **v})
     return out

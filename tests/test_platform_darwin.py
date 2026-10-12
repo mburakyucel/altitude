@@ -657,10 +657,13 @@ class Confinement(DarwinCase):
         (self.home / "code").mkdir()
         (self.home / "code" / "linked").symlink_to(atlas)
         (self.home / "code" / "loop").symlink_to(self.home / "code" / "loop")
+        (self.home / "code" / "up").symlink_to(Path("..") / "Documents")
         looked, islink = [], os.path.islink
         self.patch(platform.os.path, "islink", lambda path: looked.append(path) or islink(path))
         for path, private in ((atlas, True), (self.home / "documents" / "atlas", True),
                               (self.home / "code" / "linked" / "src", True), (self.home / "code" / "loop", True),
+                              (f"{self.home}/code/linked/../other", True), (self.home / "code" / "up" / "x", True),
+                              (f"{self.home}/code/../Projects", False), ("code/linked", False),
                               ("/Volumes/Backup/photos", True), (self.home / "code", False),
                               (self.home / "Projects" / "atlas", False), (self.home / "Library" / "Caches", False)):
             with self.subTest(path=path):
