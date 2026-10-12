@@ -82,10 +82,13 @@ test("lost reported-message receipt settles one saved message from the record, t
   const text = "Retain this follow-up even if its receipt is lost.";
   await walk.open("/projects/atlas/tasks/prepare-index-migration");
   await field.fill(text);
+  const lost = page.waitForEvent("requestfailed", (request) => request.url().endsWith("/api/l2/message"));
   await conversation.getByRole("button", { name: "Send", exact: true }).click();
+  await lost;
   const bubble = conversation.locator(".bubble").filter({ hasText: text });
   // The read that lists the send id settles the lost receipt: one stored message, never offered for resending.
-  await walk.state("01-lost-receipt-settled-from-record", { visible: [field, bubble], hidden: doubt });
+  // The bubble leaves Sending before it can leave Unconfirmed, so these hold only once the record lists it.
+  await walk.state("01-lost-receipt-settled-from-record", { visible: [field, bubble], hidden: [conversation.locator(".msg-row[data-pending]"), ...doubt] });
   await expect(field).toHaveValue("");
   await page.reload();
   await walk.state("02-reload-retains-saved-row-without-resend", { visible: [field, bubble], hidden: doubt });
@@ -112,8 +115,9 @@ test("reported composer retains voice listening, cancellation and denied states"
   await cancel.click();
   await walk.state("02-cancel-restores-typed-draft", { visible: [field, mic], hidden: [cancel] });
   await expect(field).toHaveValue("Keep the typed draft.");
+  // On the prototype: WebKit can collect navigator.mediaDevices' wrapper, and an override on it, before the tap.
   await page.evaluate(() => {
-    Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
+    Object.defineProperty(MediaDevices.prototype, "getUserMedia", {
       configurable: true, value: async () => { throw new DOMException("Denied", "NotAllowedError"); },
     });
   });
