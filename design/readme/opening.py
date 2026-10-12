@@ -33,7 +33,7 @@ def main(images: pathlib.Path):
             png = tmp / f"{name}.png"
             subprocess.run(["google-chrome", "--headless", "--hide-scrollbars", "--default-background-color=00000000",
                             f"--window-size={WIDTH},{HEIGHT}", f"--screenshot={png}", page.as_uri()],
-                           check=True, capture_output=True)
+                           check=True, stdout=subprocess.DEVNULL)
             rendered.append((png, seconds))
         script = tmp / "frames.txt"
         script.write_text("".join(f"file '{png}'\nduration {seconds}\n" for png, seconds in rendered)

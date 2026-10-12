@@ -91,33 +91,36 @@ test("the phone answers a decision and the desktop sees the task resume", async 
   await phoneContext.addCookies([{ name: "altitude_device", value: altitude.device, url: altitude.url }]);
   await phoneContext.route(/^https?:\/\/(?!127\.0\.0\.1[:/])/, route => route.abort());
   const phone = await phoneContext.newPage();
-  for (const each of [page, phone]) each.on("pageerror", (error) => errors.push(error.message));
-  async function frame(name: string) {
-    for (const [view, each] of [["desktop", page], ["phone", phone]] as [string, Page][]) {
-      await each.evaluate(() => document.fonts.ready);
-      if (images) {
-        await mkdir(images, { recursive: true });
-        await each.screenshot({ path: resolve(images, `opening-${name}-${view}.png`), animations: "disabled" });
+  try {
+    for (const each of [page, phone]) each.on("pageerror", (error) => errors.push(error.message));
+    async function frame(name: string) {
+      for (const [view, each] of [["desktop", page], ["phone", phone]] as [string, Page][]) {
+        await each.evaluate(() => document.fonts.ready);
+        if (images) {
+          await mkdir(images, { recursive: true });
+          await each.screenshot({ path: resolve(images, `opening-${name}-${view}.png`), animations: "disabled" });
+        }
       }
     }
-  }
-  const backfill = page.getByRole("region", { name: "Work", exact: true })
-    .locator('a[href^="/projects/atlas/tasks/build-resumable-index-backfill"]').first();
-  const decision = phone.getByRole("article", { name: "Build resumable index backfill", exact: true });
+    const backfill = page.getByRole("region", { name: "Work", exact: true })
+      .locator('a[href^="/projects/atlas/tasks/build-resumable-index-backfill"]').first();
+    const decision = phone.getByRole("article", { name: "Build resumable index backfill", exact: true });
 
-  await page.goto("/projects/atlas");
-  await expect(backfill).toContainText("Your turn");
-  await phone.goto("/");
-  await expect(decision).toContainText("How long should we keep the old index for rollback?");
-  await frame("1-question");
-  await decision.getByRole("button", { name: "7 days", exact: true }).click();
-  await expect(phone.getByRole("button", { name: "Send 1 answer", exact: true })).toBeEnabled();
-  await frame("2-chosen");
-  await phone.getByRole("button", { name: "Send 1 answer", exact: true }).click();
-  await expect(phone.getByText("Nothing needs you.", { exact: true })).toBeVisible();
-  await expect(backfill).not.toContainText("Your turn");
-  await expect(backfill).toContainText("L2 replying to you");
-  await frame("3-resumed");
-  expect(errors).toEqual([]);
-  await phoneContext.close();
+    await page.goto("/projects/atlas");
+    await expect(backfill).toContainText("Your turn");
+    await phone.goto("/");
+    await expect(decision).toContainText("How long should we keep the old index for rollback?");
+    await frame("1-question");
+    await decision.getByRole("button", { name: "7 days", exact: true }).click();
+    await expect(phone.getByRole("button", { name: "Send 1 answer", exact: true })).toBeEnabled();
+    await frame("2-chosen");
+    await phone.getByRole("button", { name: "Send 1 answer", exact: true }).click();
+    await expect(phone.getByText("Nothing needs you.", { exact: true })).toBeVisible();
+    await expect(backfill).not.toContainText("Your turn");
+    await expect(backfill).toContainText("L2 replying to you");
+    await frame("3-resumed");
+    expect(errors).toEqual([]);
+  } finally {
+    await phoneContext.close();
+  }
 });
