@@ -31,9 +31,11 @@ def main(images: pathlib.Path):
             page.write_text(layout.replace("../../docs/images/project-desktop.png", desktop.resolve().as_uri())
                             .replace("../../docs/images/decision-phone.png", phone.resolve().as_uri()))
             png = tmp / f"{name}.png"
-            subprocess.run(["google-chrome", "--headless", "--hide-scrollbars", "--default-background-color=00000000",
-                            f"--window-size={WIDTH},{HEIGHT}", f"--screenshot={png}", page.as_uri()],
-                           check=True, stdout=subprocess.DEVNULL)
+            chrome = subprocess.run(["google-chrome", "--headless", "--hide-scrollbars",
+                                     "--default-background-color=00000000", f"--window-size={WIDTH},{HEIGHT}",
+                                     f"--screenshot={png}", page.as_uri()], capture_output=True, text=True)
+            if chrome.returncode or not png.is_file():  # Chrome's routine stderr is noise; show it only on failure
+                sys.exit(f"Chrome could not render {name}:\n{chrome.stderr[-2000:]}")
             rendered.append((png, seconds))
         script = tmp / "frames.txt"
         script.write_text("".join(f"file '{png}'\nduration {seconds}\n" for png, seconds in rendered)

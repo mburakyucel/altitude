@@ -118,6 +118,7 @@ test("the phone answers a decision and the desktop sees the task resume", async 
     await expect(phone.getByText("Nothing needs you.", { exact: true })).toBeVisible();
     await expect(backfill).not.toContainText("Your turn");
     await expect(backfill).toContainText("L2 replying to you");
+    await backfill.scrollIntoViewIfNeeded(); // the resumed task joins the end of the working list
     await frame("3-resumed");
     expect(errors).toEqual([]);
   } finally {
