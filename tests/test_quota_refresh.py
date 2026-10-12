@@ -149,6 +149,32 @@ class TestRefreshRouting(QuotaFixture):
     def choice(self, task=None):
         return route.pick_task(self.project_config, task or {})
 
+    def test_a_usage_check_failing_on_sign_in_starts_a_lapse_and_a_current_reading_ends_it(self):
+        revoked = "\n".join(json.dumps(event) for event in (
+            {"type": "assistant", "error": "authentication_failed",
+             "message": {"model": "<synthetic>", "content": [{"type": "text", "text": "Failed to authenticate"}]}},
+            {"type": "result", "is_error": True, "api_error_status": 401, "result": "Failed to authenticate"}))
+        for failed in ("exit", "result"):
+            with self.subTest(failed=failed):
+                if failed == "exit":
+                    self.failure = subprocess.CalledProcessError(1, "claude", output=revoked, stderr="")
+                else:
+                    self.output = revoked
+                self.refresh()
+                self.assertTrue(route.signed_out("claude"))
+                self.assertNotIn("rejection", state.read_json(config.MONITOR_DIR / route.QUOTA_CLAUDE))
+                self.assertEqual(self.choice()["engine"], "codex")
+                self.assertEqual(self.choice()["signed_out"], ["claude"])
+                self.failure, self.output = None, usage(limit("weekly_all", 5), limit("session", 1))
+                self.refresh()
+                self.assertFalse(route.signed_out("claude"))
+                self.assertFalse(route._rejection_path({"engine": "claude"}, "sign-in").exists())
+        self.talk.return_value = [json.dumps({"id": 2, "error": {"code": -32000, "message":
+            "Your access token could not be refreshed because your refresh token was revoked."}})]
+        self.refresh()
+        self.assertTrue(route.signed_out("codex"))
+        self.assertNotIn("rejection", state.read_json(config.MONITOR_DIR / route.QUOTA_CODEX))
+
     def test_both_readers_persist_current_evidence_and_weekly_headroom_selects_fresh_tasks(self):
         self.output = usage(limit("weekly_all", 5), limit("session", 90))
         self.refresh()

@@ -1625,8 +1625,18 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                 active_turn["provider_started"] = True
             if on_start:
                 on_start(pid)
+        lapsed = list(choice.get("signed_out") or [])
+        def tell(outcome):
+            # The operator learns of each engine's lapsed sign-in once, in plain words, from their own conversation.
+            if trigger != "chat":
+                return
+            for name in lapsed:
+                if route.tell_sign_in(name, project):
+                    chat_log(project, "system", _sign_in_notice(name, outcome), trigger="fyi", by="altd",
+                             heads_up=True, turn_id=uuid.uuid4().hex, **_slug_meta(slug))
 
         while choice.get("engine"):
+            tell(choice["engine"])
             try:
                 with S.project_lock(project):
                     resolved = image_store.resolve(project, image_message["images"]) if image_message else []
@@ -1640,9 +1650,13 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                 res["project_message_error"] = receipt_errors[-1]
             if res.get("rejection"):
                 route.note_rejection(choice, res["rejection"])
+                if res["rejection"].get("sign_in") and choice["engine"] not in lapsed:
+                    lapsed.append(choice["engine"])
             elif res.get("limited"):
                 route.note_limit(choice["engine"], res["limited"])
             else:
+                if not res.get("error"):
+                    route.signed_in(choice["engine"])
                 if image_message and res.get("error") and not any(
                         row.get("turn_id") == turn_id and row.get("role") == "error"
                         for row in chat_history(project, None)):
@@ -1651,14 +1665,19 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
                 return res
             pinned = config.pinned_option("l3", config.project(project), engine=requested, model=model)
             if keeps and res.get("safe_to_retry") and (image_message or pinned):
+                tell("waits")
                 return kept(res)
             if image_message or pinned or not res.get("safe_to_retry"):
-                chat_log(project, "error", res.get("error") or "Provider unavailable; check authentication/model access.",
+                tell("stopped")
+                chat_log(project, "error", (res.get("rejection") or {}).get("why") or res.get("error")
+                         or "Provider unavailable; check authentication/model access.",
                          trigger=trigger, engine=choice["engine"], turn_id=active_turn["id"],
                          **_created_only(project, active_turn["id"]), **_slug_meta(slug))
                 return {**res, "undelivered": bool(res.get("safe_to_retry"))}
             tried.append(route.option_key(choice))
             choice = _select(project, requested, model=model, excluded=tried)
+            lapsed.extend(name for name in choice.get("signed_out") or [] if name not in lapsed)
+        tell("waits" if keeps else "stopped")
         why = f"engine hold: {choice['why']}"
         held = {"text": "", "session_id": "", "usage": {}, "context_tokens": 0, "cost": 0.0,
                 "turns": 0, "structured": None, "error": why, "tools": [], "skipped": False,
@@ -1669,6 +1688,22 @@ def turn(project: str, prompt: str, *, trigger: str = "chat", engine: str | None
         chat_log(project, "error", why, trigger=trigger, turn_id=turn_id, **_created_only(project, turn_id),
                  **_slug_meta(slug))
         return held
+
+
+def _failure(res: dict) -> str | None:
+    """A failed turn's own words: a recognized rejection's plain reason, never the provider's text."""
+    return (res.get("rejection") or {}).get("why") or res.get("error")
+
+
+def _sign_in_notice(engine: str, outcome: str) -> str:
+    """Which engine's sign-in lapsed, what this turn did about it, and how to sign in again."""
+    label = config.ENGINE_LABELS[engine]
+    lapse = f"{label}'s sign-in has lapsed"
+    said = {"waits": f"{lapse} and no other engine can answer, so your message waits and sends once you are "
+                     "signed in again.",
+            "stopped": f"{lapse}, so this turn stopped; Retry it once you are signed in again."}
+    step = f"To sign in, run `{engines.SIGN_IN[engine][1]}` on the computer running Altitude."
+    return f"{said.get(outcome) or f'{lapse}, so {config.ENGINE_LABELS[outcome]} is answering for now.'} {step}"
 
 
 def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_start, slug, images=(), on_result=None,
@@ -1749,7 +1784,7 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
             res.update(completed=False, turn_id=turn_id)
             return res
         if res.get("error") and not res.get("session_id"):
-            chat_log(project, "error", res["error"], trigger=trigger, engine="claude", turn_id=turn_id,
+            chat_log(project, "error", _failure(res), trigger=trigger, engine="claude", turn_id=turn_id,
                      tools=_tool_log(res.get("tools") or []), **_created_only(project, turn_id),
                      **_slug_meta(slug))
             res["turn_id"] = turn_id
@@ -1761,7 +1796,7 @@ def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_star
             _save_session(inf, session, "claude", res.get("session_id"), pct, fresh,
                           res.get("cost", 0.0), res.get("usage") or {}, choice)
         save_info(project, inf)
-        chat_log(project, "assistant", res.get("text") or (res.get("error") or ""), trigger=trigger,
+        chat_log(project, "assistant", res.get("text") or _failure(res) or "", trigger=trigger,
                  engine="claude", context_percent=pct, turns=res.get("turns"),
                  tools=_tool_log(res.get("tools") or []), turn_id=turn_id, **_created_meta(project, turn_id),
                  **_slug_meta(slug),
@@ -1848,7 +1883,7 @@ def _codex_turn(project: str, prompt: str, trigger: str, turn_started_at: str, a
         if reported_sid and not identity_error:
             _save_session(inf, session, "codex", reported_sid, pct, fresh, 0.0, usage, choice)
             save_info(project, inf)
-        chat_log(project, "error", f"codex L3 turn failed: {out['error']}", trigger=trigger,
+        chat_log(project, "error", f"codex L3 turn failed: {_failure(out)}", trigger=trigger,
                  engine="codex", turn_id=turn_id, tools=_tool_log(out["tools"]), **_created_only(project, turn_id),
                  **_slug_meta(slug))
         return out

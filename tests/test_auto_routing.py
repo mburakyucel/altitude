@@ -397,6 +397,97 @@ class TestAutoIntegration(AltitudeCase):
             self.assertNotIn("held", l3.turn(self.project, "Report landed", trigger="report-landed"))
             self.assertEqual(execute.call_count, 3)
 
+    @staticmethod
+    def revoked(*args, **kwargs):
+        """What claude_print returns for the CLI's revoked sign-in stream (tests.test_engine_availability)."""
+        from tests.test_engine_availability import REVOKED, revoked_stream
+        stdout = revoked_stream()
+        return {"session_id": "session", "text": "", "error": REVOKED, "tools": [], "turns": 1,
+                "rejection": engines.rejection("claude", {"raw_stdout": stdout}),
+                "safe_to_retry": engines._safe_output("claude", stdout)}
+
+    @staticmethod
+    def answered(text):
+        return {"session_id": "conversation", "reported_session_id": "conversation", "text": text, "tools": [],
+                "error": None, "usage": {}, "context_tokens": 1, "cost": 0, "turns": 1}
+
+    def notices(self):
+        return [row["text"] for row in l3.chat_history(self.project) if row["role"] == "system"]
+
+    def assert_no_provider_text(self):
+        self.assertFalse([row for row in l3.chat_history(self.project) if "OAuth token revoked" in row["text"]])
+
+    def test_a_revoked_sign_in_answers_on_the_other_engine_and_says_so_once_per_lapse(self):
+        self.policy("claude:opus > codex")
+        notice = ("Claude's sign-in has lapsed, so Codex is answering for now. "
+                  "To sign in, run `claude auth login` on the computer running Altitude.")
+        signed_in = []
+        def claude(*args, **kwargs):
+            return self.answered("Claude answer") if signed_in else self.revoked()
+        with mock.patch.object(engines, "claude_print", side_effect=claude) as execute, \
+             mock.patch.object(engines, "codex_exec", side_effect=lambda *a, **k: self.answered("Codex answer")) as other:
+            self.assertTrue(l3.turn(self.project, "It says activation failed")["completed"])
+            self.assertTrue(l3.turn(self.project, "What failed?")["completed"])
+            self.assertEqual((execute.call_count, other.call_count), (1, 2))
+            self.assertEqual(self.notices(), [notice])
+            replies = [row for row in l3.chat_history(self.project) if row["role"] == "assistant"]
+            self.assertEqual([(row["engine"], row["text"]) for row in replies],
+                             [("codex", "Codex answer"), ("codex", "Codex answer")])
+            self.assert_no_provider_text()
+            # The next usage check reads Claude again: the lapse ends, and a later lapse is told again.
+            signed_in.append(True)
+            route.signed_in("claude")
+            self.assertEqual(l3.turn(self.project, "Back?")["engine"], "claude")
+            signed_in.clear()
+            self.assertTrue(l3.turn(self.project, "And now?")["completed"])
+        self.assertEqual(self.notices(), [notice, notice])
+        self.assert_no_provider_text()
+
+    def test_a_revoked_sign_in_without_another_engine_keeps_the_message_and_tells_once(self):
+        self.policy("claude:opus")
+        with mock.patch.object(engines, "claude_print", side_effect=self.revoked) as execute:
+            first = l3.turn(self.project, "It says activation failed")
+            self.assertTrue(l3.turn(self.project, "Report landed", trigger="report-landed")["held"])
+            second = l3.turn(self.project, "Oauth token for what?")
+        # Each operator message retries the signed-out engine once; system turns keep waiting.
+        self.assertEqual(execute.call_count, 2)
+        for result in (first, second):
+            self.assertTrue(result["undelivered"])
+            self.assertFalse(result["completed"])
+        self.assertEqual([row["text"] for row in l3.queued(self.project)],
+                         ["It says activation failed", "Oauth token for what?"])
+        self.assertEqual(self.notices(), [
+            "Claude's sign-in has lapsed and no other engine can answer, so your message waits and sends once "
+            "you are signed in again. To sign in, run `claude auth login` on the computer running Altitude."])
+        self.assertFalse([row for row in l3.chat_history(self.project) if row["role"] in ("assistant", "error")])
+        self.assert_no_provider_text()
+        notice = next(row for row in l3.chat_history(self.project) if row["role"] == "system")
+        self.assertEqual((notice["trigger"], notice["heads_up"]), ("fyi", True))
+
+    def test_a_lapse_seen_by_the_usage_check_moves_the_next_message_without_a_failed_turn(self):
+        self.policy("claude:opus > codex")
+        route.note_rejection({"engine": "claude"}, engines.rejection("claude", {"error": "authentication_failed"}))
+        with mock.patch.object(engines, "claude_print") as execute, \
+             mock.patch.object(engines, "codex_exec", side_effect=lambda *a, **k: self.answered("Codex answer")):
+            self.assertTrue(l3.turn(self.project, "Status?")["completed"])
+        execute.assert_not_called()
+        self.assertEqual(self.notices(), ["Claude's sign-in has lapsed, so Codex is answering for now. "
+                                          "To sign in, run `claude auth login` on the computer running Altitude."])
+
+    def test_a_turn_pinned_to_a_signed_out_engine_stops_with_the_plain_reason(self):
+        self.policy("claude:opus > codex")
+        with mock.patch.object(engines, "claude_print", side_effect=self.revoked), \
+             mock.patch.object(engines, "codex_exec") as other:
+            result = l3.turn(self.project, "Use Claude for this", engine="claude")
+        other.assert_not_called()
+        self.assertFalse(result["completed"])
+        errors = [row["text"] for row in l3.chat_history(self.project) if row["role"] == "error"]
+        self.assertEqual(errors, ["provider rejected authentication or account access; sign in, then Retry or Resume"])
+        self.assertEqual(self.notices(), ["Claude's sign-in has lapsed, so this turn stopped; Retry it once you are "
+                                          "signed in again. To sign in, run `claude auth login` on the computer "
+                                          "running Altitude."])
+        self.assert_no_provider_text()
+
     def test_operator_retry_withdraws_only_the_engine_it_attempts(self):
         self.policy("claude:opus > codex")
         for engine in config.ENGINES:
