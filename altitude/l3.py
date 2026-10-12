@@ -1715,12 +1715,6 @@ def _sign_in_notice(engine: str, outcome: str) -> str:
 def _routed_turn(project, prompt, trigger, choice, active_turn, on_text, on_start, slug, images=(), on_result=None,
                  on_split=None):
     turn_id = active_turn["id"]
-    if trigger == "chat":
-        from . import audit
-        try:
-            prompt = audit.take_findings(project, turn_id) + prompt
-        except (OSError, ValueError, KeyError, TypeError, AttributeError):
-            pass  # Unavailable optional audit evidence must not prevent ordinary conversation.
     engine = choice["engine"]
     with _lifecycle_guard(project):
         if trigger == "chat" and engines.coordinator_native_send(engine):
