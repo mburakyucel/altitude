@@ -327,7 +327,7 @@ export class HostCapture {
   /** No answer: keep recording, and repeat the same request after a pause. */
   private again(error: unknown) {
     traceVoice("host.retry", this, { error: voiceError(error) });
-    this.watch("lost");
+    this.watch(error instanceof ApiError && error.status === 425 ? "catching-up" : "lost");
     const pause = Math.min(RETRY_MS * 2 ** this.attempts, MAX_RETRY_MS);
     this.attempts += 1;
     this.retry = setTimeout(() => { this.retry = null; this.pump(); }, pause);

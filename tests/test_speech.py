@@ -10,6 +10,7 @@ import http.client
 import io
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -435,6 +436,68 @@ class TestSetup(SpeechCase):
         self.fetched.clear()
         return old
 
+    def test_the_support_set_is_only_the_prior_linux_122_manifests(self):
+        # Exact preceding wheels from #847's parent; model, decoder and numpy are unchanged.
+        previous = {
+            "linux-x86_64-cp312": "6964a975731afc19dc3418fad8d4e08c48920144ff590149429a5ebe0d15fb3c",
+            "linux-x86_64-cp313": "9fe45ee3e756300fccfd8d61b91129a121d3d80e9d38e01f03ff1295badc32b8",
+        }
+        expected = {}
+        for key, sha in previous.items():
+            current = [*speech.MODEL_FILES, speech._DECODER, *speech.WHEELS[key]]
+            prior = [(name.replace("onnxruntime-1.28.0", "onnxruntime-1.22.0"), url, size,
+                      sha if "onnxruntime-" in name else digest) for name, url, size, digest in current]
+            expected[key] = (speech._digest(prior),)
+            self.assertNotEqual(speech._digest(prior), speech._digest(current))
+        self.assertEqual(speech.SUPPORTED, expected)
+
+    def test_interrupted_removal_can_be_reinstalled(self):
+        old = self.replacement()
+        # Durable state after a remover exits before it can delete, or after completion is invalidated.
+        for incomplete in (False, True):
+            S.write_json(speech.ROOT / "installation.json", {"removed": True, "generation": "removed-installation"})
+            if incomplete:
+                (old / "complete.json").unlink(missing_ok=True)
+            path = speech.setup()
+            self.assertEqual(speech.runtime(), path)
+            self.assertNotEqual(speech.installation_id(), "removed-installation")
+
+    def test_removal_timeout_keeps_files_usable_with_new_identity(self):
+        old = self.replacement()
+        identity = speech.installation_id()
+        self.patch(speech, "_lease", side_effect=speech.SpeechError("busy", 425))
+        with self.assertRaisesRegex(speech.SpeechError, "removal did not finish"):
+            speech.remove_runtime()
+        self.assertEqual(speech.runtime(), old)
+        self.assertNotEqual(speech.installation_id(), identity)
+
+    def test_separate_remover_waits_for_the_daemon_worker_to_exit(self):
+        old = self.replacement()
+        host = self.host()
+        host.open(None)
+        worker = host.worker
+        script = ('import sys; from pathlib import Path; from altitude import speech, platform; '
+                  'speech.ROOT=Path(sys.argv[1]); platform.container_unavailable=lambda _: None; '
+                  'speech.remove_runtime()')
+        removed = subprocess.run([sys.executable, "-c", script, str(speech.ROOT)],
+                                 capture_output=True, text=True, timeout=15)
+        self.assertEqual(removed.returncode, 0, removed.stderr)
+        self.assertIsNotNone(worker.poll())
+        self.assertFalse(old.exists())
+        self.assertIsNone(speech.runtime())
+
+    def test_shutdown_records_interruption_not_operator_cancellation(self):
+        old = self.replacement()
+        host = self.host()
+        host.open(None)
+        host.start_setup()
+        self.wait(lambda: speech.status().get("update", {}).get("state") == "waiting")
+        host.shutdown()
+        self.wait(lambda: host.setup_attempt is None)
+        self.assertEqual(speech.status()["update"]["state"], "failed")
+        self.assertIn("interrupted", speech.status()["update"]["reason"])
+        self.assertEqual(speech.runtime(), old)
+
     def test_replacement_reuses_verified_model_and_preserves_selection(self):
         old = self.replacement()
         identity = speech.installation_id()
@@ -482,7 +545,7 @@ class TestSetup(SpeechCase):
         self.assertTrue(old.exists())
         self.assertEqual(speech.runtime(), old)
         final = self.text(host, ident, 1, 200, "phone", final=True)
-        self.wait(lambda: host.setup_cancel is None)
+        self.wait(lambda: host.setup_attempt is None)
         self.assertFalse(old.exists())
         self.assertEqual(self.text(host, ident, 1, 200, "phone", final=True), final)
         next_id = host.open("phone")["id"]
@@ -496,28 +559,28 @@ class TestSetup(SpeechCase):
         host.update_installed()
         self.wait(lambda: speech.status().get("update", {}).get("state") == "waiting")
         host.cancel_setup()
-        self.wait(lambda: host.setup_cancel is None)
+        self.wait(lambda: host.setup_attempt is None)
         self.assertEqual(speech.status()["update"]["state"], "cancelled")
         self.assertEqual(speech.runtime(), old)
         self.assertEqual(self.text(host, ident, 0, 100, final=True)["text"], "100 samples.")
         restarted = self.host()
         restarted.update_installed()
-        self.assertIsNone(restarted.setup_cancel)
+        self.assertIsNone(restarted.setup_attempt)
         restarted.start_setup()
-        self.wait(lambda: restarted.setup_cancel is None)
+        self.wait(lambda: restarted.setup_attempt is None)
         self.assertNotEqual(speech.runtime(), old)
 
     def test_automatic_update_never_installs_absent_voice_or_retries_interruption(self):
         self.patch(config, "voice_setting", return_value={"backend": "host"})
         host = self.host()
         host.update_installed()
-        self.assertIsNone(host.setup_cancel)
+        self.assertIsNone(host.setup_attempt)
         self.assertEqual(self.fetched, [])
         old = self.replacement()
-        speech._begin(threading.Event(), automatic=True)
+        speech._begin(automatic=True)
         self.assertEqual(speech.status()["update"]["state"], "failed")
         host.update_installed()
-        self.assertIsNone(host.setup_cancel)
+        self.assertIsNone(host.setup_attempt)
         self.assertEqual(speech.runtime(), old)
 
     def test_unapproved_runtime_is_not_served_but_its_verified_model_can_be_reused(self):
@@ -564,10 +627,10 @@ class TestSetup(SpeechCase):
         self.assertEqual(speech.status()["state"], "ready")
 
     def test_cancel_leaves_nothing_behind_and_no_failure(self):
-        cancel = threading.Event()
-        cancel.set()
+        attempt = speech._begin()
+        speech.cancel_setup()
         with self.assertRaisesRegex(speech.SpeechError, "cancelled"):
-            speech.setup(cancel)
+            speech.setup(attempt=attempt)
         self.assertFalse((speech.ROOT / ".staging").exists())
         self.assertEqual(speech.status()["state"], "absent")
 
@@ -625,13 +688,13 @@ class TestSetup(SpeechCase):
         with self.assertRaisesRegex(speech.SpeechError, "already being set up"):
             speech.setup()
         release.set()
-        self.wait(lambda: host.setup_cancel is None)
+        self.wait(lambda: host.setup_attempt is None)
         self.assertEqual(speech.status()["state"], "ready")
 
     def test_the_daemon_sets_up_in_the_background_and_can_cancel(self):
         host = self.host()
         host.start_setup()
-        self.wait(lambda: host.setup_cancel is None)
+        self.wait(lambda: host.setup_attempt is None)
         self.assertEqual(speech.status()["state"], "ready")
         self.assertTrue(any("set up" in line for line in self.logs))
 

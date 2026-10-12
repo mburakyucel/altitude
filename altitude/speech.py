@@ -162,10 +162,8 @@ def _guard():
 # Release-owned support, including the worker/model protocol. Never infer support from folder age.
 # The preceding Linux 1.22 runtimes use the same pinned model and current worker protocol.
 SUPPORTED = {
-    "linux-x86_64-cp312": ("910ae4820b60ac64", "a99b5413cbe7fbf9"),
-    "linux-x86_64-cp313": ("2b2c68c4b467af35", "ecfca085ff6ad628"),
-    "macos-arm64-cp312": ("5ba9fbd6e40b8a1a",),
-    "macos-arm64-cp313": ("52b728ea58d49b57",),
+    "linux-x86_64-cp312": ("a99b5413cbe7fbf9",),
+    "linux-x86_64-cp313": ("ecfca085ff6ad628",),
 }
 
 
@@ -236,13 +234,13 @@ def status() -> dict:
 
 
 class _Attempt:
-    def __init__(self, ident: str, event: threading.Event, automatic: bool = False):
-        self.ident, self.event, self.automatic = ident, event, automatic
+    def __init__(self, ident: str, automatic: bool = False):
+        self.ident, self.automatic = ident, automatic
 
     def is_set(self) -> bool:
         state = _state()
         update = state.get("update", {})
-        return (self.event.is_set() or state.get("removed", False) or update.get("id") != self.ident
+        return (state.get("removed", False) or update.get("id") != self.ident
                 or update.get("cancel", False)
                 or (self.automatic and config.voice_setting()["backend"] != "host"))
 
@@ -258,14 +256,12 @@ class _Attempt:
             _write_state(state)
 
 
-def _begin(event: threading.Event, automatic: bool = False) -> _Attempt:
+def _begin(automatic: bool = False) -> _Attempt:
     files, reason = manifest()
     if files is None:
         raise SpeechError(f"Voice isn't available on this computer: {reason}.", 409)
     with _guard():
         state = _state()
-        if state.get("removing"):
-            raise SpeechError("Voice is being removed.", 409)
         target = _digest(files)
         if automatic and (state.get("removed") or not _installed()
                           or config.voice_setting()["backend"] != "host"
@@ -273,10 +269,11 @@ def _begin(event: threading.Event, automatic: bool = False) -> _Attempt:
                           or _complete(ROOT / f"runtime-{target}", target)):
             raise SpeechError("No automatic voice update is needed.", 409)
         ident = uuid.uuid4().hex
-        state.update(generation=installation_id() or uuid.uuid4().hex, removed=False,
+        generation = uuid.uuid4().hex if state.get("removed") else installation_id() or uuid.uuid4().hex
+        state.update(generation=generation, removed=False,
                      update={"id": ident, "target": target, "state": "preparing"})
         _write_state(state)
-        return _Attempt(ident, event, automatic)
+        return _Attempt(ident, automatic)
 
 
 def _download(url: str, target: Path, size: int, digest: str, advance: Callable[[int], None],
@@ -380,10 +377,10 @@ def _verify(path: Path, cancel: _Attempt) -> None:
             worker.wait()
 
 
-def setup(cancel: threading.Event | None = None, lock=None, attempt: _Attempt | None = None) -> Path:
+def setup(lock=None, attempt: _Attempt | None = None) -> Path:
     """Stage alongside working voice, then verify/switch/clean only with exclusive worker use."""
     with lock or _lock():
-        attempt = attempt or _begin(cancel or threading.Event())
+        attempt = attempt or _begin()
         files, _ = manifest()
         digest = _digest(files)
         staging, target = ROOT / ".staging", ROOT / f"runtime-{digest}"
@@ -422,8 +419,11 @@ def setup(cancel: threading.Event | None = None, lock=None, attempt: _Attempt | 
             with _guard():
                 state = _state()
                 if state.get("update", {}).get("id") == attempt.ident:
-                    cancelled = attempt.is_set() or isinstance(exc, KeyboardInterrupt)
+                    interrupted = state["update"].get("cancel") == "interrupted"
+                    cancelled = not interrupted and (attempt.is_set() or isinstance(exc, KeyboardInterrupt))
                     reason = str(exc) if isinstance(exc, SpeechError) else "A download failed. Try again."
+                    if interrupted:
+                        reason = "The update was interrupted. Try again."
                     state["update"].update(state="cancelled" if cancelled else "failed", reason="" if cancelled else reason)
                     _write_state(state)
             if isinstance(exc, (OSError, ValueError, zipfile.BadZipFile)) and not isinstance(exc, SpeechError):
@@ -441,7 +441,6 @@ def _finish_setup(target: Path) -> None:
     state = _state()
     state.pop("update", None)
     _write_state(state)
-    (ROOT / "failure.json").unlink(missing_ok=True)
 
 
 def _stage(files, staging: Path, digest: str, cancel: _Attempt) -> None:
@@ -485,13 +484,18 @@ def _stage(files, staging: Path, digest: str, cancel: _Attempt) -> None:
     shutil.rmtree(staging / "wheels")
 
 
-def cancel_setup() -> None:
-    """Cancellation is shared by browser, CLI and the automatic updater."""
+def _cancel_setup(reason: str) -> None:
     with _guard():
         state = _state()
-        if state.get("update"):
-            state["update"]["cancel"] = True
+        if (state.get("update", {}).get("state") not in (None, "failed", "cancelled")
+                and not state["update"].get("cancel")):
+            state["update"]["cancel"] = reason
             _write_state(state)
+
+
+def cancel_setup() -> None:
+    """Cancellation is shared by browser, CLI and the automatic updater."""
+    _cancel_setup("cancelled")
     with _lock(wait=70):
         pass
 
@@ -503,20 +507,30 @@ def remove_runtime() -> None:
         raise SpeechError(unavailable, 403)
     with _guard():
         state = _state()
-        state.update(removed=True, removing=True, generation=uuid.uuid4().hex)
+        was_removed = state.get("removed", False)
+        generation = uuid.uuid4().hex
+        state.update(removed=True, generation=generation)
+        if state.get("update"):
+            state["update"]["cancel"] = "cancelled"
         _write_state(state)
     try:
         with _lock(wait=70), _lease(True, timeout=10), _guard():
+            if _state().get("generation") != generation:
+                # A later explicit setup owns the installation now; never delete its result.
+                return
             for path in _runtimes():
+                (path / "complete.json").unlink(missing_ok=True)
                 shutil.rmtree(path)
             shutil.rmtree(ROOT / ".staging", ignore_errors=True)
-            _write_state({"removed": True, "generation": state["generation"]})
-            (ROOT / "failure.json").unlink(missing_ok=True)
-    finally:
+            _write_state({"removed": True, "generation": generation})
+    except SpeechError:
+        # Lock deadlines precede deletion. Restore availability, but never revive old recording identity.
         with _guard():
             state = _state()
-            state.pop("removing", None)
-            _write_state(state)
+            if state.get("generation") == generation:
+                state["removed"] = was_removed
+                _write_state(state)
+        raise SpeechError("Voice removal did not finish: another process is still using it. Try Remove voice again.", 409) from None
 
 
 class _Recording:
@@ -547,7 +561,7 @@ class Host:
         self.used = 0.0
         self.watching = False
         self.path: Path | None = None
-        self.setup_cancel: threading.Event | None = None
+        self.setup_attempt: _Attempt | None = None
 
     # --- recordings -------------------------------------------------------------------------------------
 
@@ -639,20 +653,19 @@ class Host:
     def start_setup(self, automatic: bool = False) -> None:
         """Set up in the background; Settings follows `status()`."""
         with self.changed:
-            if self.setup_cancel is not None:
+            if self.setup_attempt is not None:
                 raise SpeechError("Voice is already being set up.", 409)
             lock = _lock()  # held before answering, so Settings reads setting-up at once
-            cancel = threading.Event()
             try:
-                attempt = _begin(cancel, automatic)
+                attempt = _begin(automatic)
             except BaseException:
                 lock.close()
                 raise
-            self.setup_cancel = cancel
+            self.setup_attempt = attempt
 
         def run() -> None:
             try:
-                setup(cancel, lock, attempt)
+                setup(lock, attempt)
                 self.log("voice: host runtime set up")
             except SpeechError as exc:
                 self.log(f"voice: setup ended: {exc}")
@@ -660,7 +673,7 @@ class Host:
                 self.log(f"voice: setup failed: {exc!r}")
             finally:
                 with self.changed:
-                    self.setup_cancel = None
+                    self.setup_attempt = None
 
         threading.Thread(target=run, name="speech-setup", daemon=True).start()
 
@@ -675,22 +688,17 @@ class Host:
             self.log("voice: automatic runtime update started at release startup")
 
     def cancel_setup(self) -> None:
-        with self.changed:
-            if self.setup_cancel is not None:
-                self.setup_cancel.set()
         cancel_setup()
 
     def remove(self) -> None:
         with self.changed:
-            if self.setup_cancel is not None:
-                self.setup_cancel.set()
             self._stop("Voice stopped: voice was removed from this computer.")
         remove_runtime()
 
     def shutdown(self) -> None:
         with self.changed:
-            if self.setup_cancel is not None:
-                self.setup_cancel.set()
+            if self.setup_attempt is not None:
+                _cancel_setup("interrupted")
             self._stop("Voice stopped: Altitude is restarting.")
 
     # --- the worker -------------------------------------------------------------------------------------------
@@ -805,6 +813,7 @@ class Host:
                     if _state().get("removed") or (self.path is not None and not (self.path / "complete.json").exists()):
                         self._stop("Voice stopped: voice was removed from this computer.")
                     elif (_state().get("update", {}).get("state") == "waiting"
+                          and _setting_up()
                           and not any(r.final is None and r.error is None for r in self.recordings.values())):
                         self._stop("voice update ready to check")
                     elif not self.ready and now - self.started > LOAD_S:

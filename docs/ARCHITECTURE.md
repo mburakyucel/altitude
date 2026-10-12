@@ -2845,6 +2845,13 @@ Support is an explicit per-platform/interpreter digest list, never inferred from
 marker alone. Retained model files are copied only after matching the target size and SHA-256; wheel
 archives are downloaded and deleted after unpacking. There is no download cache.
 
+The support set retains the preceding Linux onnxruntime 1.22 manifests for CPython 3.12 and 3.13;
+both load and warm up with the current worker and the exact pinned model. The supported-table test
+derives their identities from those prior wheel checksums and the unchanged model/decoder/numpy.
+It admits no prior macOS runtime. This is fixed-model compatibility, not general support for arbitrary
+ONNX graphs: clients provide bounded PCM, never graph attributes or tensors. A release removes a
+digest if a relevant unsafe runtime is identified; an offline release cannot learn future revocations.
+
 At daemon startup, selected, already-installed host voice gets one automatic attempt per target
 manifest. First installation stays manual. The installation record persists the attempt, cancellation,
 failure and stable selection identity. An interrupted attempt also requires explicit Retry; switching
@@ -2861,6 +2868,9 @@ and leaves supported voice available. `alt voice cancel` and Settings cancel the
 Remove records an invalidating tombstone first, cancels setup, drains worker use and deletes runtimes;
 the daemon observes removal within a second. Successful promotion cleans superseded runtimes only
 after their readers exit.
+Removal invalidates completion before deleting a runtime's files, so interruption cannot leave a
+partially deleted runtime usable. A later explicit setup can recover an interrupted removal. A lock
+timeout restores availability without restoring old recording identity, and reports removal unfinished.
 
 The worker (`altitude/speech_worker.py`) runs as `python -I` with the daemon's interpreter and a
 minimal environment, imports only the runtime's unpacked wheels, runs the model on onnxruntime's CPU

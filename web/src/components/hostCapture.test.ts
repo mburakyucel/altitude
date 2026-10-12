@@ -79,6 +79,7 @@ describe("HostCapture", () => {
     capture.start();
     await vi.advanceTimersByTimeAsync(0);
     mic.speak(8000);
+    expect(capture.connection).toBe("catching-up");
     expect(capture.failure).toBeNull();
     checking = false;
     capture.stop();
