@@ -376,10 +376,11 @@ pending for loaded backend paths (`altitude/`, `bin/`, `systemd/`) or tracked we
 `web/tsconfig.json`, `web/vite.config.ts`). Web docs and other non-build files do not trigger it.
 Dispatch, L3 turns and report verification continue while activation is pending; new validation runs and
 adversarial review runs are refused until the restart, so the long work in flight drains instead of being
-replaced. Once no dispatch or resume claim, L3 turn, adversarial review, validation run, or report verification
-is in flight, `altd` runs the guarded restart script below as a transient user unit. Validation holds the
-quiet point through its one-hour execution limit, evidence recording and cleanup, so a busy machine
-activates within one validation run. Monitor names the validation run and review tasks it waits for.
+replaced; `alt task validate` waits through the restart and asks again. Once no dispatch or resume claim, L3
+turn, adversarial review, validation run, or report verification is in flight, `altd` runs the guarded restart
+script below as a transient user unit. Validation holds the quiet point through its one-hour execution limit,
+evidence recording and cleanup, so a busy machine activates within one validation run. Monitor names the
+validation run and review tasks it waits for.
 The unit refuses for one of two kinds of reason. A refusal a later quiet point can clear (the quiet
 probe gets no answer in three tries of ten seconds each, work claimed the quiet point first, or the
 checkout moved after the build began) withdraws the request and records the reason as `error`, a
