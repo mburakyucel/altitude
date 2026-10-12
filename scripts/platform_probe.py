@@ -244,6 +244,19 @@ def refusal(simulator: bool, error: Path) -> str:
     return f"; Simulator refused with {lines[0][:200] if lines else 'no error output'!r}"
 
 
+# Seatbelt's own verdict on an Apple Event from the asking process: no event is sent, so macOS shows no Automation
+# consent prompt and a refusal is the profile's. sandbox_check's filter is variadic, which Apple silicon passes on the
+# stack, after the eight argument registers; 4 is its Apple Event destination filter.
+APPLE_EVENT = r"""
+import ctypes, os, platform
+check = ctypes.CDLL(None).sandbox_check
+pad = [ctypes.c_void_p] * 5 if platform.machine() == "arm64" else []
+check.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, *pad, ctypes.c_char_p]
+def apple_event_refused():
+    return check(os.getpid(), b"appleevent-send", 4, *[None] * len(pad), b"com.apple.Terminal") == 1
+"""
+
+
 @row
 def confinement():
     if not DARWIN:
@@ -263,6 +276,8 @@ def confinement():
                   "sleep 5 & kill $! && echo signal-own-child; "
                   f"git init -q '{root}/repo' && echo git; "
                   f"/usr/bin/open -g -j '{root}/fixture.app' 2>/dev/null && echo open-app; "
+                  f"{shlex.quote(sys.executable)} -I -c {shlex.quote(APPLE_EVENT + 'raise SystemExit(apple_event_refused())')}"
+                  " && echo apple-event; "
                   f"xcrun simctl list runtimes >/dev/null 2>'{root}/simctl.err' && echo simulator")
         result = subprocess.run(platform.job_command(job, ["/bin/sh", "-c", script], env(), writable=(root,), runtime_max=60),
                                 stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=90)
@@ -271,8 +286,8 @@ def confinement():
         check(result.stdout.split() == ["write-inside", "signal-own-child", "git"] and not written and not ran,
               f"confinement: {result.stdout.split()} home written: {written}; fixture app ran: {ran}")
         evidence = refusal(simulator, root / "simctl.err")
-    return ("writes under the roots only; the supervisor, launchd, LaunchServices and the Simulator service are out of "
-            f"reach; own children stay signalable and git works ({xcode}{evidence})")
+    return ("writes under the roots only; the supervisor, launchd, LaunchServices, Apple Events and the Simulator service "
+            f"are out of reach; own children stay signalable and git works ({xcode}{evidence})")
 
 
 # Everything a validation run tries, inside the validation profile. True means the attempt succeeded.
@@ -334,6 +349,10 @@ attempt("keychain", lambda: run("/usr/bin/security", "default-keychain"))
 attempt("git", lambda: run("git", "init", "-q", os.path.join(area, "repo")))
 attempt("launchd-bootstrap", bootstrap)
 attempt("open-app", lambda: run("/usr/bin/open", "-g", "-j", os.path.join(area, "fixture.app")))
+def apple_event():
+    if apple_event_refused():
+        raise PermissionError
+attempt("apple-event", apple_event)
 def simulator():
     listed = subprocess.run(["xcrun", "simctl", "list", "runtimes"], capture_output=True, text=True, timeout=30)
     with open(os.path.join(area, "simctl.err"), "w") as stream:
@@ -373,7 +392,7 @@ def validation_confinement():
             listener.listen()
         port, other = (listener.getsockname()[1] for listener in listeners[:2])
         log, status = outside / "run.log", outside / "run.exit"
-        command = platform.validation_command((area, outside / "linked", temp), log, port, [sys.executable, "-I", "-c", ATTEMPTS, str(area),
+        command = platform.validation_command((area, outside / "linked", temp), log, port, [sys.executable, "-I", "-c", APPLE_EVENT + ATTEMPTS, str(area),
                                                               str(outside), str(Path.home()), str(port), str(other),
                                                               label, platform._user_temp(), str(temp)],
                                               {"HOME": str(area), "PATH": "/opt/homebrew/bin:/usr/bin:/bin", "LANG": "C"})
@@ -401,8 +420,8 @@ def validation_confinement():
         shutil.rmtree(temp, ignore_errors=True)
         Path(f"/private/tmp/{label}").unlink(missing_ok=True)  # written only if the profile failed
     return ("only the area is written and read in the home and shared temporary folders; the reserved port, other "
-            "sockets, keychain, launchd, LaunchServices, the Simulator service and the supervisor are out of reach; "
-            f"system files, name resolution, other loopback ports, own sockets in every root and git work ({xcode}{evidence})")
+            "sockets, keychain, launchd, LaunchServices, Apple Events, the Simulator service and the supervisor are out of "
+            f"reach; system files, name resolution, other loopback ports, own sockets in every root and git work ({xcode}{evidence})")
 
 
 @row
