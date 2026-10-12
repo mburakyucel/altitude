@@ -91,6 +91,8 @@ test("@phone-only content swipes preserve both reading positions, draft and sele
   // From rest, the swipe below is the first view's own rather than one held during this spring-back.
   await expect.poll(() => page.locator(".task-track").evaluate((node) => node.style.transform)).toBe("");
   await tabs.getByRole("link", { name: "Conversation", exact: true }).click();
+  // A tab switch commits in a transition; until it does, Terminal stays on screen and takes the touch.
+  await expect(page.getByText("Terminal is off", { exact: true })).toBeHidden();
   await expect(conversation).toBeVisible();
   await swipe(page, 100, 320, 220);
   await expect(conversation).toBeVisible(); // There is no wrap before the first view.
@@ -232,6 +234,8 @@ test("@phone-only the swipe tracks the finger: reveal, load, settle, spring back
   await expect.poll(() => offset(track)).toBe(0);
   await expect(page).toHaveURL(`${path}/terminal`);
   await tabs.getByRole("link", { name: "Conversation", exact: true }).click();
+  // A tab switch commits in a transition; until it does, Terminal stays on screen and takes the touch.
+  await expect(terminalOff).toBeHidden();
   await expect(conversation).toBeVisible();
   // Reduced motion: nothing moves with the finger; a release past the threshold switches at once.
   await page.emulateMedia({ reducedMotion: "reduce" });

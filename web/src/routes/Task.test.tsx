@@ -1139,6 +1139,25 @@ describe("Phone swipe lifecycle", () => {
     expect(screen.getByLabelText("Message the L2")).not.toBeVisible();
   });
 
+  it("takes a touch on the view a swipe settled into as that view's own from the moment its URL changes", async () => {
+    stub(running);
+    const { router } = renderApp({ route });
+    await screen.findByRole("region", { name: "Task conversation" });
+    const next = new Promise<string>((resolve) => {
+      const stop = router.subscribe((state) => {
+        if (state.location.pathname !== `${route}/live`) return;
+        stop();
+        touch("touchStart", 100, ".live-body");
+        touch("touchMove", 300, ".live-body");
+        resolve(track().style.transform);
+      });
+    });
+    touch("touchStart", 300);
+    touch("touchMove", 100);
+    touch("touchEnd", 100);
+    expect(await next).toBe("translateX(200px)");
+  });
+
   it("completes a short quick flick from its release speed", async () => {
     let now = 0;
     const clock = vi.spyOn(Event.prototype, "timeStamp", "get").mockImplementation(() => now);
