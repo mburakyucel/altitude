@@ -7,29 +7,6 @@ identity is stale. Boot/start mismatches establish a stale owner before reading 
 namespace link; a permission error when the lifetime still matches remains unavailable evidence. Linux is
 implemented; native macOS process-identity evidence remains part of that platform's open runtime gap.
 
-## Conversation-audit pilot
-
-The operator-started pilot uses independent fresh reviewer sessions, not the coordinator's resumable
-conversation. Its engine/model stays pinned, using ordinary Altitude permissions and tools with a
-review assignment. L3/L2 retain action ownership. Each session uses its engine's ordinary timeout,
-enforced for the process tree; restart cannot automatically replay a reserved attempt. Failure/uncertainty pauses the
-pilot, retaining its original seven-day expiry and fourteen-attempt budget.
-
-Reviews wait twelve hours and four new exchanges older than thirty minutes. Failed/unanswered
-exchanges remain eligible with uncertainty. The rolling forty-eight-hour sample starts no earlier
-than September 22, 2026 07:00 UTC. Starting prompts contain at most twenty exchanges, four directly
-related task records and 64 KiB including instructions. Native tool reads/reasoning add usage;
-billing and quota are not inferred from these bounds.
-
-Private results preserve sources, later evidence and ownership. New unresolved candidates accompany
-the next project chat turn once; no dedicated coordinator session or periodic notification runs.
-No later chat means delayed triage. Supply receipts do not prove handling. Corrected, already-owned,
-legitimate-wait and uncertain cases stay private. L3 verifies current evidence before action. Stop
-prevents new attempts while a claimed session may finish; audit errors never pause ordinary work.
-Deterministic tests use fictional state and scripted engines. Authorized live samples measure only
-their stated model-quality cases, not general provider compatibility or accuracy. See
-[pilot controls](CLI.md#conversation-audit-pilot).
-
 The persistent L3 conversation coordinates the project across task lifetimes. Each L2 owns one
 task's investigation, approach and relevant system implications within its authorized outcome,
 with its own durable conversation, isolated worktree and PR delivery. Questions go to L3
@@ -1537,8 +1514,8 @@ replacement until the operator runs the host launcher's Continue. Restarting the
 preserves its prior admission. Fresh empty home and project volumes initialize once before the
 application starts; imported, restored or incomplete state never silently becomes fresh.
 
-Task dispatch/resume, coordinator chat/report turns, independent reviews, setup connection and
-conversation audit enter the same admission lease before taking their work. Engine primitives
+Task dispatch/resume, coordinator chat/report turns, independent reviews and setup connection
+enter the same admission lease before taking their work. Engine primitives
 check that lease too. A later Pause permits an already admitted call to finish but rejects new
 ones. Queued messages, review requests and resume generations remain unconsumed on refusal;
 report refusals do not consume failure backoff. Stop and report bookkeeping do not need admission.

@@ -1,0 +1,479 @@
+{
+ "project": "skylog",
+ "now": "2026-11-09T08:00:00+00:00",
+ "tasks": [
+  {
+   "slug": "seeing-scale",
+   "title": "Record seeing conditions on observations",
+   "state": "done",
+   "created": "2026-10-27T20:00:00+00:00",
+   "reported": "2026-10-27T23:10:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-27T23:40:00+00:00",
+   "tokens": 900000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-27T20:00:00+00:00",
+     "role": "l3",
+     "text": "Ask: observers want to note how steady the air was for each session, on the usual 1 to 5 scale."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-27T20:20:00+00:00",
+     "role": "l2",
+     "text": "Outline: a seeing field (1 to 5, with a one-line description of each step) and a transparency field on the session form, both optional, shown on the session page and filterable in the log."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-27T23:10:00+00:00",
+     "role": "l2",
+     "text": "Merged as PR #61. Sessions carry seeing and transparency; the log filters by both."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-27T23:00:00+00:00",
+     "kind": "delivery",
+     "number": 61
+    }
+   ]
+  },
+  {
+   "slug": "moon-phase-badge",
+   "title": "Show the moon phase on each night",
+   "state": "done",
+   "created": "2026-10-28T19:00:00+00:00",
+   "reported": "2026-10-28T22:20:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-28T23:05:00+00:00",
+   "tokens": 1100000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-28T19:00:00+00:00",
+     "role": "l3",
+     "text": "Ask: show the moon's phase and illumination next to each night in the calendar."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-28T19:25:00+00:00",
+     "role": "l2",
+     "text": "Outline: compute phase and illumination per night from the date with the standard algorithm, show a small phase icon and a percentage in the calendar and on the session page. Tests against a few published values."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-28T22:20:00+00:00",
+     "role": "l2",
+     "text": "Merged as PR #63. Calendar nights show the phase icon and illumination; values match the reference dates within 1%."
+    },
+    {
+     "id": "m4",
+     "at": "2026-10-28T22:35:00+00:00",
+     "role": "operator",
+     "text": "Lovely, exactly what I wanted."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-28T22:10:00+00:00",
+     "kind": "delivery",
+     "number": 63
+    }
+   ]
+  },
+  {
+   "slug": "equipment-profiles",
+   "title": "Save telescope and eyepiece profiles",
+   "state": "done",
+   "created": "2026-10-29T20:00:00+00:00",
+   "reported": "2026-10-30T00:40:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-30T01:10:00+00:00",
+   "tokens": 1500000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-29T20:00:00+00:00",
+     "role": "l3",
+     "text": "Ask: observers re-type their telescope and eyepiece each session. Let them save equipment and pick it."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-29T20:30:00+00:00",
+     "role": "l2",
+     "text": "Outline: equipment profiles (telescope with aperture and focal length, eyepieces with focal length and field), picked on the session form, with magnification and true field computed per eyepiece. One question about sharing."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-29T21:30:00+00:00",
+     "role": "operator",
+     "text": "Private for now. Maybe sharing later."
+    },
+    {
+     "id": "m4",
+     "at": "2026-10-30T00:40:00+00:00",
+     "role": "l2",
+     "text": "Merged as PR #65. Profiles are private; the session form shows magnification and true field for the chosen eyepiece."
+    }
+   ],
+   "questions": [
+    {
+     "id": "q1",
+     "revision": 1,
+     "asked": "2026-10-29T20:31:00+00:00",
+     "audience": "operator",
+     "text": "Should equipment profiles be private to each observer, or shareable within an observing club?",
+     "asked_again": false,
+     "resolution": {
+      "disposition": "answered",
+      "at": "2026-10-29T21:30:00+00:00",
+      "by": "operator",
+      "message": "m3"
+     }
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-30T00:30:00+00:00",
+     "kind": "delivery",
+     "number": 65
+    }
+   ]
+  },
+  {
+   "slug": "messier-checklist",
+   "title": "Messier checklist progress",
+   "state": "done",
+   "created": "2026-10-30T19:00:00+00:00",
+   "reported": "2026-10-30T23:00:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-30T23:30:00+00:00",
+   "tokens": 1700000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-30T19:00:00+00:00",
+     "role": "l3",
+     "text": "Ask: show how many Messier objects each observer has logged, with the missing ones listed."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-30T19:20:00+00:00",
+     "role": "l2",
+     "text": "Outline: a checklist page from the catalogue table with logged objects ticked from session entries, a count, and the unlogged ones sorted by how well placed they are tonight."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-30T23:00:00+00:00",
+     "role": "l2",
+     "text": "The review caught that objects logged under their common name (for example the Orion Nebula) weren't ticked; matching now uses the catalogue's aliases. Merged as PR #67."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-30T22:50:00+00:00",
+     "kind": "delivery",
+     "number": 67
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-10-30T22:20:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "medium",
+       "title": "Objects logged by common name are not matched to their catalogue number"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Match on catalogue aliases"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "red-light-mode",
+   "title": "Red night-vision mode",
+   "state": "done",
+   "created": "2026-10-31T18:00:00+00:00",
+   "reported": "2026-10-31T21:20:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-31T21:50:00+00:00",
+   "tokens": 1000000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-31T18:00:00+00:00",
+     "role": "l3",
+     "text": "Ask: a red-on-black display mode so the phone doesn't ruin dark adaptation at the eyepiece."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-31T18:20:00+00:00",
+     "role": "l2",
+     "text": "Outline: a night mode theme with only red tones and low brightness, a toggle in the header, remembered per device. Walk every screen on phone at minimum brightness."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-31T21:20:00+00:00",
+     "role": "l2",
+     "text": "Merged as PR #69. Every screen walked in night mode on phone and desktop; images are tinted red too."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-31T21:10:00+00:00",
+     "kind": "delivery",
+     "number": 69
+    }
+   ]
+  },
+  {
+   "slug": "sketch-upload",
+   "title": "Attach eyepiece sketches to sessions",
+   "state": "done",
+   "created": "2026-11-02T19:00:00+00:00",
+   "reported": "2026-11-02T22:40:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-02T23:10:00+00:00",
+   "tokens": 1200000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-02T19:00:00+00:00",
+     "role": "l3",
+     "text": "Ask: observers draw what they see and photograph the sketch. Let them attach those images to an observation."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-02T19:25:00+00:00",
+     "role": "l2",
+     "text": "Outline: image attachments on observation entries, resized on upload, with a full-screen viewer that keeps night mode's red tint."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-02T22:40:00+00:00",
+     "role": "l2",
+     "text": "Merged as PR #71."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-02T22:30:00+00:00",
+     "kind": "delivery",
+     "number": 71
+    }
+   ]
+  },
+  {
+   "slug": "export-observing-log",
+   "title": "Export the observing log",
+   "state": "done",
+   "created": "2026-11-03T20:00:00+00:00",
+   "reported": "2026-11-03T22:40:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-03T23:10:00+00:00",
+   "tokens": 800000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-03T20:00:00+00:00",
+     "role": "l3",
+     "text": "Ask: observers want their log as a file for their own records or for an observing programme."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-03T20:20:00+00:00",
+     "role": "l2",
+     "text": "Outline: CSV export of sessions and observations with date, object, equipment, seeing and notes; times in UTC with the observer's offset column."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-03T22:40:00+00:00",
+     "role": "l2",
+     "text": "Merged as PR #73."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-03T22:30:00+00:00",
+     "kind": "delivery",
+     "number": 73
+    }
+   ]
+  },
+  {
+   "slug": "rise-set-times",
+   "title": "Rise and set times for planned targets",
+   "state": "done",
+   "created": "2026-11-04T19:00:00+00:00",
+   "reported": "2026-11-04T23:00:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-04T23:30:00+00:00",
+   "tokens": 1400000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-04T19:00:00+00:00",
+     "role": "l3",
+     "text": "Ask: when planning a night, show when each target rises, transits and sets from the observer's location."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-04T19:25:00+00:00",
+     "role": "l2",
+     "text": "Outline: compute rise, transit and set for each planned target from the observer's saved location, show them in the plan with the best viewing window highlighted. Tests against known values for a fixed location and date."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-04T23:00:00+00:00",
+     "role": "l2",
+     "text": "Merged as PR #75. Times agree with the reference values within a minute."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-04T22:50:00+00:00",
+     "kind": "delivery",
+     "number": 75
+    }
+   ]
+  },
+  {
+   "slug": "cloud-forecast",
+   "title": "Cloud forecast on the planning page",
+   "state": "done",
+   "created": "2026-11-05T18:00:00+00:00",
+   "reported": "2026-11-05T21:20:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-05T22:05:00+00:00",
+   "tokens": 1100000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-05T18:00:00+00:00",
+     "role": "l3",
+     "text": "Ask: show the hourly cloud cover forecast for tonight on the planning page."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-05T18:25:00+00:00",
+     "role": "l2",
+     "text": "Outline: fetch the hourly cloud cover from the weather service the app already uses for sunrise times, cache it for an hour, and show a strip above the plan. Hidden when the service is unavailable."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-05T21:20:00+00:00",
+     "role": "l2",
+     "text": "Merged as PR #77."
+    },
+    {
+     "id": "m4",
+     "at": "2026-11-05T21:35:00+00:00",
+     "role": "operator",
+     "text": "Nice. Useful already tonight."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-05T21:10:00+00:00",
+     "kind": "delivery",
+     "number": 77
+    }
+   ]
+  },
+  {
+   "slug": "remove-old-star-charts",
+   "title": "Remove the old star chart viewer",
+   "state": "done",
+   "created": "2026-11-06T19:00:00+00:00",
+   "reported": "2026-11-06T21:20:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-11-06T21:50:00+00:00",
+   "tokens": 700000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-11-06T19:00:00+00:00",
+     "role": "l3",
+     "text": "Ask: the old static star charts were replaced by the interactive sky view months ago. Remove them."
+    },
+    {
+     "id": "m2",
+     "at": "2026-11-06T19:15:00+00:00",
+     "role": "l2",
+     "text": "Outline: delete the chart images, the viewer and its route; links in old notes point to the sky view instead."
+    },
+    {
+     "id": "m3",
+     "at": "2026-11-06T21:20:00+00:00",
+     "role": "l2",
+     "text": "Merged as PR #79; about 60 MB of images gone from the repository."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-11-06T21:10:00+00:00",
+     "kind": "delivery",
+     "number": 79
+    }
+   ]
+  }
+ ],
+ "current": [
+  {
+   "slug": "observing-clubs",
+   "title": "Observing clubs with shared session logs",
+   "state": "proposal"
+  }
+ ],
+ "chat": [
+  {
+   "id": "c1",
+   "at": "2026-11-01T10:00:00+00:00",
+   "role": "operator",
+   "text": "Anything waiting on me for skylog?",
+   "turn": "t1"
+  },
+  {
+   "id": "c2",
+   "at": "2026-11-01T10:01:00+00:00",
+   "role": "l3",
+   "text": "Nothing. Five tasks finished this week; sketches and the export are next.",
+   "turn": "t1"
+  },
+  {
+   "id": "c3",
+   "at": "2026-11-06T18:30:00+00:00",
+   "role": "operator",
+   "text": "Let's drop the old star charts.",
+   "turn": "t2"
+  },
+  {
+   "id": "c4",
+   "at": "2026-11-06T18:31:00+00:00",
+   "role": "l3",
+   "text": "Dispatched as a removal.",
+   "turn": "t2"
+  }
+ ],
+ "earlier": []
+}

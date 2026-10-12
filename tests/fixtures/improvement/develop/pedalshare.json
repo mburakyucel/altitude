@@ -1,0 +1,618 @@
+{
+ "project": "pedalshare",
+ "now": "2026-10-20T07:00:00+00:00",
+ "tasks": [
+  {
+   "slug": "dock-return-elsewhere",
+   "title": "Allow returning a bike to a different dock",
+   "state": "done",
+   "created": "2026-10-06T09:00:00+00:00",
+   "reported": "2026-10-06T16:00:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-06T16:30:00+00:00",
+   "tokens": 2300000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-06T09:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: riders should be able to end a rental at any dock, not only the one they started from. The operator wants to know whether a fee applies."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-06T09:20:00+00:00",
+     "role": "l2",
+     "text": "Plan: drop the same-dock check in the end-rental endpoint, record both dock ids on the rental, and add a fee rule if one is wanted. Question below on the fee."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-06T10:30:00+00:00",
+     "role": "operator",
+     "text": "No fee, but only to docks in the same city."
+    },
+    {
+     "id": "m4",
+     "at": "2026-10-06T10:35:00+00:00",
+     "role": "l2",
+     "text": "Thanks. One follow-up before I write the rule, since \"same city\" can be read two ways in our data."
+    },
+    {
+     "id": "m5",
+     "at": "2026-10-06T11:40:00+00:00",
+     "role": "operator",
+     "text": "Service area. The city field is just a label."
+    },
+    {
+     "id": "m6",
+     "at": "2026-10-06T16:00:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #388 merged. Returns inside the rider's service area are free; outside it the endpoint refuses with a message naming the nearest allowed dock."
+    }
+   ],
+   "questions": [
+    {
+     "id": "q1",
+     "revision": 1,
+     "asked": "2026-10-06T09:21:00+00:00",
+     "audience": "operator",
+     "text": "Should returning to a different dock carry a fee?",
+     "asked_again": false,
+     "resolution": {
+      "disposition": "superseded",
+      "at": "2026-10-06T10:36:00+00:00",
+      "by": "l2"
+     }
+    },
+    {
+     "id": "q1",
+     "revision": 2,
+     "asked": "2026-10-06T10:36:00+00:00",
+     "audience": "operator",
+     "text": "Does \"same city\" mean the dock's city field, or inside the same service area polygon? A few docks near the river have the neighbouring city's label but sit in our area.",
+     "asked_again": false,
+     "resolution": {
+      "disposition": "answered",
+      "at": "2026-10-06T11:40:00+00:00",
+      "by": "operator",
+      "message": "m5"
+     }
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-06T15:40:00+00:00",
+     "kind": "delivery",
+     "number": 388
+    }
+   ]
+  },
+  {
+   "slug": "rental-receipt-email",
+   "title": "Email a receipt when a rental ends",
+   "state": "done",
+   "created": "2026-10-07T10:00:00+00:00",
+   "reported": "2026-10-07T15:00:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-07T15:30:00+00:00",
+   "tokens": 1600000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-07T10:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: send a short receipt email when a rental ends: duration, distance if known, price."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-07T10:25:00+00:00",
+     "role": "l2",
+     "text": "Plan: queue the email from the end-rental handler through the existing mail job, template with duration, docks and price. Distance is omitted when the bike has no tracker."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-07T11:00:00+00:00",
+     "role": "operator",
+     "text": "Fine. Can you show me a sample of the email body when it's done?"
+    },
+    {
+     "id": "m4",
+     "at": "2026-10-07T15:00:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #390 merged. Sample: \"Your ride: 34 min, Harbour Steps to Mill Lane, 2.40.\" One CI rerun on the lint job, which failed on a rule from a newer linter release than the one we test with."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-07T13:50:00+00:00",
+     "kind": "ci-recheck",
+     "reason": "lint job: new rule from an unpinned linter release"
+    },
+    {
+     "id": "e2",
+     "at": "2026-10-07T14:50:00+00:00",
+     "kind": "delivery",
+     "number": 390
+    }
+   ]
+  },
+  {
+   "slug": "fleet-battery-report",
+   "title": "Daily battery report for e-bikes",
+   "state": "done",
+   "created": "2026-10-08T08:00:00+00:00",
+   "reported": "2026-10-08T12:20:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-08T12:50:00+00:00",
+   "tokens": 1400000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-08T08:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: the fleet team wants a morning list of e-bikes below 20% battery, by dock."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-08T08:10:00+00:00",
+     "role": "l3",
+     "text": "The first dispatch failed before the owner started: the build cache disk on the worker was full. Cleared it and redispatched; nothing else affected."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-08T08:40:00+00:00",
+     "role": "l2",
+     "text": "Plan: a scheduled job at 06:00 that groups low-battery bikes by dock and posts the list to the fleet endpoint the ops dashboard reads. Proceeding."
+    },
+    {
+     "id": "m4",
+     "at": "2026-10-08T12:20:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #392 merged. The list is sorted by dock with the lowest battery first."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-08T08:05:00+00:00",
+     "kind": "dispatch-failed",
+     "reason": "Worker start failed: build cache disk full"
+    },
+    {
+     "id": "e2",
+     "at": "2026-10-08T12:10:00+00:00",
+     "kind": "delivery",
+     "number": 392
+    }
+   ]
+  },
+  {
+   "slug": "refund-partial-rides",
+   "title": "Refund rides cut short by a faulty bike",
+   "state": "done",
+   "created": "2026-10-09T09:00:00+00:00",
+   "reported": "2026-10-09T14:50:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-09T15:20:00+00:00",
+   "tokens": 3100000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-09T09:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: when a rider reports a fault within five minutes, refund the ride automatically."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-09T09:30:00+00:00",
+     "role": "l2",
+     "text": "Plan: a fault report within five minutes of unlock marks the rental refundable; the payment job refunds it and flags the bike for service. Refunds go back to the original card."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-09T09:55:00+00:00",
+     "role": "operator",
+     "text": "This touches payments. After the normal review, please run a second review round with the other engine before you ask me to merge."
+    },
+    {
+     "id": "m4",
+     "at": "2026-10-09T13:40:00+00:00",
+     "role": "l2",
+     "text": "First review fixed (refund could run twice on a retried webhook). Second round from the other engine found the refund amount ignored the unlock fee; fixed. Ready for merge approval."
+    },
+    {
+     "id": "m5",
+     "at": "2026-10-09T14:20:00+00:00",
+     "role": "operator",
+     "text": "Approved."
+    },
+    {
+     "id": "m6",
+     "at": "2026-10-09T14:50:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #395 merged."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-09T14:40:00+00:00",
+     "kind": "delivery",
+     "number": 395
+    }
+   ],
+   "reviews": [
+    {
+     "id": "r1",
+     "subject": "changes",
+     "requested": "2026-10-09T12:00:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "high",
+       "title": "Refund can run twice when the webhook is retried"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Idempotency key on the refund call"
+      }
+     ]
+    },
+    {
+     "id": "r2",
+     "subject": "changes",
+     "requested": "2026-10-09T13:10:00+00:00",
+     "findings": [
+      {
+       "id": "F1",
+       "severity": "medium",
+       "title": "Refund amount omits the unlock fee"
+      }
+     ],
+     "dispositions": [
+      {
+       "finding_id": "F1",
+       "disposition": "fixed",
+       "reason": "Refund the full charged amount"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "slug": "dock-capacity-api",
+   "title": "Expose free slots per dock in the public API",
+   "state": "done",
+   "created": "2026-10-12T09:00:00+00:00",
+   "reported": "2026-10-12T12:20:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-12T13:15:00+00:00",
+   "tokens": 1500000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-12T09:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: partners want free slot counts per dock through the public API."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-12T09:20:00+00:00",
+     "role": "l2",
+     "text": "Plan: add free_slots to the dock resource, computed from live sensor counts with the cached value as a floor when a sensor is silent. Versioned as an additive field."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-12T12:20:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #398 merged. CI needed one rerun of the lint job again, the same unpinned linter rule as on the receipt task."
+    },
+    {
+     "id": "m4",
+     "at": "2026-10-12T12:35:00+00:00",
+     "role": "operator",
+     "text": "Can you paste a sample response so I can forward it to the partner?"
+    },
+    {
+     "id": "m5",
+     "at": "2026-10-12T12:45:00+00:00",
+     "role": "l2",
+     "text": "{\"id\": \"dock-17\", \"name\": \"Mill Lane\", \"free_slots\": 6, \"bikes\": 9}"
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-12T11:30:00+00:00",
+     "kind": "ci-recheck",
+     "reason": "lint job: unpinned linter rule again"
+    },
+    {
+     "id": "e2",
+     "at": "2026-10-12T12:10:00+00:00",
+     "kind": "delivery",
+     "number": 398
+    }
+   ]
+  },
+  {
+   "slug": "weekend-tariff",
+   "title": "Add the weekend tariff",
+   "state": "done",
+   "created": "2026-10-13T10:00:00+00:00",
+   "reported": "2026-10-16T08:50:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-16T09:20:00+00:00",
+   "tokens": 1700000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-13T10:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: a weekend tariff starts next Saturday; the operator will announce it on Friday."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-13T10:20:00+00:00",
+     "role": "l2",
+     "text": "Plan: a tariff table keyed by day type with the weekend price from the brief, applied by rental start time. I will ask for merge approval when it is ready."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-13T10:40:00+00:00",
+     "role": "operator",
+     "text": "Hold the merge until I say go on Friday. I don't want it live before the announcement."
+    },
+    {
+     "id": "m4",
+     "at": "2026-10-13T14:00:00+00:00",
+     "role": "l2",
+     "text": "Ready and green; holding for your go as asked."
+    },
+    {
+     "id": "m5",
+     "at": "2026-10-16T08:20:00+00:00",
+     "role": "operator",
+     "text": "Go."
+    },
+    {
+     "id": "m6",
+     "at": "2026-10-16T08:50:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #401 merged."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-13T14:01:00+00:00",
+     "kind": "fyi",
+     "text": "Held for the operator's go before merge, at the operator's request"
+    },
+    {
+     "id": "e2",
+     "at": "2026-10-16T08:40:00+00:00",
+     "kind": "delivery",
+     "number": 401
+    }
+   ]
+  },
+  {
+   "slug": "unlock-latency",
+   "title": "Speed up the unlock endpoint",
+   "state": "done",
+   "created": "2026-10-14T09:00:00+00:00",
+   "reported": "2026-10-14T14:30:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-14T15:00:00+00:00",
+   "tokens": 2200000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-14T09:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: unlocking a bike takes over two seconds at busy docks."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-14T09:30:00+00:00",
+     "role": "l2",
+     "text": "Plan: the endpoint waits on a synchronous lock confirmation; switch to the lock's acknowledgement message and respond once it arrives, with a timeout. Load test against the simulator."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-14T14:30:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #404 merged. Median unlock time in the simulator went from 2.3 s to 0.6 s. The lint job needed a rerun once more for the same linter rule."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-14T13:20:00+00:00",
+     "kind": "ci-recheck",
+     "reason": "lint job: unpinned linter rule"
+    },
+    {
+     "id": "e2",
+     "at": "2026-10-14T14:20:00+00:00",
+     "kind": "delivery",
+     "number": 404
+    }
+   ]
+  },
+  {
+   "slug": "rider-ban-appeal",
+   "title": "Let banned riders appeal",
+   "state": "done",
+   "created": "2026-10-15T11:00:00+00:00",
+   "reported": "2026-10-15T14:30:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-15T15:20:00+00:00",
+   "tokens": 1100000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-15T11:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: riders banned for damage need a way to appeal from the app."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-15T11:25:00+00:00",
+     "role": "l2",
+     "text": "Plan: an appeal form on the banned screen that creates a support case with the ban reason attached. No automatic unban. Proceeding."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-15T14:30:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #406 merged."
+    },
+    {
+     "id": "m4",
+     "at": "2026-10-15T14:40:00+00:00",
+     "role": "operator",
+     "text": "Send me an example of the support case it creates?"
+    },
+    {
+     "id": "m5",
+     "at": "2026-10-15T14:50:00+00:00",
+     "role": "l2",
+     "text": "Subject \"Ban appeal: rider 4821\", body with ban reason, date, rider's text and the last three rentals."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-15T14:20:00+00:00",
+     "kind": "delivery",
+     "number": 406
+    }
+   ]
+  },
+  {
+   "slug": "station-map-cluster",
+   "title": "Cluster docks on the map at low zoom",
+   "state": "done",
+   "created": "2026-10-16T09:00:00+00:00",
+   "reported": "2026-10-16T12:50:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-16T13:20:00+00:00",
+   "tokens": 1300000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-16T09:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: the city map is unreadable when zoomed out; cluster docks."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-16T09:20:00+00:00",
+     "role": "l2",
+     "text": "Plan: use the map library's clustering with counts per cluster, uncluster from zoom 14. Walk phone and desktop."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-16T12:50:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #409 merged; walked both widths."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-16T12:40:00+00:00",
+     "kind": "delivery",
+     "number": 409
+    }
+   ]
+  },
+  {
+   "slug": "helmet-reminder",
+   "title": "Remind riders to wear a helmet",
+   "state": "done",
+   "created": "2026-10-17T10:00:00+00:00",
+   "reported": "2026-10-17T12:20:00+00:00",
+   "verdict": "delivered",
+   "finished": "2026-10-17T12:50:00+00:00",
+   "tokens": 700000,
+   "messages": [
+    {
+     "id": "m1",
+     "at": "2026-10-17T10:00:00+00:00",
+     "role": "l3",
+     "text": "Brief: show a one-line helmet reminder on the unlock screen, dismissible forever."
+    },
+    {
+     "id": "m2",
+     "at": "2026-10-17T10:15:00+00:00",
+     "role": "l2",
+     "text": "Plan: a small line under the unlock button with a dismiss that stores the choice on the rider profile. Proceeding."
+    },
+    {
+     "id": "m3",
+     "at": "2026-10-17T12:20:00+00:00",
+     "role": "l2",
+     "text": "Delivered: PR #411 merged."
+    }
+   ],
+   "events": [
+    {
+     "id": "e1",
+     "at": "2026-10-17T12:10:00+00:00",
+     "kind": "delivery",
+     "number": 411
+    }
+   ]
+  }
+ ],
+ "current": [
+  {
+   "slug": "pin-ci-linter",
+   "title": "Pin the linter version in CI",
+   "state": "running"
+  }
+ ],
+ "chat": [
+  {
+   "id": "c1",
+   "at": "2026-10-14T17:00:00+00:00",
+   "role": "operator",
+   "text": "The lint job keeps tripping on new rules. Can someone pin the linter?",
+   "turn": "t1"
+  },
+  {
+   "id": "c2",
+   "at": "2026-10-14T17:01:00+00:00",
+   "role": "l3",
+   "text": "Dispatched a task to pin the linter version in CI and the dev setup.",
+   "turn": "t1"
+  },
+  {
+   "id": "c3",
+   "at": "2026-10-16T08:10:00+00:00",
+   "role": "operator",
+   "text": "The tariff announcement is out. Giving the go in the task now.",
+   "turn": "t2"
+  },
+  {
+   "id": "c4",
+   "at": "2026-10-16T08:11:00+00:00",
+   "role": "l3",
+   "text": "Noted; the owner merges on your go there.",
+   "turn": "t2"
+  }
+ ],
+ "earlier": [
+  {
+   "title": "Owners include a sample of what the change produces (a response, an email, a record) in every report",
+   "outcome": "dismissed"
+  }
+ ]
+}
