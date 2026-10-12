@@ -1,0 +1,112 @@
+/* Show files boards: the viewer page, its rendered markdown, and the conversation link. Tokens come from ../wireframes.css. */
+.u{color:var(--accent-text);text-decoration:underline;text-underline-offset:2px}
+.u:hover{color:var(--accent-hover)}
+/* the link under a reply or in a question card: its own line, 44px tall on phone */
+.view{align-self:flex-start;color:var(--accent-text);text-decoration:underline;text-underline-offset:3px;overflow-wrap:anywhere}
+.m .view,.mv .view{display:inline-flex;align-items:center;min-height:44px;margin:-10px 0}
+/* question card in the conversation */
+.qc{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-card);padding:14px 16px;display:flex;flex-direction:column;gap:8px;font-size:14px;line-height:1.55}
+.qc .k{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--text-muted)}
+.qc .k b{color:var(--accent-text);font-weight:600}
+.qc .qq{font-weight:600;margin:0}
+.qc p{margin:0}
+.qc .rec{color:var(--text-secondary)}
+.qc .rcpt{display:flex;flex-direction:column;gap:4px;padding-top:8px;border-top:1px solid var(--hairline)}
+.qc .rcpt b{color:var(--success-text);font-weight:600}
+.qc .opts{margin-top:4px}
+.qc .btn[aria-pressed]{color:var(--text-primary)}
+.qc .batch{display:flex;align-items:center;gap:10px;padding-top:10px;border-top:1px solid var(--hairline);margin-top:4px}
+.btn.off{opacity:.6}
+.m .qc{font-size:15px;padding:14px 16px;border-radius:14px}
+.caret{display:inline-block;width:1.5px;height:20px;background:var(--accent);vertical-align:-4px;margin-left:1px}
+/* phone frame for the viewer: header, page, tab bar */
+.mv{width:390px;height:100%;display:grid;grid-template-rows:54px minmax(0,1fr) 84px;background:var(--surface);overflow:hidden}
+.mv .mh{border-bottom:1px solid var(--hairline)}
+.mv .tabbar{align-self:end;height:84px}
+.hb{display:grid;place-items:center;width:44px;height:44px;margin-left:-10px;color:var(--text-primary)}
+.ht{flex:1;min-width:0}.ht b{display:block;font-size:17px;font-weight:600;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* the viewer page */
+.vw{display:flex;flex-direction:column;gap:24px;width:100%;max-width:984px;margin:0 auto;padding:24px 32px 56px;min-width:0}
+.mv .vw{padding:18px 16px 32px;gap:20px;overflow:hidden}
+.back{align-self:flex-start;font-size:13px;color:var(--accent-text);text-decoration:underline;text-underline-offset:2px;margin-bottom:-8px}
+.vh{display:flex;flex-direction:column;gap:4px;min-width:0}
+.vh h1{font-size:22px;font-weight:600;line-height:1.3;margin:0;overflow-wrap:anywhere}
+.vmeta{font-size:13px;color:var(--text-muted);overflow-wrap:anywhere}
+.vmeta code{font-family:var(--font-mono);font-size:12.5px;color:var(--text-secondary)}
+.mv .vmeta code{word-break:break-all}
+.vstat{font-size:13px;color:var(--text-secondary);margin:4px 0 0}
+.mv .vstat .u{display:inline-flex;align-items:center;min-height:44px;margin:-12px 0}
+.loading{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--text-muted);margin:0}
+.spin.a{border-top-color:var(--accent)}
+/* figures for images the document does not place */
+.fig{margin:0;display:flex;flex-direction:column;gap:10px;min-width:0}
+.fig figcaption{display:flex;align-items:center;justify-content:space-between;gap:16px;font-size:13px;min-height:24px}
+.mv .fig figcaption{min-height:44px;margin:-8px 0}
+.mv .istate{min-height:132px}
+.fig figcaption b{font-weight:600;overflow-wrap:anywhere;min-width:0}
+.fig figcaption .u{flex:none;white-space:nowrap}
+.mv .fig figcaption .u{display:inline-flex;align-items:center;min-height:44px}
+.fig .img{display:block;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--page)}
+.fig .img svg,.md .img svg{display:block;width:100%;height:auto}
+.istate{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;min-height:180px;border:1px solid var(--border);border-radius:8px;background:var(--page);font-size:14px;color:var(--text-muted);text-align:center;padding:16px}
+.istate .loading{font-size:14px}
+.istate.fail{color:var(--danger)}
+.istate.fail p{margin:0;font-weight:500}
+/* Raw toggle */
+.tgl{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:34px;padding:0 14px;border:1px solid var(--border);border-radius:var(--radius-control);background:var(--card);font-size:13px;font-weight:500;color:var(--text-primary);align-self:flex-start}
+.tgl svg{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+.tgl[aria-pressed="true"]{background:var(--accent-tint);border-color:var(--accent-tint-border);color:var(--accent-text);font-weight:600}
+.mv .tgl{height:44px;font-size:14px;padding:0 16px}
+.docwrap{display:flex;flex-direction:column;gap:16px;min-width:0}
+.raw{margin:0;font-family:var(--font-mono);font-size:13px;line-height:1.65;color:var(--text-primary);white-space:pre-wrap;overflow-wrap:anywhere}
+/* unavailable and denied */
+.unav{display:flex;flex-direction:column;align-items:flex-start;gap:12px}
+.unav h1{font-size:22px;font-weight:600;line-height:1.3;margin:0}
+.unav p{margin:0;color:var(--text-muted);font-size:14px;line-height:1.55}
+.mv .btn{height:44px;font-size:14px;padding:0 18px}
+/* rendered markdown, GitHub-like on Altitude's tokens */
+.md{font-size:15px;line-height:1.7;color:var(--text-primary);min-width:0;overflow-wrap:break-word}
+.mv .md{font-size:16px;line-height:1.65}
+.md>:first-child{margin-top:0}
+.md p,.md ul,.md ol,.md blockquote,.md pre,.md .tw,.md .ns{margin:0 0 16px}
+.md h1,.md h2,.md h3{font-weight:600;line-height:1.3;margin:28px 0 14px}
+.md h1{font-size:28px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+.md h2{font-size:21px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.md h3{font-size:17px}
+.mv .md h1{font-size:26px}.mv .md h2{font-size:20px}
+.md a{color:var(--accent-text);text-decoration:underline;text-underline-offset:2px}
+.md .rel{color:inherit;text-decoration:none;cursor:default}
+.md code{font-family:var(--font-mono);font-size:.88em;background:var(--bubble);border-radius:6px;padding:.12em .38em}
+.md pre{background:var(--page);border:1px solid var(--border);border-radius:8px;padding:14px 16px;overflow:hidden;font-family:var(--font-mono);font-size:13px;line-height:1.6;white-space:pre}
+.md pre code{background:none;padding:0;font-size:inherit;border-radius:0}
+.md pre .c{color:var(--text-muted)}
+.md ul,.md ol{padding-left:26px}
+.md li+li{margin-top:4px}
+.md ul.tasks{list-style:none;padding-left:4px}
+.md ul.tasks li{display:flex;gap:10px;align-items:baseline}
+.md .cb{flex:none;width:15px;height:15px;border:1.5px solid var(--text-muted);border-radius:4px;display:inline-grid;place-items:center;transform:translateY(2px);background:var(--card)}
+.md .cb.on{background:var(--accent);border-color:var(--accent)}
+.md .cb.on svg{width:11px;height:11px;fill:none;stroke:var(--on-accent);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+.md blockquote{border-left:3px solid var(--border);padding:0 0 0 14px;color:var(--text-secondary)}
+.md blockquote p{margin:0}
+.md hr{border:0;border-top:1px solid var(--border);margin:24px 0}
+.md .center{text-align:center}
+.md .img{display:inline-block;max-width:100%;vertical-align:middle;cursor:zoom-in}
+/* wide tables scroll inside their own block; the scrollbar shown is the one visible while scrolling */
+.md .tw{position:relative}
+.md .tw .sc{overflow:hidden}
+.md table{border-collapse:collapse;font-size:14px;line-height:1.5}
+.mv .md table{font-size:15px}
+.md th,.md td{border:1px solid var(--border);padding:7px 12px;text-align:left;vertical-align:top}
+.md th{background:var(--page);font-weight:600;white-space:nowrap}
+.md td.nw{white-space:nowrap}
+.md .bar{height:4px;border-radius:2px;background:var(--hairline);margin-top:6px;position:relative}
+.md .bar i{position:absolute;left:0;top:0;bottom:0;border-radius:2px;background:var(--text-muted);opacity:.55}
+.md .ns{display:flex;align-items:center;gap:10px;padding:12px 14px;border:1px solid var(--border);border-radius:8px;color:var(--text-muted);font-size:13px;line-height:1.45;overflow-wrap:anywhere}
+.md .ns svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+/* boards that hold several frames */
+.frames{display:grid;grid-template-columns:repeat(4,390px);gap:36px 32px;padding:0 40px 40px}
+.frame{display:flex;flex-direction:column;gap:10px}
+.frame .lab{font-size:13px;font-weight:600;color:var(--text-primary);white-space:nowrap}
+.frame .lab span{color:var(--text-muted);font-weight:400;margin-left:6px}
+.frame .mv{height:844px;border:1px solid var(--border);border-radius:20px}
