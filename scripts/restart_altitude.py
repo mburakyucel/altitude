@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
@@ -31,6 +32,16 @@ DIST = WEB / "dist"
 
 class RestartError(RuntimeError):
     """A restart boundary could not be proven safe or healthy."""
+
+
+class Transient(RestartError):
+    """A refusal a later quiet point can clear: altd requests the unit again (I-20261010-214654)."""
+
+
+QUIET_PROBES = 3  # I-20261010-214654: a loaded host answered the overview slower than the old two-second probe
+QUIET_PROBE_SECONDS = 10.0
+RETRIES = 3  # transient refusals altd retries before the activation parks with a fault
+RETRY_SECONDS = 300
 
 
 def run(args: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = None,
@@ -66,7 +77,10 @@ def unit_environment() -> dict[str, str]:
     return values
 
 
-def require_deployed_checkout() -> None:
+def require_deployed_checkout() -> str:
+    """The deployed checkout's head, held to the service's own startup rule: clean, on its branch, not ahead or
+    diverged. Behind is fine: the unit activates the head it builds and the deployment tick pends the rest
+    (I-20261010-214654: origin moved during the build and the refusal parked the activation for hours)."""
     deployed = unit_properties().get("WorkingDirectory", "")
     if not deployed or Path(deployed).expanduser().resolve() != ROOT.resolve():
         raise RestartError(
@@ -79,7 +93,7 @@ def require_deployed_checkout() -> None:
         )
     try:
         # The service's branch, as it runs: this detached job inherits only PATH.
-        git_policy.fetch_and_require_exact_base(ROOT, unit_environment().get("ALTITUDE_SOURCE_BRANCH") or "main")
+        return git_policy.service_preflight(ROOT, unit_environment().get("ALTITUDE_SOURCE_BRANCH") or "main").head
     except git_policy.GitPolicyError as exc:
         raise RestartError(str(exc)) from exc
 
@@ -88,17 +102,21 @@ def require_idle() -> None:
     # Detached workers survive; validation holds through its bounded execution and evidence recording (#649).
     # Ask the live daemon too: its L3 turns and verification are process-local, unlike task markers.
     if unit_properties().get("ActiveState") == "active":
-        try:
-            status = json.loads(fetch("/api/overview")).get("restart") or {}
-        except (RestartError, ValueError) as exc:
-            raise RestartError(f"cannot prove Altitude is quiet: {exc}") from exc
+        for probe in range(QUIET_PROBES):
+            try:
+                status = json.loads(fetch("/api/overview", timeout=QUIET_PROBE_SECONDS)).get("restart") or {}
+                break
+            except (RestartError, ValueError) as exc:
+                if probe + 1 == QUIET_PROBES:
+                    raise Transient(f"cannot prove Altitude is quiet: {exc}") from exc
+                time.sleep(5)
         if status.get("waiting_for"):
-            raise RestartError("restart refused while work is active: " + ", ".join(status["waiting_for"]))
+            raise Transient("restart refused while work is active: " + ", ".join(status["waiting_for"]))
     with config.restart_lock(exclusive=True) as quiet:
         active = [f"{p}/{t['slug']}" for p in config.load_projects() for t in S.list_tasks(p)
                   if t.get("dispatching") or t.get("resume_claim")]
         if not quiet or active:
-            raise RestartError("restart refused while dispatch, L3, validation or report verification is active: " + ", ".join(active))
+            raise Transient("restart refused while dispatch, L3, validation or report verification is active: " + ", ".join(active))
         # The operator command also closes entry until the replacement daemon answers.
         flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
         pending = S.read_json(flag, {}) or {}
@@ -230,10 +248,12 @@ def requested_at() -> str | None:
     return (S.read_json(config.MONITOR_DIR / dispatch.RESTART_PENDING, {}) or {}).get("requested_at")
 
 
-def record_failure(attempt: str | None, error: str) -> None:
+def record_failure(attempt: str | None, exc: RestartError) -> None:
     """File this unit's own reason at once and reopen entry (I-20260924-205802: altd learned of a 10-second
     failure only at its ten-minute grace timeout, which now covers just a unit that dies without reporting).
-    A replacement daemon that failed verification has already cleared the record; the fault is still filed."""
+    A transient refusal instead withdraws the request for altd to retry at a quiet point after RETRY_SECONDS, at
+    most RETRIES times, before it too is filed (I-20261010-214654). A replacement daemon that failed verification
+    has already cleared the record; the fault is still filed."""
     if not attempt:
         return
     flag = config.MONITOR_DIR / dispatch.RESTART_PENDING
@@ -241,9 +261,16 @@ def record_failure(attempt: str | None, error: str) -> None:
     if pending.get("requested_at") == attempt:
         if pending.get("failed"):
             return
-        pending.update(failed=S.now(), error=error)
+        retries = pending.get("retries", 0)
+        if isinstance(exc, Transient) and retries < RETRIES:
+            del pending["requested_at"]
+            retry_at = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(seconds=RETRY_SECONDS)
+            pending.update(error=str(exc), retries=retries + 1, retry_at=retry_at.isoformat())
+            S.write_json(flag, pending)
+            return
+        pending.update(failed=S.now(), error=str(exc))
         S.write_json(flag, pending)
-    incidents.system_fault("restart", f"restart failed: {error}")
+    incidents.system_fault("restart", f"restart failed: {exc}")
 
 
 def main() -> int:
@@ -252,19 +279,22 @@ def main() -> int:
     attempt = requested_at()
     try:
         print("Checking the deployed checkout...")
-        require_deployed_checkout()
+        head = require_deployed_checkout()
         print("Building the web app in a staging directory...")
         staging = build_bundle()
-        require_deployed_checkout()
         print("Checking that Altitude is idle...")
         require_idle()
         attempt = requested_at()
+        # With the gate closed no self-deploy moves the checkout again, so the bundle and the backend the service
+        # exports at startup are the same commit.
+        if (moved := require_deployed_checkout()) != head:
+            raise Transient(f"the checkout moved from {head[:7]} to {moved[:7]} after the build began")
         print("Restarting Altitude and waiting for API/UI health...")
         publish_and_restart(staging)
         staging = None
     except RestartError as exc:
         print(f"Altitude restart failed: {exc}", file=sys.stderr)
-        record_failure(attempt, str(exc))
+        record_failure(attempt, exc)
         return 1
     finally:
         if staging and staging.exists():

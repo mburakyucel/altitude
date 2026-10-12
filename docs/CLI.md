@@ -1968,7 +1968,9 @@ browser and other candidate checks run through [validation runs](#validation-run
 with no grant. The approved Mac fictional harness uses the existing Seatbelt runner without
 Chromium's inner sandbox; dual-protection checks use the Linux container. A grant never substitutes
 an outside-worker browser run or changes worker permissions. Host
-container deployment work uses the [standing container approval](../AGENTS.md#container-operations-on-this-machine):
+container deployment work uses the [standing container approval](../AGENTS.md#container-operations-on-this-machine),
+and virtual machines on the Mac, which cannot start inside a validation run, use the
+[standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac):
 
 ```text
 alt task grant <slug> --approval <message-id> --question <id> --revision <n> [--source task|project] --reason <why>
@@ -2022,12 +2024,12 @@ run against that earlier question and answer; the grant records the purpose as t
 it and `from_task`, binds this task's current attempt and is revoked as usual. L3 judges later
 corrections and whether the new work is the same purpose; any narrower or wider purpose is asked again.
 
-For standing approval, the owner copies the complete paragraph under **Container operations on this
-machine** in the project's committed `AGENTS.md` into an L3-directed `alt task block --reason`
-(without `--for-operator`). Task-specific steps, cleanup and verification belong in the preceding
-reply. L3 reads the original approval and later corrections, then records the grant with
-`--standing-policy 'Container operations on this machine'`, the paragraph's approval ID, the current
-question/revision and `--attempt`. No new operator answer is required. The owner cannot self-record
+For standing approval, the owner copies the complete paragraph under the policy's heading in the
+project's committed `AGENTS.md`, such as **Container operations on this machine** or **VM lane runs on
+this Mac**, into an L3-directed `alt task block --reason` (without `--for-operator`). Task-specific
+steps, cleanup and verification belong in the preceding reply. L3 reads the original approval and
+later corrections, then records the grant with `--standing-policy '<heading>'`, the paragraph's
+approval ID, the current question/revision and `--attempt`. No new operator answer is required. The owner cannot self-record
 a standing grant. L3 resumes the owner with the recorded purpose; the owner resolves that dependency
 from L3's message using the ordinary question flow.
 
