@@ -169,7 +169,10 @@ def run(results, cache, *, image_workflow=False, native_binary=None, browser=Fal
             except subprocess.TimeoutExpired:
                 forwarding.kill(); forwarding.wait(timeout=5)
         if machine:
-            machine.stop()
+            try:
+                machine.stop()
+            except Exception as error:  # the run fails, but its folder and record still go
+                record.update(passed=False, stop_error=repr(error))
             record['vm_stopped'] = machine.process is None or machine.process.poll() is not None
         if monitor:
             try:

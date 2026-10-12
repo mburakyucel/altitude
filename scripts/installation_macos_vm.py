@@ -106,6 +106,7 @@ def lock():
     try:
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
+        handle.close()
         raise Stop("another run of this lane is using the guests") from None
     return handle
 

@@ -968,7 +968,7 @@ class TestLinuxVmMac(AltitudeCase):
         self.assertFalse((self.tmp / vm.IMAGE / vm.KERNEL).exists())
         self.assertFalse((self.tmp / vm.IMAGE / "image.json").exists())
 
-    def test_one_guest_at_a_time_and_a_refused_disk_releases_the_cache(self):
+    def test_one_virtual_machine_at_a_time_and_failed_setups_release_the_lock(self):
         from scripts import linux_vm_mac as vm
         image = self.tmp / "image"
         image.mkdir()
@@ -978,12 +978,23 @@ class TestLinuxVmMac(AltitudeCase):
             folder.mkdir()
             (folder / "id_ed25519.pub").write_text("ssh-ed25519 FIXTURE\n")
             return folder
-        with mock.patch.object(vm.subprocess, "run"), mock.patch.object(vm.os, "truncate"):
+        with mock.patch.object(vm.macos, "CACHE", self.tmp / "lane"), \
+                mock.patch.object(vm.subprocess, "run"), mock.patch.object(vm.os, "truncate"):
             first = vm.Machine(work("first"), image)
-            with self.assertRaisesRegex(RuntimeError, "another Linux guest"):
+            # The macOS installation lane's lock: a second guest, or its downloads, wait for the first.
+            with self.assertRaisesRegex(vm.macos.Stop, "another run"):
                 vm.Machine(work("second"), image)
+            with self.assertRaisesRegex(vm.macos.Stop, "another run"):
+                vm.base_image(self.tmp / "other-cache")
             first.stop()
             with mock.patch.object(vm.shutil, "disk_usage", return_value=types.SimpleNamespace(free=vm.FLOOR)):
                 with self.assertRaisesRegex(RuntimeError, "at least 10 GiB must stay free"):
                     vm.Machine(work("third"), image)
-            vm.Machine(work("fourth"), image).stop()
+            # A helper that cannot be built or started still lets the guest's setup be stopped.
+            broken = vm.Machine(work("fourth"), image)
+            with mock.patch.object(vm.macos, "helper", side_effect=subprocess.CalledProcessError(1, "swiftc")):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    broken.start()
+            broken.stop()
+            self.assertTrue(broken.log.closed)
+            vm.Machine(work("fifth"), image).stop()

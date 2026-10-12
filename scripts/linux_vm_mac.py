@@ -6,13 +6,13 @@ Ubuntu's published root filesystem image, kernel and initial ramdisk, each check
 over HTTPS. cloud-init provisions it from a read-only seed disk. SSH reaches the guest through the host-guest
 (vsock) socket, relayed to its sshd, so `ubuntu@127.0.0.1` with any port names it; the guest's NAT network card
 serves only its own downloads. Downloads live in CACHE/linux-arm64; each run boots a copy-on-write clone of the
-root filesystem in its own folder, deleted with it. One guest runs at a time, and a guest stops when less than
-10 GiB of disk would stay free. Virtual machines cannot start inside a worker sandbox: run this through
+root filesystem in its own folder, deleted with it. Downloads and the guest hold the macOS installation lane's
+lock, so one virtual machine of either lane runs at a time, and a guest stops when less than 10 GiB of disk
+would stay free. Virtual machines cannot start inside a worker sandbox: run this through
 `alt task run` under an operator grant.
 """
 from __future__ import annotations
 
-import fcntl
 import gzip
 import json
 import os
@@ -105,6 +105,11 @@ def base_image(cache: Path) -> dict:
     published checksums change. Without the Ubuntu signing keyring on a Mac, the checksums are trusted over HTTPS."""
     folder = cache / IMAGE
     folder.mkdir(parents=True, exist_ok=True)
+    with macos.lock():
+        return _base_image(folder)
+
+
+def _base_image(folder: Path) -> dict:
     fetch(IMAGES + "SHA256SUMS", folder / "SHA256SUMS")
     fetch(IMAGES + "unpacked/SHA256SUMS", folder / "unpacked-SHA256SUMS")
     wanted = {ROOT: expected(folder / "SHA256SUMS", ROOT),
@@ -137,7 +142,7 @@ def base_image(cache: Path) -> dict:
 
 class Machine:
     def __init__(self, work: Path, image: Path):
-        self.work, self.image, self.process, self.log = work, image, None, None
+        self.work, self.image, self.process, self.log, self.reader = work, image, None, None, None
         self.socket = work / "ssh.sock"
         self.key = work / "id_ed25519"
         subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(self.key)], check=True)
@@ -147,12 +152,7 @@ class Machine:
         (seed / "meta-data").write_text(f"instance-id: {work.name}\nlocal-hostname: altitude-guest\n")
         subprocess.run(["hdiutil", "makehybrid", "-quiet", "-iso", "-joliet", "-default-volume-name", "cidata",
                         "-o", str(work / "seed.iso"), str(seed)], check=True, timeout=60)
-        self.lock = (image / "guest.lock").open("w")
-        try:
-            fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            self.lock.close()
-            raise RuntimeError("another Linux guest from this cache is running") from None
+        self.lock = macos.lock()
         # A copy-on-write clone in the run's folder, which the lane deletes whatever happens.
         self.disk = work / "disk.img"
         try:
@@ -241,8 +241,11 @@ class Machine:
                 self.process.wait(10)
 
     def stop(self) -> None:
-        self.halt()
-        if self.log:
-            self.reader.join(10)  # the helper's last lines, then its log
-            self.log.close()
-        self.lock.close()
+        try:
+            self.halt()
+        finally:
+            if self.reader:
+                self.reader.join(10)  # the helper's last lines, then its log
+            if self.log:
+                self.log.close()
+            self.lock.close()
