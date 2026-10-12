@@ -951,10 +951,7 @@ def phase_privacy(guest: Guest, repository: str, results: Path, record: dict, in
     sandbox in a guest whose Python was never asked for access to a private place: a worker's and a validation run's
     profiles must refuse the Desktop and mounted volumes before macOS asks, so its privacy log shows no request."""
     guest.copy(inputs / "source.tar", f"{SHARED}/source.tar")
-    guest.ssh(f"mkdir {SHARED}/source && tar -xf {SHARED}/source.tar -C {SHARED}/source")
-    # In the account's login session, as a Terminal there runs it: from SSH's own session LaunchServices starts no app,
-    # so the probe's control (its fixture app runs outside the profile) would fail.
-    command = (f"cd {SHARED}/source && sudo -n launchctl asuser {ACCOUNT_UID} sudo -n -H -u {ACCOUNT} "
+    command = (f"mkdir {SHARED}/source && tar -xf {SHARED}/source.tar -C {SHARED}/source && cd {SHARED}/source && "
                f"/opt/homebrew/bin/python3.12 -B scripts/platform_probe.py --only {' '.join(PRIVACY_ROWS)}")
     result = guest.ssh(command, timeout=300, check=False)
     (results / "privacy.log").write_text(f"$ {command}\n# exit {result.returncode}\n{result.stdout}{result.stderr}")
