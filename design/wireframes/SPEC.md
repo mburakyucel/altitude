@@ -732,8 +732,9 @@ The L3 tab says "Applies from L3's next reply." with the last reply's reported m
 Tasks tab says that each project's Auto picks while the chosen model is unavailable, lists every
 project whose **Only <engine>** routing keeps its tasks elsewhere ("harbor runs tasks only on Codex,
 so it keeps its Codex model. Change", linking to its Routing), and ends with the hint "For one task,
-tell L3: “use Opus at Max for this”." The L3 tab names the project's own L3 Only engine the same way
-("This project keeps L3 only on Codex, so Fable can't be used here. Change in Routing").
+tell L3: “use Opus at Max for this”." While the L3 tab's choice is on another engine than the
+project's L3 Only engine, it says "L3 is Only Codex here. Using Fable sets L3 routing back to Auto.";
+saving it does so, and Routing then reads Auto.
 
 | State | What appears and what actions do |
 | --- | --- |
@@ -1885,10 +1886,11 @@ sections, model choices in the order they are applied:
   a choice the copy names it. At 390px each row stacks model above effort.
 - **Routing** (`#routing`): **Tasks** is Auto, Prefer <engine> or Only <engine>; **L3** is Auto or
   Only <engine>. The copy names the order Auto tries (the default weekly-headroom split or the custom
-  routing), that Only keeps the role on that engine even with a model choice and waits while it is
-  unavailable, and when a preferred engine is missing from custom routing. A change saves on choice
-  with the value shown as `expected`; one changed elsewhere says "Changed in another window." and
-  the page shows the current routing.
+  routing), that Only keeps the role on that engine and waits while it is unavailable (tasks keep it
+  even with New tasks set; choosing L3 Only clears an L3 choice on another engine), and when a
+  preferred engine is missing from custom routing. A change saves on choice with the value shown as
+  `expected`; one changed elsewhere says "Changed in another window." and the page shows the current
+  routing.
 - **Improvement suggestions** (`#improvement`, the Altitude project only;
   [design](improvement-review/PROPOSAL.md#turning-it-on-the-settings-section)): "Finds friction that
   keeps coming back in this project's tasks and suggests fixes." over one card. **Weekly** is a switch

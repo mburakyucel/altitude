@@ -57,6 +57,13 @@ The personas define [L2 task ownership and decisions](personas/l2.md) and
 [L3 coordination, feedback and recovery](personas/l3.md). L3 dispatches concrete requests without
 a separate scoping or research stage; implementation choices belong to the owner.
 
+By the operator's direction of 2026-10-12, finish currently authorized tasks and their necessary
+delivery and recovery, preserving dependencies, checks and holds. Afterwards, do not initiate
+optional enhancements or unrelated backlog without a new operator request. Necessary work is
+limited to finishing authorized outcomes or addressing a concrete blocker; it does not expand
+the roadmap. The operator's planned installed-version trial is context only, not authorization
+to replace or delete the source checkout, change services, install software or publish a release.
+
 L2 blocks for the operator's go on a short proposal before writing code only when a material product/UX,
 security, spend or paradigm choice is unsettled, or the brief asks for it. Otherwise it replies with a
 one-paragraph plan and proceeds; the operator can redirect at any checkpoint.

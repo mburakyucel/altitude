@@ -936,7 +936,10 @@ attempts keep their engine. With custom routing the preference reorders only the
 routing lists, and an engine it omits stays unused. Auto (unset) is the routing tiers alone: the
 Settings page says whether that is the default distribution or names the custom routing.
 
-**Only** keeps a role on one engine, the Settings page's Only <engine> routing:
+**Only** keeps a role on one engine, the Settings page's Only <engine> routing. A project's L3 choice
+and its Only L3 engine never name different engines: setting Only clears an L3 choice on another engine,
+and an L3 choice on another engine sets L3 routing back to Auto, so the newer setting is what answers.
+The request receipt and project event record what was released:
 
 ```sh
 alt project set example --l2-engine codex --reason 'Keep tasks on Codex'
@@ -960,7 +963,8 @@ alt project set example --unset-l3-choice --reason 'Back to Auto'
 
 Precedence, highest first: a task's or turn's explicit engine, model or effort (`alt task new
 --engine/--model/--effort`, `alt chat --engine`); a project's Only engine, which keeps its engine and
-uses the choice's model and effort only when they are on it; the choice; then the routing tiers with
+uses the choice's model and effort only when they are on it (for L3 they always are, since saving one
+releases the other); the choice; then the routing tiers with
 each project's Auto defaults. A choice whose engine or model is unavailable (missing CLI, exhausted
 window or a recent rejection) leaves the tiers to pick meanwhile, and its controls say so. An effort
 alone applies to whichever engine the tiers pick that accepts it; an engine that does not keeps its

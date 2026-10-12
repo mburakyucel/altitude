@@ -115,6 +115,51 @@ class TestProjectEffort(AltitudeCase):
         refused = self.alt("project", "set", self.project, "--l3-choice", "claude@ultra", "--reason", "Claude has no Ultra")
         self.assertNotEqual(refused.returncode, 0)
 
+    def test_l3_choice_and_only_l3_release_each_other_and_routing_follows_the_newer(self):
+        engine, other = config.ENGINES
+        self.register(self.project, l3_engine=engine, l2_engine=engine)
+        self.assertEqual(route.pick_engine("l3", project=config.project(self.project))["engine"], engine)
+        for kept in ({"engine": engine, "model": "kept"}, {"effort": "high"}):
+            set_default(self.project, "l3_choice", kept)  # on the Only engine, or an effort alone: Only stays
+            self.assertEqual(config.project(self.project)["l3_engine"], engine)
+        view = set_default(self.project, "l3_choice", {"engine": other})
+        self.assertEqual((view["l3_choice"], view["l3_engine"], view["l2_engine"]), ({"engine": other}, None, engine))
+        request = json.loads((config.project_dir(self.project) / "l3_choice-request.json").read_text())
+        self.assertEqual((request["status"], request["released"]), ("done", {"l3_engine": engine}))
+        picked = route.pick_engine("l3", project=config.project(self.project))
+        self.assertEqual((picked["engine"], picked["pinned"]), (other, False))
+        self.assertTrue(picked["why"].startswith("chosen for L3"), picked["why"])
+        # L3 may save project settings too: its Only clears the operator's choice, recorded with actor and reason.
+        result = self.alt("project", "set", self.project, "--l3-engine", engine, "--reason", "Keep L3 on one engine",
+                          env={"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": self.project})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        dispatch.run_settings(self.project)
+        saved = config.project(self.project)
+        self.assertEqual((saved["l3_engine"], "l3_choice" in saved), (engine, False))
+        events = [json.loads(row) for row in (config.project_dir(self.project) / "events.jsonl").read_text().splitlines()]
+        self.assertEqual({k: events[-1].get(k) for k in ("actor", "reason", "l3_engine", "released")},
+                         {"actor": "l3", "reason": "Keep L3 on one engine", "l3_engine": engine,
+                          "released": {"l3_choice": {"engine": other}}})
+        self.assertEqual(route.pick_engine("l3", project=saved)["engine"], engine)
+
+    def test_a_release_is_recorded_when_altd_stops_after_saving_and_replays(self):
+        engine, other = config.ENGINES
+        self.register(self.project, l3_engine=engine)
+        dispatch.request_setting(self.project, "l3_choice", {"engine": other}, "Use the other engine", actor="burak")
+        write = dispatch.S.atomic_write
+        def stop_at_event(path, *args, **kwargs):
+            if path.name == "events.jsonl":
+                raise RuntimeError("stopped before the event")
+            return write(path, *args, **kwargs)
+        with mock.patch.object(dispatch.S, "atomic_write", side_effect=stop_at_event):
+            with self.assertRaises(RuntimeError):
+                dispatch._run_setting(self.project, "l3_choice")
+        self.assertNotIn("l3_engine", config.project(self.project))
+        request = dispatch._run_setting(self.project, "l3_choice")
+        self.assertEqual((request["status"], request["released"]), ("done", {"l3_engine": engine}))
+        event = json.loads((config.project_dir(self.project) / "events.jsonl").read_text().splitlines()[-1])
+        self.assertEqual((event["request_id"], event["released"]), (request["id"], {"l3_engine": engine}))
+
     def test_l3_changes_next_turn_with_same_session_and_distinct_observation(self):
         for engine in config.ENGINES:
             with self.subTest(engine=engine):

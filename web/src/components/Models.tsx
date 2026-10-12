@@ -227,8 +227,7 @@ function Choices({ tab, project, state, draft, setDraft, saving, l3Only, only, l
       Applies from L3's next reply.{text("engine_last") ? ` Last reply: ${[lastModel || "model not reported", launched ? effortLabel(launched, options) : "default effort",
         reported ? `reported ${effortLabel(reported, options)}` : "effort not reported"].join(" · ")}.` : ""}
     </p> : value?.engine ? <p className="text-meta text-muted">When {name} is unavailable, each project's Auto picks instead.</p> : null}
-    {l3Kept ? <p className="models-kept">This project keeps L3 only on {engineLabel(l3Only)}, so {name} can't be used here.{" "}
-      <Link to={`/settings/projects/${project}#routing`}>Change in Routing</Link></p> : null}
+    {l3Kept ? <p className="models-kept">L3 is Only {engineLabel(l3Only)} here. Using {name} sets L3 routing back to Auto.</p> : null}
     {keptOnly.map((row) => <p key={row.project} className="models-kept">
       <strong>{row.project}</strong> runs tasks only on {engineLabel(row.engine)}, so it keeps its {engineLabel(row.engine)} model.{" "}
       <Link to={`/settings/projects/${row.project}#routing`}>Change</Link></p>)}
