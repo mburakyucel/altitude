@@ -940,6 +940,17 @@ def queue_locked(project: str, text: str, *, trigger: str, slug: str | None = No
     return row
 
 
+def pending(project: str, row_id: str) -> bool:
+    """Whether L3 has yet to finish the turn of queued row or chat message `row_id`. The queue is read first: a
+    turn takes its rows off the queue and becomes active under one lifecycle guard, so a row is never between."""
+    with S.project_lock(project):
+        if any(row.get("id") == row_id for row in _queue_rows(queue_path(project))):
+            return True
+    with _lifecycle_guard(project):
+        turn = _active.get(project) or {}
+        return row_id == turn.get("id") or row_id in turn.get("queue_ids", [])
+
+
 def unqueue_locked(project: str, row_id: str) -> None:
     """Remove one server row that has not started, for a caller already holding the project lock."""
     path = queue_path(project)

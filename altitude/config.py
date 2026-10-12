@@ -105,6 +105,16 @@ IMPROVEMENT_MODEL = "claude-sonnet-5-5"
 IMPROVEMENT_RESERVE = 90
 #: Display names, the way the shell shows an engine; nothing outside the seam spells one.
 ENGINE_LABELS = {"claude": "Claude", "codex": "Codex"}
+
+
+def model_label(model: str) -> str:
+    """A model id the way the interface names it: "claude-sonnet-5-5" reads "Claude Sonnet 5.5"."""
+    match = re.fullmatch(r"([a-z]+)-([a-z]+)-(\d+(?:-\d+)*)", model)
+    if not match:
+        return model
+    engine, family, version = match.groups()
+    return f"{ENGINE_LABELS.get(engine, engine.title())} {family.title()} {version.replace('-', '.')}"
+
 #: The operator seam's initial display name; the `operator_name` machine setting replaces it (operator_name()).
 OPERATOR = os.environ.get("ALTITUDE_OPERATOR")
 #: The persisted authority identity in task records, events and messages, independent of the display name.
