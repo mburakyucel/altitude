@@ -2,11 +2,13 @@
 from unittest import mock
 import time
 
-from tests.support import AltitudeCase
+from tests.support import AltitudeCase, set_project_setting
 from altitude import config, digest, dispatch, engines, incidents, l3, monitor, quota_codex, route, server, state as S, tasks as T
 
 
 REJECTION = {"scope": "model", "why": "provider rejected the selected model as inaccessible"}
+RESET_EPOCH = 4070926800  # 2099-01-01T05:00:00Z
+RESET_ISO = "2099-01-01T05:00:00+00:00"
 
 
 class TestAutoIntegration(AltitudeCase):
@@ -278,17 +280,17 @@ class TestAutoIntegration(AltitudeCase):
                 self.assertTrue(any(row.get("engine") == engine and row.get("tools") and
                                     row["text"] == "I performed the operation" for row in l3.chat_history(self.project)))
 
-    def test_l3_project_pin_does_not_fallback_on_quota_limit(self):
-        self.policy("claude:fable > codex", l3_engine="claude", l3_model="opus")
+    def test_a_limit_met_mid_turn_on_l3_s_chosen_engine_answers_on_the_other_and_says_so(self):
+        self.policy("claude:fable > codex", l3_choice={"engine": "claude", "model": "opus"})
         failure = {"session_id": "session", "text": "", "error": "usage window exhausted", "tools": [],
                    "limited": engines._usage_limit("2099-01-01T00:00:00+00:00"), "safe_to_retry": True}
         with mock.patch.object(engines, "claude_print", return_value=failure) as execute, \
-             mock.patch.object(engines, "codex_exec") as fallback:
+             mock.patch.object(engines, "codex_exec", side_effect=lambda *a, **k: self.answered("Codex answer")) as other:
             result = l3.turn(self.project, "Continue")
-        self.assertEqual(execute.call_count, 1)
-        self.assertEqual(execute.call_args.kwargs["model"], "opus")
-        fallback.assert_not_called()
-        self.assertFalse(result["completed"])
+        self.assertEqual((execute.call_count, execute.call_args.kwargs["model"], other.call_count), (1, "opus", 1))
+        self.assertTrue(result["completed"])
+        self.assertEqual(self.notices(), ["Claude's usage limit is reached until 2099-01-01T00:00:00+00:00, "
+                                          "so Codex is answering for now."])
 
     def test_l3_scoped_unknown_limit_falls_back_without_freezing_other_models(self):
         self.policy("claude:fable > claude:opus")
@@ -484,6 +486,131 @@ class TestAutoIntegration(AltitudeCase):
         execute.assert_not_called()
         self.assertEqual(self.notices(), ["Claude's sign-in has lapsed, so Codex is answering for now. "
                                           "To sign in, run `claude auth login` on the computer running Altitude."])
+
+    def exhausted(self, *, codex=False):
+        """Claude's five-hour window at its limit with a reported reset; Codex at 1% of its week unless also out."""
+        self.quota.return_value = {"known": True, "at": time.time(), "five_hour": 100, "seven_day": 40,
+                                   "five_hour_resets": RESET_EPOCH, "seven_day_resets": RESET_EPOCH + 86400}
+        self.other_quota.return_value = {"known": True, "read_at": S.now(),
+                                         "primary_used": 100 if codex else 1, "primary_window_minutes": route.SHORT_MINUTES,
+                                         "primary_resets": "2099-01-01T06:00:00+00:00",
+                                         "secondary_used": 1, "secondary_window_minutes": route.WEEK_MINUTES}
+
+    def test_an_operator_message_queued_on_l3_s_exhausted_engine_is_answered_on_the_other_with_one_line(self):
+        # 2026-10-12: L3 on Claude (Fable), Claude's five-hour window used up, Codex at 1%, the operator's message
+        # queued behind it. The stored L3 Only key that held it there no longer decides anything.
+        self.register(self.project, l3_engine="claude", l3_choice={"engine": "claude", "model": "fable"})
+        l3.save_info(self.project, {"engine_last": "claude"})
+        self.exhausted()
+        waiting = l3.queue_message(self.project, "Codex is available, is my message going?", trigger="chat",
+                                   role=config.OPERATOR_ACTOR)
+        with mock.patch.object(engines, "claude_print") as execute, \
+             mock.patch.object(engines, "codex_exec", side_effect=lambda *a, **k: self.answered("Yes, on Codex.")):
+            self.assertTrue(l3.deliver_queued(self.project)["completed"])
+            self.assertTrue(l3.turn(self.project, "Thanks")["completed"])
+        execute.assert_not_called()
+        self.assertEqual(l3.queued(self.project), [])
+        replies = [(row["engine"], row["text"]) for row in l3.chat_history(self.project) if row["role"] == "assistant"]
+        self.assertEqual(replies, [("codex", "Yes, on Codex."), ("codex", "Yes, on Codex.")])
+        self.assertEqual(self.notices(), [f"Claude's usage limit is reached until {RESET_ISO}, so Codex is answering for now."])
+        user = next(row for row in l3.chat_history(self.project) if row["role"] == "user")
+        self.assertEqual((user["text"], user["queue_ids"]), (waiting["text"], [waiting["id"]]))
+
+    def test_an_l3_choice_changed_while_a_message_waits_sends_it_on_the_new_choice(self):
+        self.policy("claude:fable")
+        self.exhausted()
+        with mock.patch.object(engines, "claude_print") as execute, \
+             mock.patch.object(engines, "codex_exec", side_effect=lambda *a, **k: self.answered("Answered on Codex")) as other:
+            held = l3.turn(self.project, "Are you there?")
+            self.assertTrue(held["undelivered"])
+            self.assertIsNone(l3.deliver_queued(self.project))
+            other.assert_not_called()
+            set_project_setting(self.project, "l3_choice", {"engine": "codex"})
+            self.assertTrue(l3.deliver_queued(self.project)["completed"])
+        execute.assert_not_called()
+        self.assertEqual(l3.queued(self.project), [])
+        replies = [row for row in l3.chat_history(self.project) if row["role"] == "assistant"]
+        self.assertEqual([(row["engine"], row["text"], row["turn_id"]) for row in replies],
+                         [("codex", "Answered on Codex", held["turn_id"])])
+
+    def test_with_no_engine_able_to_run_the_waiting_message_gets_one_line_with_the_reset(self):
+        self.policy("claude:fable > codex")
+        self.exhausted(codex=True)
+        with mock.patch.object(engines, "claude_print") as execute, mock.patch.object(engines, "codex_exec") as other:
+            first = l3.turn(self.project, "Is the release out?")
+            for _ in range(3):
+                self.assertIsNone(l3.deliver_queued(self.project))
+            second = l3.turn(self.project, "Hello?")
+        execute.assert_not_called(); other.assert_not_called()
+        self.assertTrue(first["undelivered"] and second["undelivered"])
+        self.assertEqual([row["text"] for row in l3.queued(self.project)], ["Is the release out?", "Hello?"])
+        self.assertEqual(self.notices(), ["Claude and Codex's usage limits are reached, so your message waits until "
+                                          "2099-01-01T05:00:00+00:00."])
+        self.assertFalse([row for row in l3.chat_history(self.project) if row["role"] in ("assistant", "error")])
+        notice = next(row for row in l3.chat_history(self.project) if row["role"] == "system")
+        self.assertEqual((notice["trigger"], notice["heads_up"]), ("fyi", True))
+
+    def test_one_engine_at_its_limit_says_the_message_waits_until_its_reset(self):
+        self.policy("claude:fable")
+        self.exhausted()
+        l3.queue_message(self.project, "Is the release out?", trigger="chat", role=config.OPERATOR_ACTOR)
+        self.assertIsNone(l3.deliver_queued(self.project))
+        self.assertEqual(self.notices(), [f"Claude's usage limit is reached until {RESET_ISO} and no other engine can "
+                                          "answer, so your message waits until then."])
+
+    def test_each_change_in_what_can_answer_gets_its_own_line_and_an_unchanged_one_is_not_repeated(self):
+        self.policy("claude:fable > codex", l3_choice={"engine": "claude"})
+        elsewhere = f"Claude's usage limit is reached until {RESET_ISO}, so Codex is answering for now."
+        waits = f"Claude and Codex's usage limits are reached, so your message waits until {RESET_ISO}."
+        with mock.patch.object(engines, "claude_print") as execute, \
+             mock.patch.object(engines, "codex_exec", side_effect=lambda *a, **k: self.answered("On Codex")):
+            self.exhausted()
+            self.assertTrue(l3.turn(self.project, "One")["completed"])
+            self.exhausted(codex=True)
+            self.assertTrue(l3.turn(self.project, "Two")["undelivered"])
+            self.exhausted()
+            self.assertTrue(l3.deliver_queued(self.project)["completed"])
+            self.assertTrue(l3.turn(self.project, "Three")["completed"])
+        execute.assert_not_called()
+        self.assertEqual(self.notices(), [elsewhere, waits, elsewhere])
+
+    def test_automatic_work_hands_off_with_the_line_while_the_chosen_engine_is_limited_and_returns_to_its_own_conversation(self):
+        self.policy("claude:fable > codex", l3_choice={"engine": "claude"})
+        claude = {"session_id": "claude-conversation", "text": "On Claude", "tools": [], "error": None, "usage": {},
+                  "context_tokens": 1, "cost": 0, "turns": 1}
+        with mock.patch.object(engines, "claude_print", return_value=claude) as execute, \
+             mock.patch.object(engines, "codex_exec", side_effect=lambda *a, **k: self.answered("On Codex")) as other:
+            self.assertTrue(l3.turn(self.project, "Morning", trigger="system")["completed"])
+            self.exhausted()
+            self.assertEqual(l3.turn(self.project, "A report landed", trigger="system")["engine"], "codex")
+            self.quota.return_value = {"known": True, "at": time.time(), "five_hour": 10, "seven_day": 40}
+            self.assertEqual(l3.turn(self.project, "CI finished", trigger="system")["engine"], "claude")
+        self.assertEqual([call.kwargs.get("resume") for call in execute.call_args_list], [None, "claude-conversation"])
+        other.assert_called_once()
+        self.assertEqual(self.notices(), [f"Claude's usage limit is reached until {RESET_ISO}, so Codex is answering for now."])
+
+    def test_a_waiting_line_names_the_earliest_reported_reset_when_another_engine_reports_none(self):
+        self.policy("claude:fable > codex")
+        self.exhausted(codex=True)
+        self.other_quota.return_value = {**self.other_quota.return_value, "primary_resets": None}
+        self.assertTrue(l3.turn(self.project, "Is the release out?")["undelivered"])
+        self.assertEqual(self.notices(), [f"Claude and Codex's usage limits are reached, so your message waits until "
+                                          f"{RESET_ISO}."])
+
+    def test_a_limit_that_ends_and_returns_is_announced_again(self):
+        self.policy("claude:fable > codex", l3_choice={"engine": "claude"})
+        line = f"Claude's usage limit is reached until {RESET_ISO}, so Codex is answering for now."
+        claude = {"session_id": "claude-conversation", "text": "On Claude", "tools": [], "error": None, "usage": {},
+                  "context_tokens": 1, "cost": 0, "turns": 1}
+        with mock.patch.object(engines, "claude_print", return_value=claude), \
+             mock.patch.object(engines, "codex_exec", side_effect=lambda *a, **k: self.answered("On Codex")):
+            for limited in (True, True, False, True):
+                if limited:
+                    self.exhausted()
+                else:
+                    self.quota.return_value = {"known": True, "at": time.time(), "five_hour": 10, "seven_day": 40}
+                self.assertTrue(l3.turn(self.project, "Next")["completed"])
+        self.assertEqual(self.notices(), [line, line])
 
     def test_a_turn_pinned_to_a_signed_out_engine_stops_with_the_plain_reason(self):
         self.policy("claude:opus > codex")

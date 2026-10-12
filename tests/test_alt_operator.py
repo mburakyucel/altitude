@@ -31,12 +31,11 @@ class TestOperatorCommands(AltitudeCase):
         for cap in (1, 3, 50):
             with self.subTest(cap=cap):
                 projects = config.load_projects()
-                projects[self.project].update(wip=cap, approval="manual", l2_engine="codex", l3_engine="codex")
+                projects[self.project].update(wip=cap, approval="manual", l2_engine="codex")
                 config.save_projects(projects)
                 entry = config.project(self.project)
                 self.assertNotIn("wip", entry)
-                self.assertEqual([entry[k] for k in ("approval", "l2_engine", "l3_engine")],
-                                 ["manual", "codex", "codex"])
+                self.assertEqual([entry[k] for k in ("approval", "l2_engine")], ["manual", "codex"])
                 self.assertNotIn("wip", json.loads(self.alt("project", "list").stdout)[self.project])
         self.assertFalse((config.ROOT / ".project-wip-default-migrated").exists())
         for args in (("project", "add", "op", "--path", str(self.repo), "--wip", "3"),

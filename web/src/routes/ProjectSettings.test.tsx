@@ -15,8 +15,7 @@ const options = {
   efforts: { alpha: [{ value: "low", label: "Low" }, { value: "high", label: "High" }], beta: [{ value: "low", label: "Low" }, { value: "ultra", label: "Ultra" }] },
 };
 
-/** A fictional server: settings keyed like the registry, validated and echoed as the defaults view. Like altd, saving
- * the L3 choice or the Only L3 engine releases the other when they name different engines. */
+/** A fictional server: settings keyed like the registry, validated and echoed as the defaults view. */
 function fixture({ refuse = "", l3 = {} as Record<string, unknown>, hold = null as null | { setting: string; until: Promise<void> },
   routing = null as string | null, initial = {} as Record<string, unknown>, remove = (): Response | Promise<Response> => json({ ok: true }),
   overviewDown = { on: false } } = {}) {
@@ -24,7 +23,7 @@ function fixture({ refuse = "", l3 = {} as Record<string, unknown>, hold = null 
   const posts: Record<string, unknown>[] = [];
   let managed = true;
   const field = (setting: string, fallback: string, choices: unknown) => ({ setting, value: saved[setting] ?? null, default: fallback, choices });
-  const view = () => ({ l3_engine: saved.l3_engine ?? null, l2_engine: saved.l2_engine ?? null, l3_choice: saved.l3_choice ?? null,
+  const view = () => ({ l2_engine: saved.l2_engine ?? null, l3_choice: saved.l3_choice ?? null,
     l2_preference: saved.l2_preference ?? null, l3_unavailable: null, routing, ...options,
     engines: engines.map(({ engine, label }) => ({ value: engine, label, efforts: [], routed: !routing || routing.includes(engine) })),
     roles: (["l3", "l2"] as const).map((role) => ({ role, engines: engines.map(({ engine, label }) => ({
@@ -43,8 +42,6 @@ function fixture({ refuse = "", l3 = {} as Record<string, unknown>, hold = null 
       if (body.setting === refuse) return json({ error: "Alpha does not support reasoning effort low" }, 400);
       if ("expected" in body && JSON.stringify(saved[body.setting] ?? null) !== JSON.stringify(body.expected)) return json({ error: "Changed in another window.", changed: true }, 409);
       saved[body.setting] = body.value;
-      const choice = (saved.l3_choice as { engine?: string } | null)?.engine;
-      if (choice && saved.l3_engine && choice !== saved.l3_engine) delete saved[body.setting === "l3_choice" ? "l3_engine" : "l3_choice"];
       const response = view();
       if (hold && body.setting === hold.setting) await hold.until;
       return json(response);
@@ -144,7 +141,7 @@ describe("Project settings", () => {
     await waitFor(() => expect(posts).toHaveLength(2));
   });
 
-  it("routes tasks Auto, Prefer or Only an engine, and L3 Auto or Only, sending the value each page showed", async () => {
+  it("routes tasks Auto, Prefer or Only an engine, sending the value each page showed, and has no L3 routing", async () => {
     const { posts } = fixture();
     const { user } = renderApp({ route: "/settings/projects/example" });
     const tasks = await screen.findByRole("combobox", { name: "Tasks routing" });
@@ -162,53 +159,7 @@ describe("Project settings", () => {
       { project: "example", setting: "l2_preference", value: null, expected: "beta" },
       { project: "example", setting: "l2_engine", value: null, expected: "alpha" },
     ]);
-    const l3 = screen.getByRole("combobox", { name: "L3 routing" });
-    expect(within(l3).getAllByRole("option").map((o) => o.textContent)).toEqual(["Auto", "Only Alpha", "Only Beta"]);
-    await user.selectOptions(l3, "only:beta");
-    await waitFor(() => expect(l3).toHaveDisplayValue("Only Beta"));
-    expect(posts.at(-1)).toEqual({ project: "example", setting: "l3_engine", value: "beta", expected: null });
-  });
-
-  it("clears an L3 choice on another engine when L3 is set Only, and a choice on another engine sets L3 routing back to Auto", async () => {
-    const { saved } = fixture({ initial: { l3_choice: { engine: "alpha", model: "deep" } } });
-    const { user } = renderApp({ route: "/settings/projects/example" });
-    const section = await screen.findByRole("region", { name: "L3" });
-    await within(section).findByText("Deep");
-    const routing = screen.getByRole("region", { name: "Routing" });
-    expect(routing).toHaveTextContent("Auto or Only an engine. Only keeps L3 on it and waits while it is unavailable; choosing it clears an L3 choice on another engine.");
-    const l3 = within(routing).getByRole("combobox", { name: "L3 routing" });
-    await user.selectOptions(l3, "only:beta");
-    await waitFor(() => expect(l3).toHaveDisplayValue("Only Beta"));
-    await within(section).findByText("Auto");
-    expect(saved).toEqual({ l3_engine: "beta" });
-    await user.click(within(section).getByRole("button", { name: "Change…" }));
-    const dialog = await screen.findByRole("dialog", { name: "Models · L3 · example only" });
-    await user.click(within(dialog).getByRole("radio", { name: /^Swift/ }));
-    expect(dialog).toHaveTextContent("L3 is Only Beta here. Using Swift sets L3 routing back to Auto.");
-    await user.click(within(dialog).getByRole("button", { name: "Use for L3 in example" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    await within(section).findByText("Swift");
-    expect(l3).toHaveDisplayValue("Auto");
-    expect(saved).toEqual({ l3_choice: { engine: "alpha", model: "swift" } });
-  });
-
-  it("shows the stored L3 pair when an earlier Only save's response arrives after a later L3 choice", async () => {
-    let release!: () => void;
-    const { saved } = fixture({ hold: { setting: "l3_engine", until: new Promise<void>((resolve) => { release = resolve; }) } });
-    const { user } = renderApp({ route: "/settings/projects/example" });
-    const section = await screen.findByRole("region", { name: "L3" });
-    const l3 = screen.getByRole("combobox", { name: "L3 routing" });
-    await user.selectOptions(l3, "only:beta");
-    await user.click(within(section).getByRole("button", { name: "Change…" }));
-    const dialog = await screen.findByRole("dialog", { name: "Models · L3 · example only" });
-    await user.click(within(dialog).getByRole("radio", { name: /^Swift/ }));
-    await user.click(within(dialog).getByRole("button", { name: "Use for L3 in example" }));
-    await within(section).findByText("Swift");
-    release();
-    await waitFor(() => expect(l3).toBeEnabled());
-    await waitFor(() => expect(l3).toHaveDisplayValue("Auto"));
-    expect(within(section).getByText("Swift")).toBeVisible();
-    expect(saved).toEqual({ l3_choice: { engine: "alpha", model: "swift" } });
+    expect(screen.queryByRole("combobox", { name: "L3 routing" })).toBeNull();
   });
 
   it("names custom routing and a preference outside it, and refuses a routing changed in another window", async () => {

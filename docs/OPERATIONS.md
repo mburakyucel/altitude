@@ -47,7 +47,7 @@ Add `--json` where supported for the full record. The [CLI reference](CLI.md) de
 inspection and task lifecycle verbs.
 
 Project verbs include `alt project add <name> [--path PATH]`, `list`, `discover`,
-`remove <name>` and `set <name>` for routing preferences, the L2 provider priority, Only engines and
+`remove <name>` and `set <name>` for routing preferences, the L2 provider priority, the task Only engine and
 the L3 model choice. All projects share one machine cap,
 defaulting to 80; the operator can use `alt machine set --wip N --reason '…'` (including N above 80),
 `alt machine set --unset-wip --reason '…'`, and `alt machine show` to set, reset and inspect it.

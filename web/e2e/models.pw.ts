@@ -229,9 +229,9 @@ test("Settings by destination: the menu, the overview groups, every project and 
     action: () => main.getByRole("link", { name: project.name, exact: true }).click(),
     visible: [group("L3"), group("Auto defaults"), group("Routing"), group("Project"),
       group("Auto defaults").getByRole("group", { name: /^Tasks · / }).first(), group("Auto defaults").getByRole("group", { name: /^L3 · / }).first(),
-      group("Routing").getByRole("combobox", { name: "Tasks routing" }), group("Routing").getByRole("combobox", { name: "L3 routing" }),
+      group("Routing").getByRole("combobox", { name: "Tasks routing" }),
       group("Project").getByRole("link", { name: /^Setup / }), group("Project").getByRole("button", { name: "Remove…", exact: true })],
-    hidden: [main.getByRole("alert")],
+    hidden: [main.getByRole("alert"), group("Routing").getByRole("combobox", { name: "L3 routing" })],
   });
   await expect(group("Project").getByRole("link", { name: /^Setup / })).toHaveAttribute("href", `/projects/${project.name}?setup=1`);
   const defaults = await options(request, project.name);

@@ -217,7 +217,7 @@ existing defaults and `native` requests no override. `config.task_effort` owns e
 resolution, and a setting accepts only its own engine's levels. `config.default_model` and
 `config.default_effort` resolve an Auto option for the chosen role and engine: an option's own model,
 then the project default, then the role default (Opus for a Claude L2, Fable for L3, the CLI's own model
-on Codex). They are preferences: only `l2_engine`/`l3_engine` and task or turn pins force an engine.
+on Codex). They are preferences: only `l2_engine` and task or turn pins force an engine.
 Explicit task `effort` and `model` win over the defaults without rewriting them. Routing resolves effort
 per option, excludes Auto candidates that cannot accept an explicit level and keeps pins strict.
 Fresh dispatch saves that selection as `launch_effort` alongside `launch_model`; message/resume
@@ -228,7 +228,7 @@ Both roles clear observed `engine_reasoning_effort` for a new turn; absent obser
 Model compatibility and provider caps remain native decisions. Effort failures do not trigger
 application-side downgrading or engine fallback. No model capability catalog or session migration exists.
 
-`GET /api/defaults/<project>` returns the project's Only engines, L3 choice (with why it is unavailable,
+`GET /api/defaults/<project>` returns the project's task Only engine, L3 choice (with why it is unavailable,
 if it is), routing, the model choices on offer and each role's model/effort pair per engine with its
 setting key, default and engine-owned choices; `POST /api/defaults` saves one setting through
 the existing settings request/apply mechanism under project/registry locks. The machine-wide New
@@ -239,6 +239,7 @@ value differs at the moment the setting is applied, under the same lock, so a se
 [model choices](CLI.md#model-choices) gives the precedence). The project Settings page
 applies its request immediately; CLI `alt project set` requests are applied on the daemon tick,
 independently of worker capacity. A conflicting pending request refuses another save until applied.
+A save while an L3 message waits for an engine retries it at once.
 Neither path mutates Only engines or running tasks. Native L1 helpers inherit or override effort
 through their own engine controls; Altitude does not create helper workers or promise a uniform L1
 override.
@@ -858,9 +859,8 @@ them without a PR, restart or free task slot. Altd applies the request on its ne
 actor, reason and outcome. The project setting serves both L3 and fresh L2 routing; it changes no
 explicit pin or existing L2 attempt. The L2 provider priority (`--l2-preference <engine>`, or
 Auto with `--unset-l2-preference`, also in the project's Settings page) lifts one engine's options
-above the others for fresh L2 only; L3 keeps the tiers as written. `--l2-engine`/`--l3-engine` (Only)
-keep a role on one engine and `--l3-choice` sets L3's model choice; saving either L3 setting releases
-the other when they name different engines and records the release. [CLI examples](CLI.md#automatic-routing-preferences) cover
+above the others for fresh L2 only; L3 keeps the tiers as written. `--l2-engine` (Only) keeps tasks on
+one engine and `--l3-choice` sets L3's model choice, its one engine setting. [CLI examples](CLI.md#automatic-routing-preferences) cover
 single-model accounts, different orders and ties, and the provider priority.
 
 Project removal is L3 detachment: one operator action through `config.remove_project`, shared by
