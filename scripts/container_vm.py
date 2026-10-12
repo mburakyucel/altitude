@@ -18,6 +18,7 @@ from pathlib import Path
 import platform
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -195,6 +196,8 @@ def main():
     parser.add_argument('--browser', action='store_true', help='actual published HTTPS daemon onboarding with fictional engine on phone/desktop')
     parser.add_argument('--logout', action='store_true', help='user-manager shutdown and new-login recovery of the actual launcher')
     args = parser.parse_args()
+    # A stop request (a command time limit) still stops the guest, deletes its disk and writes the record.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     if args.native_sandbox_binary and not args.image_workflow:
         parser.error('--native-sandbox-binary needs --image-workflow')
     if sum((args.browser, args.image_workflow, args.logout)) > 1:
