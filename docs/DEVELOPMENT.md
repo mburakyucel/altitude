@@ -446,9 +446,13 @@ alt task validate -- python3 -m unittest tests.test_container_workflow tests.tes
   before the record: a run whose cleanup does not finish ends as `cleanup failed`, with the first entry
   that stayed and why, and keeps its area. The runner's own files in the area (the run's identity,
   delivery receipt, log and exit status) sit outside the candidate's folders and go after the record.
-  Activation waits through execution, evidence recording and cleanup; validation admission refuses
-  runs while activation is pending, including a request already waiting for the machine, so the
+  Activation waits through execution, evidence recording and cleanup; validation admission turns runs
+  away while activation is pending, including a request already waiting for the machine, so the
   quiet point opens after the run in flight. A request waiting for the machine does not hold activation.
+  The line lives in altd, which restarts to activate, so `alt task validate` waits through the restart
+  instead: it says Altitude is activating merged changes, asks again every two seconds for up to the
+  line's own wait, and joins the new line once altd is back. Requests that waited across a restart
+  join it in the order they ask again, not their earlier arrival order.
 - **Record.** Each run is recorded on its task like a [machine run](CLI.md#operator-grant), with
   purpose `validation`, the command, commit and tree, the host's OS and architecture, what isolated it
   (the image tag, or `seatbelt:` and the profile's digest), exit, how it ended and any cleanup failure.

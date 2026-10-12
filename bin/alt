@@ -583,6 +583,20 @@ def main(argv=None) -> None:
         # request waits for that command's result instead of running it again.
         reconnect_until = time.monotonic() + config.MACHINE_COMMAND_WAIT + config.MACHINE_COMMAND_TIMEOUT + 120
         reconnecting = False
+        activating_until = None
+
+        def wait_for_activation() -> None:
+            """A validation request that pending activation turned away, even after waiting its turn, waits and asks
+            again: the line lives in altd, which restarts to activate (docs/DEVELOPMENT.md#validation-runner)."""
+            nonlocal activating_until
+            if activating_until is None:
+                activating_until = time.monotonic() + validation.WAIT
+                print("[altitude] Altitude is activating merged changes; this request asks again once it has "
+                      "restarted", file=sys.stderr, flush=True)
+            if time.monotonic() >= activating_until:
+                sys.exit(f"alt task validate: Altitude did not finish activating merged changes within "
+                         f"{validation.WAIT // 60} minutes; try again")
+            time.sleep(validation.WATCH_SECONDS)
         while True:
             # The running service's record, not this process's launch environment, says where altd listens and
             # which CA proves it, read afresh for each attempt, so a restart onto another certificate folder or
@@ -590,6 +604,9 @@ def main(argv=None) -> None:
             try:
                 found = tls.service()
             except tls.TLSFailure as exc:
+                if activating_until is not None:   # restarting
+                    wait_for_activation()
+                    continue
                 sys.exit(f"alt {c}: altd unavailable: {exc}")
             ca = found["tls_dir"] / "ca.crt"
             from altitude import platform
@@ -609,6 +626,9 @@ def main(argv=None) -> None:
                                 shown = result["waiting"]
                                 print(f"[altitude] {S.localized(shown)}", file=sys.stderr, flush=True)
                         if "unit" not in result and result.get("error"):
+                            if validation_run and result["error"] == validation.RESTARTING:
+                                wait_for_activation()
+                                continue
                             sys.exit(S.localized(result["error"]))
                         if "unit" not in result:
                             if machine_run:  # a restart ended the connection: ask again for this request's result
@@ -643,8 +663,15 @@ def main(argv=None) -> None:
             except urllib.error.HTTPError as exc:
                 if exc.code == 401:
                     sys.exit(f"alt {c}: altd refused this machine's key; read access to {access.DIR / 'machine.key'} is required")
-                sys.exit(("" if machine_run or validation_run else f"alt {c}: ") + json.load(exc).get("error", str(exc)))
+                error = json.load(exc).get("error", str(exc))
+                if validation_run and error == validation.RESTARTING:
+                    wait_for_activation()
+                    continue
+                sys.exit(("" if machine_run or validation_run else f"alt {c}: ") + error)
             except (OSError, http.client.HTTPException, ValueError) as exc:
+                if activating_until is not None and isinstance(exc, urllib.error.URLError):   # restarting
+                    wait_for_activation()
+                    continue
                 # urllib reports a failure to connect or send as URLError: altd never received that request.
                 if machine_run and (reconnecting or not isinstance(exc, urllib.error.URLError)) \
                         and time.monotonic() < reconnect_until:
