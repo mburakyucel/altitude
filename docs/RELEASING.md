@@ -133,7 +133,9 @@ decision; the audit itself changes nothing.
 Pushing a `v0.*` tag runs `.github/workflows/release.yml` on a GitHub-hosted runner with GitHub's
 own token and no other secrets; it never creates a tag. The job refuses to publish unless the tag's
 commit is on `main`, that exact commit has a successful push `check` run of
-`.github/workflows/hosted-checks.yml`, and `CHANGELOG.md` has the version's dated section. It then
+`.github/workflows/hosted-checks.yml` (one that reused the PR run of the identical tree, as [CI and
+candidate identity](DEVELOPMENT.md#ci-and-candidate-identity) describes, counts), and `CHANGELOG.md`
+has the version's dated section. It then
 builds the release files from the tag, attests their build provenance and creates the GitHub release
 with that section as its notes. A `-rc.N` tag is published as a prerelease; any other version
 becomes the latest release, which the [one-command install](SETUP.md#install-the-application)

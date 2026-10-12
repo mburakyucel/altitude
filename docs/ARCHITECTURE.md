@@ -967,8 +967,10 @@ current main is integrated at its turn in the merge line and needs a fresh PR ru
 Altitude serializes merges across installations, rechecks identity and holds, and verifies the merged
 tree against the tested tree. Missing, pending, failed or stale CI blocks; CI outages have no local bypass.
 The task hold and review protocol govern Altitude merges. Concurrent hosted runs are bounded by
-GitHub capacity: 11 jobs per check against the plan's 20 concurrent jobs. A new PR push cancels
-that PR's superseded check run; main and manual runs are never cancelled.
+GitHub capacity: 11 jobs per check against the plan's 20 concurrent jobs. A push to main whose tree a
+same-repository PR run already tested in full, with the CI setup unchanged, reuses that run instead of
+running the shards again. A new PR push cancels that PR's superseded check run; main and manual runs
+are never cancelled.
 See [policy, evidence and activation](DEVELOPMENT.md#ci-and-candidate-identity).
 Planned file lists guide coordination without limiting edits or landing. The owner stages selected
 files or hunks and reviews `git diff --cached`; `alt land` commits exactly that index, preserving

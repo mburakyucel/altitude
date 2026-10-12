@@ -23,13 +23,19 @@ class TestRequiredCheckWorkflow(AltitudeCase):
 
     def test_hosted_shards_report_through_one_required_check_for_every_pull_request(self):
         self.assertEqual(config.PR_CHECK_NAME, 'check')
-        self.assertEqual(list(self.jobs), ['shard', config.PR_CHECK_NAME])
+        self.assertEqual(list(self.jobs), ['reuse', 'shard', config.PR_CHECK_NAME])
         for job in self.jobs.values():
             self.assertRegex(job, r'(?m)^    runs-on: ubuntu-24\.04$')
             self.assertIsNone(re.search(r'^    name:', job, re.M))
-        # A shard condition would skip work; the required check always runs, so it cannot be skipped.
-        self.assertIsNone(re.search(r'^    if:', self.jobs['shard'], re.M))
-        self.assertTrue(self.jobs['check'].startswith('    needs: shard\n    if: always()\n'))
+        # Only a push to main looks for a run to reuse. Shards run whenever it found none: on every pull
+        # request and manual run, where `reuse` is skipped, and when it failed. The required check always runs.
+        self.assertTrue(self.jobs['reuse'].startswith("    if: github.event_name == 'push'\n"))
+        self.assertTrue(self.jobs['shard'].startswith(
+            "    needs: reuse\n    # Runs unless `reuse` succeeded naming a run: on every pull request and manual run, and "
+            "whenever the lookup fails.\n"
+            "    if: ${{ !cancelled() && (needs.reuse.result != 'success' || needs.reuse.outputs.run == '') }}\n"))
+        self.assertTrue(self.jobs['check'].startswith('    needs: [reuse, shard]\n    if: always()\n'))
+        self.assertIn('      run: ${{ steps.lookup.outputs.run }}\n', self.jobs['reuse'])
         self.assertIn('    timeout-minutes: 30\n', self.jobs['shard'])
         self.assertIn('on:\n  workflow_dispatch:\n  pull_request:\n    branches: [main]\n'
                       '  push:\n    branches: [main]\n', self.workflow)
@@ -40,15 +46,20 @@ class TestRequiredCheckWorkflow(AltitudeCase):
         self.assertIn('concurrency:\n  group: checks-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}\n'
                       "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n", self.workflow)
 
-    def test_required_check_passes_only_when_every_shard_succeeded(self):
+    def test_required_check_passes_only_when_every_shard_succeeded_or_reuse_named_a_run(self):
         [gate] = self.steps('check')
-        self.assertIn('SHARDS: ${{ needs.shard.result }}\n', gate)
+        self.assertIn('SHARDS: ${{ needs.shard.result }}\n          REUSE: ${{ needs.reuse.result }}\n'
+                      '          REUSED: ${{ needs.reuse.outputs.run }}\n', gate)
         script = gate.split('run: ')[1].strip()
-        for result in ('success', 'failure', 'cancelled', 'skipped', ''):
-            with self.subTest(result=result):
-                verdict = subprocess.run(['bash', '-eo', 'pipefail', '-c', script],
-                                         env=dict(os.environ, SHARDS=result), capture_output=True)
-                self.assertEqual(verdict.returncode == 0, result == 'success')
+        results = ('success', 'failure', 'cancelled', 'skipped', '')
+        for shards in results:
+            for reuse in results:
+                for reused in ('', '41'):
+                    with self.subTest(shards=shards, reuse=reuse, reused=reused):
+                        verdict = subprocess.run(['bash', '-eo', 'pipefail', '-c', script], capture_output=True,
+                                                 env=dict(os.environ, SHARDS=shards, REUSE=reuse, REUSED=reused))
+                        self.assertEqual(verdict.returncode == 0, shards == 'success' or (
+                            shards == 'skipped' and reuse == 'success' and reused == '41'))
 
     def test_shards_cover_each_make_check_suite_exactly_once(self):
         matrix = re.findall(r'^          - \{suite: (\w+), shard: (\d+)/(\d+)\}$', self.jobs['shard'], re.M)
@@ -69,19 +80,28 @@ class TestRequiredCheckWorkflow(AltitudeCase):
 
     def test_every_checkout_verifies_the_exact_candidate_first(self):
         checkouts = [job for job in self.jobs if 'actions/checkout@' in self.jobs[job]]
-        self.assertEqual(checkouts, ['shard'])
-        for job in checkouts:
+        self.assertEqual(checkouts, ['reuse', 'shard'])
+        # The lookup itself refuses a checkout that is not the pushed commit (tests/test_ci_reuse.py).
+        lookup = self.steps('reuse')[1]
+        self.assertTrue(lookup.startswith('name: Find the run that tested this tree\n'))
+        self.assertIn('run: python3 scripts/ci_reuse.py', lookup)
+        for job in checkouts[1:]:
             steps = self.steps(job)
             self.assertTrue(steps[0].startswith('uses: actions/checkout@'))
             self.assertIn('ref: ${{ github.sha }}', steps[0])
             self.assertTrue(steps[1].startswith('name: Verify the exact candidate\n'))
-        self.assertEqual(self.workflow.count('- name: Verify the exact candidate'), len(checkouts))
+        self.assertEqual(self.workflow.count('- name: Verify the exact candidate'), len(checkouts) - 1)
 
     def test_fork_and_owner_runs_share_a_read_only_token_without_secrets(self):
         self.assertIn('\npermissions:\n  contents: read\n', self.workflow)
-        self.assertEqual(self.workflow.count('permissions:'), 1)
+        # Only the push-only lookup reads run and pull request records; nothing can write.
+        self.assertIn('    permissions:\n      contents: read\n      actions: read\n      pull-requests: read\n',
+                      self.jobs['reuse'])
+        self.assertEqual(self.workflow.count('permissions:'), 2)
+        self.assertNotIn('write', self.workflow)
         self.assertIsNone(re.search(r'\bsecrets\.\w', self.workflow))
-        self.assertIn('persist-credentials: false', self.jobs['shard'])
+        for job in ('reuse', 'shard'):
+            self.assertIn('persist-credentials: false', self.jobs[job])
         for action in re.findall(r'uses: (\S+)', self.workflow):
             self.assertRegex(action, r'@[0-9a-f]{40}$')
 
@@ -113,6 +133,15 @@ class TestRequiredCheckWorkflow(AltitudeCase):
         release = (WORKFLOWS / 'release.yml').read_text()
         self.assertIn(f'actions/workflows/{os.path.basename(config.PR_CHECK_WORKFLOW)}/runs?', release)
         self.assertIn(f'select(.name == "{config.PR_CHECK_NAME}" and .conclusion == "success")', release)
+
+    def test_a_reused_main_run_gives_every_reader_the_evidence_it_reads(self):
+        # A reused push run has the same workflow, event, head and conclusion, and its `check` job succeeds
+        # only on a tested tree. Readers use exactly those, so none of them can tell it from a full run.
+        from altitude import status
+        self.assertEqual(set(status._RUN_FIELDS.split(',')),
+                         {'databaseId', 'headSha', 'event', 'conclusion', 'status', 'workflowName'})
+        self.assertIn('info = gh(["run", "view", rid, "--json", "conclusion,status"], repo)',
+                      (REPO / 'altitude/verify.py').read_text())
 
 
 class TestCandidateIdentity(AltitudeCase):
