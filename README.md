@@ -29,10 +29,11 @@ One engine is enough, and each integration is
 - **Self-healing.** When something breaks, it gets repaired and the work picks up where it stopped.
 - **Self-improving.** Altitude learns from its own finished work and fixes what slowed it down.
 - **Parallel without collisions.** Many tasks at once, each on its own copy of the code.
-- **Balanced quotas.** Each task goes to the engine that has used less of its week, so both are used evenly.
+- **Balanced quotas.** By default, each task goes to the engine that has used less of its week, so both are
+  used evenly.
 - **Steer mid-flight.** Watch any agent live, redirect it in a sentence or take the terminal.
-- **Nothing ships unchecked.** Independent review and your own checks stand before every merge, and
-  the final say is yours whenever you want it.
+- **Nothing ships unchecked.** Your checks gate every merge, complex work gets an independent review,
+  and the final say is yours whenever you want it.
 - **Decide from anywhere.** Your phone alerts you when a decision needs you; answer with a tap or
   your voice.
 - **Power with a fence.** Agents leave their sandbox only for a purpose you approve.
