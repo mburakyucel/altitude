@@ -1901,8 +1901,10 @@ sections, model choices in the order they are applied:
   12."; with too few tasks or Claude's allowance inside the reserve it looks disabled and its reason
   ("Needs 5 finished tasks since Oct 12; 3 so far.") is its accessible description, shown under it on
   press. While a review runs, its line ("Reading 6 tasks") with an underlined **Stop** replaces the
-  button. A muted last row says what is sent: "Counts and short chat quotes · Claude Sonnet 5.5 on your
-  plan · capped per run, plus one L3 check". Before the operator agrees to the current terms, turning
+  button. A muted row says what is sent: "Counts and short chat quotes · Claude Sonnet 5.5 on your
+  plan · capped per run, plus one L3 check". Once a review has posted or found nothing, a muted last
+  row sums them: "4 runs · 7 suggestions · 3 became tasks · 2 dismissed · Latest", Latest underlined
+  and opening the latest card in the project's chat (absent when no review had a card). Before the operator agrees to the current terms, turning
   Weekly on or pressing Get suggestions now opens a sheet (bottom at 390px with full-width buttons,
   Turn on above Cancel; centered at 1440px): **Turn on improvement suggestions for <name>?**, what the
   model reads and how much of the plan it uses, then **Cancel** (focused) and the primary **Turn on**,
@@ -1947,7 +1949,8 @@ Only, a change made elsewhere), loading/read failure and saving/denied states at
 project draft preserved. `web/e2e/project-lifecycle.pw.ts` walks the Remove dialog's cancel, refused,
 lost-response and removed outcomes. `web/e2e/improvement-settings.pw.ts` walks the Improvement
 suggestions section: the sheet, Cancel, Escape, Turn on and saving, Weekly on and off, running with
-Stop, a refusal, a skipped week, the unavailable reason and the change-of-terms line.
+Stop, a refusal, a skipped week, the unavailable reason and the change-of-terms line;
+`web/e2e/improvement-suggestions.pw.ts` walks Past suggestions with Latest.
 `web/e2e/models.pw.ts` walks §3.6.1.
 Composer listening, denied, unavailable, cancellation and transcript states remain §3.6.
 

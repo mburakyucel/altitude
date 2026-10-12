@@ -696,6 +696,8 @@ def settings(project: str, *, now: datetime | None = None) -> dict:
     active = next((r for r in record["runs"] if r["state"] in ACTIVE), None)
     out = {"available": True, "terms": terms(project), "agreed": _agreed(record), "weekly": bool(switch.get("on")),
            "line": line}
+    if past := _past(project, record, now):
+        out["past"] = past
     if active:
         out["running"] = {"id": active["id"], "line": f"Reading {_tasks(active['tasks'])}" if active["state"] == "reading"
                           else f"L3 is checking {len(active['suggestions'])}"}
@@ -705,6 +707,22 @@ def settings(project: str, *, now: datetime | None = None) -> dict:
                           f"Needs {MIN_TASKS} finished tasks since {since}; {count} so far." if count < MIN_TASKS
                           else None)}
     return out
+
+
+def _past(project: str, record: dict, now: datetime) -> dict | None:
+    """Past suggestions, the feature's own measure: reviews that ended with a card or nothing to suggest, the
+    suggestions they showed, how many became tasks and how many the operator dismissed, and the latest card."""
+    ended = [r for r in record["runs"] if r["state"] in ("posted", "nothing")]
+    if not ended:
+        return None
+    made = {t["improvement"] for t in S.list_tasks(project, include_archive=True) if t.get("improvement")}
+    shown = [(r, n) for r in ended for n in (r.get("post") or {}).get("shown", [])]
+    tasks = sum(f"{r['id']}/{n}" in made for r, n in shown)
+    dismissed = sum(suggestion_state(r, n, now) == "dismissed" for r, n in shown)
+    runs, suggestions = len(ended), len(shown)
+    return {"line": f"{runs} run{'' if runs == 1 else 's'} · {suggestions} suggestion{'' if suggestions == 1 else 's'} · "
+                    f"{tasks} became {'a task' if tasks == 1 else 'tasks'} · {dismissed} dismissed",
+            "latest": next((r["id"] for r in reversed(ended) if r["state"] == "posted"), None)}
 
 
 def execute(project: str, run_id: str) -> None:
