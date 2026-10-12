@@ -1400,9 +1400,11 @@ def _move(project: str, task: dict, to: str, actor: str, **ev) -> dict:
 def new(project: str, title: str, request: str, actor: str = "l3", source: str = "chat", model: str | None = None,
         paths: list[str] | None = None, hold_merge: str | None = None, engine: str | None = None,
         effort: str | None = None, image_ids: list[str] | None = None,
-        wait: str | None = None, after: str | None = None, offer_turn: str | None = None) -> dict:
+        wait: str | None = None, after: str | None = None, offer_turn: str | None = None,
+        improvement: str | None = None) -> dict:
     """`offer_turn` names the coordinator reply whose Create task press this creation answers (SPEC.md §3.3);
-    a reply produces at most one task, however often its turn is retried."""
+    a reply produces at most one task, however often its turn is retried. `improvement` names the accepted
+    improvement suggestion ("<run>/<n>") the task carries out; a suggestion has at most one task."""
     if source not in ("chat", "recovery"):
         raise TransitionError("task source must be chat or recovery")
     if wait is not None and after is not None:
@@ -1435,6 +1437,12 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
             S.load_task(project, after)  # dependencies are existing tasks in this project
         if offer_turn and (existing := offered_task(project, offer_turn)):
             raise TransitionError(f"this reply already created task {existing}; one Create task press makes one task")
+        if improvement:
+            from . import improve
+            try:
+                improve.require_accepted_locked(project, improvement)
+            except ValueError as exc:
+                raise TransitionError(str(exc)) from exc
         refs = image_store.lookup(project, image_ids) if image_ids else []
         base = S.slugify(title)
         slug, n = base, 1
@@ -1458,8 +1466,11 @@ def new(project: str, title: str, request: str, actor: str = "l3", source: str =
             task["images"] = refs
         if offer_turn:
             task["offer_turn"] = offer_turn
+        if improvement:
+            task["improvement"] = improvement
         S.save_task(project, task)
-        S.append_event(project, slug, "new", by=actor, title=title, source=source, queued=True, planned_wait=planned)
+        S.append_event(project, slug, "new", by=actor, title=title, source=source, queued=True, planned_wait=planned,
+                       **({"improvement": improvement} if improvement else {}))
         S.regen_state_md(project)
         return task
 

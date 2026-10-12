@@ -1716,9 +1716,9 @@ and [CLI times](CLI.md#times).
 ### Improvement review
 
 The approved [improvement suggestions design](../design/wireframes/improvement-review/PROPOSAL.md)
-reads one project's finished work and proposes at most three fixes. Its reviewer and evidence exist
-and are measured on fictional projects; nothing starts a review of a real project yet, and the later
-rollout steps add the run, its record and its card.
+reads one project's finished work and proposes at most three fixes. A review runs when the operator
+asks L3 for one in the Altitude project's chat; the card, Needs you, settings and the Monday schedule
+are later rollout steps.
 
 `improve.py` builds the evidence in code. Signals are exact, versioned predicates over existing task
 records (`SIGNALS_VERSION`): question revisions with no operator message since the previous one,
@@ -1732,14 +1732,15 @@ the unmerged PRs a replaced report named), questions with how they were settled,
 with their dispositions, and up to four paired quotes (the message answered, the operator's words,
 the reply, 300 characters each). Sheets are at most 3 KiB each and 48 KiB together; tasks that do not
 fit are listed by counts. Operator chat turns fill the remaining room as paired quotes, followed by
-current task titles and earlier suggestions with their outcome. The prompt is at most 64 KiB.
+current task titles and earlier suggestions with their outcome (their decision, lapse or L3's reason for
+dropping them). The prompt is at most 64 KiB.
 
 Every quoted or counted place carries a short alias (`[A12]`) mapped to a canonical place: a task
 message, question revision, event, review finding, report finding or chat row byte offset. Only
 aliases that reach the prompt are valid, and only the code writes them: square brackets in quoted
 text become round ones, so a quote cannot forge a citation. `improve.validate` treats the answer as untrusted: at most
 three suggestions, each with a target (`project` or `agents`), bounded text, a known signal or none,
-and at least two citations from its own prompt; text that looks like a path or credential is
+and at least two citations from its own prompt; text that looks like a link, path or credential is
 dropped. Dropped suggestions are kept with their reason.
 
 `engines.improvement_review` is one tool-free Claude call on the plan: `--safe-mode`,
@@ -1754,6 +1755,41 @@ variables, so it uses the signed-in plan and never pay-per-use credentials. A us
 timeout, usage limit or unusable answer ends the call with its reason; nothing retries or switches
 model. Codex is not offered: no tool-free Codex mode is verified, so without Claude the review is
 unavailable.
+
+A run starts with `alt improve run` on L3's coordinator socket, admitted only during the chat turn that
+answers the operator's own project-chat message; that message is the run's authority, and asking again
+with it returns the same run. It covers only the project whose origin is Altitude's repository. It is
+refused while another run of the project is active, while Altitude waits to activate a change, with
+fewer than five tasks finished since the last review's window, and while Claude's weekly or short
+window is at `config.IMPROVEMENT_RESERVE` (90%) or more or is unknown (`route.improvement_reserve`).
+The claim is durable in `<project>/improvements.json` before the reviewer runs on a daemon thread
+holding the restart lock as review runs do. Each run reads the tasks finished after the previous
+posted or empty review's window (the first reads 14 days); a stopped or failed run does not advance
+it. The exact prompt and raw answer stay private in `<project>/improvements/<run>/`.
+
+A run is reading, then checking, then exactly one of posted, nothing, stopped or failed, with one
+deadline two hours after its start. With suggestions, Altitude queues one L3 turn (trigger
+`improvement-check`) naming only the run, so the unchecked wording never enters the conversation;
+L3 reads the candidates with `alt improve status --run`, opens their cited places and posts with
+`alt improve post <run> --keep … --drop n:reason`, naming every number once. Altitude, not L3, writes
+the chat message from the validated wording: a heading with the review's date and window, each kept
+suggestion under its run number with its target, explanation and a link to every cited task, then
+L3's drops. Model and L3 text is made plain first (brackets, emphasis, code marks, leading slashes and
+issue numbers neutralized), so the only links are Altitude's own. The message is an assistant row of
+its own turn (trigger `improvement`, its run id); its row id, the numbers shown and the date are the
+run's receipt, the same post returns it and a different one is refused, as is a post for a stopped,
+ended or late run. Keeping none ends the run with the nothing-to-suggest line. No suggestions, a
+failed call, and a deadline passed while reading ("it was interrupted by a restart") or checking ("L3
+did not finish checking") each end the run with one line. `alt improve stop` during the operator's chat
+turn stops a reading or checking run; its answer is discarded and its queued check removed. Nothing
+retries.
+
+`alt improve resolve <run>/<n> accepted|dismissed --reason` records the operator's typed answer during
+the chat turn of their message, which must follow the post and name a number it showed. Undecided
+becomes accepted or dismissed; dismissed and not decided (seven days after the post, computed on
+read) become accepted; accepted is final. The same message and outcome return the existing receipt.
+`alt task new --improvement <run>/<n>` creates the one task for an accepted suggestion and records it
+on the task, so a second is refused.
 
 `improve_eval.py` loads fictional scenarios from `tests/fixtures/improvement/` as ordinary task
 folders and project chat, runs the same prompt builder and reviewer, matches suggestions to planted

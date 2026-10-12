@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import access, config, digest, dispatch, engines, git_policy, images, incidents, installation, l3, line, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, validation, verify
+from . import access, config, digest, dispatch, engines, git_policy, images, improve, incidents, installation, l3, line, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, validation, verify
 
 
 class ThreadingHTTPServer(http.server.ThreadingHTTPServer):
@@ -283,6 +283,11 @@ def _l3_verb_request(project: str, request: dict) -> dict:
                 raise ValueError("alt task offer takes its title as one argument, not stdin")
             result = l3.note_offer(project, l3.offer_parser().parse_args(args[2:]).title)
             return {"returncode": 0, "stdout": json.dumps(result) + "\n", "stderr": ""}
+        if args[:1] == ["improve"]:
+            if stdin:
+                raise ValueError("alt improve takes its arguments, not stdin")
+            result = improvement_verb(project, improve.parser().parse_args(args[1:]))
+            return {"returncode": 0, "stdout": json.dumps(result) + "\n", "stderr": ""}
         if args[:2] == ["project", "terminal"]:
             if stdin or args[2:] not in ([], ["--json"]):
                 raise ValueError("alt project terminal: the only option is --json")
@@ -369,6 +374,26 @@ def _l3_verb_request(project: str, request: dict) -> dict:
 
     return {"returncode": result.returncode, "stdout": _l3_bounded(result.stdout or ""),
             "stderr": _l3_bounded(result.stderr or "")}
+
+
+def improvement_verb(project: str, options: argparse.Namespace) -> dict:
+    """`alt improve` for the project's L3. Starting, stopping and recording a decision need the operator's own
+    chat message, the one the running turn answers; checking and posting are L3's."""
+    if options.action == "status":
+        return improve.status(project, options.run)
+    if options.action == "post":
+        return improve.post(project, options.run, options.keep, options.drop)
+    message = l3.chat_turn(project)
+    if not any(row["id"] == message for row in T._decision_messages(project, "", "project")):
+        raise ValueError("this applies only to the operator's own chat message")
+    if options.action == "stop":
+        return improve.stop(project, message)
+    if options.action == "resolve":
+        return improve.resolve(project, options.ref, options.outcome, message, options.reason)
+    receipt = improve.start(project, message)
+    if not receipt.get("replayed"):
+        spawn(f"improve:{project}", improve.execute, project, receipt["run"])
+    return receipt
 
 
 def _l3_gh_command(args: list[str]) -> list[str]:
@@ -1231,6 +1256,7 @@ def tick_project(project: str) -> None:
         for item in dispatch.poll(project):
             spawn(f"finished:{project}:{item['task']['slug']}", on_l2_finished, project, item)
         resume_stranded_reports(project)
+        improve.reconcile(project)
         for slug in dispatch.resume_due(project):
             request_task_resume(project, slug)
         dispatch_waiting(project)

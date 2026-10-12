@@ -247,8 +247,9 @@ def chat_log(project: str, role: str, text: str, **meta) -> dict:
 
 
 def human_chat(row: dict) -> bool:
-    """Operator conversation and L3's answers to it, as opposed to server-triggered turns and FYIs."""
-    return (row.get("trigger") or "chat") == "chat"
+    """Operator conversation, L3's answers to it and the improvement suggestions Altitude posts into it, as opposed
+    to server-triggered turns and FYIs."""
+    return (row.get("trigger") or "chat") in ("chat", "improvement")
 
 
 class _MessageParser(argparse.ArgumentParser):
@@ -279,6 +280,16 @@ def note_offer(project: str, title: str) -> dict:
             raise ValueError("alt task offer applies to a reply to the operator, during a chat turn")
         _offers[turn["id"]] = title
         return {"turn_id": turn["id"], "offer": title}
+
+
+def chat_turn(project: str) -> str:
+    """The id of the operator message the running chat turn answers: the authority of a verb only the operator's
+    own request admits."""
+    with _lifecycle_guard(project):
+        turn = _active.get(project)
+        if not turn or turn["trigger"] != "chat":
+            raise ValueError("this applies only while L3 answers the operator's chat message")
+        return turn["id"]
 
 
 def active_offer(project: str) -> str | None:
@@ -927,6 +938,12 @@ def queue_locked(project: str, text: str, *, trigger: str, slug: str | None = No
            **_slug_meta(slug)}
     _write_queue(path, [*_without_superseded(_queue_rows(path), row), row])
     return row
+
+
+def unqueue_locked(project: str, row_id: str) -> None:
+    """Remove one server row that has not started, for a caller already holding the project lock."""
+    path = queue_path(project)
+    _write_queue(path, [row for row in _queue_rows(path) if row.get("id") != row_id])
 
 
 def _without_superseded(rows: list[dict], new: dict) -> list[dict]:

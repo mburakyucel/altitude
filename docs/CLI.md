@@ -346,6 +346,34 @@ ownership and merge holds remain intact. Closure alone proves neither delivery n
 A verified `CLOSED` state also appends one `pr-closed` event to each task whose current PR it is,
 so that task stops asking for merge review; its delivery record and hold stay unchanged.
 
+## Improvement suggestions
+
+```text
+alt improve run
+alt improve stop
+alt improve status [--run RUN]
+alt improve post RUN [--keep N,N] [--drop N:REASON ...]
+alt improve resolve RUN/N accepted|dismissed --reason TEXT
+alt task new --title TITLE --improvement RUN/N -
+```
+
+These are L3's verbs for an [improvement review](ARCHITECTURE.md#improvement-review) of the Altitude
+project, through its coordinator socket; the operator's CLI reads `alt improve status` only. `run`,
+`stop` and `resolve` are admitted only during the chat turn that answers the operator's own message,
+which becomes their recorded authority; L3 never starts or stops a review, or records a decision,
+on its own judgment. A refused `run` returns its reason for L3's reply: another review running,
+fewer than five tasks finished since the last review, Claude's allowance inside Altitude's reserve or
+unknown, or a pending restart. `stop` returns the line L3 replies with.
+
+The run's queued checking turn names the run; `status --run` shows its candidates, their cited places
+(`slug/q/question/revision`, `slug/m/message`, `slug/e/event index`, `slug/r/review/finding`,
+`slug/report/finding index`, `chat/byte offset`) and the reviewer's own drops. `post` names every
+candidate number once, kept or dropped with a reason of at most 200 characters; Altitude writes the
+chat message. `status` without `--run` lists the latest runs with each suggestion's state and task.
+After the operator accepts a suggestion in words, L3 records it with `resolve`, naming the scope it
+read in the operator's message, and creates its one task with `alt task new --improvement`; that
+message, not the suggestion, is the task's authority.
+
 ## GitHub issues
 
 ### Coordinator GitHub reads

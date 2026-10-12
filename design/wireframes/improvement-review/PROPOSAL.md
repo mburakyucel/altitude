@@ -234,8 +234,9 @@ switches model without your recorded decision.
     and agreement. A week whose run fails a condition is skipped and recorded; nothing is posted.
   - **Get suggestions now** in the project's settings: your own authenticated press, sent with a
     request id; a repeat with the same id returns the same run.
-  - **In chat**: you ask L3, and L3 starts it with `alt improve run --message <id>`. Altitude checks the
-    message is yours, in that project's chat, and not used by an earlier run. A refusal comes back as
+  - **In chat**: you ask L3, and L3 starts it with `alt improve run` while answering that message.
+    Altitude takes the message from the running chat turn, checks it is yours, in that project's chat,
+    and returns the same run when it already started one. A refusal comes back as
     L3's reply with the reason. L3 cannot start a review without your message, and cannot agree or
     switch **Weekly** on.
 - **States.** Reading (the reviewer call), checking (L3's turn), then exactly one ending: posted,
@@ -394,8 +395,8 @@ change. The allowed changes:
 
 - **Buttons.** A press is the operator's own authenticated act, sent with a request id; a repeat with the
   same id returns the same receipt. A press the table does not allow is refused and the card refreshes.
-- **Typed answers.** `alt improve resolve <run>/<n> accepted|dismissed --message <id> --reason '…'`
-  requires the operator's own project-chat message sent after the run's presentation receipt, and a
+- **Typed answers.** `alt improve resolve <run>/<n> accepted|dismissed --reason '…'`, run while L3
+  answers it, requires the operator's own project-chat message sent after the run's presentation receipt, and a
   number that receipt shows. When the answer does not say which run it means and more than one could
   fit, L3 asks rather than guesses. L3 records the scope it read from that message (for example "owner
   instructions only"); that message, not the suggestion, is the new task's source authority. The same

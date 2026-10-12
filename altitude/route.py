@@ -136,6 +136,18 @@ def _usage(readings: dict[str, dict] | None = None) -> dict[str, tuple[float | N
     return {"claude": (claude_week, claude_short), "codex": (codex_week, codex_short)}
 
 
+def improvement_reserve() -> str | None:
+    """Why an improvement review may not start: its engine's allowance is unknown or inside Altitude's reserve."""
+    weekly, short = _usage()["claude"]
+    if weekly is None or short is None:
+        return "Claude's allowance is not known, so Altitude cannot keep its reserve."
+    if weekly >= config.IMPROVEMENT_RESERVE:
+        return "Claude's weekly allowance is inside Altitude's reserve."
+    if short >= config.IMPROVEMENT_RESERVE:
+        return "Claude's short-term allowance is inside Altitude's reserve."
+    return None
+
+
 def _unavailable(weekly: float | None, short: float | None) -> str | None:
     if weekly is not None and weekly >= 100:
         return "weekly window exhausted"

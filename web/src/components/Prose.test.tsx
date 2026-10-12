@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 import { InlineProse, Prose, ProseAt, ProseRepository, ProseScope, QuestionProse, lastParagraph } from "./Prose";
 import { clockText, exactTime } from "../data/observed";
@@ -24,6 +25,11 @@ describe("local file references", () => {
       expect(link.getAttribute("title")).toBeTruthy();
     }
     expect(screen.getByText(/, then/)).toBeVisible();
+  });
+  it("opens this project's task links in place and reads another project's as a file path", () => {
+    render(<MemoryRouter><ProseScope project="atlas"><Prose text="Seen in [Dock export](/projects/atlas/tasks/dock-export) and [Elsewhere](/projects/beta/tasks/dock-export)." /></ProseScope></MemoryRouter>);
+    expect(destinations()).toEqual([["Dock export", "/projects/atlas/tasks/dock-export"], ["Elsewhere", route("/projects/beta/tasks/dock-export")]]);
+    expect(screen.getByRole("link", { name: "Dock export" })).not.toHaveAttribute("target");
   });
   it("preserves web links and code without linking embedded paths or image resources", () => {
     const text = `https://example.org/doc.md [Web](https://example.org/doc.md) \`${path}\`\n\n~~~sh\ncat ${path}\n~~~\n\nword/path ../relative //host/share 1 / 2 ![photo](https://example.org/photo.png) [Bad](javascript:alert)`;

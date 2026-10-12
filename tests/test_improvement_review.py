@@ -191,7 +191,7 @@ class TestValidate(ImprovementCase):
         self.assertEqual(improve.validate({"suggestions": []}, self.anchors), {"suggestions": [], "dropped": []})
         for unsafe in ("token ghp_abcdefghijkl", "see ~/.ssh", "-----BEGIN KEY"):
             self.assertEqual(improve.validate({"suggestions": [self.suggestion(explanation=unsafe)]},
-                                              self.anchors)["dropped"][0]["why"], "it contains a path or credential")
+                                              self.anchors)["dropped"][0]["why"], "it contains a link, path or credential")
         for broken in (None, [], {"answer": []}, {"suggestions": "none"}):
             with self.assertRaisesRegex(ValueError, "not usable"):
                 improve.validate(broken, self.anchors)

@@ -1279,7 +1279,8 @@ are never replayed.
 Every fresh session, whether from first use, reset, context rotation or a confinement policy change,
 receives the project's latest 20 prior human chat messages from either provider, oldest first. A
 replaced session's `last_turn` does not limit this context. Selection uses `user` and `assistant`
-rows with trigger `chat` or no trigger, before applying the count limit: server reports, restart
+rows with trigger `chat` or no trigger, and the improvement suggestions Altitude posts into the
+conversation (trigger `improvement`), before applying the count limit: server reports, restart
 turns, other system events and their replies cannot displace human discussion. The current turn's
 rows are excluded. Messages are labeled historical context for the current request, rather than
 new instructions, with at most 800 characters of each text and an explicit `[truncated]` marker
@@ -1301,7 +1302,8 @@ evidence under current instructions and authoritative task records. See
 A resumed session keeps native continuity. When another provider handled intervening turns,
 Altitude supplies only the cross-provider missed-message handoff: human user/assistant rows
 newer than the selected session's `last_turn` whose engine differs, up to 20 from the latest 60
-human rows. Server-triggered turns never enter it. It uses the same text bound and historical label. A fresh session receives only fresh
+human rows; Altitude's improvement messages name no engine, so every session receives them. Server-triggered
+turns, including an improvement review's checking turn (trigger `improvement-check`), never enter it. It uses the same text bound and historical label. A fresh session receives only fresh
 context, and a native resume with no missed rows receives neither block, avoiding duplicate
 injection. A limit or access rejection after text or tool activity never causes the same turn
 to be automatically replayed on another option because that could duplicate side effects. A confirmed
