@@ -1,11 +1,10 @@
 # README visuals
 
 The README shows the built web app on desktop and phone together: an opening picture of the desktop
-project view with the phone's decision in front of it, three phone views (project, task and decision),
-a phone recording and an editable role diagram.
+project view with the phone's decision in front of it and the "work at any altitude" drawing of the
+coordinator, task agents and helpers.
 [The walkthrough](../../docs/WALKTHROUGH.md) carries the longer scenario and full-size captures.
-Below 600 px width the opening picture gives way to the decision capture alone, so it stays legible on
-a phone.
+Both pictures are the same at every width; the README is laid out for a computer screen first.
 
 The captures come from an ordinary [browser walkthrough](../../docs/DEVELOPMENT.md#browser-walkthroughs):
 `web/e2e/readme.pw.ts` against `web/e2e/readme-service.py`, a disposable service with real handlers and
@@ -35,10 +34,10 @@ each capture. No speech recognition or coding agent runs.
 ## Opening picture
 
 `design/readme/hero.html` places `docs/images/project-desktop.png` and `decision-phone.png` on a
-transparent 2400×1440 canvas. After replacing either capture, render it again from the repository root:
+transparent 2240×1360 canvas. After replacing either capture, render it again from the repository root:
 
 ```sh
-google-chrome --headless --hide-scrollbars --default-background-color=00000000 --window-size=2400,1440 \
+google-chrome --headless --hide-scrollbars --default-background-color=00000000 --window-size=2240,1360 \
   --screenshot=docs/images/hero.png "file://$PWD/design/readme/hero.html"
 ```
 
@@ -49,11 +48,11 @@ google-chrome --headless --hide-scrollbars --default-background-color=00000000 -
 - Copy only reviewed illustrations needed by README or the walkthrough into `docs/images/`,
   replacing the matching files. Keep routine renders and before/after review evidence outside Git
   under the [project UI rule](../../AGENTS.md#ui); do not add a gallery for each PR.
-- Edit `docs/images/orchestration.svg` and `orchestration-phone.svg` directly. These standalone
-  vectors contain no external fonts, scripts or raster art. Keep their relationships and text
-  equivalent; the phone composition stacks independent owners for legibility.
-- Keep responsive diagram `<picture>` sources and image alt text in README and walkthrough. Keep
-  desktop and phone app views visible together in README. Check GitHub's sanitized Markdown, image
+- Edit `docs/images/altitude.svg` directly. This standalone vector uses system fonts and contains
+  no scripts or raster art; it is the same drawing at every width, so keep its type large enough
+  to read in a desktop README column.
+- Keep image alt text in README and walkthrough. Keep desktop and phone app views visible together
+  in README. Check GitHub's sanitized Markdown, image
   paths and anchors, then inspect both widths. Open the original images to review details that are
   small in a desktop README column.
 
