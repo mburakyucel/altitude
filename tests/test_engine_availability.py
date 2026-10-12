@@ -8,6 +8,16 @@ from altitude import config, engines, platform, state as S
 
 
 MODEL_ERROR = "There's an issue with the selected model (fable). It may not exist or you may not have access to it."
+REVOKED = "Failed to authenticate: OAuth token revoked. Please log in again or contact your administrator."
+
+
+def revoked_stream(text=REVOKED):
+    """The CLI's own shape for a lapsed sign-in: its message is marked with an authentication code and a 401."""
+    return stream({"type": "system", "subtype": "init", "session_id": "session"},
+                  {"type": "assistant", "error": "authentication_failed", "is_api_error_message": True,
+                   "message": {"model": "<synthetic>", "content": [{"type": "text", "text": text}]}},
+                  {"type": "result", "is_error": True, "api_error_status": 401, "terminal_reason": "api_error",
+                   "result": text})
 
 
 def stream(*events):
@@ -45,6 +55,60 @@ class TestAvailability(AltitudeCase):
                               ("codex", "This account is not currently authorized to use Codex in this workspace.")):
             with self.subTest(engine=engine, error=error):
                 self.assertEqual(engines.rejection(engine, {"error": error})["scope"], "engine")
+
+    def test_a_lapsed_sign_in_is_recognized_by_its_code_or_401_whatever_the_wording(self):
+        future = "Your session token secret-value is no longer accepted."
+        for engine, result in (
+            ("claude", {"raw_stdout": revoked_stream()}),
+            ("claude", {"raw_stdout": revoked_stream(future)}),
+            ("claude", {"raw_stdout": stream({"type": "result", "is_error": True, "api_error_status": 401,
+                                              "result": future})}),
+            ("claude", {"error": REVOKED}),
+            ("claude", {"error": "Failed to authenticate: OAuth session expired and could not be refreshed"}),
+            ("codex", {"raw_stdout": stream({"type": "turn.failed", "error": {
+                "message": "unexpected status 401 Unauthorized: token secret-value revoked"}})}),
+            ("codex", {"error": "Your access token could not be refreshed because your refresh token was revoked. "
+                                "Please log out and sign in again."}),
+            ("codex", {"error": {"code": "authentication_failed", "message": future}}),
+        ):
+            with self.subTest(engine=engine, result=result):
+                rejected = engines.rejection(engine, result)
+                self.assertEqual((rejected["scope"], rejected["sign_in"]), ("engine", True))
+                self.assertNotIn("secret-value", json.dumps(rejected))
+        for engine in ("claude", "codex"):
+            self.assertIsNone(engines.rejection(engine, {"raw_stdout": stream(
+                {"type": "result", "is_error": True, "api_error_status": 403, "result": "Forbidden"})}))
+        # A tool or MCP server's own authentication diagnostic is not the engine's sign-in.
+        for engine, result in (
+            ("claude", {"raw_stderr": "Failed to authenticate with MCP server fixture-docs", "raw_stdout": stream(
+                {"type": "result", "is_error": False, "result": "Answered"})}),
+            ("claude", {"error": "claude exit 1: MCP server fixture-docs: Failed to authenticate"}),
+            ("codex", {"raw_stderr": "mcp client fixture-docs: unexpected status 401 Unauthorized"}),
+        ):
+            with self.subTest(engine=engine, result=result):
+                self.assertIsNone(engines.rejection(engine, result))
+
+    def test_a_coordinator_turn_failing_on_a_revoked_sign_in_is_a_safe_sign_in_rejection(self):
+        process = mock.Mock(pid=123, returncode=1, stdout=io.StringIO(revoked_stream()), stderr=io.StringIO(""),
+                            stdin=io.StringIO())
+        with mock.patch.object(engines.subprocess, "Popen", return_value=process), \
+             mock.patch.object(engines, "usage_hold", return_value=None):
+            result = engines.claude_print("hello", cwd=self.repo)
+        self.assertTrue(result["rejection"]["sign_in"])
+        self.assertTrue(result["safe_to_retry"])
+        self.assertEqual(result["text"], "")
+
+    def test_a_task_owner_ending_on_a_revoked_sign_in_has_the_same_rejection(self):
+        paths = engines._codex_paths(self.tmp, "claude")
+        S.write_json(paths["record"], {"engine": "claude", "unit": "owned.service", "started_at": S.now(),
+                                       "launch_model": "opus"})
+        paths["stderr"].write_text("")
+        paths["stdout"].write_text(revoked_stream())
+        with mock.patch.object(platform, "job_active", return_value=False), \
+             mock.patch.object(engines, "_codex_session_model", return_value={}):
+            row = engines.worker("claude", {"agent_id": "claude"}, job_root=self.tmp)
+        self.assertTrue(row["rejection"]["sign_in"])
+        self.assertIn("sign in, then Retry or Resume", row["rejection"]["why"])
 
     def test_unknown_errors_capacity_quota_and_plan_names_do_not_prove_unavailability(self):
         for error in (engines.TEMPORARY_CAPACITY_TEXT, "API Error: 529 overloaded_error", "connection refused",

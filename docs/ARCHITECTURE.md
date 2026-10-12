@@ -598,12 +598,18 @@ resolved. `ALTITUDE_PRIMARY_ENGINE` chooses only the default tie order. Named, c
 configured order, and L3 retains its current engine/model within that tier unless a competitor has
 at least fifteen percentage points more weekly headroom. A higher available tier takes precedence.
 Missing executables, exhausted windows and explicit provider rejections exclude the affected option;
-unknown access remains eligible. Authentication rejections exclude the engine and model rejections
-exclude only that model for thirty minutes. Signing in cures an authentication rejection at once, so
-it has its own record: an operator coordinator message or Retry that finds no engine withdraws it for
-the engine that turn then attempts, and each explicit task resume request withdraws it for the task's
-engine. A credential still invalid records it again on that attempt, and automatic turns and resumes
-keep waiting. A current model-specific weekly reading at 100% also
+unknown access remains eligible. A sign-in rejection is the CLI's own authentication code or an
+HTTP 401, whatever its wording, or the CLI's sign-in prompt before any request. Authentication
+rejections exclude the engine and model rejections exclude only that model for thirty minutes.
+Signing in cures an authentication rejection at once, so it has its own record, which is the engine's
+sign-in lapse: an operator coordinator message or Retry that finds no engine withdraws it for the
+engine that turn then attempts, and each explicit task resume request withdraws it for the task's
+engine. A credential still invalid records it again on that attempt, within the same lapse, and
+automatic turns and resumes keep waiting. The quota refresh records a lapse when its read is refused
+for sign-in; its successful read, or a successful coordinator turn, ends it. Each project's
+conversation gets one heads-up line per lapse naming the engine, what the turn did (answered on
+another engine, waits, or stopped) and the engine's sign-in command; failed turns show the
+rejection's plain reason, never provider text. A current model-specific weekly reading at 100% also
 excludes only that model. The router never derives model allowances from an
 account-wide meter or subscription entitlement from a plan name. Safe pre-output rejection retries
 are bounded to configured alternatives. Explicit pins never fall back, and an L2 resume retains its
