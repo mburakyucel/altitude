@@ -155,7 +155,7 @@ def load(scenario: dict) -> dict[str, str]:
             "suggestions": [{"n": n, "target": "agents", "title": e["title"], "explanation": "", "where": "",
                              "signal": None, "anchors": [], "uncertainty": ""} for n, e in numbered],
             "decisions": [{"n": n, "from": "undecided", "to": e["outcome"], "at": at, "by": "l3",
-                           "message": "0" * 12, "reason": "fixture"} for n, e in numbered]}]})
+                           "message": "0" * 12, "said": at, "reason": "fixture"} for n, e in numbered]}]})
     for row in scenario.get("chat", []):
         operator = row["role"] == "operator"
         offset = _line(base / "chat.jsonl", {"at": row["at"], "role": "user" if operator else "assistant",

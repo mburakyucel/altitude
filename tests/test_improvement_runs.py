@@ -190,6 +190,22 @@ class TestPosting(RunCase):
         self.assertEqual(dropped, "Dropped 1: already handled by an open task")
         self.assertEqual((row["turn_id"], self.queued()), (receipt["post"]["row"], []))
 
+    def test_the_posted_message_follows_its_saved_receipt_and_appears_once(self):
+        run = self.checking()
+        with mock.patch.object(l3, "chat_log", side_effect=OSError("disk full")), self.assertRaises(OSError):
+            improve.post(self.project, run["id"], [1, 2], [], now=NOW)
+        saved = improve._find(improve._load(self.project), run["id"])
+        self.assertEqual((saved["state"], saved["post"]["row"], self.chat()), ("posted", run["id"], []))
+        self.assertEqual(improve.post(self.project, run["id"], [1, 2], [], now=NOW)["post"]["row"], run["id"])
+        improve.reconcile(self.project, NOW)
+        [row] = self.chat()  # the replay posted it; the tick found nothing left
+        self.assertEqual((row["turn_id"], row["improvement"]), (run["id"], run["id"]))
+        record = improve._load(self.project)
+        record["runs"][-1]["line"] = row["text"]  # the chat row was written, the record not yet re-saved
+        improve._save(self.project, record)
+        self.assertEqual(len(self.chat()), 1)
+        self.assertNotIn("line", improve._find(improve._load(self.project), run["id"]))
+
     def test_the_window_reads_as_days(self):
         day = lambda d, h=12: datetime(2026, 10, d, h, tzinfo=timezone.utc).astimezone().replace(hour=h).isoformat()
         self.assertEqual(improve._span(day(12, 9), day(12, 15)), "Oct 12")
@@ -197,6 +213,8 @@ class TestPosting(RunCase):
         self.assertEqual(improve._span(datetime(2026, 9, 28, 12).astimezone().isoformat(), day(5)), "Sep 28–Oct 5")
 
     def test_posted_text_is_plain_prose(self):
+        self.assertEqual(improve._plain("~~~ js\n- ~~~ - code"), "js - ~~~ - code")
+        self.assertEqual(improve._plain("about ~5 tasks"), "about ~5 tasks")
         plain = improve._plain("[Click](https://x) **now** `rm` /etc/x #12\n- item")
         self.assertEqual(plain, "(Click)(https:/\u2215x) \u2217\u2217now\u2217\u2217 'rm' \u2215etc/x #\u206012 - item")
         self.assertEqual(improve._plain("1. listed"), "listed")
@@ -242,6 +260,16 @@ class TestPosting(RunCase):
         self.assertEqual(self.queued(), [])
         self.assertEqual(self.chat()[-1]["text"], "Improvement suggestions failed · L3 did not finish checking.")
 
+    def test_the_tick_posts_an_ending_a_restart_interrupted(self):
+        run = self.checking()
+        with mock.patch.object(l3, "chat_log", side_effect=OSError("disk full")), self.assertRaises(OSError):
+            improve.post(self.project, run["id"], [], [(1, "handled"), (2, "handled")], now=NOW)
+        self.assertEqual(self.chat(), [])
+        improve.reconcile(self.project, NOW)
+        improve.reconcile(self.project, NOW)
+        [row] = self.chat()
+        self.assertTrue(row["text"].endswith("nothing to suggest.\n\nDropped 1: handled\n\nDropped 2: handled"))
+
     def test_a_reading_run_past_its_deadline_was_interrupted(self):
         self.load()
         receipt = improve.start(self.project, self.operator("Get improvement suggestions"), now=NOW)
@@ -273,6 +301,17 @@ class TestDecisions(RunCase):
         decisions = improve._find(improve._load(self.project), run["id"])["decisions"]
         self.assertEqual([(d["from"], d["to"], d["message"]) for d in decisions],
                          [("undecided", "dismissed", dismiss), ("dismissed", "accepted", accept)])
+
+    def test_a_reversal_needs_the_operators_newer_message(self):
+        run = self.posted()
+        ref = f"{run['id']}/1"
+        later, dismiss = self.operator("Make a task for it", 2), self.operator("Dismiss the first one", 3)
+        improve.resolve(self.project, ref, "dismissed", dismiss, "not now", now=NOW)
+        for message in (dismiss, later):
+            with self.assertRaisesRegex(ValueError, "a change needs the operator's newer message"):
+                improve.resolve(self.project, ref, "accepted", message, "owner rules only", now=NOW)
+        self.assertEqual(improve.resolve(self.project, ref, "accepted", self.operator("Actually do it", 4), "all",
+                                         now=NOW)["state"], "accepted")
 
     def test_answers_need_a_shown_number_and_a_later_operator_message(self):
         run = self.posted()

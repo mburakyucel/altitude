@@ -368,11 +368,13 @@ unknown, or a pending restart. `stop` returns the line L3 replies with.
 The run's queued checking turn names the run; `status --run` shows its candidates, their cited places
 (`slug/q/question/revision`, `slug/m/message`, `slug/e/event index`, `slug/r/review/finding`,
 `slug/report/finding index`, `chat/byte offset`) and the reviewer's own drops. `post` names every
-candidate number once, kept or dropped with a reason of at most 200 characters; Altitude writes the
-chat message. `status` without `--run` lists the latest runs with each suggestion's state and task.
+candidate number once, kept or dropped with a reason of at most 200 characters; Altitude saves the
+receipt, then writes the chat message as the run's own turn, so a retried `post` or the next tick
+completes a message a restart interrupted without repeating it. `status` without `--run` lists the latest runs with each suggestion's state and task.
 After the operator accepts a suggestion in words, L3 records it with `resolve`, naming the scope it
 read in the operator's message, and creates its one task with `alt task new --improvement`; that
-message, not the suggestion, is the task's authority.
+message, not the suggestion, is the task's authority. Changing a recorded answer needs a newer
+operator message than the one it was recorded from.
 
 ## GitHub issues
 

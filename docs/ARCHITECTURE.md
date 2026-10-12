@@ -1774,11 +1774,12 @@ L3 reads the candidates with `alt improve status --run`, opens their cited place
 `alt improve post <run> --keep … --drop n:reason`, naming every number once. Altitude, not L3, writes
 the chat message from the validated wording: a heading with the review's date and window, each kept
 suggestion under its run number with its target, explanation and a link to every cited task, then
-L3's drops. Model and L3 text is made plain first (brackets, emphasis, code marks, leading slashes and
-issue numbers neutralized), so the only links are Altitude's own. The message is an assistant row of
-its own turn (trigger `improvement`, its run id); its row id, the numbers shown and the date are the
-run's receipt, the same post returns it and a different one is refused, as is a post for a stopped,
-ended or late run. Keeping none ends the run with the nothing-to-suggest line. No suggestions, a
+L3's drops. Model and L3 text is made plain first (brackets, emphasis, code marks and fences, leading
+slashes and issue numbers neutralized), so the only links are Altitude's own. The numbers shown and the
+date are the run's receipt, the same post returns it and a different one is refused, as is a post for a
+stopped, ended or late run. A run's one chat line, posted or ending, is an assistant row of its own turn
+named by the run (trigger `improvement`); the record is saved first, and a retried post or the next
+tick writes a line a restart interrupted, once. Keeping none ends the run with the nothing-to-suggest line. No suggestions, a
 failed call, and a deadline passed while reading ("it was interrupted by a restart") or checking ("L3
 did not finish checking") each end the run with one line. `alt improve stop` during the operator's chat
 turn stops a reading or checking run; its answer is discarded and its queued check removed. Nothing
@@ -1787,7 +1788,8 @@ retries.
 `alt improve resolve <run>/<n> accepted|dismissed --reason` records the operator's typed answer during
 the chat turn of their message, which must follow the post and name a number it showed. Undecided
 becomes accepted or dismissed; dismissed and not decided (seven days after the post, computed on
-read) become accepted; accepted is final. The same message and outcome return the existing receipt.
+read) become accepted; accepted is final. The same message and outcome return the existing receipt;
+a change needs a newer operator message than the recorded answer's.
 `alt task new --improvement <run>/<n>` creates the one task for an accepted suggestion and records it
 on the task, so a second is refused.
 

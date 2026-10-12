@@ -479,12 +479,12 @@ def _span(start: str, end: str) -> str:
 
 def _plain(text: str) -> str:
     """Untrusted words as plain chat prose: one line, and nothing the chat would turn into a link, code, emphasis,
-    a list or a reference, so the only links in a posted message are the ones Altitude writes."""
+    a list, a code block or a reference, so the only links in a posted message are the ones Altitude writes."""
     text = " ".join(str(text or "").split()).replace("[", "(").replace("]", ")").replace("`", "'")
     text = text.replace("*", "\u2217")
     text = re.sub(r"(?<![\w:\\.-])/", "\u2215", text)
     text = re.sub(r"#(?=\d)", "#\u2060", text)
-    return re.sub(r"^(?:[-•#>]+|\d+[.)])\s+", "", text)
+    return re.sub(r"^(?:(?:[-•#>]+|\d+[.)])\s+|~+\s*)+", "", text)
 
 
 def _join(parts: list[str]) -> str:
@@ -541,7 +541,7 @@ def start(project: str, message_id: str, *, now: datetime | None = None) -> dict
                "model": config.IMPROVEMENT_MODEL, "window": {"start": begin.isoformat(), "end": at.isoformat()},
                "tasks": len(items), "older": older, "suggestions": [], "dropped": [], "decisions": []}
         record["runs"].append(run)
-        S.write_json(_path(project), record)
+        _save(project, record)
     return _receipt(run)
 
 
@@ -577,7 +577,7 @@ def execute(project: str, run_id: str) -> None:
         else:
             run["state"] = "checking"
             run["check"] = l3.queue_locked(project, check_turn(run), trigger="improvement-check")["id"]
-        S.write_json(_path(project), record)
+        _save(project, record)
 
 
 def check_turn(run: dict) -> str:
@@ -597,11 +597,11 @@ def _end(project: str, run: dict, state: str, reason: str | None = None, *, line
     """End `run` in the caller's locked record, with its one chat line for nothing to suggest or a failure."""
     run.update(state=state, ended=S.now(), reason=reason)
     if line and state == "nothing":
-        _say(project, run, f"Improvement suggestions of {_day(run['started'])} · {run['tasks']} tasks from "
-                           f"{_span(run['window']['start'], run['window']['end'])} · nothing to suggest."
-             + _drops((run.get("post") or {}).get("drops") or {}))
+        run["line"] = (f"Improvement suggestions of {_day(run['started'])} · {run['tasks']} tasks from "
+                       f"{_span(run['window']['start'], run['window']['end'])} · nothing to suggest."
+                       + _drops((run.get("post") or {}).get("drops") or {}))
     elif line and state == "failed":
-        _say(project, run, f"Improvement suggestions failed · {_plain(reason)}.")
+        run["line"] = f"Improvement suggestions failed · {_plain(reason)}."
 
 
 def _ended(project: str, run_id: str, state: str, reason: str) -> None:
@@ -610,13 +610,23 @@ def _ended(project: str, run_id: str, state: str, reason: str) -> None:
         run = _find(record, run_id)
         if run["state"] in ACTIVE:
             _end(project, run, state, reason)
-            S.write_json(_path(project), record)
+            _save(project, record)
 
 
-def _say(project: str, run: dict, text: str) -> dict:
-    """Altitude's own chat message about a run: an assistant row of its own turn, never part of L3's."""
-    return l3.chat_log(project, "assistant", text, trigger="improvement", turn_id=uuid.uuid4().hex[:12],
-                       improvement=run["id"])
+def _save(project: str, record: dict) -> None:
+    """Save the caller's locked record, then post each run's pending chat line: the record first, so a line never
+    appears without its run's receipt. A run's line is Altitude's own turn named by the run, so a line a restart
+    interrupted is posted once by the next save."""
+    S.write_json(_path(project), record)
+    pending = [run for run in record["runs"] if "line" in run]
+    if not pending:
+        return
+    said = {row.get("improvement") for row in l3.chat_history(project) if row.get("trigger") == "improvement"}
+    for run in pending:
+        text = run.pop("line")
+        if run["id"] not in said:
+            l3.chat_log(project, "assistant", text, trigger="improvement", turn_id=run["id"], improvement=run["id"])
+    S.write_json(_path(project), record)
 
 
 def _drops(drops: dict) -> str:
@@ -634,7 +644,7 @@ def stop(project: str, message_id: str) -> dict:
             l3.unqueue_locked(project, run["check"])
         _end(project, run, "stopped", "stopped by you", line=False)
         run["stop"] = message_id
-        S.write_json(_path(project), record)
+        _save(project, record)
     return {**_receipt(run), "say": "Improvement suggestions stopped by you."}
 
 
@@ -655,6 +665,8 @@ def post(project: str, run_id: str, keep: list[int], drop: list[tuple[int, str]]
         if done:
             if (done["shown"], done["drops"]) != (shown, drops):
                 raise ValueError(f"The review of {_day(run['started'])} is already posted differently.")
+            if "line" in run:
+                _save(project, record)
             return {**_receipt(run), "post": done}
         if run["state"] != "checking":
             raise ValueError(f"The review of {_day(run['started'])} {ENDED[run['state']]}; nothing can be posted.")
@@ -670,9 +682,10 @@ def post(project: str, run_id: str, keep: list[int], drop: list[tuple[int, str]]
         if not shown:
             _end(project, run, "nothing")
         else:
-            run["post"]["row"] = _say(project, run, message(project, run))["turn_id"]
+            run["post"]["row"] = run["id"]
+            run["line"] = message(project, run)
             _end(project, run, "posted")
-        S.write_json(_path(project), record)
+        _save(project, record)
     return {**_receipt(run), "post": run["post"]}
 
 
@@ -743,12 +756,15 @@ def resolve(project: str, ref: str, outcome: str, message_id: str, reason: str, 
         last = next((d for d in reversed(run["decisions"]) if d["n"] == n), None)
         if last and (last["message"], last["to"]) == (message_id, outcome):
             return _decision(project, run, n, now)
+        if last and _date(said["at"]) <= _date(last["said"]):
+            raise ValueError(f"suggestion {n} was decided on that message or a later one; a change needs the "
+                             "operator's newer message")
         current = suggestion_state(run, n, now)
         if (current, outcome) not in ALLOWED:
             raise ValueError(f"suggestion {n} of the {_day(run['started'])} review is {current}; it cannot become {outcome}")
         run["decisions"].append({"n": n, "from": current, "to": outcome, "at": now.replace(microsecond=0).isoformat(),
-                                 "by": "l3", "message": message_id, "reason": reason})
-        S.write_json(_path(project), record)
+                                 "by": "l3", "message": message_id, "said": said["at"], "reason": reason})
+        _save(project, record)
     return _decision(project, run, n, now)
 
 
@@ -783,9 +799,9 @@ def require_accepted_locked(project: str, ref: str) -> None:
 
 def reconcile(project: str, now: datetime | None = None) -> None:
     """The tick: a run past its deadline ends. Reading then means its call was interrupted; checking means L3's
-    turn failed, was interrupted or never ran. Nothing is retried."""
+    turn failed, was interrupted or never ran. Nothing is retried. A chat line a restart interrupted is posted."""
     now = now or datetime.now(timezone.utc)
-    if not any(r["state"] in ACTIVE and now > _date(r["deadline"]) for r in _load(project)["runs"]):
+    if not any(r["state"] in ACTIVE and now > _date(r["deadline"]) or "line" in r for r in _load(project)["runs"]):
         return
     with S.project_lock(project):
         record = _load(project)
@@ -795,7 +811,7 @@ def reconcile(project: str, now: datetime | None = None) -> None:
                     l3.unqueue_locked(project, run["check"])
                 _end(project, run, "failed", "it was interrupted by a restart" if run["state"] == "reading"
                      else "L3 did not finish checking")
-        S.write_json(_path(project), record)
+        _save(project, record)
 
 
 def status(project: str, run_id: str | None = None, *, now: datetime | None = None) -> dict:
