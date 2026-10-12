@@ -135,10 +135,15 @@ describe("review status on proposal and merge questions (SPEC.md §3.8.3)", () =
     expect(screen.getByText("Old layout").closest("a")).toBeNull();
     expect(screen.getByText("Preview unavailable")).toBeVisible();
   });
-  it("a question naming the held PR shows the implementation review", () => {
-    const question = DecisionSchema.parse({ ...base, question: "Merge PR #7?", review: { subject: "changes", ...done, findings: 0 } });
-    mount(<QuestionSet decisions={[question]} chat />);
+  it("the held PR's merge question shows the implementation review and links its PR beside Send", () => {
+    const question = DecisionSchema.parse({ ...base, question: "Merge the fix?", pr: 7, review: { subject: "changes", ...done, findings: 0 } });
+    const { container, unmount } = mount(<QuestionSet decisions={[question]} chat />);
     expect(screen.getByRole("link", { name: "Implementation review · done, no findings" })).toHaveAttribute("href", "/projects/atlas/tasks/gate?review=r1");
+    expect(screen.getByRole("link", { name: "View PR #7" })).toHaveAttribute("href", "https://github.com/example/atlas/pull/7");
+    expect(container.querySelector(".question-batch .btn-primary + a.btn-ghost")).not.toBeNull();
+    unmount();
+    mount(<QuestionSet decisions={[{ ...question, pr: null }]} chat />);
+    expect(screen.queryByRole("link", { name: /^View PR/ })).toBeNull();
   });
   it("a question that is neither a proposal nor a merge approval has no line", () => {
     const { container, unmount } = mount(<QuestionSet decisions={[DecisionSchema.parse({ ...base, question: "Where should the backup live?" })]} />);
