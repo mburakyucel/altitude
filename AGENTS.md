@@ -222,13 +222,16 @@ and every other host resource the launcher did not create. It grants nothing for
 
 The operator's project-chat approval of 2026-10-12 06:23 UTC (`8db20389c22e`) stands until the
 operator revokes it: L3 records a VM-lane operator grant on an owner's request without another
-operator question. Its scope is virtual machines this Apple silicon Mac runs through Apple's
-Virtualization framework for Altitude's own checks: the macOS VM lane (`scripts/installation_macos_vm.py`
-and `make installation-macos-vm`, including building its images when they are missing) and throwaway
-Linux guests for the container lane's checks, each kept in its lane's own cache folder. One guest runs
-at a time with at most half of this Mac's CPUs and 8 GiB of memory; each clone or throwaway guest is
-deleted after its run, also after a failure or a stop; and a run stops whenever less than 10 GiB of
-disk would stay free. Runs serve a task's stated purpose and may be retried after a failure, never
-repeated back to back without end. Nothing is installed on the Mac itself. It excludes the operator's
-Altitude installation and service, LaunchAgents, keychains, trust stores, network settings, credential
-directories and every other host resource the lanes did not create. It grants nothing for other projects.
+operator question. Its scope is two lanes that run throwaway guests on this Apple silicon Mac through
+Apple's Virtualization framework, with one guest at a time. The macOS VM lane runs
+`make installation-macos-vm` or `scripts/installation_macos_vm.py run` on the images already in its
+cache, with the guest's 4 CPUs and 4 GiB of memory, the guest network unplugged before the installer
+runs, and each clone deleted after its phase; building or downloading images is outside this scope.
+The container lane's Linux test boots a throwaway Ubuntu guest to build and check Altitude's
+container, with at most half of this Mac's CPUs, 6 GiB of memory and 24 GiB of disk in its own cache
+folder, a download of at most 1 GB, and the guest deleted after each run. Every run stops whenever
+less than 10 GiB of disk would stay free, also cleaning up after a failure or a stop. Runs serve a
+task's stated purpose and may be retried after a failure, never repeated back to back without end.
+Nothing is installed on the Mac itself. It excludes the operator's Altitude installation and service,
+LaunchAgents, keychains, trust stores, network settings, credential directories and every other host
+resource the lanes did not create. It grants nothing for other projects.

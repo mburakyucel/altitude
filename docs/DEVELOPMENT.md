@@ -1268,9 +1268,9 @@ minutes and `login` just over one; the release build adds about one. `installati
 
 Virtual machines cannot start inside a task's sandbox or a [macOS validation
 run](#macos-validation-runs). Inside a task, an owner runs `installation_macos_vm.py` with
-`alt task run` under an [operator grant](CLI.md#operator-grant) that L3 records from the
-[standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac) on request: `image --step`
-while images are missing, then `run`, with `--phase` splitting the phases across commands when the
+`alt task run` under an [operator grant](CLI.md#operator-grant): `image --step` while images are
+missing, under a grant naming that build, then `run`, under one L3 records from the
+[standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac) on request, with `--phase` splitting the phases across commands when the
 Mac is busy so each finishes within the command limit, keeping `RESULTS` in the task folder. The runner never touches the host's Altitude
 service, LaunchAgents, keychains, trust stores or network configuration.
 
