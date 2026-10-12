@@ -1,0 +1,59 @@
+/* A markdown document as GitHub shows it, on Altitude's tokens (SPEC.md §3.11). Wide tables and code scroll in
+ * their own block; the document never scrolls sideways. */
+.markdown { min-width: 0; font-size: 16px; line-height: 1.65; color: var(--text-primary); overflow-wrap: break-word; }
+.shell:not([data-phone]) .markdown { font-size: 15px; line-height: 1.7; }
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+.markdown :is(p, ul, ol, blockquote, pre, dl, details, .md-table) { margin: 0 0 16px; }
+.markdown :is(h1, h2, h3, h4, h5, h6) { margin: 28px 0 14px; font-weight: 600; line-height: 1.3; scroll-margin-top: 12px; }
+.markdown h1 { padding-bottom: 8px; border-bottom: 1px solid var(--border); font-size: 26px; }
+.markdown h2 { padding-bottom: 6px; border-bottom: 1px solid var(--border); font-size: 20px; }
+.markdown h3 { font-size: 17px; }
+.markdown :is(h4, h5, h6) { font-size: 15px; }
+.markdown h6 { color: var(--text-secondary); }
+.markdown a { color: var(--accent-text); text-decoration: underline; text-underline-offset: 2px; }
+.markdown .md-relative { cursor: default; }
+.markdown :is(ul, ol) { padding-left: 26px; }
+.markdown ul { list-style: disc; }
+.markdown ol { list-style: decimal; }
+.markdown :is(ul, ol) :is(ul, ol) { margin: 4px 0 0; }
+.markdown li + li { margin-top: 4px; }
+.markdown .contains-task-list { padding-left: 4px; list-style: none; }
+.markdown .task-list-item input { margin: 0 8px 0 0; vertical-align: -1px; accent-color: var(--accent); }
+.markdown blockquote { padding: 0 0 0 14px; border-left: 3px solid var(--border); color: var(--text-secondary); }
+.markdown hr { margin: 24px 0; border: 0; border-top: 1px solid var(--border); }
+.markdown code { padding: 0.12em 0.38em; border-radius: 6px; background: var(--bubble); font-family: var(--font-mono); font-size: 0.86em; }
+.markdown pre { overflow-x: auto; padding: 14px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--page);
+  font-family: var(--font-mono); font-size: 13px; line-height: 1.6; white-space: pre; }
+.markdown pre code { padding: 0; border-radius: 0; background: none; font-size: inherit; }
+.markdown .md-table { overflow-x: auto; }
+.markdown table { border-collapse: collapse; font-size: 15px; line-height: 1.5; }
+.shell:not([data-phone]) .markdown table { font-size: 14px; }
+.markdown :is(th, td) { padding: 7px 12px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
+.markdown th { background: var(--page); font-weight: 600; }
+.markdown [align="center"] { text-align: center; }
+.markdown [align="right"] { text-align: right; }
+.markdown details > summary { cursor: pointer; font-weight: 500; }
+.markdown dt { font-weight: 600; }
+.markdown dd { margin: 0 0 8px 16px; }
+.markdown kbd { padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; font-family: var(--font-mono); font-size: 0.86em; }
+.markdown sup { font-size: 0.75em; }
+/* A copied image: its natural width narrowed to the column, a button with an expand badge that opens the gallery. */
+.markdown .md-picture { position: relative; display: inline-block; max-width: 100%; padding: 0; border: 0; border-radius: 8px;
+  background: none; line-height: 0; vertical-align: middle; }
+button.md-picture { cursor: zoom-in; }
+.markdown .md-picture img, .shown-extra img { display: block; max-width: 100%; height: auto; border-radius: 8px; }
+.markdown .md-picture img[data-loading], .shown-extra img[data-loading] { background: var(--bubble); }
+.shown-expand { position: absolute; right: 8px; bottom: 8px; display: grid; width: 28px; height: 28px; place-items: center;
+  border-radius: 8px; background: rgb(15 23 42 / 0.62); color: #fff; }
+/* A remote image is never loaded: an icon and its alt text, linked. */
+.markdown .md-remote { display: inline-flex; align-items: center; gap: 5px; margin: 0 4px; }
+.markdown .md-remote .shown-icon { color: var(--text-muted); }
+/* A local image that was not copied, and a copied image that failed. */
+.markdown .md-not-shown { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; padding: 12px 14px; border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text-muted); line-height: 1.4; }
+.markdown .md-not-shown > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.markdown .md-not-shown code { padding: 0; background: none; color: var(--text-muted); font-size: 13px; overflow-wrap: anywhere; }
+.shown-image-failed { display: flex; min-height: 170px; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  padding: 16px; border: 1px solid var(--border); border-radius: 8px; color: var(--text-muted); line-height: 1.4; text-align: center; }
+.shown-image-failed b { color: var(--text-secondary); font-size: 15px; font-weight: 500; }

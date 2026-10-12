@@ -213,7 +213,7 @@ describe("queued L3 Send now", () => {
     expect(within(card).getByText("Information only · Exchange exchange-1")).toBeVisible();
     expect(within(card).queryByRole("link", { name: "Open task" })).toBeNull();
     expect(within(card).queryByRole("button", { name: /terminal/i })).toBeNull();
-    expect(within(card).getByRole("link", { name: "Fix PR (https://example.invalid/different-destination)" })).toHaveAttribute("href", "https://example.invalid/different-destination");
+    expect(await within(card).findByRole("link", { name: "Fix PR (https://example.invalid/different-destination)" })).toHaveAttribute("href", "https://example.invalid/different-destination");
     expect(within(card).getByRole("link", { name: "http://example.invalid/probe" })).toHaveAttribute("href", "http://example.invalid/probe");
     expect(within(card).queryAllByRole("link")).toHaveLength(2);
     await user.click(within(card).getByRole("button", { name: "Hide" }));

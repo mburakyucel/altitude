@@ -89,11 +89,10 @@ to submit them; even a single choice stays staged until you send it. You can als
 that decision against your message. A follow-up keeps the question open, and a saved answer does
 not by itself mean work has resumed or a merge hold has been released.
 
-**View preview** opens captured design evidence in a separate tab. **Back to question** takes you
-to that capture's question and revision; an earlier capture also offers **Open current question**.
-Either return replaces the preview in that tab's history, so the task's **Back** opens the
-owning project conversation. Browser Back/Forward follows the tab's remaining history.
-The original tab and its unsent draft remain available.
+When the owner shows you a document or screenshots, such as a proposal or a README draft, the
+question or reply carries a card for them. Tap it to read the document beside the conversation, or
+over it on a phone; pictures open full screen. Closing returns you to the question with your unsent
+answer intact, and an older version is marked **Earlier** with a link to the newer one.
 
 <picture>
   <source media="(max-width: 600px)" srcset="images/decision-phone.png">

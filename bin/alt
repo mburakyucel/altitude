@@ -61,17 +61,6 @@ def _question_input(args, reason: str | None) -> tuple[dict | None, str]:
     return payload, reason.strip()
 
 
-def _design_selection(path: str, command: str) -> dict:
-    try:
-        with open(path, "rb") as stream:
-            data = stream.read(T.DESIGN_TEXT_LIMIT + 1)
-        if len(data) > T.DESIGN_TEXT_LIMIT:
-            raise ValueError("design selection exceeds 64 KiB")
-        return json.loads(data)
-    except (OSError, ValueError) as exc:
-        sys.exit(f"{command} --design-file: {exc}")
-
-
 def _stdin_or_file(args) -> str:
     if getattr(args, "file", None):
         return sys.stdin.read() if args.file == "-" else Path(args.file).read_text()
@@ -341,8 +330,9 @@ def main(argv=None) -> None:
                            '{"questions":[{"question":"...","options":[{"key":"a","label":"Short action","text":"Chosen approach"}],'
                            '"recommended_key":"a","why":"..."}]}; a plain question omits options and recommended_key; '
                            'add an existing "id" to revise that member; "review":"proposal" marks a proposal approval '
-                           '(a design preview or a question naming the held PR is recognised without it)')
-            x.add_argument("--design-file", help="current L2: JSON selecting this question's screenshots and proposal text")
+                           '(a question showing files or naming the held PR is recognised without it)')
+            x.add_argument("--show", action="append", metavar="PATH",
+                           help="current L2: show this worktree file with the one question (repeat; one .md/.txt, images)")
             x.add_argument("--recommendation"); x.add_argument("--label"); x.add_argument("--why")
             x.add_argument("--fault", action="store_true", help="the environment failed, not a decision: file the incident and tell L3")
             x.add_argument("--for-operator", action="store_true", help="the brief says to ask the operator here, or the call is plainly theirs: skip L3")
@@ -414,6 +404,8 @@ def main(argv=None) -> None:
     rp.add_argument("text", nargs="*", metavar="[slug] text|-", help="optionally led by this task's slug, as in the sibling verbs; - or nothing reads stdin"); rp.add_argument("--file")
     rp.add_argument("--capture", type=int, metavar="RUN", help="attach this validation run's captures; the reply links to them")
     rp.add_argument("--to", choices=("l3",), help="l3: also queue the reply as one L3 turn about this task")
+    rp.add_argument("--show", action="append", metavar="PATH",
+                    help="show this worktree file under the reply (repeat; one .md/.txt document, PNG/JPEG/GIF/WebP images)")
     review = ts.add_parser("review", help="request, run and assess an adversarial review of the owned task")
     review_actions = review.add_subparsers(dest="review_action", required=True)
     for action in ("status", "request", "run", "assess", "cancel", "withdraw", "skip"):
@@ -437,7 +429,8 @@ def main(argv=None) -> None:
             rv.add_argument("--review-id", required=True)
             if action == "run":
                 rv.add_argument("--proposal-message", help="exact original L2 proposal message to review")
-                rv.add_argument("--design-file", help="proposal review: the design preview's selection JSON, giving the reviewer its spec")
+                rv.add_argument("--show", action="append", metavar="PATH",
+                                help="proposal review: the files the question shows, giving the reviewer its spec and screenshots")
                 rv.add_argument("--context-message", action="append", help="original task context message; repeat as needed")
             elif action == "assess":
                 rv.add_argument("--proposal-message", help="revised original L2 proposal message being assessed")
@@ -554,7 +547,7 @@ def main(argv=None) -> None:
         body = "" if setup_command or machine_run or validation_run or review_run or terminal_read or sys.stdin.isatty() and (closing_pr or args.operation in ("close", "label")) else sys.stdin.read()
         payload = {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"],
                    "review_id": args.review_id, "context_ids": args.context_message, "proposal_id": args.proposal_message,
-                   **({"design": _design_selection(args.design_file, "alt task review run")} if args.design_file else {})} if review_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"]} if terminal_read else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "request": uuid.uuid4().hex} if machine_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "kvm": args.kvm, "publish": args.publish, "simulator": args.simulator, "capture": args.capture} if validation_run else {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
+                   "show": args.show} if review_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"]} if terminal_read else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "request": uuid.uuid4().hex} if machine_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "kvm": args.kvm, "publish": args.publish, "simulator": args.simulator, "capture": args.capture} if validation_run else {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
                    "project": _project(args), "operation": args.operation, "body": body,
                    **{key: getattr(args, key) for key in ("title", "labels", "number", "reason", "add", "remove") if hasattr(args, key)}}
         # An option left unset sends nothing, so a checkout awaiting activation keeps working against the older
@@ -775,13 +768,10 @@ def main(argv=None) -> None:
             out(T.recheck_ci(p, args.slug, args.run, args.at, args.reason, actor=ACTOR))
         elif tc == "block":
             questions, args.reason = _question_input(args, args.reason)
-            design = None
-            if args.design_file:
-                if (ACTOR != "l2" or args.slug != os.environ.get("ALTITUDE_TASK")
-                        or p != os.environ.get("ALTITUDE_PROJECT") or not os.environ.get("ALTITUDE_ATTEMPT")
-                        or args.fault or (questions is not None and len(questions["questions"]) != 1)):
-                    sys.exit("alt task block --design-file: only the current L2's own project/task and one question")
-                design = _design_selection(args.design_file, "alt task block")
+            if args.show and (ACTOR != "l2" or args.slug != os.environ.get("ALTITUDE_TASK")
+                              or p != os.environ.get("ALTITUDE_PROJECT") or not os.environ.get("ALTITUDE_ATTEMPT")
+                              or args.fault or (questions is not None and len(questions["questions"]) != 1)):
+                sys.exit("alt task block --show: only the current L2's own project/task and one question")
             if args.fault and questions is not None:
                 sys.exit("alt task block: --fault needs --reason, not questions JSON")
             if ACTOR == "l2":
@@ -799,13 +789,13 @@ def main(argv=None) -> None:
                     blocked = T.block(p, args.slug, args.reason, actor="l2", expected_state="running",
                                       expected_attempt=int(attempt), updates={"waiting_on": waiting},
                                       recommendation=args.recommendation, recommendation_label=args.label,
-                                      recommendation_why=args.why, questions=questions, design=design,
+                                      recommendation_why=args.why, questions=questions, show=args.show,
                                       tell_l3=True)
-                    if design is not None:
-                        design_question = questions["questions"][0]["question"] if questions else args.reason
+                    if args.show:
+                        asked = questions["questions"][0]["question"] if questions else args.reason
                         question = next(q for q in reversed(blocked["questions"])
-                                        if q["status"] == "open" and q["detail"].strip() == design_question.strip())
-                        out({**blocked, "design_url": T.design_url(p, args.slug, question)})
+                                        if q["status"] == "open" and q["detail"].strip() == asked.strip())
+                        out({**blocked, "view_url": T.shown_url(p, args.slug, question["id"], question["revision"])})
                     else:
                         out(blocked)
             elif not args.fault:
@@ -897,8 +887,9 @@ def main(argv=None) -> None:
             if len(words) > 1:
                 sys.exit("alt task reply: give one text or -, optionally after this task's slug")
             args.text = words[0] if words else "-"
-            out(T.message(p, slug, "l2", _stdin_or_file(args), by="l2", expected_attempt=int(attempt),
-                          capture_run=args.capture, to_l3=args.to == "l3"))
+            row = T.message(p, slug, "l2", _stdin_or_file(args), by="l2", expected_attempt=int(attempt),
+                            capture_run=args.capture, to_l3=args.to == "l3", show=args.show)
+            out({**row, "view_url": T.shown_url(p, slug, row["id"])} if row.get("shown") else row)
         elif tc in ("show", "status"):
             from altitude import status
             slug = args.slug or os.environ.get("ALTITUDE_TASK")

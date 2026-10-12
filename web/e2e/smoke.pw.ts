@@ -29,16 +29,18 @@ function paths(node: ts.Node, parent = ""): string[] {
 const routePaths = [...new Set(paths(source))];
 
 for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe(() => {
-  const design = route.includes("/design/");
+  const shown = route.includes("/view/");
   const file = route.endsWith("/file");
   const captures = route.includes("/captures/");
-  test.use({ serviceScript: design ? "task-design-service.py" : captures ? "captures-service.py" : file ? "file-references-service.py" : "" });
+  test.use({ serviceScript: shown ? "shown-files-service.py" : captures ? "captures-service.py" : file ? "file-references-service.py" : "" });
   test(`${route} renders without errors or horizontal overflow (issue #195, SPEC §2.2)`, async ({ page, request, browserName }, info) => {
     const project = await fixtureProject(request, route === "/projects" || route === "/chat");
-    const task = route.includes(":slug") ? await fixtureTask(request, project.name) : undefined;
-    if (design) expect(task?.question?.design_url, "The fixture supplies a real saved proposal").toBeTruthy();
+    // The reader opens the fixture's own reply and question; other task routes take the project's first task.
+    const files = shown ? await (await request.get("/fixture/shown")).json() : undefined;
+    const task = files ? { slug: files.slug as string, question: files.question as { id: string; revision: number } }
+      : route.includes(":slug") ? await fixtureTask(request, project.name) : undefined;
     // The reply whose captures are all present: a missing one is captures.pw.ts's unavailable state.
-    const reply = captures ? (await (await request.get("/fixture/captures")).json()).single as string : "";
+    const reply = captures ? (await (await request.get("/fixture/captures")).json()).single as string : files?.readme as string ?? "";
     let url = route.replace(":name", encodeURIComponent(project.name))
       .replace(":slug", encodeURIComponent(task?.slug ?? ""))
       .replace(":questionId", encodeURIComponent(task?.question?.id ?? ""))
@@ -78,17 +80,13 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       await expect(contents.getByRole("heading", { name: "Setup instructions", exact: true })).toBeVisible();
       await expect(contents.locator("pre")).toContainText("never executed");
       await expect(main.getByText("Loading file…", { exact: true })).toHaveCount(0);
-    } else if (task && design) {
-      await expect(main.getByRole("heading", { name: "Conversation layout", exact: true })).toBeVisible();
-      await expect(main.getByText(/^Preview · v\d+$/)).toHaveCount(0);
-      await expect(main.getByRole("img", { name: "Phone conversation", exact: true })).toBeVisible();
-      await expect(main.getByRole("img", { name: "Desktop conversation", exact: true })).toBeVisible();
-      await expect(main.getByRole("region", { name: "Preview text", exact: true }))
-        .toContainText("Keep the conversation easy to read.");
-      // One Back control: the phone header's, or the page's own on desktop.
-      await expect(page.getByRole("button", { name: info.project.name === "phone" ? "Back" : "← Back", exact: true })).toBeVisible();
-      await expect(main.getByText("Loading preview…", { exact: true })).toHaveCount(0);
-      await expect(main.getByText("Loading screenshot…", { exact: true })).toHaveCount(0);
+    } else if (task && shown) {
+      const [name, heading] = route.includes(":questionId") ? ["PROPOSAL.md", "Proposal: a shorter README"] : ["README.md", "Lumen"];
+      const reader = page.getByRole("region", { name, exact: true });
+      await expect(reader.getByRole("heading", { name: heading, level: 1 })).toBeVisible();
+      await expect(reader.getByRole("button", { name: "Open image phone.png", exact: true }).locator("img")).not.toHaveAttribute("data-loading");
+      await expect(reader.getByRole("button", { name: "Close", exact: true })).toBeVisible();
+      await expect(reader.getByRole("status")).toHaveCount(0);
     } else if (task && captures) {
       await expect(main.getByRole("heading", { name: "Captures from validation run 3", exact: true })).toBeVisible();
       await expect(main.getByRole("img", { name: "Phone send", exact: true })).toBeVisible();
@@ -217,7 +215,9 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       const fixed = page.locator(info.project.name === "phone" ? ".phone-header, .tab-bar, .convo-dock" : ".rail, .project-header, .task-header, .convo-dock");
       const boxes = () => fixed.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().toJSON()));
       const before = await boxes();
-      const owners = main.locator(".page:visible, .convo-scroll:visible, .work-panel:visible, .live-body:visible, .terminal-body:visible");
+      // A reader covering the phone screen owns its scrolling; the conversation beneath it is inert.
+      const owners = main.locator(shown && info.project.name === "phone" ? ".shown-reader-body"
+        : ".page:visible, .convo-scroll:visible, .work-panel:visible, .live-body:visible, .terminal-body:visible, .shown-reader-body:visible");
       if (info.project.name === "phone") await expect(owners).toHaveCount(1);
       for (const owner of await owners.all()) {
         await owner.evaluate((node) => { node.scrollTop = 0; });

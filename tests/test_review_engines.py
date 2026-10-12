@@ -126,7 +126,7 @@ class ReviewEngineTests(AltitudeCase):
             self.assertNotIn("altitude-l3", " ".join(command))
 
     def test_design_screenshots_attach_natively_in_order_for_both_engines(self):
-        from tests.test_task_design import JPEG, png
+        from tests.test_shown_files import JPEG, png
         (self.snapshot / "design").mkdir()
         (self.snapshot / "design" / "phone.png").write_bytes(png())
         (self.snapshot / "design" / "desktop.jpg").write_bytes(JPEG)

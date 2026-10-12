@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
+import { MemoryRouter, useLocation, useNavigate } from "react-router";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { ApiError } from "../data/api";
 import Composer, { returnToComposer } from "./Composer";
@@ -409,7 +410,7 @@ describe("private image reads", () => {
     let status = 403;
     vi.stubGlobal("fetch", vi.fn(async () => json({}, status)));
     const user = userEvent.setup();
-    render(<ImageViewerHost scope="/"><MessageImages project="alpha" images={[{ id: "abc", name: "screen.png", mime_type: "image/png", size: 12, width: 2, height: 2, source_message_id: "message" }]} /></ImageViewerHost>);
+    render(<ImageViewerHost scope="/"><MessageImages project="alpha" images={[{ id: "abc", name: "screen.png", mime_type: "image/png", size: 12, width: 2, height: 2, source_message_id: "message" }]} /></ImageViewerHost>, { wrapper: MemoryRouter });
     expect(await screen.findByRole("alert")).toHaveTextContent("Image access denied.");
     status = 404;
     await user.click(screen.getByRole("button", { name: "Retry image screen.png" }));
@@ -427,7 +428,7 @@ describe("private image reads", () => {
     const Page = ({ admitted }: { admitted: boolean }) => <ImageViewerHost scope="/projects/alpha">
       {admitted ? <div className="bubble"><MessageImages project="alpha" images={images} /></div> : <ul><li><MessageImages project="alpha" images={images} /></li></ul>}
     </ImageViewerHost>;
-    const view = render(<Page admitted={false} />);
+    const view = render(<Page admitted={false} />, { wrapper: MemoryRouter });
     await user.click(await screen.findByRole("button", { name: "Open image queued.png" }));
     await user.click(screen.getByRole("button", { name: "Zoom image" }));
     const dialog = screen.getByRole("dialog", { name: "Image queued.png" });
@@ -435,7 +436,7 @@ describe("private image reads", () => {
     await screen.findByRole("button", { name: "Open image queued.png" });
     expect(screen.getByRole("dialog", { name: "Image queued.png" })).toBe(dialog);
     expect(screen.getByRole("button", { name: "Fit image" })).toBeInTheDocument();
-    expect(fetch).toHaveBeenCalledTimes(2); // The viewer reuses its bytes; only the new row reads.
+    expect(fetch).toHaveBeenCalledTimes(2); // The viewer keeps its own images; only the new row reads.
     await user.click(screen.getByRole("button", { name: "Close image" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open image queued.png" })).toHaveFocus();
@@ -444,13 +445,40 @@ describe("private image reads", () => {
     expect(revoke.mock.calls.length).toBeGreaterThan(before);
   });
 
+  it("moves through a message's images within one history entry, and Back closes it", async () => {
+    browser();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("fictional raster", { headers: { "Content-Type": "image/png" } })));
+    modal();
+    const user = userEvent.setup();
+    const images = ["first", "second", "third"].map((name) => ({ id: name, name: `${name}.png`, mime_type: "image/png", size: 16, width: 2, height: 2, source_message_id: "message" }));
+    let back = () => {};
+    const History = () => { const navigate = useNavigate(); back = () => void navigate(-1); return <span data-testid="entry">{useLocation().key}</span>; };
+    render(<ImageViewerHost scope="/"><MessageImages project="alpha" images={images} /><History /></ImageViewerHost>, { wrapper: MemoryRouter });
+    const page = screen.getByTestId("entry").textContent;
+    await user.click(await screen.findByRole("button", { name: "Open image second.png" }));
+    expect(screen.getByRole("dialog", { name: "Image second.png" })).toHaveTextContent("2 / 3");
+    const entry = screen.getByTestId("entry").textContent;
+    expect(entry).not.toBe(page);
+    await user.click(screen.getByRole("button", { name: "Next image" }));
+    expect(screen.getByRole("dialog", { name: "Image third.png" })).toHaveTextContent("3 / 3");
+    expect(screen.queryByRole("button", { name: "Next image" })).toBeNull();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "ArrowLeft" });
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "ArrowLeft" });
+    expect(screen.getByRole("dialog", { name: "Image first.png" })).toHaveTextContent("1 / 3");
+    expect(screen.queryByRole("button", { name: "Previous image" })).toBeNull();
+    expect(screen.getByTestId("entry").textContent).toBe(entry);
+    await act(async () => back());
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByTestId("entry").textContent).toBe(page);
+  });
+
   it("closes the viewer when the page scope changes", async () => {
     browser();
     vi.stubGlobal("fetch", vi.fn(async () => new Response("fictional raster", { headers: { "Content-Type": "image/png" } })));
     modal();
     const user = userEvent.setup();
     const images = [{ id: "abc", name: "screen.png", mime_type: "image/png", size: 16, width: 2, height: 2, source_message_id: "message" }];
-    const view = render(<ImageViewerHost scope="/projects/alpha"><MessageImages project="alpha" images={images} /></ImageViewerHost>);
+    const view = render(<ImageViewerHost scope="/projects/alpha"><MessageImages project="alpha" images={images} /></ImageViewerHost>, { wrapper: MemoryRouter });
     await user.click(await screen.findByRole("button", { name: "Open image screen.png" }));
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     view.rerender(<ImageViewerHost scope="/projects/alpha/tasks/other"><MessageImages project="alpha" images={images} /></ImageViewerHost>);

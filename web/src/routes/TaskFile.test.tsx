@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderApp } from "../test/render";
 
@@ -25,10 +25,11 @@ describe("TaskFile", () => {
     const { user } = renderApp({ route: route(reference) });
     expect(await screen.findByRole("heading", { name: "commands.md" })).toBeVisible();
     expect(screen.getByLabelText("Referenced path")).toHaveTextContent(reference);
-    expect(screen.getByRole("heading", { name: "Setup", level: 2 })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Setup", level: 1 })).toBeVisible();
     expect(screen.getByText("carefully").tagName).toBe("STRONG");
     expect(screen.getByRole("listitem")).toHaveTextContent("First step");
-    expect(screen.getByText("echo hello").tagName).toBe("PRE");
+    expect(screen.getByText("echo hello").closest("pre")).not.toBeNull();
+    expect(within(screen.getByLabelText("File contents")).queryByRole("button", { name: /copy|terminal/i })).toBeNull();
     expect(screen.getByText("Close this tab to return to the conversation.")).toBeVisible();
     const requests = fetch.mock.calls.map(([url]) => String(url)).filter((url) => url.startsWith("/api/files/"));
     expect(requests).toEqual([`/api/files/atlas?${new URLSearchParams({ path: reference })}`]);

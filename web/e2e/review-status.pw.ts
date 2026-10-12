@@ -82,7 +82,7 @@ test("a question's review line in its conversation opens the review card and Bac
   await walk.open("/projects/atlas/tasks/settings-layout");
   const question = conversation(page).locator(".conversation-question").last();
   const link = question.getByRole("link", { name: proposal, exact: true });
-  await walk.state("04-conversation-proposal-line", { visible: [link, question.getByRole("link", { name: /^View preview/ })], hidden: [] });
+  await walk.state("04-conversation-proposal-line", { visible: [link, question.getByRole("link", { name: "Open proposal.md", exact: true })], hidden: [] });
   await expect(link).toBeInViewport();
   await roundTrip(page, link, "settings-l-proposal", "Muted labels lack contrast", async () => {
     await walk.state("05-conversation-review-opened", { visible: [page.locator("#review-settings-l-proposal")], hidden: [] });

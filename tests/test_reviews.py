@@ -1439,16 +1439,15 @@ class TestReviews(AltitudeCase):
         self.assertEqual(assessed["snapshot"]["proposal"]["text"], proposal["text"])
         reviews.require_merge(self.project, self.slug, self.pair())
 
-    def test_proposal_review_reads_the_design_spec_the_preview_publishes(self):
+    def test_proposal_review_reads_the_files_the_question_shows(self):
         # A proposal review once saw only a question pointing at a preview it could not open.
-        from tests.test_task_design import png
-        boards = self.worktree / "design" / "wireframes"
+        from tests.test_shown_files import png
+        boards = self.worktree / "docs"
         boards.mkdir(parents=True)
-        spec = "# Compact rows\nPhone: one line, `Coordinator · 2 min`, truncated with an ellipsis.\n"
+        spec = "# Compact rows\nPhone: one line, `Coordinator · 2 min`, truncated with an ellipsis.\n\n![Phone, idle](phone.png)\n"
         (boards / "spec.md").write_text(spec)
         (boards / "phone.png").write_bytes(png())
-        selection = {"title": "Compact rows", "proposal": "design/wireframes/spec.md",
-                     "images": [{"title": "Phone — idle", "path": "design/wireframes/phone.png"}]}
+        selection = ["docs/spec.md"]
         captured = {}
         def inspect(prompt, **kwargs):
             design = kwargs["snapshot"] / "design.md"
@@ -1459,16 +1458,16 @@ class TestReviews(AltitudeCase):
         self.engine.side_effect = inspect
         capability = self.patch(engines, "review_capability", return_value={"available": True, "images": True})
         proposal = T.message(self.project, self.slug, "l2", "Build the compact rows in the saved design.", expected_attempt=1)
-        result = self.run_review(self.request(subject="proposal"), proposal_id=proposal["id"], design=selection)
+        result = self.run_review(self.request(subject="proposal"), proposal_id=proposal["id"], show=selection)
 
         # The reviewer is given the screenshots themselves, and the receipt names each one.
         self.assertEqual(result["state"], "completed")
         self.assertEqual(captured["design"], spec)
-        self.assertEqual(captured["context"]["design"], {"title": "Compact rows", "file": "design.md",
-                                                         "screenshots": ["Phone — idle"]})
+        self.assertEqual(captured["context"]["design"], {"title": "docs/spec.md", "file": "design.md",
+                                                         "screenshots": ["docs/phone.png"]})
         name = hashlib.sha256(png()).hexdigest() + ".png"
         self.assertEqual(captured["screens"], {name: png()})
-        self.assertEqual(captured["images"], [{"title": "Phone — idle", "file": f"design/{name}"}])
+        self.assertEqual(captured["images"], [{"title": "docs/phone.png", "file": f"design/{name}"}])
         self.assertEqual(result["snapshot"]["design"]["images"], captured["images"])
         self.assertFalse(any("named, not viewed" in item for item in captured["context"].get("limitations", [])))
         for words in ("proposal.md and design.md", "screenshots attached to this prompt as images", "not obviously clickable on a phone",
@@ -1478,7 +1477,7 @@ class TestReviews(AltitudeCase):
         # An engine whose CLI cannot take images says so plainly instead of quietly reviewing only the spec.
         capability.return_value = {"available": True, "images": False}
         self.assess(result)
-        result = self.run_review(self.request(subject="proposal", previous=result["id"]), proposal_id=proposal["id"], design=selection)
+        result = self.run_review(self.request(subject="proposal", previous=result["id"]), proposal_id=proposal["id"], show=selection)
         self.assertEqual(result["state"], "completed")
         notice = "This reviewer's engine cannot take images, so the design screenshots are named, not viewed; design.md is the design under review."
         self.assertIn(notice, captured["context"]["limitations"])
@@ -1494,13 +1493,13 @@ class TestReviews(AltitudeCase):
         self.assertNotIn("design.md", captured["prompt"])
         self.assertIn("also review it as a design", captured["prompt"])
         self.engine.reset_mock()
-        changes = self.run_review(self.request(), design=selection)
+        changes = self.run_review(self.request(), show=selection)
         self.assertEqual(changes["state"], "failed")
-        self.assertIn("--design-file", changes["error"])
+        self.assertIn("--show", changes["error"])
         self.engine.assert_not_called()
-        # The reviewed design is the one the operator's preview shows; a changed spec makes the review an earlier version.
-        question = T.block(self.project, self.slug, "Build the rows as shown?", actor="l2", expected_attempt=1, design=selection)
-        self.assertEqual(result["snapshot"]["design"], {"id": question["questions"][-1]["design"]["id"], "title": "Compact rows", "images": []})
+        # The reviewed design is the one the operator is shown; a changed spec makes the review an earlier version.
+        question = T.block(self.project, self.slug, "Build the rows as shown?", actor="l2", expected_attempt=1, show=selection)
+        self.assertEqual(result["snapshot"]["design"], {"id": question["questions"][-1]["shown"]["id"], "title": "docs/spec.md", "images": []})
         reviewed = lambda: next(r for r in reviews.view(self.project, self.slug)["history"] if r["id"] == result["id"])
         self.assertFalse(reviewed()["earlier"])
         # The design question's review line names the latest proposal review (SPEC.md §3.8.3).
@@ -1508,19 +1507,19 @@ class TestReviews(AltitudeCase):
                          {"subject": "proposal", "id": plain["id"], "earlier": False})
         (boards / "spec.md").write_text(spec + "Desktop: two lines.\n")
         T.resume(self.project, self.slug)
-        T.block(self.project, self.slug, "Build the rows as shown?", actor="l2", expected_attempt=1, design=selection)
+        T.block(self.project, self.slug, "Build the rows as shown?", actor="l2", expected_attempt=1, show=selection)
         self.assertTrue(reviewed()["earlier"])
 
     def test_question_review_status_reads_the_saved_reviews(self):
         # SPEC.md §3.8.3: a kind's latest review and its open findings; with no worktree identity only the design compares.
-        task = {"questions": [{"design": {"id": "d1"}}], "reviews": [
+        task = {"questions": [{"shown": {"id": "d1"}}], "reviews": [
             {"id": "p1", "subject": "proposal", "state": "completed", "snapshot": {"head": "a" * 40, "design": {"id": "d1"}},
              "reconciled": {"head": "a" * 40}, "result": {"findings": [{"id": "f1"}, {"id": "f2"}]},
              "dispositions": [{"finding_id": "f1", "disposition": "open"}, {"finding_id": "f2", "disposition": "fixed"}]},
             {"id": "c1", "subject": "changes", "state": "running", "snapshot": None}]}
         self.assertEqual(reviews.status(self.project, task, "proposal"), {"subject": "proposal", "id": "p1", "state": "completed",
                                                                           "findings": 2, "reconciled": True, "open": 1, "earlier": False})
-        task["questions"].append({"design": {"id": "d2"}})
+        task["questions"].append({"shown": {"id": "d2"}})
         self.assertTrue(reviews.status(self.project, task, "proposal")["earlier"])
         self.assertEqual({k: reviews.status(self.project, task, "changes")[k] for k in ("id", "state", "earlier")},
                          {"id": "c1", "state": "running", "earlier": False})

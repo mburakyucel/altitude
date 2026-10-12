@@ -154,8 +154,8 @@ Keep wireframes lean: maintain the current approved design in the spec and usefu
 accepted changes into them instead of accumulating per-PR galleries. Review-only before/after
 comparisons, proposal captures, implementation screenshot galleries, and routine test renderings stay
 outside version control and out of the committed PR diff. Use ignored review/CI artifacts (see
-[development](docs/DEVELOPMENT.md#browser-walkthroughs)), or the task design preview once delivered and
-verified with ignored/untracked inputs. Keep evidence accessible until its review is complete and
+[development](docs/DEVELOPMENT.md#browser-walkthroughs)), or show ignored or untracked captures to the
+operator with [`--show`](docs/CLI.md#showing-files). Keep evidence accessible until its review is complete and
 link it from the PR; a missing upload does not waive review or an existing merge hold. Curated
 documentation illustrations may stay when they explain current behavior and have a maintained source.
 
