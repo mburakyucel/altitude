@@ -61,8 +61,8 @@ function Details({ run }: { run: ImprovementRun }) {
   );
 }
 
-/** A running review's line, with Stop until it ends. */
-export function ImprovementRunning({ project, run }: { project: string; run: ImprovementRun }) {
+/** A running review's line, in chat or in settings, with Stop until it ends. */
+export function ImprovementRunning({ project, run }: { project: string; run: Pick<ImprovementRun, "id" | "line"> }) {
   const { busy, failed, press } = usePress(project);
   return (
     <div className="sys-line" data-progress data-improvement={run.id}>
@@ -93,6 +93,20 @@ export function ImprovementEnding({ run }: { run: ImprovementRun }) {
         )}
       </div>
       {open ? <Details run={run} /> : null}
+    </div>
+  );
+}
+
+/** Weekly turned off by a change of terms: the line opens the settings section where the new terms are agreed. */
+export function ImprovementTermsLine({ project, at }: { project: string; at?: string | null }) {
+  return (
+    <div className="sys-line">
+      <span className="sys-dot" aria-hidden />
+      <Stamp at={at} className="sys-time" />
+      <span className="sys-text">
+        Improvement suggestions are off until you agree to the new terms in{" "}
+        <Link to={`/settings/projects/${encodeURIComponent(project)}#improvement`}>settings</Link>.
+      </span>
     </div>
   );
 }

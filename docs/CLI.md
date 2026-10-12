@@ -361,9 +361,11 @@ These are L3's verbs for an [improvement review](ARCHITECTURE.md#improvement-rev
 project, through its coordinator socket; the operator's CLI reads `alt improve status` only. `run`,
 `stop` and `resolve` are admitted only during the chat turn that answers the operator's own message,
 which becomes their recorded authority; L3 never starts or stops a review, or records a decision,
-on its own judgment. A refused `run` returns its reason for L3's reply: another review running,
-fewer than five tasks finished since the last review, Claude's allowance inside Altitude's reserve or
-unknown, or a pending restart. After `stop`, Altitude posts the run's stopped line.
+on its own judgment. A refused `run` returns its reason for L3's reply: improvement suggestions not
+turned on in the project's settings (the operator's agreement to the current terms), another review
+running, fewer than five tasks finished since the last review, Claude's allowance inside Altitude's
+reserve or unknown, or a pending restart. After `stop`, Altitude posts the run's stopped line. Weekly
+and the agreement are the operator's alone, in the project's settings; no verb changes them.
 
 The run's queued checking turn names the run; `status --run` shows its candidates, their cited places
 (`slug/q/question/revision`, `slug/m/message`, `slug/e/event index`, `slug/r/review/finding`,

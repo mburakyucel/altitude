@@ -46,9 +46,18 @@ class RunCase(AltitudeCase):
                     "tokens": 900, "over_limit": False, "answer": answer, "error": None}
         self.engine = self.patch(engines, "improvement_review", side_effect=review)
 
-    def load(self, count=6):
+    def agree(self):
+        """The operator's Turn on, as the settings sheet records it."""
+        with S.project_lock(self.project):
+            record = improve._load(self.project)
+            improve._agree_locked(record, improve.terms(self.project)["version"], NOW.isoformat())
+            S.write_json(improve._path(self.project), record)
+
+    def load(self, count=6, *, agree=True):
         improve_eval.load({"project": self.project, "now": NOW.isoformat(),
                            "tasks": [finished_task(n, 1 + n) for n in range(1, count + 1)]})
+        if agree:
+            self.agree()
 
     def operator(self, text: str, hours: float = 0) -> str:
         turn = f"{abs(hash((text, hours))) % 16**12:012x}"
