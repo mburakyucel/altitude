@@ -8,7 +8,7 @@ import threading
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import audit, config, dispatch, engines, l3, platform, project_setup, reviews, server, state as S, tasks as T, tls
+from altitude import config, dispatch, engines, l3, platform, project_setup, reviews, server, state as S, tasks as T, tls
 from scripts import container
 
 
@@ -176,7 +176,7 @@ class ContainerAdmission(AltitudeCase):
             lambda: engines.codex_exec("fixture", cwd=self.tmp),
             lambda: engines._start_worker("claude", "fixture", "prompt", cwd=self.tmp, job_root=self.tmp),
             lambda: engines._start_worker("codex", "fixture", "prompt", cwd=self.tmp, job_root=self.tmp),
-            lambda: engines.conversation_review(self.project, "fixture", engine="claude", model="fixture"),
+            lambda: engines.improvement_review("fixture", "fixture", {}, model="claude-sonnet-5-5", timeout=1),
             lambda: engines.review("fixture", engine="codex", snapshot=self.tmp, runtime=self.tmp),
         ]
         with mock.patch.object(engines.subprocess, "Popen", side_effect=AssertionError("provider launch")), \
@@ -259,7 +259,7 @@ with config.provider_admission() as held:
         self.assertIn("paused", result["held"])
         self.assertEqual(S.load_task(self.project, task["slug"]), before)
 
-    def test_chat_report_audit_review_and_setup_wait_without_consuming_their_work(self):
+    def test_chat_report_review_and_setup_wait_without_consuming_their_work(self):
         self.change("pause")
         first = l3.turn(self.project, "Keep my message")
         self.assertIn("paused", first["error"])
@@ -273,8 +273,6 @@ with config.provider_admission() as held:
         with mock.patch.object(reviews, "_run", side_effect=AssertionError("claimed review")):
             with self.assertRaisesRegex(T.TransitionError, "paused"):
                 reviews.run(self.project, "fixture", "review", actor="l2", expected_attempt=1)
-        with mock.patch.object(audit, "_run", side_effect=AssertionError("claimed audit")):
-            audit.run(self.project)
         project_setup.request(self.project, "check", actor=config.OPERATOR_ACTOR)
         before = project_setup.read(self.project)
         project_setup.run(self.project)

@@ -96,8 +96,11 @@ CONTEXT_LINES = {"claude": (0.25, 0.30, CONTEXT_WINDOW), "codex": (0.80, 1.00, 2
 # Default Claude models. Codex uses the Codex CLI's configured model unless the task overrides it.
 MODELS = {"l3": "fable", "l2": "opus"}
 ENGINES = ("claude", "codex")
-CONVERSATION_AUDIT_PROJECT = "altitude"
-CONVERSATION_AUDIT_REVIEWER = {"engine": "claude", "model": "claude-sonnet-5"}
+#: Models the improvement review can use, with published dollars per million input and output tokens. The review runs
+#: on the plan; these figures only set Claude Code's budget stop at the review's token maximum. Codex has no
+#: verified tool-free mode, so the review is unavailable without Claude.
+IMPROVEMENT_MODELS = {"claude-haiku-5-5": (0.10, 0.50), "claude-sonnet-5-5": (2.0, 10.0), "claude-opus-5-5": (4.0, 20.0)}
+IMPROVEMENT_MODEL = "claude-sonnet-5-5"
 #: Display names, the way the shell shows an engine; nothing outside the seam spells one.
 ENGINE_LABELS = {"claude": "Claude", "codex": "Codex"}
 #: The operator seam's initial display name; the `operator_name` machine setting replaces it (operator_name()).

@@ -945,6 +945,7 @@ when the observable behavior breaks. Keep the expected result independent of the
 | Operator image input | `test_images.py`, `test_image_chat.py`, `test_image_delivery.py`: real raster conversion/storage/HTTP, admission retry, caption ordering, checkpoint/resume restoration, handoff and archive/isolation. `image-input.pw.ts` walks selection/removal, voice/paste, loading, refusals, uncertain retry, sent viewer and missing/denied content on phone/desktop. | Native payloads and readable canonical bytes use engine fixtures; physical phone picker, clipboard permissions and live account/model image compatibility are unverified. |
 | CI recovery | `test_ci_recheck.py`, `test_ci_recheck_delivery.py`: due probes, question-blocked observation-only waits, single rerun intent, uncertain writes, fresh artifacts, finite reads/delivery, queue/turn crashes, stale lifecycle and preserved controls on both engine seams. | GitHub responses and engine calls are fixtures; real quota recovery needs fresh uploaded artifact evidence. |
 | Adversarial review | `test_review_engines.py`, `test_reviews.py`, `test_review_interfaces.py`: the captured-input adapter over real stdio (list/read/search, long-line continuation, refused private paths, read marker), the first JSON object accepted from a prose-wrapped answer and no object refused, both engines' confinement flags, unit lifecycle without a duration cutoff, cancellation, unknown termination, and a reviewer that read nothing failing instead of completing with no coverage. Startup/nonzero/capture-overflow fixtures retain bounded sanitized stderr and exit status. Structured stdout-only failures with empty stderr retain fixed error categories in owner-readable receipts across explicit retries for both engines; an unrecognized Claude result retains its allowlisted failure facts there. Unknown, malformed, incomplete and truncated output stays explicit; private prose/source and unknown values are omitted. Fixtures preserve original task ownership through cancellation/retry and keep successful reviews intact. | Fixture processes stand in for the CLIs; whether the installed Codex exposes MCP tools through its code-mode host, and whether the installed Claude connects the adapter without safe mode while loading no hooks, plugins or instructions, is established by recorded reviewer runs, not by the suite. Failure diagnostics do not establish provider compatibility, historical crash cause or recovery; live-provider testing remains deferred. |
+| Improvement review | `test_improvement_review.py`: every signal predicate on fictional records, the window and its limits, the 64 KiB prompt with 3 KiB sheets and counted overflow, operator-only chat pairs, citations limited to places in the prompt, untrusted answers (unknown places, bad targets and signals, paths and credentials, too many suggestions), the reviewer's flags and token limit, isolation failing closed, refusals before launch, timeouts, usage limits and unusable answers; every eval scenario loads with a consistent key; one-to-one matching. | The reviewer CLI is scripted; whether a model finds planted friction is the [eval](#improvement-review-eval), run by hand on the plan. |
 | Routing/failures | `test_route.py`, `test_direct_dispatch.py`, `test_temporary_capacity.py`, composed journeys: pins, availability, fallback, backoff and failure without duplicate completion. | Deterministic availability/quota input does not prove real authentication, entitlement or current provider compatibility. |
 | Landing | `test_land.py`, `test_land_contention.py`, `test_git_policy_integration.py`: real Git/bare origins, concurrent owner processes (merging and required-check turns, timeouts, terminated holders), ordinary and assigned histories without trailer repair, selected index content, unrelated working edits, task/PR ownership, adopted ancestry, holds, failed/skipped/absent checks, changing base/head, candidate validation and cleanup. | Fake GitHub cannot establish remote API/permission/check-association compatibility. Owners review outgoing history and diffs for scope and privacy; tests do not establish semantic content screening. |
 | Merge approval | `test_recorded_merge_approval.py`, `test_merge_approval_journey.py`: original task/project/UI authority, intervening discussion, Git integration and scoped follow-up delivery; invalid sources, renewed holds and wrong PR identity refuse. | Scope, revocation and conditions are explicit coordinator judgments in fixtures; these tests do not establish live model interpretation. |
@@ -976,6 +977,9 @@ not claim those fixtures prove live provider compatibility. Record any additiona
 behavior in the task report. The native sandbox probe in `test_l3_privilege.py` is an existing
 explicit host-capability check with no model request; it is outside default test applicability.
 
+The operator approved the [improvement review eval](#improvement-review-eval) on 2026-10-12 as a
+by-hand run on the plan within a stated usage ceiling; it is not part of CI.
+
 The operator separately authorizes one [live Linux container run](CONTAINERS.md#live-linux-run)
 on 2026-10-06. Its real sign-in, onboarding and single-task evidence do not change the fixture-based
 CI policy or authorize repeated provider runs.
@@ -989,6 +993,43 @@ keep decoded pixels. A 12-megapixel Display P3 photo converts under the real pro
 wall/CPU/memory/output bounds, orientation, alpha/color parity and intermediate cleanup have real
 conversion fixtures. The service
 and Python harnesses replace image capability checks and native execution at the engine seam.
+
+## Improvement review eval
+
+The eval measures whether a model finds recurring friction before any real conversation is read
+([design](../design/wireframes/improvement-review/PROPOSAL.md#proving-it-works)). Scenarios are
+fictional projects in `tests/fixtures/improvement/` ([format](../tests/fixtures/improvement/README.md)):
+`develop/` for writing the reviewer's instructions, `heldback/` for the reported numbers. Each half
+has a clean project, a decoys-only project and three with planted patterns: counted, words-only and
+shared-cause. Each command loads the scenarios into its own throwaway Altitude home and refuses the
+real one:
+
+```sh
+export ALTITUDE_HOME="$(mktemp -d)"
+python3 -m altitude.improve_eval check heldback
+python3 -m altitude.improve_eval show <develop-scenario>        # the prompt a develop scenario builds
+python3 -m altitude.improve_eval run heldback --ceiling <yardstick> --out <private-dir>
+```
+
+`run` calls the reviewer for every scenario, model (`--models`, default all offered) and repeat
+(`--repeats`, default 3) and stops before the next call's maximum could pass the ceiling, in the
+engine's reported-cost yardstick; an incomplete run never passes. It writes `calls.jsonl`, `run.json`
+and `grading.json`: every kept suggestion, shuffled and without its model, beside its scenario's key
+and the text of its cited places. A blind grader, given only `grading.json`, writes `grades.json` by
+its rubric. Then a fresh `ALTITUDE_HOME`:
+
+```sh
+python3 -m altitude.improve_eval score heldback --out <private-dir>
+```
+
+`score` writes `score.json`: per model, each run's share of counted and shared-cause patterns caught
+and of words-only patterns caught (counting only patterns whose places reached the prompt), wrong
+suggestions on the controls and elsewhere, invalid answers, tokens, the counts-alone column and the
+recommendation, the least plan use that clears the bar. Only a complete held-back run of every
+scenario, at least three repeats each, can pass a model; anything less reports `full_matrix` false
+and no recommendation. A pattern is caught when the matcher pairs a
+suggestion with it by at least two shared planted places and the grader marks it caught. The output
+directory is private evidence; the PR carries the table.
 
 ## Installation lifecycle acceptance
 
