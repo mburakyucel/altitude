@@ -1394,7 +1394,9 @@ candidate at the head of the line integrates main, runs one fresh check and merg
 uses at most two checks and never cancels its own run by re-integrating (#777).
 
 1. **Publication.** `alt land --merge` checks ownership and holds; a held task needs `--approval`, and
-   the approval is validated (not yet applied) before main is integrated. When the landing has new
+   the approval is validated (not yet applied) against the PR before main is integrated; a held task
+   without a PR yet publishes its head as it is, and the approval is validated before it joins the
+   line. When the landing has new
    commits to publish, or no open PR carries its head yet, it fetches main, merges it into the task
    branch when needed, pushes and opens or reuses the PR. A head that is already published with its own
    check is not integrated again. Nonmerging landings never integrate.
@@ -1421,7 +1423,10 @@ compare-and-swap push (`--force-with-lease` on the ref), so landings on every in
 repository share one order. The head heartbeats once a minute; any landing removes a head whose
 heartbeat is over five minutes old, and the next entry's turn starts then. The head's branch push
 and its heartbeat travel in one `--atomic` push, so a landing that lost its turn while paused cannot
-publish; it ends without merging. A landing killed outside its waits leaves its entry for at most
+publish; it ends without merging. The merge request itself cannot carry the line: a head paused for
+over five minutes inside that one call can still merge the exact head it validated, out of order.
+GitHub's strict up-to-date rule refuses it if main has moved, and a turn that finds main moved
+integrates again within that turn. A landing killed outside its waits leaves its entry for at most
 those five minutes at the head. One landing holds a PR's entry: re-running `alt land --merge` for the
 same PR takes over its place, and the earlier landing ends without merging. Heartbeats compare
 wall-clock times across installations, so their clocks stay synchronized.

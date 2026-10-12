@@ -1563,16 +1563,19 @@ def land(message: str, *, project: str | None = None, pr_title: str | None = Non
                 if line:
                     line.beat()  # a turn taken over while this process was paused ends here
                     ready()
-                elif merge and hold_merge and pair is None:  # #777: a held candidate never integrates main
+                elif merge and hold_merge:  # #777: a held candidate integrates main only on a validated approval
                     if not approval:
                         raise LandError(f"task carries a merge hold: {hold_merge}")
                     if pr and pr.get("headRefOid"):
                         apply_approval(pr, pr["headRefOid"], validate_only=True)
+                # An approval binds to a PR: without one, the head publishes as it is and is validated before the line.
+                unbound = merge and hold_merge and not line and not (pr and pr.get("headRefOid"))
                 publishing_base = _fetch_rev(root, base)
                 head = _need(_git(root, "rev-parse", "HEAD"), "head")
                 # A published head with its own check waits for that check and its turn instead of chasing main.
                 published = pr is not None and pr.get("state") == "OPEN" and head == recorded_tip
-                if merge and not ahead(publishing_base, head) and (line or republish or not published):
+                if (merge and not unbound and not ahead(publishing_base, head)
+                        and (line or republish or not published)):
                     _note(f"integrating current origin/{base} before publishing the candidate")
                     try:
                         _need(_git(root, "merge", "--no-edit", publishing_base, timeout=300), "integrate current base")

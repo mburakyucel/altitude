@@ -9,6 +9,7 @@ import multiprocessing
 import os
 import shutil
 import signal
+import subprocess
 import time
 import types
 from pathlib import Path
@@ -964,6 +965,21 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
         self.assertIn('recorded merge approval refused', self.finish(call)['error'])
         self.assertNotIn('integrating current', self.notes(call))
         self.assertEqual(git('rev-parse', 'worktree-first', cwd=self.remote).strip(), published['head'])
+        self.assertEqual(self.line(), [])
+
+    def test_held_candidate_without_a_pr_publishes_without_integrating_main(self):
+        self.ship_check_workflow()
+        self.outside_merge()
+        self.hold_a_second_ago(self.project, 'first', 'Operator approval required')
+        self.release('first')
+        call = self.start('first', required_check=True, approval='not-an-operator-message')
+        self.assertIn('recorded merge approval refused', self.finish(call)['error'])
+        self.assertNotIn('integrating current', self.notes(call))
+        worktree = self.owners['first'][0]
+        self.assertEqual(git('rev-parse', 'worktree-first', cwd=self.remote).strip(),
+                         git('rev-parse', 'HEAD', cwd=worktree).strip())
+        self.assertNotEqual(subprocess.run(['git', 'merge-base', '--is-ancestor', 'main', 'worktree-first'],
+                                           cwd=self.remote).returncode, 0)
         self.assertEqual(self.line(), [])
 
     def test_a_turn_that_was_taken_over_cannot_push(self):

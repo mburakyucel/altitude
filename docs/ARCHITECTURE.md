@@ -928,7 +928,9 @@ parentless commit whose message lists the entries (PR, per-landing token, ready 
 Every change is a compare-and-swap push, so every owner on every installation shares one order. The
 head heartbeats once a minute; any landing removes a head silent for five minutes and starts the next
 entry's turn. The head's branch push travels atomically with its heartbeat, so a landing that lost its
-turn cannot publish. Re-running a PR's landing takes over its entry; the earlier landing ends unmerged.
+turn cannot publish. A head paused for five minutes inside the merge call itself can still merge
+its validated head out of order; this repository's strict up-to-date rule refuses it once main has
+moved, and a turn that finds main moved integrates again. Re-running a PR's landing takes over its entry; the earlier landing ends unmerged.
 `--wait` bounds each phase separately, an hour by default: the first check and assessment, time in the
 line, and the turn. The wait polls after 15 seconds, doubling to once a minute. The account's
 landings, workers and coordinator share one hourly GitHub GraphQL budget, so landing reads only the exact
