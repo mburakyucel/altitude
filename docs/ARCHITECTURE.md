@@ -854,7 +854,8 @@ actor, reason and outcome. The project setting serves both L3 and fresh L2 routi
 explicit pin or existing L2 attempt. The L2 provider priority (`--l2-preference <engine>`, or
 Auto with `--unset-l2-preference`, also in the project's Settings page) lifts one engine's options
 above the others for fresh L2 only; L3 keeps the tiers as written. `--l2-engine`/`--l3-engine` (Only)
-keep a role on one engine and `--l3-choice` sets L3's model choice. [CLI examples](CLI.md#automatic-routing-preferences) cover
+keep a role on one engine and `--l3-choice` sets L3's model choice; saving either L3 setting releases
+the other when they name different engines and records the release. [CLI examples](CLI.md#automatic-routing-preferences) cover
 single-model accounts, different orders and ties, and the provider priority.
 
 Project removal is L3 detachment: one operator action through `config.remove_project`, shared by

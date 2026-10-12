@@ -1707,9 +1707,11 @@ export function useSetDefault(project: string) {
       ProjectDefaultsSchema.parse(await post("/api/defaults", { project, ...input })),
     onMutate: () => client.cancelQueries({ queryKey: ["defaults", project] }),
     // Merge only the acknowledged field: a slower response to another field's save must not restore its old value.
+    // The L3 choice and the Only L3 engine are one pair: saving either can release the other.
     onSuccess: (result, { setting }) => client.setQueryData<ProjectDefaults>(["defaults", project], (old) => {
       if (!old) return result;
-      if (setting === "l3_choice") return { ...old, l3_choice: result.l3_choice, l3_unavailable: result.l3_unavailable };
+      if (setting === "l3_choice" || setting === "l3_engine")
+        return { ...old, l3_choice: result.l3_choice, l3_unavailable: result.l3_unavailable, l3_engine: result.l3_engine };
       if ((PROJECT_FIELDS as readonly string[]).includes(setting)) return { ...old, [setting]: result[setting as typeof PROJECT_FIELDS[number]] };
       const saved = result.roles.flatMap((row) => row.engines).flatMap((e) => [e.model, e.effort]).find((f) => f.setting === setting);
       return { ...old, roles: old.roles.map((row) => ({ ...row, engines: row.engines.map((e) => ({

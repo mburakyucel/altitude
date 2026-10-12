@@ -163,7 +163,7 @@ function RoutingSection({ name, data }: { name: string; data: ProjectDefaults })
         </select>
       </label>
       <label className="settings-row">
-        <span><strong>L3</strong>{" "}<small>Auto or Only an engine. Only keeps L3 on it, even with an L3 choice; it waits while it is unavailable.</small></span>
+        <span><strong>L3</strong>{" "}<small>Auto or Only an engine. Only keeps L3 on it and waits while it is unavailable; choosing it clears an L3 choice on another engine.</small></span>
         <select className="settings-select" aria-label="L3 routing" value={l3} disabled={save.isPending}
           onChange={(event) => void write([["l3_engine", event.target.value ? event.target.value.slice(5) : null, data.l3_engine]])}>
           <option value="">Auto</option>
