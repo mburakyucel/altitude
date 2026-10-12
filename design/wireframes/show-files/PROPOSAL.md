@@ -75,7 +75,7 @@ a fourth tile reads **+N** over a dimmed thumbnail. Tapping any tile opens the g
 (the **+N** tile at the fourth).
 
 **Gallery.** Altitude's existing full-screen image viewer gains previous and next: arrow buttons at
-the sides on desktop (and the keyboard arrows), a horizontal swipe on phone, and a quiet **2 / 5**
+the sides on desktop (and the keyboard arrows), a horizontal swipe and subtle side chevrons on phone, and a quiet **2 / 5**
 count in its header. It shows the images of one shown set in order (extra images first, then the
 document's copied images in document order); the operator's own chat images use the same viewer
 with their message's images. Opening it adds one history entry: Back, Escape or **Close image**

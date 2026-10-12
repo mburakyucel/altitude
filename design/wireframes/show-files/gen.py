@@ -320,7 +320,7 @@ convo = (reply("Screens from the new export page.", thumbs(THUMBS))
                  card("README.md", EXCERPT, hero("hero-c2", cover=True))))
 DRAFT = "Reads well. Could the tour also show the config file"
 two = ''.join(f'<div class="frame"><div class="lab">{lab}<span>{note}</span></div>{phone_task(convo, DRAFT, shift)}</div>'
-              for lab, note, shift in [("At the latest reply", "", 0), ("Scrolled up", "the earlier card dims and says so", 262)])
+              for lab, note, shift in [("At the latest reply", "", 0), ("Scrolled up", "the earlier card's cover greys out, marked Earlier", 262)])
 write("PhoneConversation", 892, 960,
       '<div style="padding:28px 40px 18px"><h1 style="font-size:20px;font-weight:600;margin:0">Shown files in the conversation</h1></div>'
       f'<div class="frames" style="grid-template-columns:repeat(2,390px)">{two}</div>')
@@ -348,7 +348,7 @@ frames = [
     ("Gallery", "an image tapped in the reader; swipe or the side arrows", viewer_frame),
     ("Reader unavailable", "× still closes", reader("README.md", gone_page("docx", UNAV))),
     ("Reader denied", "", reader("README.md", gone_page("lock", DENIED))),
-    ("Thumbnails and cover loading", "one thumbnail failed; tapping it retries", card_loading),
+    ("Thumbnails and cover loading", "a failed tile retries when tapped", card_loading),
     ("Cover failed, saved files missing", "the first card still opens", card_failed),
 ]
 cells = ''.join(f'<div class="frame"><div class="lab">{i}. {lab}<span>{note}</span></div>{body}</div>'
