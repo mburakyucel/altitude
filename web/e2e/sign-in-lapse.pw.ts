@@ -72,7 +72,7 @@ test("with no other engine the message waits under one plain line", async ({ pag
   await v.field.fill("Oauth token for what?");
   await walk.state("01-message-waits", {
     action: () => v.send.click(),
-    visible: [message, v.notice(waiting), message.getByRole("button", { name: "Send now", exact: true })],
+    visible: [message, v.notice(waiting), v.convo.getByRole("button", { name: "Send now", exact: true })],
     hidden: [v.provider, v.convo.getByText("L3 could not answer this turn."), message.locator(".spinner")],
   });
   expect(await v.notice(waiting).locator(".sys-text").innerText()).toBe(waiting);
