@@ -467,7 +467,7 @@ Everything above the platform seam is the same on both hosts. These are the beha
 
 | Area | Linux | macOS 15+ | Where |
 | --- | --- | --- | --- |
-| Service | systemd user unit; restarts on failure; runs while the user manager runs | LaunchAgent in the `gui` domain; restarts on failure; starts at login, runs with the screen locked, stops at logout (running before login is a later increment) | Setup, Operations |
+| Service | systemd user unit; restarts on failure; runs while the user manager runs | LaunchAgent in the `gui` domain; restarts on failure; starts at login, runs with the screen locked, stops at logout; does not run before any login, when macOS has neither the login's job domain nor its keychain | Setup, Operations |
 | Service logs | the user journal | `~/Library/Logs/altitude/`, also for detached jobs such as updates | Operations |
 | A job (worker, review, machine command, update) | transient user unit; systemd holds every descendant in its cgroup and enforces the time limit | its own launchd job; a supervisor enforces the time limit, holds an idle-sleep assertion, and stops the job's kernel coalition when the command exits | above |
 | Stop | stop the unit; the cgroup takes every descendant; pidfd pins each signal | kill every coalition member, rechecking start time and coalition just before each signal (no process handle exists) | above |
