@@ -1707,7 +1707,8 @@ export function useSetDefault(project: string) {
       ProjectDefaultsSchema.parse(await post("/api/defaults", { project, ...input })),
     onMutate: () => client.cancelQueries({ queryKey: ["defaults", project] }),
     // Merge only the acknowledged field: a slower response to another field's save must not restore its old value.
-    // The L3 choice and the Only L3 engine are one pair: saving either can release the other.
+    // The L3 choice and the Only L3 engine are one pair: saving either can release the other, so a pair save also
+    // reads the stored pair back, and a slower response to an earlier pair save cannot keep showing its state.
     onSuccess: (result, { setting }) => client.setQueryData<ProjectDefaults>(["defaults", project], (old) => {
       if (!old) return result;
       if (setting === "l3_choice" || setting === "l3_engine")
@@ -1720,6 +1721,9 @@ export function useSetDefault(project: string) {
         effort: e.effort.setting === setting ? { ...e.effort, value: saved?.value ?? null } : e.effort,
       })) })) };
     }),
+    onSettled: (_result, _error, { setting }) => {
+      if (setting === "l3_choice" || setting === "l3_engine") void client.invalidateQueries({ queryKey: ["defaults", project] });
+    },
   });
 }
 

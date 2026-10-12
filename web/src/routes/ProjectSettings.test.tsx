@@ -192,6 +192,25 @@ describe("Project settings", () => {
     expect(saved).toEqual({ l3_choice: { engine: "alpha", model: "swift" } });
   });
 
+  it("shows the stored L3 pair when an earlier Only save's response arrives after a later L3 choice", async () => {
+    let release!: () => void;
+    const { saved } = fixture({ hold: { setting: "l3_engine", until: new Promise<void>((resolve) => { release = resolve; }) } });
+    const { user } = renderApp({ route: "/settings/projects/example" });
+    const section = await screen.findByRole("region", { name: "L3" });
+    const l3 = screen.getByRole("combobox", { name: "L3 routing" });
+    await user.selectOptions(l3, "only:beta");
+    await user.click(within(section).getByRole("button", { name: "Change…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Models · L3 · example only" });
+    await user.click(within(dialog).getByRole("radio", { name: /^Swift/ }));
+    await user.click(within(dialog).getByRole("button", { name: "Use for L3 in example" }));
+    await within(section).findByText("Swift");
+    release();
+    await waitFor(() => expect(l3).toBeEnabled());
+    await waitFor(() => expect(l3).toHaveDisplayValue("Auto"));
+    expect(within(section).getByText("Swift")).toBeVisible();
+    expect(saved).toEqual({ l3_choice: { engine: "alpha", model: "swift" } });
+  });
+
   it("names custom routing and a preference outside it, and refuses a routing changed in another window", async () => {
     const { saved } = fixture({ routing: "beta" });
     const { user } = renderApp({ route: "/settings/projects/example" });

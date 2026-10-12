@@ -142,6 +142,24 @@ class TestProjectEffort(AltitudeCase):
                           "released": {"l3_choice": {"engine": other}}})
         self.assertEqual(route.pick_engine("l3", project=saved)["engine"], engine)
 
+    def test_a_release_is_recorded_when_altd_stops_after_saving_and_replays(self):
+        engine, other = config.ENGINES
+        self.register(self.project, l3_engine=engine)
+        dispatch.request_setting(self.project, "l3_choice", {"engine": other}, "Use the other engine", actor="burak")
+        write = dispatch.S.atomic_write
+        def stop_at_event(path, *args, **kwargs):
+            if path.name == "events.jsonl":
+                raise RuntimeError("stopped before the event")
+            return write(path, *args, **kwargs)
+        with mock.patch.object(dispatch.S, "atomic_write", side_effect=stop_at_event):
+            with self.assertRaises(RuntimeError):
+                dispatch._run_setting(self.project, "l3_choice")
+        self.assertNotIn("l3_engine", config.project(self.project))
+        request = dispatch._run_setting(self.project, "l3_choice")
+        self.assertEqual((request["status"], request["released"]), ("done", {"l3_engine": engine}))
+        event = json.loads((config.project_dir(self.project) / "events.jsonl").read_text().splitlines()[-1])
+        self.assertEqual((event["request_id"], event["released"]), (request["id"], {"l3_engine": engine}))
+
     def test_l3_changes_next_turn_with_same_session_and_distinct_observation(self):
         for engine in config.ENGINES:
             with self.subTest(engine=engine):

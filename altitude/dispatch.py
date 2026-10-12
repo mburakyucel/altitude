@@ -565,6 +565,7 @@ def _run_setting(project: str | None, setting: str) -> dict:
             choice, only = (entry.get("l3_choice") or {}).get("engine"), entry.get("l3_engine")
             if setting in L3_PAIR and choice and only and choice != only:
                 request["released"] = {L3_PAIR[setting]: entry.pop(L3_PAIR[setting])}
+                S.write_json(path, request)  # a replay after a crash finds no conflict left to record
             if projects is None:
                 S.write_json(config.ROOT / "settings.json", entry)
             else:
