@@ -261,7 +261,7 @@ for (const scope of ["project", "task"] as const) {
     await start.click(); await expect(stop).toBeVisible(); await expect(v.listening).toBeVisible(); await expect(v.field).toHaveValue(/ check/, { timeout: 5000 }); await v.send.click();
     await walk.state("05-voice-send-clears-image-and-draft", { visible: [v.preview, start], hidden: [v.strip, page.getByRole("status", { name: "Transcribing…", exact: true })] });
     await expect(v.field).toHaveValue("");
-    await page.evaluate(() => { Object.defineProperty(navigator.mediaDevices, "getUserMedia", { configurable: true, value: async () => { throw new DOMException("denied", "NotAllowedError"); } }); });
+    await page.evaluate(() => { Object.defineProperty(MediaDevices.prototype, "getUserMedia", { configurable: true, value: async () => { throw new DOMException("denied", "NotAllowedError"); } }); });
     await walk.state("06-microphone-denied", { action: () => start.click(), visible: [page.getByText("Microphone blocked in the browser. Typing works.", { exact: true }), v.add], hidden: [v.strip] });
     await expect(start).toBeEnabled(); await expect(v.field).toBeEnabled();
   });
