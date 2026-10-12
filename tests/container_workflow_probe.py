@@ -38,16 +38,16 @@ for raw in sys.stdin:  # Codex app-server: JSON-RPC over stdio
     elif method == 'turn/start':
         prompt = ''.join(item.get('text', '') for item in params['input'])
         out({'id':identity, 'result':{'turn':{'id':'turn-1', 'status':'inProgress'}}})
-        out({'method':'turn/started', 'params':{'turn':{'id':'turn-1'}}})
+        out({'method':'turn/started', 'params':{'threadId':session, 'turn':{'id':'turn-1'}}})
         if os.environ.get('ALTITUDE_TASK'):
             with Path('fixture-input.jsonl').open('a') as output:
                 output.write(json.dumps({'session':session, 'prompt':prompt}) + '\n')
             time.sleep(90)
             raise SystemExit(0)
-        out({'method':'item/completed', 'params':{'item':{'type':'agentMessage', 'id':'message',
+        out({'method':'item/completed', 'params':{'threadId':session, 'item':{'type':'agentMessage', 'id':'message',
             'text':'Fictional coordinator connected.'}}})
-        out({'method':'thread/tokenUsage/updated', 'params':{'tokenUsage':{'total':{'inputTokens':1, 'outputTokens':1}}}})
-        out({'method':'turn/completed', 'params':{'turn':{'id':'turn-1', 'status':'completed'}}})
+        out({'method':'thread/tokenUsage/updated', 'params':{'threadId':session, 'tokenUsage':{'total':{'inputTokens':1, 'outputTokens':1}}}})
+        out({'method':'turn/completed', 'params':{'threadId':session, 'turn':{'id':'turn-1', 'status':'completed'}}})
 '''
 
 
