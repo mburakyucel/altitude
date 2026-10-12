@@ -80,7 +80,8 @@ count in its header. It shows the images of one shown set in order (extra images
 document's copied images in document order); the operator's own chat images use the same viewer
 with their message's images. Opening it adds one history entry: Back, Escape or **Close image**
 returns to the exact place it was opened from (the conversation or the reader at the same scroll
-position), and the draft is untouched.
+position), and the draft is untouched. Moving between images adds no history entries, so one Back
+always closes the gallery, and the next Back closes the reader.
 
 **A document** (with or without images) is one page card, as wide as a reply (full width on phone,
 at most 420 px on desktop), bordered and with a press state:
@@ -96,8 +97,9 @@ at publication, so the card needs no download.
 
 **Versions.** When a later reply in the task shows the same document (same worktree path), the older
 card's cover turns greyscale at reduced opacity and gains a small **Earlier** chip in its top-right
-corner; its name, excerpt and chevron keep full contrast, because it still opens. The newest card
-has no chip.
+corner; its name, excerpt and chevron keep full contrast, because it still opens. A card without a
+cover (a document with no image, or a cover that failed) carries the same **Earlier** chip after its
+file name. The newest card has no chip.
 
 ## Reader
 
@@ -152,7 +154,7 @@ Inside the document:
 | Card | Ready | Cover, icon, name, chevron, excerpt. |
 | Card | Cover or thumbnail loading | A flat grey block of the same size; no text. |
 | Card | Cover failed | The card shows without its cover strip; it still opens. |
-| Card | Thumbnail failed | The tile shows a broken-image icon; the tile is still the one control, and tapping it retries the load (accessible name "Retry image overview.png"). No control sits inside another. |
+| Card | Thumbnail failed | The tile becomes a bordered button showing a broken-image icon above a circular-arrow retry icon; tapping it retries the load (accessible name "Retry image overview.png"). It is the tile's only control. |
 | Card | Earlier | Greyscale, faded cover with the **Earlier** chip; name, excerpt and chevron at full contrast. |
 | Card | Saved files missing | The card stays, without cover or chevron, with a broken-document icon; it is not a control. Its excerpt line reads **Preview unavailable**. |
 | Reader | Loading | A skeleton of the page: a heading bar, five text lines and an image block; static under reduced motion. Accessible name "Loading README.md". |
@@ -161,6 +163,9 @@ Inside the document:
 | Reader | Image failed | An outlined box with a broken-image icon, **Image unavailable** and a bordered **Retry**. |
 | Reader | Earlier | **Newer** pill in the header. |
 | Gallery | Open | Image fitted to the screen, **2 / 5**, Zoom image, Close image, previous and next (hidden at the ends). |
+| Gallery | Image loading | The spinner centred where the image goes; count, previous, next and Close stay usable. |
+| Gallery | Image failed or denied | A broken-image icon, **Image unavailable** and a bordered **Retry** where the image goes; previous, next and Close stay usable, and Zoom is hidden. |
+| Gallery | Zoomed | A swipe pans the image instead of changing image; previous and next buttons still change image and reset zoom. |
 | Reader | Unavailable | A broken-document icon, **Preview unavailable**, "It could not be loaded. Try again, or ask in the conversation.", a bordered **Retry**; the header's × still closes. |
 | Reader | Denied | A lock icon, **Preview unavailable**, "This device has no access right now.", a bordered **Retry**. |
 

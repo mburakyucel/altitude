@@ -67,7 +67,7 @@
 .iv .ivh span{flex:1;min-width:0;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:6px}
 .iv .ivh .btn{height:44px;padding:0 10px;font-size:14px}
 .iv .ivc{flex:1;min-height:0;background:var(--hairline);display:flex;align-items:center}
-.iv .ivc svg{display:block;width:100%;height:auto}
+.iv .ivc > svg{display:block;width:100%;height:auto}
 
 /* ---- rendered markdown, GitHub-like on Altitude's tokens ---- */
 .md{font-size:16px;line-height:1.65;color:var(--text-primary);min-width:0;overflow-wrap:break-word}
@@ -166,10 +166,22 @@ button.extra{margin:0 0 24px}
 .dlg .iv{position:relative;inset:auto;width:1100px;height:736px;border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:var(--shadow)}
 .dlg .iv .ivh{padding:10px 12px;gap:8px}
 .dlg .iv .ivc{justify-content:center}
-.dlg .iv .ivc svg{width:auto;height:100%;max-width:100%}
+.dlg .iv .ivc > svg{width:auto;height:100%;max-width:100%}
 .dlg .nav{width:44px;height:44px;margin-top:-22px;background:var(--card);border:1px solid var(--border);color:var(--text-primary);box-shadow:var(--shadow)}
 .dlg .nav.l{left:16px}.dlg .nav.r{right:16px}
 .frames.d{grid-template-columns:repeat(2,960px)}
 .dframe{position:relative;width:960px;height:600px;border:1px solid var(--border);border-radius:12px;overflow:hidden}
 .dz{width:1280px;height:800px;zoom:.75;position:relative}
 .iv .ivh .btn{flex:none}
+.th.broke{border-color:var(--border);background:var(--card);cursor:pointer;color:var(--text-muted)}
+.th.broke .rt{width:26px;height:26px;margin-top:6px;box-shadow:none}
+.th.broke .rt svg.ic{width:14px;height:14px}
+.pc .pt b:has(+ .tag.in){flex:0 1 auto}
+.pc .tag.in{position:static;flex:none;height:20px;padding:0 8px;font-size:11.5px;box-shadow:none}
+.pc .tag.in + .chev{margin-left:auto}
+.iv .ivc .gfail{flex:1;align-self:stretch;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--text-muted)}
+.iv .ivc .gfail b{font-size:16px}
+.nav svg{width:22px;height:22px}
+.dlg .nav svg{width:24px;height:24px}
+.gfail svg.ic.lg{width:40px;height:40px}
+.gfail b{font-weight:500;color:var(--text-secondary)}
