@@ -419,10 +419,11 @@ initial ramdisk, checked against Ubuntu's SHA256SUMS over HTTPS (the signature i
 Mac), and builds the image for linux/arm64 inside the guest. Each run's disk is a copy-on-write clone
 deleted with the run; one guest runs at a time, and the guest stops when less than 10 GiB of disk
 would stay free. A virtual machine cannot start inside a worker sandbox, so an owner runs the target
-through `alt task run` under an operator grant. The launcher lane passes on candidate `bb7e0d1`
-(Ubuntu 24.04 arm64, kernel 6.8.0-142, Podman 4.9.3, crun 1.14.1, macOS 26.6.2 on Apple M3). This
-is Linux guest behavior: the Mac side owns only the guest process, and a Mac-side controller and Mac
-logout/restart and sleep/wake stay open in [#643](https://github.com/mburakyucel/altitude/issues/643).
+through `alt task run` under an operator grant. The launcher lane passes on candidate `bb7e0d1` and
+the `--logout` lane on `2f9db4d` (Ubuntu 24.04 arm64, kernel 6.8.0-142, Podman 4.9.3, crun 1.14.1,
+macOS 26.6.2 on Apple M3). This is Linux guest behavior: the Mac side owns only the guest process,
+and a Mac-side controller and Mac logout/restart and sleep/wake stay open in
+[#643](https://github.com/mburakyucel/altitude/issues/643).
 
 The VM observes system-manager calls independently of the launcher's environment, before their result
 is known. Beginning and ending fictional denied Stop controls prove coverage. Unexpected management
