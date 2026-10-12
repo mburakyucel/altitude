@@ -629,6 +629,52 @@ class Confinement(DarwinCase):
             self.assertIn(rule, text)
         self.assertTrue(text.endswith(platform.SERVICE_ESCAPES), "a later allow would reopen them")
 
+    def test_every_profile_refuses_the_private_places_after_its_own_file_rules(self):
+        """macOS asks the operator before a process reads its private places and names the Python that launchd started
+        for the job, so a worker's search of the home once asked about "Python 3.12"."""
+        self.patch(platform, "_user_temp", return_value="/private/var/folders/ab/cd/T/")
+        home = os.path.realpath(self.home)
+        places = platform.private_places()
+        for place in ("Desktop", "Documents", "Downloads", "Pictures", "Music", "Movies", "Library/Mail",
+                      "Library/Messages", "Library/Safari", "Library/Calendars", "Library/Reminders",
+                      "Library/Application Support/AddressBook", "Library/Containers", "Library/Mobile Documents"):
+            self.assertIn(os.path.join(home, place), places)
+            self.assertIn("/System/Volumes/Data" + os.path.join(home, place), places)
+        self.assertEqual(places[-2:], ("/Volumes", "/Network"))
+        rule = platform.private_rule()
+        self.assertTrue(rule.startswith("(deny file-read* file-write* "))
+        for place in places:
+            self.assertIn(f'(subpath "{place}")', rule)
+        inside = str(self.home / "Desktop" / "work")  # a root inside a private place stays refused
+        for text in (platform.seatbelt_profile([inside]),
+                     platform.validation_profile((Path(inside),), self.tmp / "unit.log", 8890)):
+            self.assertTrue(text.endswith(rule + platform.SERVICE_ESCAPES), "a later allow would reopen them")
+            self.assertLess(text.rindex(inside), text.index(rule))
+
+    def test_a_path_is_judged_private_without_looking_inside_a_private_place(self):
+        atlas = self.home / "Documents" / "atlas"
+        atlas.mkdir(parents=True)
+        (self.home / "code").mkdir()
+        (self.home / "code" / "linked").symlink_to(atlas)
+        (self.home / "code" / "loop").symlink_to(self.home / "code" / "loop")
+        (self.home / "code" / "up").symlink_to(Path("..") / "Documents")
+        (self.home / "code" / "slashes").symlink_to(f"/{atlas}")
+        looked, islink = [], os.path.islink
+        self.patch(platform.os.path, "islink", lambda path: looked.append(path) or islink(path))
+        for path, private in ((atlas, True), (self.home / "documents" / "atlas", True),
+                              (self.home / "code" / "linked" / "src", True), (self.home / "code" / "loop", True),
+                              (f"{self.home}/code/linked/../other", True), (self.home / "code" / "up" / "x", True), (self.home / "code" / "slashes" / "x", True),
+                              (f"/{self.home}/code/linked", True),
+                              (f"{self.home}/code/../Projects", False), ("code/linked", False),
+                              ("/Volumes/Backup/photos", True), (self.home / "code", False),
+                              (self.home / "Projects" / "atlas", False), (self.home / "Library" / "Caches", False)):
+            with self.subTest(path=path):
+                self.assertIs(platform.private(path), private)
+        documents = os.path.realpath(self.home / "Documents").casefold()
+        self.assertFalse([path for path in looked if path.casefold().startswith(documents + "/")])
+        self.patch(platform.sys, "platform", "linux")
+        self.assertEqual((platform.private_places(), platform.private_rule(), platform.private(atlas)), ((), "", False))
+
     def test_seatbelt_compiles_both_profiles_on_a_mac(self):
         """Seatbelt rejects a whole profile over one unknown rule, which would stop every confined job."""
         try:

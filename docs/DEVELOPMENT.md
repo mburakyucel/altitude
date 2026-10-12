@@ -95,8 +95,8 @@ the Linux image.
 throwaway jobs: piped and file output, logged and detached jobs, Stop of descendants that leave by
 `setsid`, double fork, a cleared environment or continued forking, cleanup when the main process
 exits, the time limit, also after its owner exits, macOS confinement (including the Simulator
-service, a fixture app opened through LaunchServices and Seatbelt's verdict on sending an Apple
-Event, which must be refused) and supervisor
+service, a fixture app opened through LaunchServices, Seatbelt's verdict on sending an Apple
+Event, which must be refused, and a read of a [private place](#macos-private-places)) and supervisor
 tampering, process and socket facts, and the memory limit. `--service` adds a throwaway user service's start,
 restart and stop. It prints one JSON row per check and exits non-zero when one fails.
 
@@ -194,6 +194,32 @@ the verified toolchain on its PATH or an ordinary resume after activation.
 unavailable/default recovery, engine discovery, fresh/resumed worker execution and failed worker
 results. `test_land.py` uses real Git repositories with fictional GitHub responses to check
 the delivery gate and candidate identity.
+
+## macOS private places
+
+macOS keeps some places private and asks the operator before any process reads them: Desktop,
+Documents, Downloads, Pictures (with the Photos library), Music, Movies, Mail, Messages, Safari,
+Calendars, Reminders, Contacts, other apps' data (`Library/Containers`, `Library/Group Containers`),
+iCloud Drive and file providers, the consent records themselves, and mounted volumes under `/Volumes`
+and `/Network`. It names the program launchd started, so a worker's search of the home folder once
+asked the operator about "Python 3.12". Altitude never needs these places, and a server must never ask.
+
+`platform.private_places()` lists them (empty on Linux), each home place through the resolved home and
+through `/System/Volumes/Data`. `/Volumes` is refused whole, including the startup disk's link there;
+sandboxed code reaches the startup disk by its own paths. A sandbox's refusal comes before macOS's consent check, so a refused
+read asks the operator nothing. Every sandbox Altitude applies refuses them as its last file rule, so no
+root it admits reopens one: the worker profile, the validation profile, and Codex's worker and
+coordinator permissions. Altitude code that runs outside a sandbox (altd, the coordinator launch,
+doctor, the installer, the speech runtime) follows one rule: it never lists, walks or searches the home
+folder or mounted volumes, and it starts no child in the home folder; it reads only its own named paths.
+Code that must take a path the operator chose (the folder browser, project discovery and registration,
+the projects folder) asks `platform.private(path)` first, which reads each link on the way and judges
+its target before following it, so nothing inside a private place is touched.
+`tests/test_folders.py` and `tests/test_platform_darwin.py` cover the rule with fictional homes;
+the [native probe](#local-checks) checks that a sandboxed read of the Desktop or `/Volumes` fails with
+"operation not permitted" and that macOS's privacy log records no request for either (macOS logs a request even when it
+already holds an answer); it reads only after Seatbelt's own verdict refuses the read, and otherwise fails
+without reading.
 
 ## Browser walkthroughs
 
@@ -490,7 +516,8 @@ than a worker's:
   `/private/var/tmp` and the user's temporary and cache folder) except its own folders: Altitude's
   home and records, credentials, engine and GitHub sign-ins, checkouts including the deployment
   checkout, and other processes' temporary files and caches stay out; only xcrun's lookup cache is
-  readable, never writable, so `/usr/bin`'s xcrun shims stay fast. Toolchains outside the home
+  readable, never writable, so `/usr/bin`'s xcrun shims stay fast. Mounted volumes and the other
+  [private places](#macos-private-places) stay out too. Toolchains outside the home
   (`/opt/homebrew`, `/usr`, the developer directory) stay readable. `PATH` keeps altd's entries
   outside the home, with the active developer directory's `usr/bin` just ahead of `/usr/bin`, so
   `git` (and `python3` when no earlier entry has one) run without the shims, which report the
@@ -523,7 +550,8 @@ stop cleanup. Links are removed, never followed. `--kvm` and `--publish` are ref
 `python3 scripts/platform_probe.py --only validation-confinement` checks the profile natively: a
 fixture run in the home writes and reads only its own folder and is refused the home, the shared
 temporary folders, a stand-in for Altitude's port, other sockets, the keychain, launchd and its
-supervisor, a fixture app opened through LaunchServices, Apple Events and the Simulator service, while system
+supervisor, a fixture app opened through LaunchServices, Apple Events, the Simulator service, the Desktop and
+mounted volumes, while system
 files, name resolution and its socket, other loopback ports, Git and its own sockets work, including
 one nested in a later folder, as a run's temporary folder is.
 

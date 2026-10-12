@@ -705,7 +705,8 @@ demand, so a project registered after startup can start from the web app. Its Fi
 project flow registers the folder and opens Setup immediately, using Auto and the project's
 preferences. Its folder browser shows folders on the computer running Altitude, whichever device
 displays the page. Browsing starts at your home folder and stays inside it, judged after following
-links; hidden folders are left out. Each request lists one folder you opened: subfolder names, whether
+links; hidden folders are left out, and on a Mac so are the folders macOS keeps private (Desktop,
+Documents, Downloads, Pictures, Music, Movies and the like), which cannot hold a project. Each request lists one folder you opened: subfolder names, whether
 one is already a project and whether it holds a Git repository, never file names, sizes or contents.
 Altitude reads only what your account can read; an unreadable folder shows as such. Folders outside
 home are added by typing their path or with `alt project add --path`. Closing the checklist leaves accepted work running. A CLI conversation
