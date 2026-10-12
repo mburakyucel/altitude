@@ -174,9 +174,10 @@ handled by a different provider after that session's `last_turn`. Fresh context 
 `alt l3 search` provides on-demand historical evidence through the same project-bound coordinator
 transport and CLI role gate. `l3.search` scans existing human `chat.jsonl` rows, the shared
 `tasks.task_messages` projection (including status-backed decision messages), and active/archived
-`report.json` string values and `digest.md`. It uses literal case-insensitive matching, retains the
-newest bounded matches, and returns original text with immediate neighbors, dates, roles/recorded
-authors and logical source references that survive task archival. Report/digest authors are unknown
+`report.json` string values and `digest.md`. A record matches when it contains every word of the
+query in any order, ignoring case and punctuation. Search retains the newest bounded matches and
+returns original text with immediate neighbors, dates, roles/recorded authors and logical source
+references that survive task archival. Report/digest authors are unknown
 where unrecorded; their dates explicitly mean file modification, never decision time. Resolved
 evidence paths stay within the selected project. No engine transcripts, generated summaries, index,
 external service, model call or state mutation participate.
@@ -597,12 +598,18 @@ resolved. `ALTITUDE_PRIMARY_ENGINE` chooses only the default tie order. Named, c
 configured order, and L3 retains its current engine/model within that tier unless a competitor has
 at least fifteen percentage points more weekly headroom. A higher available tier takes precedence.
 Missing executables, exhausted windows and explicit provider rejections exclude the affected option;
-unknown access remains eligible. Authentication rejections exclude the engine and model rejections
-exclude only that model for thirty minutes. Signing in cures an authentication rejection at once, so
-it has its own record: an operator coordinator message or Retry that finds no engine withdraws it for
-the engine that turn then attempts, and each explicit task resume request withdraws it for the task's
-engine. A credential still invalid records it again on that attempt, and automatic turns and resumes
-keep waiting. A current model-specific weekly reading at 100% also
+unknown access remains eligible. A sign-in rejection is the CLI's own authentication code or an
+HTTP 401, whatever its wording, or the CLI's sign-in prompt before any request. Authentication
+rejections exclude the engine and model rejections exclude only that model for thirty minutes.
+Signing in cures an authentication rejection at once, so it has its own record, which is the engine's
+sign-in lapse: an operator coordinator message or Retry that finds no engine withdraws it for the
+engine that turn then attempts, and each explicit task resume request withdraws it for the task's
+engine. A credential still invalid records it again on that attempt, within the same lapse, and
+automatic turns and resumes keep waiting. The quota refresh records a lapse when its read is refused
+for sign-in; its successful read, or a successful coordinator turn, ends it. Each project's
+conversation gets one heads-up line per lapse naming the engine, what the turn did (answered on
+another engine, waits, or stopped) and the engine's sign-in command; failed turns show the
+rejection's plain reason, never provider text. A current model-specific weekly reading at 100% also
 excludes only that model. The router never derives model allowances from an
 account-wide meter or subscription entitlement from a plan name. Safe pre-output rejection retries
 are bounded to configured alternatives. Explicit pins never fall back, and an L2 resume retains its
@@ -1482,7 +1489,7 @@ Recipient queue acceptance, project-log receipts and system chat rows carry stru
 recipient, exchange and summary metadata. Internal checkout bindings never enter prompts or chat
 API projections. Source Sent acknowledges acceptance, not handling; recipient pending rows become
 incoming history when supplied on an ordinary turn. Each information row stays separately folded
-outside routine system groups, with only Show/Hide. Existing literal history search attributes it
+outside routine system groups, with only Show/Hide. Existing history search attributes it
 as information; decision readers and human conversation handoffs exclude it.
 Provider text/tool output, a completed turn or a participant-bound in-turn reply proves supply;
 CLI launch alone does not. Incoming precedes its associated receiving turn and reply. Receipt failure reports
@@ -1703,6 +1710,9 @@ shows ISO instants in the machine's zone. Formats are in [SPEC.md §4.5](../desi
 and [CLI times](CLI.md#times).
 
 ### Conversation-audit pilot
+
+The approved [improvement suggestions design](../design/wireframes/improvement-review/PROPOSAL.md)
+replaces this pilot in its first rollout step; until then the pilot behaves as described here.
 
 `audit.py` owns the finite pilot for the project named in `config.py`. The operator explicitly starts
 it; installation/registration do not enable it. `audit.json` stores reviewer, expiry, attempts,

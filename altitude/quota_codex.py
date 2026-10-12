@@ -136,7 +136,8 @@ def read(timeout: float = 20.0) -> dict:
     if response.get("error") is not None:
         error = response["error"]
         message = error.get("message") if isinstance(error, dict) else str(error)
-        return _unknown(f"Codex JSON-RPC error: {message or error}")
+        # The refusal itself, for sign-in recognition only; the refresh never persists it.
+        return {**_unknown(f"Codex JSON-RPC error: {message or error}"), "error": error}
 
     result = response.get("result")
     limits = result.get("rateLimits") if isinstance(result, dict) else None
