@@ -174,9 +174,10 @@ handled by a different provider after that session's `last_turn`. Fresh context 
 `alt l3 search` provides on-demand historical evidence through the same project-bound coordinator
 transport and CLI role gate. `l3.search` scans existing human `chat.jsonl` rows, the shared
 `tasks.task_messages` projection (including status-backed decision messages), and active/archived
-`report.json` string values and `digest.md`. It uses literal case-insensitive matching, retains the
-newest bounded matches, and returns original text with immediate neighbors, dates, roles/recorded
-authors and logical source references that survive task archival. Report/digest authors are unknown
+`report.json` string values and `digest.md`. A record matches when it contains every word of the
+query in any order, ignoring case and punctuation. Search retains the newest bounded matches and
+returns original text with immediate neighbors, dates, roles/recorded authors and logical source
+references that survive task archival. Report/digest authors are unknown
 where unrecorded; their dates explicitly mean file modification, never decision time. Resolved
 evidence paths stay within the selected project. No engine transcripts, generated summaries, index,
 external service, model call or state mutation participate.
@@ -1488,7 +1489,7 @@ Recipient queue acceptance, project-log receipts and system chat rows carry stru
 recipient, exchange and summary metadata. Internal checkout bindings never enter prompts or chat
 API projections. Source Sent acknowledges acceptance, not handling; recipient pending rows become
 incoming history when supplied on an ordinary turn. Each information row stays separately folded
-outside routine system groups, with only Show/Hide. Existing literal history search attributes it
+outside routine system groups, with only Show/Hide. Existing history search attributes it
 as information; decision readers and human conversation handoffs exclude it.
 Provider text/tool output, a completed turn or a participant-bound in-turn reply proves supply;
 CLI launch alone does not. Incoming precedes its associated receiving turn and reply. Receipt failure reports
