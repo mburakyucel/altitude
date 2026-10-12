@@ -2004,6 +2004,30 @@ class Handler(BaseHTTPRequestHandler):
         except OSError as exc:
             log(f"{self.command} {self.path}: client went away ({type(exc).__name__}: {exc})")
 
+    def _improve_post(self, body: dict) -> None:
+        """The operator's presses on improvement suggestions: Stop on the running line, Make a task, Dismiss, Undo
+        and Try again on the card. Each carries a request id, so a repeated press returns its first receipt."""
+        try:
+            if body.keys() - {"project", "action", "ref", "request_id"} \
+                    or body.get("action") not in ("stop", "accept", "dismiss", "undo", "retry"):
+                raise ValueError("Unsupported improvement request.")
+            project, action, ref = str(body.get("project")), body["action"], str(body.get("ref"))
+            config.project(project)
+            request_id = uuid.UUID(str(body.get("request_id"))).hex
+            if action == "stop":
+                result = improve.stop(project, request_id)
+            elif action == "retry":
+                result = improve.retry(project, ref, request_id)
+            else:
+                result = improve.decide(project, ref, action, request_id)
+        except KeyError as exc:
+            return self._json({"error": exc.args[0]}, 404)
+        except ValueError as exc:
+            return self._json({"error": str(exc)}, 409)
+        if action in ("accept", "retry"):
+            request_l3_drain(project)
+        return self._json({"ok": True, **result})
+
     def _validation_post(self, body: dict) -> None:
         """The validation switch, behind the terminal's request checks: an agent cannot turn its own runner back on."""
         denied = self._terminal_denied(json_body=True, subject="Validation")
@@ -2466,6 +2490,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(exc)}, 409)
                 remove_l3_verb_broker(o["name"])
                 return self._json({"ok": True})
+            if api == "improve":
+                return self._improve_post(o)
             if api == "decide":
                 project, slug = o["project"], o["slug"]
                 try:
@@ -2870,7 +2896,9 @@ def overview() -> dict:
                                           and not t.get("resume_after") and t.get("waiting_on") == "l3")
             p["l3"] = l3.info(p["name"])
             p["hold"] = S.read_json(config.project_dir(p["name"]) / "hold.json")
-    return {"projects": projects, "queue": digest.queue(), "wip": digest.wip(), "quota": monitor.quota(),
+    # Improvement suggestions waiting for the operator: listed after Needs you's questions, never counted with them.
+    suggestions = [{"project": p["name"], **run} for p in projects if p["managed"] for run in improve.waiting(p["name"])]
+    return {"projects": projects, "queue": digest.queue(), "suggestions": suggestions, "wip": digest.wip(), "quota": monitor.quota(),
             "lifecycle": platform.container_lifecycle(),
             "deployment": "container" if platform.containerized() else "native",
             "engines": route.engine_readouts(), "new_tasks": new_tasks_view(),
@@ -3447,6 +3475,7 @@ def project_view(name: str) -> dict:
             "decisions": T.decisions(name), "log": [event for event in S.read_project_log(name, 40)
                                                   if event.get("kind") != "project-message-received"],
             "incidents": incidents.index(name)[-10:], "hold": S.read_json(config.project_dir(name) / "hold.json"),
+            "improvements": improve.view(name),
             "state_md": (config.project_dir(name) / "STATE.md").read_text() if (config.project_dir(name) / "STATE.md").exists() else ""}
 
 

@@ -445,12 +445,45 @@ const ContainerLifecycleSchema = z.object({
 });
 export type ContainerLifecycle = z.infer<typeof ContainerLifecycleSchema>;
 
+/** One improvement review as chat and Needs you show it (improve.view): its running line, ending or card. */
+export const ImprovementSuggestionSchema = z.object({
+  ref: z.string(),
+  n: z.number(),
+  target: z.string(),
+  title: z.string(),
+  explanation: z.string(),
+  /** Each cited task once; a cited project chat has no slug. */
+  seen: z.array(z.object({ slug: z.string().nullable(), title: z.string() })),
+  count: z.string().nullable(),
+  state: z.enum(["undecided", "accepted", "dismissed", "not decided"]),
+  task: z.string().nullable(),
+  undo: z.boolean(),
+  opening: z.boolean(),
+});
+export type ImprovementSuggestion = z.infer<typeof ImprovementSuggestionSchema>;
+export const ImprovementRunSchema = z.object({
+  id: z.string(),
+  state: z.enum(["reading", "checking", "posted", "nothing", "stopped", "failed"]),
+  started: z.string(),
+  ended: z.string().nullable(),
+  posted: z.string().nullish(),
+  tasks: z.number(),
+  window: z.string(),
+  reason: z.string().nullable(),
+  line: z.string().optional(),
+  suggestions: z.array(ImprovementSuggestionSchema),
+  details: z.array(z.tuple([z.string(), z.string()])),
+});
+export type ImprovementRun = z.infer<typeof ImprovementRunSchema>;
+
 export const OverviewSchema = z
   .object({
     deployment: z.enum(["native", "container"]).optional(),
     lifecycle: ContainerLifecycleSchema.nullish(),
     projects: z.array(ProjectRowSchema),
     queue: z.array(DecisionSchema),
+    /** Improvement cards waiting for a decision or a task: listed after the queue, never counted with it. */
+    suggestions: z.array(ImprovementRunSchema.extend({ project: z.string() })).default([]),
     wip: WipSchema,
     quota: SeatQuotaSchema,
     engines: z.array(EngineReadoutSchema).default([]),
@@ -499,6 +532,7 @@ export const ProjectViewSchema = z
     /** The wireframe viewer's URL when the checkout has boards; absent otherwise. */
     design_viewer: z.string().nullish(),
     repository: z.string().nullish(),
+    improvements: z.array(ImprovementRunSchema).default([]),
   })
   .passthrough();
 
@@ -539,6 +573,11 @@ export async function sendImageChat(project: string, text: string, input: ImageS
 /** Create task under the reply of `offerTurn`: Altitude writes the message, and a repeat returns the saved one. */
 export async function sendCreateTask(project: string, offerTurn: string) {
   return api<{ queued?: unknown; sent?: boolean }>("/api/chat", { method: "POST", body: JSON.stringify({ project, offer_turn: offerTurn }) });
+}
+
+/** A press on an improvement review: Stop on its running line; Make a task, Dismiss, Undo or Try again on a suggestion. */
+export async function sendImprovement(project: string, action: "stop" | "accept" | "dismiss" | "undo" | "retry", requestId: string, ref?: string) {
+  return api<{ ok: boolean }>("/api/improve", { method: "POST", body: JSON.stringify({ project, action, ref, request_id: requestId }) });
 }
 
 export const TaskMessageSchema = z
@@ -780,6 +819,8 @@ export const ChatMessageSchema = z
     request_id: z.string().nullish(),
     /** On a user row delivered from the queue: the queue rows it carries, each a send id when the page sent it. */
     queue_ids: z.array(z.string()).nullish(),
+    /** On an improvement review's row (trigger "improvement"): the review it shows, read from the project view. */
+    improvement: z.string().nullish(),
   })
   .passthrough();
 

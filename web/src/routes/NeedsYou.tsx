@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useOverview } from "../data/api";
-import type { Decision } from "../data/api";
+import type { Decision, Overview } from "../data/api";
 import { DecisionCard } from "../components/DecisionCard";
+import { ImprovementCard } from "../components/Improvement";
 import type { QuestionOrigin } from "../components/DecisionCard";
 import { useVisitReturn } from "../components/visitMemory";
 import { DecisionAlertToggle } from "../data/alerts";
@@ -19,6 +20,33 @@ export function needsSummary(queue: Decision[]): string {
 export function projectOrder(queue: Decision[], selected: string | null): string[] {
   const projects = [...new Set(queue.map((decision) => decision.project))];
   return selected && projects.includes(selected) ? [selected, ...projects.filter((project) => project !== selected)] : projects;
+}
+
+const NO_TASKS = new Map();
+
+/**
+ * Improvement cards waiting for a decision or a task, after everything that needs you and grouped by project. They
+ * are suggestions, not questions: never counted in the summary or badge and never alerting a device.
+ */
+function Suggestions({ suggestions, selected }: { suggestions: Overview["suggestions"]; selected: string | null }) {
+  if (!suggestions.length) return null;
+  const projects = [...new Set(suggestions.map((run) => run.project))];
+  const order = selected && projects.includes(selected) ? [selected, ...projects.filter((project) => project !== selected)] : projects;
+  return (
+    <section className="needs-suggestions" aria-label="Suggestions">
+      <h2 className="needs-suggestions-label">Suggestions</h2>
+      {order.map((project) => (
+        <section className="needs-project" key={project} aria-label={`Suggestions for ${project}`}>
+          <h3 className="text-card-title font-semibold">{project}</h3>
+          <div className="needs-project-cards">
+            {suggestions.filter((run) => run.project === project).map((run) => (
+              <ImprovementCard key={run.id} project={project} run={run} tasks={NO_TASKS} linked />
+            ))}
+          </div>
+        </section>
+      ))}
+    </section>
+  );
 }
 
 /** Needs you (SPEC.md §2.1): contiguous project sections, each collapsible from its heading. */
@@ -70,7 +98,10 @@ export default function NeedsYou() {
           </button>
         </p>
       ) : overview.data!.queue.length === 0 ? (
-        <p className="text-muted">Nothing needs you.</p>
+        <>
+          <p className="text-muted">Nothing needs you.</p>
+          <Suggestions suggestions={overview.data!.suggestions} selected={selected} />
+        </>
       ) : (
         <>
           <div className="needs-list" aria-label="Decisions" ref={list}>
@@ -94,6 +125,7 @@ export default function NeedsYou() {
               );
             })}
           </div>
+          <Suggestions suggestions={overview.data!.suggestions} selected={selected} />
         </>
       )}
     </div>

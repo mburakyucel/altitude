@@ -259,7 +259,9 @@ Anatomy: a single column, max 720px, bottom-anchored, newest last. Day dividers 
 Operator messages are right-aligned bubbles (`--bubble`, radius `--radius-bubble`, 15px). L3 replies
 are left-aligned prose with no bubble (15px, line-height 1.65): paragraphs, lists, inline code,
 links; no headings, no tables. A task card (§3.5) sits under an L3 reply whose turn created a task,
-and Create task (below) under the latest reply that offered one.
+and Create task (below) under the latest reply that offered one. An improvement review shows at its
+run's row as a line or one card, and a running review as a line with Stop at the end
+([improvement suggestions](improvement-review/PROPOSAL.md#where-suggestions-appear)).
 System turns render as system lines (§3.4). Hovering a row shows its time in the gutter; on the
 phone a long-press shows it. The phone layout is portrait 390 wide only; landscape is unsupported.
 The conversation scrolls inside the fixed shell, shrinks above the keyboard, and follows its newest
@@ -2057,7 +2059,8 @@ is one operator question on the operator's turn, one held review, plus each exis
 attention item. Two questions on one task count as two; any reply to that task removes both until
 its owner asks again. A known zero hides it. Project
 rail/switcher rows retain their state dots, and Work has no attention badge. Task totals remain
-labelled text. Running tasks, FYIs and queued messages do not add attention.
+labelled text. Running tasks, FYIs, queued messages and improvement cards listed under Suggestions do not
+add attention.
 
 Needs you says **N questions across N projects**; reviews and operational items, when present,
 are named separately. Project summaries use the same distinction. Loading and failed reads never imply
