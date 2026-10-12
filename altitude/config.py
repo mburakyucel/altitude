@@ -234,6 +234,11 @@ def machine_settings() -> dict:
     return S.read_json(ROOT / "settings.json", {})
 
 
+#: Why a folder inside one of macOS's private places (Desktop, Documents and the rest) cannot hold a project.
+PRIVATE_FOLDER = ("macOS keeps this folder private, so Altitude can't use it. Move the project somewhere else, such as "
+                  "a Projects folder in your home.")
+
+
 def project_roots() -> list[Path]:
     """The folders First run lists the immediate subfolders of: the chosen projects folder, else ALTITUDE_ROOTS."""
     folder = machine_settings().get("projects_folder")
@@ -296,6 +301,8 @@ def validate_projects_folder(value) -> None:
     if not isinstance(value, str) or not Path(value).is_absolute():
         raise ValueError("the projects folder must be an absolute path")
     platform.require_container_project(Path(value), folder=True)
+    if platform.private(value):
+        raise ValueError(PRIVATE_FOLDER)
     if not Path(value).is_dir():
         raise ValueError(f"{value} is not a directory")
     if not os.access(value, os.R_OK | os.X_OK):
@@ -577,6 +584,8 @@ def add_project(name: str, *, path=None, approval="default", l2_engine=None, l3_
     from . import state as S
     path = Path(path or (project_roots()[0] / name)).expanduser()
     platform.require_container_project(path)
+    if platform.private(path):
+        raise ValueError(PRIVATE_FOLDER)
     if not path.is_dir():
         raise ValueError(f"{path} is not a directory")
     entry = {"path": str(path), "approval": approval,
@@ -671,11 +680,11 @@ def discover_projects() -> list[dict]:
     out, seen = [], set()
     for root in project_roots():
         try:
-            children = sorted(root.iterdir())
+            children = [] if platform.private(root) else sorted(root.iterdir())
         except OSError:  # a missing or unreadable projects folder lists nothing; managed projects remain
             continue
         for p in children:
-            if not p.is_dir() or p.name.startswith("."):
+            if p.name.startswith(".") or platform.private(p) or not p.is_dir():
                 continue
             key = str(p.resolve())
             name = by_path.get(key)
@@ -684,5 +693,6 @@ def discover_projects() -> list[dict]:
                         "git": (p / ".git").exists(), **(managed.get(name, {}) if name else {})})
     for k, v in managed.items():  # managed projects outside the roots
         if k not in seen:
-            out.append({"name": k, "folder": Path(v["path"]).name, "managed": True, "git": (Path(v["path"]) / ".git").exists(), **v})
+            git = not platform.private(v["path"]) and (Path(v["path"]) / ".git").exists()
+            out.append({"name": k, "folder": Path(v["path"]).name, "managed": True, "git": git, **v})
     return out

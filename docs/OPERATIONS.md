@@ -426,6 +426,22 @@ health handling. Native prevention acceptance separately requires a successful g
 with a new service PID, API/UI health and worker/session survival. A running service or an absent
 pending flag establishes neither the cause of a prior bootstrap failure nor that acceptance.
 
+## macOS privacy prompts
+
+Altitude never needs access to Photos, Desktop, Documents, Downloads, Music and media, Contacts,
+Calendars, Reminders, removable or network volumes, or Full Disk Access, and it never asks for them:
+every sandbox it applies refuses those [private places](DEVELOPMENT.md#macos-private-places), and its
+own code stays out of them. A projects folder or project cannot live in one. If macOS shows a prompt
+such as "python3.12 would like to access…" or "Python 3.12 would like to access…" while Altitude runs,
+click **Don't Allow**; nothing in Altitude depends on the answer.
+
+To review or remove a permission given earlier, open **System Settings → Privacy & Security** and check
+**Files & Folders**, **Photos**, **Media & Apple Music**, **Contacts**, **Calendars**, **Reminders** and
+**Full Disk Access**. Turn off each switch next to `python3.12` or **Python**; under Full Disk Access,
+select it and click **−**. `tccutil` is not needed and is best avoided: these prompts name a Python
+program rather than an app bundle, and `tccutil reset` without a bundle identifier clears that
+permission for every app on the Mac.
+
 ## Preserve source TLS before upgrading
 
 An existing source deployment that relies on implicit certificate discovery needs an explicit TLS

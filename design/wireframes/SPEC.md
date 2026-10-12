@@ -1542,7 +1542,7 @@ Walkthroughs: `web/e2e/onboarding.pw.ts` at 390×844 and 1440×900.
 The folder browser is an inline panel in the same card, the rail dialog or the phone switcher sheet,
 never a second dialog. It is labelled "Folders on the computer running Altitude", starts at **Home**
 and shows breadcrumbs whose earlier parts go back up. Rows are the current folder's visible
-subfolders, sorted by name, with **Project** and **git** tags; a row opens that folder. The footer has
+subfolders, sorted by name (on a Mac, without the folders macOS keeps private, such as Desktop and Documents), with **Project** and **git** tags; a row opens that folder. The footer has
 **Type a path instead**, **Cancel** (absent when the browser is the only way forward) and **Add
 "<folder>"** for the current folder, disabled at Home. States: loading (skeleton rows); empty ("No
 folders inside X", Add stays available); unreadable ("Altitude can't open X: your account can't read

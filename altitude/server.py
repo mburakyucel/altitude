@@ -2910,12 +2910,15 @@ class FolderError(ValueError):
 def folders(raw: str | None) -> dict:
     """One folder the operator opened in the folder browser: its visible subfolders, never files or contents.
 
-    Browsing starts at the home folder and stays inside it after following links; hidden folders stay out.
+    Browsing starts at the home folder and stays inside it after following links; hidden folders and macOS's private
+    places stay out, judged before anything inside them is touched.
     """
     home = (platform.CONTAINER_PROJECTS if platform.containerized() else config.HOME).resolve()
     target = Path(raw).expanduser() if raw else home
     if not target.is_absolute():
         raise FolderError("Choose an absolute folder path.", 400)
+    if platform.private(target):
+        raise FolderError(config.PRIVATE_FOLDER, 403)
     target = target.resolve()
     if not target.is_relative_to(home) or any(part.startswith(".") for part in target.relative_to(home).parts):
         raise FolderError("Choose a folder inside the container projects volume." if platform.containerized()
@@ -2931,7 +2934,7 @@ def folders(raw: str | None) -> dict:
     managed = {str(Path(entry["path"]).expanduser().resolve()): name for name, entry in config.load_projects().items()}
     for entry in entries:
         try:
-            if entry.name.startswith(".") or not entry.is_dir():
+            if entry.name.startswith(".") or platform.private(entry.path) or not entry.is_dir():
                 continue
             resolved = Path(entry.path).resolve()
         except OSError:

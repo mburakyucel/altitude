@@ -257,6 +257,40 @@ def apple_event_verdict():
     return check(os.getpid(), b"appleevent-send", 4, *[None] * len(pad), b"com.apple.Terminal")
 """
 
+# A read of a private place from inside the profile, after Seatbelt's own verdict on it (filter 1 is a path): when the
+# profile would allow it the read is skipped, since macOS could then ask the operator. Prints the read's outcome.
+PRIVATE_READ = APPLE_EVENT + r"""
+import errno, sys
+if check(os.getpid(), b"file-read-data", 1, *[None] * len(pad), sys.argv[1].encode()) != 1:
+    print("allowed")
+else:
+    try:
+        os.listdir(sys.argv[1])
+        print("read")
+    except OSError as error:
+        print(errno.errorcode.get(error.errno, error.errno))
+"""
+
+
+def private_place() -> Path:
+    """The private place the probes read: the Desktop, where a Mac's consent decision for Python, if any, is kept."""
+    return Path.home() / "Desktop"
+
+
+def privacy_requests(since: float) -> list[str]:
+    """macOS's consent requests about Desktop, any mounted volume, or shown as a prompt since `since`, from its
+    privacy log: none may follow a sandboxed read, since the profile refuses it before macOS is asked."""
+    listed = subprocess.run(
+        ["/usr/bin/log", "show", "--start", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(since - 1)),
+         "--style", "ndjson", "--predicate", 'subsystem == "com.apple.TCC" AND (eventMessage CONTAINS "AUTHREQ_CTX" '
+         'OR eventMessage CONTAINS "AUTHREQ_PROMPTING")'], capture_output=True, text=True, timeout=120)
+    check(listed.returncode == 0, f"the privacy log is unreadable here: {listed.stderr.strip()[:200]}")
+    messages = [json.loads(line).get("eventMessage", "") for line in listed.stdout.splitlines() if line.startswith("{")]
+    return [message[:200] for message in messages if "AUTHREQ_PROMPTING" in message or any(
+        f"service={service}," in message for service in ("kTCCServiceSystemPolicyDesktopFolder",
+                                                         "kTCCServiceSystemPolicyRemovableVolumes",
+                                                         "kTCCServiceSystemPolicyNetworkVolumes"))]
+
 
 @row
 def confinement():
@@ -270,6 +304,7 @@ def confinement():
         fixture_app(root / "fixture.app", marker)
         simulator, xcode = controls(root / "fixture.app", marker)
         label = platform._label(job)
+        started = time.time()
         script = (f"echo x > '{root}/inside' && echo write-inside; echo x > '{outside}' 2>/dev/null && echo write-home; "
                   "kill -TERM $PPID 2>/dev/null && echo signal-supervisor; "
                   f"/bin/launchctl kill KILL gui/{os.getuid()}/{label} 2>/dev/null && echo launchctl-kill; "
@@ -279,17 +314,22 @@ def confinement():
                   f"/usr/bin/open -g -j '{root}/fixture.app' 2>/dev/null && echo open-app; "
                   f"{shlex.quote(sys.executable)} -I -c {shlex.quote(APPLE_EVENT + 'print(apple_event_verdict())')}"
                   " | sed 's/^/apple-event=/'; "
+                  f"{shlex.quote(sys.executable)} -I -c {shlex.quote(PRIVATE_READ)} {shlex.quote(str(private_place()))}"
+                  " | sed 's/^/private=/'; ls /Volumes >/dev/null 2>&1 && echo volumes; "
                   f"xcrun simctl list runtimes >/dev/null 2>'{root}/simctl.err' && echo simulator")
         result = subprocess.run(platform.job_command(job, ["/bin/sh", "-c", script], env(), writable=(root,), runtime_max=60),
                                 stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=90)
         written, ran = outside.exists(), app_ran(root / "fixture.app", marker)
         outside.unlink(missing_ok=True)
-        check(result.stdout.split() == ["write-inside", "signal-own-child", "git", "apple-event=1"] and not written
-              and not ran,
+        check(result.stdout.split() == ["write-inside", "signal-own-child", "git", "apple-event=1", "private=EPERM"]
+              and not written and not ran,
               f"confinement: {result.stdout.split()} home written: {written}; fixture app ran: {ran}")
         evidence = refusal(simulator, root / "simctl.err")
+        asked = privacy_requests(started)
+        check(not asked, f"macOS was asked about a private place: {asked}")
     return ("writes under the roots only; the supervisor, launchd, LaunchServices, Apple Events and the Simulator service "
-            f"are out of reach; own children stay signalable and git works ({xcode}{evidence})")
+            "are out of reach; the Desktop and mounted volumes are refused with no consent request in the privacy log; "
+            f"own children stay signalable and git works ({xcode}{evidence})")
 
 
 # Everything a validation run tries, inside the validation profile. True means the attempt succeeded.
@@ -334,6 +374,8 @@ attempt("link-runner-file", lambda: os.symlink("/etc/hosts", os.path.join(outsid
 attempt("read-runner-log", lambda: open(os.path.join(outside, "run.log")).read())
 attempt("read-home", lambda: open(os.path.join(outside, "secret")).read())
 attempt("list-home", lambda: os.listdir(home))
+attempt("list-private", lambda: os.listdir(os.path.join(home, "Desktop")))
+attempt("list-volumes", lambda: os.listdir("/Volumes"))
 attempt("read-system", lambda: open("/etc/hosts").read())
 attempt("list-shared-temp", lambda: os.listdir("/private/tmp"))
 attempt("list-user-temp", lambda: os.listdir(os.path.dirname(user_temp.rstrip("/"))))
@@ -377,6 +419,7 @@ def validation_confinement():
     area, label = outside / "run", f"dev.altitude.probe-validation-{NONCE}"
     temp = platform.validation_temp(NONCE)  # a later root, as a run's own temporary folder is
     listeners = [socket.socket() for _ in range(2)]
+    started = time.time()
     try:
         area.mkdir(parents=True)
         temp.mkdir()
@@ -414,6 +457,8 @@ def validation_confinement():
         check(not (outside / "written").exists(), "the home folder was written")
         check(not app_ran(area / "fixture.app", outside / "launched"), "the fixture app ran")
         evidence = refusal(simulator, area / "simctl.err")
+        asked = privacy_requests(started)
+        check(not asked, f"macOS was asked about a private place: {asked}")
     finally:
         subprocess.run([platform.LAUNCHCTL, "bootout", f"gui/{os.getuid()}/{label}"], capture_output=True, timeout=60)
         for listener in listeners:
@@ -421,7 +466,8 @@ def validation_confinement():
         shutil.rmtree(outside, ignore_errors=True)
         shutil.rmtree(temp, ignore_errors=True)
         Path(f"/private/tmp/{label}").unlink(missing_ok=True)  # written only if the profile failed
-    return ("only the area is written and read in the home and shared temporary folders; the reserved port, other "
+    return ("only the area is written and read in the home and shared temporary folders; the Desktop and mounted volumes "
+            "are refused with no consent request in the privacy log; the reserved port, other "
             "sockets, keychain, launchd, LaunchServices, Apple Events, the Simulator service and the supervisor are out of "
             f"reach; system files, name resolution, other loopback ports, own sockets in every root and git work ({xcode}{evidence})")
 
