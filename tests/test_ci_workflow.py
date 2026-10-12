@@ -31,8 +31,9 @@ class TestRequiredCheckWorkflow(AltitudeCase):
         # request and manual run, where `reuse` is skipped, and when it failed. The required check always runs.
         self.assertTrue(self.jobs['reuse'].startswith("    if: github.event_name == 'push'\n"))
         self.assertTrue(self.jobs['shard'].startswith(
-            "    needs: reuse\n    # Runs unless `reuse` found a run: on every pull request and manual run, and whenever "
-            "the lookup fails.\n    if: ${{ !cancelled() && needs.reuse.outputs.run == '' }}\n"))
+            "    needs: reuse\n    # Runs unless `reuse` succeeded naming a run: on every pull request and manual run, and "
+            "whenever the lookup fails.\n"
+            "    if: ${{ !cancelled() && (needs.reuse.result != 'success' || needs.reuse.outputs.run == '') }}\n"))
         self.assertTrue(self.jobs['check'].startswith('    needs: [reuse, shard]\n    if: always()\n'))
         self.assertIn('      run: ${{ steps.lookup.outputs.run }}\n', self.jobs['reuse'])
         self.assertIn('    timeout-minutes: 30\n', self.jobs['shard'])

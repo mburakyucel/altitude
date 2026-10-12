@@ -16,8 +16,9 @@ WORKFLOW = ".github/workflows/hosted-checks.yml"
 CHECK = "check"
 # The files that decide how CI runs. A push changing any of them runs in full, so a reused result only ever
 # comes from a CI setup already proven on main. This script is one of them.
-CONTRACT = (".github/", "Makefile", "tests/run_parallel.py", "web/package.json", "web/playwright.config.ts",
-            "web/vite.config.ts", "scripts/time_command.py", "scripts/ci_reuse.py")
+CONTRACT = (".github/", "Makefile", "tests/run_parallel.py", "web/package.json", "web/pnpm-lock.yaml",
+            "web/tsconfig.json", "web/playwright.config.ts", "web/vite.config.ts", "scripts/time_command.py",
+            "scripts/ci_reuse.py")
 
 
 class NoReuse(Exception):
@@ -64,6 +65,14 @@ def reusable_run(repo: str, sha: str, before: str, *, api=api, git=git) -> dict:
         raise NoReuse(f"PR #{number} comes from a fork")
     if api(f"repos/{repo}/git/commits/{head}")["tree"]["sha"] != git("rev-parse", "HEAD^{tree}"):
         raise NoReuse(f"the pushed tree differs from PR #{number}'s head {head}")
+    # A run names its head and branch, not its base: a PR from the branch to another base could run another
+    # workflow on the same head. Every PR the branch ever opened targets main, or nothing is reused.
+    owner = repo.split("/")[0]
+    branch_pulls = api(f"repos/{repo}/pulls?head={owner}:{branch}&state=all&per_page=100")
+    if (len(branch_pulls) >= 100 or number not in [item["number"] for item in branch_pulls]
+            or any(item["base"]["ref"] != "main" or item["base"]["repo"]["full_name"] != repo
+                   for item in branch_pulls)):
+        raise NoReuse(f"branch {branch} has pull requests to another base, or they cannot all be listed")
     listing = api(f"repos/{repo}/actions/workflows/{os.path.basename(WORKFLOW)}/runs"
                   f"?event=pull_request&head_sha={head}&per_page=100")
     if listing["total_count"] != len(listing["workflow_runs"]):
@@ -101,10 +110,10 @@ def main() -> int:
         return 0
     line = f"Tree already tested by PR #{run['pr']}'s run {run['url']}"
     print(line)
-    with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-        output.write(f"run={run['id']}\n")
     with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
         summary.write(line + "\n")
+    with open(os.environ["GITHUB_OUTPUT"], "a") as output:  # last: nothing after it can fail the job
+        output.write(f"run={run['id']}\n")
     return 0
 
 

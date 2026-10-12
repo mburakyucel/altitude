@@ -52,8 +52,8 @@ jobs:
 
   shard:
     needs: reuse
-    # Runs unless `reuse` found a run: on every pull request and manual run, and whenever the lookup fails.
-    if: ${{ !cancelled() && needs.reuse.outputs.run == '' }}
+    # Runs unless `reuse` succeeded naming a run: on every pull request and manual run, and whenever the lookup fails.
+    if: ${{ !cancelled() && (needs.reuse.result != 'success' || needs.reuse.outputs.run == '') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:

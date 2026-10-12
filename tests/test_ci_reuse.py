@@ -37,6 +37,7 @@ class TestCiReuse(AltitudeCase):
         self.answers = {
             f'repos/{REPO_NAME}/commits/{self.sha}/pulls': [self.pull()],
             f'repos/{REPO_NAME}/git/commits/{self.head}': {'tree': {'sha': tree}},
+            f'repos/{REPO_NAME}/pulls?head=example:worktree-fix&state=all&per_page=100': [self.pull()],
             f'repos/{REPO_NAME}/actions/workflows/hosted-checks.yml/runs?event=pull_request&head_sha={self.head}&per_page=100':
                 {'total_count': 1, 'workflow_runs': [self.workflow_run()]},
             f'repos/{REPO_NAME}/actions/runs/41/attempts/1/jobs?per_page=100': self.jobs(),
@@ -98,8 +99,7 @@ class TestCiReuse(AltitudeCase):
         self.refuses('does not extend', before=rewritten)
 
     def test_a_change_to_how_ci_runs_runs_in_full(self):
-        for name in ('.github/workflows/hosted-checks.yml', 'Makefile', 'tests/run_parallel.py', 'web/package.json',
-                     'scripts/ci_reuse.py'):
+        for name in (item + 'workflows/hosted-checks.yml' if item.endswith('/') else item for item in ci_reuse.CONTRACT):
             with self.subTest(name=name):
                 self.publish({'change': 'candidate\n', name: 'changed\n'})
                 self.refuses(f'changes how CI runs: {name}')
@@ -129,6 +129,15 @@ class TestCiReuse(AltitudeCase):
             with self.subTest(reason=reason, pulls=len(pulls)):
                 self.answers[key] = pulls
                 self.refuses(reason)
+
+    def test_a_branch_with_a_pull_request_to_another_base_runs_in_full(self):
+        # The run names only head and branch: a PR to another base could run another workflow on that head.
+        key = f'repos/{REPO_NAME}/pulls?head=example:worktree-fix&state=all&per_page=100'
+        other = self.pull(number=8, merged_at=None, base={'ref': 'release', 'repo': {'full_name': REPO_NAME}})
+        for pulls in ([self.pull(), other], [], [self.pull()] + [self.pull(number=n) for n in range(100, 199)]):
+            with self.subTest(pulls=len(pulls)):
+                self.answers[key] = pulls
+                self.refuses('another base, or they cannot all be listed')
 
     def test_the_pushed_tree_must_be_the_pull_request_heads(self):
         self.answers[f'repos/{REPO_NAME}/git/commits/{self.head}'] = {'tree': {'sha': self.git('rev-parse', f'{self.before}^{{tree}}')}}
@@ -179,6 +188,12 @@ class TestCiReuse(AltitudeCase):
             self.assertEqual(output.read_text(), 'run=41\n')
             self.assertIn("PR #7's run https://github.com/example/altitude/actions/runs/41", summary.read_text())
             output.unlink()
+            # The output is written last: a failed summary fails the job without naming a run.
+            summary.unlink()
+            summary.mkdir()
+            with self.assertRaises(OSError):
+                ci_reuse.main()
+            self.assertFalse(output.exists())
             for failure in (OSError('HTTP Error 403: rate limited'), ValueError('Expecting value')):
                 with self.subTest(failure=failure):
                     self.answers[self.runs_key()] = failure

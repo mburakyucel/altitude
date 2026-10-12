@@ -1373,13 +1373,14 @@ when every shard succeeded: a failed, cancelled or skipped shard fails it. Typec
 in every web shard because each one's browser walkthroughs need the build.
 A push to main first runs the read-only `reuse` job (`scripts/ci_reuse.py`, #777). Merging an
 up-to-date PR pushes the tree its PR run just tested in full, so when exactly one merged PR from a
-branch of this repository has the pushed commit as its merge commit, the pushed tree equals that PR's
-head tree, the push changes none of the files that decide how CI runs (`.github/`, `Makefile`,
-`tests/run_parallel.py`, `web/package.json`, the Playwright and Vite configs, the timing and reuse
-scripts), and the newest `pull_request` run of this workflow file for that head and branch passed every
+branch of this repository has the pushed commit as its merge commit, every PR that branch opened
+targets main, the pushed tree equals that PR's head tree, the push changes none of the files that
+decide how CI runs (`.github/`, `Makefile`, `tests/run_parallel.py`, `web/package.json`, the web
+lockfile, the TypeScript, Playwright and Vite configs, the timing and reuse scripts), and the newest `pull_request` run of this workflow file for that head and branch passed every
 shard and its `check` job in its latest attempt, the shards are skipped and `check` passes, linking
 that run in its summary. Any miss, lookup error or incomplete listing runs every shard as on pull
-requests and manual runs; a skipped shard passes `check` only with that evidence. The run keeps its
+requests and manual runs; shards are skipped only when the `reuse` job succeeded naming a run, and
+`check` accepts skipped shards only with that evidence. The run keeps its
 workflow, event, head and conclusion, and the `check` job release publication requires, so task status,
 report verification and release read it as before. `tests/test_ci_reuse.py` covers each condition on
 real Git with fixture API answers.
