@@ -179,13 +179,14 @@ test("a task terminal opens in its worktree, closes when its shell exits and fol
     visible: [toast.getByText("Terminal closed · exit code 3")],
     hidden: [panel, keys],
   });
+  // A notice leaves after a few seconds, so it is dismissed here, before starting a fresh shell can outlast it.
+  await toast.getByRole("button", { name: "Dismiss" }).click();
 
   // Coming back starts a fresh shell; a clean exit returns without a notice.
   await views.getByRole("link", { name: "Terminal" }).click();
   await run(page, "echo fresh-$((3+3))");
   await expect(output).toContainText("fresh-6");
   await expect(output).not.toContainText("back-4");
-  await toast.getByRole("button", { name: "Dismiss" }).click();
   await run(page, "exit");
   await expect(page).toHaveURL(new RegExp(`${TASK}/live$`));
   await walk.state("08-exit-clean", { visible: [views.getByRole("link", { name: "Terminal" })], hidden: [panel, toast] });
@@ -257,11 +258,11 @@ test("a project terminal opens in the project folder, refuses agents and ends wi
     visible: [toast.getByText("The terminal closed while the connection was lost.")],
     hidden: [panel],
   });
+  await toast.getByRole("button", { name: "Dismiss" }).click();
 
   await page.getByRole("button", { name: "Terminal", exact: true }).click();
   await run(page, "echo last-$((4+5))");
   await expect(output).toContainText("last-9");
-  await toast.getByRole("button", { name: "Dismiss" }).click();
   await close.click();
   await expect(page).toHaveURL(/\/projects\/atlas$/);
   await walk.state("15-closed-back-to-project", { visible: [page.getByRole("button", { name: "Terminal", exact: true })], hidden: [panel, toast] });
