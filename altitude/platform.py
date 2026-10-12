@@ -2483,8 +2483,8 @@ def validation_profile(roots: tuple[Path, ...], output: Path, port: int) -> str:
     and sockets live; reach Unix sockets only in its roots and the system's DNS and log services, and nothing on
     Altitude's `port`, on any address; ask nothing of the keychain, the Simulator service or LaunchServices; send no
     Apple Event; and signal only its own processes. launchd refuses service control to every sandboxed process, so the
-    run cannot start, stop or change a service. It reads, never writes, xcrun's lookup cache: without it every call to a /usr/bin xcrun shim
-    takes over a second."""
+    run cannot start, stop or change a service. It reads, never writes, xcrun's lookup cache: without it every call to
+    a /usr/bin xcrun shim takes over a second."""
     def filters(kind: str, values) -> list[str]:
         return [f'({kind} "' + str(v).replace("\\", "\\\\").replace('"', '\\"') + '")' for v in values]
 
