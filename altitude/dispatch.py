@@ -495,7 +495,7 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
             config.validate_project_default(setting, value)
         elif setting == "l2_preference":
             config.validate_preference(value)
-        elif setting in ("l2_engine", "l3_engine"):
+        elif setting == "l2_engine":
             config.validate_engine_pin(value)
         elif setting in config.CHOICE_SETTINGS.values():
             value = config.parse_choice(value) if isinstance(value, str) else value

@@ -23,7 +23,7 @@ function fixture({ refuse = "", l3 = {} as Record<string, unknown>, hold = null 
   const posts: Record<string, unknown>[] = [];
   let managed = true;
   const field = (setting: string, fallback: string, choices: unknown) => ({ setting, value: saved[setting] ?? null, default: fallback, choices });
-  const view = () => ({ l3_engine: saved.l3_engine ?? null, l2_engine: saved.l2_engine ?? null, l3_choice: saved.l3_choice ?? null,
+  const view = () => ({ l2_engine: saved.l2_engine ?? null, l3_choice: saved.l3_choice ?? null,
     l2_preference: saved.l2_preference ?? null, l3_unavailable: null, routing, ...options,
     engines: engines.map(({ engine, label }) => ({ value: engine, label, efforts: [], routed: !routing || routing.includes(engine) })),
     roles: (["l3", "l2"] as const).map((role) => ({ role, engines: engines.map(({ engine, label }) => ({
@@ -141,7 +141,7 @@ describe("Project settings", () => {
     await waitFor(() => expect(posts).toHaveLength(2));
   });
 
-  it("routes tasks Auto, Prefer or Only an engine, and L3 Auto or Only, sending the value each page showed", async () => {
+  it("routes tasks Auto, Prefer or Only an engine, sending the value each page showed, and has no L3 routing", async () => {
     const { posts } = fixture();
     const { user } = renderApp({ route: "/settings/projects/example" });
     const tasks = await screen.findByRole("combobox", { name: "Tasks routing" });
@@ -159,11 +159,7 @@ describe("Project settings", () => {
       { project: "example", setting: "l2_preference", value: null, expected: "beta" },
       { project: "example", setting: "l2_engine", value: null, expected: "alpha" },
     ]);
-    const l3 = screen.getByRole("combobox", { name: "L3 routing" });
-    expect(within(l3).getAllByRole("option").map((o) => o.textContent)).toEqual(["Auto", "Only Alpha", "Only Beta"]);
-    await user.selectOptions(l3, "only:beta");
-    await waitFor(() => expect(l3).toHaveDisplayValue("Only Beta"));
-    expect(posts.at(-1)).toEqual({ project: "example", setting: "l3_engine", value: "beta", expected: null });
+    expect(screen.queryByRole("combobox", { name: "L3 routing" })).toBeNull();
   });
 
   it("names custom routing and a preference outside it, and refuses a routing changed in another window", async () => {

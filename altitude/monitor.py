@@ -56,10 +56,8 @@ def routing() -> list[dict]:
     rows = []
     for name, project in config.load_projects().items():
         info = S.read_json(config.project_dir(name) / "l3.json", {}) or {}
-        pin = config.project(name).get("l3_engine")
-        pin = pin if pin in config.ENGINES else None
         current = info.get("engine_last")
-        rows.append({"role": "l3", "project": name, "pin": pin, "current": current,
+        rows.append({"role": "l3", "project": name, "pin": None, "current": current,
                      **route.pick_engine("l3", project=project, current=current,
                                          current_model=((info.get("sessions") or {}).get(current) or {}).get("launch_model"))})
         choice = route.pick_engine("l2", project=project)

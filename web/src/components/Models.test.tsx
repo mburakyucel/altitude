@@ -13,12 +13,12 @@ const engines = [{ engine: "alpha", label: "Alpha", week: 40, known: true, stale
 type Choice = Record<string, string> | null;
 
 /** A fictional server holding New tasks and the example project's L3 choice, refusing a stale `expected`. */
-function server({ newTasks = null as Choice, l3Choice = null as Choice, l3Engine = null as string | null, unavailable = null as string | null,
+function server({ newTasks = null as Choice, l3Choice = null as Choice, unavailable = null as string | null,
   only = [] as { project: string; engine: string }[], refuse = "", hold = null as Promise<void> | null } = {}) {
   const state = { newTasks, l3Choice };
   const posts: { path: string; body: Record<string, unknown> }[] = [];
   const tasksView = () => ({ value: state.newTasks, unavailable, only, ...options });
-  const defaults = () => ({ l3_engine: l3Engine, l2_engine: null, l3_choice: state.l3Choice, l2_preference: null, l3_unavailable: null, routing: null,
+  const defaults = () => ({ l2_engine: null, l3_choice: state.l3Choice, l2_preference: null, l3_unavailable: null, routing: null,
     engines: engines.map(({ engine, label }) => ({ value: engine, label, efforts: [], routed: true })), roles: [], ...options });
   const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -162,13 +162,12 @@ describe("Models dialog", () => {
     expect(dialog()).toHaveTextContent("Deep unavailable · Auto meanwhile: Deep's weekly limit is used up until Friday");
   });
 
-  it("names an L3 Only engine that keeps a chosen model from being used", async () => {
-    server({ l3Engine: "beta" });
+  it("says Auto answers while L3's chosen model is unavailable", async () => {
+    server({ l3Choice: { engine: "alpha", model: "deep" } });
     const { user } = renderApp({ route: "/projects/example" });
-    await user.click(await screen.findByRole("button", { name: "L3 model: Auto" }));
-    await user.click(within(dialog()).getByRole("radio", { name: /^Deep/ }));
-    expect(dialog()).toHaveTextContent("This project keeps L3 only on Beta, so Deep can't be used here.");
-    expect(within(dialog()).getByRole("link", { name: "Change in Routing" })).toHaveAttribute("href", "/settings/projects/example#routing");
+    await user.click(await screen.findByRole("button", { name: /^L3 model: Deep/ }));
+    expect(dialog()).toHaveTextContent("Applies from L3's next reply. When Deep is unavailable, Auto answers instead.");
+    expect(within(dialog()).queryByRole("link", { name: "Change in Routing" })).toBeNull();
   });
 
   it("shows only the Tasks tab outside a project, and the control on the phone's Monitor and Work", async () => {

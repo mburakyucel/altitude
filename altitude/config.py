@@ -147,7 +147,7 @@ DEFAULT_SETTINGS = {role_setting(role, engine, kind): (role, engine, kind)
                     for role in ROLES for engine in ENGINES for kind in ("model", "effort")}
 #: A model choice tried ahead of a role's routing: New tasks for every project's L2, and each project's L3 choice.
 CHOICE_SETTINGS = {"l2": "new_tasks", "l3": "l3_choice"}
-PROJECT_SETTINGS = ("routing", "l2_preference", "l2_engine", "l3_engine", "l3_choice", *DEFAULT_SETTINGS)
+PROJECT_SETTINGS = ("routing", "l2_preference", "l2_engine", "l3_choice", *DEFAULT_SETTINGS)
 WIP_PER_MACHINE = 80
 L3_TURN_TIMEOUT = 900             # seconds
 MACHINE_COMMAND_TIMEOUT = 600     # seconds; one command under a task's operator grant
@@ -194,7 +194,7 @@ def effort_label(value: str | None) -> str:
 
 
 def defaults_view(name: str) -> dict:
-    """A project's settings page: Only pins, the L3 choice, routing, and one model/effort pair per role and engine."""
+    """A project's settings page: the tasks' Only pin, the L3 choice, routing, and one model/effort pair per role and engine."""
     from . import route
     entry = project(name)
     def field(role, engine, kind):
@@ -204,7 +204,7 @@ def defaults_view(name: str) -> dict:
                     "choices": list(MODEL_ALIASES) if engine == "claude" else []}
         return {"setting": key, "value": entry.get(key), "default": effort_label(task_effort(engine, None, role=role)),
                 "choices": [{"value": v, "label": effort_label(v)} for v in ENGINE_EFFORTS[engine]]}
-    return {"l3_engine": entry.get("l3_engine"), "l2_engine": entry.get("l2_engine"), "l3_choice": entry.get("l3_choice"),
+    return {"l2_engine": entry.get("l2_engine"), "l3_choice": entry.get("l3_choice"),
             "l2_preference": entry.get("l2_preference"),
             "l3_unavailable": route.choice_unavailable("l3", entry.get("l3_choice"), entry), **choice_options(),
             "routing": format_routing(entry["routing"]) if "routing" in entry else None,
@@ -443,12 +443,14 @@ def default_effort(role: str, engine: str, project: dict | None = None) -> str |
 
 def pinned_option(role: str, project: dict, *, engine: str | None = None,
                   model: str | None = None) -> dict | None:
-    """Explicit task or project engine/model pins; project default models are preferences, not pins."""
+    """Explicit task or turn engine/model pins and a project's Only engine for tasks; project default models and
+    the L3 choice are preferences, not pins."""
+    only = project.get("l2_engine") if role == "l2" else None
     if model and not engine:
-        engine = "claude" if model in MODEL_ALIASES else project.get(f"{role}_engine")
+        engine = "claude" if model in MODEL_ALIASES else only
         if not engine:
             raise ValueError("a model pin requires --engine for this model")
-    engine = engine or project.get(f"{role}_engine")
+    engine = engine or only
     if not engine:
         return None
     if engine not in ENGINES:
@@ -589,7 +591,7 @@ def _write_project(name: str, entry: dict | None) -> None:
 
 
 @contextmanager
-def add_project(name: str, *, path=None, approval="default", l2_engine=None, l3_engine=None):
+def add_project(name: str, *, path=None, approval="default", l2_engine=None):
     """CLI/HTTP registration, including rollback if the caller's setup fails."""
     from . import state as S
     path = Path(path or (project_roots()[0] / name)).expanduser()
@@ -599,7 +601,7 @@ def add_project(name: str, *, path=None, approval="default", l2_engine=None, l3_
     if not path.is_dir():
         raise ValueError(f"{path} is not a directory")
     entry = {"path": str(path), "approval": approval,
-             **{key: value for key, value in {"l2_engine": l2_engine, "l3_engine": l3_engine}.items() if value}}
+             **({"l2_engine": l2_engine} if l2_engine else {})}
     with S.project_lock(name):
         registered = load_projects()
         # Runtime folders are named after projects, and a case-insensitive disk (macOS by default) holds one folder.

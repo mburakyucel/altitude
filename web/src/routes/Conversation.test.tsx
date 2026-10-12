@@ -81,7 +81,7 @@ type Fixtures = { chat?: unknown; project?: unknown; chatFn?: () => Response | P
 
 let defaults: Record<string, unknown> = {};
 const auto = {
-  l3_engine: null, l2_engine: null, l3_choice: null, l2_preference: null, l3_unavailable: null, routing: null, roles: [],
+  l2_engine: null, l3_choice: null, l2_preference: null, l3_unavailable: null, routing: null, roles: [],
   engines: [{ value: "alpha", label: "Alpha", efforts: [], routed: true }],
   models: [{ engine: "alpha", model: "swift", label: "Swift" }, { engine: "alpha", model: "deep", label: "Deep" }],
   efforts: { alpha: [{ value: "low", label: "Low" }, { value: "high", label: "High" }] },

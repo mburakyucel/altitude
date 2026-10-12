@@ -121,14 +121,13 @@ function DefaultsSection({ name, data }: { name: string; data: ProjectDefaults }
   </section>;
 }
 
-/** Auto, Prefer or Only an engine for tasks; Auto or Only an engine for L3. */
+/** Auto, Prefer or Only an engine for tasks. */
 function RoutingSection({ name, data }: { name: string; data: ProjectDefaults }) {
   const save = useSetDefault(name);
   const client = useQueryClient();
   const [error, setError] = useState<Error | null>(null);
   const label = (engine: string) => data.engines.find((e) => e.value === engine)?.label ?? engine;
   const tasks = data.l2_engine ? `only:${data.l2_engine}` : data.l2_preference ? `prefer:${data.l2_preference}` : "";
-  const l3 = data.l3_engine ? `only:${data.l3_engine}` : "";
   const write = async (changes: [string, string | null, string | null | undefined][]) => {
     setError(null);
     try {
@@ -160,14 +159,6 @@ function RoutingSection({ name, data }: { name: string; data: ProjectDefaults })
           <option value="">Auto</option>
           {data.engines.map((e) => <option key={`p-${e.value}`} value={`prefer:${e.value}`}>Prefer {e.label}</option>)}
           {data.engines.map((e) => <option key={`o-${e.value}`} value={`only:${e.value}`}>Only {e.label}</option>)}
-        </select>
-      </label>
-      <label className="settings-row">
-        <span><strong>L3</strong>{" "}<small>Auto or Only an engine. Only keeps L3 on it, even with an L3 choice; it waits while it is unavailable.</small></span>
-        <select className="settings-select" aria-label="L3 routing" value={l3} disabled={save.isPending}
-          onChange={(event) => void write([["l3_engine", event.target.value ? event.target.value.slice(5) : null, data.l3_engine]])}>
-          <option value="">Auto</option>
-          {data.engines.map((e) => <option key={e.value} value={`only:${e.value}`}>Only {label(e.value)}</option>)}
         </select>
       </label>
     </div>

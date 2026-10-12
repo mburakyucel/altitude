@@ -906,8 +906,6 @@ export const ChatViewSchema = z
     queued: z.array(QueuedMessageSchema).nullish(),
     send_now_reason: z.string().nullish(),
     l3: z.record(z.string(), z.unknown()).nullish(),
-    /** The engine the project's L3 routing is Only on; null or absent means Auto. */
-    engine: z.string().nullish(),
   })
   .passthrough();
 
@@ -1661,12 +1659,11 @@ export function useSaveNewTasks() {
   });
 }
 
-/** config.defaults_view(): the project's pins, L3 choice, routing and requested model/effort per role and engine. */
+/** config.defaults_view(): the project's task pin, L3 choice, routing and requested model/effort per role and engine. */
 const DefaultFieldSchema = z.object({
   setting: z.string(), value: z.string().nullable(), default: z.string(),
 });
 const ProjectDefaultsSchema = ChoiceOptionsSchema.extend({
-  l3_engine: z.string().nullish(),
   l2_engine: z.string().nullish(),
   l3_choice: ChoiceSchema.optional().transform((value) => value ?? null),
   l3_unavailable: z.string().nullish(),
@@ -1695,7 +1692,7 @@ export function useProjectDefaults(project: string) {
 }
 
 /** The project settings a page or dialog saves whole, outside the per-engine model/effort table. */
-const PROJECT_FIELDS = ["l2_preference", "l2_engine", "l3_engine", "l3_choice"] as const;
+const PROJECT_FIELDS = ["l2_preference", "l2_engine", "l3_choice"] as const;
 
 /**
  * One saved project setting; each field owns its mutation so its Saving/Saved/error state stays beside it.
