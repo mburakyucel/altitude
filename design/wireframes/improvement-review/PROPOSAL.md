@@ -183,8 +183,9 @@ One fresh call per run through the engine seam (`engines.py`), using the isolati
 uses for its quota read: `--safe-mode` (no CLAUDE.md, skills, plugins, hooks or MCP),
 `--no-session-persistence`, `--tools ""`, `--strict-mcp-config`, an empty temporary working directory,
 no added directories and a JSON response schema. The adapter fails closed: if the session's own start
-record lists any tool other than Claude Code's carrier for the schema-bound answer, or reports no
-model, the run stops before its answer is used.
+record lists any tool other than Claude Code's carrier for the schema-bound answer, reports no
+model or reports an API key in use, the run stops before its answer is used. The call runs without
+`ANTHROPIC_*` variables, so it always uses the signed-in plan.
 
 **Runs on your plan.** Every call runs through the Claude Code login on your subscription, like every
 task; nothing uses the API or an API key, and nothing is billed. Claude Code also reports each call's
