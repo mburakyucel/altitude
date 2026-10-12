@@ -14,7 +14,7 @@ def out(message):
 
 
 def notify(method,params):
-    out({'method':method,'params':params})
+    out({'method':method,'params':{'threadId':session,**params}})
 
 
 def coordinator(prompt):
