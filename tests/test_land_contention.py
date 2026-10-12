@@ -50,12 +50,6 @@ def run_owner(project, slug, worktree, fixture, output, options):
     clock_path = options.pop('clock_path', None)
     if clock_path:
         land.time = types.SimpleNamespace(monotonic=lambda: float(Path(clock_path).read_text()), sleep=time.sleep)
-    scale = options.pop('clock_scale', None)
-    if scale:
-        # Landing's own clock runs `scale` times faster, so an hour-long bound fits in seconds.
-        origin = time.monotonic()
-        land.time = types.SimpleNamespace(monotonic=lambda: origin + (time.monotonic() - origin) * scale,
-                                          sleep=lambda seconds: time.sleep(seconds / scale))
     if options.pop('required_check', False):
         (fixture / 'required-pr-check').touch()
         (fixture / 'hosted-barrier').touch()
@@ -265,15 +259,19 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
 
     def test_green_current_pr_merges_while_another_owner_waits_for_its_check(self):
         # PR #748 waited behind other owners' full CI runs; PR #718: a CI wait must outlast 600 seconds.
-        scale = 300
         self.ship_check_workflow()
         first_fixture = self.owners['first'][1]
-        first = self.start('first', required_check=True, wait=None, clock_scale=scale)
+        clock = first_fixture / 'clock'
+        clock.write_text('0')
+        first = self.start('first', required_check=True, wait=None, clock_path=str(clock))
         self.checked('first')
         (first_fixture / 'checks.json').write_text('[{"bucket": "pending"}]')
         self.release('first')
         self.await_condition(lambda: 'PR checks pending' in (first[1] / 'notes').read_text(), 'pending check')
-        time.sleep(900 / scale)  # Past the old 600-second default on landing's clock, within its hour.
+        # Past the old 600-second default on landing's clock, within its hour, however long the other owner takes.
+        (first_fixture / 'clock-next').write_text('900')
+        (first_fixture / 'clock-next').replace(clock)
+        time.sleep(.5)  # several polls at the advanced clock
         self.assertTrue(first[0].is_alive())
         self.release('second')
         second = self.start('second', required_check=True)
@@ -446,7 +444,9 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
 
     def test_assessment_wait_leaves_the_turn_to_a_competing_owner(self):
         self.stale_review()
-        first = self.start('first', wait=20)
+        clock = self.owners['first'][1] / 'clock'
+        clock.write_text('0')  # the wait outlasts the other owner's landing, however long it takes
+        first = self.start('first', wait=20, clock_path=str(clock))
         self.assessment_wait(first)
         self.release('second')
         self.merged('second', self.finish(self.start('second')))
