@@ -10,12 +10,16 @@ TOP = ('acpi','asound','bus','fs','irq','kallsyms','kcore','keys','latency_stats
        'sched_debug','scsi','sys','sysrq-trigger','timer_list','timer_stats')
 
 
-def require_tuple(info, network, policy):
+def observed_tuple(info, network):
     host=info['host']
-    observed={'distribution':host['distribution']['distribution'],
+    return {'distribution':host['distribution']['distribution'],
         'release':host['distribution']['version'], 'architecture':host['arch'],
         'kernel':host['kernel'], 'podman':info['version']['Version'],
         'crun':host['ociRuntime']['version'].splitlines()[0], 'network':network}
+
+
+def require_tuple(info, network, policy):
+    observed=observed_tuple(info, network)
     if observed!=policy['tuple']:
         raise RuntimeError('Unreviewed proc inventory tuple; record and review its full exposure: '+str(observed))
     return observed

@@ -1,16 +1,21 @@
-"""Build and test the container launcher in a disposable Ubuntu 24.04 amd64 VM.
+"""Build and test the container launcher in a disposable Ubuntu 24.04 VM.
 
-Run `make container-vm RESULTS=DIR`; task owners use the validation runner.
+On Linux the guest is amd64 under KVM: run `make container-vm RESULTS=DIR`; task
+owners use the validation runner. On an Apple silicon Mac the guest is arm64 under
+Apple's Virtualization framework (scripts/linux_vm_mac.py): run
+`make container-macos-vm RESULTS=DIR`, inside a task through `alt task run`.
 The actual image, launcher, systemd and Podman run with fictional state. Sender
 metadata and service-manager monitoring stay entirely inside the guest. The VM
 needs internet for distribution/image packages, but receives no host credentials.
-This lane proves no Mac, provider authentication or physical-device behavior.
+This lane proves Linux guest behavior only: no Mac host lifecycle, provider
+authentication or physical-device behavior.
 """
 import argparse
 import concurrent.futures
 import hashlib
 import json
 from pathlib import Path
+import platform
 import shlex
 import shutil
 import subprocess
@@ -20,7 +25,10 @@ import time
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-from scripts import installation_vm as vm
+if sys.platform == 'darwin':
+    from scripts import linux_vm_mac as vm
+else:
+    from scripts import installation_vm as vm
 
 
 def run(results, cache, *, image_workflow=False, native_binary=None, browser=False, logout=False):
@@ -61,6 +69,7 @@ def run(results, cache, *, image_workflow=False, native_binary=None, browser=Fal
         machine.start()
         machine.wait_ready(time.monotonic() + 600)
         record['guest'] = machine.ssh('uname -a; podman --version; crun --version').stdout
+        record['host'] = {'system': sys.platform, 'machine': platform.machine(), 'release': platform.mac_ver()[0] or platform.release()}
         source = work / 'source.tar'
         subprocess.run(['git', '-C', str(REPO), 'archive', '--format=tar', '-o', str(source), 'HEAD'], check=True)
         record['source_sha256'] = hashlib.sha256(source.read_bytes()).hexdigest()
@@ -167,7 +176,7 @@ def run(results, cache, *, image_workflow=False, native_binary=None, browser=Fal
             except Exception as error:
                 record['monitor_error'] = repr(error)
         pool.shutdown(wait=True)
-        for name in ('console.log', 'qemu.log'):
+        for name in ('console.log', 'qemu.log', 'helper.log'):
             if (work / name).is_file():
                 shutil.copyfile(work / name, results / name)
         shutil.rmtree(work)

@@ -118,19 +118,19 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def helper() -> Path:
+def helper(target: Path = HELPER) -> Path:
     """The Swift helper, compiled with this Mac's Xcode tools and signed here for the Virtualization framework."""
     source = SCRIPTS / "macos_vm.swift"
-    stamp = HELPER.with_suffix(".sha256")
+    stamp = target.with_suffix(".sha256")
     digest = hashlib.sha256(source.read_bytes() + (SCRIPTS / "macos_vm.entitlements").read_bytes()).hexdigest()
-    if HELPER.is_file() and stamp.is_file() and stamp.read_text().strip() == digest:
-        return HELPER
-    HELPER.parent.mkdir(parents=True, exist_ok=True)
+    if target.is_file() and stamp.is_file() and stamp.read_text().strip() == digest:
+        return target
+    target.parent.mkdir(parents=True, exist_ok=True)
     note("compiling the guest helper")
-    run("xcrun", "swiftc", "-O", "-target", "arm64-apple-macos14", "-o", HELPER, source, timeout=600)
-    run("codesign", "-f", "-s", "-", "--entitlements", SCRIPTS / "macos_vm.entitlements", HELPER)
+    run("xcrun", "swiftc", "-O", "-target", "arm64-apple-macos14", "-o", target, source, timeout=600)
+    run("codesign", "-f", "-s", "-", "--entitlements", SCRIPTS / "macos_vm.entitlements", target)
     stamp.write_text(digest + "\n")
-    return HELPER
+    return target
 
 
 def clone(source: Path, target: Path) -> None:
