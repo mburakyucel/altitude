@@ -1,8 +1,8 @@
 # README visuals
 
 The README shows the built web app on desktop and phone together: an opening picture of the desktop
-project view with the phone's decision in front of it, three phone views (project, task and decision),
-a phone recording and an editable role diagram.
+project view with the phone's decision in front of it and the "work at any altitude" drawing of the
+coordinator, task agents and helpers.
 [The walkthrough](../../docs/WALKTHROUGH.md) carries the longer scenario and full-size captures.
 Below 600 px width the opening picture gives way to the decision capture alone, so it stays legible on
 a phone.
@@ -49,9 +49,9 @@ google-chrome --headless --hide-scrollbars --default-background-color=00000000 -
 - Copy only reviewed illustrations needed by README or the walkthrough into `docs/images/`,
   replacing the matching files. Keep routine renders and before/after review evidence outside Git
   under the [project UI rule](../../AGENTS.md#ui); do not add a gallery for each PR.
-- Edit `docs/images/orchestration.svg` and `orchestration-phone.svg` directly. These standalone
-  vectors contain no external fonts, scripts or raster art. Keep their relationships and text
-  equivalent; the phone composition stacks independent owners for legibility.
+- Edit `docs/images/altitude.svg` and `altitude-phone.svg` directly. These standalone vectors use
+  system fonts and contain no scripts or raster art. Keep their levels, labels and example tasks
+  equivalent; the phone composition stacks the tasks for legibility.
 - Keep responsive diagram `<picture>` sources and image alt text in README and walkthrough. Keep
   desktop and phone app views visible together in README. Check GitHub's sanitized Markdown, image
   paths and anchors, then inspect both widths. Open the original images to review details that are

@@ -11,8 +11,8 @@ An owner can delegate bounded work to native helpers (L1) and remains responsibl
 You can talk to an owner directly as well as through the project conversation.
 
 <picture>
-  <source media="(max-width: 600px)" srcset="images/orchestration-phone.svg">
-  <img src="images/orchestration.svg" alt="The operator directs the project coordinator and can steer task owners directly. Each owner chooses and integrates its own native helpers." width="1200">
+  <source media="(max-width: 600px)" srcset="images/altitude-phone.svg">
+  <img src="images/altitude.svg" alt="Three levels: the coordinator runs the project with you, one agent per task carries it from idea to production, and helpers take focused pieces of a task. You can step in at any level." width="1200">
 </picture>
 
 ## Keep the project direction in one conversation
