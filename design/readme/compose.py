@@ -20,7 +20,7 @@ OPENING = [("opening-1-question-desktop", "opening-1-question-phone", 2.6),
 # Each feature picture: its left and right phone captures and the end of each that stays in view.
 FEATURES = {
     "feature-live": [("task-phone", "top"), ("session-phone", "top")],
-    "feature-review": [("review-findings-phone", "top"), ("review-phone", "bottom")],
+    "feature-review": [("review-findings-phone", "top"), ("review-phone", "top")],
     "feature-heal": [("heal-1-fault-phone", "top"), ("heal-2-repaired-phone", "bottom")],
     "feature-improve": [("improve-phone", "top"), ("improve-accepted-phone", "top")],
 }

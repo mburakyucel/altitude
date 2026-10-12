@@ -39,7 +39,7 @@ test("review before merge, a repaired fault and improvement suggestions", async 
   await nav.getByRole("link", { name: /Needs you/ }).click();
   const review = page.getByRole("article", { name: "Add per-tenant limits to the public API", exact: true });
   await expect(review).toContainText("Review PR #214 before merge");
-  await review.evaluate((card) => card.scrollIntoView({ block: "end" }));
+  await review.evaluate((card) => card.scrollIntoView({ block: "start" }));
   await capture("review");
 
   // A machine problem pauses the sign-on task; the coordinator repairs it and the task resumes.
