@@ -58,9 +58,9 @@ class TestInspectionCLI(AltitudeCase):
             with self.subTest(actor=actor):
                 self.setenv("ALTITUDE_ACTOR", actor)
                 record = json.loads(cli("l3", "search", "Atlas pilot", "--json"))
-                self.assertEqual(record["matched"], 2)
+                self.assertEqual(record["matched"], 3)
                 evidence = json.dumps(record)
-                for text in ("original", "correction", "needs review", "not new authority"):
+                for text in ("original", "correction", "needs review", "pilot scoped to Atlas", "not new authority"):
                     self.assertIn(text, evidence)
                 self.assertIn("Keep the pilot scoped", cli("task", "messages", "inspect"))
                 self.assertEqual(json.loads(cli("pr", "8", "--json"))["head_sha"], "candidate")
