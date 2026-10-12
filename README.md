@@ -13,46 +13,25 @@ Altitude runs Claude Code and Codex like an engineering team on your computer.
 
 **Early preview · Linux · macOS · [Get started](#get-started)**
 
-<picture>
-  <source media="(max-width: 600px)" srcset="docs/images/decision-phone.png">
-  <img src="docs/images/hero.png" alt="The project view on a computer, with the coordinator's plan and three tasks at work; in front of it, a phone shows the one question that needs you, with its recommended answer." width="1200">
-</picture>
+<img src="docs/images/hero.png" alt="The project view on a computer, with the coordinator's plan and three tasks at work; in front of it, a phone shows the one question that needs you, with its recommended answer." width="1200">
 
-## On your phone
+## Work at any altitude
 
-<p>
-  <a href="docs/images/project-phone.png"><img src="docs/images/project-phone.png" alt="Phone: speak or type to L3 in the project conversation." width="250"></a>
-  <a href="docs/images/task-phone.png"><img src="docs/images/task-phone.png" alt="Phone: steer a task owner directly in its conversation." width="250"></a>
-  <a href="docs/images/decision-phone.png"><img src="docs/images/decision-phone.png" alt="Phone: answer a task owner's question with one tap in Needs you." width="250"></a>
-</p>
+<img src="docs/images/altitude.svg" alt="You make the executive decisions. Below you, the coordinator (L3) orchestrates the project: it plans with you, starts tasks and answers from your decisions. Each task has its own agent (L2) that takes it from idea to production, and each task agent runs its own helper agents (L1) for focused work such as reading API docs, running tests or profiling latency." width="1000">
 
-[Watch the phone walkthrough](docs/images/phone-walkthrough.webm) ·
-[Explore the desktop and phone walkthrough](docs/WALKTHROUGH.md)
-
-## One conversation. An engineering team behind it.
-
-<picture>
-  <source media="(max-width: 600px)" srcset="docs/images/orchestration-phone.svg">
-  <img src="docs/images/orchestration.svg" alt="You set roadmap, architecture and executive decisions with L3. L3 orchestrates parallel L2 owners, each accountable for delivery and any L1 helpers. You can steer owners directly." width="1200">
-</picture>
-
-**Delegate the follow-through.** L3 works through architecture and priorities with you, briefs
-task owners, tracks delivery and answers questions from decisions you've already made. Unresolved
-choices reach **Needs you**; independent work keeps moving.
-
-**Give every task an owner.** Each L2 owns an isolated worktree and delivery through a PR. It can
-enlist L1 helpers and remains accountable for their work. Your project's checks and review govern
-delivery; request a merge hold when you want the final say before merging.
-
-**Take the controls at any depth.** Talk directly to an owner, inspect its live session or redirect
-the work. Move between project strategy and implementation detail from the same browser, on your
-computer or [your phone](docs/OPERATIONS.md#on-iphone).
+Altitude works in levels, and you choose yours: steer the whole project with the coordinator, or step
+straight into any task. Each task agent works in its own worktree, and complex work gets an independent review,
+by your other engine when you use both.
 
 One engine is enough, and each integration is
 [replaceable by design](docs/ARCHITECTURE.md#engine-integration-boundary).
 
+[Explore the desktop and phone walkthrough](docs/WALKTHROUGH.md)
+
 ## Built in
 
+- **Your checks, your call.** Your project's checks and review govern every merge; ask for a merge
+  hold whenever you want the final say.
 - **Phone access.** [Pair each browser](docs/SETUP.md#pair-each-device) with a one-time code, add
   Altitude to the iPhone Home Screen and get an alert when a decision needs you, choosing on each
   device how much the alert reveals, how often it comes and whether it sounds. Dictation runs on
