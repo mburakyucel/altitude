@@ -4,7 +4,7 @@ The README shows the built web app on desktop and phone together: an opening pic
 project view with the phone's decision in front of it and the "work at any altitude" drawing of the
 coordinator, task agents and helpers.
 [The walkthrough](../../docs/WALKTHROUGH.md) carries the longer scenario and full-size captures.
-The opening picture is the same at every width; the README is laid out for a computer screen first.
+Both pictures are the same at every width; the README is laid out for a computer screen first.
 
 The captures come from an ordinary [browser walkthrough](../../docs/DEVELOPMENT.md#browser-walkthroughs):
 `web/e2e/readme.pw.ts` against `web/e2e/readme-service.py`, a disposable service with real handlers and
@@ -48,11 +48,11 @@ google-chrome --headless --hide-scrollbars --default-background-color=00000000 -
 - Copy only reviewed illustrations needed by README or the walkthrough into `docs/images/`,
   replacing the matching files. Keep routine renders and before/after review evidence outside Git
   under the [project UI rule](../../AGENTS.md#ui); do not add a gallery for each PR.
-- Edit `docs/images/altitude.svg` and `altitude-phone.svg` directly. These standalone vectors use
-  system fonts and contain no scripts or raster art. Keep their levels, labels and example tasks
-  equivalent; the phone composition stacks each task with its helpers for legibility.
-- Keep responsive diagram `<picture>` sources and image alt text in README and walkthrough. Keep
-  desktop and phone app views visible together in README. Check GitHub's sanitized Markdown, image
+- Edit `docs/images/altitude.svg` directly. This standalone vector uses system fonts and contains
+  no scripts or raster art; it is the same drawing at every width, so keep its type large enough
+  to read in a desktop README column.
+- Keep image alt text in README and walkthrough. Keep desktop and phone app views visible together
+  in README. Check GitHub's sanitized Markdown, image
   paths and anchors, then inspect both widths. Open the original images to review details that are
   small in a desktop README column.
 
