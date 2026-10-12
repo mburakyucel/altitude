@@ -244,16 +244,17 @@ def refusal(simulator: bool, error: Path) -> str:
     return f"; Simulator refused with {lines[0][:200] if lines else 'no error output'!r}"
 
 
-# Seatbelt's own verdict on an Apple Event from the asking process: no event is sent, so macOS shows no Automation
-# consent prompt and a refusal is the profile's. sandbox_check's filter is variadic, which Apple silicon passes on the
-# stack, after the eight argument registers; 4 is its Apple Event destination filter.
+# Seatbelt's own verdict on an Apple Event from the asking process: 1 refused, 0 allowed, -1 not established. No event
+# is sent, so macOS shows no Automation consent prompt and a refusal is the profile's. sandbox_check's filter is
+# variadic, which Apple silicon passes on the stack, after the eight argument registers; 4 is its Apple Event
+# destination filter.
 APPLE_EVENT = r"""
 import ctypes, os, platform
 check = ctypes.CDLL(None).sandbox_check
 pad = [ctypes.c_void_p] * 5 if platform.machine() == "arm64" else []
 check.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, *pad, ctypes.c_char_p]
-def apple_event_refused():
-    return check(os.getpid(), b"appleevent-send", 4, *[None] * len(pad), b"com.apple.Terminal") == 1
+def apple_event_verdict():
+    return check(os.getpid(), b"appleevent-send", 4, *[None] * len(pad), b"com.apple.Terminal")
 """
 
 
@@ -276,14 +277,15 @@ def confinement():
                   "sleep 5 & kill $! && echo signal-own-child; "
                   f"git init -q '{root}/repo' && echo git; "
                   f"/usr/bin/open -g -j '{root}/fixture.app' 2>/dev/null && echo open-app; "
-                  f"{shlex.quote(sys.executable)} -I -c {shlex.quote(APPLE_EVENT + 'raise SystemExit(apple_event_refused())')}"
-                  " && echo apple-event; "
+                  f"{shlex.quote(sys.executable)} -I -c {shlex.quote(APPLE_EVENT + 'print(apple_event_verdict())')}"
+                  " | sed 's/^/apple-event=/'; "
                   f"xcrun simctl list runtimes >/dev/null 2>'{root}/simctl.err' && echo simulator")
         result = subprocess.run(platform.job_command(job, ["/bin/sh", "-c", script], env(), writable=(root,), runtime_max=60),
                                 stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=90)
         written, ran = outside.exists(), app_ran(root / "fixture.app", marker)
         outside.unlink(missing_ok=True)
-        check(result.stdout.split() == ["write-inside", "signal-own-child", "git"] and not written and not ran,
+        check(result.stdout.split() == ["write-inside", "signal-own-child", "git", "apple-event=1"] and not written
+              and not ran,
               f"confinement: {result.stdout.split()} home written: {written}; fixture app ran: {ran}")
         evidence = refusal(simulator, root / "simctl.err")
     return ("writes under the roots only; the supervisor, launchd, LaunchServices, Apple Events and the Simulator service "
@@ -349,10 +351,10 @@ attempt("keychain", lambda: run("/usr/bin/security", "default-keychain"))
 attempt("git", lambda: run("git", "init", "-q", os.path.join(area, "repo")))
 attempt("launchd-bootstrap", bootstrap)
 attempt("open-app", lambda: run("/usr/bin/open", "-g", "-j", os.path.join(area, "fixture.app")))
-def apple_event():
-    if apple_event_refused():
-        raise PermissionError
-attempt("apple-event", apple_event)
+try:
+    apple_event = apple_event_verdict()
+except Exception as error:
+    apple_event = repr(error)
 def simulator():
     listed = subprocess.run(["xcrun", "simctl", "list", "runtimes"], capture_output=True, text=True, timeout=30)
     with open(os.path.join(area, "simctl.err"), "w") as stream:
@@ -361,8 +363,8 @@ def simulator():
 attempt("simulator", simulator)
 attempt("signal-supervisor", lambda: os.kill(os.getppid(), 18))
 with open(os.path.join(area, "seen.json"), "w") as stream:
-    json.dump(seen, stream)
-print(json.dumps(seen))
+    json.dump({**seen, "apple-event": apple_event}, stream)
+print(json.dumps({**seen, "apple-event": apple_event}))
 """
 
 
@@ -407,7 +409,7 @@ def validation_confinement():
         check(saved == seen, f"output reached the runner's log: {bool(lines)}; attempts saved in the area {saved}")
         allowed = {"write-area", "read-system", "resolve", "bind-other", "connect-other", "unix-area", "unix-temp",
                    "unix-system", "git"}
-        check(seen and all(seen[key] == (key in allowed) for key in seen),
+        check(seen.get("apple-event") == 1 and all(seen[key] == (key in allowed) for key in seen if key != "apple-event"),
               f"attempts {seen}; status {status.read_text() if status.exists() else None}; output {output[-500:]!r}")
         check(not (outside / "written").exists(), "the home folder was written")
         check(not app_ran(area / "fixture.app", outside / "launched"), "the fixture app ran")
