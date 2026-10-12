@@ -46,7 +46,7 @@ alt queue [--json]
 alt repo [--json]
 alt pr <number> [--json]
 alt l3 tools [--days N] [--json]
-alt l3 search <literal-text> [--limit N] [--json]
+alt l3 search <words> [--limit N] [--json]
 ```
 
 `alt task status <slug> --brief` prints at most ten orientation lines. `alt task status <slug>` and
@@ -224,16 +224,18 @@ request `{"kind":"alt","args":["l3","search","index migration","--json"]}`. The 
 project; L2 uses the same CLI read bound to its launch project, while the operator can select one through
 the usual `--project` option. Source paths resolving outside the project are refused.
 
-The query is 1–200 characters, contains non-whitespace text and matches a literal case-insensitive
-substring, without regex, token ranking or model calls. The full existing corpus is scanned on each
-request, so read cost grows with its size; the coordinator's existing 120-second command timeout
-still applies. There is no recent-message scan cutoff, index or persistent search state.
+The query is 1–200 characters with at least one word. A record matches when it contains every word
+of the query in any order, ignoring case and punctuation: `live provider`, `live-provider` and
+`provider/live` find the same records, while a record missing any one word does not match. A word also
+matches inside a longer one, so `mac` finds `macOS`. Words match as plain text, without regex,
+stemming, ranking or model calls. The full existing corpus is scanned on each request, so read cost
+grows with its size; the coordinator's existing 120-second command timeout still applies. There is no recent-message scan cutoff, index or persistent search state.
 
 Matches sort newest first by recorded message timestamp or explicitly labeled report/digest file
 modification time. Dates are not inferred from decision prose. Each matching record includes its
 immediate preceding and following conversation rows or report string fields in original order.
 The default is five matches, `--limit` accepts 1–20, each excerpt contains at most 1,200 original
-characters around its first match, and the serialized response including metadata fits 64 KiB.
+characters around the first matched word, and the serialized response including metadata fits 64 KiB.
 `--json` retains those bounds: `matched` counts matching records, `truncated` reports omitted matches,
 and each context row has `start`, `end`, `text_chars` and `truncated` for clipped text. Text output
 also identifies those omissions. Refining the query can retrieve a condition beyond a clipped excerpt;
