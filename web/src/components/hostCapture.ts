@@ -13,7 +13,7 @@
  * at once: one sending, one recording. A request that gets no answer is repeated with the same samples,
  * number and final flag, so the host never counts it twice, while the microphone keeps recording. When the
  * host no longer knows the recording (it idled out or restarted), the capture opens a new one and replays
- * everything from the start; the host refuses that replay if the voice setting or its runtime changed, or if
+ * everything from the start; the host refuses that replay if the voice setting or installation changed, or if
  * the browser was paired again as another device. The words shown hold still until the replay catches up. After Stop, the capture waits two minutes
  * at most for the connection, then ends with the words shown.
  */

@@ -241,7 +241,7 @@ class _Attempt:
         state = _state()
         update = state.get("update", {})
         return (state.get("removed", False) or update.get("id") != self.ident
-                or update.get("cancel", False)
+                or bool(update.get("cancel"))
                 or (self.automatic and config.voice_setting()["backend"] != "host"))
 
     def check(self) -> None:
@@ -375,6 +375,10 @@ def _verify(path: Path, cancel: _Attempt) -> None:
             if worker.poll() is None:
                 worker.kill()
             worker.wait()
+            if worker.stdin:
+                worker.stdin.close()
+            if worker.stdout:
+                worker.stdout.close()
 
 
 def setup(lock=None, attempt: _Attempt | None = None) -> Path:
@@ -704,12 +708,12 @@ class Host:
     # --- the worker -------------------------------------------------------------------------------------------
 
     def _start(self, path: Path) -> None:
-        memory = platform.available_memory()
-        if memory is not None and memory < MEMORY_NEEDED:
-            raise SpeechError(f"Voice isn't available right now: this computer has {memory / 1e9:.1f} GB of free "
-                              "memory and voice needs 2.5 GB.", 503)
         # Answer before the browser's request deadline; it retains samples and retries a busy handoff.
         with _lease(False, timeout=0.5) as lease, _guard():
+            memory = platform.available_memory()
+            if memory is not None and memory < MEMORY_NEEDED:
+                raise SpeechError(f"Voice isn't available right now: this computer has {memory / 1e9:.1f} GB of free "
+                                  "memory and voice needs 2.5 GB.", 503)
             path = runtime()
             if path is None:
                 raise SpeechError("Voice needs an update on this computer.", 409)

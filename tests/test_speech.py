@@ -571,11 +571,13 @@ class TestSetup(SpeechCase):
     def test_start_during_verification_is_retryable_without_allocating_a_recording(self):
         self.replacement()
         host = self.host()
+        memory = self.patch(platform, "available_memory", return_value=1_000_000_000)
         with speech._lease(True):
             with self.assertRaises(speech.SpeechError) as caught:
                 host.open(None)
             self.assertEqual(caught.exception.status, 425)
             self.assertEqual(host.recordings, {})
+        memory.return_value = 8_000_000_000
         ident = host.open(None)["id"]
         self.assertEqual(self.text(host, ident, 0, 100, final=True)["text"], "100 samples.")
 
