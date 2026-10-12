@@ -1225,7 +1225,9 @@ class _Line:
                 if p.returncode == 0:
                     return changed
                 err = ((p.stderr or "") + (p.stdout or "")).strip()
-                if "stale info" not in err:
+                # The lease fails in the client ("stale info") or, when another write lands between the client's
+                # check and the update, at the remote ("incorrect old value", "cannot lock ref"): PR #859's check.
+                if not any(lost in err for lost in ("stale info", "incorrect old value", "cannot lock ref")):
                     raise LandError(f"git push: {err[-300:]}")
             time.sleep(random.uniform(.05, .5))  # another landing wrote first; read its line and apply again
         raise LandError("the merge line kept changing; re-run alt land")

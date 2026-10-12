@@ -982,6 +982,21 @@ cmd = tuple(args[:2])''').replace('        tree = subprocess.check_output', '''
                                            cwd=self.remote).returncode, 0)
         self.assertEqual(self.line(), [])
 
+    def test_line_write_retries_a_compare_and_swap_lost_at_the_remote(self):
+        worktree, real_git, refused = self.owners['first'][0], land._git, []
+
+        def remote_lost_once(root, *args, **kwargs):
+            if args[0] == 'push' and not refused:
+                refused.append(args)
+                return subprocess.CompletedProcess(args, 1, '', f' ! [remote rejected] 0123 -> {land.LINE_REF} '
+                                                                '(incorrect old value provided)')
+            return real_git(root, *args, **kwargs)
+
+        with mock.patch.object(land, '_git', remote_lost_once):
+            land._Line(worktree, 101).join()
+        self.assertEqual(len(refused), 1)
+        self.assertEqual(self.line(), [101])
+
     def test_a_turn_that_was_taken_over_cannot_push(self):
         worktree = self.owners['first'][0]
         git('commit', '-qm', 'publishable', cwd=worktree)
