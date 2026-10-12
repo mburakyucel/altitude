@@ -80,7 +80,7 @@ test("project, work, task steering, live session and a decision", async ({ page 
 
 // The README's opening loop: the phone answers the backfill decision while the desktop project view watches the
 // task go back to work. One run drives both screens on the same service; ALTITUDE_README_IMAGES receives
-// `opening-<frame>-desktop.png` and `opening-<frame>-phone.png` for design/readme/opening.py.
+// `opening-<frame>-desktop.png` and `opening-<frame>-phone.png` for design/readme/compose.py.
 test.describe(() => {
   // The phone project skips before its fixtures start: a service stopped mid-startup can overrun the cleanup limit.
   test.skip(({ isMobile }) => isMobile, "one run drives the desktop and the phone together");

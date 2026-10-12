@@ -55,6 +55,7 @@ test("review before merge, a repaired fault and improvement suggestions", async 
   expect((await request.post("/fixture/repair")).ok()).toBe(true);
   await page.goto(phone ? "/projects/atlas?tab=work" : "/projects/atlas");  // the coordinator's turn reaches the chat on its next load
   await expect(signOn).toContainText("L2 working");
+  await signOn.scrollIntoViewIfNeeded();  // the resumed task joins the end of the working list
   if (phone) await nav.getByRole("link", { name: "Chat", exact: true }).click();
   const chat = page.getByRole("region", { name: "Conversation", exact: true });
   await expect(chat).toContainText("resumed the task");
