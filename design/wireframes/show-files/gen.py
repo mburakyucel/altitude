@@ -142,7 +142,7 @@ def card(name, excerpt, cover="", state="ready", cls=""):
     if state == "loading":
         cov = '<div class="cover blank"></div>'
     elif state == "failed":
-        cov = f'<div class="cover broke">{ic(P["imgx"], "ic lg")}<span class="rt" role="button" aria-label="Retry image">{ic(P["retry"], "ic sm")}</span></div>'
+        cov = ''  # a failed cover leaves the card without its strip; it still opens
     else:
         cov = f'<div class="cover">{cover}</div>' if cover else ''
     tag = '<span class="tag">Earlier</span>' if "earlier" in cls else ''
@@ -157,7 +157,7 @@ def thumbs(tiles):
         if body == "loading":
             out_.append(f'<div class="th blank" style="width:{w}px"></div>')
         elif body == "failed":
-            out_.append(f'<div class="th broke" style="width:{w}px">{ic(P["imgx"])}<span class="rt" role="button" aria-label="Retry image">{ic(P["retry"], "ic sm")}</span></div>')
+            out_.append(f'<button class="th broke" type="button" aria-label="Retry image export-phone.png" style="width:{w}px">{ic(P["imgx"])}</button>')
         else:
             m = f'<span class="more">+{more}</span>' if more else ''
             out_.append(f'<button class="th" type="button" style="width:{w}px;padding:0">{body}{m}</button>')
@@ -326,10 +326,15 @@ write("PhoneConversation", 892, 960,
       f'<div class="frames" style="grid-template-columns:repeat(2,390px)">{two}</div>')
 
 # 3. PhoneStates
+def gallery(name, count, img):
+    return (f'<div class="iv" role="dialog" aria-label="Image {name}"><div class="ivh"><span>{name}</span><span class="cnt">{count}</span>'
+            '<span class="btn">Zoom image</span><span class="btn">Close image</span></div>'
+            f'<div class="ivc">{img}<span class="nav l" role="button" aria-label="Previous image">{ic(P["back"], "i")}</span>'
+            f'<span class="nav r" role="button" aria-label="Next image">{ic(P["chev"], "i")}</span></div></div>')
+
+
 viewer_frame = ('<div class="rd">' + reader("README.md", md(readme("hero-v", short=True)))[len('<div class="rd">'):-len('</div>')]
-                + '<div class="iv" role="dialog" aria-label="Image tour.png"><div class="ivh"><span>tour.png</span>'
-                '<span class="btn">Zoom image</span><span class="btn">Close image</span></div>'
-                f'<div class="ivc">{terminal(TAIL_LINES)}</div></div></div>')
+                + gallery("tour.png", "2 / 5", terminal(TAIL_LINES)) + '</div>')
 card_loading = phone_task(
     reply("Screens from the new export page.", thumbs([(128, "loading", 0), (72, "failed", 0), (54, "loading", 0), (72, "loading", 0)]))
     + reply("The README draft is ready to read. It now opens with the two-minute tour.", card("README.md", EXCERPT, state="loading")), None)
@@ -340,11 +345,11 @@ frames = [
     ("Reader loading", "a skeleton of the page", reader("README.md", SKELETON)),
     ("Reader, earlier version", "Newer opens the latest in place", reader("README.md", md(readme("hero-e", short=True)), newer=True)),
     ("Reader, image failed", "in the image's place", reader("README.md", md(readme("hero-f", hero_state="failed", short=True)))),
-    ("Image viewer", "an image tapped in the reader", viewer_frame),
+    ("Gallery", "an image tapped in the reader; swipe or the side arrows", viewer_frame),
     ("Reader unavailable", "× still closes", reader("README.md", gone_page("docx", UNAV))),
     ("Reader denied", "", reader("README.md", gone_page("lock", DENIED))),
-    ("Thumbnails and cover loading", "one thumbnail failed", card_loading),
-    ("Cover failed, saved files missing", "", card_failed),
+    ("Thumbnails and cover loading", "one thumbnail failed; tapping it retries", card_loading),
+    ("Cover failed, saved files missing", "the first card still opens", card_failed),
 ]
 cells = ''.join(f'<div class="frame"><div class="lab">{i}. {lab}<span>{note}</span></div>{body}</div>'
                 for i, (lab, note, body) in enumerate(frames, 1))
@@ -416,5 +421,29 @@ q_convo = ('<div class="day">Today</div>'
            + reply("Plan: lead with a two-minute tour, then install, then configuration. One layout question first.")
            + open_q)
 write("DesktopQuestion", 1280, 800, desk(desk_conversation(q_convo, None)))
+
+# 7. DesktopStates: the panel's states and the gallery, 1280x800 frames at three-quarter size
+SPLIT_LEFT = desk_conversation(split_convo, None)
+
+
+def split_with(body, title="README.md"):
+    return desk('<div class="split">' + SPLIT_LEFT + panel(title, body) + '</div>')
+
+
+DESK_FAILED = md(readme("hero-s3", hero_state="failed", short=True))
+gallery_desk = ('<div class="dz">' + split_with(md(readme("hero-s4")))
+                + '<div class="dlg">' + gallery("overview.png", "3 / 5", ui_mock(840, 620, title="Timeline")) + '</div></div>')
+dframes = [
+    ("Panel loading", "the conversation stays live beside it", '<div class="dz">' + split_with(SKELETON.replace('class="sk"', 'class="sk" style="max-width:520px"')) + '</div>'),
+    ("Panel unavailable", "× still closes", '<div class="dz">' + split_with(gone_page("docx", UNAV)) + '</div>'),
+    ("Panel image failed", "Retry in the image's place", '<div class="dz">' + split_with(DESK_FAILED) + '</div>'),
+    ("Gallery on desktop", "side arrows and the keyboard arrows; hidden at the ends", gallery_desk),
+]
+dcells = ''.join(f'<div class="frame"><div class="lab">{i}. {lab}<span>{note}</span></div><div class="dframe">{body}</div></div>'
+                 for i, (lab, note, body) in enumerate(dframes, 1))
+write("DesktopStates", 2032, 1460,
+      '<div style="padding:32px 40px 4px"><h1 style="font-size:20px;font-weight:600;margin:0">Reader panel and gallery on desktop</h1>'
+      '<p class="muted" style="margin:4px 0 18px">1280 × 800 frames at three-quarter size</p></div>'
+      f'<div class="frames d">{dcells}</div>')
 
 print("written:", ", ".join(f"{n}.html {w}x{h}" for n, (w, h) in BOARDS.items()))
