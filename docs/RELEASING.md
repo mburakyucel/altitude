@@ -224,7 +224,9 @@ On an Apple silicon Mac, `make installation-macos-vm RESULTS=dir SOURCE=<sha>` r
 `install.sh` through its public command in fresh macOS guests ([macOS VM run](DEVELOPMENT.md#macos-vm-run)):
 each missing prerequisite must stop it with its documented fix and nothing changed, and with them
 present the release installs, updates to newer stable releases, recovers from a failing one, starts
-again at login after a restart and uninstalls. Record its `macos-vm.json` files with the candidate's
+again at login after a restart and uninstalls. After publication, `PUBLISHED=<previous>..<tag>`
+updates the previous published release to the new one there through the previous release's own
+daemon, keeping the state made through the app. Record its `macos-vm.json` files with the candidate's
 evidence. It establishes no physical second Mac, browser/device certificate trust or download from
 GitHub.
 
