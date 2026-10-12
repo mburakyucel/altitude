@@ -683,6 +683,8 @@ runtime, including unpacked libraries. Cancel, failure, interrupted setup or swi
 recognition leaves Retry to you, including after restart. `alt voice cancel` also cancels the update.
 First installation stays manual. Only the operator invokes setup, cancel and removal; agents cannot.
 Removing voice cancels any update, stops dictation and deletes its runtime files.
+If removal is interrupted, **Set up voice** restores it; the displayed full-download estimate is an
+upper bound, since any surviving verified model files are reused.
 
 The first recording starts a speech process in about 1–3 seconds; speech during startup is kept. While
 you dictate it uses about 1.3–2 GB of memory and one to two CPU cores; it exits after fifteen minutes

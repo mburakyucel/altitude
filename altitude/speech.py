@@ -281,8 +281,9 @@ def _download(url: str, target: Path, size: int, digest: str, advance: Callable[
     hashed, seen = hashlib.sha256(), 0
     if cancel.is_set():
         raise SpeechError("Setup was cancelled.", 409)
-    with urllib.request.urlopen(url, timeout=60) as response, open(target, "wb") as out:
-        while block := response.read(BLOCK):
+    with urllib.request.urlopen(url, timeout=10) as response, open(target, "wb") as out:
+        # One underlying read lets cancellation run even when a server trickles a large block.
+        while block := response.read1(BLOCK):
             if cancel.is_set():
                 raise SpeechError("Setup was cancelled.", 409)
             seen += len(block)
@@ -441,7 +442,10 @@ def _finish_setup(target: Path) -> None:
     # Callers hold exclusive worker use and the control lock; no reader or remover can cross promotion.
     for old in _runtimes():
         if old != target:
-            shutil.rmtree(old)
+            try:
+                shutil.rmtree(old)
+            except OSError as exc:
+                raise SpeechError("Voice is updated, but old files could not be removed. Try again.") from exc
     state = _state()
     state.pop("update", None)
     _write_state(state)
@@ -500,8 +504,11 @@ def _cancel_setup(reason: str) -> None:
 def cancel_setup() -> None:
     """Cancellation is shared by browser, CLI and the automatic updater."""
     _cancel_setup("cancelled")
-    with _lock(wait=70):
-        pass
+    try:
+        with _lock(wait=70):
+            pass
+    except SpeechError:
+        raise SpeechError("Cancellation is requested; the update is still stopping. Try again shortly.", 409) from None
 
 
 def remove_runtime() -> None:

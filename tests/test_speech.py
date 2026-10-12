@@ -449,7 +449,52 @@ class TestSetup(SpeechCase):
                       sha if "onnxruntime-" in name else digest) for name, url, size, digest in current]
             expected[key] = (speech._digest(prior),)
             self.assertNotEqual(speech._digest(prior), speech._digest(current))
-        self.assertEqual(speech.SUPPORTED, expected)
+        # Direct _digest output of historical speech.py at 7474162 (the parent of #847).
+        historical = {"linux-x86_64-cp312": ("a99b5413cbe7fbf9",),
+                      "linux-x86_64-cp313": ("ecfca085ff6ad628",)}
+        self.assertEqual(expected, historical)
+        self.assertEqual(speech.SUPPORTED, historical)
+
+    def test_cancel_timeout_reports_the_request_was_recorded(self):
+        self.replacement()
+        speech._begin()
+        self.patch(speech, "_lock", side_effect=speech.SpeechError("busy", 409))
+        with self.assertRaisesRegex(speech.SpeechError, "Cancellation is requested"):
+            speech.cancel_setup()
+        self.assertEqual(speech._state()["update"]["cancel"], "cancelled")
+
+    def test_download_checks_cancellation_between_partial_reads(self):
+        self.replacement()
+        attempt = speech._begin()
+
+        class Trickle(io.BytesIO):
+            def read(self, count=-1):
+                raise AssertionError("must not wait for an entire block")
+
+            def read1(self, count=-1):
+                speech._cancel_setup("cancelled")
+                return super().read1(1)
+
+        self.patch(speech.urllib.request, "urlopen", return_value=Trickle(b"fixture"))
+        with self.assertRaisesRegex(speech.SpeechError, "cancelled"):
+            speech._download("https://files.example/fixture", self.tmp / "download", 7,
+                             hashlib.sha256(b"fixture").hexdigest(), lambda _: None, attempt)
+
+    def test_cleanup_failure_reports_cleanup_and_keeps_verified_replacement(self):
+        old = self.replacement()
+        remove = speech.shutil.rmtree
+
+        def fail_old(path, *args, **kwargs):
+            if path == old:
+                raise OSError("fixture cleanup refusal")
+            return remove(path, *args, **kwargs)
+
+        self.patch(speech.shutil, "rmtree", new=fail_old)
+        with self.assertRaisesRegex(speech.SpeechError, "old files could not be removed"):
+            speech.setup()
+        self.assertNotEqual(speech.runtime(), old)
+        self.assertEqual(speech.status()["state"], "ready")
+        self.assertIn("old files", speech.status()["update"]["reason"])
 
     def test_interrupted_removal_can_be_reinstalled(self):
         old = self.replacement()
