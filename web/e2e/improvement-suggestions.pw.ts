@@ -1,50 +1,177 @@
-import { expect } from "@playwright/test";
+import { expect, type Locator, type Page, type Route } from "@playwright/test";
 import { test } from "./fixtures";
 import { walkthrough } from "./walkthrough";
 
 /**
- * Improvement suggestions in the project chat (design/wireframes/improvement-review/PROPOSAL.md, rollout step 2): the
- * review's endings and its posted message are plain replies written by Altitude through the real run lifecycle. The
- * kept numbers stay as posted, each cited task opens in place, and Back returns to the conversation.
+ * Improvement suggestions (design/wireframes/improvement-review/PROPOSAL.md, "Where suggestions appear"): through
+ * the real run lifecycle, a posted review is one card in the project's chat with Make a task, Dismiss, Undo and
+ * Details; endings are short lines with Show; a running review is a line with Stop; cards still waiting for a
+ * decision or a task are listed under Suggestions in Needs you, linking back to the card in the chat.
  */
 test.use({ serviceScript: "improvement-suggestions-service.py" });
 
-test("posted suggestions read as one reply with run numbers, task links and drops; endings read as one line", async ({ page }, info) => {
-  test.setTimeout(60_000);
+/** Holds every press until released, so its saving state can be captured. */
+async function hold(page: Page, reply?: (route: Route) => Promise<void>) {
+  let release = () => {};
+  const released = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/improve", async (route) => {
+    await released;
+    await (reply ? reply(route) : route.continue());
+  });
+  return async () => {
+    release();
+    await page.unrouteAll({ behavior: "wait" });
+  };
+}
+
+test("posted cards, endings and the running line take their presses and appear under Suggestions", async ({ page }, info) => {
+  test.setTimeout(120_000);
   const walk = walkthrough(page, info);
+  const phone = info.project.name === "phone";
+  const press = (target: Locator) => (phone ? target.tap() : target.click());
   const chat = page.getByRole("region", { name: "Conversation", exact: true });
-  const heading = chat.getByText(/^Improvement suggestions of \w{3} \d+ · 5 tasks from [^·]+$/);
-  const post = heading.locator("xpath=ancestor::div[contains(@class, 'turn')][1]");
-  const first = post.getByText("1. Owners re-ask merge questions you already answered", { exact: true });
-  const third = post.getByText("3. Reports name checks that never ran", { exact: true });
-  const dropped = post.getByText("Dropped 2: an open task already adds that target", { exact: true });
-  const failed = chat.getByText("Improvement suggestions failed · it went over its usage limit.", { exact: true });
-  const nothing = chat.getByText(/^Improvement suggestions of \w{3} \d+ · 5 tasks from .+ · nothing to suggest\.$/);
-  const harbor = post.getByText(/harbor list is rebuilt/);
+  const cards = chat.locator("article.irc");
+  const earlier = cards.first();
+  const recent = cards.last();
+  const reports = earlier.getByRole("region", { name: "1. Owners restate the brief in every report" });
+  const crane = earlier.getByRole("region", { name: "2. Crane slots are renamed by hand" });
+  const reviewer = earlier.getByRole("region", { name: "3. Reviews wait for a reviewer that is busy" });
+  const reask = recent.getByRole("region", { name: "1. Owners re-ask merge questions you already answered" });
+  const checks = recent.getByRole("region", { name: "3. Reports name checks that never ran" });
+  const failed = chat.getByText("Improvement suggestions failed · it went over its usage limit", { exact: true });
+  const nothing = chat.getByText(/^Improvement suggestions · 5 tasks from .+ · nothing to suggest$/);
+  const running = chat.locator(".sys-line[data-progress]");
+  const stop = running.getByRole("button", { name: "Stop", exact: true });
+  const opening = (suggestion: Locator) => suggestion.getByText("Accepted · L3 is opening a task", { exact: true });
+  const make = (suggestion: Locator) => suggestion.getByRole("button", { name: "Make a task", exact: true });
+  const dismiss = (suggestion: Locator) => suggestion.getByRole("button", { name: "Dismiss", exact: true });
+  const saving = (suggestion: Locator) => suggestion.getByRole("status", { name: "Saving" });
 
   await walk.open("/projects/alpha");
-  await walk.state("01-endings-and-posted-suggestions", { visible: [failed, nothing, heading, first, third, dropped], hidden: [harbor] });
-  await expect(post.locator("ol, ul")).toHaveCount(0);
-  await expect(post.locator("strong")).toHaveText(["1. Owners re-ask merge questions you already answered", "3. Reports name checks that never ran"]);
-  const targets = await post.locator("strong").evaluateAll((titles) => titles.map((t) => t.nextSibling?.textContent?.split("\n")[0]));
-  expect(targets).toEqual([" · How agents work", " · How agents work"]);
+  await expect(cards).toHaveCount(2);
+  await walk.state("01-cards-endings-and-running-line", {
+    visible: [reports, crane.getByText("Not decided", { exact: true }), reviewer.getByText(/^Accepted · no task yet ·/),
+      failed, nothing, reask, checks, make(reask), dismiss(checks), running, stop],
+    hidden: [recent.getByRole("region", { name: /^2\. / }), make(crane), make(reviewer), opening(reviewer)],
+  });
+  await expect(running.locator(".sys-text")).toHaveText(/^Improvement suggestions · reading 5 tasks from [^·]+$/);
+  await expect(reports.getByRole("link", { name: /Start reports from the outcome/ })).toBeVisible();
+  await expect(reask.locator(".chip")).toHaveText("How agents work");
+  await expect(reask.getByText("Your messages after a report in 5 of 5 tasks", { exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 
-  const links = post.getByRole("link");
-  expect(await links.count()).toBeGreaterThanOrEqual(2);
-  const cited = links.first();
+  // Details: what was read, what L3 dropped, the model and its usage, and when it ran.
+  await press(recent.getByRole("button", { name: "Details", exact: true }));
+  const details = recent.locator(".irc-details");
+  await walk.state("02-card-details-open", {
+    visible: [details.getByText("L3 dropped", { exact: true }), details.getByText("Suggestion 2: an open task already adds that target", { exact: true }),
+      details.getByText("Claude Sonnet 5.5", { exact: true }), details.getByText("900 of its 86,000-token limit", { exact: true }),
+      details.getByText("Ran", { exact: true }), recent.getByRole("button", { name: "Hide details", exact: true })],
+    hidden: [recent.getByRole("button", { name: "Details", exact: true })],
+  });
+  await press(recent.getByRole("button", { name: "Hide details", exact: true }));
+  await expect(details).toBeHidden();
+
+  // An ending's Show opens the same details; a failure names its reason.
+  const ending = chat.locator(".irc-ending").filter({ hasText: /nothing to suggest/ });
+  await press(ending.getByRole("button", { name: "Show", exact: true }));
+  await walk.state("03-nothing-to-suggest-details", {
+    visible: [ending.locator(".irc-details").getByText(/^5 tasks that finished .+; their questions, reviews, landings and conversations/),
+      ending.getByRole("button", { name: "Hide", exact: true })],
+    hidden: [ending.getByRole("button", { name: "Show", exact: true })],
+  });
+  await press(ending.getByRole("button", { name: "Hide", exact: true }));
+  await expect(ending.locator(".irc-details")).toBeHidden();
+
+  // Dismiss folds the suggestion with Undo; Undo brings its buttons back.
+  await press(dismiss(checks));
+  await walk.state("04-dismissed-with-undo", {
+    visible: [checks.getByText(/^Dismissed/), checks.getByRole("button", { name: "Undo", exact: true })],
+    hidden: [make(checks), dismiss(checks), checks.getByText("Two reports listed a check as passed without its log.")],
+  });
+  await press(checks.getByRole("button", { name: "Undo", exact: true }));
+  await expect(make(checks)).toBeVisible();
+  await expect(checks.getByRole("button", { name: "Undo", exact: true })).toBeHidden();
+
+  // A press that fails to save says so in place and keeps the buttons.
+  const failing = await hold(page, (route) => route.fulfill({ status: 500, contentType: "application/json", body: '{"error":"fictional failure"}' }));
+  await press(dismiss(checks));
+  await expect(saving(checks)).toBeVisible();
+  await failing();
+  await walk.state("05-press-not-saved", {
+    visible: [checks.getByRole("alert").filter({ hasText: "Not saved. Try again." }), make(checks), dismiss(checks)],
+    hidden: [saving(checks), checks.getByText(/^Dismissed/)],
+  });
+
+  // Make a task: a spinner while it saves, then L3 is opening its task.
+  const saved = await hold(page);
+  await press(make(reask));
+  await walk.state("06-make-a-task-saving", {
+    visible: [saving(reask)],
+    hidden: [opening(reask), checks.getByRole("alert")],
+  });
+  await expect(reask.locator(".irc-make")).toBeDisabled();
+  await expect(dismiss(checks)).toBeDisabled();
+  await saved();
+  await walk.state("07-accepted-l3-opening-a-task", {
+    visible: [opening(reask), make(checks), chat.getByText("Task for an improvement suggestion", { exact: true })],
+    hidden: [make(reask), dismiss(reask), saving(reask)],
+  });
+
+  // An accepted suggestion whose task turn ended without a task: Try again asks L3 once more.
+  await press(reviewer.getByRole("button", { name: "Try again", exact: true }));
+  await walk.state("08-try-again-reopens", {
+    visible: [opening(reviewer)],
+    hidden: [reviewer.getByText(/^Accepted · no task yet ·/)],
+  });
+
+  // Seen in: three cited tasks, then the rest in place; a task opens in place and Back returns.
+  const seen = reask.locator(".irc-meta").filter({ hasText: /^Seen in/ });
+  await press(seen.getByRole("button", { name: "3 more", exact: true }));
+  await expect(seen.getByText("the project chat", { exact: true })).toBeVisible();
+  const cited = seen.getByRole("link").first();
   const title = (await cited.textContent())!;
   await expect(cited).toHaveAttribute("href", /^\/projects\/alpha\/tasks\/dock-\d+$/);
-  await expect(cited).not.toHaveAttribute("target", /.*/);
-  await expect(cited).toHaveCSS("text-decoration-line", "underline");
-  await cited.scrollIntoViewIfNeeded();
-  if (info.project.name === "phone") await cited.tap();
-  else await cited.click();
+  await press(cited);
   await expect(page).toHaveURL(/\/projects\/alpha\/tasks\/dock-\d+$/);
-  const task = page.getByRole("heading", { name: title, exact: true }).first();
-  await walk.state("02-cited-task-opens-in-place", { visible: [task], hidden: [heading] });
-
+  await walk.state("09-cited-task-opens-in-place", {
+    visible: [page.getByRole("heading", { name: title, exact: true }).first()],
+    hidden: [reask],
+  });
   await page.goBack();
   await expect(page).toHaveURL(/\/projects\/alpha$/);
-  await walk.state("03-back-returns-to-the-conversation", { visible: [heading, first, dropped], hidden: [] });
+  await expect(reask).toBeVisible();
+
+  // Needs you lists both cards under Suggestions, newest first, without Details; the header opens the card in chat.
+  await walk.open("/");
+  const suggestions = page.getByRole("region", { name: "Suggestions", exact: true });
+  const listed = suggestions.locator("article.irc");
+  await walk.state("10-needs-you-suggestions", {
+    visible: [suggestions.getByRole("heading", { name: "Suggestions" }), listed.first(), listed.last(),
+      listed.first().getByText("Accepted · L3 is opening a task", { exact: true })],
+    hidden: [suggestions.getByRole("button", { name: "Details", exact: true })],
+  });
+  await expect(listed).toHaveCount(2);
+  await expect(listed.last().getByRole("region", { name: "2. Crane slots are renamed by hand" })).toBeVisible();
+  await press(listed.last().getByRole("link", { name: "Improvement suggestions", exact: true }));
+  await expect(page).toHaveURL(/\/projects\/alpha#improvement-[0-9a-f]{12}$/);
+  await walk.state("11-card-opened-from-needs-you", { visible: [earlier, reports], hidden: [suggestions] });
+  await expect(earlier).toBeInViewport();
+
+  // Stop: a failed press says so beside the line; a saved one ends the review with its line.
+  const stopFails = await hold(page, (route) => route.fulfill({ status: 500, contentType: "application/json", body: '{"error":"fictional failure"}' }));
+  await running.scrollIntoViewIfNeeded();
+  await press(stop);
+  await expect(running.getByRole("status", { name: "Stopping" })).toBeVisible();
+  await stopFails();
+  await walk.state("12-stop-not-saved", {
+    visible: [running.getByText("Not stopped. Try again.", { exact: true }), stop],
+    hidden: [running.getByRole("status", { name: "Stopping" })],
+  });
+  await press(stop);
+  await walk.state("13-stopped-by-you", {
+    visible: [chat.getByText("Improvement suggestions stopped by you", { exact: true })],
+    hidden: [running, stop],
+  });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });

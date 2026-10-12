@@ -2111,6 +2111,65 @@ button.choice-button::after { content: ""; position: absolute; left: -1px; right
 .sys-group .sys-line::after {
   display: none;
 }
+/* ---- Improvement suggestions (improvement-review/PROPOSAL.md): one card per posted review, never a filled button. ---- */
+.irc {
+  display: flex;
+  flex-direction: column;
+  padding: 14px 18px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  color: var(--text-primary);
+}
+.irc-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.irc-name { margin: 0; font-size: 15px; font-weight: 600; }
+a.irc-name { color: var(--accent-text); text-decoration: underline; text-underline-offset: 2px; }
+.irc-time { flex: none; font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.irc-window { margin: 2px 0 0; font-size: 13px; color: var(--text-muted); }
+.irc-sg { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--hairline); }
+.irc-sg > div { display: flex; }
+.irc-title { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.irc-text { margin: 0; font-size: 14px; line-height: 1.55; color: var(--text-secondary); overflow-wrap: anywhere; }
+.irc-meta { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-muted); overflow-wrap: anywhere; }
+.irc-meta a { color: var(--text-primary); text-decoration: underline; text-underline-offset: 2px; }
+.irc-sg[data-folded] { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.irc-sg[data-folded] .irc-title { font-size: 14px; font-weight: 500; color: var(--text-muted); }
+.irc-actions { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.irc-actions .btn { position: relative; }
+.irc-make { border-color: var(--accent); color: var(--accent-text); }
+.irc-make:not(:disabled):hover { background: var(--accent-tint); }
+.irc-dismiss { border-color: transparent; background: none; color: var(--text-secondary); }
+.irc-dismiss:not(:disabled):hover { background: var(--hairline); }
+/* A saving press keeps its width: the spinner sits over the hidden label. */
+.irc-actions .btn[aria-busy] .irc-label { visibility: hidden; }
+.irc-actions .btn[aria-busy] .spinner { position: absolute; inset: 0; margin: auto; }
+.irc-actions .btn:disabled { opacity: 1; }
+.irc-actions .btn[data-dim] { opacity: 0.45; }
+.irc-accepted { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; font-size: 13px; color: var(--success-text); }
+.irc-retry, .irc-error { margin-top: 2px; }
+.irc-error { font-size: 13px; }
+.irc-sg .turn-tasks { margin-top: 4px; }
+.irc-foot { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--hairline); font-size: 12px; }
+.irc-foot > .link { color: var(--text-secondary); }
+.irc-details {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 12px;
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--page);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+.irc-details > div { display: contents; }
+.irc-details dt { color: var(--text-muted); }
+.irc-details dd { margin: 0; overflow-wrap: anywhere; }
+.irc-ending .irc-details { max-width: 560px; margin: 8px auto 0; }
+.sys-line .spinner { width: 12px; height: 12px; }
+.needs-suggestions { display: flex; max-width: 720px; flex-direction: column; gap: 12px; margin-top: 8px; }
+.needs-suggestions-label { margin: 0; font-size: 13px; color: var(--text-muted); }
 .sys-card {
   padding: 12px 14px;
   border: 1px solid var(--hairline);

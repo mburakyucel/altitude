@@ -1723,8 +1723,8 @@ and [CLI times](CLI.md#times).
 
 The approved [improvement suggestions design](../design/wireframes/improvement-review/PROPOSAL.md)
 reads one project's finished work and proposes at most three fixes. A review runs when the operator
-asks L3 for one in the Altitude project's chat; the card, Needs you, settings and the Monday schedule
-are later rollout steps.
+asks L3 for one in the Altitude project's chat; settings and the Monday schedule are later rollout
+steps.
 
 `improve.py` builds the evidence in code. Signals are exact, versioned predicates over existing task
 records (`SIGNALS_VERSION`): question revisions with no operator message since the previous one,
@@ -1788,8 +1788,8 @@ named by the run (trigger `improvement`); the record is saved first, and a retri
 tick writes a line a restart interrupted, once. Keeping none ends the run with the nothing-to-suggest line. No suggestions, a
 failed call, and a deadline passed while reading ("it was interrupted by a restart") or checking ("L3
 did not finish checking") each end the run with one line. `alt improve stop` during the operator's chat
-turn stops a reading or checking run; its answer is discarded and its queued check removed. Nothing
-retries.
+turn, or the Stop press, stops a reading or checking run: its answer is discarded, its queued check
+removed and its line says the operator stopped it. Nothing retries.
 
 `alt improve resolve <run>/<n> accepted|dismissed --reason` records the operator's typed answer during
 the chat turn of their message, which must follow the post and name a number it showed. Undecided
@@ -1798,6 +1798,25 @@ read) become accepted; accepted is final. The same message and outcome return th
 a change needs a newer operator message than the recorded answer's.
 `alt task new --improvement <run>/<n>` creates the one task for an accepted suggestion and records it
 on the task, so a second is refused.
+
+The web reads the runs with the project (`improvements`, from `improve.view`), never from a copy in
+chat. A reading or checking run is a line with Stop. An ending is a line with Show, opening its
+details. A posted run is one card at its chat row: each shown suggestion with its target, explanation,
+Seen in (each cited task once, opening in place, then the project chat), the count of its signal
+across the run's tasks, and its state. Details name what was read and left out, L3's drops, the model,
+its usage of the call's token limit and when it ran. The presses go to `POST /api/improve` with a
+request id: Make a task (`accept`) and Dismiss on an undecided suggestion, Undo on a dismissed one
+until it lapses, Try again (`retry`) and Stop, which names the run its line showed. A request id makes
+one press in the project: the same press again returns its receipt and any other is refused. A press
+the record no longer allows is refused (409) and the card shows the fresh record. Make a task records the
+acceptance with the press as its authority and queues one L3 turn (trigger `improvement-task`) naming
+only the suggestion; L3 checks its cited places and creates its task. While that turn, or the chat turn
+of a typed acceptance, is queued or running (`l3.pending`), the suggestion reads "L3 is opening a
+task"; when it ended without a task, Try again queues the same turn once more, refused when another Try
+again queued it first. The overview lists under
+`suggestions` every posted run with a suggestion undecided or accepted without its task; Needs you
+shows them under Suggestions, newest first, after what needs the operator and not counted with it,
+each heading linking to its card in the project's chat.
 
 `improve_eval.py` loads fictional scenarios from `tests/fixtures/improvement/` as ordinary task
 folders and project chat, runs the same prompt builder and reviewer, matches suggestions to planted

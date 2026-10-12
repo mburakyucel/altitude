@@ -210,7 +210,7 @@ def improvement_review(prompt: str, instructions: str, schema: dict, *, model: s
     except ValueError as exc:
         return {**result, "error": str(exc)}
     if installation("claude").get("available") is False or usage_hold():
-        return {**result, "error": f"{model} is unavailable"}
+        return {**result, "error": f"{config.model_label(model)} is unavailable"}
     cmd = [config.CLAUDE_BIN, "--print", "--output-format", "stream-json", "--verbose", "--safe-mode",
            "--no-session-persistence", "--tools", "", "--strict-mcp-config", "--model", model,
            "--system-prompt", instructions, "--json-schema", schema_text, "--max-budget-usd", str(budget)]
