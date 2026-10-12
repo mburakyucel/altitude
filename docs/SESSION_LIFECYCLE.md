@@ -740,7 +740,9 @@ Every terminal result reaches only the originating L3, including unchanged failu
 a concrete next step and gives a concise heads-up for significant stalled work. Repeated observations
 stay quiet; a finished probe schedules no further CI check. A changed block,
 attempt or lifecycle request invalidates the probe. Fault, questions, hold and provider ownership
-stay intact; probing does not resume implementation. See [bounds and evidence](CLI.md#durable-ci-recheck).
+stay intact; probing does not resume implementation. L3 reports schedules in project chat without
+waking the owner merely to acknowledge registration; necessary lifecycle changes require a truthful
+replacement next action. See [scheduling, bounds and evidence](CLI.md#durable-ci-recheck).
 
 The owner applies the operator's task-chat approval of a held PR with `alt land --merge --approval`;
 L3 applies a project-chat approval through [`hold-merge --approval`](CLI.md#recorded-merge-approval).

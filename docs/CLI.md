@@ -186,6 +186,14 @@ The saved `ci_recheck` names its status, next action/time, evidence and delivery
 registration retries return the same receipt; another active probe refuses replacement. L2 asks L3
 to register the probe. Registration starts no worker and needs no free worker slot.
 
+Report a scheduling acknowledgement in project chat or retain it in project tracking, without
+`alt task message` to the blocked owner. An ordinary coordinator message wakes a question-blocked
+owner and invalidates the registered probe. If necessary owner coordination changes lifecycle,
+the old schedule no longer promises observation: name the next actor and trigger. If the owner
+blocks again on pending CI, register a new probe against that block and verify its saved next
+action/time before reporting the replacement schedule. Stop, attempt/session identity, questions
+and merge holds retain their existing rules; scheduling supplies no resume or approval authority.
+
 An owner's ordinary block gets a wait, so the recheck observes and never makes a failed run green.
 For a failed flaky shard, the owner first reruns the failed jobs on the same head
 (`gh run rerun --failed <run>`), and asks for a recheck only while that rerun is queued or running.
