@@ -623,14 +623,15 @@ test("the L3 model button: Auto, the Models dialog on L3, the choice posts and i
   ]);
 });
 
-/** Chromium's fake microphone, which the test can hold while it opens (`window.fixtureMicGate`). */
+/** The browser's fake microphone, which the test can hold while it opens (`window.fixtureMicGate`). On the
+ * prototype: WebKit can collect navigator.mediaDevices' wrapper, and an override on it. */
 const FAKE_MIC = `
-  const open = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-  Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
+  const open = MediaDevices.prototype.getUserMedia;
+  Object.defineProperty(MediaDevices.prototype, "getUserMedia", {
     configurable: true,
-    value: async (constraints) => {
+    value: async function (constraints) {
       await window.fixtureMicGate;
-      return open(constraints);
+      return open.call(this, constraints);
     },
   });
 `;

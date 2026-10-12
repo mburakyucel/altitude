@@ -714,10 +714,26 @@ def request_project_setup(project: str, action: str, *, actor: str, expected: st
                           reason: str = "Project setup") -> dict:
     result = project_setup.request(project, action, actor=actor, expected=expected, reason=reason)
     try:
-        spawn(f"setup:{project}", project_setup.run, project)
+        spawn(f"setup:{project}", run_project_setup, project)
     except Exception as exc:
         log(f"[{project}] setup request saved; immediate wake failed: {exc}")
     return result
+
+
+def run_project_setup(project: str) -> None:
+    """Run accepted setup operations until none is newly pending. A request accepted while the previous run
+    is finishing finds that run alive, so the run takes it up before it exits instead of losing its wake."""
+    key = f"setup:{project}"
+    while True:
+        seen = (project_setup.read(project).get("operation") or {}).get("id")
+        project_setup.run(project)
+        with _bg_guard:
+            operation = project_setup.read(project).get("operation") or {}
+            if operation.get("state") == "pending" and operation.get("id") != seen:
+                continue
+            if _bg.get(key) is threading.current_thread():
+                _bg.pop(key, None)
+            return
 
 
 def restart_notice() -> None:

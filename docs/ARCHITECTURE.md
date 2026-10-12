@@ -507,7 +507,8 @@ storage under a nonblocking operation-lock probe. Changed records trigger one fr
 an acquired lock stays held through that inspection so repair cannot invalidate its receipts.
 A still-running record under the free lock exposes an interrupted runner; a busy runner remains
 checking. Only the runner waits for the lock: a read in flight delays an accepted repair rather
-than losing its wake. Retry rechecks completed effects before writing.
+than losing its wake, and a request accepted while the previous run is finishing runs before that
+runner exits. Retry rechecks completed effects before writing.
 Pending, running, created, reused, not-applicable, failed and input-needed results come from
 observed work. A queued notification or saved start request never proves an agent is running.
 Recorded task worktrees expose their own hook overrides; inherited healthy guards share the
@@ -854,7 +855,8 @@ actor, reason and outcome. The project setting serves both L3 and fresh L2 routi
 explicit pin or existing L2 attempt. The L2 provider priority (`--l2-preference <engine>`, or
 Auto with `--unset-l2-preference`, also in the project's Settings page) lifts one engine's options
 above the others for fresh L2 only; L3 keeps the tiers as written. `--l2-engine`/`--l3-engine` (Only)
-keep a role on one engine and `--l3-choice` sets L3's model choice. [CLI examples](CLI.md#automatic-routing-preferences) cover
+keep a role on one engine and `--l3-choice` sets L3's model choice; saving either L3 setting releases
+the other when they name different engines and records the release. [CLI examples](CLI.md#automatic-routing-preferences) cover
 single-model accounts, different orders and ties, and the provider priority.
 
 Project removal is L3 detachment: one operator action through `config.remove_project`, shared by

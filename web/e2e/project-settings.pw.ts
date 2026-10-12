@@ -136,10 +136,28 @@ test("the L3 choice and L3 routing save from Settings, read back and return to A
   await expect.poll(async () => (await defaults(request, project.name)).l3_engine).toBe(engine.value);
   await page.reload();
   await expect(routing).toHaveValue(`only:${engine.value}`);
-  await routing.selectOption("");
-  await expect.poll(async () => (await defaults(request, project.name)).l3_engine).toBeNull();
+  await expect(l3.getByText(model.label, { exact: true })).toBeVisible();
 
-  await walk.state("05-back-to-auto", {
+  // The choice and Only never name different engines: the newer save releases the other.
+  const other = initial.engines.find((e) => e.value !== engine.value)!;
+  await walk.state("05-only-elsewhere-clears-the-choice", {
+    action: () => routing.selectOption(`only:${other.value}`),
+    visible: [l3.getByText("Auto", { exact: true })], hidden: [back],
+  });
+  expect(await defaults(request, project.name)).toMatchObject({ l3_engine: other.value, l3_choice: null });
+  const note = dialog.getByText(`L3 is Only ${other.label} here. Using ${model.label} sets L3 routing back to Auto.`, { exact: true });
+  await l3.getByRole("button", { name: "Change…", exact: true }).click();
+  await walk.state("06-models-says-only-ends", {
+    action: () => dialog.getByRole("radio", { name: new RegExp(`^${model.label}`) }).check(), visible: [note], hidden: [],
+  });
+  await walk.state("07-choice-sets-routing-auto", {
+    action: () => dialog.getByRole("button", { name: `Use for L3 in ${project.name}`, exact: true }).click(),
+    visible: [l3.getByText(model.label, { exact: true }), back], hidden: [dialog],
+  });
+  await expect(routing).toHaveValue("");
+  expect(await defaults(request, project.name)).toMatchObject({ l3_engine: null, l3_choice: { engine: model.engine, model: model.model } });
+
+  await walk.state("08-back-to-auto", {
     action: () => back.click(), visible: [l3.getByText("Auto", { exact: true })], hidden: [back],
   });
   expect((await defaults(request, project.name)).l3_choice).toBeNull();

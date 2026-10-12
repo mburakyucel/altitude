@@ -792,7 +792,7 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
 
         def started(_key, _fn, project):
             self.assertEqual(project, name)
-            if _fn is server.project_setup.run:
+            if _fn is server.run_project_setup:
                 _fn(project)
                 return True
             self.assertTrue(l3.verb_socket_path(name).is_socket(),
