@@ -3,6 +3,7 @@
 
     python3 scripts/installation_macos_vm.py image [--step]
     python3 scripts/installation_macos_vm.py run RESULTS_DIR [--source REF] [--phase PHASE]
+    python3 scripts/installation_macos_vm.py run RESULTS_DIR --published BASELINE..CANDIDATE
     python3 scripts/installation_macos_vm.py clean
 
 `image` builds the guests once, from Apple's restore image for the newest macOS this Mac supports: `fresh`, a new
@@ -16,8 +17,11 @@ an image, checks that its network reaches the internet and a listener on this Ma
 that neither answers, then runs the release's install.sh through its public `curl … | sh` command against a server on
 the guest's loopback that answers for github.com. `fresh` must stop for the missing Python; `prerequisites` must stop
 for OpenSSL 3 not being first on PATH and, for a second account with no desktop session, for the missing session.
-Each refused attempt must leave the account's files and launchd jobs as they were. The clone is deleted afterwards,
-also after a failure or a stop. RESULTS_DIR/macos-vm.json records the outcome.
+Each refused attempt must leave the account's files and launchd jobs as they were. `privacy` runs the revision's own
+platform_probe.py confinement rows as the logged-in account in a guest whose Python was never asked for access to a
+private place. `--published` downloads two published releases on this Mac, checked against their SHA256SUMS and tags,
+and runs only `published`: the baseline's own daemon must install the candidate and keep the state made through the
+app. The clone is deleted afterwards, also after a failure or a stop. RESULTS_DIR/macos-vm.json records the outcome.
 
 The host reaches a guest only through the Virtualization framework's host-guest socket, relayed to the guest's sshd.
 Everything lives in ~/.cache/altitude-installation-vm/macos; nothing runs as root on this Mac. One guest runs at a
@@ -49,6 +53,9 @@ import time
 import uuid
 
 SCRIPTS = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPTS.parent))
+from scripts.installation_vm import published, release_version, repository  # noqa: E402 (shared with the Linux lane)
+
 CACHE = Path.home() / ".cache/altitude-installation-vm/macos"
 HELPER = CACHE / "bin/macos_vm"
 IMAGES, RESTORE, RUNS = CACHE / "images", CACHE / "restore", CACHE / "runs"
@@ -789,12 +796,12 @@ def add_github_cli(guest: Guest, record: dict) -> None:
     record["github_cli"] = guest.ssh("zsh -lc 'gh --version'").stdout.splitlines()[0]
 
 
-def phase_fresh(guest: Guest, repository: str, results: Path, record: dict, release: Path, commit: str) -> None:
+def phase_fresh(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
     record["prerequisites"] = prerequisites(guest)
     record["cases"] = {"missing-python": judged(attempt(guest, repository, ACCOUNT, results, "missing-python"), "missing-python")}
 
 
-def phase_prerequisites(guest: Guest, repository: str, results: Path, record: dict, release: Path, commit: str) -> None:
+def phase_prerequisites(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
     record["prerequisites"] = prerequisites(guest)
     cases = record["cases"] = {}
     cases["openssl-not-first"] = judged(attempt(guest, repository, ACCOUNT, results, "openssl-not-first"), "openssl-not-first")
@@ -821,16 +828,30 @@ log show --last 10m --style compact --predicate "eventMessage CONTAINS '$label'"
 """
 
 
-def phase_lifecycle(guest: Guest, repository: str, results: Path, record: dict, release: Path, commit: str) -> None:
+def phase_lifecycle(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
     """installation_lifecycle.py's `mac` phase, as installation_mac.py runs it on a configured Mac, in this fresh guest:
     install through the public command, health, doctor, the daemon's automatic installation of a newer stable release
     with no browser terminal open, with automatic updates off a release that waits for `alt update` and then the app's
     Update button, a failed automatic update rolled back and not retried, and uninstall, under a throwaway HOME of the
     account."""
+    lifecycle(guest, results, record, inputs / "release", inputs / "release", commit, "mac", "lifecycle")
+
+
+def phase_published(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commits: str) -> None:
+    """installation_lifecycle.py's `mac-published` phase under a throwaway HOME of the account: the published baseline
+    installed through its public command, a paired device and a machine setting made through the app, then the
+    baseline's own daemon installing the published candidate, which must keep them and read them."""
+    lifecycle(guest, results, record, inputs / "baseline", inputs / "candidate", commits, "mac-published", "published")
+
+
+def lifecycle(guest: Guest, results: Path, record: dict, baseline: Path, candidate: Path, commits: str, phase: str,
+              case: str) -> None:
+    """An installation_lifecycle.py phase in installation_mac.py's clean environment; its results join the record."""
     fix_openssl(guest)
     add_github_cli(guest, record)
     record["prerequisites"] = prerequisites(guest)
-    guest.copy(release, f"{SHARED}/release")
+    guest.copy(baseline, f"{SHARED}/baseline")
+    guest.copy(candidate, f"{SHARED}/candidate")
     guest.copy(SCRIPTS / "installation_lifecycle.py", f"{SHARED}/installation_lifecycle.py")
     (results / "diagnose.sh").write_text(DIAGNOSE)
     guest.copy(results / "diagnose.sh", f"{SHARED}/diagnose.sh")
@@ -839,27 +860,27 @@ def phase_lifecycle(guest: Guest, repository: str, results: Path, record: dict, 
               f'mkdir -m 700 "$work" "$work/home" && mkdir "$work/home/results" && cd "$work/home" && '
               f'env -i HOME="$work/home" USER={ACCOUNT} LOGNAME={ACCOUNT} SHELL=/bin/zsh LANG=en_US.UTF-8 TMPDIR="$temp" '
               f'PATH="$(/opt/homebrew/bin/brew --prefix openssl@3)/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" '
-              f'/opt/homebrew/bin/python3.12 -I -B {SHARED}/installation_lifecycle.py {SHARED}/release {SHARED}/release '
-              f'"$work/home/results" {commit} mac; code=$?; cp -R "$work/home/results" {SHARED}/lifecycle; '
+              f'/opt/homebrew/bin/python3.12 -I -B {SHARED}/installation_lifecycle.py {SHARED}/baseline {SHARED}/candidate '
+              f'"$work/home/results" {commits} {phase}; code=$?; cp -R "$work/home/results" {SHARED}/lifecycle; '
               f'cp -R "$work/home/Library/Logs" {SHARED}/lifecycle/logs 2>/dev/null; '
               f'[ $code = 0 ] || sh {SHARED}/diagnose.sh "$work/home" {SHARED}/lifecycle; exit $code')
     result = guest.ssh(script, timeout=480, check=False)
     (results / "lifecycle.log").write_text(result.stdout + result.stderr)
     guest.fetch(f"{SHARED}/lifecycle", results / "lifecycle")
     outcome = json.loads((results / "lifecycle/result.json").read_text())
-    record["cases"] = {"lifecycle": {"exit": result.returncode, "passed": result.returncode == 0 and outcome["passed"],
+    record["cases"] = {case: {"exit": result.returncode, "passed": result.returncode == 0 and outcome["passed"],
                                      "steps": [step["step"] for step in outcome["steps"]], "limits": outcome["limits"],
                                      **({"error": outcome["error"]} if "error" in outcome else {})}}
 
 
-def phase_login(guest: Guest, repository: str, results: Path, record: dict, release: Path, commit: str) -> None:
+def phase_login(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
     """The account's own installation through the public command, its LaunchAgent started again by the automatic login
     after the guest restarts, and its uninstall."""
     fix_openssl(guest)
     add_github_cli(guest, record)
     record["prerequisites"] = prerequisites(guest)
     steps = record["steps"] = []
-    version = re.search(r"^VERSION='([^']+)'", (release / "install.sh").read_text(), re.M).group(1)
+    version = re.search(r"^VERSION='([^']+)'", (inputs / "release/install.sh").read_text(), re.M).group(1)
     agent = f"/Users/{ACCOUNT}/Library/LaunchAgents/{SERVICE_LABEL}.plist"
     alt = f"/Users/{ACCOUNT}/.local/bin/alt"
 
@@ -920,10 +941,37 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, rele
                                  "pids": [before["pid"], after["pid"]]}}
 
 
-PHASES = {"fresh": phase_fresh, "prerequisites": phase_prerequisites, "lifecycle": phase_lifecycle, "login": phase_login}
+# The confinement rows that must refuse private places without macOS asking, and how their details say so.
+PRIVACY_ROWS, REFUSED = ("confinement", "validation-confinement"), \
+    "the Desktop and mounted volumes are refused with no consent request in the privacy log"
 
 
-def build(commit: str, work: Path, log: Path) -> Path:
+def phase_privacy(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
+    """platform_probe.py's confinement rows from the revision's own files, run by the logged-in account outside any
+    sandbox in a guest whose Python was never asked for access to a private place: a worker's and a validation run's
+    profiles must refuse the Desktop and mounted volumes before macOS asks, so its privacy log shows no request."""
+    guest.copy(inputs / "source.tar", f"{SHARED}/source.tar")
+    command = (f"mkdir {SHARED}/source && tar -xf {SHARED}/source.tar -C {SHARED}/source && cd {SHARED}/source && "
+               f"/opt/homebrew/bin/python3.12 -B scripts/platform_probe.py --only {' '.join(PRIVACY_ROWS)}")
+    result = guest.ssh(command, timeout=300, check=False)
+    (results / "privacy.log").write_text(f"$ {command}\n# exit {result.returncode}\n{result.stdout}{result.stderr}")
+    try:
+        rows = json.loads(result.stdout)["rows"]
+    except (ValueError, KeyError):
+        rows = []
+    record["python"] = guest.ssh("/opt/homebrew/bin/python3.12 --version").stdout.strip()
+    record["cases"] = {"privacy": {"exit": result.returncode, "rows": rows, "passed": result.returncode == 0 and sorted(
+        row["row"] for row in rows) == sorted(PRIVACY_ROWS) and all(row["state"] == "pass" and REFUSED in row["detail"]
+                                                                    for row in rows)}}
+
+
+# `fresh` starts from the fresh image, every other phase from prerequisites; `published` runs only with --published.
+PHASES = {"fresh": phase_fresh, "prerequisites": phase_prerequisites, "lifecycle": phase_lifecycle, "login": phase_login,
+          "privacy": phase_privacy, "published": phase_published}
+BUILT = ("fresh", "prerequisites", "lifecycle", "login")  # the phases that install the release built from the source
+
+
+def build(commit: str, work: Path, log: Path) -> None:
     """The release, built in `work` with packages already in this Mac's pnpm store; the build downloads nothing."""
     temp = work / "tmp"
     temp.mkdir()
@@ -933,10 +981,9 @@ def build(commit: str, work: Path, log: Path) -> Path:
         subprocess.run([sys.executable, "-B", str(SCRIPTS / "build_release.py"), "--version", "v0.0.1",
                         "--output", str(work / "release"), "--source", commit], stdout=stream, stderr=subprocess.STDOUT,
                        env=environment, check=True, timeout=300)
-    return work / "release"
 
 
-def run_phase(name: str, release: Path, results: Path, record: dict) -> None:
+def run_phase(name: str, inputs: Path, results: Path, record: dict, commits: str) -> None:
     source = IMAGES / ("fresh" if name == "fresh" else "prerequisites")
     if not source.is_dir():
         raise Stop(f"the {name} guest is not built; run `installation_macos_vm.py image` first")
@@ -955,17 +1002,20 @@ def run_phase(name: str, release: Path, results: Path, record: dict) -> None:
         phase["guest"] = guest.ssh("sw_vers -productVersion; sw_vers -buildVersion").stdout.split()
         note(f"{name}: checking the guest's network, then unplugging it")
         isolate(guest, phase)
-        serve = work / "serve"
-        serve.mkdir()
-        certificates(serve)
-        repository = release_tree(release, serve)
         guest.ssh(f"sudo -n mkdir -p {SHARED} && sudo -n chown {ACCOUNT} {SHARED}")
-        for name_ in ("root", "ca.pem", "server.pem", "server.key"):
-            guest.copy(serve / name_, f"{SHARED}/{name_}")
-        guest.ssh(f"chmod -R a+rX {SHARED}")
-        guest.ssh(SERVE)
-        note(f"{name}: running the installer")
-        PHASES[name](guest, repository, folder, phase, release, record["source_commit"])
+        repository = None
+        if (inputs / "release").is_dir():
+            # The built release, answered as github.com on the guest's loopback.
+            serve = work / "serve"
+            serve.mkdir()
+            certificates(serve)
+            repository = release_tree(inputs / "release", serve)
+            for name_ in ("root", "ca.pem", "server.pem", "server.key"):
+                guest.copy(serve / name_, f"{SHARED}/{name_}")
+            guest.ssh(f"chmod -R a+rX {SHARED}")
+            guest.ssh(SERVE)
+        note(f"{name}: running the phase")
+        PHASES[name](guest, repository, folder, phase, inputs, commits)
         phase["guest_load"] = guest.ssh("sysctl -n vm.loadavg").stdout.split()[1:4]
         phase["reachable"]["after"] = reachable(guest)
         if any(phase["reachable"]["after"].values()):
@@ -984,7 +1034,8 @@ def run_phase(name: str, release: Path, results: Path, record: dict) -> None:
         note(f"{name}: clone deleted; {'passed' if phase['passed'] else 'failed'}")
 
 
-def lane(results: Path, commit: str, phases: list[str]) -> int:
+def lane(results: Path, commit: str | None, phases: list[str], releases: tuple[str, str] | None = None) -> int:
+    """Runs PHASES against COMMIT's release and files, or with RELEASES only `published` from those published tags."""
     results.mkdir(parents=True, exist_ok=True)
     git = lambda *args: run("git", *args, cwd=SCRIPTS.parent).stdout.strip()
     record = {"source_commit": commit, "harness": {"commit": git("rev-parse", "HEAD"),
@@ -997,10 +1048,23 @@ def lane(results: Path, commit: str, phases: list[str]) -> int:
     started = time.monotonic()
     work = Path(tempfile.mkdtemp(prefix="release.", dir=CACHE))
     try:
-        note(f"building the release from {commit[:12]}")
-        release = build(commit, work, results / "build.log")
+        commits = commit
+        if releases:
+            github = repository()
+            for name, tag in zip(("baseline", "candidate"), releases):
+                note(f"downloading the published {tag} as the {name}")
+                try:
+                    record.setdefault("published", {})[name] = published(github, tag, work / name)
+                except SystemExit as error:  # the shared download reports a mismatch this way
+                    raise Stop(str(error)) from None
+            commits = f"{record['published']['baseline']['commit']}..{record['published']['candidate']['commit']}"
+        if set(phases) & set(BUILT):
+            note(f"building the release from {commit[:12]}")
+            build(commit, work, results / "build.log")
+        if "privacy" in phases:
+            run("git", "archive", "-o", work / "source.tar", commit, "altitude", "scripts", cwd=SCRIPTS.parent)
         for name in phases:
-            run_phase(name, release, results, record)
+            run_phase(name, work, results, record, commits)
         record["passed"] = all(record["phases"][name]["passed"] for name in phases)
     except (Stop, subprocess.SubprocessError) as error:
         record["error"] = str(error)
@@ -1034,9 +1098,21 @@ def main() -> int:
     run_parser = commands.add_parser("run", help="run the installer in clones of the guests")
     run_parser.add_argument("results", type=Path)
     run_parser.add_argument("--source", default="HEAD", help="committed revision to build and test (default: HEAD)")
-    run_parser.add_argument("--phase", choices=list(PHASES), action="append", help="run only this phase (repeatable)")
+    run_parser.add_argument("--phase", choices=[name for name in PHASES if name != "published"], action="append",
+                            help="run only this phase (repeatable)")
+    run_parser.add_argument("--published", metavar="BASELINE..CANDIDATE",
+                            help="run only the published phase, updating the published BASELINE to the published CANDIDATE")
     commands.add_parser("clean", help="delete the images, the helper and any leftover clone")
     args = parser.parse_args()
+    releases = None
+    if getattr(args, "published", None):
+        baseline, _, candidate = args.published.partition("..")
+        try:
+            releases = (release_version(baseline), release_version(candidate))
+        except SystemExit as error:
+            parser.error(str(error))
+        if args.phase:
+            parser.error("--published runs only the published phase")
     if sys.platform != "darwin" or platform.machine() != "arm64":
         print("This lane needs a Mac with Apple silicon.", file=sys.stderr)
         return 2
@@ -1050,12 +1126,15 @@ def main() -> int:
             watch_disk()
             if args.command == "image":
                 return image(args.step)
+            if releases:
+                return lane(args.results.resolve(), None, ["published"], releases)
             resolved = subprocess.run(["git", "rev-parse", "--verify", f"{args.source}^{{commit}}"], text=True,
                                       capture_output=True, cwd=SCRIPTS)
             if resolved.returncode:
                 print(f"{args.source} is not a commit in this repository.", file=sys.stderr)
                 return 2
-            return lane(args.results.resolve(), resolved.stdout.strip(), args.phase or list(PHASES))
+            return lane(args.results.resolve(), resolved.stdout.strip(),
+                        args.phase or [name for name in PHASES if name != "published"])
     except Stop as error:
         print(f"Stopped: {error}", file=sys.stderr)
         return 1
