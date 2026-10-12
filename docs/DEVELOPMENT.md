@@ -366,10 +366,14 @@ harness. This sacrifices separate renderer protection; shared Mach and network e
 CPU/memory/process quotas remain limitations. It is neither private/live-content verification nor
 native worker, installation, Simulator or GUI acceptance. Linux validation keeps the container
 and Chromium sandbox. No new operator-facing mode, runtime patch or lifecycle trial is installed.
-The custom runtime preparation and trial route are retired, having never been adopted; their
-historical delivery does not repair the stock runtime's recorded nested metadata limitation.
-[Issue 625](https://github.com/mburakyucel/altitude/issues/625) and native runtime tracking retain that
-separate enforcement concern and original failure evidence.
+The custom runtime preparation and trial route are retired, having never been adopted. Stock Codex's
+Seatbelt rules keep a writable root's protected metadata names (`.git`, `.agents`, `.codex` and the
+like) out of that root's own write rule only, so a broader root admits them: a Codex worker can
+write those names inside its linked worktree's Git directory, which the common Git directory's rule
+covers. Neither Git nor the engines read them there, and the worker writes the common Git directory
+by design; the emitted rules belong to Codex, so Altitude has no seam that changes them.
+[Issue 625](https://github.com/mburakyucel/altitude/issues/625) holds the original evidence and
+native runtime tracking keeps the limitation.
 
 A pass requires the actual daemon receipt's candidate tree/profile identity, native job context
 where applicable, finite browser evidence and successful process/area cleanup. The environment
@@ -522,8 +526,10 @@ one nested in a later folder, as a run's temporary folder is.
 A process under the profile cannot apply another Seatbelt profile, so these do not run in a macOS
 validation run: browsers that keep their own sandbox (see [browser verification](#browser-verification)),
 Altitude's own worker confinement, and launchd jobs. Candidate application journeys there use the
-suites' local-process job fixtures. A macOS run establishes the candidate's behavior on this Mac under
-those fixtures; it does not establish native launchd/Seatbelt worker behavior, installation or provider compatibility.
+suites' local-process job fixtures, and suite cases replace worker confinement at the platform seam,
+so the full suite has the same result in a validation run, inside a confined worker and on Linux.
+A macOS run establishes the candidate's behavior on this Mac under those fixtures; it does not
+establish native launchd/Seatbelt worker behavior, installation or provider compatibility.
 The approved fictional browser lane below establishes only the journeys actually run.
 
 The complete required suite runs in a Mac validation run with its dependencies in the run's own folders:
@@ -535,7 +541,9 @@ alt task validate -- sh -c 'export PLAYWRIGHT_BROWSERS_PATH="$HOME/browsers" MAC
 A Mac shared with running tasks runs the suite several times slower than an idle one, and workers' and
 runs' timers are coalesced there: a 16 ms sleep has been measured at over 100 ms. Suite time limits are
 therefore failure bounds that end a stall, never budgets a passing test has to meet: Vitest allows 30 s
-per test and 10 s per `findBy`/`waitFor`, and walkthrough gestures carry their own touch times. Headless
+per test and 10 s per `findBy`/`waitFor`, and walkthrough gestures carry their own touch times. A case
+whose outcome depends on elapsed time holds its clock still and moves it itself, as the landing
+contention cases and the alert pace case do, and computes relative times when it runs. Headless
 Chromium there has no display to pace its GPU compositor, which stops animation frames after the first,
 so `web/playwright.config.ts` composites in software on macOS, as Chromium does on Linux.
 
