@@ -2605,17 +2605,28 @@ def speech_runtime() -> tuple[str | None, str]:
     unavailable = container_unavailable("Voice")
     if unavailable:
         return None, unavailable
+    python = f"cp{sys.version_info.major}{sys.version_info.minor}"
+    if _darwin() and host_platform.machine() == "arm64":
+        return f"macos-arm64-{python}", ""
     if sys.platform != "linux" or host_platform.machine() not in ("x86_64", "AMD64"):
-        return None, "voice runs on Linux x86_64 only for now"
+        return None, "voice runs on Linux x86_64 and on Macs with Apple silicon"
     libc = (os.confstr("CS_GNU_LIBC_VERSION") or "") if hasattr(os, "confstr") else ""
     match = re.fullmatch(r"glibc (\d+)\.(\d+).*", libc)
     if not match or (int(match[1]), int(match[2])) < (2, 28):
         return None, "voice needs glibc 2.28 or newer"
-    return f"linux-x86_64-cp{sys.version_info.major}{sys.version_info.minor}", ""
+    return f"linux-x86_64-{python}", ""
 
 
 def available_memory() -> int | None:
-    """Bytes of memory available without swapping, or None when the host does not say."""
+    """Bytes of memory available without swapping, or None when the host does not say. macOS gives the share of
+    memory it counts as available; Linux gives MemAvailable."""
+    if _darwin():
+        try:
+            level, total = subprocess.run(["/usr/sbin/sysctl", "-n", "kern.memorystatus_level", "hw.memsize"],
+                                          capture_output=True, text=True, timeout=5, check=True).stdout.split()
+            return int(total) * int(level) // 100
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return None
     try:
         for line in (PROC / "meminfo").read_text().splitlines():
             if line.startswith("MemAvailable:"):

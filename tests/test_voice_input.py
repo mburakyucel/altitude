@@ -18,7 +18,7 @@ class VoiceCase(AltitudeCase):
 
     def runs_here(self, supported: bool):
         self.patch(platform, "speech_runtime",
-                   return_value=("linux-x86_64-cp312", "") if supported else (None, "voice runs on Linux x86_64 only for now"))
+                   return_value=("linux-x86_64-cp312", "") if supported else (None, "voice runs on Linux x86_64 and on Macs with Apple silicon"))
 
 
 class TestVoiceSetting(VoiceCase):

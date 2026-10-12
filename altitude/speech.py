@@ -71,6 +71,26 @@ WHEELS = {
          "numpy-2.5.3-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
          16708577, "a5fa86b80fd24bcd1aff83ad23be44ea323de3f787be8f8b15d4a65621e25321"),
     ],
+    "macos-arm64-cp312": [
+        ("wheels/onnxruntime-1.22.0-cp312-cp312-macosx_13_0_universal2.whl",
+         _PYPI + "4d/de/9162872c6e502e9ac8c99a98a8738b2fab408123d11de55022ac4f92562a/"
+         "onnxruntime-1.22.0-cp312-cp312-macosx_13_0_universal2.whl",
+         34298046, "f3c0380f53c1e72a41b3f4d6af2ccc01df2c17844072233442c3a7e74851ab97"),
+        ("wheels/numpy-2.5.3-cp312-cp312-macosx_14_0_arm64.whl",
+         _PYPI + "9c/59/a312e95696e5f601914dd8b6dd844692ba61670807417e24b68e337b5c70/"
+         "numpy-2.5.3-cp312-cp312-macosx_14_0_arm64.whl",
+         5445405, "a72f874bc9e10e4b8f80426fb49716d5141f64442a0c8418065093ec8017fbb0"),
+    ],
+    "macos-arm64-cp313": [
+        ("wheels/onnxruntime-1.22.0-cp313-cp313-macosx_13_0_universal2.whl",
+         _PYPI + "a9/65/5cb5018d5b0b7cba820d2c4a1d1b02d40df538d49138ba36a509457e4df6/"
+         "onnxruntime-1.22.0-cp313-cp313-macosx_13_0_universal2.whl",
+         34298715, "fe7c051236aae16d8e2e9ffbfc1e115a0cc2450e873a9c4cb75c0cc96c1dae07"),
+        ("wheels/numpy-2.5.3-cp313-cp313-macosx_14_0_arm64.whl",
+         _PYPI + "ab/2a/98282aa5b8f58b1157d440bb6282eed47e3632a5de53a714fbab17e659fe/"
+         "numpy-2.5.3-cp313-cp313-macosx_14_0_arm64.whl",
+         5439695, "f9a2353b37a1a9e78fd82b27ad7e2a32a2d036604d18f02b05e3136c62ca3b09"),
+    ],
 }
 #: The unpacked wheels are about 110 MB; anything far larger is not the pinned content.
 UNPACKED_LIMIT = 400 << 20

@@ -39,7 +39,7 @@ See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](D
   selected engine's sandbox. Installation turns on [lingering](#keep-running-after-logout) so the
   service runs with nobody logged in. Both task integrations launch through transient user units, even
   with a foreground Altitude server. Ubuntu 24.04/Python 3.12 is the CI environment; a broader
-  compatibility matrix is not established. [Host voice](OPERATIONS.md#host-voice) needs x86_64.
+  compatibility matrix is not established. [Host voice](OPERATIONS.md#host-voice) needs x86_64 on Linux.
 - Or macOS 15 or newer, with the account logged in (the screen may stay locked).
   The service is a LaunchAgent of your login and needs no administrator rights. It starts at login,
   so after a restart Altitude is back once someone logs in; macOS offers no way to run it before any
@@ -780,7 +780,7 @@ repair cannot make this choice for you. See the
 | `ALTITUDE_PUSH_CONTACT` | Address a push service may use to reach the sender of decision alerts, default `mailto:altitude@example.com`, which names no one. Set your own `mailto:` address if a device's push service refuses that one. |
 | `ALTITUDE_PRIMARY_ENGINE` | Tie order in the default Auto top tier; project `--routing` overrides those tiers. |
 | `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` | Initial GitHub `owner/repository` that receives Altitude's own sanitized incident issues, for a non-interactive install. Unset by default: incidents stay on this machine. First run or **Settings → Incident reports** replaces it, including turning publishing off; see [incident publication](OPERATIONS.md#incident-publication). |
-| `alt machine set --voice` | Transcription backend: `host` (this computer transcribes live after `alt voice setup`; the default where its model runs) or `browser` (no setup; the default elsewhere, including macOS for now). See [voice input](OPERATIONS.md#voice-input). |
+| `alt machine set --voice` | Transcription backend: `host` (this computer transcribes live after `alt voice setup`; the default where its model runs) or `browser` (no setup; the default elsewhere). See [voice input](OPERATIONS.md#voice-input). |
 
 Quota telemetry is optional. The Monitor shows missing or stale readings rather than assuming
 zero usage. The daemon reads both accounts itself: Codex through its app-server integration and
@@ -805,9 +805,9 @@ wildcard bind is certified for `localhost` only) and arrange firewall/network ac
 server and encrypts traffic, not the person opening it. Existing explicitly configured addresses
 and external certificate directories remain explicit choices. See [operations](OPERATIONS.md)
 for update/recovery and source deployments. Voice input runs on this computer by default where its
-speech model can run: first run offers the one-time download of about 698 MB, checked against the
+speech model can run: first run offers the one-time download of about 700 MB, checked against the
 release (**Set up voice**, **Use browser recognition instead** or **Skip**; see [host voice](OPERATIONS.md#host-voice)).
-Elsewhere, including macOS for now, voice uses the browser's own speech recognition, with English
+Elsewhere, such as an Intel Mac, voice uses the browser's own speech recognition, with English
 punctuated on the device by a model bundled in the archive (see [voice input](OPERATIONS.md#voice-input)).
 Typing remains available without either.
 Choose **Settings → Voice input** from a project’s three dots (or the desktop operator row).

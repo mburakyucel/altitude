@@ -850,7 +850,7 @@ can run the speech model and `browser` elsewhere; `machine show` reports the bac
 [voice input](OPERATIONS.md#voice-input) for what each backend needs and where audio goes.
 
 `alt voice status` reports whether [host voice](OPERATIONS.md#host-voice) can run here and its setup
-state. `alt voice setup` downloads and checks the speech model and its runtime once (about 698 MB),
+state. `alt voice setup` downloads and checks the speech model and its runtime once (about 700 MB),
 printing progress and the final state; `alt voice remove` stops dictation and deletes them. Setup
 and removal are the operator's; agents are refused.
 
