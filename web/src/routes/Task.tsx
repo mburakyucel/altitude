@@ -1026,9 +1026,10 @@ export default function Task() {
   const slug = params["slug"] ?? "";
   const liveRoute = Boolean(useMatch("/projects/:name/tasks/:slug/live"));
   const terminalRoute = Boolean(useMatch("/projects/:name/tasks/:slug/terminal"));
-  const viewMatch = useMatch("/projects/:name/tasks/:slug/view/:shownId/:revision?");
-  const shownId = viewMatch?.params.shownId;
-  const shownRevision = viewMatch?.params.revision;
+  const replyView = useMatch("/projects/:name/tasks/:slug/view/:messageId")?.params;
+  const questionView = useMatch("/projects/:name/tasks/:slug/view/:questionId/:revision")?.params;
+  const shownId = replyView?.messageId ?? questionView?.questionId;
+  const shownRevision = questionView?.revision;
   const shown = useMemo(() => shownId ? { id: shownId, revision: shownRevision } : null, [shownId, shownRevision]);
   const task = useTask(project, slug);
   const overview = useOverview();

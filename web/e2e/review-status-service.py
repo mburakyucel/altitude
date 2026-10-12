@@ -34,12 +34,11 @@ def main():
         folder = worktree / "design" / "wireframes"
         folder.mkdir(parents=True)
         shutil.copyfile(REPO / "docs/images/project-phone.png", folder / "phone.png")
-        (folder / "proposal.md").write_text("Fictional layout proposal for the walkthrough.\n")
+        (folder / "proposal.md").write_text("# Layout proposal\n\nFictional layout proposal for the walkthrough.\n\n![Phone](phone.png)\n")
         T.message("atlas", slug, "l2", "The screenshots show the proposed layout on phone and desktop.")
         T.block("atlas", slug, question, actor="l2", expected_attempt=1, updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE},
                 recommendation="Use the captured layout.", recommendation_label="Use this design",
-                design={"title": f"{title} proposal", "proposal": "design/wireframes/proposal.md",
-                        "images": [{"title": "Phone", "path": "design/wireframes/phone.png"}]})
+                show=["design/wireframes/proposal.md"])
         return slug
 
     def review(slug, subject, findings, dispositions, *, design=None, assessed=True, head=None):
@@ -68,7 +67,7 @@ def main():
     review(settings, "proposal", [finding("contrast", "Muted labels lack contrast"), finding("order", "Model choice comes too late")],
            [{"finding_id": "contrast", "disposition": "fixed", "reason": "Labels use the primary text colour."},
             {"finding_id": "order", "disposition": "dismissed", "reason": "The order follows the existing settings page."}],
-           design=S.load_task("atlas", settings)["questions"][-1]["design"]["id"])
+           design=S.load_task("atlas", settings)["questions"][-1]["shown"]["id"])
     design_question("Compact header", "Build the compact header as shown?")
 
     pagination, worktree = running("Keep pagination stable")
@@ -123,8 +122,7 @@ def main():
         T.block("atlas", settings, f"Build settings layout revision {n} as shown?", actor="l2",
                 expected_attempt=S.load_task("atlas", settings)["attempt"], updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE},
                 recommendation="Use the revised layout.", recommendation_label="Use this design",
-                design={"title": f"Settings layout revision {n}", "proposal": "design/wireframes/proposal.md",
-                        "images": [{"title": "Phone", "path": "design/wireframes/phone.png"}]})
+                show=["design/wireframes/proposal.md"])
 
     fake.on_resume = lambda: threading.Thread(target=revise).start()
     serve()

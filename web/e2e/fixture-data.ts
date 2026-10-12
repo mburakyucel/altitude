@@ -21,5 +21,5 @@ export async function fixtureTask(request: APIRequestContext, name: string) {
   const detail = await request.get(`/api/task/${encodeURIComponent(name)}/${encodeURIComponent(task.slug)}`);
   expect(detail.ok(), "Selected task must still be readable").toBe(true);
   return await detail.json() as { slug: string; title?: string; session_id?: string;
-    question?: { id: string; revision: number; design_url?: string } | null };
+    question?: { id: string; revision: number } | null };
 }

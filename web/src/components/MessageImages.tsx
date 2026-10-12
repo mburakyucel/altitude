@@ -118,6 +118,16 @@ function ImageViewer({ images, start, onClose }: { images: GalleryImage[]; start
       target?.focus({ preventScroll: true });
     };
   }, [opener]);
+  // Arrow keys move between images wherever focus rests, including after the last image's Next button goes away.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      go(index + (event.key === "ArrowRight" ? 1 : -1));
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  });
   // A horizontal swipe changes image unless zoomed, when it pans instead.
   const down = (event: PointerEvent) => { swipe.current = zoomed ? null : { x: event.clientX, y: event.clientY }; };
   const up = (event: PointerEvent) => {
@@ -128,10 +138,7 @@ function ImageViewer({ images, start, onClose }: { images: GalleryImage[]; start
     if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(event.clientY - from.y)) go(index + (dx < 0 ? 1 : -1));
   };
   return createPortal(<dialog ref={dialog} role="dialog" className="image-viewer" aria-label={`Image ${image.name}`} onCancel={(event) => { event.preventDefault(); onClose(); }}
-    onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
-    onKeyDown={(event) => {
-      if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); go(index + (event.key === "ArrowRight" ? 1 : -1)); }
-    }}>
+    onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <div className="image-viewer-header">
       <span>{image.name}</span>
       {images.length > 1 ? <span className="image-viewer-count">{index + 1} / {images.length}</span> : null}
