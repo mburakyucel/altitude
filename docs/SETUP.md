@@ -41,8 +41,9 @@ See the [walkthrough](WALKTHROUGH.md) for the experience and [coverage limits](D
   with a foreground Altitude server. Ubuntu 24.04/Python 3.12 is the CI environment; a broader
   compatibility matrix is not established. [Host voice](OPERATIONS.md#host-voice) needs x86_64.
 - Or macOS 15 or newer, with the account logged in (the screen may stay locked).
-  The service is a LaunchAgent of your login and needs no administrator rights; it starts at login,
-  so a Mac that restarts waits for one login, and running before any login is a later increment.
+  The service is a LaunchAgent of your login and needs no administrator rights. It starts at login,
+  so after a restart Altitude is back once someone logs in; macOS offers no way to run it before any
+  login ([why](#keep-running-after-logout)).
   Put Homebrew's `openssl@3` ahead of `/usr/bin` on PATH (`brew install openssl@3`): macOS's own
   LibreSSL cannot check a certificate's host name. Python 3.12 comes from `brew install python@3.12`
   or python.org, Git from the Xcode command line tools. Each task job runs as its own launchd job,
@@ -186,8 +187,17 @@ sudo loginctl enable-linger <account>
 
 `alt doctor` shows the same in its **runs without a login** row, for a source service too. Updates
 leave lingering as it is, so `loginctl disable-linger` keeps Altitude to your login sessions, and
-uninstalling leaves it on. A Mac is unaffected: its LaunchAgent belongs to your desktop login and
-starts again at the next login.
+uninstalling leaves it on.
+
+On a Mac the LaunchAgent belongs to your desktop login: it keeps running with the screen locked, stops
+at logout and starts again at the next login. After a restart Altitude is back once someone logs in;
+with FileVault on, typing the password at the startup screen is that login. Running before any login
+is a macOS limitation. A service that starts before login has to be installed system-wide by an
+administrator; there it cannot start Altitude's per-task jobs until someone logs in, and even then it
+cannot read the login keychain, where Claude keeps its Mac sign-in and GitHub CLI keeps its own by
+default. With FileVault on, nothing runs at all until the disk is unlocked. Automatic login (Users &
+Groups settings) brings Altitude back unattended, but macOS offers it only with FileVault off, leaving
+the disk readable to anyone holding the Mac.
 
 ### Install by hand
 
