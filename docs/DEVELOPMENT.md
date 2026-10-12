@@ -27,7 +27,7 @@ port with `ALTITUDE_PORT`. Run `alt tls-init`, follow the [certificate trust gui
 then `alt serve` with the same environment. It still needs the systemd user manager, or on macOS the
 logged-in launchd domain, for workers.
 Do not bind an existing service's reserved port or use its runtime state for a preview.
-To run a checkout as the operator's service instead, follow [run from a source checkout](SETUP.md#run-from-a-source-checkout).
+To run a checkout as the operator's service instead, follow [run from a source checkout](OPERATIONS.md#run-from-a-source-checkout).
 
 `make check` runs the full Python suite alongside the ordered web unit, TypeScript/build,
 full Chromium browser suite and headless-shell recovery lane. Each phase retains
@@ -1191,7 +1191,7 @@ make installation-vm RESULTS=/tmp/altitude-vm SOURCE=origin/main BASELINE=v0.1.2
 
 `RECOVERY=1` with a published `BASELINE` runs only the `recovery` phase: the published release's
 installation must fail and leave an interrupted activation that the candidate's installer refuses.
-The phase then runs the cleanup [setup](SETUP.md#install-the-application) gives for that machine
+The phase then runs the cleanup the [`v0.1.0-rc.2` notes](../CHANGELOG.md#v010-rc2--2026-09-29) give for that machine
 (disable and remove the unit, reload systemd, `alt recover`), and the candidate's installer run over
 what is left must start the service and keep its settings, TLS identity and fictional data, then
 uninstall. `v0.1.0-rc.1` is such a

@@ -14,7 +14,7 @@ This is the runtime guide for an already configured installation. New users shou
 [setup](SETUP.md); contributors should use [development and checks](DEVELOPMENT.md).
 A source deployment runs as the user service `make install-service` installs from the checkout: the
 shipped [service unit](../systemd/altitude.service) on Linux, or a LaunchAgent written by
-`scripts/source_launch_agent.py` on a Mac. [Run from a source checkout](SETUP.md#run-from-a-source-checkout)
+`scripts/source_launch_agent.py` on a Mac. [Run from a source checkout](#run-from-a-source-checkout)
 describes its setup, settings and removal. Releases generate their own user service instead.
 
 ## Runtime and inspection
@@ -192,7 +192,7 @@ the line under the alert switch in Needs you names that push service and its rea
 gets no alerts.
 
 - `403 BadJwtToken`: the service rejects the signed sender token, most often its contact address.
-  Set `ALTITUDE_PUSH_CONTACT` to a `mailto:` address with a real domain (see [configuration](SETUP.md#configuration-and-limits)).
+  Set `ALTITUDE_PUSH_CONTACT` to a `mailto:` address with a real domain (see [configuration](#configuration)).
 - `403 VapidPkHashMismatch` or another refusal of the key: turn alerts off and on again on that
   device, which subscribes it with the key Altitude signs with.
 - `404` or `410`: the subscription has ended; altd drops it and the device subscribes again when
@@ -269,6 +269,35 @@ Cleanup failures, ignored obstructions and submodule/nested-repository dirt keep
 retain the snapshot and fault evidence. Legacy `preserved_checkout` stash SHAs stay readable and
 apply with `git stash apply --index <SHA>` in the owner's worktree; existing stashes remain untouched.
 Restart notices retain unresolved faults and require observed resolution before resume.
+
+## Configuration
+
+An installed release saves these settings from the shell that installed it in
+`~/.config/altitude/install.json`, and its service keeps them; a source service takes them from its
+unit or LaunchAgent and the environment. Application versions live under `~/.local/share/altitude`,
+configuration and certificates under `~/.config/altitude`, runtime state under `ALTITUDE_HOME`, and
+project checkouts stay where they are. Keep those directories separate.
+
+| Setting | Purpose |
+| --- | --- |
+| `ALTITUDE_HOME` | Runtime state directory, default `~/.altitude`; use the same value for CLI and server. Keep it out of Git. |
+| `ALTITUDE_ROOTS` | Initial projects folder(s), colon separated, default `~/Projects`: First run lists the folders directly inside. **Settings → Projects folder** or `alt machine set --projects-folder PATH` replaces it with one folder without a restart; `--unset-projects-folder` returns to this value. `project add --path` also supports other folders. |
+| `ALTITUDE_OPERATOR` | Initial name shown for the operator; unset falls back to Git's global `user.name`, and with neither, screens say “you”. First run or **Settings → Your name** stores a name that replaces it; clearing that name returns to this value. |
+| `ALTITUDE_HOST`, `ALTITUDE_PORT`, `ALTITUDE_TLS` | Default `127.0.0.1:8890` over HTTPS. For other devices, bind the specific private address they reach; a wildcard bind is certified for `localhost` only. Explicit source/development HTTP remains available; TLS failures never select it automatically. |
+| `ALTITUDE_TLS_DIR` | Private certificates, default `~/.config/altitude/tls`, outside application/runtime/project writable roots. |
+| `ALTITUDE_SOURCE_BRANCH` | The branch a source service runs and self-deploys, default `main`. The service refuses to start unless its checkout is clean, on this branch and not ahead of `origin/<branch>`; task worktrees still branch from `main`. On a Mac, `make install-service` sets it to the checked-out branch when that is not `main`. |
+| `ALTITUDE_CONFIG` | Installed settings, default `~/.config/altitude/install.json`, outside application/runtime/project directories. CLI overrides are explicit; the generated service pins saved values against its inherited environment. Source checkouts ignore this file. |
+| `CODEX_BIN`, `CLAUDE_BIN` | Engine executable locations. The default locations and role/model settings are in the engine configuration module. |
+| `ALTITUDE_PUSH_CONTACT` | Address a push service may use to reach the sender of decision alerts, default `mailto:altitude@example.com`, which names no one. Set your own `mailto:` address if a device's push service refuses that one. |
+| `ALTITUDE_PRIMARY_ENGINE` | Tie order in the default Auto top tier; project `--routing` overrides those tiers. |
+| `ALTITUDE_UPSTREAM_ISSUE_REPOSITORY` | Initial GitHub `owner/repository` that receives Altitude's own sanitized incident issues, for a non-interactive install. Unset by default: incidents stay on this machine. First run or **Settings → Incident reports** replaces it, including turning publishing off; see [incident publication](#incident-publication). |
+| `alt machine set --voice` | Transcription backend: `host` (this computer transcribes live after `alt voice setup`; the default where its model runs) or `browser` (no setup; the default elsewhere). See [voice input](#voice-input). |
+
+Single-engine Auto and explicit pins are supported; arbitrary provider and access configurations are
+not verified. The launcher filters some engine environment variables and supplies role settings, and
+the Codex coordinator ignores user configuration, including custom provider settings, so an
+interactive API or Bedrock configuration may not carry over to a launched session. See the
+[engine boundary](ARCHITECTURE.md#engine-integration-boundary).
 
 ## Installed application lifecycle
 
@@ -357,6 +386,133 @@ and project worktrees remain. On Linux it leaves the account's lingering on and 
 `loginctl disable-linger` turns it off when nothing else needs it. Updates do not prune prior versions. Removing retained data or
 device trust is a separate deliberate action, not part of uninstall or recovery. Code restoration
 does not roll back data; incompatible state needs the [release recovery procedure](RELEASING.md#recovery).
+
+## Run from a source checkout
+
+A clone of this repository can run Altitude instead of a release: the service runs the checkout's
+committed code and follows a branch of its `origin`, `main` by default, rather than published
+releases. Point `origin` at your fork and check out your own branch to run your own changes. The
+[platform table](ARCHITECTURE.md#linux-and-macos) lists what differs between Linux and a Mac.
+
+You need the [setup prerequisites](SETUP.md#prerequisites), and `python3` on PATH must be Python
+3.12 or newer, since `bin/alt` runs with it. Building the web app also needs a Node version that
+`web/package.json` accepts and the pnpm it pins, through Corepack (`corepack enable pnpm`); the
+service rebuilds the web app itself when it activates a new commit, so its PATH needs them too.
+
+### Clone and build
+
+On Linux the service unit runs the checkout at `~/Projects/altitude`, so clone it there; on a Mac
+any location works.
+
+```sh
+git clone https://github.com/mburakyucel/altitude.git ~/Projects/altitude
+cd ~/Projects/altitude
+make web
+export PATH="$PWD/bin:$PATH"
+alt tls-init
+```
+
+`make web` installs the locked web dependencies and builds `web/dist`. Add the checkout's `bin` to
+PATH in your shell profile as well, so `alt` is this checkout's CLI; do not link it into
+`~/.local/bin`, which belongs to an installed release. `alt tls-init` creates Altitude's
+certificate authority and server certificate in `ALTITUDE_TLS_DIR`, or keeps the identity already
+there, so devices that trust it keep that trust. The service refuses to start without it.
+
+### Install the service
+
+From the checkout, clean and on the branch the service will run:
+
+```sh
+make install-service
+```
+
+It installs Altitude's Git guards in the checkout and starts the service at `https://127.0.0.1:8890`:
+
+- **Linux:** it copies `systemd/altitude.service` to `~/.config/systemd/user/`, then enables and
+  starts it. The unit runs `main` with PATH `~/.local/bin:/usr/local/bin:/usr/bin:/bin`; nvm's
+  default Node is found when Node is missing from that PATH ([noninteractive toolchain](DEVELOPMENT.md#noninteractive-toolchain)).
+  Change the address, PATH or branch with a drop-in from `systemctl --user edit altitude`, for
+  example `Environment=ALTITUDE_HOST=<private address>`, then `systemctl --user restart altitude`.
+- **Mac:** it writes the LaunchAgent `~/Library/LaunchAgents/dev.altitude.altd.plist`, which
+  logs to `~/Library/Logs/altitude/altd.log`. The agent listens on `ALTITUDE_HOST` from the
+  command's environment (default `127.0.0.1`), keeps the PATH the command runs with, which must
+  find OpenSSL 3, `gh`, the coding CLIs and pnpm, and runs the checked-out branch. Run it again to
+  change any of them, for example `ALTITUDE_HOST=<private address> make install-service`.
+
+The service starts only while the checkout is clean, on its branch and not ahead of
+`origin/<branch>` ([`ALTITUDE_SOURCE_BRANCH`](#configuration)). Each start runs the committed code,
+exported under the ignored `.altitude-source/`. `alt service status` and `alt service logs` read it.
+A phone or another computer needs a private address; the target prints the firewall command for
+`ufw`. Continue with [device trust](SETUP.md#trust-https-on-each-device),
+[pairing](SETUP.md#pair-each-device) and [First run](SETUP.md#first-run-in-the-browser).
+
+Both service definitions start with Altitude's sanitized incident reports going to its public
+issue tracker (`ALTITUDE_UPSTREAM_ISSUE_REPOSITORY`). First run's **Report Altitude's own faults?**
+step or **Settings → Incident reports** saves your own choice, including keeping them on this
+computer ([incident publication](#incident-publication)).
+
+### Updates from the branch
+
+Register the checkout as the project named `altitude` (**Add project** on it in First run, or
+`alt project add altitude --path "$PWD"` from the checkout) and the service follows its branch: every
+thirty seconds it fast-forwards the checkout to `origin/<branch>`, then builds, restarts and verifies
+itself at the next quiet point ([service lifecycle](#service-lifecycle)). That project also gets a
+coordinator conversation like any other; its tasks need push access to `origin`. Without that
+registration, update by hand from the checkout:
+
+```sh
+git pull --ff-only
+make restart
+```
+
+`make restart` rebuilds the web app, restarts the service and waits for its API and page to answer;
+it refuses unless the checkout is exactly `origin/<branch>` and Altitude is idle. A bad commit is
+fixed by a revert or fix on the branch, never by resetting the checkout
+([source recovery](RELEASING.md#recovery)).
+
+### Differences from an installed release
+
+- `alt update`, `alt recover`, `alt uninstall`, `alt service start` and `alt service stop` refuse a
+  source deployment, and it neither checks for nor offers new releases.
+- `~/.config/altitude/install.json` (`ALTITUDE_CONFIG`) does not apply: the service takes its
+  settings from its unit or LaunchAgent and the environment.
+- The checkout is a deployment, not a workspace. Its Git guards refuse commits and pushes to `main`,
+  and the service refuses to start or update a dirty, diverged or ahead checkout; develop in another
+  clone or a worktree, push there and let the service fast-forward.
+- The service needs Node and pnpm to rebuild the web app, which a release does not.
+
+### One service per account
+
+A source service and an installed release use the same service name, port 8890, `ALTITUDE_HOME`
+(`~/.altitude`) and TLS directory, so an account runs one of them. `make install-service` replaces
+an existing service definition without asking: run `alt uninstall` first to retire a release,
+which keeps configuration, TLS identity and data for the source service to reuse. The installer
+refuses an existing source service and an `alt` it did not write; remove the source service as
+below and take its `bin` off PATH before installing a release. An older release may not read data
+that newer source code wrote ([recovery](RELEASING.md#recovery)).
+
+### Remove a source service
+
+Finish or stop running tasks first; their workers run in their own jobs and outlive the service.
+On Linux:
+
+```sh
+systemctl --user disable --now altitude
+rm ~/.config/systemd/user/altitude.service
+systemctl --user daemon-reload
+```
+
+On a Mac:
+
+```sh
+launchctl bootout gui/$(id -u)/dev.altitude.altd
+rm ~/Library/LaunchAgents/dev.altitude.altd.plist
+```
+
+The checkout, `ALTITUDE_HOME`, the TLS identity and device trust stay. `git config --unset
+core.hooksPath` in the checkout removes its Git guards, [removing the project](#remove-a-project)
+unregisters it, and each device's certificate manager removes the CA
+([setup](SETUP.md#verify-https-before-pairing)).
 
 ## Service lifecycle
 
