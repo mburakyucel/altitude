@@ -318,8 +318,8 @@ Review-only comparisons, proposal captures, implementation galleries and routine
 outside Git under the [project UI rule](../AGENTS.md#ui). Link the relevant evidence from the PR and
 keep it accessible until review finishes. Use the local HTML report above or retained task artifacts;
 if an upload is unavailable, provide the ignored evidence through an accessible review location.
-Passing tests do not replace a pending visual review or release a merge hold. The task design preview
-is an option only after its delivery and ignored/untracked input handling are verified.
+Passing tests do not replace a pending visual review or release a merge hold. An owner can show
+ignored or untracked captures and specs to the operator with [`--show`](CLI.md#showing-files).
 
 Wireframe renders stay in ignored `design/wireframes/shots/`. The
 [documentation renderer](../design/readme/README.md) also writes to ignored artifacts; only selected

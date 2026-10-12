@@ -1,6 +1,6 @@
 """Write the show-files boards beside this file: python3 design/wireframes/show-files/gen.py
 
-PROPOSAL.md outranks these boards. All content is fictional: a small log viewer called Lumen.
+SPEC.md §3.9.1 outranks these boards. All content is fictional: a small log viewer called Lumen.
 Boards: PhoneConversation, PhoneReader, PhoneStates, DesktopSplit, DesktopSplitEarlier, DesktopQuestion.
 """
 import pathlib

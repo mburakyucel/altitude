@@ -682,23 +682,17 @@ Report handoff closes the prior dilemma without accepting its approach;
 the report review can raise its own question.
 Neither operational resume nor closing an obsolete question approves its abandoned recommendation.
 
-A design question can carry a saved screenshot-and-text proposal. The current owner publishes its
-explicit worktree selection with `alt task block --design-file` in the ordinary question operation;
-publication neither launches a worker nor releases a merge hold. Selected content, including
-ignored or untracked captures, is copied without Git changes before
-the question is persisted. Its fixed image files stay with the task through archival, and the
-captured text and manifest stay in the question. **View preview · saved title** appears in Needs you and the
-owning question. Offscreen-question navigation reaches the question before opening its preview.
-Work opens the owning question from its row.
-The link and viewer use the captured title rather than question-revision numbering to identify the
-proposal or implementation review; older attachments
-remain with their historical questions. It opens in another tab, preserving the original view and
-draft; **Back to question** opens the exact question/revision. Viewing creates no
-message or decision. A replacement capture advances the question revision even when the question
-text is unchanged, so stale controls and earlier conversational answers cannot accept it. First
-acceptance checks saved content integrity; unavailable or altered evidence leaves the decision open.
-Interactive wireframes are shown as captured states, and submitted HTML never executes. See
-[selection bounds and owner commands](CLI.md#task-design-previews).
+A reply or question can show the operator worktree files: a document rendered as GitHub would, and
+images. The current owner names them with `--show` on `alt task reply` or `alt task block`; publication
+neither launches a worker nor releases a merge hold. Named files, including ignored or untracked ones,
+and the document's own pictures are copied without Git changes before the reply or question is
+persisted, and the copies stay with the task through archival. The conversation shows a page card
+or thumbnails; the reader opens beside the conversation on a wide desktop and over it elsewhere, and
+closing it returns to the same place with any unsent message intact. Viewing creates no message or
+decision. Showing changed files advances the question revision even when its text is unchanged, so
+stale controls and earlier answers cannot accept them. First acceptance checks the copies; missing or
+altered copies leave the decision open. No document HTML or script executes. See
+[showing files](CLI.md#showing-files).
 
 File references in saved and arriving task/project prose open a separate read-only browser tab,
 preserving the conversation, draft and worker state. Ordinary underlined links retain their

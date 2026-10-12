@@ -150,7 +150,7 @@ small group; a question link names its durable ID and revision and focuses the o
   reach 44px touch targets.
 - Ordinary use never changes page scale: focusing, typing, switching fields, sending and dismissing the
   keyboard keep the zoom level, so touch layouts render fields at 16px. Manual pinch zoom stays
-  available everywhere, including mocks and design previews.
+  available everywhere, including mocks and the reader.
 - Browser-managed safe areas remain intact. When navigation hides, the composer owns any applicable
   bottom inset once, without the navigation's reserved home-indicator gap above the keyboard.
 - Breakpoint constants live in one place in the web code and are the only place widths are named.
@@ -328,10 +328,10 @@ separate read-only browser tab, retaining the conversation's scroll position and
 wrap. A Markdown angle-bracket destination or percent-encoded file URI supports spaces.
 
 The reader shows filename, full selectable reference, Copy path and current contents. After task
-archival it also identifies the current location. Markdown renders headings, paragraphs, lists,
-bold, links and literal code blocks; a small Raw toggle exposes its exact source. `.txt` stays
-plain text. Embedded HTML and images stay text; opening performs no command execution, automatic
-external-resource fetch, download or native-app launch. The operator approved simple link styling
+archival it also identifies the current location. Markdown renders as in the shown-files reader
+(§3.9.1), where no image is copied, so local images are **Image not shown** boxes and remote ones are
+links; a small Raw toggle exposes its exact source. `.txt` stays plain text. Opening performs no
+command execution, automatic external-resource fetch, download or native-app launch. The operator approved simple link styling
 and bounded task-document access with rendered Markdown on 2026-09-15 Pacific.
 
 | File state | Appearance and interaction |
@@ -952,11 +952,11 @@ box, so whether it was reviewed is visible in Needs you and the conversation wit
 
 | Question | Box |
 | --- | --- |
-| An open proposal approval: a question with a design preview, or one its owner marks as a proposal | **Proposal review** |
+| An open proposal approval: a question showing files, or one its owner marks as a proposal | **Proposal review** |
 | The held PR's **Review before merge** card, or an open operator question naming the held PR | **Implementation review** |
 | Any other question, and a resolved or withdrawn one | none |
 
-The box sits under the question, its **View preview** link or the merge card's detail, above the recommendation. Its
+The box sits under the question, the files it shows or the merge card's detail, above the recommendation. Its
 anatomy follows the task card (§3.5): a 16px state icon, the review's name (14px, 600) over its state
 (13px, muted), and a chevron; bordered, card radius, at least 44px tall, full card width up to 480px.
 Its accessible name is "<name> · <state>". The state reads the latest review of that kind:
@@ -1033,38 +1033,88 @@ question. These conditional buttons float above the composer (§3.10).
 Pending-question reads poll every two seconds. Stale navigation refreshes before acceptance, and
 every write names its exact question revision. Archived tasks retain history without a composer.
 
-#### 3.9.1 Pending design preview
+#### 3.9.1 Shown files
 
-A question with saved design content has a **View preview · saved title** link in Needs you and its owning
-question. When the open question is offscreen, use its floating question jump, then View preview.
-Question navigation follows an open group member with an attachment before another open member,
-including after partial answers. Work's task row opens the exact owning question.
-Links open `/projects/:name/tasks/:slug/design/:questionId/:revision`
-in the same tab. Back (the browser's, the phone header's, or the page's own **← Back** on desktop) returns
-to the place it was opened from: the task conversation with that question in view, or Needs you with
-that card in view. Unsent answers and the task's unsent message are still in place on return. With no
-app history behind the preview (a pasted link or a new tab), Back opens its exact question; the task's
-Back then opens the project conversation, never the preview again.
-The page shows the captured title (identifying proposal or implementation review),
-named screenshots with **Full size** links and captured text. Earlier proposal
-attachments remain with their historical questions. Screenshot links open the fixed image in a browser tab for
-native zoom. There is no added conversation, approval control or permanent task banner.
+An owner shows the operator files from its task worktree (`--show`, [CLI](../../docs/CLI.md#showing-files)):
+at most one document (`.md` or `.txt`) and images. They appear as what they are, under the owner's reply
+text or inside a question card in the conversation and Needs you, never as a text link. Showing is a
+read: it answers no question, releases no hold and changes no question state. Boards:
+[`show-files/`](show-files/) (this section outranks them).
 
-Each version contains explicitly selected PNG/JPEG screenshots and text. HTML simulations are shown
-as captured states; active HTML is never embedded. Changing the working files does not change the
-saved version. A replacement advances the existing question revision, and the prior preview is
-labelled **Earlier preview** with **Open current question**. Question revisions fence identity and
-answers, not displayed proposal numbering. Back with no app history targets the
-exact version inspected. Viewing, opening a full-size screenshot and sending a follow-up leave the
-question unanswered. The existing decision controls record approval; merge holds remain unchanged.
+**Images only.** Thumbnails in one row: 96 px tall on phone, 120 px on desktop, rounded, each cropped
+to its own aspect between 3:4 and 4:3. At most three show; a fourth tile reads **+N** over a dimmed
+thumbnail. Each tile is a button ("Open image timeline.png", the fourth "Open N more images") that
+opens the gallery at that image.
 
-Phone and desktop states are walked in `web/e2e/task-design.pw.ts`: no design means no link;
-**Loading preview…** gives way to content; missing, changed, denied or failed reads show **Design
-unavailable**, **Retry** and Back, with saved content hidden. An image starts at
-**Loading screenshot…**; a failed image hides its preview and full-size control and shows
-**Screenshot unavailable** with **Retry screenshot**. Recovery removes the error/loading text.
-Earlier versions retain their original text and screenshots. Existing conversation listening and
-decision states are reused; the viewer has no microphone, composer or empty publishing form.
+**A document** is one page card, full width on phone and at most 420 px on desktop, bordered with a
+press state: a 120 px cover strip cropped from the document's first copied image (or the first shown
+image) when there is one; a document icon, the file name in bold and a chevron; and two muted lines,
+the document's first heading, an em dash and its first paragraph, cut with an ellipsis. The whole card
+is one link ("Open README.md"). While the reader shows its document on desktop the card carries an
+accent border.
+
+**Versions.** When a later reply or question in the task shows the same document path, the older
+card's cover turns greyscale at reduced opacity with an **Earlier** chip in its top-right corner; name,
+excerpt and chevron keep full contrast, because it still opens. A card without a cover carries the
+chip after its name.
+
+**Reader.** A card opens `/projects/:name/tasks/:slug/view/:messageId` (a reply) or
+`.../view/:questionId/:revision` (a question). The task page stays mounted underneath, so its scroll
+position and unsent message are untouched. On a desktop wide enough for the inline live panel
+(1280 px, §3.10) the reader is a panel of about 55% beside the conversation, in the live panel's place,
+and the conversation stays usable; its header holds a document icon, the file name, a **Newer** pill
+when a later version exists, and a close **×**. On phone and narrower desktops it covers the screen,
+with **×** at the left, the name and **Newer**; the page beneath is inert. Close, Escape and browser
+Back return to the conversation (or Needs you, when opened there); with no app history behind it,
+close opens the task conversation. **Newer** opens the latest version in place, replacing the history
+entry. There is no meta line, path line or Raw toggle: the reader is the document.
+
+Content: images named with `--show` that the document does not embed, each full width with rounded
+corners and an expand badge, then the document. Markdown renders as GitHub does, with its safe HTML
+subset (`<p align="center">`, `<details>`, `<img>`); a `.txt` document is wrapped monospaced text.
+Inside it:
+
+- A copied image renders at its natural width, narrowed to the column, with an expand badge; it is a
+  button ("Open image phone.png") that opens the gallery. Inside a link it keeps the link and has no badge.
+- A remote image is never loaded: an image icon and its alt text (or host) link to the surrounding
+  link or the image, in a new tab.
+- A local image that was not copied is an outlined box, **Image not shown**, with its path in muted
+  monospace.
+- `#heading` links scroll within the reader; web and mail links open a new tab; a relative link to
+  another file is plain text with its target as the tooltip.
+- Wide tables and code scroll inside their own block; the reader never scrolls sideways. Code has no
+  Copy or terminal action. No script, style, frame or form from the document runs or renders.
+
+**Gallery.** The image viewer shows one set's images in order (extra images, then the document's in
+document order), with a quiet **2 / 5** count in its header, **Zoom image** and **Close image**, and
+previous and next arrows at the sides (hidden at the ends). Arrow keys and a horizontal swipe move
+between images; while zoomed a swipe pans instead. The operator's own chat images use the same viewer.
+Opening adds one history entry and moving adds none, so Back, Escape or **Close image** always closes
+the gallery to the exact place it was opened from, and the next Back closes the reader.
+
+| Where | State | What shows |
+| --- | --- | --- |
+| Card | Ready | Cover, icon, name, chevron, excerpt. |
+| Card | Cover or thumbnail loading | A flat grey block of the same size; no text. |
+| Card | Cover failed | The card without its cover strip; it still opens. |
+| Card | Thumbnail failed | The tile becomes a bordered button with a broken-image icon over a circular retry icon ("Retry image timeline.png"), its only control. |
+| Card | Earlier | Greyscale, faded cover with **Earlier**; name, excerpt and chevron at full contrast. |
+| Card | Saved files missing or changed | No cover or chevron, a broken-document icon and **Preview unavailable** under the name; not a control. Previews saved before shown files existed show the same card with their title. |
+| Reader | Loading | A page skeleton (heading bar, text lines, image block), static under reduced motion; "Loading README.md". |
+| Reader | Ready | Header and document. |
+| Reader | Image loading / failed | A grey block at the saved size; on failure an outlined box with a broken-image icon, **Image unavailable** and **Retry**. |
+| Reader | Earlier | **Newer** in the header. |
+| Reader | Unavailable | A broken-document icon, **Preview unavailable**, "It could not be loaded. Try again, or ask in the conversation." and **Retry**; × still closes. |
+| Reader | Denied | A lock icon, **Preview unavailable**, "This device has no access right now." and **Retry**. |
+| Gallery | Open | The image fitted, count, Zoom image, Close image, previous and next. |
+| Gallery | Image loading | The spinner where the image goes; count, arrows and Close stay usable. |
+| Gallery | Image failed | A broken-image icon, **Image unavailable** and **Retry**; arrows and Close stay usable, Zoom is hidden. |
+| Gallery | Zoomed | **Fit image**; a swipe pans; the arrows change image and reset zoom. |
+
+Every phone control is at least 44 px. The reader has no approval control or banner; the question
+card keeps its own. Phone and desktop states are walked in `web/e2e/shown-files.pw.ts`, including an
+adversarial document in the reader and the file reader that fails on any executed script or request
+leaving Altitude's origin.
 
 #### 3.9.2 Validation captures
 
@@ -1217,7 +1267,7 @@ An operator question sits at the end of the chat with no generic Resume while th
 When it is offscreen, **1 question ↓** (or its count) floats above the composer. **Latest ↓** appears
 when newer messages are below the reader. If both lead to the bottom, show only the question jump.
 Each hides when its destination is visible. These labeled, keyboard-accessible 44px buttons occupy
-the conversation's lower corner without reducing its viewport. View preview stays in the question
+the conversation's lower corner without reducing its viewport. Shown files stay in the question
 and Needs you; View question stays in task details, useful from Live session. A held review-ready PR whose owner has stopped
 (#419) shows **Your turn · review before merge** at the end of the chat and in Needs you:
 **Approve merge** sends the operator's own message "Approved: merge PR #N." and the L2 merges
