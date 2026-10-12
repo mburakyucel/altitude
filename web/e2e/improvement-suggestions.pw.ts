@@ -6,7 +6,8 @@ import { walkthrough } from "./walkthrough";
  * Improvement suggestions (design/wireframes/improvement-review/PROPOSAL.md, "Where suggestions appear"): through
  * the real run lifecycle, a posted review is one card in the project's chat with Make a task, Dismiss, Undo and
  * Details; endings are short lines with Show; a running review is a line with Stop; cards still waiting for a
- * decision or a task are listed under Suggestions in Needs you, linking back to the card in the chat.
+ * decision or a task are listed under Suggestions in Needs you, linking back to the card in the chat; settings sum
+ * past runs.
  */
 test.use({ serviceScript: "improvement-suggestions-service.py" });
 
@@ -174,4 +175,15 @@ test("posted cards, endings and the running line take their presses and appear u
     hidden: [running, stop],
   });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+
+  // Settings sum the reviews that posted or found nothing; Latest opens the latest card in chat.
+  await walk.open("/settings/projects/alpha");
+  const area = page.getByRole("region", { name: "Improvement suggestions", exact: true });
+  const past = area.getByText(/^3 runs · 5 suggestions · 1 became a task · 0 dismissed/);
+  await past.scrollIntoViewIfNeeded();
+  await walk.state("14-past-suggestions", { visible: [past, past.getByRole("link", { name: "Latest", exact: true })], hidden: [] });
+  await press(past.getByRole("link", { name: "Latest", exact: true }));
+  await expect(page).toHaveURL(/\/projects\/alpha#improvement-[0-9a-f]{12}$/);
+  await walk.state("15-latest-card-from-settings", { visible: [recent], hidden: [area] });
+  await expect(recent).toBeInViewport();
 });

@@ -594,6 +594,7 @@ export const ImprovementSettingsSchema = z
     line: z.string().optional(),
     now: z.object({ line: z.string(), unavailable: z.string().nullable() }).optional(),
     running: z.object({ id: z.string(), line: z.string() }).optional(),
+    past: z.object({ line: z.string(), latest: z.string().nullable() }).optional(),
   })
   .passthrough();
 export type ImprovementSettings = z.infer<typeof ImprovementSettingsSchema>;
