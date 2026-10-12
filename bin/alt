@@ -237,6 +237,10 @@ def _repo_text(record: dict) -> str:
     pending = (f"{len(restart.get('files') or [])} files ({', '.join((restart.get('files') or [])[:6])}) "
                f"since {restart.get('since') or '?'}"
                if restart else "none")
+    if restart and restart.get("error"):
+        state = (f"; failed {restart['failed']}" if restart.get("failed") else
+                 f"; retry {restart.get('retries')} after {restart['retry_at']}" if restart.get("retry_at") else "")
+        pending += f"{state}; last error: {_one_line(restart['error'])}"
     faults = ", ".join(f"{kind}={row.get('count', 0)}" for kind, row in record["faults"].items()) or "none"
     unit = f"{service.get('state') or '?'}/{service.get('substate') or '?'} PID {service.get('pid') or '-'}"
     lines = [f"repo {record['project']}: {checkout.get('branch') or '?'} ({drift})",

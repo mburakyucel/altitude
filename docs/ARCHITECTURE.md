@@ -467,7 +467,7 @@ Everything above the platform seam is the same on both hosts. These are the beha
 
 | Area | Linux | macOS 15+ | Where |
 | --- | --- | --- | --- |
-| Service | systemd user unit; restarts on failure; runs while the user manager runs | LaunchAgent in the `gui` domain; restarts on failure; starts at login, runs with the screen locked, stops at logout (running before login is a later increment) | Setup, Operations |
+| Service | systemd user unit; restarts on failure; runs while the user manager runs | LaunchAgent in the `gui` domain; restarts on failure; starts at login, runs with the screen locked, stops at logout; does not run before any login, when macOS has neither the login's job domain nor its keychain | Setup, Operations |
 | Service logs | the user journal | `~/Library/Logs/altitude/`, also for detached jobs such as updates | Operations |
 | A job (worker, review, machine command, update) | transient user unit; systemd holds every descendant in its cgroup and enforces the time limit | its own launchd job; a supervisor enforces the time limit, holds an idle-sleep assertion, and stops the job's kernel coalition when the command exits | above |
 | Stop | stop the unit; the cgroup takes every descendant; pidfd pins each signal | kill every coalition member, rechecking start time and coalition just before each signal (no process handle exists) | above |
@@ -1673,15 +1673,19 @@ question block remains waiting after worker exit and needs no completion report.
 while activation is pending. When dispatch/resume claims, L3 turns, adversarial reviews, report
 verification and bounded validation runs (including evidence recording and cleanup) are quiet, altd runs
 the one guarded restart script as a transient user unit outside its own cgroup. It installs the
-pnpm-locked dependencies, builds and validates the latest bundle in staging, rechecks the checkout and
-quiet point, swaps the bundle, restarts safely, and verifies both API and UI; verification failure
+pnpm-locked dependencies, builds and validates the checked-out head's bundle in staging, rechecks that the
+checkout is clean, not ahead or diverged and still at that head (behind origin is fine: the deployment tick pends
+the rest) and the quiet point, swaps the bundle, restarts safely, and verifies both API and UI; verification failure
 restores the prior bundle and verifies recovery API/UI health from another new process, retaining
 both the activation failure and recovery outcome. With no prior bundle, recovery is unavailable.
 On macOS, service Stop/restart confirms coalition cleanup and waits up to 45 seconds for launchd
 to remove the label before completing Stop or bootstrapping again; unreadable removal fails explicitly.
 Independent worker jobs retain their own coalitions. Monitor's Restart button runs the same path sooner by hand: it appears
 at that narrow quiet point, even while workers run, disappears once restart is under way, and
-the notice leaves when the new process answers with nothing pending. A restart unit that fails files a
+the notice leaves when the new process answers with nothing pending. A transient refusal (no quiet-probe
+answer in three tries, work claimed the quiet point, the checkout moved after the build began) withdraws the
+request with its `error` and a five-minute `retry_at`, and altd requests the unit again at a later quiet point,
+up to three retries. Any other failure, or a transient one past that bound, files a
 system fault naming its reason at once and, while its request is still pending, marks the record `failed`
 with that `error`, so the hold lifts; a restart that has not happened ten minutes after it was requested (the unit died without
 reporting) is the same fault. Dispatch, resume and

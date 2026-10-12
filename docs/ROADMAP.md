@@ -78,7 +78,9 @@ stay open:
   It is on `main` (#570), Altitude runs from source on the operator's Mac, and `v0.1.0` installs there
   with one command (#551). macOS 15 and 26 are supported while the evidence below is recorded on
   Apple silicon.
-  Running before any login (boot mode) is a separate, later increment.
+  Running before any login is a macOS limitation, not planned work: a system-wide service could start
+  before login but not run Altitude's jobs or reach the login keychain, and FileVault holds every
+  service until the disk is unlocked ([setup](SETUP.md#keep-running-after-logout)).
 - **Native evidence:** on a disposable Mac account, record exact OS/chip, application, Python and
   engine versions. Verify allowed writes and denied writes outside the task, ordinary and detached
   descendant Stop, timeout after owner exit, restart/adoption without duplicate workers, preserved

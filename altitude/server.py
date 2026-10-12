@@ -2732,6 +2732,9 @@ def auto_restart() -> None:
         return
     if status["waiting_for"]:
         return
+    retry_at = pend.get("retry_at")
+    if retry_at and datetime.fromisoformat(retry_at) > datetime.now(timezone.utc):
+        return  # a transient refusal pauses before its retry (I-20261010-214654)
     try:
         res = restart_service()
     except RestartBusy:
@@ -2782,7 +2785,9 @@ def restart_service() -> dict:
             return {"ok": True, "unit": pend.get("unit")}
         # Publish before releasing the gate, including the manual button path: no launch can race the unit.
         res = _request_restart_unit()
-        pend.pop("failed", None)
+        if pend.pop("failed", None):
+            pend.pop("retries", None)  # a parked activation requested again gets its full retry bound
+        pend.pop("retry_at", None)
         pend.update({"requested_at": S.now(), "unit": res["unit"]})
         S.write_json(flag, pend)
         return res
