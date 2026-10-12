@@ -68,6 +68,18 @@ class TestInspectionCLI(AltitudeCase):
                 self.assertIn("groups", json.loads(cli("l3", "tools", "--json")))
         self.assertEqual({p: p.read_bytes() for p in config.project_dir(self.project).rglob("*") if p.is_file()}, before)
 
+    def test_repo_shows_what_activation_waits_for_and_its_last_error(self):
+        flag = config.MONITOR_DIR / "restart-pending.json"
+        S.write_json(flag, {"since": "2026-10-12T03:00:00+00:00", "files": ["altitude/server.py"], "retries": 1,
+                            "retry_at": "2026-10-12T03:12:52+00:00", "error": "cannot prove Altitude is quiet"})
+        self.assertIn(S.localized("restart pending: 1 files (altitude/server.py) since 2026-10-12T03:00:00+00:00; "
+                                  "retry 1 after 2026-10-12T03:12:52+00:00; last error: cannot prove Altitude is quiet"),
+                      cli("repo"))
+        S.write_json(flag, {"since": "2026-10-12T03:00:00+00:00", "files": ["altitude/server.py"],
+                            "failed": "2026-10-12T03:30:00+00:00", "error": "checkout has uncommitted changes"})
+        self.assertIn(S.localized("; failed 2026-10-12T03:30:00+00:00; last error: checkout has uncommitted changes"),
+                      cli("repo"))
+
     def test_owner_inspection_preserves_project_and_mutation_boundaries(self):
         self.setenv("ALTITUDE_ACTOR", "l2")
         for command in (("repo",), ("pr", "8"), ("l3", "search", "decision"), ("l3", "tools")):
