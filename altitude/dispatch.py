@@ -357,7 +357,9 @@ def _send_handoff_checkpoint(project: str, task: dict, request: dict, job_root: 
             "risks and next steps. Do not start more implementation or publish a completion report. "
             "Finish or safely stop pending work and record anything unfinished as unverified. "
             f"Then atomically write {folder / ('handoff-' + request['id'] + '.ready.json')} containing exactly "
-            f"{json.dumps(receipt)}. This signals readiness; stop doing task work and wait for transfer. "
+            f"{json.dumps(receipt)}. This signals readiness; end your turn immediately without calling "
+            "task block, task done or writing a report. The readiness receipt is your supported handoff "
+            "checkpoint instead of the normal end-of-turn block/report; the daemon owns the transfer. "
             f"This instruction belongs only to transfer {request['id']}. A later correction ending this "
             "transfer overrides it; always respect newer task instructions, questions and Stop actions. "
             "No elapsed-time cutoff applies. Pending questions and merge holds stay in force.")

@@ -150,7 +150,9 @@ worker/session identity and be running, stopped by L3 or the operator, or blocke
 (`l2-died`) or a recognized usage limit. A running owner receives a request to refresh `progress.md`
 with its current work, completed checks, unfinished work and next steps, then write the exact
 request-scoped readiness receipt supplied in that instruction. Existing workers use their file tools;
-they do not need an updated CLI. The transfer waits for readiness without a time cutoff. A slow
+they do not need an updated CLI. The readiness receipt replaces the owner's normal end-of-turn
+block/report: the owner ends its turn immediately and the daemon completes the transfer. The
+transfer waits for readiness without a time cutoff. A slow
 command, silence or network interruption does not force a switch. Workers launched without native
 message delivery show that the note cannot be requested; use switch-now or cancel explicitly.
 Injected instructions can move pending commands into native background work; the note must distinguish

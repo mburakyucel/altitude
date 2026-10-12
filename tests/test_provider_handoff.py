@@ -250,6 +250,9 @@ class TestProviderHandoff(AltitudeCase):
         self.assertEqual(len(list(sends.glob("*.json"))), 1)
         self.assertEqual(self.engine.workers[task["agent_id"]]["state"], "working")
         self.ready(task, request)
+        with self.assertRaisesRegex(T.TransitionError, "readiness is recorded"):
+            T.block(self.project, task["slug"], "Waiting for transfer", actor="l2",
+                    expected_attempt=task["attempt"])
         self.execute(task)
         dispatch.run(self.project, task["slug"])
         current = S.load_task(self.project, task["slug"])
@@ -439,6 +442,20 @@ class TestProviderHandoff(AltitudeCase):
         current["attempt"] += 1
         S.save_task(self.project, current)
         self.assertNotIn("handoff note was", dispatch.build_brief(self.project, task["slug"]))
+
+    def test_invalid_owner_block_does_not_cancel_preparation(self):
+        task = self.running_owner()
+        request = self.request(task)["request"]
+        dispatch.run_task_operation(self.project, task["slug"])
+        for options in ({"questions": {"invalid": True}}, {"expected_owner": {"stale": True}},
+                        {"show": [], "updates": {"fault": "bad"}}):
+            with self.subTest(options=options), self.assertRaises(T.TransitionError):
+                T.block(self.project, task["slug"], "Invalid block", actor="l2",
+                        expected_attempt=task["attempt"], **options)
+            current = S.load_task(self.project, task["slug"])
+            self.assertEqual(current["daemon_request"]["status"], "executing")
+            self.assertFalse(any(row["id"] == request["id"] + "-cancel"
+                                 for row in T.pending(self.project, task["slug"])))
 
     def test_decision_only_other_fault_unlaunched_and_finished_tasks_are_ineligible(self):
         for state, fault, attempt in (("blocked", None, 1), ("blocked", "external-ci", 1),

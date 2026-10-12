@@ -913,7 +913,9 @@ availability recheck, not a reset claim. Ordinary resume preserves the provider 
 For a running owner, an operator/L3-stopped owner, or one blocked by worker death or a recognized usage limit, L3 or the operator
 uses [`alt task handoff`](CLI.md#explicit-provider-handoff) with the observed attempt, target engine
 and reason. A running owner gets one native checkpoint instruction to refresh `progress.md` and write a
-request-specific readiness file identifying its attempt and worker/session. This works with workers
+request-specific readiness file identifying its attempt and worker/session. That receipt replaces
+the normal block/report at turn end; the owner ends its turn without another lifecycle command.
+This works with workers
 whose immutable CLI predates handoff. Readiness does not depend on file modification time or a send receipt.
 There is no automatic timeout. Confirmed engine exit, a recorded usage limit, an existing Stop or an
 explicit `--now` allows saved-context transfer without a new note; silence and network failure do not.

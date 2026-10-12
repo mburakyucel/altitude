@@ -1627,17 +1627,20 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
         task = S.load_task(project, slug)
         published = {(q["id"], q["revision"]) for q in task.get("questions", [])}
         request = task.get("daemon_request") or {}
-        if (actor == "l2" and expected_daemon_request is None
+        cancel_handoff = (actor == "l2" and expected_daemon_request is None
                 and (expected_attempt is None or expected_attempt == task.get("attempt"))
                 and (expected_state is None or expected_state == task.get("state"))
                 and (expected_agent_id is _UNSET or expected_agent_id == task.get("agent_id"))
                 and (expected_session_id is _UNSET or expected_session_id == task.get("session_id"))
                 and (expected_block_id is _UNSET or expected_block_id == task.get("block_id"))
                 and request.get("operation") == "handoff" and request.get("phase") != "stopping"
-                and request.get("status") in ("pending", "executing")):
+                and request.get("status") in ("pending", "executing"))
+        if cancel_handoff:
             from . import dispatch
-            dispatch._finish_task_operation_locked(project, task, request["id"], "cancelled", "Owner needs to block")
-        _require_daemon_fence(task, slug, expected_daemon_request=expected_daemon_request,
+            if dispatch._handoff_ready(project, slug, request):
+                raise TransitionError("Transfer readiness is recorded; end this turn without blocking and let the daemon transfer ownership")
+        _require_daemon_fence({**task, "daemon_request": None} if cancel_handoff else task,
+                              slug, expected_daemon_request=expected_daemon_request,
                               expected_agent_id=expected_agent_id, expected_session_id=expected_session_id,
                               expected_block_id=expected_block_id)
         if expected_owner is not None and (report_owner(task) != expected_owner or any(
@@ -1691,6 +1694,8 @@ def block(project: str, slug: str, reason: str, actor: str = "altd", *,
                 _take_turn(task)
         if files:
             _save_files(project, slug, files)
+        if cancel_handoff:
+            dispatch._finish_task_operation_locked(project, task, request["id"], "cancelled", "Owner needs to block")
         moved = _move(project, task, "blocked", actor, reason=reason)
         if tell_l3 and any(q["status"] == "open" and (q["id"], q["revision"]) not in published
                            for q in moved.get("questions", [])):
