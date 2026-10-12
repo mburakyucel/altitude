@@ -1077,6 +1077,8 @@ class TestChatQueue(AltitudeCase):
     def test_a_text_send_id_names_its_stored_row_and_its_queue_row(self):
         """The page reconciles its bubble by the send id, never by matching text (SPEC.md §3.6)."""
         streamed, waiting = "0f8b8c2e-6a51-4d1e-9a39-3c3b1d6f2a10", "5d1f0b77-2a64-4c8e-8f0e-6b5d3a2c1e90"
+        # The test drains the queue itself; the server's own drain thread would race it for the turn lock.
+        drain = self.patch(server, "request_l3_drain")
         with self.deliverable(), mock.patch.object(engines, "claude_print", return_value=self.claude_result()):
             status, _ = self.request("POST", "/api/chat", {"project": self.project, "text": "same words",
                                                             "request_id": streamed})
@@ -1090,9 +1092,10 @@ class TestChatQueue(AltitudeCase):
                                                         "request_id": waiting})
         self.assertEqual((status, receipt["queued"]["id"]), (200, waiting.replace("-", "")))
         self.assertEqual([row["id"] for row in self.chat_view()["queued"]], [waiting.replace("-", "")])
+        drain.assert_called_with(self.project)
         release()
         with self.deliverable(), mock.patch.object(engines, "claude_print", return_value=self.claude_result()):
-            l3.deliver_queued(self.project)
+            self.assertIsNotNone(l3.deliver_queued(self.project))
         delivered = [row for row in self.chat_view()["history"] if row["role"] == "user"][-1]
         self.assertEqual((delivered["text"], delivered["queue_ids"]), ("same words", [waiting.replace("-", "")]))
 
