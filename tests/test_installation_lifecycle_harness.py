@@ -938,8 +938,10 @@ class TestInstallationMacosVm(AltitudeCase):
         guest, passed = judged(both)
         self.assertTrue(passed)
         self.assertEqual(guest.copied, [f"{vm.SHARED}/source.tar"])
-        self.assertIn("scripts/platform_probe.py --only confinement validation-confinement", guest.commands[0])
-        self.assertNotIn("sudo", guest.commands[0])  # the logged-in account itself, outside any sandbox
+        probe = next(command for command in guest.commands if "platform_probe.py" in command)
+        # The logged-in account itself, in its login session and outside any sandbox.
+        self.assertIn(f"launchctl asuser {vm.ACCOUNT_UID} sudo -n -H -u {vm.ACCOUNT} ", probe)
+        self.assertTrue(probe.endswith("scripts/platform_probe.py --only confinement validation-confinement"))
         for rows, code in ((both[:1], 0), ([both[0], {**both[1], "detail": "writes under the roots only"}], 0),
                            ([both[0], {**both[1], "state": "fail"}], 1), (both, 1)):
             self.assertFalse(judged(rows, code)[1], rows)
