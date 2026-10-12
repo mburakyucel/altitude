@@ -607,6 +607,18 @@ class TestMacLifecycle(AltitudeCase):
             run.assert_not_called()
         self.assertFalse(json.loads((results / "result.json").read_text())["passed"])
 
+    def test_published_update_outside_a_throwaway_home_runs_nothing(self):
+        from scripts.installation_lifecycle import MacLifecycle
+        results = self.tmp / "results"
+        results.mkdir()
+        harness = MacLifecycle(self.tmp / "baseline", results, "a" * 40 + ".." + "b" * 40, self.tmp / "candidate")
+        self.assertEqual(harness.expected, {"baseline": "a" * 40, "candidate": "b" * 40})
+        with mock.patch("scripts.installation_lifecycle.subprocess.run") as run:
+            with self.assertRaises(AssertionError):
+                harness.execute("mac-published")
+            run.assert_not_called()
+        self.assertFalse(json.loads((results / "result.json").read_text())["passed"])
+
     def test_cleanup_boots_out_only_the_throwaway_installations_own_labels(self):
         from scripts import installation_mac as mac
         work = self.tmp / "altitude-installation-mac"
@@ -898,6 +910,70 @@ class TestInstallationMacosVm(AltitudeCase):
         self.assertTrue((root / "latest/download/install.sh").is_file())
         self.assertEqual(sorted(path.name for path in (root / "download/v0.0.1").iterdir()),
                          ["altitude-v0.0.1.tar.gz", "install.sh"])
+
+    def test_privacy_passes_only_when_both_rows_refuse_private_places_without_a_consent_request(self):
+        from scripts import installation_macos_vm as vm
+        refused = f"writes under the roots only; {vm.REFUSED}; git works"
+        both = [{"row": "confinement", "state": "pass", "detail": refused},
+                {"row": "validation-confinement", "state": "pass", "detail": refused}]
+
+        class Guest:
+            def __init__(self, rows, code=0):
+                self.output, self.code, self.copied, self.commands = json.dumps({"host": "darwin", "rows": rows}), code, [], []
+
+            def copy(self, source, target):
+                self.copied.append(target)
+
+            def ssh(self, command, timeout=120, check=True):
+                self.commands.append(command)
+                if "--version" in command:
+                    return subprocess.CompletedProcess(command, 0, "Python 3.12.12\n", "")
+                return subprocess.CompletedProcess(command, self.code, self.output, "")
+
+        def judged(rows, code=0):
+            guest, record = Guest(rows, code), {}
+            vm.phase_privacy(guest, None, self.tmp, record, self.tmp, "c" * 40)
+            return guest, record["cases"]["privacy"]["passed"]
+
+        guest, passed = judged(both)
+        self.assertTrue(passed)
+        self.assertEqual(guest.copied, [f"{vm.SHARED}/source.tar"])
+        self.assertIn("scripts/platform_probe.py --only confinement validation-confinement", guest.commands[0])
+        self.assertNotIn("sudo", guest.commands[0])  # the logged-in account itself, outside any sandbox
+        for rows, code in ((both[:1], 0), ([both[0], {**both[1], "detail": "writes under the roots only"}], 0),
+                           ([both[0], {**both[1], "state": "fail"}], 1), (both, 1)):
+            self.assertFalse(judged(rows, code)[1], rows)
+
+    def test_published_names_two_release_tags_and_runs_alone(self):
+        from scripts import installation_macos_vm as vm
+        for argv, error in ((["--published", "v0.3.0"], "is not a release version"),
+                            (["--published", "v0.3.0..main"], "main is not a release version"),
+                            (["--published", "v0.3.0..v0.4.0", "--phase", "login"], "runs only the published phase")):
+            with mock.patch.object(vm.sys, "argv", ["installation_macos_vm.py", "run", str(self.tmp / "r"), *argv]), \
+                    mock.patch.object(vm.sys, "stderr", io.StringIO()) as stderr, mock.patch.object(vm, "lock") as lock:
+                with self.assertRaises(SystemExit):
+                    vm.main()
+            self.assertIn(error, stderr.getvalue())
+            lock.assert_not_called()
+
+    def test_published_run_downloads_both_releases_and_builds_nothing(self):
+        from scripts import installation_macos_vm as vm
+        tags = {"v0.3.0": "a" * 40, "v0.4.0": "b" * 40}
+        fetched, ran = [], []
+        def published(github, tag, folder):
+            fetched.append((github, tag))
+            return {"release": tag, "commit": tags[tag], "sha256": {}}
+        with mock.patch.object(vm, "repository", return_value="https://github.com/example/altitude"), \
+                mock.patch.object(vm, "published", side_effect=published), mock.patch.object(vm, "build") as build, \
+                mock.patch.object(vm, "CACHE", self.tmp), \
+                mock.patch.object(vm, "run_phase", side_effect=lambda name, inputs, results, record, commits:
+                                  ran.append((name, commits)) or record["phases"].setdefault(name, {"passed": True})):
+            self.assertEqual(vm.lane(self.tmp / "results", None, ["published"], ("v0.3.0", "v0.4.0")), 0)
+        build.assert_not_called()
+        self.assertEqual(fetched, [("https://github.com/example/altitude", "v0.3.0"), ("https://github.com/example/altitude", "v0.4.0")])
+        self.assertEqual(ran, [("published", "a" * 40 + ".." + "b" * 40)])
+        record = json.loads((self.tmp / "results/macos-vm.json").read_text())
+        self.assertEqual((record["source_commit"], record["published"]["candidate"]["release"]), (None, "v0.4.0"))
 
     def test_other_hosts_refuse_before_touching_anything(self):
         from scripts import installation_macos_vm as vm

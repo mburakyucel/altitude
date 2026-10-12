@@ -850,7 +850,7 @@ blocks automating it.
 | --- | --- | --- | --- | --- |
 | Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration, systemd unit-file parsing (`systemd-analyze verify`, without systemd running) and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, native macOS, container deployment | In use |
 | Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run), in a task through the [validation runner](#validation-runner)) | Fresh install, user-service start, update, failed-update recovery, the service running on after its SSH login closes and starting after a restart with nobody logged in, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`) and an installation over a failed one (`RECOVERY`); with `PUBLIC`, setup's command and the installed daemon's update lookup and `alt update` against GitHub itself, on Ubuntu 24.04 x86_64 | Desktop login/logout, a physical machine, the app's Update button from a published release, storage migration (no application state is created), other distributions | In use |
-| Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under the [standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac)) | The built `install.sh` through its public command in fresh macOS 26 arm64 guests with automatic login and no network: its refusals with their documented fixes for missing Python, OpenSSL 3 not first on PATH and an account with no desktop session; the [macOS installation lane](#macos-installation-lane)'s lifecycle under a throwaway HOME, including automatic updates, the automatic-updates-off confirmation and recovery from a failed automatic update; and the account's own installation, its HTTPS health and `alt doctor`, its LaunchAgent started again by the automatic login after a restart, and uninstall | A physical second Mac, other macOS versions, logout/login without a restart, browser/device CA trust, the guest's own download from GitHub, the real check and notice schedule, the app's rendered notice, a release candidate's lookup, an update from a published release to a later published one | In use on Apple silicon |
+| Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under the [standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac)) | The built `install.sh` through its public command in fresh macOS 26 arm64 guests with automatic login and no network: its refusals with their documented fixes for missing Python, OpenSSL 3 not first on PATH and an account with no desktop session; the [macOS installation lane](#macos-installation-lane)'s lifecycle under a throwaway HOME, including automatic updates, the automatic-updates-off confirmation and recovery from a failed automatic update; and the account's own installation, its HTTPS health and `alt doctor`, its LaunchAgent started again by the automatic login after a restart, and uninstall; the confinement probe's refusal of private places with no consent request, in a guest whose Python was never asked; with `PUBLISHED`, a published release's own daemon installing a later published release and keeping the state made through the app | A physical second Mac, other macOS versions, other Apple chips, Python 3.13, logout/login without a restart, sleep, browser/device CA trust, the guest's own download from GitHub, the real check and notice schedule, the app's rendered notice, a release candidate's lookup | In use on Apple silicon |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Validation container | `alt task validate -- COMMAND` ([validation runner](#validation-runner)); `make browser-sandbox` | A committed candidate's command in a disposable rootless Podman container, including nested rootless containers and Playwright's Chromium with its own sandbox | Running Altitude itself in a container, other hosts' kernels or Podman versions, native macOS | In use on Linux x86_64 |
 | macOS validation run | `alt task validate -- COMMAND` on a Mac ([macOS validation runs](#macos-validation-runs)) | A committed candidate's command on macOS under the validation profile, with fictional state and fixture engines: the Python suites and application journeys with local-process jobs | Native launchd jobs and worker confinement, browsers with their own sandbox, installation, provider compatibility | Implemented; native acceptance is recorded on the delivering PR |
@@ -1345,18 +1345,43 @@ shell trusts, with `github.com` resolving to the loopback.
   version and commit on the generated authority and pass `alt doctor`. After the guest restarts with
   its card still unplugged, the automatic login must start the service again with a new process;
   uninstall must then remove the LaunchAgent and stop the service.
+- `privacy`: the account, logged in and outside any sandbox, runs the revision's own
+  `scripts/platform_probe.py --only confinement validation-confinement` with Homebrew's Python 3.12,
+  which nothing in the guest has ever asked for access to a private place. Both rows must pass, their
+  details stating that the Desktop and mounted volumes are refused with no consent request in the
+  privacy log. A Mac whose Python already holds an answer cannot show that the profile, not the
+  stored answer, refused.
+
+`PUBLISHED=<baseline>..<candidate>` names two published release tags instead of `SOURCE` and runs only
+the `published` phase:
+
+```sh
+make installation-macos-vm RESULTS=/tmp/altitude-macos-vm PUBLISHED=v0.3.0..v0.4.0
+```
+
+The runner downloads each release's assets anonymously on this Mac, as the [Linux VM
+run's](#local-vm-run) `BASELINE` does: each must match the release's `SHA256SUMS`, and its archive
+must declare the version and commit the tag names. The files reach the offline guest over the
+host-guest socket. Under a throwaway HOME, as in `lifecycle`, a server on the guest's loopback
+answers GitHub's release lookup and downloads with the published files. The baseline installs through
+its own public command; a device pairs and the operator's name is saved through the app's own
+requests, beside fictional data. The baseline's own daemon must then find the candidate, install it
+automatically at a quiet point and download only its archive and checksum. The candidate must answer
+health with its own version and commit and pass `alt doctor`, recognize the same paired device, show the
+saved name, and keep configuration, TLS identity and data unchanged before uninstall.
 
 `RESULTS/macos-vm.json` records the source and harness commits, this Mac's macOS version, free disk
 and load average before and after, the guest's sizing, each image's restore image, macOS build,
 prerequisites and disk footprint, and per phase the probe outcomes, every attempt's and step's exit
-and result, the guest's load average, the disk the clone took and the run time. Each step's full output, the
+and result, the guest's load average, the disk the clone took and the run time; `privacy` adds the probe's rows and
+the guest's Python, and a `PUBLISHED` run each release's tag, commit and checksums. Each step's full output, the
 listing each refusal is compared against, the lifecycle's own results and the guest helper's log stay beside it. Everything the runner writes
 lives in `~/.cache/altitude-installation-vm/macos`: the helper, the release build and its temporary files, the images (about 26 GiB for macOS
 26.6.2) and per-run clones (about 1 GiB at most), deleted after each phase, also after a failure or a
 stop. One guest runs at a time, and the runner stops whenever less than 10 GiB of disk would stay
 free. Building the images takes about fifteen minutes after the restore image's download. On an
 unloaded Mac `fresh` and `prerequisites` take under half a minute each, `lifecycle` about five
-minutes and `login` just over one; the release build adds about one. `installation_macos_vm.py clean` deletes everything in its folder.
+minutes, `login` just over one, `privacy` under one and `published` about one and a half; the release build adds about one. `installation_macos_vm.py clean` deletes everything in its folder.
 
 Virtual machines cannot start inside a task's sandbox or a [macOS validation
 run](#macos-validation-runs). Inside a task, an owner runs `installation_macos_vm.py` with
