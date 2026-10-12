@@ -1,7 +1,7 @@
 # Improvement review: proposal
 
 Status: the operator approved this design; the eval in **Proving it works** awaits their decision on
-its spend. Nothing here is built yet. In the interface the feature is called **Improvement
+its use of your plan. Nothing here is built yet. In the interface the feature is called **Improvement
 suggestions**, so it is never confused with the code and proposal reviews that Needs you already
 shows; this document calls one run "a review".
 
@@ -25,8 +25,8 @@ can tell when it has stopped earning its place.
 ## How it works
 
 1. **You choose it per project**, in that project's settings: turn on **Weekly**, or press **Get
-   suggestions now**. The first time, a sheet says what is sent, to which model, and what it costs; it
-   is off until you agree, because it sends parts of the project's conversations to a model and spends.
+   suggestions now**. The first time, a sheet says what is sent, to which model, and how much of your plan
+   it uses; it is off until you agree, because it sends parts of the project's conversations to a model.
 2. **Weekly means Monday morning.** At the 08:00 morning check each Monday, a review runs if at least
    five tasks have finished since the last one. Otherwise it skips that week silently and costs
    nothing.
@@ -48,12 +48,12 @@ Nothing starts work on its own. The reviewer has no tools, files or network beyo
 
 | Your question | Answer | Why |
 | --- | --- | --- |
-| Is it opt-in? | Yes, per project and off by default. Only you can turn on **Weekly** or press **Get suggestions now**, and the first time either shows what is sent and what it costs. L3 and task owners cannot turn it on. | It sends conversation quotes to a provider and spends allowance; that is your call for each project. |
-| Does it run after every task? | No. Nothing runs per task; each finished task's counts are read from its record when a review runs. | One task rarely shows a pattern. A model call per task would spend on every task and post noise. |
+| Is it opt-in? | Yes, per project and off by default. Only you can turn on **Weekly** or press **Get suggestions now**, and the first time either shows what is sent and how much of your plan it uses. L3 and task owners cannot turn it on. | It sends conversation quotes to a provider and spends allowance; that is your call for each project. |
+| Does it run after every task? | No. Nothing runs per task; each finished task's counts are read from its record when a review runs. | One task rarely shows a pattern. A model call per task would use your plan on every task and post noise. |
 | Is it periodic: daily or weekly? | Weekly at most, on Monday mornings at the 08:00 check that already writes the morning digest, so the card is there when your week starts. | A day rarely holds enough tasks to show repetition, and a daily card would ask for attention daily. Monthly would let friction run for four weeks. |
 | What if little happened? | A Monday review runs only when at least five tasks have finished since the last review. Otherwise that week is skipped: no model call, nothing posted. | A quiet week costs nothing and says nothing. Five tasks is the least that can show something repeating. |
 | Can I run one now? | Yes: **Get suggestions now** in the project's settings, or ask L3 in chat. Same five-task minimum. One review per project runs at a time. | You may want a look before a busy week, or after a change. |
-| What if I stop looking? | Nothing piles up. Suggestions never count toward Needs you and lapse after a week; turning **Weekly** off stops the schedule. The settings show how many past suggestions became tasks. | A feature you ignore should cost you nothing but its weekly cents, and show you that it is being ignored. |
+| What if I stop looking? | Nothing piles up. Suggestions never count toward Needs you and lapse after a week; turning **Weekly** off stops the schedule. The settings show how many past suggestions became tasks. | A feature you ignore should cost you no attention and little of your plan, and show you that it is being ignored. |
 | What else delays it? | When Claude's weekly allowance is inside Altitude's reserve, the Monday review is skipped and **Get suggestions now** is refused with that reason. It never waits on, or pauses, ordinary work. | Ordinary work comes first. |
 
 ## Decisions that are yours
@@ -65,9 +65,9 @@ first.
 | --- | --- | --- |
 | When it runs | Off until you turn it on per project; then Monday mornings when five tasks have finished, plus whenever you ask | A review after every task; daily; monthly; only when you ask |
 | What may be sent to the reviewer's provider | Counts from task records plus short paired quotes of the task and project conversations (your message, the agent message it answered, the reply), each cut to 300 characters | Counts only, nothing quoted; or, in a later step, also short excerpts of the agents' working logs |
-| Reviewer model and cost limit | Claude Sonnet 5.5 at medium effort: at most $0.27 a review, usually $0.08–0.12, plus one ordinary L3 turn to check. Weekly, about $0.40–0.50 a month per project, at most $1.20 | Claude Haiku 5.5: at most $0.02 a review, noisier suggestions |
+| Reviewer model and its limit | Claude Sonnet 5.5 at medium effort on your Claude plan: at most 86,000 tokens a review, usually about 25,000, plus one ordinary L3 turn to check. Weekly, far less of your plan than one ordinary task | Claude Haiku 5.5: uses the least of your plan, noisier suggestions |
 | Where suggestions reach you | One card in the project's chat and a **Suggestions** section in Needs you, not counted and never alerting | Counted in the Needs you badge; or chat only |
-| Proving it works | An eval on fictional projects with planted friction before any real conversation is read (below): about $8 at API prices, at most $35; a later rerun after a prompt, signal or model change at most $5 on Sonnet | Judge it only by real suggestions and your dispositions |
+| Proving it works | An eval on fictional projects with planted friction before any real conversation is read (below), on your plan: expected about a third of what this feature's design conversation used, at most about as much; a later rerun after a prompt, signal or model change at most a quarter of that limit | Judge it only by real suggestions and your dispositions |
 
 The conversations being reviewed were already processed by the engines that took part in them, but
 sending them again to the reviewer is a new disclosure, so it needs your yes, given per project on the
@@ -183,30 +183,34 @@ uses for its quota read: `--safe-mode` (no CLAUDE.md, skills, plugins, hooks or 
 no added directories and a JSON response schema. The adapter fails closed: if the session's own start
 record lists any tool, or reports no model, the run stops before its answer is used.
 
-**Cost limit.** With no tools there is exactly one model request, so the limit is set by its size, not
+**Runs on your plan.** Every call runs through the Claude Code login on your subscription, like every
+task; nothing uses the API or an API key, and nothing is billed. Claude Code also reports each call's
+size as what it would cost at API prices. Altitude uses that figure only as a yardstick for limits and
+records; the interface shows tokens and never shows dollars.
+
+**Usage limit.** With no tools there is exactly one model request, so the limit is set by its size, not
 watched afterwards. Everything sent (the reviewer's instructions, which replace the engine's default
 system prompt, the answer schema and the 64 KiB prompt) is at most 72 KiB, counted conservatively as
 one token per byte: at most 74,000 input tokens, though typical text is about a quarter of that. Output,
-including reasoning, is capped at 12,000 tokens through the engine's output-token setting, and Claude's
-own `--max-budget-usd` is passed at the computed maximum. A model whose prices are not in the engine
-seam cannot be chosen, so an unknown cost never runs. These bounds are tested as arguments with a
-scripted engine; that the provider honours them is confirmed by the first real run's recorded usage.
-Details shows the actual cost beside the limit, and a run that ever exceeds it says so on its line.
-Expected and maximum per run for the reviewer, at published API prices:
+including reasoning, is capped at 12,000 tokens through the engine's output-token setting, so a run uses
+at most 86,000 tokens. As a second stop, Claude Code's own budget option is set to that same maximum in
+its yardstick; a model the engine seam has no figures for cannot be chosen. These bounds are tested as
+arguments with a scripted engine; that the provider honours them is confirmed by the first real run's
+recorded usage. Details shows the tokens used beside the limit, and a run that ever exceeds it says so
+on its line. The models use different amounts of your plan for the same tokens:
 
-| Model | Per million tokens (in / out) | Expected | Maximum | What is lost |
-| --- | --- | --- | --- | --- |
-| Claude Haiku 5.5 | $0.10 / $0.50 | under $0.01 | $0.02 | Weaker judgement: more obvious or duplicate proposals, more wrong targets for L3 to drop |
-| **Claude Sonnet 5.5 (recommended)** | $2 / $10 | $0.08–0.12 | $0.27 | Close to the owners' model on reading and attribution; misses some subtle cross-task causes |
-| Claude Opus 5.5 (the owners' model, for comparison) | $4 / $20 | $0.15–0.25 | $0.54 | Not cheaper; listed as the baseline |
+| Model | Plan use for the same tokens | What is lost |
+| --- | --- | --- |
+| Claude Haiku 5.5 | About a twentieth of Sonnet's | Weaker judgement: more obvious or duplicate proposals, more wrong targets for L3 to drop |
+| **Claude Sonnet 5.5 (recommended)** | The reference | Close to the owners' model on reading and attribution; misses some subtle cross-task causes |
+| Claude Opus 5.5 (the owners' model, for comparison) | About twice Sonnet's | Not lighter; listed as the baseline |
 
-These are the API-equivalent figures Altitude already records; on this machine the engines run on
-subscriptions, so a run draws subscription allowance, not cash. The limit covers the reviewer. L3's
-check is one ordinary coordinator turn, like answering a chat message, on L3's usual model; its usage
-is recorded in the run and shown separately in Details, so the run's total is reviewer plus check.
-Weekly on one project, the reviewer comes to about $0.40–0.50 a month, at most $1.20. Codex is not offered: its models record no dollar
-cost, and Altitude runs Codex with a command sandbox that can still read the disk; no tool-free Codex
-mode has been verified. If the chosen model is unavailable the run fails and says so; it never
+The ratios follow Claude's published prices. The limit covers the reviewer. L3's check is one ordinary
+coordinator turn, like answering a chat message, on L3's usual model; its usage is recorded in the run
+and shown separately in Details. A weekly review on one project uses far less of the plan than one
+ordinary task: a task routinely reads millions of tokens, a review at most 86,000. Codex is not
+offered: Altitude runs Codex with a command sandbox that can still read the disk, and no tool-free
+Codex mode has been verified. If the chosen model is unavailable the run fails and says so; it never
 switches model without your recorded decision.
 
 ## Run lifecycle
@@ -269,8 +273,8 @@ between **Routing** and **Project**, follows the page's existing form: heading, 
   reason (**Needs 5 finished tasks since Oct 12; 3 so far.** or **Claude's weekly allowance is inside
   Altitude's reserve.**) is its accessible description and appears under it on press, as SPEC §3.8.1
   does for an unavailable alert switch.
-- **What is sent**, muted, no control: **Counts and short chat quotes · Claude Sonnet 5.5 · capped at
-  $0.27 a run at API prices, plus one L3 check**.
+- **What is sent**, muted, no control: **Counts and short chat quotes · Claude Sonnet 5.5 on your plan ·
+  capped per run, plus one L3 check**.
 - **Past suggestions**, muted, once there is one run: **4 runs · 7 suggestions · 3 became tasks · 2
   dismissed**, and an underlined **Latest** that opens the latest card in the project's chat.
 
@@ -279,8 +283,8 @@ current terms opens a sheet before anything is saved or run:
 
 - Title: **Turn on improvement suggestions for altitude?**
 - Body: **Claude Sonnet 5.5 reads counts from this project's tasks and short quotes from its chats (up
-  to 300 characters each). Its share is capped at $0.27 a run at API prices, drawn from your Claude
-  plan; one ordinary L3 turn then checks what it finds. With Weekly on, this happens Monday mornings
+  to 300 characters each). It runs on your Claude plan, capped at far less per run than an ordinary
+  task; one ordinary L3 turn then checks what it finds. With Weekly on, this happens Monday mornings
   once 5 tasks have finished. Nothing is published, and nothing becomes work until you choose it.**
 - Buttons: **Turn on** (primary) and **Cancel**. **Turn on** records the agreement, then completes what
   was pressed (the switch turns on, or the run starts). Cancel or Escape changes nothing.
@@ -331,7 +335,7 @@ task; the last card leaving leaves **Nothing needs you.** alone, or the empty pa
 | Finished with suggestions | The card (below). |
 | Nothing to suggest | System line **Improvement suggestions · 14 tasks from Oct 5–12 · nothing to suggest** and **Show** (the details, including any L3 drops). |
 | Not started | A Monday skip shows only in settings. **Get suggestions now** is disabled with its reason. A chat request gets L3's reply with the reason. No line, no model call. |
-| Failed | System line with the danger dot: **Improvement suggestions failed · <reason>** and **Show**. Reasons: "it went over its $0.27 limit", "Claude Sonnet 5.5 is unavailable", "it could not run isolated", "its answer was not usable", "L3 did not finish checking", "it was interrupted by a restart". |
+| Failed | System line with the danger dot: **Improvement suggestions failed · <reason>** and **Show**. Reasons: "it went over its usage limit", "Claude Sonnet 5.5 is unavailable", "it could not run isolated", "its answer was not usable", "L3 did not finish checking", "it was interrupted by a restart". |
 | Terms changed | System line **Improvement suggestions are off until you agree to the new terms in settings.** with an underlined **Settings**. |
 
 ### The card
@@ -350,7 +354,7 @@ task; the last card leaving leaves **Nothing needs you.** alone, or the empty pa
 - **Make a task** (bordered, accent text) and **Dismiss** (ghost beside it). No filled buttons, so the
   card never competes with a question above it.
 - Footer: an underlined **Details**, opening in place: what was read and left out, what L3 dropped and
-  why, the model, the reviewer's cost against its limit, the check's usage, and when it ran.
+  why, the model, the reviewer's tokens against its limit, the check's tokens, and when it ran.
 
 | Action or state | What appears and disappears |
 | --- | --- |
@@ -470,12 +474,13 @@ reported numbers. If the prompt is revised after the held-back run, the next rep
 held-back scenarios written the same way, since the old half has become tuning data. Results show
 counts ("caught 5 of 7"), not percentages.
 
-**Runs and cost.** The held-back half runs three times on each model the engine seam offers the
+**Runs and plan use.** The held-back half runs three times on each model the engine seam offers the
 reviewer (today Claude Haiku 5.5, Sonnet 5.5 and Opus 5.5), because one prompt can give different
-answers: 45 calls. With prompt development (at most 30 Sonnet calls) and one fresh held-back run if the
-first fails, the eval costs about $8 at API prices and at most $35, drawn from the Claude plan like
-other work. Before every call the harness adds that call's maximum to what is spent and stops if it
-would pass the approved total; an eval stopped short is reported as incomplete, never as passing.
+answers: 45 calls. With prompt development (at most 20 Sonnet calls), the eval runs on your Claude plan
+like other work. In plan terms it is expected to use about a third of what this feature's design
+conversation used, and at most about as much: in Claude Code's API-price yardstick, about $6 expected
+and an $18 ceiling. Before every call the harness adds that call's maximum to what is used and stops if
+it would pass the ceiling; an eval stopped short is reported as incomplete, never as passing.
 
 **The bar** for reading real conversations, on the held-back half, per model:
 
@@ -486,9 +491,9 @@ would pass the approved total; an eval stopped short is reported as incomplete, 
 - At most one of its fifteen answers fails validation; a failed answer counts as a run that caught
   nothing.
 
-The recommendation is the cheapest model that clears the bar; Sonnet stays the default only if Haiku
-does not. If none clears it, the prompt is revised on the development half and fresh held-back
-scenarios are run once; if still none clears it, you get the results instead of the next step. The
+The recommendation is the model using the least of your plan that clears the bar; Sonnet stays the
+default only if Haiku does not. If none clears it, you get the results instead of the next step, and
+decide whether the prompt is revised and measured again on fresh held-back scenarios. The
 controls are reported on their own rows, so a quiet failure on them is never averaged away.
 
 **What it does not prove.** Fiction is cleaner than real work, and fifteen patterns are few. Your
@@ -498,8 +503,8 @@ decisions on the first real suggestions are the measure that counts.
 scripted reviewer and no model: the scenarios load, signals fire on counted patterns and not on decoys,
 the key's record of what reached the prompt is right, and the code's matching and validation handle
 scripted answers correctly. The live eval runs only by hand, by the owner of a later change to the
-prompt, signals or model, on the held-back half and the chosen model: at most $5 on Sonnet ($9 if
-Opus is chosen). Its table goes in that PR, and a failure it finds becomes a new scenario.
+prompt, signals or model, on the held-back half and the chosen model: on Sonnet at most a quarter of
+the eval's ceiling. Its table goes in that PR, and a failure it finds becomes a new scenario.
 
 **Its own small harness.** What is under test is Altitude's prompt builder and its tool-free call
 through the engine seam on the plan. Open-source eval frameworks such as Inspect or promptfoo would
@@ -510,7 +515,7 @@ more models or scenarios, Inspect is the one to adopt.
 ## Where it lives
 
 - `~/.altitude/<project>/improvements/<run>/`: the exact prompt, the raw answer and the run record
-  (usage, cost, model, isolation check, coverage, validation drops, L3 drops). Private, never published,
+  (usage, model, isolation check, coverage, validation drops, L3 drops). Private, never published,
   archived like task records.
 - `<project>/improvements.json`: runs, suggestions, dispositions with their source (button request or
   message), linked tasks, baselines, later counts and the Monday skips.
@@ -552,7 +557,7 @@ more models or scenarios, Inspect is the one to adopt.
   suggestion, measurement cohorts after merge, the Needs you Suggestions section leaving the count and
   badge unchanged, and every chat, Needs you and settings state walked on phone and desktop. The
   eval's scenarios load, their counted patterns fire and decoys do not, the key records what reached
-  the prompt, and matching, validation and the spend stop handle scripted answers correctly.
+  the prompt, and matching, validation and the usage stop handle scripted answers correctly.
 
 ## What is removed
 
@@ -572,7 +577,7 @@ the eval has shown a model that clears the bar, and Monday runs come only after 
 suggestions on request.
 
 1. **The reviewer, proven on fiction (this week).** `improve.py` with the signals, task sheets and
-   prompt; the tool-free reviewer with its isolation check and cost limit; the scenarios, keys,
+   prompt; the tool-free reviewer with its isolation check and usage limit; the scenarios, keys,
    matcher and grading sheet; the pilot removed. The live eval runs within the limit you approve, and the PR carries its
    table and a model recommendation. No real conversation is read. About three to four days: the
    signals and sheets are the largest part, the scenarios about a day.
@@ -585,7 +590,7 @@ suggestions on request.
    numbers with L3's reasons. Endings are one short message each with the card's wording. You answer
    in words; L3 records them with `alt improve resolve` against that message. No new screen or
    component. Docs: the pilot's architecture, session lifecycle, CLI and persona sections are rewritten
-   for the review. Acceptance: one real run on this project with its record, cost and your
+   for the review. Acceptance: one real run on this project with its record, usage and your
    dispositions.
 3. **The card and Needs you.** The same post renders as the card in project chat and under
    **Suggestions** in Needs you: the running line with Stop, Make a task, Dismiss and Undo, Details,
@@ -605,7 +610,7 @@ suggestions on request.
   the counts, at no extra model cost, and the eval gains scenarios for them. Recommended first, since
   owners see friction no record shows.
 - **L3 starting a review on its own judgment**, for example after an incident. Not recommended: it
-  would spend and send quotes without your yes for that run, and **Weekly** already covers the
+  would use your plan and send quotes without your yes for that run, and **Weekly** already covers the
   schedule. Asking L3 in chat already starts one (step 2).
 
 ## Settled by the owner (redirect any of these)
