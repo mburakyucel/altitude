@@ -2293,9 +2293,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"text": digest.text()})
             if api == "chat" and len(parts) > 2:
                 project = parts[2]
+                config.project(project)  # a removed or unknown project's conversation is refused
                 lifecycle = l3.chat_state(project, int(q.get("limit", ["60"])[0]))
-                return self._json({**lifecycle, "l3": l3.info(project),
-                                   "engine": config.project(project).get("l3_engine")})
+                return self._json({**lifecycle, "l3": l3.info(project)})
             return self._json({"error": "unknown api"}, 404)
         except images.ImageError as exc:
             return self._json({"error": str(exc)}, exc.status)
@@ -2476,6 +2476,8 @@ class Handler(BaseHTTPRequestHandler):
                         return self._json({"error": CHANGED_ELSEWHERE, "changed": True}, 409)
                     if result["status"] != "done":
                         raise ValueError(result["note"])
+                    if l3.queue_path(o["project"]).exists():
+                        request_l3_drain(o["project"])  # a message waiting for an engine tries the changed choice now
                     return self._json(config.defaults_view(o["project"]))
                 except (ValueError, KeyError, T.TransitionError) as exc:
                     return self._json({"error": str(exc)}, 400)

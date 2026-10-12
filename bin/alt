@@ -273,7 +273,7 @@ def main(argv=None) -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     sp = sub.add_parser("project"); ps = sp.add_subparsers(dest="pcmd", required=True)
     a = ps.add_parser("add"); a.add_argument("name"); a.add_argument("--path"); a.add_argument("--approval", default="default")
-    a.add_argument("--l2-engine", choices=config.ENGINES); a.add_argument("--l3-engine", choices=config.ENGINES)
+    a.add_argument("--l2-engine", choices=config.ENGINES)
     ps.add_parser("list"); ps.add_parser("discover")
     ps.add_parser("message", parents=[l3.project_message_parser()], help="coordinator socket: send information to a registered project")
     ps.add_parser("terminal", help="coordinator socket: read this project's terminal output (read-only)").add_argument(
@@ -286,10 +286,9 @@ def main(argv=None) -> None:
     routing.add_argument("--unset-routing", action="store_true")
     routing.add_argument("--l2-preference", choices=config.ENGINES, help="engine fresh L2 routing tries first; the other stays its fallback")
     routing.add_argument("--unset-l2-preference", action="store_true", help="restore Auto: the routing tiers alone")
-    for role, who, choice in (("l2", "tasks", "even over New tasks"), ("l3", "L3", "clearing an L3 choice on another engine")):
-        routing.add_argument(f"--{role}-engine", choices=config.ENGINES, help=f"Only: keep this project's {who} on one engine, {choice}")
-        routing.add_argument(f"--unset-{role}-engine", action="store_true", help=f"let routing choose the engine for {who}")
-    routing.add_argument("--l3-choice", metavar="CHOICE", help="L3's model choice, tried ahead of routing: [engine][:model][@effort], e.g. fable@high; one on another engine than Only L3 sets L3 routing back to Auto")
+    routing.add_argument("--l2-engine", choices=config.ENGINES, help="Only: keep this project's tasks on one engine, even over New tasks")
+    routing.add_argument("--unset-l2-engine", action="store_true", help="let routing choose the engine for tasks")
+    routing.add_argument("--l3-choice", metavar="CHOICE", help="L3's model choice, tried ahead of routing: [engine][:model][@effort], e.g. fable@high")
     routing.add_argument("--unset-l3-choice", action="store_true", help="back to Auto: L3 follows routing and defaults")
     for key, (role, engine, kind) in config.DEFAULT_SETTINGS.items():
         flag, where = key.replace("_", "-"), f"{role.upper()} on {config.ENGINE_LABELS[engine]}"
@@ -745,7 +744,7 @@ def main(argv=None) -> None:
         if args.pcmd == "add":
             try:
                 with config.add_project(args.name, path=args.path, approval=args.approval,
-                                        l2_engine=args.l2_engine, l3_engine=args.l3_engine) as entry:
+                                        l2_engine=args.l2_engine) as entry:
                     out(entry)
                 S.regen_state_md(args.name)
                 project_setup.registered(args.name)

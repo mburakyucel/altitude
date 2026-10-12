@@ -26,7 +26,7 @@ function serve(initial: Partial<ImprovementSettings>, press: (body: Record<strin
     if (url === "/api/overview") return json({ projects: [{ name: "altitude", managed: true }], queue: [], engines: [],
       wip: { machine: 0, per_project: {}, waiting: [] }, quota: { known: false } });
     if (url === "/api/project/altitude") return json({ name: "altitude", tasks: [], l3: {}, improvements: [] });
-    if (url === "/api/defaults/altitude") return json({ l3_engine: null, l2_engine: null, l3_choice: null, l2_preference: null,
+    if (url === "/api/defaults/altitude") return json({ l2_engine: null, l3_choice: null, l2_preference: null,
       l3_unavailable: null, routing: null, models: [], efforts: {}, engines: [], roles: [] });
     if (url === "/api/improve/altitude") return json(state);
     if (url === "/api/improve" && init?.method === "POST") {

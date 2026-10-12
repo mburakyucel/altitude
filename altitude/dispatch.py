@@ -461,9 +461,6 @@ MACHINE_SETTINGS = ("wip", "voice", "projects_folder", "operator_name", "inciden
 
 
 UNSET = object()
-#: A project's L3 choice and its Only L3 engine never name different engines: saving one releases the other,
-#: so the newer save is what answers next and every L3 control shows it.
-L3_PAIR = {"l3_choice": "l3_engine", "l3_engine": "l3_choice"}
 
 
 def request_setting(project: str | None, setting: str, value, reason: str, *, actor: str, expected=UNSET) -> dict:
@@ -498,7 +495,7 @@ def request_setting(project: str | None, setting: str, value, reason: str, *, ac
             config.validate_project_default(setting, value)
         elif setting == "l2_preference":
             config.validate_preference(value)
-        elif setting in ("l2_engine", "l3_engine"):
+        elif setting == "l2_engine":
             config.validate_engine_pin(value)
         elif setting in config.CHOICE_SETTINGS.values():
             value = config.parse_choice(value) if isinstance(value, str) else value
@@ -562,10 +559,6 @@ def _run_setting(project: str | None, setting: str) -> dict:
                 entry.pop(setting, None)
             else:
                 entry[setting] = request[setting]
-            choice, only = (entry.get("l3_choice") or {}).get("engine"), entry.get("l3_engine")
-            if setting in L3_PAIR and choice and only and choice != only:
-                request["released"] = {L3_PAIR[setting]: entry.pop(L3_PAIR[setting])}
-                S.write_json(path, request)  # a replay after a crash finds no conflict left to record
             if projects is None:
                 S.write_json(config.ROOT / "settings.json", entry)
             else:
@@ -576,8 +569,7 @@ def _run_setting(project: str | None, setting: str) -> dict:
         if not any(json.loads(row).get("request_id") == request["id"] for row in rows):
             event = {"at": S.now(), "kind": request["operation"], "project": project, "request_id": request["id"],
                      "actor": request["actor"], "reason": request["reason"], setting: request[setting],
-                     "status": request["status"], "note": request.get("note"),
-                     **({"released": request["released"]} if "released" in request else {})}
+                     "status": request["status"], "note": request.get("note")}
             S.atomic_write(events, "".join(row + "\n" for row in rows) + json.dumps(event) + "\n")
         request.update({f"result_{setting}": entry.get(setting) if entry else None, "completed_at": S.now()})
         S.write_json(path, request)
