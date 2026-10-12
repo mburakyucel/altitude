@@ -342,11 +342,13 @@ window.AudioContext = class extends NativeAudioContext {
 };
 Object.defineProperty(__voice.devices, 'getUserMedia', {configurable: true, value: async () => {
   if (!__voice.tone) {
-    // A tone that swells and fades twice a second, so a drawing waveform keeps changing.
+    // A tone that swells twice a second, so a drawing waveform keeps changing. Its quietest moment stays a third of
+    // its middle level: the trace samples once a second, in step with the swell, and must hear it at every phase.
     const tone = __voice.tone = new NativeAudioContext(), swell = tone.createOscillator(), depth = tone.createGain();
     __voice.oscillator = tone.createOscillator();
     __voice.level = tone.createGain();
-    __voice.level.gain.value = depth.gain.value = 0.15;
+    __voice.level.gain.value = 0.15;
+    depth.gain.value = 0.1;
     swell.frequency.value = 2;
     swell.connect(depth).connect(__voice.level.gain);
     __voice.oscillator.connect(__voice.level);
