@@ -58,15 +58,27 @@ class TestInspectionCLI(AltitudeCase):
             with self.subTest(actor=actor):
                 self.setenv("ALTITUDE_ACTOR", actor)
                 record = json.loads(cli("l3", "search", "Atlas pilot", "--json"))
-                self.assertEqual(record["matched"], 2)
+                self.assertEqual(record["matched"], 3)
                 evidence = json.dumps(record)
-                for text in ("original", "correction", "needs review", "not new authority"):
+                for text in ("original", "correction", "needs review", "pilot scoped to Atlas", "not new authority"):
                     self.assertIn(text, evidence)
                 self.assertIn("Keep the pilot scoped", cli("task", "messages", "inspect"))
                 self.assertEqual(json.loads(cli("pr", "8", "--json"))["head_sha"], "candidate")
                 self.assertEqual(json.loads(cli("repo", "--json"))["project"], self.project)
                 self.assertIn("groups", json.loads(cli("l3", "tools", "--json")))
         self.assertEqual({p: p.read_bytes() for p in config.project_dir(self.project).rglob("*") if p.is_file()}, before)
+
+    def test_repo_shows_what_activation_waits_for_and_its_last_error(self):
+        flag = config.MONITOR_DIR / "restart-pending.json"
+        S.write_json(flag, {"since": "2026-10-12T03:00:00+00:00", "files": ["altitude/server.py"], "retries": 1,
+                            "retry_at": "2026-10-12T03:12:52+00:00", "error": "cannot prove Altitude is quiet"})
+        self.assertIn(S.localized("restart pending: 1 files (altitude/server.py) since 2026-10-12T03:00:00+00:00; "
+                                  "retry 1 after 2026-10-12T03:12:52+00:00; last error: cannot prove Altitude is quiet"),
+                      cli("repo"))
+        S.write_json(flag, {"since": "2026-10-12T03:00:00+00:00", "files": ["altitude/server.py"],
+                            "failed": "2026-10-12T03:30:00+00:00", "error": "checkout has uncommitted changes"})
+        self.assertIn(S.localized("; failed 2026-10-12T03:30:00+00:00; last error: checkout has uncommitted changes"),
+                      cli("repo"))
 
     def test_owner_inspection_preserves_project_and_mutation_boundaries(self):
         self.setenv("ALTITUDE_ACTOR", "l2")

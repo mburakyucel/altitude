@@ -174,9 +174,10 @@ handled by a different provider after that session's `last_turn`. Fresh context 
 `alt l3 search` provides on-demand historical evidence through the same project-bound coordinator
 transport and CLI role gate. `l3.search` scans existing human `chat.jsonl` rows, the shared
 `tasks.task_messages` projection (including status-backed decision messages), and active/archived
-`report.json` string values and `digest.md`. It uses literal case-insensitive matching, retains the
-newest bounded matches, and returns original text with immediate neighbors, dates, roles/recorded
-authors and logical source references that survive task archival. Report/digest authors are unknown
+`report.json` string values and `digest.md`. A record matches when it contains every word of the
+query in any order, ignoring case and punctuation. Search retains the newest bounded matches and
+returns original text with immediate neighbors, dates, roles/recorded authors and logical source
+references that survive task archival. Report/digest authors are unknown
 where unrecorded; their dates explicitly mean file modification, never decision time. Resolved
 evidence paths stay within the selected project. No engine transcripts, generated summaries, index,
 external service, model call or state mutation participate.
@@ -467,12 +468,12 @@ Everything above the platform seam is the same on both hosts. These are the beha
 
 | Area | Linux | macOS 15+ | Where |
 | --- | --- | --- | --- |
-| Service | systemd user unit; restarts on failure; runs while the user manager runs | LaunchAgent in the `gui` domain; restarts on failure; starts at login, runs with the screen locked, stops at logout (running before login is a later increment) | Setup, Operations |
+| Service | systemd user unit; restarts on failure; runs while the user manager runs | LaunchAgent in the `gui` domain; restarts on failure; starts at login, runs with the screen locked, stops at logout; does not run before any login, when macOS has neither the login's job domain nor its keychain | Setup, Operations |
 | Service logs | the user journal | `~/Library/Logs/altitude/`, also for detached jobs such as updates | Operations |
 | A job (worker, review, machine command, update) | transient user unit; systemd holds every descendant in its cgroup and enforces the time limit | its own launchd job; a supervisor enforces the time limit, holds an idle-sleep assertion, and stops the job's kernel coalition when the command exits | above |
 | Stop | stop the unit; the cgroup takes every descendant; pidfd pins each signal | kill every coalition member, rechecking start time and coalition just before each signal (no process handle exists) | above |
-| Claude confinement | Claude's permission boundary only | also Altitude's Seatbelt profile: writes only under its roots, signals only its own processes, no launchd control, Simulator service or app launches; browser checks run in validation | Isolation and landing |
-| Codex confinement | Codex's own sandbox (bwrap) | Codex's own sandbox (Seatbelt), which admits neither the Simulator service nor app launches; the two profiles cannot nest | Isolation and landing |
+| Claude confinement | Claude's permission boundary only | also Altitude's Seatbelt profile: writes only under its roots, signals only its own processes, no launchd control, Simulator service, app launches or Apple Events; browser checks run in validation | Isolation and landing |
+| Codex confinement | Codex's own sandbox (bwrap) | Codex's own sandbox (Seatbelt), which admits neither the Simulator service, app launches nor Apple Events; the two profiles cannot nest | Isolation and landing |
 | Candidate browser checks, both engines | `alt task validate` runs the disposable rootless container with Chromium's own sandbox (two layers) | `alt task validate` runs a job under the validation Seatbelt profile with Chromium's inner sandbox off because profiles cannot nest (one layer, fictional fixtures only); stock engines need no custom runtime | [Browser verification](DEVELOPMENT.md#browser-verification) |
 | Operator-grant commands | outside the worker sandbox with the user bus reachable, so a command can stop or reconfigure its own unit and its time limit | outside any sandbox with launchd reachable, so a command can signal its own supervisor; on both hosts the time limit bounds an ordinary command, not one that works against it | Isolation and landing |
 | Terminal Close | the shell is a transient unit; stopping it hangs up its cgroup | the shell is a launchd job; stopping it hangs up its coalition | Operator terminal |
@@ -597,12 +598,18 @@ resolved. `ALTITUDE_PRIMARY_ENGINE` chooses only the default tie order. Named, c
 configured order, and L3 retains its current engine/model within that tier unless a competitor has
 at least fifteen percentage points more weekly headroom. A higher available tier takes precedence.
 Missing executables, exhausted windows and explicit provider rejections exclude the affected option;
-unknown access remains eligible. Authentication rejections exclude the engine and model rejections
-exclude only that model for thirty minutes. Signing in cures an authentication rejection at once, so
-it has its own record: an operator coordinator message or Retry that finds no engine withdraws it for
-the engine that turn then attempts, and each explicit task resume request withdraws it for the task's
-engine. A credential still invalid records it again on that attempt, and automatic turns and resumes
-keep waiting. A current model-specific weekly reading at 100% also
+unknown access remains eligible. A sign-in rejection is the CLI's own authentication code or an
+HTTP 401, whatever its wording, or the CLI's sign-in prompt before any request. Authentication
+rejections exclude the engine and model rejections exclude only that model for thirty minutes.
+Signing in cures an authentication rejection at once, so it has its own record, which is the engine's
+sign-in lapse: an operator coordinator message or Retry that finds no engine withdraws it for the
+engine that turn then attempts, and each explicit task resume request withdraws it for the task's
+engine. A credential still invalid records it again on that attempt, within the same lapse, and
+automatic turns and resumes keep waiting. The quota refresh records a lapse when its read is refused
+for sign-in; its successful read, or a successful coordinator turn, ends it. Each project's
+conversation gets one heads-up line per lapse naming the engine, what the turn did (answered on
+another engine, waits, or stopped) and the engine's sign-in command; failed turns show the
+rejection's plain reason, never provider text. A current model-specific weekly reading at 100% also
 excludes only that model. The router never derives model allowances from an
 account-wide meter or subscription entitlement from a plan name. Safe pre-output rejection retries
 are bounded to configured alternatives. Explicit pins never fall back, and an L2 resume retains its
@@ -1224,7 +1231,7 @@ disposable rootless Podman container that altd starts from its own deployed imag
 limits. On macOS it runs as a job under the platform's validation Seatbelt profile, stricter than a
 worker's: it writes and reads only its own folders in the run area, reads nothing else in the operator's
 home or the shared temporary folders, reaches neither Altitude's port, other processes' Unix sockets,
-the keychain, the Simulator service nor LaunchServices, and launchd refuses it service control. The runner's storage sits beside Altitude's home, outside every worker's writable roots. The image prepares pinned Playwright
+the keychain, the Simulator service, LaunchServices nor Apple Events, and launchd refuses it service control. The runner's storage sits beside Altitude's home, outside every worker's writable roots. The image prepares pinned Playwright
 Chromium and WebKit with both sets of system libraries, so required emulated-iPhone validation
 uses the supported runner without host package installation. Image corrections take effect after
 normal source activation and require a successful browser check through that effective runner;
@@ -1250,7 +1257,8 @@ may signal only processes in its own sandbox, never its supervisor, and write on
 the worktree's Git directories, Altitude's home, Claude's own state, the GitHub CLI's configuration and
 temporary directories; launchd refuses service control to any sandboxed process. The profile also refuses
 the per-user services that start programs as the operator's account outside it: Apple's Simulator service,
-whose devices run what any client asks, and LaunchServices, which opens apps. A Claude L3 turn that
+whose devices run what any client asks, and LaunchServices, which opens apps; it also refuses sending Apple
+Events, which script running apps with only macOS's Automation consent in the way. A Claude L3 turn that
 runs as altd's child rather than as a job starts under the same profile. On Linux Codex uses the native `altitude-task` profile, with explicit worktree, Git and Altitude-state
 roots. The session bus and manager runtime directory (including its direct private socket) are denied;
 other runtime-directory paths retain their policy. The generated profile also supplies provider-free
@@ -1482,7 +1490,7 @@ Recipient queue acceptance, project-log receipts and system chat rows carry stru
 recipient, exchange and summary metadata. Internal checkout bindings never enter prompts or chat
 API projections. Source Sent acknowledges acceptance, not handling; recipient pending rows become
 incoming history when supplied on an ordinary turn. Each information row stays separately folded
-outside routine system groups, with only Show/Hide. Existing literal history search attributes it
+outside routine system groups, with only Show/Hide. Existing history search attributes it
 as information; decision readers and human conversation handoffs exclude it.
 Provider text/tool output, a completed turn or a participant-bound in-turn reply proves supply;
 CLI launch alone does not. Incoming precedes its associated receiving turn and reply. Receipt failure reports
@@ -1667,15 +1675,19 @@ question block remains waiting after worker exit and needs no completion report.
 while activation is pending. When dispatch/resume claims, L3 turns, adversarial reviews, report
 verification and bounded validation runs (including evidence recording and cleanup) are quiet, altd runs
 the one guarded restart script as a transient user unit outside its own cgroup. It installs the
-pnpm-locked dependencies, builds and validates the latest bundle in staging, rechecks the checkout and
-quiet point, swaps the bundle, restarts safely, and verifies both API and UI; verification failure
+pnpm-locked dependencies, builds and validates the checked-out head's bundle in staging, rechecks that the
+checkout is clean, not ahead or diverged and still at that head (behind origin is fine: the deployment tick pends
+the rest) and the quiet point, swaps the bundle, restarts safely, and verifies both API and UI; verification failure
 restores the prior bundle and verifies recovery API/UI health from another new process, retaining
 both the activation failure and recovery outcome. With no prior bundle, recovery is unavailable.
 On macOS, service Stop/restart confirms coalition cleanup and waits up to 45 seconds for launchd
 to remove the label before completing Stop or bootstrapping again; unreadable removal fails explicitly.
 Independent worker jobs retain their own coalitions. Monitor's Restart button runs the same path sooner by hand: it appears
 at that narrow quiet point, even while workers run, disappears once restart is under way, and
-the notice leaves when the new process answers with nothing pending. A restart unit that fails files a
+the notice leaves when the new process answers with nothing pending. A transient refusal (no quiet-probe
+answer in three tries, work claimed the quiet point, the checkout moved after the build began) withdraws the
+request with its `error` and a five-minute `retry_at`, and altd requests the unit again at a later quiet point,
+up to three retries. Any other failure, or a transient one past that bound, files a
 system fault naming its reason at once and, while its request is still pending, marks the record `failed`
 with that `error`, so the hold lifts; a restart that has not happened ten minutes after it was requested (the unit died without
 reporting) is the same fault. Dispatch, resume and
@@ -1699,6 +1711,9 @@ shows ISO instants in the machine's zone. Formats are in [SPEC.md §4.5](../desi
 and [CLI times](CLI.md#times).
 
 ### Conversation-audit pilot
+
+The approved [improvement suggestions design](../design/wireframes/improvement-review/PROPOSAL.md)
+replaces this pilot in its first rollout step; until then the pilot behaves as described here.
 
 `audit.py` owns the finite pilot for the project named in `config.py`. The operator explicitly starts
 it; installation/registration do not enable it. `audit.json` stores reviewer, expiry, attempts,

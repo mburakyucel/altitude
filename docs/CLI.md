@@ -76,7 +76,7 @@ alt queue [--json]
 alt repo [--json]
 alt pr <number> [--json]
 alt l3 tools [--days N] [--json]
-alt l3 search <literal-text> [--limit N] [--json]
+alt l3 search <words> [--limit N] [--json]
 ```
 
 `alt task status <slug> --brief` prints at most ten orientation lines. `alt task status <slug>` and
@@ -254,16 +254,18 @@ request `{"kind":"alt","args":["l3","search","index migration","--json"]}`. The 
 project; L2 uses the same CLI read bound to its launch project, while the operator can select one through
 the usual `--project` option. Source paths resolving outside the project are refused.
 
-The query is 1–200 characters, contains non-whitespace text and matches a literal case-insensitive
-substring, without regex, token ranking or model calls. The full existing corpus is scanned on each
-request, so read cost grows with its size; the coordinator's existing 120-second command timeout
-still applies. There is no recent-message scan cutoff, index or persistent search state.
+The query is 1–200 characters with at least one word. A record matches when it contains every word
+of the query in any order, ignoring case and punctuation: `live provider`, `live-provider` and
+`provider/live` find the same records, while a record missing any one word does not match. A word also
+matches inside a longer one, so `mac` finds `macOS`. Words match as plain text, without regex,
+stemming, ranking or model calls. The full existing corpus is scanned on each request, so read cost
+grows with its size; the coordinator's existing 120-second command timeout still applies. There is no recent-message scan cutoff, index or persistent search state.
 
 Matches sort newest first by recorded message timestamp or explicitly labeled report/digest file
 modification time. Dates are not inferred from decision prose. Each matching record includes its
 immediate preceding and following conversation rows or report string fields in original order.
 The default is five matches, `--limit` accepts 1–20, each excerpt contains at most 1,200 original
-characters around its first match, and the serialized response including metadata fits 64 KiB.
+characters around the first matched word, and the serialized response including metadata fits 64 KiB.
 `--json` retains those bounds: `matched` counts matching records, `truncated` reports omitted matches,
 and each context row has `start`, `end`, `text_chars` and `truncated` for clipped text. Text output
 also identifies those omissions. Refining the query can retrieve a condition beyond a clipped excerpt;
@@ -1968,7 +1970,9 @@ browser and other candidate checks run through [validation runs](#validation-run
 with no grant. The approved Mac fictional harness uses the existing Seatbelt runner without
 Chromium's inner sandbox; dual-protection checks use the Linux container. A grant never substitutes
 an outside-worker browser run or changes worker permissions. Host
-container deployment work uses the [standing container approval](../AGENTS.md#container-operations-on-this-machine):
+container deployment work uses the [standing container approval](../AGENTS.md#container-operations-on-this-machine),
+and virtual machines on the Mac, which cannot start inside a validation run, use the
+[standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac):
 
 ```text
 alt task grant <slug> --approval <message-id> --question <id> --revision <n> [--source task|project] --reason <why>
@@ -2022,12 +2026,12 @@ run against that earlier question and answer; the grant records the purpose as t
 it and `from_task`, binds this task's current attempt and is revoked as usual. L3 judges later
 corrections and whether the new work is the same purpose; any narrower or wider purpose is asked again.
 
-For standing approval, the owner copies the complete paragraph under **Container operations on this
-machine** in the project's committed `AGENTS.md` into an L3-directed `alt task block --reason`
-(without `--for-operator`). Task-specific steps, cleanup and verification belong in the preceding
-reply. L3 reads the original approval and later corrections, then records the grant with
-`--standing-policy 'Container operations on this machine'`, the paragraph's approval ID, the current
-question/revision and `--attempt`. No new operator answer is required. The owner cannot self-record
+For standing approval, the owner copies the complete paragraph under the policy's heading in the
+project's committed `AGENTS.md`, such as **Container operations on this machine** or **VM lane runs on
+this Mac**, into an L3-directed `alt task block --reason` (without `--for-operator`). Task-specific
+steps, cleanup and verification belong in the preceding reply. L3 reads the original approval and
+later corrections, then records the grant with `--standing-policy '<heading>'`, the paragraph's
+approval ID, the current question/revision and `--attempt`. No new operator answer is required. The owner cannot self-record
 a standing grant. L3 resumes the owner with the recorded purpose; the owner resolves that dependency
 from L3's message using the ordinary question flow.
 

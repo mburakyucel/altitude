@@ -168,16 +168,36 @@ class TestL3Search(AltitudeCase):
             if saved is not None:
                 path.write_bytes(saved)
 
-    def test_literal_query_count_excerpt_and_output_bounds_are_explicit(self):
+    def test_every_word_matches_in_any_order_ignoring_case_and_punctuation(self):
+        self.chat("Live-provider testing stays deferred until the operator decides.")
+        self.chat("Run the Mac verification with alt task validate.", at="2030-01-02T00:00:00+00:00")
+        self.chat("Provider testing is live on the staging host.", at="2030-01-03T00:00:00+00:00")
+        slug = self.task("Archived decision")
+        message = T.message(self.project, slug, T.OPERATOR_MESSAGE_ROLE, "Verify the fix on macOS before closing.")
+        T._archive(self.project, slug)
+        S.write_json(S.task_dir(self.project, slug) / "report.json", {"fyi": ["live/provider checks remain open"]})
+        found = lambda query: {r["match"] for r in self.lookup(query, "--json")["results"]}
+        chat = lambda line: f"{self.project}/chat.jsonl#L{line}"
+        hyphenated = {chat(1), chat(3), f"{self.project}/task/{slug}/report.json#/fyi/0"}
+        self.assertEqual(found("live provider"), hyphenated)
+        self.assertEqual(found("LIVE-PROVIDER"), hyphenated)
+        self.assertEqual(found("provider/live"), hyphenated)
+        self.assertEqual(found("live provider testing"), {chat(1), chat(3)})
+        self.assertEqual(found("verification mac"), {chat(2)})
+        self.assertEqual(found("verify on the mac"), {f"{self.project}/task/{slug}/conversation#{message['id']}"})
+        self.assertEqual(self.lookup("live provider rollout", "--json")["status"], "no_results", "every word must appear")
+
+    def test_word_query_count_excerpt_and_output_bounds_are_explicit(self):
         long_text = "prefix " * 400 + "[Atlas.*] only until Friday" + " suffix" * 400
         self.chat(long_text)
-        record = self.lookup("[Atlas.*]", "--json")
+        record = self.lookup("friday [Atlas.*]", "--json")
         row = record["results"][0]["context"][0]
         self.assertEqual(row["text"], long_text[row["start"]:row["end"]])
         self.assertIn("[Atlas.*] only until Friday", row["text"])
+        self.assertEqual(row["start"], long_text.index("Atlas") - 600, "excerpt centers on the first matched word")
         self.assertTrue(row["truncated"])
         self.assertLessEqual(len(row["text"]), 1200)
-        self.assertEqual(self.lookup("Atlas.+", "--json")["status"], "no_results", "query is not a regex")
+        self.assertEqual(self.lookup("Atlas.+ Saturday", "--json")["status"], "no_results", "query is not a regex")
         for index in range(30):
             self.chat("Atlas " + "😀" * 1200 + str(index))
             (S.tasks_dir(self.project) / f"orphan-{index:02d}-{'x' * 65}").mkdir(parents=True)
@@ -202,7 +222,7 @@ class TestL3Search(AltitudeCase):
         self.assertIn("No matching evidence found. No decision inferred.", self.lookup("missing"))
         self.task()  # absent conversation/report files are normal
         self.assertEqual(self.lookup("missing", "--json")["matched"], 0)
-        for args in (("",), (" " ,), ("x" * 201,), ("x", "--limit", "0"), ("x", "--limit", "21")):
+        for args in (("",), (" " ,), ("/.?",), ("x" * 201,), ("x", "--limit", "0"), ("x", "--limit", "21")):
             result = self.alt("l3", "search", *args, env={"ALTITUDE_ACTOR": "l3"})
             self.assertNotEqual(result.returncode, 0)
             self.assertNotIn("no_results", result.stdout)
@@ -263,7 +283,7 @@ class TestL3Search(AltitudeCase):
         resumes = []
 
         def execute(text, **kwargs):
-            self.assertIn('alt l3 search "literal text"', text)
+            self.assertIn('alt l3 search "key words"', text)
             self.assertNotIn("only during the pilot", text, "old evidence is beyond the handoff")
             runtime = kwargs["cwd"]
             env = os.environ | kwargs["extra_env"]

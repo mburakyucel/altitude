@@ -227,7 +227,7 @@ def _state_error(state: RepositoryState, base: str, *, exact: bool) -> str | Non
 def fetch_and_require_exact_base(repo: str | Path, base: str = DEFAULT_BASE) -> str:
     """Fetch, then require a clean checkout exactly at ``origin/<base>``.
 
-    Used for explicit checkout recovery and activation, never isolated task admission.
+    Used for explicit checkout recovery, never isolated task admission or activation.
     """
     origin_sha = fetch_origin(repo, base)
     state = inspect_repository(repo, base)

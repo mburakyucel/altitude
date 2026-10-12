@@ -95,7 +95,8 @@ the Linux image.
 throwaway jobs: piped and file output, logged and detached jobs, Stop of descendants that leave by
 `setsid`, double fork, a cleared environment or continued forking, cleanup when the main process
 exits, the time limit, also after its owner exits, macOS confinement (including the Simulator
-service and a fixture app opened through LaunchServices, which must be refused) and supervisor
+service, a fixture app opened through LaunchServices and Seatbelt's verdict on sending an Apple
+Event, which must be refused) and supervisor
 tampering, process and socket facts, and the memory limit. `--service` adds a throwaway user service's start,
 restart and stop. It prints one JSON row per check and exits non-zero when one fails.
 
@@ -497,8 +498,9 @@ than a worker's:
 - **Keychain** lookups are refused, and launchd refuses service control to every sandboxed process,
   so a run cannot start, stop or change a service. It signals only its own processes.
 - **Simulator and apps** stay out of reach: Apple's Simulator service and LaunchServices start
-  programs as the operator's account outside any sandbox, so the profile refuses both, as a worker's
-  does. A run cannot create, boot or run programs in a Simulator device, or open an app. With
+  programs as the operator's account outside any sandbox, and Apple Events script running apps with
+  only macOS's Automation consent in the way, so the profile refuses all three, as a worker's does. A
+  run cannot create, boot or run programs in a Simulator device, open an app or script one. With
   `--simulator`, altd gives the run one iPhone's Safari through a relay instead
   ([iOS Simulator runs](#ios-simulator-runs)).
 - **Environment** is exactly `HOME`, `TMPDIR`, `PATH`, `LANG`, `ALTITUDE_VALIDATION` and
@@ -513,7 +515,7 @@ stop cleanup. Links are removed, never followed. `--kvm` and `--publish` are ref
 `python3 scripts/platform_probe.py --only validation-confinement` checks the profile natively: a
 fixture run in the home writes and reads only its own folder and is refused the home, the shared
 temporary folders, a stand-in for Altitude's port, other sockets, the keychain, launchd and its
-supervisor, a fixture app opened through LaunchServices and the Simulator service, while system
+supervisor, a fixture app opened through LaunchServices, Apple Events and the Simulator service, while system
 files, name resolution and its socket, other loopback ports, Git and its own sockets work, including
 one nested in a later folder, as a run's temporary folder is.
 
@@ -799,7 +801,7 @@ blocks automating it.
 | --- | --- | --- | --- | --- |
 | Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration, systemd unit-file parsing (`systemd-analyze verify`, without systemd running) and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, native macOS, container deployment | In use |
 | Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run), in a task through the [validation runner](#validation-runner)) | Fresh install, user-service start, update, failed-update recovery, the service running on after its SSH login closes and starting after a restart with nobody logged in, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`) and an installation over a failed one (`RECOVERY`); with `PUBLIC`, setup's command and the installed daemon's update lookup and `alt update` against GitHub itself, on Ubuntu 24.04 x86_64 | Desktop login/logout, a physical machine, the app's Update button from a published release, storage migration (no application state is created), other distributions | In use |
-| Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under an [operator grant](CLI.md#operator-grant)) | The built `install.sh` through its public command in fresh macOS 26 arm64 guests with automatic login and no network: its refusals with their documented fixes for missing Python, OpenSSL 3 not first on PATH and an account with no desktop session; the [macOS installation lane](#macos-installation-lane)'s lifecycle under a throwaway HOME, including automatic updates, the automatic-updates-off confirmation and recovery from a failed automatic update; and the account's own installation, its HTTPS health and `alt doctor`, its LaunchAgent started again by the automatic login after a restart, and uninstall | A physical second Mac, other macOS versions, logout/login without a restart, browser/device CA trust, the guest's own download from GitHub, the real check and notice schedule, the app's rendered notice, a release candidate's lookup, an update from a published release to a later published one | In use on Apple silicon |
+| Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under the [standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac)) | The built `install.sh` through its public command in fresh macOS 26 arm64 guests with automatic login and no network: its refusals with their documented fixes for missing Python, OpenSSL 3 not first on PATH and an account with no desktop session; the [macOS installation lane](#macos-installation-lane)'s lifecycle under a throwaway HOME, including automatic updates, the automatic-updates-off confirmation and recovery from a failed automatic update; and the account's own installation, its HTTPS health and `alt doctor`, its LaunchAgent started again by the automatic login after a restart, and uninstall | A physical second Mac, other macOS versions, logout/login without a restart, browser/device CA trust, the guest's own download from GitHub, the real check and notice schedule, the app's rendered notice, a release candidate's lookup, an update from a published release to a later published one | In use on Apple silicon |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Validation container | `alt task validate -- COMMAND` ([validation runner](#validation-runner)); `make browser-sandbox` | A committed candidate's command in a disposable rootless Podman container, including nested rootless containers and Playwright's Chromium with its own sandbox | Running Altitude itself in a container, other hosts' kernels or Podman versions, native macOS | In use on Linux x86_64 |
 | macOS validation run | `alt task validate -- COMMAND` on a Mac ([macOS validation runs](#macos-validation-runs)) | A committed candidate's command on macOS under the validation profile, with fictional state and fixture engines: the Python suites and application journeys with local-process jobs | Native launchd jobs and worker confinement, browsers with their own sandbox, installation, provider compatibility | Implemented; native acceptance is recorded on the delivering PR |
@@ -1268,8 +1270,9 @@ minutes and `login` just over one; the release build adds about one. `installati
 
 Virtual machines cannot start inside a task's sandbox or a [macOS validation
 run](#macos-validation-runs). Inside a task, an owner runs `installation_macos_vm.py` with
-`alt task run` under an [operator grant](CLI.md#operator-grant) naming this lane: `image --step`
-while images are missing, then `run`, with `--phase` splitting the phases across commands when the
+`alt task run` under an [operator grant](CLI.md#operator-grant): `image --step` while images are
+missing, under a grant naming that build, then `run`, under one L3 records from the
+[standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac) on request, with `--phase` splitting the phases across commands when the
 Mac is busy so each finishes within the command limit, keeping `RESULTS` in the task folder. The runner never touches the host's Altitude
 service, LaunchAgents, keychains, trust stores or network configuration.
 

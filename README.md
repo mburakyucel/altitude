@@ -1,22 +1,22 @@
 # <img src="web/public/altitude-mark.svg" alt="" width="32" height="32"> Altitude
 
-**You lead. Altitude orchestrates. Agents ship.**
+## Be the lead, not the bottleneck.
 
-Be the principal engineer. Set the roadmap. Own the architecture. Make executive decisions.
+Altitude runs Claude Code and Codex like an engineering team on your computer.
 
-Altitude is a self-hosted workspace where one developer leads Claude Code or Codex agents as an
-engineering team. Your project orchestrator works through strategy with you and puts work in
-motion. Task owners carry it through investigation, implementation, checks and pull requests: in
-parallel, each in its own worktree, on your machine and your coding account.
-
-**Steer from your phone, by voice.** Describe the next feature, settle a tradeoff or step into
-any task. The work keeps going on your machine after you put the phone away.
-[Set up phone access and voice](docs/OPERATIONS.md#on-iphone) with private HTTPS and a supported
-browser.
+- **You make the executive decisions; Altitude handles the rest.** Only the calls that need you
+  reach you, wherever you are.
+- **A coordinator runs your project with you** and answers the agents from what you have decided.
+- **Every task gets its own agent,** from idea to production, around the clock.
+- **It heals and improves itself.** When something breaks, the coordinator fixes it and the work
+  resumes, and every fix makes it better.
 
 **Early preview · Linux · macOS · [Get started](#get-started)**
 
-<img src="docs/images/project-desktop.png" alt="Desktop: the project conversation with L3 beside the Work panel, where three task owners deliver in parallel." width="1440">
+<picture>
+  <source media="(max-width: 600px)" srcset="docs/images/decision-phone.png">
+  <img src="docs/images/hero.png" alt="The project view on a computer, with the coordinator's plan and three tasks at work; in front of it, a phone shows the one question that needs you, with its recommended answer." width="1200">
+</picture>
 
 ## On your phone
 
