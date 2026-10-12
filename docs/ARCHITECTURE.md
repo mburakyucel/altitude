@@ -1710,6 +1710,9 @@ and [CLI times](CLI.md#times).
 
 ### Conversation-audit pilot
 
+The approved [improvement suggestions design](../design/wireframes/improvement-review/PROPOSAL.md)
+replaces this pilot in its first rollout step; until then the pilot behaves as described here.
+
 `audit.py` owns the finite pilot for the project named in `config.py`. The operator explicitly starts
 it; installation/registration do not enable it. `audit.json` stores reviewer, expiry, attempts,
 reviewed exchange identities and finding-supply receipts. Sessions wait twelve hours and four new
