@@ -37,7 +37,8 @@ def minutes_ago(minutes: float):
         S.now, T._conversation_time = real
 
 
-def main():
+def seed() -> dict:
+    """Seed the example; readme-features-service.py adds the feature illustrations to it."""
     configure()
     settings = S.read_json(config.ROOT / "settings.json", {})
     S.write_json(config.ROOT / "settings.json", {**settings, "operator_name": "Alex"})
@@ -189,8 +190,9 @@ def main():
     route.engine_readouts = lambda: [{"engine": name, "label": config.ENGINE_LABELS[name], "week": readings[name],
                                       "known": True, "stale": False, "at": S.now()} for name in config.ENGINES]
     S.regen_state_md(PROJECT)
-    serve()
+    return {"fake": fake, "repo": repo, "repos": repos, "say": say}
 
 
 if __name__ == "__main__":
-    main()
+    seed()
+    serve()
