@@ -3,9 +3,10 @@ import { resolve } from "node:path";
 import { expect } from "@playwright/test";
 import { test } from "./fixtures";
 
-// The README's feature illustrations (design/readme/README.md#features): a pull request waiting for the operator's
-// review, a command typed into the task's terminal, a fault the coordinator repairs, and improvement suggestions. With ALTITUDE_README_IMAGES naming a folder,
-// each state is written there as `<feature>-<viewport>.png` at 2×.
+// The README's feature illustrations (design/readme/README.md#feature-pictures): a pull request waiting for the
+// operator's review, a command typed into the task's terminal, a fault the coordinator repairs, and improvement
+// suggestions. With ALTITUDE_README_IMAGES naming a folder, each state is written there as
+// `<feature>-<viewport>.png` at 2×.
 const images = process.env.ALTITUDE_README_IMAGES ? resolve(process.env.ALTITUDE_README_IMAGES) : undefined;
 test.use({ serviceScript: "readme-features-service.py", deviceScaleFactor: 2, locale: "en-US", timezoneId: "UTC", colorScheme: "light" });
 test.setTimeout(90_000);

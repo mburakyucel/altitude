@@ -3,7 +3,8 @@
 Usage, from the repository root: python3 design/readme/compose.py <images folder>
 The opening loop's frames place a desktop and a phone capture with hero.html's layout and become an animated WebP
 that loops. Each feature picture places two phone captures side by side with pair.html's layout, each cropped to
-its top or bottom, and becomes a still WebP. Needs Google Chrome and ffmpeg with libwebp.
+its top or bottom, and becomes a still WebP; its phone-width version is the one capture that proves it, whole.
+Needs Google Chrome and ffmpeg with libwebp.
 """
 import pathlib
 import subprocess
@@ -25,6 +26,9 @@ FEATURES = {
     "feature-improve": [("improve-phone", "top"), ("improve-accepted-phone", "top")],
     "feature-terminal": [("terminal-1-command-phone", "bottom"), ("terminal-2-typed-phone", "top")],
 }
+# The capture each feature shows at phone width; the live session's is docs/images/session-phone.png.
+PROOF = {"feature-review": "review-findings-phone", "feature-heal": "heal-2-repaired-phone",
+         "feature-improve": "improve-accepted-phone", "feature-terminal": "terminal-2-typed-phone"}
 
 
 def render(layout: str, size: tuple[int, int], captures: dict[str, pathlib.Path], png: pathlib.Path):
@@ -68,6 +72,8 @@ def main(images: pathlib.Path):
             render(layout, (1720, 1200), {"../../docs/images/task-phone.png": images / f"{left}.png",
                                           "../../docs/images/session-phone.png": images / f"{right}.png"}, png)
             encode(ROOT / f"docs/images/{name}.webp", ["-i", str(png), "-c:v", "libwebp", "-frames:v", "1"])
+        for name, capture in PROOF.items():
+            encode(ROOT / f"docs/images/{name}-phone.webp", ["-i", str(images / f"{capture}.png"), "-c:v", "libwebp"])
 
 
 if __name__ == "__main__":

@@ -121,6 +121,50 @@ The scope and ordering here are an example of engineering judgment, not a prescr
 For session identity and engine-specific message timing, see [lifecycle](SESSION_LIFECYCLE.md).
 To try a project, follow [setup](SETUP.md).
 
+## See the features
+
+Five of the README's features in the same Atlas project. On a computer each picture shows two phone
+screens side by side; on a phone it shows the one screen that proves it.
+
+**Steer mid-flight.** Your message to the compatibility owner beside its live session.
+
+<picture>
+  <source media="(max-width: 600px)" srcset="images/session-phone.png">
+  <img src="images/feature-live.webp" alt="On the left, the compatibility task's conversation with your instruction to keep pagination tokens valid and the owner's reply. On the right, its live session showing the owner's replies and the commands it ran." width="860">
+</picture>
+
+**Take the terminal.** The billing owner hands you a step only you can take; it waits typed in the
+task's terminal until you press Enter.
+
+<picture>
+  <source media="(max-width: 600px)" srcset="images/feature-terminal-phone.webp">
+  <img src="images/feature-terminal.webp" alt="On the left, the billing task's owner explains that deploying to staging uses your SSH key, with the command make deploy ENV=staging and an Open in terminal button. On the right, the task's terminal with that command typed at the prompt, waiting for Enter." width="860">
+</picture>
+
+**Nothing ships unchecked.** The independent review's two findings, both fixed, beside the pull
+request waiting for your merge.
+
+<picture>
+  <source media="(max-width: 600px)" srcset="images/feature-review-phone.webp">
+  <img src="images/feature-review.webp" alt="On the left, the per-tenant limits task's implementation review by the other engine: a burst at the window edge and a missing Retry-After, each marked fixed with the owner's fix. On the right, Needs you asks you to review pull request 214 before merge, with Approve merge." width="860">
+</picture>
+
+**Self-healing.** A machine problem pauses the sign-on task; the coordinator repairs it and the task
+resumes.
+
+<picture>
+  <source media="(max-width: 600px)" srcset="images/feature-heal-phone.webp">
+  <img src="images/feature-heal.webp" alt="On the left, the Work list with the sign-on task paused by a system problem. On the right, the project conversation where the coordinator reports that it restarted the test identity provider, checked a login end to end and resumed the task." width="860">
+</picture>
+
+**Self-improving.** Altitude reviews its own finished work and suggests fixes; one tap makes a fix a
+task.
+
+<picture>
+  <source media="(max-width: 600px)" srcset="images/feature-improve-phone.webp">
+  <img src="images/feature-improve.webp" alt="Improvement suggestions in the Altitude project's conversation, each citing the finished tasks it came from, with Make a task and Dismiss. On the right, the first suggestion is accepted and the coordinator is opening a task." width="860">
+</picture>
+
 ## Capture source and maintenance
 
 [Example data and capture instructions](../design/readme/README.md) explain how to reproduce the
