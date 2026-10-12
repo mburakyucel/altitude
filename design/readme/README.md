@@ -50,7 +50,7 @@ google-chrome --headless --hide-scrollbars --default-background-color=00000000 -
   under the [project UI rule](../../AGENTS.md#ui); do not add a gallery for each PR.
 - Edit `docs/images/altitude.svg` and `altitude-phone.svg` directly. These standalone vectors use
   system fonts and contain no scripts or raster art. Keep their levels, labels and example tasks
-  equivalent; the phone composition stacks each level for legibility.
+  equivalent; the phone composition stacks each task with its helpers for legibility.
 - Keep responsive diagram `<picture>` sources and image alt text in README and walkthrough. Keep
   desktop and phone app views visible together in README. Check GitHub's sanitized Markdown, image
   paths and anchors, then inspect both widths. Open the original images to review details that are

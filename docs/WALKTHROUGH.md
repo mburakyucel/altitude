@@ -12,7 +12,7 @@ You can talk to an owner directly as well as through the project conversation.
 
 <picture>
   <source media="(max-width: 600px)" srcset="images/altitude-phone.svg">
-  <img src="images/altitude.svg" alt="You set the goal and make the calls. Below you, the coordinator (L3) plans with you and runs the project; task agents (L2), one per task, take each from idea to production; helpers (L1) handle research, tests and benchmarks on demand." width="1200">
+  <img src="images/altitude.svg" alt="You make the executive decisions. Below you, the coordinator (L3) orchestrates the project: it plans with you, starts tasks and answers from your decisions. Each task has its own agent (L2) that takes it from idea to production, and each task agent runs its own helper agents (L1) for focused work such as reading API docs, building tests or profiling latency." width="1200">
 </picture>
 
 ## Keep the project direction in one conversation
