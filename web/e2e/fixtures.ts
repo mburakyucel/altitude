@@ -22,6 +22,7 @@ export const test = base.extend<{ altitude: Service; service: string; scenario: 
     const lines = createInterface({ input: child.stdout });
     const exited = once(child, "exit");
     let timer: NodeJS.Timeout | undefined;
+    let started = false;
     try {
       const ready = await Promise.race([
         once(lines, "line"),
@@ -29,6 +30,7 @@ export const test = base.extend<{ altitude: Service; service: string; scenario: 
         new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`Disposable service did not start: ${stderr}`)), 10_000); }),
       ]);
       clearTimeout(timer);
+      started = true;
       const data = JSON.parse(ready[0] as string);
       expect(data.disposable).toBe(true);
       expect(new URL(data.url).hostname).toBe("127.0.0.1");
@@ -41,8 +43,11 @@ export const test = base.extend<{ altitude: Service; service: string; scenario: 
       if (child.exitCode === null) child.kill("SIGTERM");
       const forced = setTimeout(() => child.kill("SIGKILL"), 3_000);
       try { await exited; } finally { clearTimeout(forced); }
-      expect(child.exitCode, `Disposable service must finish cleanup within three seconds: ${stderr}`).toBe(0);
-      expect(stderr, "The isolated server must not hide failed background workflows").toBe("");
+      // A service that never started fails with its own startup error, which a cleanup check would replace.
+      if (started) {
+        expect(child.exitCode, `Disposable service must finish cleanup within three seconds: ${stderr}`).toBe(0);
+        expect(stderr, "The isolated server must not hide failed background workflows").toBe("");
+      }
     }
   },
   service: async ({ altitude }, use) => { await use(altitude.url); },
