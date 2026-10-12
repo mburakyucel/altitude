@@ -553,7 +553,7 @@ Altitude coordinates ongoing CLI agent sessions. Codex and Claude Code are the c
 integrations; the project workflow centers on the coordinator, task owner, isolated worktree and
 checked PR, independently of which integration executes a turn. Both roles use the project's Auto
 preferences or explicit pins and can operate with one installed engine and one available model.
-The [setup guide](SETUP.md) describes the current manual configuration.
+[Configuration](OPERATIONS.md#configuration) lists the settings an installation reads.
 
 Owner launch and resume pre-approve `Bash(alt *)` in native auto mode, so Altitude's own
 coordination commands do not depend on the permission classifier. Native deny/ask rules,

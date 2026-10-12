@@ -1600,7 +1600,7 @@ The concise explanation reads: **Setup runs automatically. If a step fails, L3 c
 **Discuss with L3** opens the existing project conversation without sending or launching a new agent.
 Notification, investigation and verified repair remain distinct. A step becomes complete only when
 programmatic checks confirm it. Existing projects show newly applicable requirements without
-reattachment. See [setup behavior](../../docs/SETUP.md#project-setup-and-repair) for responsibilities.
+reattachment. See [project setup](../../docs/ARCHITECTURE.md#project-setup) for responsibilities.
 
 A custom-hook conflict offers **Review integration**, showing the original directory/events and
 explaining that trusted custom hooks and their dependencies run with Altitude's Git permissions,

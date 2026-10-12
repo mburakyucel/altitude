@@ -318,11 +318,11 @@ Known limitations:
 Updating from a release candidate:
 
 - An installation from `v0.1.0-rc.2` follows stable releases and is offered this release; run
-  `alt update` ([setup](docs/SETUP.md#update-from-a-release-candidate)). Configuration, TLS identity
+  `alt update` ([operations](docs/OPERATIONS.md#installed-application-lifecycle)). Configuration, TLS identity
   and data are kept, and the Linux service unit is unchanged.
 - A machine whose `v0.1.0-rc.1` installation failed at service start has no installed version to
-  update: clear its refused service unit, run `alt recover` as setup describes, then install this
-  release.
+  update: clear its refused service unit and run `alt recover` as the
+  [`v0.1.0-rc.2` notes](#v010-rc2--2026-09-29) describe, then install this release.
 - Operator grants recorded with `alt task machine` are not carried over; record them again with
   `alt task grant` when a task needs one.
 - `alt install-statusline` is removed. If you ran it, restore Claude Code's own `statusLine` in
@@ -426,11 +426,19 @@ published release to another are not yet verified; live engine providers are not
 `install.sh` stops before downloading anything.
 
 Recovery: a `v0.1.0-rc.1` installation failed at service start and left its refused service unit
-and an interrupted activation, which block `alt recover`, updates and uninstall. Remove that unit,
-run `alt recover`, then run this release's `install.sh`; configuration, TLS identity and data are
-kept (see [setup](docs/SETUP.md#install-the-application)). A failed activation restores the
-previous version; `alt recover` completes an interrupted one. A faulty release is followed by a new
-version.
+and an interrupted activation, which block `alt recover`, updates and uninstall. Remove that unit
+and complete the recovery, then run this release's `install.sh`; configuration, TLS identity and
+data are kept:
+
+```sh
+systemctl --user disable altitude.service
+rm ~/.config/systemd/user/altitude.service
+systemctl --user daemon-reload
+~/.local/bin/alt recover
+```
+
+A failed activation restores the previous version; `alt recover` completes an interrupted one. A
+faulty release is followed by a new version.
 
 - Installation starts its service under systemd: the generated unit names its working directory
   as a plain path, which systemd 255 (Ubuntu 24.04) accepts, including paths with spaces, quotes

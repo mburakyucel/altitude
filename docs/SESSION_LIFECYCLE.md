@@ -67,7 +67,8 @@ conversation, without rotating it. Each call records `effort` (requested setting
 with its original selection. Resetting a project default needs no worker or service restart.
 See [CLI precedence, support and native helper controls](CLI.md#task-reasoning-effort).
 
-For first-run configuration, Auto preferences and explicit pins, see [setup](SETUP.md). The
+For first run, see [setup](SETUP.md#first-run-in-the-browser); for Auto preferences and explicit pins, see
+[routing preferences](CLI.md#automatic-routing-preferences). The
 [engine integration boundary](ARCHITECTURE.md#engine-integration-boundary) separates the supported
 launchers from the broader extensibility direction; this page describes their current lifecycle.
 [Operations](OPERATIONS.md) covers service activation, inspection and mobile voice checks.

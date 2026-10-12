@@ -9,8 +9,8 @@ This page describes command contracts and examples. Global role responsibilities
 [AGENTS.md](../AGENTS.md). [Session lifecycle](SESSION_LIFECYCLE.md#repository-instructions)
 describes how those instructions reach each engine.
 
-Start with [setup](SETUP.md) to build the app, register a project with Auto preferences or explicit
-pins, and start a conversation. Registration requests daemon-owned setup, including routine Git
+Start with [setup](SETUP.md) to install the app, register a project and start a conversation;
+[routing preferences](#automatic-routing-preferences) set Auto preferences or explicit pins. Registration requests daemon-owned setup, including routine Git
 guard installation or refresh. [Operations](OPERATIONS.md) covers project settings and service lifecycle.
 
 ## Times
