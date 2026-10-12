@@ -206,39 +206,49 @@ class TestDecisions(AltitudeCase):
                            reason="Asked in the review instead.", expected_attempt=S.load_task(self.project, slug)["attempt"])
         self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"])
 
-    def test_a_merge_question_without_the_pr_number_is_the_single_surface(self):
-        # A merge question saying "the pull request" without its number showed beside a second Approve merge
-        # card. Published options on a task holding a PR ask to merge it; a proposal go or a shown design does not.
+    def test_a_marked_merge_question_is_the_single_surface_without_naming_the_pr(self):
+        # A merge question saying "the pull request" without its number showed beside a second Approve merge card.
+        # While the PR waits for review, a question with choices says what it is; the owner's mark decides.
+        options = [{"key": "merge", "label": "Approve merge", "text": "Merge the second part."},
+                   {"key": "changes", "label": "Request changes", "text": "Tell me what to change first."}]
+        ask = lambda text, **mark: {"questions": [{"question": text, "options": options, "recommended_key": "merge", **mark}]}
         task = self.blocked("Readme section", "Choose the next section.")
         slug, name = task["slug"], config.operator_label()
+        T.resolve_question(self.project, slug, task["questions"][-1]["id"], 1, None, disposition="withdrawn",
+                           reason="The section is chosen.", expected_attempt=1)
+        T.resume(self.project, slug)
         held = S.load_task(self.project, slug)
         held.update(hold_merge="Operator review of the public page", prs=[42],
                     delivery={"number": 42, "head": "a" * 40, "at": S.now()})
         S.save_task(self.project, held)
-        T.resolve_question(self.project, slug, held["questions"][-1]["id"], 1, None, disposition="withdrawn",
-                           reason="The section is chosen.", expected_attempt=1)
-        options = [{"key": "merge", "label": "Approve merge", "text": "Merge the second part."},
-                   {"key": "changes", "label": "Request changes", "text": "Tell me what to change first."}]
-        merge = {"question": "Merge the new section? It is on the pull request with all checks green.",
-                 "options": options, "recommended_key": "merge"}
-        T.resume(self.project, slug)
-        T.block(self.project, slug, merge["question"], actor="l2", updates={"waiting_on": "burak"},
-                questions={"questions": [merge]})
+        merge = "Merge the new section? It is on the pull request with all checks green."
+        park = lambda payload: T.block(self.project, slug, merge, actor="l2", updates={"waiting_on": "burak"}, questions=payload)
+        with self.assertRaisesRegex(T.TransitionError, '"review": "changes"'):
+            park(ask(merge))
+        self.assertEqual(S.load_task(self.project, slug)["state"], "running", "a refused question publishes nothing")
+        park(ask(merge, review="changes"))
         [row] = T.decisions(self.project)
-        self.assertEqual(row["kind"], "asks", "one merge control for one held PR")
-        self.assertEqual(row["review"]["subject"], "changes", "the question carries the implementation review")
+        self.assertEqual((row["kind"], row["pr"], row["review"]["subject"]), ("asks", 42, "changes"),
+                         "one merge control, linking its PR and carrying the implementation review")
         self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), f"{name}'s turn · 1 question")
         question = S.load_task(self.project, slug)["questions"][-1]
         T.resolve_question(self.project, slug, question["id"], 1, None, disposition="withdrawn",
                            reason="Asking in the review instead.", expected_attempt=1)
         self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"])
-        T.resume(self.project, slug)
-        go = {"question": "Build the next section?", "options": options, "recommended_key": "merge", "review": "proposal"}
-        T.block(self.project, slug, go["question"], actor="l2", updates={"waiting_on": "burak"}, questions={"questions": [go]})
-        self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["asks", "review"],
-                         "a proposal go keeps the merge review")
-        design = {**S.load_task(self.project, slug)["questions"][-1], "review": None, "shown": {"id": "d"}}
-        self.assertFalse(T._references_held_pr(S.load_task(self.project, slug), design), "so does a shown design")
+        for mark, text in (("none", "Allow the release script to tag PR #420?"), ("proposal", "Build the next section?")):
+            with self.subTest(mark=mark):
+                T.resume(self.project, slug)
+                park(ask(text, review=mark))
+                rows = T.decisions(self.project)
+                self.assertEqual([row["kind"] for row in rows], ["asks", "review"], "an unrelated question keeps the review")
+                self.assertIsNone(rows[0]["pr"])
+                current = S.load_task(self.project, slug)["questions"][-1]
+                T.resolve_question(self.project, slug, current["id"], 1, None, disposition="withdrawn",
+                                   reason="Not needed.", expected_attempt=1)
+        held = S.load_task(self.project, slug)
+        shown = {**question, "status": "open", "review": None, "shown": {"id": "d"}}
+        self.assertFalse(T._references_held_pr(held, shown), "an unmarked design is a proposal")
+        self.assertTrue(T._references_held_pr(held, {**shown, "review": "changes"}), "a merge question may show files")
 
     def test_submitted_pr_question_keeps_one_surface_until_owner_resolution(self):
         # The freeform answer is delivered, not classified as merge permission. An independent

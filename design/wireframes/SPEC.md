@@ -1273,9 +1273,10 @@ and Needs you; View question stays in task details, useful from Live session. A 
 **Approve merge** sends the operator's own message "Approved: merge PR #N." and the L2 merges
 with it after fresh checks of the current head (the press shows as its pill, §3.8.2, and the chat then shows "Sent · the L2 has your reply."); **View PR #N** opens it; asking below discusses it. A later,
 unrelated question never hides that review. An open operator question about the PR supplies its single
-response surface instead: one that links or names the PR, with quick options or a freeform field, and on
-that task any question with options that is neither a proposal go nor a design, which asks to merge
-whether or not its text names the PR. A freeform question or one about another PR is unrelated. The separate card stays
+response surface instead: one its owner marks as the merge question, or an unmarked one that links or
+names the PR, with quick options or a freeform field. Beside **Send answers** it offers **View PR #N**,
+as the card does. While the PR waits, Altitude refuses an owner's unmarked question with choices, so a
+question never offers **Approve merge** beside the card. The separate card stays
 away until the owner resolves the question, including while a submitted response waits for interpretation.
 Resolution restores the fallback when merge approval is still needed; a PR mention alone grants no
 approval. Independent questions and ordinary chat remain available. After **Approve merge**, a later park

@@ -101,15 +101,17 @@ test("a question's review line in its conversation opens the review card and Bac
   await expect(line).toBeInViewport();
 });
 
-test("a merge question that never names its held PR is the one Approve merge control", async ({ page }, info) => {
+test("a marked merge question that never names its held PR is the one Approve merge control", async ({ page }, info) => {
   const walk = walkthrough(page, info);
   const review = "Implementation review · done, 1 finding resolved";
+  const viewPr = (scope: Locator) => scope.getByRole("link", { name: "View PR #44", exact: true });
   await walk.open("/");
   const needs = page.getByRole("article", { name: "Help page copy", exact: true });
   await expect(needs).toHaveCount(1);
   await needs.scrollIntoViewIfNeeded();
+  await expect(viewPr(needs)).toHaveAttribute("href", "https://github.com/example/atlas/pull/44");
   await walk.state("09-needs-you-one-merge-control", {
-    visible: [needs.getByRole("link", { name: review, exact: true }), needs.getByRole("button", { name: /^Approve merge/ })],
+    visible: [needs.getByRole("link", { name: review, exact: true }), needs.getByRole("button", { name: /^Approve merge/ }), viewPr(needs)],
     hidden: [page.getByText("Review PR #44 before merge", { exact: true })],
   });
 
@@ -119,8 +121,20 @@ test("a merge question that never names its held PR is the one Approve merge con
   await expect(chat.getByRole("button", { name: /^Approve merge/ })).toHaveCount(1);
   await walk.state("10-conversation-one-merge-control", {
     visible: [question.getByText("Merge the new help page? It is on the pull request with all checks green.", { exact: true }),
-      question.getByRole("link", { name: review, exact: true })],
+      question.getByRole("link", { name: review, exact: true }), viewPr(question)],
     hidden: [chat.getByText("Your turn · review before merge", { exact: true })],
+  });
+
+  // Answering keeps one surface: the choice shows as sent and no review card appears while the L2 reads it.
+  await question.getByRole("button", { name: /^Approve merge/ }).click();
+  await walk.state("11-conversation-approve-selected", {
+    visible: [question.getByRole("button", { name: "Send 1 answer", exact: true }), viewPr(question)], hidden: [],
+  });
+  await question.getByRole("button", { name: "Send 1 answer", exact: true }).click();
+  await expect(question.getByRole("button", { name: "Send 1 answer", exact: true })).toHaveCount(0);
+  await walk.state("12-conversation-approval-sent", {
+    visible: [question.getByText("Approve merge", { exact: true })],
+    hidden: [chat.getByText("Your turn · review before merge", { exact: true }), viewPr(question), question.getByRole("button", { name: "Request changes", exact: true })],
   });
 });
 
