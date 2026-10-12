@@ -43,7 +43,7 @@ def _claude_quota() -> dict:
         reading, models = {}, {}
         for event in map(json.loads, result.stdout.splitlines()):
             if event.get("type") == "result" and event.get("is_error"):
-                return unknown
+                return _signed_out(result, unknown)
             if event.get("type") != "assistant" or not event.get("usage_report"):
                 continue
             rows = (event["usage_report"].get("rate_limits") or {}).get("limits") or []
@@ -67,20 +67,35 @@ def _claude_quota() -> dict:
         if models:
             reading["models"] = list(models.values())
         return {"known": True, "at": time.time(), **reading} if reading else unknown
+    except subprocess.CalledProcessError as exc:
+        return _signed_out(exc, unknown)
     except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError):
         return unknown
 
 
+def _signed_out(process, unknown: dict) -> dict:
+    """A failed usage read that shows a sign-in rejection carries it, so the refresh can record the lapse."""
+    rejected = rejection("claude", {"raw_stdout": process.stdout or "", "raw_stderr": process.stderr or ""})
+    return {**unknown, "rejection": rejected} if rejected and rejected.get("sign_in") else unknown
+
+
 def refresh_quotas(min_interval: float = 300) -> None:
-    """Refresh both seats without an interactive session or a model turn."""
+    """Refresh both seats without an interactive session or a model turn. Each read uses the CLI's sign-in, so a
+    current reading ends a sign-in lapse and a sign-in rejection starts one before any turn fails on it."""
     from . import quota_codex, route
     global _last_quota_refresh
     now = time.monotonic()
     if _last_quota_refresh is not None and now - _last_quota_refresh < min_interval:
         return
     _last_quota_refresh = now
-    for path, read in ((route.QUOTA_CODEX, quota_codex.read), (route.QUOTA_CLAUDE, _claude_quota)):
-        S.write_json(config.MONITOR_DIR / path, read())
+    for engine, path, read in (("codex", route.QUOTA_CODEX, quota_codex.read), ("claude", route.QUOTA_CLAUDE, _claude_quota)):
+        reading = read()
+        rejected = reading.pop("rejection", None) or rejection(engine, {"error": reading.pop("error", None)})
+        S.write_json(config.MONITOR_DIR / path, reading)
+        if reading.get("known"):
+            route.signed_in(engine)
+        elif rejected and rejected.get("sign_in"):
+            route.note_rejection({"engine": engine}, rejected)
 
 
 def repository_rules(repo: Path) -> Path | None:
@@ -328,38 +343,55 @@ def _event_error(engine: str, event: dict):
         return event.get("error") or event.get("message") or event
     if engine == "claude":
         if event.get("type") == "result" and event.get("is_error"):
-            return {key: event.get(key) for key in ("error", "errors", "result")}
+            return {key: event.get(key) for key in ("error", "errors", "result", "api_error_status")}
         message = event.get("message") or {}
         if event.get("type") == "assistant" and message.get("model") == "<synthetic>":
             return {"error": event.get("error"), "message": message.get("content")}
     return None
 
 
+def _strings(value) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    items = value.values() if isinstance(value, dict) else value if isinstance(value, list) else ()
+    return [text for item in items for text in _strings(item)]
+
+
+#: The authentication codes the CLIs attach to a sign-in failure (Claude marks its message "authentication_failed").
+AUTH_CODES = frozenset({"authentication_error", "authentication_failed", "invalid_api_key"})
+
+
 def rejection(engine: str, result: dict, model: str | None = None) -> dict | None:
     """Recognize provider rejection evidence, without echoing tokens or arbitrary provider text.
 
     Claude's error codes/messages are emitted by stream-json; Codex includes API errors in turn.failed.
-    Capacity, transport errors, plan names, and a generic permission/404 failure prove no model entitlement.
+    A sign-in failure is the CLI's own authentication code or an HTTP 401, whatever its wording; each CLI's
+    sign-in prompts cover failures reported before any request. Capacity, transport errors, plan names, and
+    a generic permission/404 failure prove no model entitlement.
     """
-    errors = [result.get(key) for key in ("error", "stderr", "raw_stderr", "detail", "synthetic")]
-    errors.extend(_event_error(engine, event) for event in _codex_parse(result.get("raw_stdout") or ""))
+    envelope = [result.get(key) for key in ("error", "detail", "synthetic")]
+    envelope.extend(_event_error(engine, event) for event in _codex_parse(result.get("raw_stdout") or ""))
+    errors = [*envelope, result.get("stderr"), result.get("raw_stderr")]
     text = "\n".join(value if isinstance(value, str) else json.dumps(value) for value in errors if value)
+    # Sign-in wording counts only where one of the CLI's own failure messages begins with it, so a tool or
+    # MCP server diagnostic that mentions authentication never signs a healthy engine out.
+    said = [message.strip() for value in envelope for message in _strings(value)]
     codes = set(re.findall(r'"(?:code|type|error)"\s*:\s*"([a-z_]+)"', text))
-    if text.strip() in ("model_not_found", "authentication_error", "invalid_api_key"):
+    if text.strip() in ("model_not_found", *AUTH_CODES):
         codes.add(text.strip())
     model_missing = "model_not_found" in codes
+    auth = bool(codes & AUTH_CODES) or bool(re.search(r'"api_error_status"\s*:\s*401\b', text))
     if engine == "claude":
         model_missing |= bool(re.search(
             r"There's an issue with the selected model \([^\n]+\)\. It may not exist or you may not have access to it\.", text))
         if model:
             model_missing |= bool(re.search(r"The model " + re.escape(model) + r" is not available on your [^\n]+ deployment\.", text))
-        auth = bool(codes & {"authentication_error", "invalid_api_key"}) or any(message in text for message in (
-            "Not logged in", "Invalid API key", "Invalid auth token",
-            "Failed to authenticate: OAuth session expired and could not be refreshed"))
+        auth |= any(re.match(r"Failed to authenticate|Not logged in|Invalid (?:API key|auth token)", message)
+                    for message in said)
     elif engine == "codex":
-        auth = bool(codes & {"authentication_error", "invalid_api_key"}) or any(message in text for message in (
-            "Your access token could not be refreshed", "You do not have access to Codex",
-            "This account is not currently authorized to use Codex in this workspace")) or text.strip() == "Not logged in"
+        auth |= any(re.match(r"unexpected status 401\b|Not logged in$", message) for message in said) or bool(re.search(
+            r"Your access token could not be refreshed|You do not have access to Codex|"
+            r"This account is not currently authorized to use Codex in this workspace", text))
     else:
         raise ValueError(f"unknown engine {engine!r}")
     if auth:
