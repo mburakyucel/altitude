@@ -229,7 +229,10 @@ The service serves this checkout's `web/dist` and real application HTTP handlers
 service URL or active worker is needed. Tests clean up their owned service processes and temporary
 storage, with bounded termination. Never point routine acceptance at operator data.
 Cleanup releases fixture gates and finishes HTTP requests and background work before closing L3
-broker sockets; unfinished work or logged background failures fail the walkthrough.
+broker sockets; unfinished work or logged background failures fail the walkthrough. A service that
+does not start within ten seconds, or exits while starting, fails with that startup error and its
+output. Playwright starts a test's service before evaluating its skip conditions, so a test that
+only one project runs is tagged `@phone-only` or `@desktop-only`, which the other project excludes.
 The image stream/admission walkthrough holds a real admission receipt until a history poll shows
 its image, then holds later reads while verifying that receipt cannot recreate a queued copy.
 The image selection/viewer/reload journey holds completion after the active turn clears and before
