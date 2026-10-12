@@ -1766,8 +1766,8 @@ model. Codex is not offered: no tool-free Codex mode is verified, so without Cla
 unavailable.
 
 The terms (`improve.terms`) are the sheet's title and text and the What is sent line, versioned by a
-hash of that text with the model, quote length, prompt size and token limits, so a change to what is
-sent, the model or the limit is a new version. The agreement in `<project>/improvements.json` records
+hash of that text with the signals version, the window's bounds, quote, sheet and prompt sizes, the
+model and its token limits, so a change to what is read, the model or the limit is a new version. The agreement in `<project>/improvements.json` records
 the version, `operator` and when; an agreement to an earlier version does not count. While Weekly is on
 under an earlier version, the next tick turns it off and writes one chat line, "Improvement
 suggestions are off until you agree to the new terms in settings.", linking to the settings section.
@@ -1841,7 +1841,9 @@ The project's settings show an Improvement suggestions section from `GET /api/im
 (`improve.settings`): the Weekly switch with its line (off; the next Monday, with how many more tasks
 must finish; the week skipped and why; off because the terms changed), Get suggestions now with the
 tasks it would read, or the reason it cannot start as its accessible description, or the running review
-with Stop in its place, and What is sent. Without the agreement to the current terms, turning Weekly
+with Stop in its place, What is sent, and once a review has posted or found nothing, Past suggestions:
+its runs, the suggestions they showed, how many became tasks and how many were dismissed, with Latest
+opening the latest card in chat. Without the agreement to the current terms, turning Weekly
 on or pressing Get suggestions now opens the sheet first; Turn on sends the press with the sheet's
 version (`terms`), which records the agreement and completes the press, and a version that changed
 since is refused. `weekly` and `run` presses on `POST /api/improve` come only from a paired device's
