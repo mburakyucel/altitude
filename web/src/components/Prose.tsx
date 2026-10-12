@@ -71,7 +71,7 @@ function references(text: string, repository?: string | null): ReactNode[] {
 }
 
 export function InlineProse({ text }: { text: string }) {
-  const scope = useScope(false);
+  const scope = useScope();
   return <>{codeBlocks(text).map((block, index) => (
     <Fragment key={index}>
       {index > 0 ? "\n" : null}
@@ -80,15 +80,15 @@ export function InlineProse({ text }: { text: string }) {
   ))}</>;
 }
 
-type Scope = { repository?: string | null; project?: string; at?: string | null; showLinkTargets: boolean };
+type Scope = { repository?: string | null; project?: string; at?: string | null };
 
-function useScope(showLinkTargets: boolean): Scope {
-  return { repository: useContext(ProseRepository), project: useContext(ProseProject), at: useContext(ProseAt), showLinkTargets };
+function useScope(): Scope {
+  return { repository: useContext(ProseRepository), project: useContext(ProseProject), at: useContext(ProseAt) };
 }
 
 /** Inline code, bold, existing links, written times and GitHub references in plain text. */
 function inline(text: string, scope: Scope): ReactNode[] {
-  const { repository, project, showLinkTargets } = scope;
+  const { repository, project } = scope;
   const nodes: ReactNode[] = [];
   let end = 0;
   for (const match of text.matchAll(INLINE)) {
@@ -121,7 +121,7 @@ function inline(text: string, scope: Scope): ReactNode[] {
     if (link) {
       nodes.push(
         <a className="prose-link" key={index} href={link[2]} target="_blank" rel="noopener noreferrer">
-          {link[1]}{showLinkTargets ? ` (${link[2]})` : ""}
+          {link[1]}
         </a>
       );
       continue;
@@ -146,12 +146,12 @@ const HEADING = /^\s*#{1,6}\s+(.*)$/;
 
 /**
  * Markdown-lite prose for a reply (SPEC.md §3.3): paragraphs split on blank lines with line breaks
- * kept, bulleted and numbered lists, fenced code blocks (outside a document with Copy, and `run` blocks
- * as commands), inline code, bold, and links. A heading line reads as a plain paragraph: replies carry
- * no headings and no tables, so neither gets a shape here.
+ * kept, bulleted and numbered lists, fenced code blocks (with Copy, and `run` blocks as commands), inline
+ * code, bold, and links. A heading line reads as a plain paragraph: replies carry no headings and no
+ * tables, so neither gets a shape here. Documents render with MarkdownDocument.
  */
-export function Prose({ text, document = false, showLinkTargets = false }: { text: string; document?: boolean; showLinkTargets?: boolean }) {
-  const scope = useScope(showLinkTargets);
+export function Prose({ text }: { text: string }) {
+  const scope = useScope();
   const blocks: ReactNode[] = [];
   let para: string[] = [];
   let list: { ordered: boolean; items: string[] } | null = null;
@@ -187,8 +187,7 @@ export function Prose({ text, document = false, showLinkTargets = false }: { tex
   for (const block of codeBlocks(text)) {
     if (block.code) {
       flush();
-      // A document (the file reader) stays read-only text: its code has no Copy and no terminal action.
-      blocks.push(document ? <pre key={blocks.length} className="session-code">{block.text}</pre> : <CodeBlock key={blocks.length} text={block.text} info={block.info} />);
+      blocks.push(<CodeBlock key={blocks.length} text={block.text} info={block.info} />);
       continue;
     }
     for (const line of block.text.split("\n")) {
@@ -213,14 +212,7 @@ export function Prose({ text, document = false, showLinkTargets = false }: { tex
         continue;
       }
       flushList();
-      const heading = HEADING.exec(line);
-      if (document && heading) {
-        flushPara();
-        const Tag = `h${Math.min(6, /^#+/.exec(line.trimStart())![0].length + 1)}` as "h2" | "h3" | "h4" | "h5" | "h6";
-        blocks.push(<Tag key={blocks.length}>{inline(heading[1]!, scope)}</Tag>);
-        continue;
-      }
-      para.push(heading?.[1] ?? line);
+      para.push(HEADING.exec(line)?.[1] ?? line);
     }
   }
   flush();

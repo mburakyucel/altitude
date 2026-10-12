@@ -48,14 +48,6 @@ describe("local file references", () => {
     view.rerender(<ProseScope project="second"><Prose text={path} /></ProseScope>);
     expect(destinations()).toEqual([[path, route(path, "second")]]);
   });
-  it("renders document headings and code without enabling HTML or remote images", () => {
-    const text = "# Setup\n\n##\tCommands\n\n- **Review** first\n\n```sh\nprintf '<script>alert(1)</script>'\n```\n\n<script>alert(2)</script>\n\n![Remote](https://example.org/private.png)";
-    const { container } = render(<Prose text={text} document />);
-    expect(screen.getByRole("heading", { name: "Setup", level: 2 })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Commands", level: 3 })).toBeVisible();
-    expect(container.querySelector("pre")?.textContent).toBe("printf '<script>alert(1)</script>'");
-    expect(container.querySelector("script, img, iframe")).toBeNull();
-  });
 });
 
 describe("project-aware GitHub references", () => {

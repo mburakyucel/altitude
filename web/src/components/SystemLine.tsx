@@ -1,12 +1,14 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { Link } from "react-router";
 import { useProject, useTask } from "../data/api";
 import { questionPath } from "../data/decisions";
 import type { ChatMessage, TaskRow } from "../data/api";
 import { stampText } from "../data/observed";
-import { InlineProse, Prose, ProseAt, ProseProject, ProseRepository, lastParagraph } from "./Prose";
+import { InlineProse, Prose, ProseAt, lastParagraph } from "./Prose";
 import { Stamp } from "./Stamp";
 import { TaskCards } from "./TaskCard";
+
+const MarkdownDocument = lazy(() => import("./MarkdownDocument"));
 
 /*
  * The system line (SPEC.md §3.4, §4.1): every chat row whose trigger is not "chat" is a system turn,
@@ -236,9 +238,7 @@ function SystemCard({
         <div className="sys-card-body">
           <p>{lineText(turn, null)}</p>
           <p className="text-muted">Information only · Exchange {turn.projectMessage.exchange_id}</p>
-          <ProseProject value={undefined}><ProseRepository value={null}>
-            <Prose text={turn.prompt} document showLinkTargets />
-          </ProseRepository></ProseProject>
+          <Suspense fallback={<p>{turn.prompt}</p>}><MarkdownDocument text={turn.prompt} showLinkTargets /></Suspense>
         </div>
       ) : turn.fyi ? (
         <div className="sys-card-body">

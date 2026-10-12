@@ -10,7 +10,6 @@ import ProjectPage from "./routes/Project";
 import DecisionPage from "./routes/Decision";
 import Task from "./routes/Task";
 import TaskReport from "./routes/TaskReport";
-import TaskDesign from "./routes/TaskDesign";
 import TaskCaptures from "./routes/TaskCaptures";
 import TaskFile from "./routes/TaskFile";
 import Monitor from "./routes/Monitor";
@@ -74,7 +73,9 @@ export const routes: RouteObject[] = [
       { path: "/projects/:name/tasks/:slug/terminal", element: <Task /> },
       // The task's report view: what the expanded system card links as Full report and Digest (§3.4).
       { path: "/projects/:name/tasks/:slug/report", element: <TaskReport /> },
-      { path: "/projects/:name/tasks/:slug/design/:questionId/:revision", element: <TaskDesign /> },
+      // Shown files open in a reader over the conversation: a reply's, or a question revision's (SPEC.md §3.11).
+      { path: "/projects/:name/tasks/:slug/view/:shownId", element: <Task /> },
+      { path: "/projects/:name/tasks/:slug/view/:shownId/:revision", element: <Task /> },
       { path: "/projects/:name/tasks/:slug/captures/:messageId", element: <TaskCaptures /> },
       { path: "/chat", loader: () => redirect("/projects") },
       { path: "/chat/:name", loader: ({ params }) => redirect(`/projects/${params.name}`) },

@@ -26,6 +26,8 @@ import { SteeringControls, SteeringNotice, useTaskSteering } from "../components
 import type { Steering } from "../components/TaskSteering";
 import type { ImageSubmission } from "../components/ImageDraft";
 import { MessageImages, PendingImages } from "../components/MessageImages";
+import { ShownFiles } from "../components/Shown";
+import { ShownReader } from "./ShownReader";
 import { Question, QuestionSet, ReviewDecision } from "../components/DecisionCard";
 import type { QuestionOrigin } from "../components/DecisionCard";
 import { TaskContext, TokenUsage } from "../components/TokenUsage";
@@ -253,7 +255,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
       : facts.review ?? undefined : undefined;
   const anchor = returned ?? target;
   const open = (group?.questions ?? (task.question ? [task.question] : [])).filter((question) => question.status === "open" && !question.response);
-  const current = open.find((question) => question.design_url) ?? open[0];
+  const current = open.find((question) => question.shown) ?? open[0];
   // The open group is the last thing in the chat; a reply hands the questions asked before it back to the L2.
   const live = Boolean(group?.questions.some((question) => question.status === "open"));
   const handedBack = str(task["handed_back"]);
@@ -543,7 +545,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         {queueActions}
       </Bubble> :
         message.role === "l3" ? <Coordination key={key} text={message.text} summary={message.summary} at={message.at} images={message.images?.length} enter={enter(`msg:${key}`)} onOpen={() => { following.current = false; }}><MessageImages project={project} images={message.images} /></Coordination>
-        : <Reply key={key} text={message.text} at={message.at} role={message.role} enter={enter(`msg:${key}`)}><MessageImages project={project} images={message.images} /><CaptureLink project={project} slug={task.slug} message={message} /></Reply>);
+        : <Reply key={key} text={message.text} at={message.at} role={message.role} enter={enter(`msg:${key}`)}><MessageImages project={project} images={message.images} />{message.shown ? <ShownFiles shown={message.shown} /> : null}<CaptureLink project={project} slug={task.slug} message={message} /></Reply>);
     }
   });
   for (const entry of pending) {
@@ -759,11 +761,14 @@ function TaskPage({
   refresh,
   detailsOpen,
   setDetailsOpen,
+  shown,
 }: {
   project: string;
   task: TaskView;
   overview: UseQueryResult<Overview>;
   liveRoute: boolean;
+  /** `/view/:shownId[/:revision]`: the reader of files the L2 showed, over or beside the conversation. */
+  shown: { id: string; revision?: string } | null;
   /** `/terminal`: the phone's Terminal tab, the desktop panel's Terminal view. */
   terminalRoute: boolean;
   readOnly: boolean;
@@ -854,7 +859,7 @@ function TaskPage({
   const view = terminalRoute ? 2 : liveRoute ? 1 : 0;
   // A completed swipe already shows its view, so the switch commits with its URL rather than in a transition:
   // a touch on that view never reaches the previous view's handlers, which would drop it.
-  const swipe = useTaskSwipe(phone && !detailsOpen && !voiceOwnsEscape, view, paths.length, (next) => {
+  const swipe = useTaskSwipe(phone && !detailsOpen && !voiceOwnsEscape && !shown, view, paths.length, (next) => {
     void navigate(`${base}${paths[next]}${location.search}`, { replace: true, state: location.state, flushSync: true });
   });
   // The phone tab row stays above the sliding views; the terminal on screen places its × there.
@@ -892,6 +897,12 @@ function TaskPage({
       void navigate(`${base}/terminal${location.search}`, { replace: true, state: location.state });
     } }
     : { unavailable: "This task has no terminal now." }, [task.worktree, task.state, task.slug, project, base, location.search, location.state, navigate]);
+  // The reader is a panel where the live session panel sits inline, and covers the screen elsewhere (SPEC.md §3.11).
+  const known = shown ? shown.revision == null ? task.messages?.find((row) => row.id === shown.id)?.shown
+    : (task.questions ?? (task.question ? [task.question] : [])).find((question) => question.id === shown.id && String(question.revision) === shown.revision)?.shown : undefined;
+  const reader = shown ? <ShownReader key={`${shown.id}/${shown.revision ?? ""}`} project={project} slug={task.slug} shownId={shown.id} revision={shown.revision}
+    known={known ?? undefined} panel={!phone && panelInline} /> : null;
+  const screenReader = reader && (phone || !panelInline);
   const conversation = <ProseScope project={project} repository={task.repository}><ProseTerminal value={runTarget}><TaskConversation project={project} task={task} facts={facts} readOnly={readOnly} checking={checking} refresh={refresh} draft={draft} setDraft={setDraft} steering={steering} active={!phone || view === 0} denied={denied} setDenied={setDenied} questionVisit={questionVisit} selection={selection} onEscapeOwnership={setVoiceOwnsEscape} reviewControls={reviewControls} /></ProseTerminal></ProseScope>;
 
   if (phone) {
@@ -901,7 +912,7 @@ function TaskPage({
       <PhoneHeader overview={overview} onTitleClick={() => setDetailsOpen(true)} titleExpanded={detailsOpen} status={
         <span className="task-state-line" role="status"><span className="dot" data-state={facts.dot} aria-hidden /><span data-tone={facts.dot === "danger" ? "danger" : undefined}>{facts.label}</span>{facts.holdReason ? <span data-tone="held"> · Merge held</span> : null}</span>
       }>{control}</PhoneHeader>
-      <div className="task-page" data-phone>
+      <div className="task-page" data-phone inert={Boolean(screenReader)}>
         <SteeringNotice steering={steering} />
         {!detailsOpen ? resumeError : null}
         {!detailsOpen && actions.error && actions.confirm ? <p className="task-line text-danger" role="alert">Could not {actions.confirm} the task. <button type="button" className="link" onClick={() => setDetailsOpen(true)}>Retry</button></p> : null}
@@ -917,12 +928,14 @@ function TaskPage({
         </div>
         {details}
       </div>
+      {reader}
       </>
     );
   }
 
   return (
-    <div className="task-page">
+    <>
+    <div className="task-page" inert={Boolean(screenReader)}>
       <header className="task-header">
         <div className="task-crumb-row">
           <button type="button" className="task-crumb" aria-label="Back" onClick={back}>
@@ -940,8 +953,14 @@ function TaskPage({
               type="button"
               className="icon-btn"
               aria-label={terminalRoute ? "Terminal" : "Live session"}
-              aria-pressed={panelOpen}
-              onClick={() => setPanelOpen((open) => !open)}
+              aria-pressed={panelOpen && !reader}
+              onClick={() => {
+                // The reader holds the panel's place; the panel button puts the live session back.
+                if (reader) {
+                  void navigate(`${base}${location.search}`, { replace: true, state: location.state });
+                  setPanelOpen(true);
+                } else setPanelOpen((open) => !open);
+              }}
             >
               <PanelIcon />
             </button>
@@ -954,7 +973,7 @@ function TaskPage({
       </header>
       <div className="task-body">
         <div className="task-main">{conversation}</div>
-        {panelOpen ? (
+        {reader && !screenReader ? reader : panelOpen ? (
           panelInline ? (
             panel
           ) : (
@@ -966,6 +985,8 @@ function TaskPage({
       </div>
       {details}
     </div>
+    {screenReader ? reader : null}
+    </>
   );
 }
 
@@ -1005,6 +1026,10 @@ export default function Task() {
   const slug = params["slug"] ?? "";
   const liveRoute = Boolean(useMatch("/projects/:name/tasks/:slug/live"));
   const terminalRoute = Boolean(useMatch("/projects/:name/tasks/:slug/terminal"));
+  const viewMatch = useMatch("/projects/:name/tasks/:slug/view/:shownId/:revision?");
+  const shownId = viewMatch?.params.shownId;
+  const shownRevision = viewMatch?.params.revision;
+  const shown = useMemo(() => shownId ? { id: shownId, revision: shownRevision } : null, [shownId, shownRevision]);
   const task = useTask(project, slug);
   const overview = useOverview();
   const { phone } = useViewport();
@@ -1024,6 +1049,6 @@ export default function Task() {
         </p>
       </div>
     );
-  } else content = <TaskPage key={`${project}:${slug}`} project={project} task={task.data!} overview={overview} liveRoute={liveRoute} terminalRoute={terminalRoute} readOnly={task.isError} checking={task.isFetching && !task.isFetchedAfterMount} refresh={() => task.refetch({ throwOnError: true })} detailsOpen={detailsOpen} setDetailsOpen={setDetailsOpen} />;
+  } else content = <TaskPage key={`${project}:${slug}`} project={project} task={task.data!} overview={overview} liveRoute={liveRoute} terminalRoute={terminalRoute} readOnly={task.isError} checking={task.isFetching && !task.isFetchedAfterMount} refresh={() => task.refetch({ throwOnError: true })} detailsOpen={detailsOpen} setDetailsOpen={setDetailsOpen} shown={shown} />;
   return <>{header}{content}</>;
 }

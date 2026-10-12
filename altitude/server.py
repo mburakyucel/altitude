@@ -1494,10 +1494,8 @@ class Handler(BaseHTTPRequestHandler):
                 view = T.shown_view(project, slug, shown, identity, revision, T.shown_versions(project, slug, task))
                 if not view["available"]:
                     raise ValueError("shown files unavailable")
-                return self._json({**view, "not_shown": shown.get("not_shown", []),
-                                   "document": {**view["document"], "text": text,
-                                                "markdown": document["name"].endswith(".md")} if document else None,
-                                   "conversation_url": f"/projects/{quote(project, safe='')}/tasks/{slug}"})
+                return self._json({**view, "document": {**view["document"], "text": text,
+                                                        "markdown": document["name"].endswith(".md")} if document else None})
             if asset.rsplit(".", 1)[-1] not in SHOWN_TYPES:
                 raise ValueError("documents are read through their shown set")
             data = T.shown_file(project, slug, shown, asset)

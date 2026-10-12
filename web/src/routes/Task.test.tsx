@@ -126,6 +126,7 @@ interface StubOptions {
   action?: () => Response | Promise<Response>;
   task?: () => Response;
   sendNow?: () => Response | Promise<Response>;
+  shown?: (url: string) => Response;
 }
 
 const terminalRunning = { state: "running", id: "t1", enabled: true, folder: "/fixture/worktree", offset: 0, exit_code: null, reason: null, busy: null };
@@ -228,6 +229,7 @@ function stub(task: unknown, options: StubOptions = {}) {
     if (url.includes("/api/l2/send-now")) return options.sendNow ? options.sendNow() : jsonResponse({ ok: true });
     if (url.includes("/api/l2/remove")) return jsonResponse({ ok: true });
     if (url.startsWith("/api/terminal/")) return jsonResponse(terminalRunning);
+    if (url.startsWith("/api/shown/") && options.shown) return options.shown(url);
     if (url.includes("/api/task/")) {
       if (options.task) return options.task();
       const record = task as { messages?: unknown[] };
@@ -245,6 +247,71 @@ function stub(task: unknown, options: StubOptions = {}) {
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
+
+describe("files the L2 showed", () => {
+  const base = "/projects/altitude/tasks/fix-timer";
+  const shown = (id: string, newer: string | null = null) => ({
+    url: `${base}/view/${id}`, available: true, newer_url: newer,
+    document: { name: "README.md", path: "README.md", heading: "Lumen", excerpt: "A small log viewer." },
+    images: [{ name: "tour.png", path: "docs/tour.png", url: `/api/shown/altitude/fix-timer/${id}/files/abc.png`, width: 640, height: 360, embedded: true }],
+  });
+  const record = { ...running, messages: [
+    { id: "m-4", at: "2026-08-30T10:00:00Z", role: "l2", text: "The first draft.", shown: shown("m-4", `${base}/view/m-5`) },
+    { id: "m-5", at: "2026-08-30T11:00:00Z", role: "l2", text: "The second draft.", shown: shown("m-5") },
+  ] };
+  const files = (url: string) => {
+    const id = url.split("/")[5]!;
+    return jsonResponse({ ...shown(id, id === "m-4" ? `${base}/view/m-5` : null),
+      document: { ...shown(id).document, text: `# Lumen ${id}\n\n![Tour](docs/tour.png)\n\nRead the logs.`, markdown: true } });
+  };
+
+  it.each([[1440, true], [390, false]])("opens a card's reader at %i, marks the earlier version, and closes back to the draft", async (width, panel) => {
+    setViewport(width);
+    stub(record, { shown: files });
+    const { user, router } = renderApp({ route: base });
+    const field = await screen.findByRole("textbox", { name: "Message the L2" });
+    await user.type(field, "Unsent thought");
+    const [earlier, latest] = screen.getAllByRole("link", { name: "Open README.md" });
+    expect(earlier).toHaveAttribute("data-earlier");
+    expect(within(earlier!).getByText("Earlier")).toBeVisible();
+    expect(latest).not.toHaveAttribute("data-earlier");
+    expect(within(latest!).getByText("Lumen — A small log viewer.")).toBeVisible();
+    await user.click(earlier!);
+    const reader = await screen.findByRole("region", { name: "README.md" });
+    expect(router.state.location.pathname).toBe(`${base}/view/m-4`);
+    expect(reader.hasAttribute("data-panel")).toBe(panel);
+    expect(await within(reader).findByRole("heading", { name: "Lumen m-4" })).toBeVisible();
+    expect(within(reader).getByRole("button", { name: "Open image tour.png" })).toBeVisible();
+    await user.click(within(reader).getByRole("button", { name: /^Newer/ }));
+    expect(await within(screen.getByRole("region", { name: "README.md" })).findByRole("heading", { name: "Lumen m-5" })).toBeVisible();
+    expect(router.state.location.pathname).toBe(`${base}/view/m-5`);
+    expect(screen.queryByRole("button", { name: /^Newer/ })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe(base));
+    expect(screen.queryByRole("region", { name: "README.md" })).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Message the L2" })).toHaveValue("Unsent thought");
+  });
+
+  it.each([[404, "It could not be loaded. Try again, or ask in the conversation."], [403, "This device has no access right now."]])("explains a reader that cannot load (%i) and retries", async (status, text) => {
+    setViewport(1440);
+    let reply = () => jsonResponse({ error: "Preview unavailable" }, status);
+    stub(record, { shown: () => reply() });
+    const { user } = renderApp({ route: `${base}/view/m-5` });
+    const reader = await screen.findByRole("region", { name: "README.md" });
+    expect(await within(reader).findByText(text)).toBeVisible();
+    expect(within(reader).getByRole("heading", { name: "Preview unavailable" })).toBeVisible();
+    reply = () => files(`/api/shown/altitude/fix-timer/m-5`);
+    await user.click(within(reader).getByRole("button", { name: "Retry" }));
+    expect(await within(reader).findByRole("heading", { name: "Lumen m-5" })).toBeVisible();
+  });
+
+  it("keeps a card whose saved files are gone, without opening it", async () => {
+    stub({ ...running, messages: [{ id: "m-4", at: "2026-08-30T10:00:00Z", role: "l2", text: "The draft.", shown: { ...shown("m-4"), available: false } }] });
+    renderApp({ route: base });
+    expect(await screen.findByText("Preview unavailable")).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Open README.md" })).toBeNull();
+  });
+});
 
 describe("decision selections in the task conversation", () => {
   const retention = { ...decision, id: "q-ret", question: "How long should we keep the old index?", recommendation: null,

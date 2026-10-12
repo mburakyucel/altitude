@@ -217,8 +217,6 @@ class TestShownFiles(AltitudeCase):
         body = json.loads(raw)
         self.assertEqual((body["document"]["text"], body["document"]["markdown"], body["document"]["name"]),
                          (README, True, "README.md"))
-        self.assertEqual(body["not_shown"], row["shown"]["not_shown"])
-        self.assertEqual(body["conversation_url"], f"/projects/{self.project}/tasks/{self.slug}")
         self.readme.write_text("# Changed after publication\n")
         self.screen.unlink()
         for image in body["images"]:

@@ -11,6 +11,7 @@ import { Choice, deliveryChoice } from "./Choice";
 import type { ChoiceState } from "./Choice";
 import { InlineProse, Prose, ProseScope, QuestionProse } from "./Prose";
 import { ReviewStatus, reviewLine } from "./TaskReview";
+import { ShownFiles } from "./Shown";
 import { keepForVisit, useVisitMemory } from "./visitMemory";
 
 type Draft = { option?: string; text?: string };
@@ -163,9 +164,11 @@ export function QuestionSet({ decisions, group, target, disabled = false, onDeni
       </div> : null}
       {!resolved && question.response ? <Receipt response={question.response} picked={options.find((option) => option.text === question.response!.text)?.label}
         delivery={deliveries?.[question.response.message_id]} /> : null}
-      {question.design_url ? <Link className="text-meta question-preview" to={question.design_url} onClick={(event) => {
-        if (plainClick(event)) keepForVisit(location.key, "origin", { project: question.project, slug: question.slug, id: question.id } satisfies QuestionOrigin);
-      }}>View preview · {question.design_title}</Link> : null}
+      {question.shown ? <ShownFiles shown={question.shown} state={from ? { from, tab: from === "needs" ? "needs" : "work" } : undefined} onOpen={(event) => {
+        if (!plainClick(event)) return;
+        setSelectedProject(question.project);
+        keepForVisit(location.key, "origin", { project: question.project, slug: question.slug, id: question.id } satisfies QuestionOrigin);
+      }} /> : null}
       <ReviewLink decision={question} from={chat ? undefined : from} />
       {(resolved && !withdrawn || question.response) && question.recommendation?.text ? <details className="question-context"><summary>Earlier recommendation</summary>{recommendation}</details> : recommendation}
       {chat && question.detail && question.detail !== question.question ? <details className="question-context">
