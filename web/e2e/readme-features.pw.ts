@@ -4,7 +4,7 @@ import { expect } from "@playwright/test";
 import { test } from "./fixtures";
 
 // The README's feature illustrations (design/readme/README.md#features): a pull request waiting for the operator's
-// review, a fault the coordinator repairs, and improvement suggestions. With ALTITUDE_README_IMAGES naming a folder,
+// review, a command typed into the task's terminal, a fault the coordinator repairs, and improvement suggestions. With ALTITUDE_README_IMAGES naming a folder,
 // each state is written there as `<feature>-<viewport>.png` at 2×.
 const images = process.env.ALTITUDE_README_IMAGES ? resolve(process.env.ALTITUDE_README_IMAGES) : undefined;
 test.use({ serviceScript: "readme-features-service.py", deviceScaleFactor: 2, locale: "en-US", timezoneId: "UTC", colorScheme: "light" });
@@ -41,6 +41,22 @@ test("review before merge, a repaired fault and improvement suggestions", async 
   await expect(review).toContainText("Review PR #214 before merge");
   await review.evaluate((card) => card.scrollIntoView({ block: "start" }));
   await capture("review");
+
+  // The owner hands over a step only the operator can take; it arrives typed in the task's terminal, waiting for Enter.
+  expect((await request.post("/api/terminal-access", { data: { enabled: true } })).ok()).toBe(true);
+  await page.goto(phone ? "/projects/atlas?tab=work" : "/projects/atlas");
+  await page.getByRole("region", { name: "Work", exact: true })
+    .getByRole("link", { name: /Sign billing webhook payloads/ }).first().click();
+  const command = conversation.getByRole("group", { name: "Command" });
+  await expect(command.locator("pre")).toHaveText("make deploy ENV=staging");
+  await command.scrollIntoViewIfNeeded();
+  await capture("terminal-1-command");
+  await command.getByRole("button", { name: "Open in terminal" }).click();
+  await expect(page).toHaveURL(/\/terminal$/);
+  const screen = page.locator(".terminal-screen .xterm-rows");
+  await expect(screen).toContainText("atlas $ make deploy ENV=staging");
+  await page.waitForTimeout(1_000);  // longer than the page's settle time: nothing more arrives
+  await capture("terminal-2-typed");
 
   // A machine problem pauses the sign-on task; the coordinator repairs it and the task resumes.
   const signOn = page.getByRole("region", { name: "Work", exact: true })

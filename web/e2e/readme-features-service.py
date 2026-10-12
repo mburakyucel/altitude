@@ -1,13 +1,15 @@
 """The README's feature illustrations on the Atlas example of readme-service.py: a pull request waiting for the
-operator's review after the other engine's review, a task the coordinator repairs and resumes, and improvement
-suggestions in the Altitude project. Real handlers and storage; every message is authored example text."""
+operator's review after an independent review, a command an owner hands to the operator's terminal, a task the
+coordinator repairs and resumes, and improvement suggestions in the Altitude project. Real handlers, storage and
+terminal; the shell has no profile and a fixed prompt, and every message is authored example text."""
 from datetime import datetime, timedelta, timezone
 import importlib.util
+import os
 from pathlib import Path
 
 from service_support import serve
-from tests.support import git, make_repo
-from altitude import config, dispatch, engines, improve, improve_eval, l3, project_setup, route, server
+from tests.support import git, local_terminal_launch, local_terminal_stop, make_repo
+from altitude import config, dispatch, engines, improve, improve_eval, l3, project_setup, route, server, terminal
 from altitude import state as S, tasks as T, verify
 
 _spec = importlib.util.spec_from_file_location("readme_service", Path(__file__).with_name("readme-service.py"))
@@ -58,6 +60,13 @@ def main():
         "landed": {"prs": [{"number": 214, "merged": False}], "main_runs": [], "deploy": "not-applicable"},
         "review": [], "blocked": ""})
     T.report(PROJECT, limits, {"verdict": "ok", "delivery": task["delivery"], "owner": T.report_owner(task), "prs": [214]})
+
+    # A step only the operator can take, handed to the task's terminal and run only on their Enter.
+    os.environ.update({"PS1": "atlas $ ", "PROMPT_COMMAND": ""})
+    terminal.shell_command = lambda: ["bash", "--noprofile", "--norc"]
+    terminal.launch, terminal.stop = local_terminal_launch, local_terminal_stop
+    say(slugs["Sign billing webhook payloads"], "l2", "Signing works end to end in tests. Deploying to staging uses "
+        "your SSH key, so this step is yours. Nothing runs until you press Enter:\n\n```run\nmake deploy ENV=staging\n```", 6)
 
     # A fault: a machine problem pauses the sign-on task until the coordinator repairs it.
     sso = slugs["Add SAML single sign-on for enterprise accounts"]
@@ -127,7 +136,7 @@ def main():
                 return self._json(S.load_task(PROJECT, sso))
             return super().do_POST()
 
-    serve(Handler)
+    serve(Handler, release=terminal.close_all)
 
 
 if __name__ == "__main__":
