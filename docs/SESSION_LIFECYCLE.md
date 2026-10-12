@@ -1313,7 +1313,7 @@ rows are excluded. Messages are labeled historical context for the current reque
 new instructions, with at most 800 characters of each text and an explicit `[truncated]` marker
 when longer. Task state remains in `STATE.md`; no tool evidence or generated summaries are replayed.
 
-Every fresh or resumed L3 turn also names `alt l3 search "literal text"` for evidence outside the
+Every fresh or resumed L3 turn also names `alt l3 search "key words"` for evidence outside the
 handoff. Owners use the same lookup through their CLI, bound to their launch project alongside repository,
 PR and tool-summary reads. Both roles share project inspection admission; mutation permissions stay separate.
 The coordinator lookup uses its project-bound transport on either engine. It scans human project chat and active/archived task conversations, reports and digests;
