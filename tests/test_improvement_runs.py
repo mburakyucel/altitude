@@ -1,7 +1,9 @@
 """Improvement review runs on the operator's request: start authority and refusals, the reviewer thread, L3's check
 and Altitude's post, typed decisions, deadlines, stop, and one task per accepted suggestion. Projects are
 fictional records; the reviewer is scripted at the engine seam."""
+import http.client
 import json
+import threading
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
@@ -66,6 +68,12 @@ class RunCase(AltitudeCase):
 
     def queued(self) -> list[dict]:
         return [r for r in l3._queue_rows(l3.queue_path(self.project)) if r["trigger"] == "improvement-check"]
+
+    def posted(self) -> dict:
+        run = self.started(suggestions=[suggestion(anchors=["CITE"]),
+                                        suggestion(target="project", title="Docks list rebuilt by hand", anchors=["CITE"])])
+        improve.post(self.project, run["id"], [1], [(2, "being handled")], now=NOW)
+        return run
 
 
 class TestStart(RunCase):
@@ -157,13 +165,15 @@ class TestReading(RunCase):
         self.load()
         self.answer = {"suggestions": [suggestion(anchors=["CITE"])]}
         receipt = improve.start(self.project, self.operator("Get improvement suggestions"), now=NOW)
-        stopped = improve.stop(self.project, self.operator("Stop the suggestions", 0.5))
-        self.assertEqual((stopped["state"], stopped["say"]), ("stopped", "Improvement suggestions stopped by you."))
+        message = self.operator("Stop the suggestions", 0.5)
+        stopped = improve.stop(self.project, message)
+        self.assertEqual(stopped["state"], "stopped")
+        self.assertEqual(improve.stop(self.project, message), stopped)
         improve.execute(self.project, receipt["run"])
         run = improve._find(improve._load(self.project), receipt["run"])
         self.assertEqual((run["state"], run["suggestions"]), ("stopped", []))
         self.assertFalse((improve.run_dir(self.project, run["id"]) / "answer.json").exists())
-        self.assertEqual((self.queued(), self.chat()), ([], []))
+        self.assertEqual((self.queued(), [r["text"] for r in self.chat()]), ([], ["Improvement suggestions stopped by you."]))
         with self.assertRaisesRegex(ValueError, "No improvement review is running"):
             improve.stop(self.project, self.operator("Stop", 1))
 
@@ -279,12 +289,6 @@ class TestPosting(RunCase):
 
 
 class TestDecisions(RunCase):
-    def posted(self) -> dict:
-        run = self.started(suggestions=[suggestion(anchors=["CITE"]),
-                                        suggestion(target="project", title="Docks list rebuilt by hand", anchors=["CITE"])])
-        improve.post(self.project, run["id"], [1], [(2, "being handled")], now=NOW)
-        return run
-
     def test_typed_answers_follow_the_decision_table(self):
         run = self.posted()
         ref = f"{run['id']}/1"
@@ -353,6 +357,175 @@ class TestDecisions(RunCase):
         self.assertEqual(improve.earlier(self.project, NOW),
                          [{"title": "Owners re-ask settled merge questions", "state": "dismissed"},
                           {"title": "Docks list rebuilt by hand", "state": "dropped by L3: being handled"}])
+
+
+class TestCard(RunCase):
+    """The web card and Needs you: presses with request ids, the task turn, Try again and what each view shows."""
+    def tasks(self) -> list[dict]:
+        return [r for r in l3._queue_rows(l3.queue_path(self.project)) if r["trigger"] == "improvement-task"]
+
+    def test_the_card_shows_kept_suggestions_with_their_places_count_and_details(self):
+        run = self.posted()
+        [card] = improve.view(self.project, now=NOW)
+        self.assertEqual((card["id"], card["state"], card["tasks"]), (run["id"], "posted", 6))
+        [shown] = card["suggestions"]
+        self.assertEqual((shown["ref"], shown["target"], shown["state"], shown["task"], shown["opening"]),
+                         (f"{run['id']}/1", "How agents work", "undecided", None, False))
+        self.assertTrue(shown["seen"] and all(place["title"].startswith("Fictional dock task") for place in shown["seen"]))
+        self.assertEqual(shown["count"], "Your messages after a report in 6 of 6 tasks")
+        details = dict(card["details"])
+        self.assertTrue(details["Read"].startswith("6 tasks that finished "))
+        self.assertEqual((details["L3 dropped"], details["Model"], details["Usage"]),
+                         ("Suggestion 2: being handled", "Claude Sonnet 5.5", "900 of its 86,000-token limit"))
+        self.assertEqual(improve.waiting(self.project, now=NOW), [card])
+
+    def test_running_and_ending_lines(self):
+        self.load()
+        self.answer = {"suggestions": [suggestion(anchors=["CITE"])]}
+        receipt = improve.start(self.project, self.operator("Get improvement suggestions"), now=NOW)
+        self.assertRegex(improve.view(self.project)[0]["line"], r"^Improvement suggestions · reading 6 tasks from ")
+        improve.execute(self.project, receipt["run"])
+        self.assertEqual(improve.view(self.project)[0]["line"], "Improvement suggestions · L3 is checking 1")
+        request = "0f" * 16
+        with self.assertRaisesRegex(ValueError, "That review already ended"):
+            improve.stop(self.project, request, "0" * 12)  # a press from the line of an earlier review
+        self.assertEqual(improve.stop(self.project, request, receipt["run"])["state"], "stopped")
+        self.assertEqual(improve.stop(self.project, request, receipt["run"])["state"], "stopped")
+        self.assertEqual((self.queued(), [r["text"] for r in self.chat()]),
+                         ([], ["Improvement suggestions stopped by you."]))
+        self.assertNotIn("line", improve.view(self.project)[0])
+        self.assertEqual(improve.waiting(self.project), [])
+
+    def test_make_a_task_queues_one_turn_and_the_card_follows_it(self):
+        run = self.posted()
+        ref = f"{run['id']}/1"
+        accepted = improve.decide(self.project, ref, "accept", "a" * 32, now=NOW)
+        self.assertEqual(improve.decide(self.project, ref, "accept", "a" * 32, now=NOW), accepted)
+        [turn] = self.tasks()
+        self.assertIn(f"--improvement {ref}", turn["text"])
+        self.assertNotIn("Owners re-ask", turn["text"])  # the reviewer's wording never enters the conversation
+        [card] = improve.view(self.project, now=NOW)
+        self.assertEqual((card["suggestions"][0]["state"], card["suggestions"][0]["opening"]), ("accepted", True))
+        self.assertEqual(len(improve.waiting(self.project, now=NOW)), 1)  # until its task exists
+        with self.assertRaisesRegex(ValueError, "L3 is still opening its task"):
+            improve.retry(self.project, ref, "b" * 32, now=NOW)
+        with self.assertRaisesRegex(ValueError, "This suggestion is accepted now"):
+            improve.decide(self.project, ref, "dismiss", "c" * 32, now=NOW)
+        # L3's turn ended without a task: Try again queues the same single turn once.
+        l3.unqueue_locked(self.project, turn["id"])
+        self.assertFalse(improve.view(self.project, now=NOW)[0]["suggestions"][0]["opening"])
+        improve.retry(self.project, ref, "d" * 32, now=NOW)
+        improve.retry(self.project, ref, "d" * 32, now=NOW)
+        self.assertEqual(len(self.tasks()), 1)
+        task = T.new(self.project, "Cite answered questions", "Brief.", improvement=ref)
+        self.assertEqual(improve.view(self.project, now=NOW)[0]["suggestions"][0]["task"], task["slug"])
+        self.assertEqual(improve.waiting(self.project, now=NOW), [])
+        with self.assertRaisesRegex(ValueError, "already has its task"):
+            improve.retry(self.project, ref, "e" * 32, now=NOW)
+
+    def test_two_try_again_presses_at_once_queue_one_turn(self):
+        run = self.posted()
+        ref = f"{run['id']}/1"
+        improve.decide(self.project, ref, "accept", "a" * 32, now=NOW)
+        [turn] = self.tasks()
+        l3.unqueue_locked(self.project, turn["id"])
+        pending, raced = l3.pending, []
+
+        def racing(project, row_id):
+            # The other press runs between this press's read and its lock.
+            if not raced:
+                raced.append(row_id)
+                improve.retry(project, ref, "b" * 32, now=NOW)
+            return pending(project, row_id)
+        self.patch(l3, "pending", racing)
+        with self.assertRaisesRegex(ValueError, "L3 is still opening its task"):
+            improve.retry(self.project, ref, "c" * 32, now=NOW)
+        self.assertEqual(len(self.tasks()), 1)
+
+    def test_a_request_id_makes_one_press_across_runs_and_actions(self):
+        self.posted()
+        record = improve._load(self.project)
+        first = record["runs"][-1]
+        second = {**first, "id": "1" * 12, "decisions": []}
+        record["runs"].append(second)
+        improve._save(self.project, record)
+        improve.decide(self.project, f"{first['id']}/1", "dismiss", "a" * 32, now=NOW)
+        for again in (lambda: improve.decide(self.project, f"{second['id']}/1", "dismiss", "a" * 32, now=NOW),
+                      lambda: improve.decide(self.project, f"{first['id']}/1", "undo", "a" * 32, now=NOW),
+                      lambda: improve.retry(self.project, f"{first['id']}/1", "a" * 32, now=NOW)):
+            with self.assertRaisesRegex(ValueError, "already saved for another change"):
+                again()
+        self.assertEqual(improve.view(self.project, now=NOW)[1]["suggestions"][0]["state"], "undecided")
+
+    def test_the_task_turn_running_counts_as_opening(self):
+        run = self.posted()
+        ref = f"{run['id']}/1"
+        improve.decide(self.project, ref, "accept", "a" * 32, now=NOW)
+        [turn] = self.tasks()
+        l3.unqueue_locked(self.project, turn["id"])
+        l3._active[self.project] = {"id": "0badc0ffee00", "trigger": "improvement-task", "queue_ids": [turn["id"]]}
+        self.addCleanup(l3._active.pop, self.project, None)
+        self.assertTrue(improve.view(self.project, now=NOW)[0]["suggestions"][0]["opening"])
+        typed = self.operator("Make a task for the second", 1)
+        self.assertFalse(l3.pending(self.project, typed))
+        l3._active[self.project] = {"id": typed, "trigger": "chat"}
+        self.assertTrue(l3.pending(self.project, typed))
+
+    def test_dismiss_and_undo_until_it_lapses(self):
+        run = self.posted()
+        ref = f"{run['id']}/1"
+        improve.decide(self.project, ref, "dismiss", "a" * 32, now=NOW)
+        [card] = improve.view(self.project, now=NOW)
+        self.assertEqual((card["suggestions"][0]["state"], card["suggestions"][0]["undo"]), ("dismissed", True))
+        self.assertEqual(improve.waiting(self.project, now=NOW), [])
+        with self.assertRaisesRegex(ValueError, "already saved for another change"):
+            improve.decide(self.project, ref, "undo", "a" * 32, now=NOW)
+        self.assertEqual(improve.decide(self.project, ref, "undo", "b" * 32, now=NOW)["state"], "undecided")
+        self.assertEqual(len(improve.waiting(self.project, now=NOW)), 1)
+        improve.decide(self.project, ref, "dismiss", "c" * 32, now=NOW)
+        week = NOW + timedelta(days=7)
+        self.assertFalse(improve.view(self.project, now=week)[0]["suggestions"][0]["undo"])
+        with self.assertRaisesRegex(ValueError, "This suggestion is dismissed now"):
+            improve.decide(self.project, ref, "undo", "d" * 32, now=week)
+        # A typed answer still accepts it, and an Undo a week later reads as not decided.
+        improve.decide(self.project, ref, "undo", "e" * 32, now=NOW + timedelta(days=6))
+        self.assertEqual(improve.view(self.project, now=week)[0]["suggestions"][0]["state"], "not decided")
+        self.assertEqual(improve.waiting(self.project, now=week), [])
+        with self.assertRaisesRegex(ValueError, "This suggestion is not decided now"):
+            improve.decide(self.project, ref, "accept", "f" * 32, now=week)
+        self.assertEqual(improve.resolve(self.project, ref, "accepted", self.operator("Make it after all", 200),
+                                         "all of it", now=week)["state"], "accepted")
+
+    def test_presses_reach_the_record_through_the_web(self):
+        run = self.posted()
+        drains = self.patch(server, "request_l3_drain")
+        httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": .01}, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+
+        def press(status=200, **body):
+            connection = http.client.HTTPConnection(*httpd.server_address, timeout=5)
+            connection.request("POST", "/api/improve", body=json.dumps({"project": self.project, **body}),
+                               headers={"Content-Type": "application/json"})
+            response = connection.getresponse()
+            payload = json.loads(response.read())
+            connection.close()
+            self.assertEqual(response.status, status, payload)
+            return payload
+
+        ref, request = f"{run['id']}/1", "6f1c" * 8
+        self.assertEqual(press(action="accept", ref=ref, request_id=request)["state"], "accepted")
+        drains.assert_called_once_with(self.project)
+        self.assertEqual(press(action="accept", ref=ref, request_id=request)["state"], "accepted")
+        self.assertEqual(len(self.tasks()), 1)
+        self.assertIn("is accepted now", press(409, action="dismiss", ref=ref, request_id="7" * 32)["error"])
+        self.assertIn("Unsupported", press(409, action="delete", ref=ref, request_id="7" * 32)["error"])
+        self.assertIn("badly formed", press(409, action="dismiss", ref=ref, request_id="no")["error"])
+        self.assertIn("That review already ended", press(409, action="stop", ref=run["id"], request_id="8" * 32)["error"])
+        overview = server.overview()
+        self.assertEqual([(row["project"], row["id"]) for row in overview["suggestions"]], [(self.project, run["id"])])
+        self.assertEqual(server.project_view(self.project)["improvements"][0]["id"], run["id"])
 
 
 class TestCoordinatorVerbs(RunCase):

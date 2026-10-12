@@ -94,6 +94,8 @@ export function handling(trigger: string, task?: string | null): string {
       return `an owner's message${on}`;
     case "improvement-check":
       return "the improvement suggestions";
+    case "improvement-task":
+      return "a task for an improvement suggestion";
     default:
       return `a system event${on}`;
   }
@@ -130,6 +132,8 @@ export function kindLabel(trigger: string): string {
       return "Owner message";
     case "improvement-check":
       return "Improvement suggestions";
+    case "improvement-task":
+      return "Task for an improvement suggestion";
     default:
       return "System event";
   }

@@ -19,6 +19,7 @@ import type { ImageSubmission } from "../components/ImageDraft";
 import { MessageImages, PendingImages } from "../components/MessageImages";
 import { SystemGroup, SystemLine, notable, subjectOf } from "../components/SystemLine";
 import { TaskCards } from "../components/TaskCard";
+import { ImprovementCard, ImprovementEnding, ImprovementRunning } from "../components/Improvement";
 import { ChoiceError, CreateTask } from "../components/Choice";
 import type { ChoiceState } from "../components/Choice";
 import type { SystemTurn } from "../components/SystemLine";
@@ -72,7 +73,7 @@ export function turnsOf(history: ChatMessage[]): Turn[] {
       return;
     }
     if (row.trigger === "improvement") {
-      // Altitude's own improvement message stands alone: it never answers the message waiting for L3.
+      // An improvement review's row stands alone: it never answers the message waiting for L3.
       fresh(id || `row-${index}`, row).assistant = row;
       return;
     }
@@ -108,6 +109,7 @@ function systemTurn(turn: Turn, project: string, activeId: string | null): Syste
 
 type Item =
   | { kind: "chat"; turn: Turn; inProgress: boolean }
+  | { kind: "improvement"; turn: Turn }
   | { kind: "system"; turn: SystemTurn }
   | { kind: "group"; turns: SystemTurn[]; at: string | null };
 
@@ -123,7 +125,12 @@ export function itemsOf(turns: Turn[], project: string, activeId: string | null)
     run = [];
   };
   for (const turn of turns) {
-    if (turn.trigger === "chat" || turn.trigger === "improvement") {
+    if (turn.trigger === "improvement") {
+      flush();
+      items.push({ kind: "improvement", turn });
+      continue;
+    }
+    if (turn.trigger === "chat") {
       flush();
       items.push({ kind: "chat", turn, inProgress: !turn.assistant && !turn.error && turn.id === activeId });
       continue;
@@ -206,6 +213,9 @@ export default function Conversation({
   }, [project.data]);
 
   const turns = useMemo(() => turnsOf(view?.history ?? []), [view?.history]);
+  const improvements = project.data?.improvements;
+  const runs = useMemo(() => new Map((improvements ?? []).map((run) => [run.id, run])), [improvements]);
+  const running = improvements?.find((run) => run.line);
   const items = useMemo(() => itemsOf(turns, name, activeId), [turns, name, activeId]);
 
   // The server's record takes over an entry on the snapshot this view renders, so a bubble never leaves before
@@ -324,6 +334,17 @@ export default function Conversation({
     }
   }, [name, queryClient]);
 
+  // A card opened from Needs you (#improvement-<run>) comes into view once, when it has rendered.
+  const target = location.hash.startsWith("#improvement-") ? location.hash.slice(1) : null;
+  const reached = useRef<string | null>(null);
+  useEffect(() => {
+    const card = target && reached.current !== target ? document.getElementById(target) : null;
+    if (!card) return;
+    reached.current = target;
+    following.current = false;
+    card.scrollIntoView?.({ block: "start" });
+  });
+
   const neverStarted = project.isSuccess && !project.data.l3?.session_id && view && view.history.length === 0 && !view.active;
   const queued = view?.queued ?? [];
   // A kept message is already in the conversation: its queued state shows under its own bubble, or in the list
@@ -380,7 +401,15 @@ export default function Conversation({
   for (const item of items) {
     if (item.kind === "chat" && shadowed.has(item.turn.id)) continue;
     divide(itemAt(item));
-    if (item.kind === "group") {
+    if (item.kind === "improvement") {
+      // The row names its review; the card or line reads the review's record, so it appears once that has loaded.
+      const run = runs.get(item.turn.assistant?.improvement ?? "");
+      if (run) rows.push(
+        <div key={item.turn.id} className="turn" data-turn={item.turn.id}>
+          {run.state === "posted" ? <ImprovementCard project={name} run={run} tasks={tasks} /> : <ImprovementEnding run={run} />}
+        </div>,
+      );
+    } else if (item.kind === "group") {
       rows.push(<SystemGroup key={item.turns[0]?.id ?? item.at ?? "group"} turns={item.turns} project={name} tasks={tasks}
         enter={enter(`group:${item.turns[0]?.id}`, ...item.turns.map((turn) => `sys:${turn.id}`))} />);
     } else if (item.kind === "system") {
@@ -424,6 +453,10 @@ export default function Conversation({
         </div>,
       );
     }
+  }
+  if (running) {
+    divide(running.started);
+    rows.push(<ImprovementRunning key={`improvement-${running.id}`} project={name} run={running} />);
   }
   if (view?.active && !turns.some((turn) => turn.id === view.active!.id) && view.active.trigger !== "chat" && pending.length === 0) {
     // The turn started before its rows reached the log: the line says what L3 is handling meanwhile.

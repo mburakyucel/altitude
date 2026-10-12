@@ -269,7 +269,7 @@ class TestReviewerCall(AltitudeCase):
         self.assertEqual(self.call(prompt="x" * engines.IMPROVEMENT_SENT_BYTES)["error"],
                          "its prompt exceeds the usage limit")
         with mock.patch.object(engines, "usage_hold", return_value=at(-1)):
-            self.assertEqual(self.call()["error"], f"{self.model} is unavailable")
+            self.assertEqual(self.call()["error"], "Claude Sonnet 5.5 is unavailable")
         self.assertEqual(self.calls, [])
 
     def test_timeouts_limits_and_unusable_answers_end_the_call(self):

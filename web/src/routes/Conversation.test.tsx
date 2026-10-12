@@ -1013,32 +1013,33 @@ describe("Conversation", () => {
     expect(within(region).queryByRole("article")).toBeNull();
   });
 
-  it.each([390, 1440])("posts improvement suggestions as their own reply beside a waiting message at %ipx, task links opening in place", async (width) => {
+  it.each([390, 1440])("shows an improvement review's card and ending on their own rows beside a waiting message at %ipx", async (width) => {
     setViewport(width);
-    const post = "Improvement suggestions of Oct 12 · 14 tasks from Oct 5–12\n\n**2. Owners re-ask settled questions** · How agents work\n"
-      + "Owners ask again after an answer.\nSeen in [Persist paths](/projects/altitude/tasks/persist-paths) and the project chat\n\nDropped 1: already handled";
-    mockFetch({ chat: {
-      ...chatView,
-      history: [...history,
-        { at: ago(3), role: "user", text: "Any news?", trigger: "chat", turn_id: "c3" },
-        { at: ago(2), role: "assistant", text: post, trigger: "improvement", turn_id: "i1", improvement: "0123456789ab" },
-        { at: ago(1), role: "assistant", text: "Improvement suggestions failed · L3 did not finish checking.", trigger: "improvement", turn_id: "i2", improvement: "ba9876543210" }],
-      active: { id: "c3", started_at: ago(3), trigger: "chat" }, busy: true,
-    } });
+    const run = { id: "0123456789ab", state: "posted", started: ago(4), ended: ago(2), posted: ago(2), tasks: 14, window: "Oct 5–12", reason: null,
+      details: [], suggestions: [{ ref: "0123456789ab/2", n: 2, target: "How agents work", title: "Owners re-ask settled questions",
+        explanation: "Owners ask again after an answer.", seen: [{ slug: "persist-paths", title: "Persist paths" }], count: null,
+        state: "undecided", task: null, undo: false, opening: false }] };
+    mockFetch({
+      project: { ...project, improvements: [run, { ...run, id: "ba9876543210", state: "failed", posted: null, reason: "L3 did not finish checking", suggestions: [] }] },
+      chat: {
+        ...chatView,
+        history: [...history,
+          { at: ago(3), role: "user", text: "Any news?", trigger: "chat", turn_id: "c3" },
+          { at: ago(2), role: "assistant", text: "Improvement suggestions of Oct 12", trigger: "improvement", turn_id: "i1", improvement: "0123456789ab" },
+          { at: ago(1), role: "assistant", text: "Improvement suggestions failed · L3 did not finish checking.", trigger: "improvement", turn_id: "i2", improvement: "ba9876543210" }],
+        active: { id: "c3", started_at: ago(3), trigger: "chat" }, busy: true,
+      },
+    });
     const { user, router } = renderApp({ route: "/projects/altitude" });
     const region = await conversation();
     const waiting = within(region).getByText("Any news?").closest<HTMLElement>(".turn")!;
-    const reply = within(region).getByText("Improvement suggestions of Oct 12 · 14 tasks from Oct 5–12").closest<HTMLElement>(".turn")!;
-    expect(reply).not.toBe(waiting);
+    const card = (await within(region).findByRole("article", { name: "Improvement suggestions, 14 tasks from Oct 5–12" })).closest<HTMLElement>(".turn")!;
+    expect(card).not.toBe(waiting);
     expect(within(waiting).queryByText(/Improvement suggestions/)).toBeNull();
-    expect(within(reply).getByText("2. Owners re-ask settled questions")).toBeVisible();
-    expect(within(reply).queryByRole("list")).toBeNull();
-    expect(within(reply).getByText("Dropped 1: already handled")).toBeVisible();
-    expect(within(region).getByText("Improvement suggestions failed · L3 did not finish checking.").closest(".turn")).not.toBe(reply);
-    const cited = within(reply).getByRole("link", { name: "Persist paths" });
-    expect(cited).toHaveAttribute("href", "/projects/altitude/tasks/persist-paths");
-    expect(cited).not.toHaveAttribute("target");
-    await user.click(cited);
+    expect(within(card).getByText("2. Owners re-ask settled questions")).toBeVisible();
+    expect(within(region).queryByText("Improvement suggestions of Oct 12")).toBeNull();
+    expect(within(region).getByText("Improvement suggestions failed · L3 did not finish checking").closest(".turn")).not.toBe(card);
+    await user.click(within(card).getByRole("link", { name: "Persist paths" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/projects/altitude/tasks/persist-paths"));
   });
 

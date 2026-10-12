@@ -1,6 +1,5 @@
 import { createContext, Fragment, useContext } from "react";
 import type { ReactNode } from "react";
-import { Link, useInRouterContext } from "react-router";
 import { CodeBlock } from "./CodeBlock";
 import { timeTokens, when } from "../data/observed";
 
@@ -14,8 +13,6 @@ export function ProseScope({ project, repository, children }: { project: string;
 const REPO = "[a-z\\d](?:[a-z\\d-]*[a-z\\d])?/(?=[a-z\\d_.-]*[a-z\\d_])[a-z\\d_.-]+";
 const REPOSITORY = new RegExp(`^https://github\\.com/(${REPO})/?$`, "i");
 const REFERENCE = new RegExp(`(?<![\\w/#@\\\\.-])(?:(PR|pull request|issue)\\s+)?(${REPO})?#([1-9]\\d*)(?![\\w/#]|[.,]\\d)`, "gi");
-/** A link Altitude writes to one of this project's tasks (an improvement suggestion's "Seen in"). */
-const TASK_LINK = /^\/projects\/([^/?#]+)\/tasks\/([^/?#]+)$/;
 const INLINE = /(`+)([\s\S]*?)\1(?!`)|\*\*[^*]+\*\*|!?\[[^\]]+\]\((?:<[^>\n]+>|[^\s)]+)\)|https?:\/\/[^\s<>)]+|\bfile:\/\/[^\s<>`"'\]}]+|(?<![\w/:\\.-])\/(?!\/)[^\s<>`"'[\]{}]+/g;
 
 /** Share fence boundaries across full prose, compact mirrors, and folded summaries. */
@@ -83,10 +80,10 @@ export function InlineProse({ text }: { text: string }) {
   ))}</>;
 }
 
-type Scope = { repository?: string | null; project?: string; at?: string | null; routed: boolean };
+type Scope = { repository?: string | null; project?: string; at?: string | null };
 
 function useScope(): Scope {
-  return { repository: useContext(ProseRepository), project: useContext(ProseProject), at: useContext(ProseAt), routed: useInRouterContext() };
+  return { repository: useContext(ProseRepository), project: useContext(ProseProject), at: useContext(ProseAt) };
 }
 
 /** Inline code, bold, existing links, written times and GitHub references in plain text. */
@@ -108,14 +105,6 @@ function inline(text: string, scope: Scope): ReactNode[] {
       continue;
     }
     const fileLink = /^\[([^\]]+)\]\(<?((?:file:\/\/|\/)[\s\S]*?)>?\)$/.exec(part);
-    const taskLink = fileLink && project ? TASK_LINK.exec(fileLink[2]!) : null;
-    if (fileLink && taskLink && taskLink[1] === encodeURIComponent(project!)) {
-      // A task of this project opens in place, like any task link in chat; Back returns to the conversation.
-      nodes.push(scope.routed
-        ? <Link className="prose-link" key={index} to={fileLink[2]!}>{fileLink[1]}</Link>
-        : <a className="prose-link" key={index} href={fileLink[2]}>{fileLink[1]}</a>);
-      continue;
-    }
     let fileTarget = fileLink?.[2] ?? (/^(file:\/\/|\/(?!\/))/.test(part) ? part.replace(/[.,;:!?]+$/, "") : null);
     if (fileTarget && !fileLink) {
       let closing = (fileTarget.match(/\)/g)?.length ?? 0) - (fileTarget.match(/\(/g)?.length ?? 0);
