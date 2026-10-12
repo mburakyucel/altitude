@@ -101,6 +101,43 @@ test("a question's review line in its conversation opens the review card and Bac
   await expect(line).toBeInViewport();
 });
 
+test("a marked merge question that never names its held PR is the one Approve merge control", async ({ page }, info) => {
+  const walk = walkthrough(page, info);
+  const review = "Implementation review · done, 1 finding resolved";
+  const viewPr = (scope: Locator) => scope.getByRole("link", { name: "View PR #44", exact: true });
+  await walk.open("/");
+  const needs = page.getByRole("article", { name: "Help page copy", exact: true });
+  await expect(needs).toHaveCount(1);
+  await needs.scrollIntoViewIfNeeded();
+  await expect(viewPr(needs)).toHaveAttribute("href", "https://github.com/example/atlas/pull/44");
+  await walk.state("09-needs-you-one-merge-control", {
+    visible: [needs.getByRole("link", { name: review, exact: true }), needs.getByRole("button", { name: /^Approve merge/ }), viewPr(needs)],
+    hidden: [page.getByText("Review PR #44 before merge", { exact: true })],
+  });
+
+  await walk.open("/projects/atlas/tasks/help-page-copy");
+  const chat = conversation(page);
+  const question = chat.locator(".conversation-question").last();
+  await expect(chat.getByRole("button", { name: /^Approve merge/ })).toHaveCount(1);
+  await walk.state("10-conversation-one-merge-control", {
+    visible: [question.getByText("Merge the new help page? It is on the pull request with all checks green.", { exact: true }),
+      question.getByRole("link", { name: review, exact: true }), viewPr(question)],
+    hidden: [chat.getByText("Your turn · review before merge", { exact: true })],
+  });
+
+  // Answering keeps one surface: the choice goes to the L2 as the operator's reply and no review card appears.
+  await question.getByRole("button", { name: /^Approve merge/ }).click();
+  await walk.state("11-conversation-approve-selected", {
+    visible: [question.getByRole("button", { name: "Send 1 answer", exact: true }), viewPr(question)], hidden: [],
+  });
+  await question.getByRole("button", { name: "Send 1 answer", exact: true }).click();
+  await walk.state("12-conversation-approval-sent", {
+    visible: [chat.getByText("Sent · the L2 has your reply.", { exact: true })],
+    hidden: [chat.getByText("Your turn · review before merge", { exact: true }), viewPr(chat),
+      chat.getByRole("button", { name: /^(Approve merge|Request changes)$/ })],
+  });
+});
+
 test("Back after the question is revised while its review is open returns to the latest revision", async ({ page }, info) => {
   const walk = walkthrough(page, info);
   // While reading the review the operator messages the L2, which revises the question.

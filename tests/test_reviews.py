@@ -1552,7 +1552,7 @@ class TestReviews(AltitudeCase):
         latest = T.question_views(self.project, self.slug)[-1]
         self.assertEqual((latest["id"], latest["revision"], latest["review"]["subject"]), (question["id"], 2, "proposal"))
         with self.assertRaises(T.TransitionError):
-            T._validate_questions({"questions": [{"question": "Merge?", "review": "changes"}]})
+            T._validate_questions({"questions": [{"question": "Merge?", "review": "merge"}]})
 
     def test_owner_skip_records_why_no_review_is_needed_without_changing_the_gate(self):
         skipped = reviews.skip(self.project, self.slug, actor="l2", subject="proposal", reason="One-line copy change.", expected_attempt=1)
