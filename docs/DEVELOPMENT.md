@@ -205,7 +205,8 @@ and `/Network`. It names the program launchd started, so a worker's search of th
 asked the operator about "Python 3.12". Altitude never needs these places, and a server must never ask.
 
 `platform.private_places()` lists them (empty on Linux), each home place through the resolved home and
-through `/System/Volumes/Data`. A sandbox's refusal comes before macOS's consent check, so a refused
+through `/System/Volumes/Data`. `/Volumes` is refused whole, including the startup disk's link there;
+sandboxed code reaches the startup disk by its own paths. A sandbox's refusal comes before macOS's consent check, so a refused
 read asks the operator nothing. Every sandbox Altitude applies refuses them as its last file rule, so no
 root it admits reopens one: the worker profile, the validation profile, and Codex's worker and
 coordinator permissions. Altitude code that runs outside a sandbox (altd, the coordinator launch,
@@ -215,8 +216,8 @@ Code that must take a path the operator chose (the folder browser, project disco
 the projects folder) asks `platform.private(path)` first, which reads each link on the way and judges
 its target before following it, so nothing inside a private place is touched.
 `tests/test_folders.py` and `tests/test_platform_darwin.py` cover the rule with fictional homes;
-the [native probe](#local-checks) checks that a sandboxed read of the Desktop fails with "operation not
-permitted" and that macOS's privacy log records no request for it (macOS logs a request even when it
+the [native probe](#local-checks) checks that a sandboxed read of the Desktop or `/Volumes` fails with
+"operation not permitted" and that macOS's privacy log records no request for either (macOS logs a request even when it
 already holds an answer); it reads only after Seatbelt's own verdict refuses the read, and otherwise fails
 without reading.
 

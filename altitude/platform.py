@@ -1693,10 +1693,10 @@ def private(path: str | Path) -> bool:
         links += 1
         if links > 32:  # the kernel's own link limit: such a path resolves nowhere, and refusing it touches nothing
             return True
-        target = Path(os.readlink(candidate)).parts
-        if target[:1] == ("/",):
-            current, target = "/", target[1:]
-        remaining = [*target, *remaining]
+        target = Path(os.readlink(candidate))
+        if target.is_absolute():  # its anchor may be "//", which the disk reads as "/"
+            current, target = "/", target.relative_to(target.anchor)
+        remaining = [*target.parts, *remaining]
 
 
 def _filters(kind: str, values) -> list[str]:
