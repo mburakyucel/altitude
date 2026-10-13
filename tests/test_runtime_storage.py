@@ -1,5 +1,6 @@
 """Real fictional storage verifies the narrow project-lock and fixed-brief namespace boundary."""
 import fcntl
+import json
 import os
 import select
 import subprocess
@@ -10,7 +11,7 @@ from contextlib import contextmanager
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import config, installation, platform, state as S, storage, transcript
+from altitude import config, installation, platform, server, state as S, storage, transcript
 
 
 class RuntimeStorage(AltitudeCase):
@@ -162,6 +163,102 @@ class RuntimeStorage(AltitudeCase):
         finally:
             for path in paths:
                 path.chmod(0o755)
+
+    def test_task_selector_preserves_live_directory_and_falsey_status_fallback(self):
+        live = S.tasks_dir(self.project) / "fictional-task"
+        archived = S.archive_dir(self.project) / "fictional-task"
+        live.mkdir(parents=True)
+        archived.mkdir(parents=True)
+        S.write_runtime_json(archived / "status.json", {"slug": "fictional-task", "state": "done"})
+        self.assertEqual(S.task_dir(self.project, "fictional-task"), live)
+        self.assertEqual(S.load_task(self.project, "fictional-task")["state"], "done")
+        for raw in ("", "  \n", "null", "false", "0", "[]", "{}"):
+            with self.subTest(raw=raw):
+                (live / "status.json").write_text(raw)
+                self.assertEqual(S.load_task(self.project, "fictional-task")["state"], "done")
+                self.assertEqual(S.task_dir(self.project, "fictional-task"), live)
+        (live / "status.json").unlink()
+        live.rmdir()
+        self.assertEqual(S.task_dir(self.project, "fictional-task"), archived)
+
+    def test_task_selector_surfaces_corrupt_decode_link_and_special_status(self):
+        live = S.tasks_dir(self.project) / "fictional-task"
+        archived = S.archive_dir(self.project) / "fictional-task"
+        live.mkdir(parents=True)
+        archived.mkdir(parents=True)
+        S.write_runtime_json(archived / "status.json", {"slug": "fictional-task", "state": "done"})
+        status = live / "status.json"
+        status.write_text("{")
+        with self.assertRaisesRegex(ValueError, "corrupt JSON"):
+            S.load_task(self.project, "fictional-task")
+        status.write_bytes(b"\xff")
+        with self.assertRaises(UnicodeDecodeError):
+            S.load_task(self.project, "fictional-task")
+        status.unlink()
+        marker = self.outside / "status.json"
+        marker.write_text('{"outside":true}')
+        status.symlink_to(marker)
+        with self.assertRaises(OSError):
+            S.load_task(self.project, "fictional-task")
+        status.unlink()
+        os.mkfifo(status)
+        with self.assertRaises(storage.NotRegularFile):
+            S.load_task(self.project, "fictional-task")
+        status.unlink()
+        status.write_text('{"slug":"fictional-task"}')
+        if os.geteuid() != 0:
+            status.chmod(0)
+            try:
+                with self.assertRaises(PermissionError):
+                    S.load_task(self.project, "fictional-task")
+            finally:
+                status.chmod(0o600)
+        self.assertEqual(marker.read_text(), '{"outside":true}')
+
+    def test_append_and_atomic_replace_refuse_specials_and_preserve_outside_leaf(self):
+        leaf = self.runtime / "events.log"
+        marker = self.outside / "events.log"
+        marker.write_text("outside sentinel")
+        leaf.symlink_to(marker)
+        with self.assertRaises(OSError):
+            storage.runtime_append(leaf, "never written")
+        self.assertEqual(marker.read_text(), "outside sentinel")
+        storage.runtime_atomic_write(leaf, "é\nlast\n")
+        self.assertFalse(leaf.is_symlink())
+        self.assertEqual(storage.runtime_read_text(leaf), "é\nlast\n")
+        self.assertEqual(marker.read_text(), "outside sentinel")
+        self.assertEqual(leaf.stat().st_mode & 0o777, 0o600)
+        leaf.chmod(0o200)
+        storage.runtime_atomic_write(leaf, "replacement")
+        self.assertEqual(storage.runtime_read_text(leaf), "replacement")
+        storage.runtime_append(leaf, " é\n", sync=True)
+        self.assertEqual(storage.runtime_read_text(leaf), "replacement é\n")
+        leaf.unlink()
+        os.mkfifo(leaf)
+        with self.assertRaises(OSError):
+            storage.runtime_append(leaf, "never written")
+        with self.assertRaises(storage.NotRegularFile):
+            storage.runtime_read_text(leaf)
+
+    def test_generic_json_helpers_remain_available_for_nonruntime_output(self):
+        output = self.outside / "evaluation.json"
+        S.write_json(output, {"text": "é\n"})
+        self.assertEqual(S.read_json(output), {"text": "é\n"})
+        with self.assertRaises(storage.StorageRefused):
+            S.read_runtime_json(output)
+        self.assertEqual(json.loads(output.read_text())["text"], "é\n")
+
+    def test_api_change_marks_follow_atomic_task_status_replacement(self):
+        config.ensure_root()
+        with config.edit_projects() as projects:
+            projects[self.project] = {"path": str(self.outside)}
+        status = S.tasks_dir(self.project) / "fictional-task" / "status.json"
+        S.write_runtime_json(status, {"slug": "fictional-task", "state": "queued"})
+        before = server.change_marks()[self.project]
+        S.write_runtime_json(status, {"slug": "fictional-task", "state": "running"})
+        after = server.change_marks()[self.project]
+        self.assertNotEqual(before, after)
+        self.assertEqual(server.change_marks()[self.project], after)
 
     def test_creation_regular_contents_and_shared_exclusive_contention(self):
         for name, locked in self.locks():
