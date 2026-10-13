@@ -71,6 +71,21 @@ async function devices(request: APIRequestContext) {
   return (await response.json()).devices as { id: string; name: string }[];
 }
 
+test.describe("first browser on an empty installation", () => {
+  test.use({ scenario: "folders" });
+  test("the printed link destination pairs into First run", async ({ page, request, browser }, info) => {
+    const walk = walkthrough(page, info);
+    const secret = await issue(request);
+    await presentation(page);
+    await info.attach("pairing-browser", { body: JSON.stringify({ version: browser.version(),
+      engine: info.project.use.browserName, viewport: info.project.use.viewport }), contentType: "application/json" });
+    await walk.open(`/projects#pair=${secret}`);
+    await walk.state("01-link-first-run", { visible: [page.getByRole("heading", { name: "Welcome to Altitude" })],
+      hidden: [page.getByRole("heading", { name: "Pair this device", exact: true }), page.getByLabel("Pairing code")] });
+    await clean(page, secret);
+  });
+});
+
 test("install link shows only a busy cue, pairs once, and remains clean on reload and Back", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const ui = controls(page);

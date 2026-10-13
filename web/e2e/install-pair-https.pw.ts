@@ -1,5 +1,5 @@
 import { expect } from "@playwright/test";
-import { test } from "./https-fixtures";
+import { httpsTest as test } from "../playwright.config";
 import { walkthrough } from "./walkthrough";
 
 // NSS import belongs only to the throwaway Linux Chromium home. WebKit presentation is walked separately.

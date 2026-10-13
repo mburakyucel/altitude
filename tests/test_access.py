@@ -199,6 +199,24 @@ class TestAccess(AltitudeCase):
         self.assertEqual(status, 200, reply)
         return cookie.split(";")[0].split("=", 1)[1], reply["device"]
 
+    def test_malformed_invitation_does_not_revoke_paired_access_or_prevent_manual_replacement(self):
+        key, row = self.paired()
+        for invalid in ([], {"expires": "2026-10-13T12:00:00"},
+                        {"hash": "fixture", "expires": "2026-10-13T12:00:00", "wrong": 0}):
+            with self.subTest(code=invalid):
+                record = access._read()
+                record["code"] = invalid
+                access._write(record)
+                retained = (access.DIR / "devices.json").read_bytes()
+                status, body, _ = self.request("GET", "/api/access", device=key)
+                self.assertEqual((status, body["paired"]), (200, True))
+                self.assertTrue(access.known(row["id"]))
+                self.assertIsNone(access.issue_code(first_browser=True))
+                self.assertEqual((access.DIR / "devices.json").read_bytes(), retained)
+                manual = access.issue_code()
+                self.assertEqual(access.device(key)["id"], row["id"])
+                access.redeem(manual["code"], "Manual recovery fixture")
+
     def test_an_unpaired_browser_sees_only_the_page_and_the_way_to_pair(self):
         for method, path in (("GET", "/api/overview"), ("GET", "/api/devices"), ("GET", "/design/x/board.html"),
                              ("POST", "/api/operator-name"), ("POST", "/api/devices/code")):

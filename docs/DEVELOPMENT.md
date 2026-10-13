@@ -1170,7 +1170,7 @@ trusted context; reloading the cleaned address does not recover its code.
 
 `install-pair-https.pw.ts` uses the actual result renderer from `install.sh` and the built SPA in
 the verified fixture archive; bootstrap prerequisites/downloads remain covered by release tests.
-Its shared `https-fixtures.ts` imports only the public fictional CA into a temporary Linux NSS
+Its shared `playwright.config.ts` fixture imports only the public fictional CA into a temporary Linux NSS
 database using `certutil` (`libnss3-tools`), keeps the runner's shared launch options and sandbox
 policy, and removes the owned browser/home at cleanup. A separate untrusted context refuses the
 same certificate; verification stays enabled. This Chromium-specific trust lane is tagged
