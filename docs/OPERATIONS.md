@@ -328,9 +328,12 @@ that survives the service restart. **Check for new versions** turns off both loo
 starts, retaining the automatic preference. Neither switch cancels an update already started.
 Each version gets one automatic attempt. Failure restores the previous installation through
 activation recovery and offers explicit retry; a failed recovery retains its receipt for `alt recover`.
-An abandoned job is marked failed after thirty minutes only when the installation lock is free;
-a slow live update keeps its admission fence. Manual updates and activation share that lock
-through download, verification, activation and recovery, so automatic work cannot overlap them.
+An invalid installed release settles its update attempt as failed, with a release-check explanation;
+reconciliation does not repair or ignore unexpected installed files. Other abandoned jobs are marked
+failed after thirty minutes only when the installation lock is free; a slow live update keeps its
+admission fence. Failed preflight ends the detached updater's own reservation. Manual updates and
+activation share that lock through download, verification, activation and recovery, so automatic
+work cannot overlap them.
 
 Source deployments and containers keep their source/image lifecycle; the
 [changelog](../CHANGELOG.md) notes how each release updates from earlier ones. The release lookup

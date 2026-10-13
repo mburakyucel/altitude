@@ -152,6 +152,7 @@ UPDATE_RETRY_SECONDS = 3600
 UPDATE_STALE_SECONDS = 1800
 # The page shows only this next step; the cause stays in the terminal or the update unit's log.
 UPDATE_FAILED = "Run alt update in a terminal to see why."
+UPDATE_VERIFICATION_FAILED = "The installed application failed its release check. Run alt update in a terminal to see why."
 
 
 def _update_record() -> tuple[Path, dict]:
@@ -240,7 +241,12 @@ def _reconcile_update_locked(prefix: Path) -> None:
         if attempt.get("state") != "running":
             return
         current = prefix / "current"
-        if current.is_symlink() and attempt.get("version") == metadata(_version_path(prefix, os.readlink(current)))["version"]:
+        try:
+            installed = metadata(_version_path(prefix, os.readlink(current)))["version"] if current.is_symlink() else None
+        except (OSError, ValueError, RuntimeError):
+            record["attempt"] = {**attempt, "state": "failed", "error": UPDATE_VERIFICATION_FAILED}
+            return
+        if installed is not None and attempt.get("version") == installed:
             record["attempt"] = {**attempt, "state": "succeeded"}
         elif time.time() - attempt["started"] >= UPDATE_STALE_SECONDS:
             record["attempt"] = {**attempt, "state": "failed", "error": UPDATE_FAILED}
@@ -358,18 +364,19 @@ def update(version: str | None = None) -> dict:
     platform.require_native_application()
     ident = os.environ.get("ALTITUDE_UPDATE_ATTEMPT")
     with _lock(_prefix(), wait=bool(ident)):
-        _reconcile_update_locked(_prefix())
-        last = _update_record()[1].get("attempt") or {}
-        if ident:
-            if last.get("id") != ident or last.get("state") != "running" or last.get("version") != version:
-                raise UpdateRefused("This update request has expired or already ended")
-        else:
-            _require_no_update(_prefix())
-            ident = uuid.uuid4().hex
         try:
+            _reconcile_update_locked(_prefix())
+            last = _update_record()[1].get("attempt") or {}
+            if ident:
+                if last.get("id") != ident or last.get("state") != "running" or last.get("version") != version:
+                    raise UpdateRefused("This update request has expired or already ended")
+            else:
+                _require_no_update(_prefix())
+                ident = uuid.uuid4().hex
             return _update(version, ident)
         except (OSError, ValueError, RuntimeError):
-            _finish_attempt(ident, "failed")
+            if ident:
+                _finish_attempt(ident, "failed")
             raise
 
 

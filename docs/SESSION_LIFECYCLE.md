@@ -1086,7 +1086,8 @@ runtime directory; the deployment checkout and Altitude home are read-only, dire
 user-service bus are denied. A required stdio MCP adapter exposes one coordinator tool for `alt` verbs and
 GitHub/service reads, forwarding argument arrays and stdin to the project's fixed altd socket. Every fresh
 and resumed turn receives this configuration and the instruction to use the tool; shell wrappers remain
-unreachable inside the native sandbox. The adapter starts isolated Python from protected source, never
+unreachable inside the native sandbox. Coordinator and captured-review adapters start isolated Python
+with bytecode writes disabled, retaining the installed release's exact manifest file set. The adapter never
 loads code from the writable runtime, and has no shell execution operation. Its one tool is approved for
 unattended use; altd still applies its project and actor authorization on every request. A Claude L3 turn has the same runtime cwd and uses
 `--restricted`, `dontAsk`, no unattended permission

@@ -359,12 +359,16 @@ The installation lock covers the entire manual or detached update, including dow
 A unique attempt identity reserves the interval before the detached child acquires that lock;
 expired children cannot run or finish a later request. Each release gets one automatic attempt,
 retained in `update.json`; explicit retries remain available. Failed activation restores the prior
-version, or keeps the recovery receipt if recovery cannot finish. An abandoned reservation becomes
-failed after thirty minutes only while the installation lock is free and no activation receipt is
-pending. Age in the UI never releases a live updater's fence. The app announces a successful
-automatic update with its installed version and release notes after reconnecting.
-The page shows a failure only as "Run alt update in a terminal to see why."; causes, which can name
-private paths, stay in the daemon log, the update unit's journal or the terminal.
+version, or keeps the recovery receipt if recovery cannot finish. Reconciliation marks a reservation
+failed when the current installed release fails verification, without changing its files or reporting
+an upgrade. Other abandoned reservations become failed after thirty minutes only while the
+installation lock is free and no activation receipt is pending. Age in the UI never releases a
+live updater's fence. The app announces a successful automatic update with its installed version
+and release notes after reconnecting.
+The page names a failed installed-release check and offers the terminal diagnostic action; other
+failures say "Run alt update in a terminal to see why." Specific causes, which can name private
+paths, stay in the daemon log, the update unit's journal or the terminal. Detached updater failures
+settle their own reservation even when preflight fails before activation.
 
 `source_tls.py` prepares an existing Linux source service for explicit TLS configuration.
 The operator selects its existing certificate directory; native unit/process/listener evidence and
@@ -1327,8 +1331,9 @@ report, a block, or a completion blocks the task with its result error or stderr
 Codex L3 uses a dedicated permission profile: only its fresh per-turn runtime directory is writable; the
 deployment checkout and Altitude home are read-only, direct command networking and the user-service bus are denied,
 and a required stdio MCP coordinator tool forwards structured requests to that project's role-fenced altd Unix socket.
-The adapter runs isolated Python from the protected deployment checkout, outside the command sandbox; it
-executes no shell commands and grants no filesystem or service authority to the model. Only this tool is
+The adapter runs isolated Python with bytecode writes disabled from the protected deployment
+checkout, outside the command sandbox. It executes no shell commands and grants no filesystem or
+service authority to the model. Only this tool is
 approved for unattended use; altd continues to authorize each verb. Linux Codex proxy mode denies creation
 of AF_UNIX sockets, and its proxy Unix allowlist is macOS-only, so a filesystem read rule cannot enable the
 shell wrappers. The command sandbox keeps networking disabled. The common session confinement version rotates

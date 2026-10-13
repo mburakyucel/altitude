@@ -1125,6 +1125,51 @@ class AutomaticUpdates(NoticeCase):
             pass
         self.assertEqual(path.stat().st_mtime_ns, before)
 
+    def test_detached_preflight_failure_settles_its_running_reservation(self):
+        installation.request_update("v0.2.0", automatic=True)
+        cache = self.prefix / "current/altitude/__pycache__/config.cpython-312.pyc"
+        cache.parent.mkdir()
+        cache.write_bytes(b"fixture generated cache")
+        with self.assertRaises(ValueError):
+            self.run_detached()
+        status = installation.update_status()
+        self.assertEqual(status["attempt"]["state"], "failed")
+        self.assertTrue(status["attempt"]["automatic"])
+        self.assertFalse(config.activation_pending())
+        self.assertFalse(status["automatic_pending"], "a failure does not authorize another automatic attempt")
+        self.assertEqual(os.readlink(self.prefix / "current"), "versions/v0.1.0")
+        with self.assertRaisesRegex(ValueError, "do not match its manifest"):
+            installation.metadata((self.prefix / "current").resolve())
+
+    def test_detached_reconciliation_error_ends_only_its_own_reservation(self):
+        installation.request_update("v0.2.0", automatic=True)
+        with mock.patch.object(installation, "_reconcile_update_locked", side_effect=OSError("fixture preflight failed")):
+            with self.assertRaisesRegex(OSError, "fixture preflight failed"):
+                self.run_detached()
+        self.assertEqual(installation.update_status()["attempt"]["state"], "failed")
+        self.assertFalse(config.activation_pending())
+
+    def test_refused_manual_preflight_does_not_settle_an_unowned_reservation(self):
+        with installation._changing_update_record() as record:
+            record["attempt"] = {"version": "v0.2.0", "state": "running", "started": time.time()}
+        with self.assertRaises(installation.UpdateRefused):
+            installation.update("v0.2.0")
+        self.assertTrue(installation.update_running())
+
+    def test_reconciliation_reports_invalid_current_release_without_retaining_the_spinner(self):
+        installation.request_update("v0.2.0", automatic=True)
+        unexpected = self.prefix / "current/unexpected"
+        unexpected.write_text("fixture extra file")
+        with installation._lock(self.prefix):
+            installation.reconcile_update()
+            self.assertTrue(installation.update_running(), "a held installation transaction remains fenced")
+        installation.reconcile_update()
+        status = installation.update_status()
+        self.assertEqual(status["attempt"]["state"], "failed")
+        self.assertIn("release check", status["attempt"]["error"])
+        self.assertFalse(config.activation_pending())
+        self.assertEqual(unexpected.read_text(), "fixture extra file", "reconciliation does not repair installed files")
+
     def test_legacy_manual_update_receipts_clear_admission_without_automatic_notice(self):
         # v0.1.0/v0.1.1 leave no id or automatic field. The current link, not a new receipt shape,
         # proves the required manual upgrade finished; an interrupted older attempt still expires.
