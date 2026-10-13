@@ -64,6 +64,9 @@ class ContainerBrowserControllerTests(AltitudeCase):
         rules = machine.ssh.call_args_list[0].args[0]
         for rule in ('100.64.0.0/10', '100.80.0.5', '198.51.100.3', 'meta nfproto ipv6 reject'):
             self.assertIn(rule, rules)
+        self.assertLess(rules.index('198.51.100.3'), rules.index('ip daddr 1.1.1.1 udp dport 53 accept'))
+        self.assertLess(rules.index('meta nfproto ipv6 reject'), rules.index('ip daddr 1.1.1.1 udp dport 53 accept'))
+        self.assertNotIn(' udp dport 53 accept', rules.replace('ip daddr 1.1.1.1 udp dport 53 accept', ''))
 
     def test_spawn_receipt_precedes_waiting_for_guest_start(self):
         machine = object.__new__(controller.vm.Machine)
@@ -85,7 +88,7 @@ class ContainerBrowserControllerTests(AltitudeCase):
         self.assertEqual(seen, [1234])
 
     def test_host_rejects_weakened_or_missing_renderer_evidence(self):
-        identity = {'run_id': 'fictional-run'}
+        identity = {'run_id': 'fictional-run', 'browser_image': 'fictional-image'}
         sandbox = {'passed': True, 'options': {'chromiumSandbox': True}, 'version': '123',
                    'executable_sha256': 'a' * 64, 'sandbox': 'You are adequately sandboxed.',
                    'renderers': [{'uid': '1000', 'seccomp': '2', 'own_user_namespace': True,

@@ -163,15 +163,17 @@ def network_filter(machine, denied_port, host_addresses):
     rules = f'''table inet altitude_validation {{
  chain output {{ type filter hook output priority 0; policy accept;
  tcp dport {denied_port} reject
- udp dport 53 accept
- tcp dport 53 accept
  oifname "lo" accept
  {hosts}
  ip daddr {{ 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 192.0.0.0/24, 198.18.0.0/15, 224.0.0.0/4, 240.0.0.0/4 }} reject
  meta nfproto ipv6 reject
+ ip daddr 1.1.1.1 udp dport 53 accept
+ ip daddr 1.1.1.1 tcp dport 53 accept
+ udp dport 53 reject
+ tcp dport 53 reject
  }}
 }}'''
-    machine.ssh('printf %s ' + shlex.quote(rules) + ' > input/network.nft && sudo -n nft -f input/network.nft')
+    machine.ssh('sudo -n resolvectl dns enp0s1 1.1.1.1 && printf %s ' + shlex.quote(rules) + ' > input/network.nft && sudo -n nft -f input/network.nft')
     # A finite 8 MB/s ingress cap makes the 128 MB stop margin cover polling and shutdown.
     machine.ssh('sudo -n tc qdisc add dev enp0s1 clsact && sudo -n tc filter add dev enp0s1 ingress protocol all matchall action police rate 64mbit burst 8mb conform-exceed drop')
 
@@ -197,17 +199,20 @@ def verify_protection(root, identity):
         container = json.loads((root / (name + '-container.json')).read_text())[0]
         host, mounts = container['HostConfig'], {m['Destination']: m for m in container['Mounts']}
         if (host.get('NetworkMode') != 'none' or host.get('Privileged') or host.get('Devices')
-                or container['Config']['User'] != '1000:1000' or not container.get('Image')
+                or container['Config']['User'] != '1000:1000' or container.get('Image') != identity['browser_image']
                 or set(mounts) != {'/candidate', '/results', '/sockets'} or mounts['/candidate']['RW']):
             raise RuntimeError('Browser container protection evidence differs')
     return {'passed': True, 'version': sandbox['version'], 'executable_sha256': sandbox['executable_sha256']}
 
 
-def verify_journeys(root):
+def verify_journeys(root, identity):
     browser = json.loads((root / 'browser.json').read_text())
     ipc = json.loads((root / 'ipc-controls.json').read_text())
     if browser.get('passed') is not True or ipc.get('passed') is not True or set(ipc.get('refused', [])) != {'version', 'action', 'instance', 'keys', 'values', 'order'}:
         raise RuntimeError('Browser journey or fixture IPC controls failed')
+    container = json.loads((root / 'journeys-container.json').read_text())[0]
+    if container.get('Image') != identity['browser_image']:
+        raise RuntimeError('Journey browser tooling differs from verified preflight image')
     for viewport in ('phone', 'desktop'):
         tls = json.loads((root / viewport / 'tls-controls.json').read_text())
         if tls != {'untrusted_ca_rejected': True, 'wrong_hostname_rejected': True}:
@@ -287,13 +292,14 @@ def run(args):
             machine.ssh(control + 'altitude-fictional-missing.scope replace', check=False)
             # Image context contains public dependency manifests only, never a guest key.
             for name in ('package.json', 'pnpm-lock.yaml'):
-                machine.copy(str(candidate / 'web' / name), GUEST + 'input/browser-build/')
+                machine.copy(str(SOURCE / 'web' / name), GUEST + 'input/browser-build/')
             machine.copy(str(SOURCE / 'scripts/container_browser.Containerfile'), GUEST + 'input/browser-build/Containerfile')
             stages = [
                 ('browser-image', 'podman --cgroup-manager=cgroupfs build --network=slirp4netns:allow_host_loopback=false --file input/browser-build/Containerfile --tag localhost/altitude-browser input/browser-build', 600),
             ]
             for version in ('v0.1.0-rc.2', 'v0.1.0-rc.3'):
-                command = ['podman', '--cgroup-manager=cgroupfs', 'run', '--rm', '--userns=keep-id', '--user', '1000:1000', '--network=slirp4netns:allow_host_loopback=false', '--volume', '/home/ubuntu/input/source:/work:ro', '--volume', '/home/ubuntu/input/releases:/output', '--workdir', '/work', '--env', 'PYTHONPATH=/work', 'localhost/altitude-browser', 'python3', 'scripts/build_release.py', '--version', version, '--output', '/output']
+                build = 'pnpm config set --global store-dir /opt/browser/store && python3 scripts/build_release.py --version ' + shlex.quote(version) + ' --output /output'
+                command = ['podman', '--cgroup-manager=cgroupfs', 'run', '--rm', '--userns=keep-id', '--user', '1000:1000', '--network=slirp4netns:allow_host_loopback=false', '--volume', '/home/ubuntu/input/source:/work:ro', '--volume', '/home/ubuntu/input/releases:/output', '--workdir', '/work', '--env', 'PYTHONPATH=/work', 'localhost/altitude-browser', 'sh', '-c', build]
                 stages.append(('release-' + version, shlex.join(command), 240))
             for name, command, bound in stages:
                 before = time.monotonic()
@@ -303,6 +309,9 @@ def run(args):
                 budget.observe(machine)
                 if result.returncode:
                     raise RuntimeError('Guest stage failed: ' + name)
+                if name == 'browser-image':
+                    identity_record['browser_image'] = machine.ssh("podman image inspect --format '{{.Id}}' localhost/altitude-browser").stdout.strip()
+                    guest_file(machine, identity_record, 'input/validation-identity.json', work)
             machine.ssh('cp input/releases/altitude-v0.1.0-rc.2.tar.gz input/releases/altitude-v0.1.0-rc.3.tar.gz input/')
             before = time.monotonic()
             prepared = machine.ssh('python3 input/controller/scripts/container_browser_guest.py prepare', timeout=600, check=False)
@@ -335,7 +344,7 @@ def run(args):
             inner = json.loads((results / 'browser-results/guest.json').read_text())
             if result.returncode or not inner['passed']:
                 raise RuntimeError('Guest browser acceptance failed')
-            verify_journeys(results / 'browser-results')
+            verify_journeys(results / 'browser-results', identity_record)
         cleaned = original_ssh('python3 input/controller/scripts/container_browser_guest.py cleanup', timeout=60, check=False)
         (results / 'fixture-cleanup.log').write_text(cleaned.stdout + cleaned.stderr)
         if cleaned.returncode:
@@ -350,6 +359,9 @@ def run(args):
         record['passed'] = watched.returncode == 0 and not record['manager_unexpected'] and all(record['manager_controls'].values()) and not budget.error
     except Exception as error:
         record['error'] = repr(error)
+        if isinstance(error, subprocess.TimeoutExpired):
+            output = b'\n'.join(v if isinstance(v, bytes) else str(v).encode() for v in (error.stdout, error.stderr) if v)
+            (results / 'timed-out-stage.log').write_bytes(output)
     finally:
         budget.closed.set()
         if thread:

@@ -221,6 +221,7 @@ def ipc_negative_controls(path):
 
 
 def launch_arguments(command):
+    image = json.loads((INPUT / 'validation-identity.json').read_text())['browser_image']
     return ['run', '--name', BROWSER, '--pull=never', '--network=none', '--userns=keep-id',
             '--user', f'{os.getuid()}:{os.getgid()}', '--cgroups=disabled',
             '--add-host', 'altitude-wrong.invalid:127.0.0.1',
@@ -228,7 +229,7 @@ def launch_arguments(command):
             '--volume', f'{SOCKETS}:/sockets:rw', '--workdir', '/candidate',
             '--env', 'ALTITUDE_BROWSER_PACKAGE=/opt/browser/package.json',
             '--env', 'PLAYWRIGHT_BROWSERS_PATH=/opt/browser/browsers',
-            'localhost/altitude-browser', *command]
+            image, *command]
 
 
 def container_identity(text):

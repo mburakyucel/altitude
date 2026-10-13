@@ -95,7 +95,11 @@ class ContainerBrowserGuestTests(AltitudeCase):
         self.assertTrue(self.exchange(struct.pack('!I', len(body)) + body)['ok'])
 
     def test_launch_makes_only_fixed_isolated_mounts_and_network(self):
+        self.patch(guest, 'INPUT', self.tmp)
+        (self.tmp / 'validation-identity.json').write_text(json.dumps({'browser_image': 'sha256:fictional-image'}))
         args = guest.launch_arguments(['node', 'scripts/browser_sandbox.mjs', '/results/preflight.json'])
+        self.assertIn('sha256:fictional-image', args)
+        self.assertNotIn('localhost/altitude-browser', args)
         self.assertIn('--network=none', args)
         self.assertIn('--userns=keep-id', args)
         self.assertIn('--cgroups=disabled', args)
