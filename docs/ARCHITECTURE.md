@@ -91,6 +91,12 @@ or exact missing operator action; legitimate waits and running workers need no r
 Its task briefs convey the actual problem, intended outcome, acceptance and material project context;
 brainstorming stays distinct from requirements. The [L2 persona](../personas/l2.md) owns investigation,
 approach, relevant system implications, source assessment, questions and verified delivery within that outcome.
+L3 checks supplied reference locations within existing read access before declaring evidence missing,
+including a named sibling beside the checkout when implied by the request. It hands relevant private
+evidence and unresolved investigation to L2 and creates actionable work without a planned wait.
+A wait needs a verified indispensable prerequisite that prevents useful authorized progress, with
+the checked evidence, next actor and release trigger recorded. This guidance grants no broader
+filesystem access or crawling and preserves genuine operator decisions and merge holds.
 These responsibilities use existing task operations, with no broadcast, runtime classifier or
 memory store. Project-local authority, proposal checkpoints, merge holds and verified recovery
 remain governed by the existing boundaries.
