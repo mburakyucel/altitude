@@ -123,7 +123,7 @@ class RunnerCase(AltitudeCase):
                    branch="work")
         root = dispatch.l2_job_root(self.project, slug)
         root.mkdir(parents=True, exist_ok=True)
-        S.write_json(root / f"{agent}.json", {"id": agent, "engine": "claude", "unit": engines._claude_unit(agent)})
+        S.write_json(root / f"{agent}.json", {"id": agent, "engine": "claude", "unit": engines.claude._claude_unit(agent)})
         return slug
 
     def request(self, path, body, *, status=200):

@@ -629,7 +629,7 @@ class TestOwnerHttp(TerminalCase):
         self.addCleanup(self.httpd.shutdown)
         root = dispatch.l2_job_root(self.project, self.slug)
         root.mkdir(parents=True, exist_ok=True)
-        self.unit = engines._claude_unit("agent")
+        self.unit = engines.claude._claude_unit("agent")
         S.write_json(root / "agent.json", {"id": "agent", "engine": "claude", "unit": self.unit})
 
     def read(self, body, status=200):

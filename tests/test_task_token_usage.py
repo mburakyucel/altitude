@@ -187,14 +187,14 @@ class TaskTokenUsage(AltitudeCase):
 
     def test_native_helper_audit_survives_attempts_passive_reads_failures_and_archive(self):
         home = self.tmp / "provider"
-        self.patch(engines, "_TOKEN_ROLLOUT_INDEX", {})
+        self.patch(engines.codex, "_TOKEN_ROLLOUT_INDEX", {})
         self.observe.side_effect = lambda engine, sid, cursor=None, **kw: self.native_observe(engine, sid, cursor, home=home, **kw)
         self.launch(engine="codex")
         for sid, parent in (("first", None), ("helper", "first"), ("nested", "helper")):
             path = home / f"sessions/2026/09/07/rollout-{sid}.jsonl"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps({"type": "session_meta", "payload": {"id": sid, "parent_thread_id": parent}}) + "\n")
-        engines._TOKEN_ROLLOUT_INDEX.clear()
+        engines.codex._TOKEN_ROLLOUT_INDEX.clear()
         task = S.load_task(self.project, self.slug)
         usage.capture(self.project, task)
         # Register the same concrete owner in another attempt: context expands, helper count does not.

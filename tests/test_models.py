@@ -40,24 +40,24 @@ class TestSessionModel(AltitudeCase):
 
     def test_resumed_turn_uses_its_context_not_the_old_model_or_requested_config(self):
         self.rollout.write_text(self.context("old", at="2026-09-07T07:59:59Z") + self.context())
-        self.assertEqual(engines._codex_session_model("thread-1", self.started, self.home),
+        self.assertEqual(engines.codex._codex_session_model("thread-1", self.started, self.home),
                          {"engine_model": "actual-model", "engine_reasoning_effort": "high"})
 
     def test_missing_partial_and_model_less_rollout_is_unknown_then_retried(self):
-        read = lambda: engines._codex_session_model("thread-1", self.started, self.home)
+        read = lambda: engines.codex._codex_session_model("thread-1", self.started, self.home)
         self.assertEqual(read(), {})
         self.rollout.write_text(self.context(None) + '{"type":"turn_context"')
         self.assertEqual(read(), {})
         self.rollout.write_text(self.context(effort=None))
         self.assertEqual(read(), {"engine_model": "actual-model", "engine_reasoning_effort": None})
-        self.assertEqual(engines._codex_session_model("*", self.started, self.home), {})
+        self.assertEqual(engines.codex._codex_session_model("*", self.started, self.home), {})
 
     def test_worker_caches_observation_and_poll_persists_task_and_live_snapshot(self):
         task = T.new(self.project, "Observed model", "request")
         task.update(state="running", attempt=1, l2_engine="codex", agent_id="worker-1", session_id="thread-1",
                     engine_model=None, effort="xhigh", launch_effort="xhigh")
         S.save_task(self.project, task)
-        paths = engines._codex_paths(dispatch.l2_job_root(self.project, task["slug"]), "worker-1")
+        paths = engines.common._codex_paths(dispatch.l2_job_root(self.project, task["slug"]), "worker-1")
         S.write_json(paths["record"], {"started_at": self.started, "codex_home": str(self.home)})
         paths["stdout"].write_text('{"type":"thread.started","thread_id":"thread-1"}\n')
         self.rollout.write_text(self.context())

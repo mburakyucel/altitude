@@ -625,9 +625,16 @@ its sender. Streamed launch input with images is marked as the human's, as a tex
 
 | Module | Integration responsibility |
 | --- | --- |
-| [`engines.py`](../altitude/engines.py) | Launch/resume/stop workers; engine arguments, environment and permissions; session identity, output, model/context observations and usage-limit signals. |
+| [`engines/__init__.py`](../altitude/engines/__init__.py) | The shared callable interface and engine selection used by Altitude's callers. |
+| [`engines/common.py`](../altitude/engines/common.py) | Shared launch/resume/stop execution, worker ownership and output records, token accounting, and captured review transport. |
+| [`engines/claude.py`](../altitude/engines/claude.py) | Native launch arguments, session/output parsing, model/context observations, quota and permission details. |
+| [`engines/codex.py`](../altitude/engines/codex.py) | Native launch arguments, session/output parsing, model/context observations, account quota reader and permission details. |
 | [`route.py`](../altitude/route.py) | Select an engine/model from explicit pins or ordered Auto tiers, installation, rejection and quota evidence; expose the same routing reasons to callers and Monitor. |
 | [`config.py`](../altitude/config.py) | Engine names, executable paths, defaults, preference syntax and context settings, alongside runtime configuration. |
+
+Callers continue importing `altitude.engines` and using its existing callable interface. Each native
+implementation adapts the same execution and authority contract; shared behavior lives in common
+code, with no separate provider policy system or new base-class hierarchy.
 
 The interface is internal and evolves with the integrations. Additional CLI engines such as
 OpenCode are candidates for future support. Provider access is a separate integration concern:
@@ -1975,7 +1982,7 @@ See [image delivery and recovery](SESSION_LIFECYCLE.md#image-delivery-and-recove
 ### Task usage
 
 Task token accounting is passive. `usage.py` retains each recorded task owner identity before a
-resume or recovery replaces it, and asks `engines.py` for normalized local observations. The daemon
+resume or recovery replaces it, and asks the `engines` package for normalized local observations. The daemon
 collects at most once per ten seconds per active task; HTTP and CLI reads serve the persisted
 `status.json.token_usage` snapshot and do no provider-log scanning. Engine adapters increment byte
 cursors over complete JSONL records and retain numeric response/message identities for deduplication

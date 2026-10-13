@@ -8,7 +8,8 @@ from pathlib import Path
 
 from tests.support import AltitudeCase
 from tests.test_quota_codex import transcript
-from altitude import config, engines, monitor, quota_codex, route, state
+from altitude import config, engines, monitor, route, state
+from altitude.engines import codex as quota_codex
 
 
 RESET = "2099-01-01T00:00:00+00:00"
@@ -31,11 +32,11 @@ class QuotaFixture(AltitudeCase):
     def setUp(self):
         super().setUp()
         self.private_ledgers()
-        self.patch(engines, "_last_quota_refresh", None)
+        self.patch(engines.common, "_last_quota_refresh", None)
         self.version = "2.1.277 (Claude Code)\n"
         self.output = usage(limit("weekly_all", 5), limit("session", 1))
         self.failure = None
-        self.process = self.patch(engines.subprocess, "run", side_effect=self.native_read)
+        self.process = self.patch(engines.common.subprocess, "run", side_effect=self.native_read)
 
     def native_read(self, command, **kwargs):
         self.assertEqual(command[0], config.CLAUDE_BIN)
@@ -53,7 +54,7 @@ class TestNativeQuota(QuotaFixture):
     def test_live_rows_include_zero_and_observation_time_without_a_session(self):
         self.output = usage(limit("weekly_all", 0), limit("session", 12))
         before = time.time()
-        reading = engines._claude_quota()
+        reading = engines.claude._claude_quota()
         self.assertTrue(reading["known"])
         self.assertEqual((reading["seven_day"], reading["five_hour"]), (0, 12))
         self.assertEqual(reading["seven_day_resets"], datetime.fromisoformat(RESET).timestamp())
@@ -72,19 +73,19 @@ class TestNativeQuota(QuotaFixture):
                                     ("session", "five_hour", "seven_day")):
             with self.subTest(kind=kind):
                 self.output = usage(limit(kind, 0), limit("weekly_opus", 100))
-                reading = engines._claude_quota()
+                reading = engines.claude._claude_quota()
                 self.assertTrue(reading["known"])
                 self.assertEqual(reading[field], 0)
                 self.assertNotIn(absent, reading)
         self.output = usage(limit("weekly_opus", 20))
-        self.assertFalse(engines._claude_quota()["known"])
+        self.assertFalse(engines.claude._claude_quota()["known"])
 
     def test_unsupported_or_unrecognized_version_never_invokes_print(self):
         for version in ("2.1.276 (Claude Code)", "2.0.99", "unknown", ""):
             with self.subTest(version=version):
                 self.version = version
                 self.process.reset_mock()
-                self.assertFalse(engines._claude_quota()["known"])
+                self.assertFalse(engines.claude._claude_quota()["known"])
                 self.assertEqual(self.process.call_args_list[0].args[0][1:], ["--version"])
                 self.assertEqual(self.process.call_count, 1)
 
@@ -93,7 +94,7 @@ class TestNativeQuota(QuotaFixture):
                         subprocess.TimeoutExpired("private command", 5)):
             with self.subTest(failure=type(failure).__name__):
                 self.process.side_effect = failure
-                reading = engines._claude_quota()
+                reading = engines.claude._claude_quota()
                 self.assertFalse(reading["known"])
                 self.assertNotIn("private", reading["why"])
 
@@ -102,7 +103,7 @@ class TestNativeQuota(QuotaFixture):
                         subprocess.CalledProcessError(1, "private command", stderr="private credentials")):
             with self.subTest(failure=type(failure).__name__):
                 self.failure = failure
-                reading = engines._claude_quota()
+                reading = engines.claude._claude_quota()
                 self.assertFalse(reading["known"])
                 self.assertNotIn("private", reading["why"])
                 self.assertNotIn("at", reading)
@@ -114,7 +115,7 @@ class TestNativeQuota(QuotaFixture):
                        json.dumps({"type": "assistant", "usage_report": {"rate_limits": {"limits": [None]}}})):
             with self.subTest(output=output):
                 self.output = output
-                reading = engines._claude_quota()
+                reading = engines.claude._claude_quota()
                 self.assertFalse(reading["known"])
                 self.assertNotIn("private", reading["why"])
                 self.assertNotIn("at", reading)
@@ -129,11 +130,11 @@ class TestNativeQuota(QuotaFixture):
         for row in invalid:
             with self.subTest(row=row):
                 self.output = usage(row)
-                self.assertFalse(engines._claude_quota()["known"])
+                self.assertFalse(engines.claude._claude_quota()["known"])
         self.output = usage(limit("weekly_all", 5), limit("weekly_all", 10))
-        self.assertFalse(engines._claude_quota()["known"])
+        self.assertFalse(engines.claude._claude_quota()["known"])
         self.output = usage(limit("weekly_all", 5)) + '\n' + json.dumps({"type": "result", "is_error": True})
-        self.assertFalse(engines._claude_quota()["known"])
+        self.assertFalse(engines.claude._claude_quota()["known"])
 
 
 class TestRefreshRouting(QuotaFixture):
@@ -271,10 +272,10 @@ class TestRefreshRouting(QuotaFixture):
         self.assertFalse(monitor.quota()["known"])
 
     def test_successful_and_failed_attempts_share_the_refresh_interval(self):
-        clock = self.patch(engines.time, "monotonic", return_value=1000)
+        clock = self.patch(engines.common.time, "monotonic", return_value=1000)
         for failed in (False, True):
             with self.subTest(failed=failed):
-                engines._last_quota_refresh = None
+                engines.common._last_quota_refresh = None
                 self.process.reset_mock()
                 self.talk.reset_mock()
                 self.failure = subprocess.TimeoutExpired("fixture", 20) if failed else None
