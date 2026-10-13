@@ -70,21 +70,25 @@ def repository_rule_prompt(repo: Path) -> str:
             "references/imports and any applicable directory instructions.\n\n" if rules else "")
 
 
+def owner_prompt(cwd: Path, persona: Path | None, *, resume: bool) -> str:
+    """A launch asks for the rules and the helper instruction; a resume points back to their current paths."""
+    l1 = config.PERSONAS / "l1.md"
+    if not resume:
+        return (repository_rule_prompt(cwd) +
+                f'[altitude] Begin each native helper assignment with: "You are an L1 helper. Read `{l1}` '
+                f'before working. Your assigned repository is `{cwd.resolve()}`." Then give the task-specific '
+                'assignment; do not copy the persona into the brief or rely on inherited owner instructions '
+                'to select the helper role.\n\n')
+    sources = [f"{name} at `{path}`" for name, path in (("the repository rules", repository_rules(cwd)),
+                                                         ("your role", persona)) if path]
+    held = f"{' and '.join(sources)} still {'apply' if len(sources) > 1 else 'applies'}, and " if sources else ""
+    return ("[altitude] Resumed session: " + held +
+            f"native helper assignments now name `{l1}`. Consult these as needed instead of rereading them in "
+            "full, and reread any part no longer in your context, such as the role's browser verification rules "
+            "before a browser check.\n\n")
+
+
 RAW_CAPTURE_CAP = 2 * 1024 * 1024
-
-
-BROWSER_VERIFICATION_NOTE = (
-    "[altitude] Browser verification: stock worker permissions stay unchanged. Run candidate browser checks "
-    "through `alt task validate`. Checks requiring Chromium's own sandbox use the Linux container with "
-    "chromiumSandbox:true. A project's explicitly approved local-fictional harness may instead use the existing "
-    "Mac validation Seatbelt runner without Chromium's inner sandbox; this is neither native-worker nor "
-    "deployed/private-content acceptance. Record the actual runner identity, policy, roots, finite preflight "
-    "and cleanup evidence. Test specs never set their own Playwright launchOptions or sandbox flags: the "
-    "project's shared configuration owns them. Never disable worker/runner confinement, add ad hoc "
-    "sandbox-bypass flags or chmod/chown a SUID helper. If the required runner or protections are unavailable, "
-    "or the browser fails its required preflight, report the evidence and block with --fault. An operator grant "
-    "never substitutes an outside-worker browser run.\n\n"
-)
 
 
 def installation(engine: str) -> dict:
@@ -1233,11 +1237,7 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
                   images: list[dict] | tuple = ()) -> dict:
     """One foreground CLI per transient unit; both engines persist identity and output for adoption."""
     config.task_effort(engine, effort)
-    prompt = (repository_rule_prompt(cwd) + BROWSER_VERIFICATION_NOTE +
-              f'[altitude] Begin each native helper assignment with: "You are an L1 helper. Read '
-              f'`{config.PERSONAS / "l1.md"}` before working. Your assigned repository is '
-              f'`{cwd.resolve()}`." Then give the task-specific assignment; do not copy the persona '
-              'into the brief or rely on inherited owner instructions to select the helper role.\n\n' + prompt)
+    prompt = owner_prompt(cwd, persona, resume=bool(resume)) + prompt
     native = implementation(engine)
     cmd, content, writable = native.prepare_worker(name, prompt, cwd=cwd, persona=persona, model=model,
                                                     settings=settings, effort=effort, resume=resume, images=images)
