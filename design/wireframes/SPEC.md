@@ -1142,13 +1142,15 @@ or worker exit. **Cancel** and **Prepare change** (or **Start fresh session**) c
 Unknown model facts stay explicitly unknown; unavailable/pinned choices give a reason and disable
 submission. Editing fields alone never changes the task. Read-only/denied views remove mutation controls.
 
-After admission, a shared review-style card shows **Preparing change**, the requested model/effort,
-**Switch now** and **Cancel switch**. It follows unanswered questions and merge actions, before activity
+Opening the chooser and changing its fields requests nothing. After admission, a shared review-style
+card shows **Preparing change**, the requested model/effort, who started it (**Started by you**, or
+**Started by the coordinator · <its reason>**), **Switch now** and **Cancel switch**. It follows unanswered questions and merge actions, before activity
 evidence. A current quota offer uses secondary **Change model…** and no duplicate explanation.
 Preparation has no timeout. Switch now confirms stopping pending work without a note; now/cancel
 vanish once stopping commits. Stop stays in its existing location. **Switch controls ↓** leads back
-from history; return to Conversation from Live session/Terminal to use the chooser. Opening the model
-pill during preparation shows the fixed request and controls, not editable selectors. Uncertain
+from history; return to Conversation from Live session/Terminal to use the chooser. During preparation the
+pill reads **Switching to <engine>** with a progress mark and moves focus to that card; it never opens
+the chooser over a switch, and a switch started elsewhere closes an open chooser. Uncertain
 responses offer **Check status**, never a duplicate mutation. Outcomes become conversation messages.
 Draft, selection, recording and view survive; polling never steals focus. Escape closes the active
 dialog first. Activity/warning/terminal cues accompany explicit state text and respect reduced motion.
