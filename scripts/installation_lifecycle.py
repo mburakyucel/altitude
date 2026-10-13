@@ -37,7 +37,7 @@ import tarfile
 import threading
 import time
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPSHandler, ProxyHandler, Request, build_opener, urlopen
 
 
 def digest(path: Path) -> str:
@@ -160,18 +160,19 @@ class Lifecycle:
         assert native["ActiveState"] == "active", native
         assert native["UnitFileState"] == "enabled", native
         context = ssl.create_default_context(cafile=str(self.tls / "ca.crt"))
-        base = f"https://127.0.0.1:{self.env['ALTITUDE_PORT']}"
-        with urlopen(base + "/api/health", context=context, timeout=10) as response:
+        base = self.base()
+        service = build_opener(ProxyHandler({}), HTTPSHandler(context=context))
+        with service.open(base + "/api/health", timeout=10) as response:
             health = json.load(response)
         assert (health["version"], health["commit"], str(health["pid"])) == (
             release["version"], release["commit"], native["MainPID"]), health
-        with urlopen(base + "/", context=context, timeout=10) as response:
+        with service.open(base + "/", timeout=10) as response:
             html = response.read()
         assert hashlib.sha256(html).hexdigest() == release["files"]["web/dist/index.html"]
         assets = re.findall(r'(?:src|href)="(/assets/[^"?#]+)', html.decode())
         assert assets, "Built UI references no assets"
         for asset in assets:
-            with urlopen(base + asset, context=context, timeout=10) as response:
+            with service.open(base + asset, timeout=10) as response:
                 assert hashlib.sha256(response.read()).hexdigest() == release["files"]["web/dist" + asset]
         write_json(self.results / f"{label}-health.json", {**health, "verified_assets": assets})
         assert self.prefix.joinpath("current").resolve().name == release["version"]
@@ -268,7 +269,8 @@ class Lifecycle:
         raise AssertionError(f"The daemon's release check did not record {version}")
 
     def base(self) -> str:
-        return f"https://127.0.0.1:{self.env['ALTITUDE_PORT']}"
+        host = self.env.get("ALTITUDE_HOST", "127.0.0.1")
+        return f"https://{'[' + host + ']' if ':' in host else host}:{self.env['ALTITUDE_PORT']}"
 
     def wait_version(self, version: str, timeout: float = 180):
         context = ssl.create_default_context(cafile=str(self.tls / "ca.crt"))
@@ -844,10 +846,9 @@ class MacLifecycle(Lifecycle):
         self.env.update({key: str(self.fixture) for key in keys})
 
     def versions(self, package: Path, release: dict) -> dict:
-        """Built baseline, then the next stable patch releases from its package: three healthy ones and one whose startup
-        exits."""
+        """Same-source versions for automatic/manual updates, failed startup and explicit cache-repair retry."""
         made = {}
-        for offset, failing in ((1, False), (2, False), (3, False), (4, True)):
+        for offset, failing in ((1, False), (2, False), (3, False), (4, True), (5, False)):
             version = re.sub(r"\.(\d+)$", lambda match: f".{int(match[1]) + offset}", release["version"])
             folder = self.home / f"release-{version}"
             folder.mkdir()
@@ -870,8 +871,87 @@ class MacLifecycle(Lifecycle):
             headers["Content-Type"] = "application/json"
             data = json.dumps(body).encode()
         context = ssl.create_default_context(cafile=str(self.tls / "ca.crt"))
-        with urlopen(Request(self.base() + path, data=data, headers=headers), context=context, timeout=30) as response:
+        service = build_opener(ProxyHandler({}), HTTPSHandler(context=context))
+        with service.open(Request(self.base() + path, data=data, headers=headers), timeout=30) as response:
             return json.load(response)
+
+    def native_address_recovery(self, release: dict):
+        """Real guest service transactions; process loss occurs after the durable settings write."""
+        owned = [self.settings, self.home / f"Library/LaunchAgents/{self.label}.plist", self.tls / "server.crt"]
+        identities = {path: digest(path) for path in (self.tls / "ca.crt", self.tls / "ca.key",
+                      self.tls / "server.key", self.home / ".config/altitude/access/devices.json",
+                      self.home / ".altitude/projects.json")}
+        for stopped in (False, True):
+            if stopped:
+                self.run("address-stop", self.alt, "service", "stop")
+            for host in ("::1", "127.0.0.1"):
+                label = "address-" + ("stopped-" if stopped else "running-") + ("ipv6" if ":" in host else "ipv4")
+                unchanged = {path: digest(path) for path in owned}
+                preview = json.loads(self.run(label + "-preview", self.alt, "service", "configure", "--host", host))
+                assert not preview["applied"] and all(digest(p) == h for p, h in unchanged.items()), preview
+                result = json.loads(self.run(label + "-apply", self.alt, "service", "configure", "--host", host, "--apply"))
+                self.env["ALTITUDE_HOST"] = host
+                assert result["applied"] and result["verified"] == (not stopped), result
+                assert result["url"] == self.base(), result
+                if stopped:
+                    assert self.diagnostic(label + "-status", "service", "status")["ActiveState"] in ("inactive", "failed")
+                    self.run(label + "-later-start", self.alt, "service", "start")
+                self.healthy(label, release)
+                assert self.request("/api/access")["paired"], "Existing pairing was lost"
+                assert all(digest(p) == h for p, h in identities.items()), "Address change altered identity or registrations"
+                if stopped:
+                    self.run(label + "-stop-again", self.alt, "service", "stop")
+            if stopped:
+                self.run("address-original-start", self.alt, "service", "start")
+        # Inject process death in the harness, not in the packaged release or service definition.
+        before = {path: digest(path) for path in owned}
+        code = ("import os,sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); "
+                "from altitude import installation; original=installation.atomic\n"
+                "def write(path,*args,**kwargs):\n"
+                " original(path,*args,**kwargs)\n"
+                " if Path(path)==installation._settings(): os._exit(75)\n"
+                "installation.atomic=write\ninstallation.configure_address('::1',apply=True)\n")
+        self.run("address-interrupted-settings", sys.executable, "-B", "-c", code, self.prefix / "current", success=False)
+        assert self.result["steps"][-1]["exit"] == 75, "The intended process-loss boundary was not reached"
+        assert (self.prefix / "pending.json").is_file(), "Interrupted transaction has no recovery receipt"
+        self.run("address-supported-recovery", self.alt, "recover")
+        self.healthy("address-recovered", release)
+        assert all(digest(p) == h for p, h in before.items()), "Address recovery did not restore the owned files"
+        assert all(digest(p) == h for p, h in identities.items()), "Recovery altered identity or registrations"
+
+    def native_cache_retry(self, releases: ReleaseServer, candidate: dict, version: str, current: dict):
+        """Affected cache state fails automatically, then explicit quarantine and retry preserve history."""
+        retained = {path: digest(path) for path in (self.settings, self.tls / "ca.crt", self.tls / "ca.key",
+                    self.tls / "server.key", self.home / ".config/altitude/access/devices.json",
+                    self.home / ".altitude/projects.json")}
+        code = ("import py_compile,sys; from pathlib import Path; root=Path(sys.argv[1]); "
+                "[py_compile.compile(str(root/'altitude'/ (name+'.py')),doraise=True) "
+                "for name in ('__init__','config','platform','state')]")
+        self.run("cache-affected-state", sys.executable, "-I", "-B", "-c", code, self.prefix / "current")
+        initial = self.healthy("cache-current-service", current)
+        releases.publish(candidate["folder"], version)
+        self.advance_check(version)
+        failed = self.wait_attempt(version, "failed")
+        assert failed["automatic"], failed
+        history = self.record()["automatic_attempts"]
+        assert version in history, history
+        assert self.healthy("cache-failed-service", current)["pid"] == initial["pid"]
+        assert self.request("/api/overview")["update"]["attempt"]["state"] == "failed"
+        repair = json.loads(self.run("cache-supported-manual-repair", self.alt, "recover", "--generated-bytecode"))
+        assert repair["repaired"] and repair["service"] == "unchanged", repair
+        receipt = json.loads((Path(repair["backup"]) / "recovery.json").read_text())
+        assert receipt["complete"] and len(receipt["files"]) == 4, receipt
+        assert all((Path(repair["backup"]) / name).is_file() for name in receipt["files"])
+        assert self.record()["automatic_attempts"] == history
+        assert self.healthy("cache-manually-repaired-service", current)["pid"] == initial["pid"]
+        self.request("/api/update", {"version": version})
+        succeeded = self.wait_attempt(version, "succeeded")
+        assert not succeeded["automatic"], "Explicit retry is not an unattended upgrade"
+        assert self.healthy("cache-retry-succeeded", candidate["release"])["pid"] != initial["pid"]
+        assert self.request("/api/access")["paired"]
+        assert all(digest(p) == h for p, h in retained.items()), "Cache recovery/retry altered retained state"
+        write_json(self.results / "cache-recovery-retry.json", {"manual_repair": repair, "failed": failed,
+                   "succeeded": succeeded, "automatic_attempts": history, "preserved": True})
 
     def pair(self):
         code = re.search(r"Pairing code: (\S+)", self.run("pair", self.alt, "pair")).group(1)
@@ -924,7 +1004,7 @@ class MacLifecycle(Lifecycle):
     def mac(self):
         archive, checksum, package, before = self.prepare()
         made = self.versions(package, before)
-        automatic_version, second, third, broken = list(made)
+        automatic_version, second, third, broken, cache_retry = list(made)
         repository = re.search(r"^REPOSITORY='https://github\.com/([^']+)'$", (self.baseline / "install.sh").read_text(), re.M)
         self.repository = repository.group(1)
         server = ReleaseServer(self.release_authority(*ReleaseServer.HOSTS), self.repository)
@@ -966,6 +1046,16 @@ class MacLifecycle(Lifecycle):
 
             self.wait_check(before["version"])
             self.pair()
+            # Registration is fixture data; no task is launched and every engine executable remains a refusing fixture.
+            registry = self.home / ".altitude/projects.json"
+            original_registry = registry.read_bytes()
+            register = ("import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from altitude import config\n"
+                        "with config.add_project('fictional',path=Path(sys.argv[2])): pass\n")
+            self.run("address-fictional-registration", sys.executable, "-B", "-c", register,
+                     self.prefix / "current", self.home / "Projects/fictional")
+            self.native_address_recovery(before)
+            # Address changes intentionally reissue the leaf under the same retained CA and server key.
+            retained[self.tls / "server.crt"] = digest(self.tls / "server.crt")
             status = self.offered("current", None)
             assert status["automatic"], status
 
@@ -1043,6 +1133,9 @@ class MacLifecycle(Lifecycle):
             write_json(self.results / "automatic-failure-no-repeat.json", {"update": status, "record": self.record(),
                                                                           "downloads": downloads})
             assert (self.prefix / "versions" / broken).is_dir()
+            self.native_cache_retry(server, made[cache_retry], cache_retry, made[third]["release"])
+            # Remove only the registration fixture after preservation is proven; uninstall can exercise full removal.
+            registry.write_bytes(original_registry)
             assert all(digest(path) == value for path, value in retained.items()), "Update/recovery changed retained data"
         finally:
             server.stop()

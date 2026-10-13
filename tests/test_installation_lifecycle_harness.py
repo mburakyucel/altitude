@@ -589,8 +589,8 @@ class TestMacLifecycle(AltitudeCase):
         harness = MacLifecycle(self.tmp, self.tmp, release["commit"])
         harness.home = self.tmp
         made = harness.versions(package, release)
-        self.assertEqual(list(made), ["v0.0.2", "v0.0.3", "v0.0.4", "v0.0.5"])
-        self.assertEqual([entry["failing"] for entry in made.values()], [False, False, False, True])
+        self.assertEqual(list(made), ["v0.0.2", "v0.0.3", "v0.0.4", "v0.0.5", "v0.0.6"])
+        self.assertEqual([entry["failing"] for entry in made.values()], [False, False, False, True, False])
         for version, entry in made.items():
             bundle = entry["folder"] / f"altitude-{version}.tar.gz"
             verified = installation.extract(bundle, hashlib.sha256(bundle.read_bytes()).hexdigest(), self.tmp / version)

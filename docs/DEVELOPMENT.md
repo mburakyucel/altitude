@@ -1327,6 +1327,10 @@ it and the installation keeps them, so no request reaches GitHub. It then:
   byte is refused with nothing installed, and the unaltered one installs the LaunchAgent and a
   service whose HTTPS health on the generated CA reports the release's version and commit, with
   `alt doctor` passing apart from its expected findings;
+- pairs a fixture device and records one fictional project without task dispatch; previews and
+  applies IPv4/IPv6 loopback changes while running and stopped, verifies actual HTTPS/native PID,
+  later-start loading and preserved CA/keys/pairing/registration; process loss after the durable
+  settings write leaves a receipt that `alt recover` restores;
 - publishes `v0.0.2`; the daemon installs it automatically with no browser terminal open, and
   the overview reports its successful automatic installation;
 - turns automatic updates off, publishes `v0.0.3`, checks its overview, terminal notice and
@@ -1336,6 +1340,11 @@ it and the installation keeps them, so no request reaches GitHub. It then:
   `dev.altitude.job.altitude-update-…` launchd job, which activates it and is removed;
 - turns automatic updates on and publishes `v0.0.5`, whose startup exits; automatic activation
   restores `v0.0.4`. Two subsequent checks preserve the failed attempt and make no further download;
+- creates only declared-source Python caches in the installed tree and publishes healthy `v0.0.6`;
+  its automatic preflight fails without restarting the daemon, releases its receipt/fence and
+  preserves attempt history. Explicit `alt recover --generated-bytecode` quarantines caches,
+  preserves identity/registration and does not upgrade; a paired explicit retry succeeds with a
+  replacement PID and `automatic=false`. This manual recovery is distinct from unattended success;
 - uninstalls: the LaunchAgent, its launchd job and the update job are gone, settings, TLS identity
   and fictional history and project files remain.
 
