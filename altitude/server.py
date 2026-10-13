@@ -91,7 +91,7 @@ def design_viewer_url(project: str) -> str | None:
     from a paired browser redirects to that browser's read pass (`design_entry`)."""
     try:
         root = config.project_path(project)
-    except (KeyError, OSError):
+    except (KeyError, ValueError, OSError):
         return None
     if not (root / DESIGN_ENTRY).is_file():
         return None
