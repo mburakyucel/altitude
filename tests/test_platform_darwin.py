@@ -342,10 +342,10 @@ class Jobs(DarwinCase):
         env = {"PATH": "/usr/bin:/bin", "ALTITUDE_TASK": "task"}
         spec = self.spec(platform.job_command("altitude-codex-w1.service", ["codex", "exec"], env, runtime_max=60))
         self.assertEqual(spec, {"label": "dev.altitude.job.altitude-codex-w1", "mode": "pipe", "command": ["codex", "exec"],
-                                "env": env, "runtime_max": 60, "writable": None})
+                                "env": env, "runtime_max": 60, "profile": None})
         spec = self.spec(platform.job_command("altitude-claude-c.service", ["claude"], env,
                                               writable=(Path("/work/tree"), Path("/home/.altitude"))))
-        self.assertEqual(spec["writable"], ["/work/tree", "/home/.altitude"])
+        self.assertEqual(spec["profile"], platform.seatbelt_profile(["/work/tree", "/home/.altitude"]))
         log, status = self.tmp / "machine.log", self.tmp / "machine.exit"
         spec = self.spec(platform.logged_job_command("altitude-machine-p-1.service", "brew list", log=log, status=status,
                                                      env=env, timeout=300))
@@ -673,7 +673,7 @@ class Confinement(DarwinCase):
         documents = os.path.realpath(self.home / "Documents").casefold()
         self.assertFalse([path for path in looked if path.casefold().startswith(documents + "/")])
         self.patch(platform.sys, "platform", "linux")
-        self.assertEqual((platform.private_places(), platform.private_rule(), platform.private(atlas)), ((), "", False))
+        self.assertEqual((platform.private_places(), platform.private(atlas)), ((), False))
 
     def test_seatbelt_compiles_both_profiles_on_a_mac(self):
         """Seatbelt rejects a whole profile over one unknown rule, which would stop every confined job."""

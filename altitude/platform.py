@@ -175,10 +175,16 @@ def container_unavailable(subject: str) -> str | None:
     return IMAGE_MANAGED
 
 
-def coordinator_socket_directory() -> Path:
-    """Runtime sockets must not become persistent backup data (#543)."""
+def coordinator_directory() -> Path:
+    """The folder of the coordinators' sockets and per-turn command folders, one per installation: outside every
+    root a task worker may write, so no worker can replace a socket or a command there. On Linux it is in the
+    per-user runtime folder, so sockets never become persistent backup data (#543); on macOS, whose per-user
+    temporary folder workers may write, it is beside Altitude's private configuration."""
     from . import config
-    return Path('/run/user/1000/altitude-l3') if containerized() else config.ROOT / 'l3-verbs'
+    name = hashlib.sha256(str(config.ROOT.resolve()).encode()).hexdigest()[:12]
+    if _darwin():
+        return config.HOME / ".config/altitude" / f"coordinator-{name}"
+    return Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}") / f"altitude-{name}"
 
 
 def require_native_application() -> None:
@@ -1193,7 +1199,7 @@ def job_command(name: str, command: list[str], env: dict[str, str], *, runtime_m
     if _darwin():
         return _entry("launch", json.dumps({
             "label": _label(name), "mode": "pipe", "command": command, "env": env, "runtime_max": runtime_max,
-            "writable": None if writable is None else [str(root) for root in writable]}))
+            "profile": None if writable is None else seatbelt_profile([str(root) for root in writable])}))
     return [SYSTEMD_RUN, "--user", "--wait", "--pipe", f"--unit={name}", "--quiet", "--collect",
             "--same-dir", "--expand-environment=no", "--property=KillMode=control-group",
             "--property=SendSIGKILL=yes", "--property=NoNewPrivileges=no",
@@ -1603,6 +1609,42 @@ def holds(pid: int, handle: str) -> bool:
     return False
 
 
+SO_PEERPIDFD = 77  # Linux 6.5: a process handle for the peer that connected
+LOCAL_PEERTOKEN = 6  # macOS <sys/un.h>, at level SOL_LOCAL (0): the connecting peer's audit token
+
+
+def peer_groups(connection: socket.socket) -> list[str]:
+    """The control-group path components of the process that connected this Unix stream socket (on macOS the unit
+    name of the Altitude job holding it, as `process_table` spells it); empty when they cannot be told. The kernel
+    names the connecting process itself, a process handle on Linux and an audit token on macOS, and the process is
+    confirmed to be that same one after its groups are read, so a process number reused once it ends cannot stand
+    in for it."""
+    try:
+        if _darwin():
+            token = struct.unpack("8I", connection.getsockopt(0, LOCAL_PEERTOKEN, 32))
+            pid, version = token[5], token[7]  # audit_token_t: the process number and its version
+            unit = _altitude_coalitions().get(_coalition_of(pid))
+            return [unit] if unit and _pid_version(pid) == version else []
+        handle = connection.getsockopt(socket.SOL_SOCKET, SO_PEERPIDFD)
+        try:
+            pid = _handle_pid(handle)
+            groups = (PROC / str(pid) / "cgroup").read_text() if pid > 0 else ""
+            if pid <= 0 or _handle_pid(handle) != pid:  # the handle reports -1 once its process has ended
+                return []
+        finally:
+            os.close(handle)
+        return [part for line in groups.splitlines() for part in line.split("/")]
+    except (OSError, ValueError, struct.error):
+        return []
+
+
+def _handle_pid(handle: int) -> int:
+    for line in (PROC / "self/fdinfo" / str(handle)).read_text().splitlines():
+        if line.startswith("Pid:"):
+            return int(line.split()[1])
+    return -1
+
+
 # --- Resource limits and native libraries ------------------------------------------------------------------------
 
 # Limits are set in a fresh helper process: preexec_fn is unsafe in the threaded HTTP server.
@@ -1734,11 +1776,19 @@ def _filters(kind: str, values) -> list[str]:
     return [f'({kind} "' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '")' for value in values]
 
 
+def secret_places() -> tuple[str, ...]:
+    """Altitude's own credentials, which no sandbox Altitude applies may read or write: the access folder with the
+    CLI's key and the pairing record, and the HTTPS folder with the certificate keys. Resolved, as sandboxes match
+    paths, and only those present, since a sandbox masks a folder that exists."""
+    from . import access, config
+    return tuple(dict.fromkeys(os.path.realpath(path) for path in (access.DIR, config.TLS_DIR) if path.exists()))
+
+
 def private_rule() -> str:
-    """Seatbelt's refusal of every private place. A profile puts it after its own file rules, so no root it admits
-    can reopen one."""
-    places = private_places()
-    return f"(deny file-read* file-write* {' '.join(_filters('subpath', places))})" if places else ""
+    """Seatbelt's refusal of every private place and of Altitude's credentials. A profile puts it after its own file
+    rules, so no root it admits can reopen one."""
+    places = (*private_places(), *secret_places())
+    return f"(deny file-read* file-write* {' '.join(_filters('subpath', places))})"
 
 
 def logs_dir() -> Path:
@@ -1931,15 +1981,6 @@ def seatbelt_profile(writable: list[str]) -> str:
             f"(deny file-write*)(allow file-write* {' '.join(rules)}){private_rule()}{SERVICE_ESCAPES}")
 
 
-def confined(command: list[str], writable: tuple[Path, ...]) -> list[str]:
-    """`command` under Altitude's Seatbelt profile on macOS, for a process that runs as the caller's own child
-    rather than as a job; unchanged on Linux. sandbox-exec replaces itself with the command, so its PID is the
-    command's."""
-    if not _darwin():
-        return command
-    return [SANDBOX_EXEC, "-p", seatbelt_profile([str(root) for root in writable]), *command]
-
-
 def job_main(argv: list[str]) -> None:
     """The launcher's and the supervisor's entry point (see `_entry`)."""
     role, argument = argv
@@ -2085,8 +2126,8 @@ def _supervise(job: Path) -> int:
                 streams.append(os.open(spec[fd]["fifo"], os.O_WRONLY | os.O_NONBLOCK))
                 os.set_blocking(streams[-1], True)
         command = spec["command"]
-        if spec.get("writable") is not None:
-            command = confined(command, spec["writable"])
+        if spec.get("profile") is not None:  # sandbox-exec replaces itself with the command
+            command = [SANDBOX_EXEC, "-p", spec["profile"], *command]
         try:
             child = subprocess.Popen(command, stdin=streams[0], stdout=streams[1], stderr=streams[2],
                                      env=spec["env"], cwd=spec["cwd"], start_new_session=terminal,
@@ -2334,6 +2375,19 @@ def _running(pid: int, start: str) -> bool:
         return process_running(pid, start) is True
     except OSError:
         return False
+
+
+class _UniqueIdentity(ctypes.Structure):
+    _fields_ = [("uuid", ctypes.c_uint8 * 16), ("uniqueid", ctypes.c_uint64), ("puniqueid", ctypes.c_uint64),
+                ("idversion", ctypes.c_uint32), ("reserved", ctypes.c_uint32 * 5)]
+
+
+def _pid_version(pid: int) -> int:
+    """The version of the process now holding `pid`, which its audit token carries: a reused number has another."""
+    info = _UniqueIdentity()
+    if _pidinfo(pid, 17, info) != ctypes.sizeof(info):  # PROC_PIDUNIQIDENTIFIERINFO
+        raise OSError(f"process {pid} is unreadable")
+    return info.idversion
 
 
 def _coalition_of(pid: int) -> int:

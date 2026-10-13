@@ -18,7 +18,7 @@ assert "security.capability" not in os.listxattr(binary)
 os.environ['ALTITUDE_HOME'] = str(home / 'sandbox-fixture-state')
 os.environ['CODEX_HOME'] = str(home / '.codex')
 sys.path.insert(0, '/opt/altitude')
-from altitude import config, engines, l3, platform, state as S, tasks as T
+from altitude import access, config, engines, l3, platform, state as S, tasks as T
 
 def command(args, cwd=None):
     return subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=20, check=True)
@@ -28,7 +28,7 @@ workspace = project / '.claude/worktrees/task'
 sibling = project / '.claude/worktrees/other'
 runtime = home / 'coordinator-runtime'
 tls = home / '.config/altitude/tls'
-for path in (project, runtime, tls, config.ROOT, home / '.codex'):
+for path in (project, runtime, tls, access.DIR, config.ROOT, home / '.codex'):
     path.mkdir(parents=True, exist_ok=True)
 command(['git', 'init', '--initial-branch=main', str(project)])
 command(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
@@ -58,6 +58,7 @@ tcp_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 tcp_server.bind(('127.0.0.1', 0)); tcp_server.listen(8)
 assert tcp_server.getsockname()[1] not in (8890, 8891)
 spec = {'targets': {k: str(v) for k, v in targets.items()}, 'broker': str(broker),
+        'credentials': {'access': str(access.DIR), 'tls': str(tls)},
         'task': task['slug'],
         'port': tcp_server.getsockname()[1],
         # Probe the real endpoints independently of how the profile represents denial.
@@ -103,6 +104,13 @@ for name, family, address in [(name, socket.AF_UNIX, path) for name, path in spe
         out['connections'][name] = {'connected': True}
     except OSError as e:
         out['connections'][name] = {'connected': False, 'errno': e.errno, 'error': str(e)}
+out['reads'] = {}
+for name, directory in spec['credentials'].items():
+    try:
+        os.listdir(directory)  # names only: nothing is opened
+        out['reads'][name] = {'allowed': True}
+    except OSError as e:
+        out['reads'][name] = {'allowed': False, 'errno': e.errno}
 out['security'] = [x for x in Path('/proc/self/status').read_text().splitlines()
                    if x.startswith(('Seccomp:', 'CapEff:', 'NoNewPrivs:'))]
 if role == 'task':
@@ -164,6 +172,8 @@ for name, result in control['writes'].items():
         failures.append('unsandboxed control differs from image ownership for ' + name)
 if not all(r['connected'] for r in control['connections'].values()):
     failures.append('unsandboxed socket controls failed')
+if not all(r['allowed'] for r in control['reads'].values()):
+    failures.append('unsandboxed credential folder controls failed')
 for role, writable in [('task', {'workspace', 'git_common', 'git_worktree', 'state', 'temporary'}),
                        ('coordinator', {'runtime'})]:
     row = records[role]
@@ -186,6 +196,8 @@ for role, writable in [('task', {'workspace', 'git_common', 'git_worktree', 'sta
         expected = role == 'task' and name in {'broker', 'loopback'}
         if outcome['connected'] != expected:
             failures.append(role + ': unexpected connection permission for ' + name)
+    if any(r['allowed'] for r in observed['reads'].values()):
+        failures.append(role + ': a credential folder is readable')
     if role == 'task' and observed['git_commit']['exit'] != 0:
         failures.append('task: git commit failed')
     if role == 'task':

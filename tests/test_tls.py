@@ -440,7 +440,7 @@ class ServiceCase(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.service_tls = self.root / "service-configuration" / "tls"
-        for name, value in {"TLS_DIR": self.service_tls, "HOST": "127.0.0.1",
+        for name, value in {"TLS_DIR": self.service_tls, "HOST": "127.0.0.1", "HOME": self.root / "home",
                             "ROOT": self.root / "runtime", "SOURCE": self.root / "source",
                             "PROJECT_ROOTS": [self.root / "projects"],
                             "PROJECTS_FILE": self.root / "runtime" / "projects.json"}.items():
@@ -734,7 +734,7 @@ class TestShareCommand(unittest.TestCase):
         self.root = Path(temporary.name)
 
     def service(self, settings: dict) -> None:
-        with mock.patch.object(access, "DIR", self.root / "home" / ".config" / "altitude" / "access"):
+        with mock.patch.object(config, "HOME", self.root / "home"):
             tls.publish({"host": "127.0.0.1", "port": 8890, "tls": True, "tls_dir": self.root / "service-tls",
                          **settings})
 
@@ -790,7 +790,7 @@ class TestShareCommand(unittest.TestCase):
             refused = self.alt("tls-share", ALTITUDE_ACTOR=actor)
             self.assertEqual((refused.returncode, refused.stdout), (1, ""))
             self.assertNotIn("service", refused.stderr)
-        (self.root / "home" / ".config" / "altitude" / "access" / "service.json").unlink()
+        (self.root / "home" / ".config" / "altitude" / "service.json").unlink()
         self.assertIn("alt tls-share: The Altitude service has not recorded where it listens",
                       self.alt("tls-share").stderr)
         paired = self.alt("pair")

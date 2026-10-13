@@ -137,7 +137,7 @@ def run_native_sandbox_probe(runtime: Path, settings: list[str], probe: str, arg
 
 os.environ.update({"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x"})
 sys.path.insert(0, str(REPO))
-from altitude import access, config, engines, incidents, monitor, platform  # noqa: E402
+from altitude import access, config, engines, incidents, l3, monitor, platform  # noqa: E402
 
 ALT = REPO / "bin" / "alt"
 #: The kernel the suite runs on; a case's `host` replaces `sys.platform` for its duration.
@@ -416,6 +416,15 @@ class AltitudeCase(unittest.TestCase):
         config.save_projects(projects)
         self.addCleanup(self._forget, name)
         return projects[name]
+
+    def coordinator_turn(self, *projects: str) -> str:
+        """Every connection to these projects' coordinator sockets (this case's project by default) comes from the
+        running turn: each turn records a fictional job, and the platform seam places each connecting process in it."""
+        projects = projects or (self.project,)
+        unit, recorded = "altitude-coordinator-fixture.service", l3.turn_unit
+        self.patch(l3, "turn_unit", side_effect=lambda name: unit if name in projects else recorded(name))
+        self.patch(platform, "peer_groups", return_value=["user.slice", unit])
+        return unit
 
     def fixture_boot_identity(self) -> None:
         """Resume integration uses a fixture boot; native PID/lifetime checks remain real.

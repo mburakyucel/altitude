@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.support import AltitudeCase, git, make_repo
-from altitude import config, dispatch, engines, l3, server, state as S, tasks as T
+from altitude import config, dispatch, engines, l3, platform, server, state as S, tasks as T
 
 
 class TestIssueVerbs(AltitudeCase):
@@ -227,6 +227,7 @@ class TestIssueVerbs(AltitudeCase):
 
     def test_close_through_coordinator_mcp_and_real_project_socket(self):
         broker = server.start_l3_verb_broker(self.project)
+        self.coordinator_turn()
         self.addCleanup(server.stop_l3_verb_broker, broker)
         runtime = l3._l3_runtime(self.project, "codex")
         self.addCleanup(l3._remove_runtime, runtime)
@@ -266,6 +267,7 @@ class TestIssueVerbs(AltitudeCase):
             self.assertEqual(json.load(response), {"url": self.url})
         self.assertEqual(S.read_project_log(self.project)[0]["actor"], "operator")
         broker = server.start_l3_verb_broker(self.project)
+        self.coordinator_turn()
         self.addCleanup(server.stop_l3_verb_broker, broker)
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.connect(str(l3.verb_socket_path(self.project)))
@@ -349,7 +351,7 @@ class TestL3CheckoutConfinement(AltitudeCase):
         def fake_claude(_prompt, **kwargs):
             seen.update(kwargs)
             runtime = Path(kwargs["cwd"])
-            self.assertEqual(runtime.parent, config.project_dir(self.project))
+            self.assertEqual(runtime.parent, platform.coordinator_directory())
             self.assertTrue(runtime.name.startswith("l3-claude-"))
             self.assertEqual((self.repo / "README.md").read_text(), "readme\n")
             self.assert_read_git_shim_denies_fetch(runtime, before)
@@ -381,7 +383,7 @@ class TestL3CheckoutConfinement(AltitudeCase):
         def fake_codex(_prompt, **kwargs):
             seen.update(kwargs)
             runtime = Path(kwargs["cwd"])
-            self.assertEqual(runtime.parent, config.project_dir(self.project))
+            self.assertEqual(runtime.parent, platform.coordinator_directory())
             self.assertTrue(runtime.name.startswith("l3-codex-"))
             self.assertEqual((self.repo / "README.md").read_text(), "readme\n")
             self.assert_read_git_shim_denies_fetch(runtime, before)
@@ -420,6 +422,8 @@ class TestL3CheckoutConfinement(AltitudeCase):
                          "direct GitHub and altd HTTP access stay blocked")
 
         broker = server.start_l3_verb_broker(self.project)
+
+        self.coordinator_turn()
         self.addCleanup(server.stop_l3_verb_broker, broker)
         service = {"unit": "altitude.service", "state": "active", "substate": "running", "pid": 123,
                    "last_restart": "today", "error": None}
@@ -505,6 +509,7 @@ print(json.dumps({{"type": "item.completed", "item": {{"type": "agent_message", 
     def test_i_20260924_054556_alt_shim_reads_stdin_only_for_a_dash_body(self):
         """The harness can leave stdin open for argument text; the shim must not wait on it."""
         broker = server.start_l3_verb_broker(self.project)
+        self.coordinator_turn()
         self.addCleanup(server.stop_l3_verb_broker, broker)
         runtime = l3._l3_runtime(self.project, "claude")
         self.addCleanup(l3._remove_runtime, runtime)
@@ -535,6 +540,7 @@ print(json.dumps({{"type": "item.completed", "item": {{"type": "agent_message", 
 
     def test_sept7_coordinator_mcp_uses_real_broker_and_preserves_authority(self):
         broker = server.start_l3_verb_broker(self.project)
+        self.coordinator_turn()
         self.addCleanup(server.stop_l3_verb_broker, broker)
         runtime = l3._l3_runtime(self.project, "codex")
         self.addCleanup(l3._remove_runtime, runtime)
@@ -584,6 +590,7 @@ print(json.dumps({{"type": "item.completed", "item": {{"type": "agent_message", 
         runtime = l3._l3_runtime(self.project, "codex")
         self.addCleanup(l3._remove_runtime, runtime)
         broker = server.start_l3_verb_broker(self.project)
+        self.coordinator_turn()
         self.addCleanup(server.stop_l3_verb_broker, broker)
         probe = r'''
 import errno, os, socket, subprocess, sys
@@ -623,7 +630,7 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
         second = l3._l3_runtime(self.project, "codex")
         self.addCleanup(l3._remove_runtime, second)
         self.assertNotEqual(first, second)
-        self.assertEqual(second.parent, config.project_dir(self.project))
+        self.assertEqual(second.parent, platform.coordinator_directory())
         self.assertFalse(second.is_symlink())
         self.assertEqual(self.checkout_snapshot(), before,
                          "a symlink left by one turn cannot redirect the next turn's trusted setup")
@@ -665,6 +672,8 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
         self.assertNotEqual(l3.verb_socket_path(self.project), l3.verb_socket_path(other))
 
         broker = server.start_l3_verb_broker(self.project)
+
+        self.coordinator_turn()
         self.addCleanup(server.stop_l3_verb_broker, broker)
         def raw(request):
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
@@ -755,7 +764,7 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
         claude = popen("claude", [{"type": "result", "result": "ok", "session_id": "sid", "is_error": False}])
         with mock.patch.object(engines.common, "usage_hold", return_value=None), \
              mock.patch.object(engines.common.subprocess, "Popen", side_effect=claude):
-            engines.claude_print("prompt", cwd=runtime, permission_mode="dontAsk", permission_prompts="none",
+            engines.claude_print("prompt", unit="altitude-coordinator-fixture.service", cwd=runtime, permission_mode="dontAsk", permission_prompts="none",
                                  restricted=True, tools=l3.L3_TOOLS, allowed_tools=engines.L3_ALLOWED_TOOLS,
                                  add_dirs=(self.repo, config.ROOT), settings=self.tmp / "settings.json")
         job, process = seen["claude"]
@@ -772,7 +781,7 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
         process = mock.MagicMock(pid=1, returncode=0)
         process.communicate.return_value = (json.dumps({"type": "thread.started", "thread_id": "sid"}), "")
         with mock.patch.object(engines.common.subprocess, "Popen", return_value=process) as execute:
-            engines.codex_exec("prompt", cwd=runtime, sandbox_settings=settings, ignore_user_config=True)
+            engines.codex_exec("prompt", unit="altitude-coordinator-fixture.service", cwd=runtime, sandbox_settings=settings, ignore_user_config=True)
         command = execute.call_args.args[0]
         self.assertIn("exec", command)
         self.assertNotIn("app-server", command)
@@ -840,6 +849,7 @@ class TestL3DaemonOperations(AltitudeCase):
     def test_i_20260904_062512_l3_alt_crosses_the_daemon_socket(self):
         task = self.task(title="Socket stop")
         broker = server.start_l3_verb_broker(self.project)
+        self.coordinator_turn()
         self.addCleanup(server.stop_l3_verb_broker, broker)
         runtime = l3._l3_runtime(self.project, "codex")
         self.addCleanup(l3._remove_runtime, runtime)

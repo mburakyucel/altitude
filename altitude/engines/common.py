@@ -622,6 +622,11 @@ def _feed(stream, data: str) -> None:
         pass  # the child ended without reading; its exit status and output report why
 
 
+def coordinator_unit() -> str:
+    """A job name for one launch of a coordinator turn, on either engine."""
+    return f"altitude-coordinator-{uuid.uuid4().hex}.service"
+
+
 def machine_unit(project: str, slug: str, sequence: int) -> str:
     safe = re.sub(r"[^A-Za-z0-9_.-]", "-", f"{project}-{slug}")
     return f"altitude-machine-{safe}-{sequence}.service"

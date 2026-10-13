@@ -52,6 +52,11 @@ _report_retries: dict[tuple[str, str], tuple[str, int, float]] = {}
 REPORT_RETRY_DELAYS = (60, 300, 900, 3600)
 L3_VERB_MAX_REQUEST = 4 << 20
 L3_VERB_MAX_OUTPUT = 8 << 20
+L3_VERB_REFUSED = "this socket serves only the project's running coordinator turn"
+#: The commands a task's owner runs through altd. Its worker job, not this machine's key, admits them.
+TASK_DOOR = (["api", "task", "run"], ["api", "task", "validate"], ["api", "task", "terminal"],
+             ["api", "task", "review", "run"])
+TASK_DOOR_REFUSED = "Only the running owner of this task, from its own worker, may use this command."
 # The coordinator's `gh` only reads, from any repository its login can see; `alt issue` verbs are its only writes.
 L3_GH_GROUPS = {"pr", "issue", "release", "repo", "run", "workflow", "ruleset", "label", "cache"}
 L3_GH_VERBS = {"view", "list", "status", "checks", "diff", "watch", "check"}
@@ -716,6 +721,10 @@ def _l3_bounded(value: str) -> str:
 
 class _L3VerbHandler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
+        # Every process runs as the operator's account, so the socket's mode admits task workers too: the kernel's
+        # account of who connected decides, and a refused request is read only to be discarded.
+        unit = l3.turn_unit(self.server.project)
+        admitted = bool(unit) and unit in platform.peer_groups(self.request)
         data = bytearray()
         while len(data) <= L3_VERB_MAX_REQUEST and b"\n" not in data:
             chunk = self.request.recv(min(65536, L3_VERB_MAX_REQUEST + 1 - len(data)))
@@ -723,6 +732,8 @@ class _L3VerbHandler(socketserver.BaseRequestHandler):
                 break
             data.extend(chunk)
         try:
+            if not admitted:
+                raise ValueError(L3_VERB_REFUSED)
             if len(data) > L3_VERB_MAX_REQUEST:
                 raise ValueError("L3 verb request is too large")
             request = json.loads(bytes(data).split(b"\n", 1)[0])
@@ -749,7 +760,7 @@ def start_l3_verb_broker(project: str, path: Path | None = None) -> _L3VerbServe
     """Bind one project-scoped L3 capability socket; refuse non-socket path collisions."""
     config.project(project)
     path = Path(path or l3.verb_socket_path(project))
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     try:
         mode = path.lstat().st_mode
     except FileNotFoundError:
@@ -1375,6 +1386,7 @@ def tick() -> None:
     drain_hook_faults()
     dispatch.run_settings()
     terminal.sweep()
+    access.settle()
     for project in list(_l3_verb_brokers):
         if not config.is_managed(project):
             remove_l3_verb_broker(project)
@@ -2079,6 +2091,21 @@ class Handler(BaseHTTPRequestHandler):
         secure = "; Secure" if isinstance(self.connection, ssl.SSLSocket) else ""
         return f"{access.COOKIE}={key}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Strict{secure}"
 
+    def _task_owner(self, o: dict) -> bool:
+        """Whether this connection comes from the current worker job of the running task attempt the body names: the
+        whole admission of the task door, decided before anything else reads the task, so every other caller,
+        with or without this machine's key, gets one refusal that tells nothing about tasks."""
+        try:
+            project, slug, attempt = o["project"], o["slug"], o["attempt"]
+            if type(attempt) not in (str, int):
+                return False
+            config.project(project)
+            task = S.load_task(project, slug)
+            return (task.get("state") == "running" and str(task.get("attempt")) == str(attempt)
+                    and task_owner_connection(project, slug, task, self.client_address, self.connection.getsockname()))
+        except (KeyError, TypeError, ValueError, OSError, RuntimeError):  # RuntimeError: no worker record to match
+            return False
+
     def _local(self) -> bool:
         """Whether the request comes from the computer running Altitude itself."""
         try:
@@ -2617,7 +2644,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": refused}, 403)
         u = urlparse(self.path)
         parts = [p for p in u.path.split("/") if p]
-        if not self._admit(parts):
+        door = parts in TASK_DOOR
+        if not self._admit(parts) and not door:
             self.close_connection = True
             return self._json({"error": UNPAIRED, "pair": True}, 401)
         image_submission = False
@@ -2630,6 +2658,8 @@ class Handler(BaseHTTPRequestHandler):
             if api == "voice" and len(parts) > 2:
                 return self._host_voice(parts, parse_qs(u.query))
             o = self._body(max_bytes=images.MAX_BODY if api in ("chat", "l2") else None)
+            if door and not self._task_owner(o):
+                return self._json({"error": TASK_DOOR_REFUSED}, 403)
             image_submission = api in ("chat", "l2") and bool(o.get("images") or o.get("image_ids"))
             if api in ("terminal", "terminal-access"):
                 return self._terminal_post(parts, o)

@@ -44,6 +44,7 @@ from .common import (
     service_status,
     launch_env,
     task_tool_env,
+    coordinator_unit,
     machine_unit,
     machine_files,
     machine_command,

@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from tests.support import AltitudeCase, add_worktree, make_repo
-from altitude import config, dispatch, engines, platform, state as S, tasks as T
+from altitude import access, config, dispatch, engines, platform, state as S, tasks as T
 
 PROJECT = "door"
 
@@ -76,7 +76,7 @@ class TestCodexAdapter(AltitudeCase):
         self.assertTrue(all(profile["workspace_roots"].values()))
         self.assertEqual(profile["extends"], ":workspace", "retain native protected paths and temporary roots")
         self.assertEqual(profile["filesystem"], {":root": "read", **{str(path): "deny" for path in (
-                         *platform.job_control_paths(), *platform.private_places())}})
+                         *platform.job_control_paths(), *platform.private_places(), *platform.secret_places())}})
         self.assertTrue(profile["network"]["enabled"])
         self.assertNotIn("sandbox_mode", parsed, "legacy selection must not override the named profile")
         self.assertNotIn("sandbox_workspace_write", parsed)
@@ -89,9 +89,12 @@ class TestCodexAdapter(AltitudeCase):
                          {str(config.ROOT.resolve()): True})
 
     def test_control_socket_and_private_place_denials_cover_workers_and_the_coordinator(self):
-        """The service-manager sockets, and macOS's private places, whose reads macOS charges to the job's Python."""
+        """The service-manager sockets, macOS's private places, whose reads macOS charges to the job's Python, and
+        Altitude's own credentials: the CLI's key and pairing record, and the HTTPS keys."""
         runtime = Path(f"/run/user/{os.getuid()}")
         endpoints = (runtime / "bus", runtime / "systemd/private")
+        for folder in (access.DIR, config.TLS_DIR):
+            folder.mkdir(parents=True, exist_ok=True)
         private = ("/Users/fictional/Desktop", "/Volumes")
         with mock.patch.object(config, "project_path", return_value=self.repo), \
                 mock.patch.object(platform, "private_places", return_value=private):
@@ -101,7 +104,8 @@ class TestCodexAdapter(AltitudeCase):
             parsed = tomllib.loads("\n".join(settings))
             rules = parsed["permissions"][parsed["default_permissions"]]["filesystem"]
             denied = {Path(path) for path, access in rules.items() if access == "deny"}
-            self.assertEqual(denied, {runtime / "bus", runtime / "systemd", *map(Path, private)})
+            self.assertEqual(denied, {runtime / "bus", runtime / "systemd", *map(Path, private),
+                                      Path(os.path.realpath(access.DIR)), Path(os.path.realpath(config.TLS_DIR))})
             self.assertTrue(all(any(endpoint.is_relative_to(root) for root in denied) for endpoint in endpoints))
             self.assertFalse(any((runtime / "unrelated").is_relative_to(root) for root in denied))
 
@@ -165,7 +169,8 @@ class TestCodexAdapter(AltitudeCase):
         settings = [spec["command"][i + 1] for i, arg in enumerate(spec["command"]) if arg == "-c"]
         rules = tomllib.loads("\n".join(settings))["permissions"]["altitude-task"]["filesystem"]
         self.assertEqual({path for path, access in rules.items() if access == "deny"},
-                         {str(path) for path in (*platform.job_control_paths(), *platform.private_places())})
+                         {str(path) for path in (*platform.job_control_paths(), *platform.private_places(),
+                                                 *platform.secret_places())})
         # In the job's environment, without the bus, GitHub accepts the engine only after the driver exports the
         # token; an ambient token never reaches it, and the engine reads its turn, not the token.
         driver = command[2:]
@@ -285,11 +290,11 @@ class TestCodexAdapter(AltitudeCase):
         proc.communicate.side_effect = [subprocess.TimeoutExpired("codex", 0), ("", "")]
         with mock.patch.object(engines.common.subprocess, "Popen", return_value=proc), \
              mock.patch.object(platform, "job_stop") as stop, self.assertRaises(subprocess.TimeoutExpired):
-            engines.codex_exec("Prompt", cwd=self.worktree, timeout=0)
+            engines.codex_exec("Prompt", unit="altitude-coordinator-fixture.service", cwd=self.worktree, timeout=0)
         stop.assert_called_once()
         self.assertEqual(stop.call_args.kwargs, {})
         self.assertEqual(len(stop.call_args.args), 1)
-        self.assertTrue(stop.call_args.args[0].startswith(engines.CODEX_UNIT_PREFIX))
+        self.assertEqual(stop.call_args.args[0], "altitude-coordinator-fixture.service")
         proc.kill.assert_called_once()
 
     def test_service_launcher_is_synchronous_and_scrubs_the_user_bus_before_codex_starts(self):
@@ -324,7 +329,7 @@ class TestCodexAdapter(AltitudeCase):
         prompt = "Keep the public result stable. ✓\n" * 8192
         self.patch(config, "CODEX_BIN", str(engine))
         self.patch(platform, "job_command", side_effect=lambda unit, command, env, **kw: command)
-        out = engines.codex_exec(prompt, cwd=self.worktree, model="gpt-6.1-sol", effort="high", resume="thr-l3",
+        out = engines.codex_exec(prompt, unit="altitude-coordinator-fixture.service", cwd=self.worktree, model="gpt-6.1-sol", effort="high", resume="thr-l3",
                                  extra_env={"ALTITUDE_ACTOR": "l3"}, timeout=30)
         received = json.loads(out["text"])
         self.assertEqual(received["argv"][:2], ["exec", "resume"])
@@ -350,7 +355,7 @@ class TestCodexAdapter(AltitudeCase):
 
     def test_an_engine_that_exits_without_reading_its_prompt_reports_its_failure(self):
         prompt = self._engine_that_never_reads("import sys\nprint('codex: not signed in', file=sys.stderr)\nsys.exit(3)\n")
-        out = engines.codex_exec(prompt, cwd=self.worktree, timeout=30)
+        out = engines.codex_exec(prompt, unit="altitude-coordinator-fixture.service", cwd=self.worktree, timeout=30)
         self.assertEqual((out["returncode"], out["error"]), (3, "codex: not signed in"))
         self.assert_prompt_writer_ends()
 
@@ -358,7 +363,7 @@ class TestCodexAdapter(AltitudeCase):
         prompt = self._engine_that_never_reads("import time\ntime.sleep(60)\n")
         self.patch(platform, "job_stop")
         with self.assertRaises(subprocess.TimeoutExpired):
-            engines.codex_exec(prompt, cwd=self.worktree, timeout=1)
+            engines.codex_exec(prompt, unit="altitude-coordinator-fixture.service", cwd=self.worktree, timeout=1)
         self.assert_prompt_writer_ends()
 
     def test_window_hold_belongs_to_claude_only(self):

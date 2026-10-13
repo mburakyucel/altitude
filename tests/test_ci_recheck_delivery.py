@@ -9,8 +9,8 @@ from altitude import config, engines, l3, platform, state as S, tasks as T
 
 
 def durable(engine: str, call) -> bool:
-    """Both coordinator transports bound their jobs beyond altd restart."""
-    return call.kwargs["durable_timeout"] if engine == "claude" else "durable_timeout" not in call.kwargs
+    """Both coordinator transports run the turn as a job of its own, which outlives an altd restart."""
+    return call.kwargs["unit"].startswith("altitude-coordinator-")
 
 class TestCIRecheckDelivery(AltitudeCase):
     def setUp(self):
@@ -413,7 +413,7 @@ class TestCoordinatorJob(AltitudeCase):
         with mock.patch.object(engines.common.subprocess, "Popen",
                                side_effect=RuntimeError("fixture: execution intercepted")) as popen:
             with self.assertRaisesRegex(RuntimeError, "intercepted"):
-                engines.codex_exec("Probe evidence", cwd=self.repo, timeout=37)
+                engines.codex_exec("Probe evidence", unit="altitude-coordinator-fixture.service", cwd=self.repo, timeout=37)
         cmd = popen.call_args.args[0]
         self.assertEqual(cmd[0], platform.SYSTEMD_RUN)
         for flag in ("--property=RuntimeMaxSec=37", "--property=KillMode=control-group"):

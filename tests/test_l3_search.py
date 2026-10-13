@@ -279,6 +279,7 @@ class TestL3Search(AltitudeCase):
         for index in range(30):
             self.chat(f"Later discussion {index}.", at="2030-01-03T00:00:00+00:00")
         broker = server.start_l3_verb_broker(self.project)
+        self.coordinator_turn()
         self.addCleanup(server.stop_l3_verb_broker, broker)
         resumes = []
 

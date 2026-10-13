@@ -397,7 +397,7 @@ class TestValidationRunner(ClientStop, RunnerCase):
         self.assertIn("no KVM access", self.validate(["true"], kvm=True, status=400)["error"])
 
     def test_refusals_leave_no_run(self):
-        self.assertIn("current attempt", self.validate(["true"], attempt="2", status=403)["error"])
+        self.assertEqual(self.validate(["true"], attempt="2", status=403)["error"], server.TASK_DOOR_REFUSED)
         self.assertIn("unsupported fields", self.validate(["true"], extra=1, status=400)["error"])
         self.assertIn("command", self.validate("true", status=400)["error"])
         self.assertIn("command", self.validate([], status=400)["error"])
@@ -663,7 +663,7 @@ class TestValidationRunner(ClientStop, RunnerCase):
 
     def test_only_the_tasks_own_worker_may_run_its_validation(self):
         self.owner.return_value = False
-        self.assertIn("only this task's owner", self.validate(["true"], status=403)["error"])
+        self.assertEqual(self.validate(["true"], status=403)["error"], server.TASK_DOOR_REFUSED)
         self.assertFalse(self.record.exists())
 
     def test_turning_the_runner_off_while_a_run_is_admitted_stops_it_before_or_as_it_starts(self):
@@ -1257,10 +1257,10 @@ class TestMacValidationRunner(ClientStop, MacRunnerCase):
 class TestValidationProfile(TestCase):
     def test_a_socket_nested_in_the_temporary_folder_accepts_connections(self):
         """In a macOS validation run the suite's folder is in the run's TMPDIR, a later root of its profile, where
-        the coordinator's verb broker binds (#695)."""
+        the coordinator's verb broker binds under the suite's own home (#695)."""
         with tempfile.TemporaryDirectory() as folder, socket.socket(socket.AF_UNIX) as server_socket, \
                 socket.socket(socket.AF_UNIX) as client:
-            path = Path(folder) / "at-x" / "case-y" / "altitude" / "l3-verbs" / "a.sock"
+            path = Path(folder) / "at-x" / "case-y" / "home" / ".config" / "altitude" / "coordinator-0123456789ab" / "a.sock"
             path.parent.mkdir(parents=True)
             server_socket.bind(str(path))
             server_socket.listen()

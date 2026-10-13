@@ -56,7 +56,7 @@ class TestHold(AltitudeCase):
         self.assertEqual(engines.usage_hold(), future)
         self.assertFalse((dispatch.wip_hold(self.project) or "").startswith("usage limit"),
                          "a Claude hold does not globally freeze Codex dispatch")
-        self.assertTrue(engines.claude_print("hi", cwd=self.repo).get("limited"), "no call is made while held")
+        self.assertTrue(engines.claude_print("hi", unit="altitude-coordinator-fixture.service", cwd=self.repo).get("limited"), "no call is made while held")
         engines.note_usage_limit("2000-01-01T00:00:00+00:00")
         self.assertIsNone(engines.usage_hold())
 

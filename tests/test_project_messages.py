@@ -126,6 +126,7 @@ class TestProjectMessages(AltitudeCase):
         for project in (self.project, self.peer):
             broker = server.start_l3_verb_broker(project)
             self.addCleanup(server.stop_l3_verb_broker, broker)
+        self.coordinator_turn(self.project, self.peer)
         for engine in config.ENGINES:
             exchange = None
             calls = []

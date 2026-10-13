@@ -502,28 +502,30 @@ SHARE_MINUTES = 10
 
 
 def record() -> Path:
-    """Where the running service records how to reach it: beside the machine key rather than in the runtime home
-    task folders share, since it decides where `alt` sends that key and which CA it trusts."""
-    from . import access
-    return access.DIR / "service.json"
+    """Where the running service records how to reach it: outside the runtime home task folders share, since it
+    decides where `alt` sends its requests and which CA it trusts, and outside the folders Altitude's sandboxes
+    refuse, since a sandboxed owner's `alt` reads it."""
+    return config.HOME / ".config/altitude/service.json"
 
 
 def publish(found: dict) -> None:
-    """The service records, as it starts serving, where it listens and which certificate folder it serves from.
-    A later restart with other settings replaces the record, so clients never depend on their own launch
-    environment."""
+    """The service records, as it starts serving, where it listens, which certificate folder it serves from and
+    that folder's public CA certificate, which is all a client needs to check it. A later restart with other settings
+    replaces the record, so clients never depend on their own launch environment."""
     import json
 
     from . import state
+    authority = Path(found["tls_dir"]) / "ca.crt"
+    ca = authority.read_text() if found["tls"] and authority.exists() else None  # an external certificate has none
     state.atomic_write(record(), json.dumps({"pid": os.getpid(), "host": found["host"], "port": found["port"],
-                                             "tls": found["tls"], "tls_dir": str(found["tls_dir"]),
+                                             "tls": found["tls"], "tls_dir": str(found["tls_dir"]), "ca": ca,
                                              "public_host": found.get("public_host", found["host"])}) + "\n")
 
 
 def service() -> dict:
-    """Where the running Altitude service listens and which certificate folder it serves from, as the service
-    itself recorded when it started, so every shell and agent reaches the same service whatever its own
-    environment says."""
+    """Where the running Altitude service listens, which certificate folder it serves from and that folder's CA
+    certificate, as the service itself recorded when it started, so every shell and agent reaches the same service
+    whatever its own environment says."""
     import json
     from . import platform
 
@@ -532,6 +534,7 @@ def service() -> dict:
         saved = json.loads(path.read_text())
         found = {"host": str(saved["host"]), "port": int(saved["port"]), "tls": saved["tls"] is True,
                  "tls_dir": Path(saved["tls_dir"]), "pid": int(saved["pid"]),
+                 "ca": None if saved["ca"] is None else str(saved["ca"]),
                  "public_host": str(saved["public_host"] if platform.containerized() else saved["host"])}
     except FileNotFoundError as exc:
         raise TLSFailure(f"The Altitude service has not recorded where it listens ({path}). Start the service, "

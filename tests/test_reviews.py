@@ -675,6 +675,7 @@ class TestReviews(AltitudeCase):
             reviews.require_merge(self.project, self.slug, self.pair())
 
     def test_http_stream_returns_result_and_disconnect_cancels_real_request(self):
+        self.patch(server, "task_owner_connection", return_value=True)  # the owner's worker calls
         class Handler(server.Handler):
             def log_message(self, *_args):
                 pass

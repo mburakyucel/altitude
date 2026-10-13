@@ -12,7 +12,6 @@ import subprocess
 import sys
 import threading
 import time
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from .. import config, platform, state as S
@@ -441,8 +440,8 @@ def codex_sandbox(cwd: Path, *, extra_roots: list[Path] = ()) -> list[str]:
     Writable roots must exist because Codex bind-mounts them: the working directory, any extra root (a worker's
     Git directories so it can fetch, commit, and push), and the Altitude home so `alt` can record what the turn
     reports. The workspace base retains protected configuration paths and temporary directories.
-    Network stays on for `git push`, `gh`, and the repository's own tests; user-manager sockets and macOS's private
-    places stay denied.
+    Network stays on for `git push`, `gh`, and the repository's own tests; user-manager sockets, macOS's private
+    places and Altitude's credentials stay denied.
     The sandboxed shell inherits the launch environment, so the identity variables reach `alt` and a worker's
     GitHub token (`github_token`) reaches `gh` unchanged.
     """
@@ -450,7 +449,8 @@ def codex_sandbox(cwd: Path, *, extra_roots: list[Path] = ()) -> list[str]:
     profile = "altitude-task"
     workspace_roots = "{" + ",".join(f"{json.dumps(str(root))}=true" for root in roots) + "}"
     denied = ",".join(f'{json.dumps(str(path))}="deny"' for path in (*platform.job_control_paths(),
-                                                                       *platform.private_places()))
+                                                                       *platform.private_places(),
+                                                                       *platform.secret_places()))
     return [f'default_permissions="{profile}"', f'permissions.{profile}.extends=":workspace"',
             f"permissions.{profile}.workspace_roots={workspace_roots}",
             f'permissions.{profile}.filesystem={{":root"="read",{denied}}}',
@@ -469,7 +469,8 @@ def codex_l3_permissions(cwd: Path, *, project: str) -> list[str]:
     broker = verb_socket_path(project).resolve()
     rules = {":root": "read", str(Path(cwd).resolve()): "write",
              str(config.project_path(project).resolve()): "read",
-             **{str(path): "deny" for path in (*platform.job_control_paths(), *platform.private_places())}}
+             **{str(path): "deny" for path in (*platform.job_control_paths(), *platform.private_places(),
+                                               *platform.secret_places())}}
     filesystem = "{" + ",".join(f"{json.dumps(path)}={json.dumps(access)}"
                                    for path, access in rules.items()) + "}"
     # Sept 7 coordinator outage: Linux proxy-mode seccomp denies socket(AF_UNIX), and the proxy's
@@ -561,13 +562,14 @@ def _codex_outcome(events: list[dict], returncode: int, stdout: str, stderr: str
 
 
 @config.admitted_provider
-def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int = 900, effort: str | None = None,
+def codex_exec(prompt: str, *, cwd: Path, unit: str, model: str | None = None, timeout: int = 900,
+               effort: str | None = None,
                extra_env: dict | None = None, resume: str | None = None, on_start=None,
                sandbox_settings: list[str] | None = None, ignore_user_config: bool = True, on_session=None,
                images: list[dict] | tuple = ()) -> dict:
     """One synchronous Codex turn (L3) in Codex's own workspace-write sandbox, prompt on stdin (verified with
-    codex 0.152). `codex exec resume <thread> -` continues the thread. The transient unit is the one workers use,
-    so altd's `NoNewPrivileges` hardening never reaches the nested bwrap, and a timeout stops the whole tree.
+    codex 0.152). `codex exec resume <thread> -` continues the thread. The turn runs as the job `unit`, as workers
+    do, so altd's `NoNewPrivileges` hardening never reaches the nested bwrap, and a timeout stops the whole tree.
     Send now stays queued for the next coordinator turn; this invocation has no interrupt channel."""
     content = common._engine_input("codex", prompt, images)
     prompt = content[0]["text"]
@@ -583,7 +585,6 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
     if effort:
         cmd += ["-c", f'model_reasoning_effort="{effort}"']
     cmd += [resume, "-"] if resume else ["-"]
-    unit = _codex_unit(f"sync-{uuid.uuid4().hex}")
     started_at = datetime.now(timezone.utc).isoformat()
     proc = subprocess.Popen(platform.job_command(unit, cmd, common.launch_env(extra_env),
                             runtime_max=timeout),

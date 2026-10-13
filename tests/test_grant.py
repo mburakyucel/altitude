@@ -336,7 +336,7 @@ class TestOperatorGrant(AltitudeCase):
         self.assertEqual(stored["questions"][-1]["status"], "open")
         self.assertEqual(stored["grant"], grant)
         self.assertEqual(self.events("grant")[-1]["policy"], grant["policy"])
-        self.assertIn("only the running owner's", self.run_command("true", status=403)["error"])
+        self.assertEqual(self.run_command("true", status=403)["error"], server.TASK_DOOR_REFUSED)
         message = self.resumed_by("l3", "Standing grant recorded; continue within its scope.")
         T.resolve_question(self.project, self.slug, question["id"], question["revision"], message,
                            disposition="answered", reason="Coordinator recorded the standing grant.", expected_attempt=1)
@@ -568,7 +568,7 @@ class TestOperatorGrant(AltitudeCase):
     def test_another_worker_holding_the_machine_key_cannot_run_under_this_tasks_grant(self):
         self.granted()
         self.owner.return_value = False
-        self.assertIn("only this task's owner", self.run_command("true", status=403)["error"])
+        self.assertEqual(self.run_command("true", status=403)["error"], server.TASK_DOOR_REFUSED)
         self.assertEqual(self.owner.call_args.args[2],
                          engines.worker_unit("agent", job_root=dispatch.l2_job_root(self.project, self.slug)))
         self.assertFalse((S.task_dir(self.project, self.slug) / "machine.jsonl").exists())
@@ -576,7 +576,7 @@ class TestOperatorGrant(AltitudeCase):
 
     def test_stale_attempts_blocked_tasks_and_revocation_refuse(self):
         self.granted()
-        self.assertIn("current attempt", self.run_command("true", attempt="2", status=403)["error"])
+        self.assertEqual(self.run_command("true", attempt="2", status=403)["error"], server.TASK_DOOR_REFUSED)
         self.assertIn("unsupported fields", self.request("/api/task/run", {"project": self.project, "slug": self.slug,
                                                                             "attempt": "1", "command": "true",
                                                                             "extra": 1}, status=400)["error"])
@@ -980,8 +980,8 @@ class TestOperatorGrant(AltitudeCase):
         self.assertEqual((again["n"], again["exit"], again["output"]), (first["n"], 0, "done\n"))
         self.assertEqual(counter.read_text(), "once\n")
         self.assertIn("different command", self.run_command("echo other", request=request, status=400)["error"])
-        self.assertIn("current attempt", self.run_command(f"echo once >> {counter}; echo done", request=request,
-                                                          attempt="2", status=403)["error"])
+        self.assertEqual(self.run_command(f"echo once >> {counter}; echo done", request=request, attempt="2",
+                                          status=403)["error"], server.TASK_DOOR_REFUSED)
         self.assertIn("hexadecimal", self.run_command("true", request="not-a-request", status=400)["error"])
         self.assertEqual((len(self.rows()), len(self.events("machine-run"))), (1, 1))
 
