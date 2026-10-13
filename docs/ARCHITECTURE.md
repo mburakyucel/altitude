@@ -1806,7 +1806,8 @@ append opens a regular leaf without following links. The non-resume transcript p
 An existing live task with no brief never borrows an archived brief. Linked ancestors and nonregular
 read or append leaves are refused; atomic replacement may replace a linked leaf entry without reading
 its target. Task-directory predicates treat an ordinary file in a directory position as absent for
-archive selection and no-op rename; record reads and enumeration still surface ENOTDIR. Generic JSON
+archive selection and no-op rename, while linked and special entries are refused; record reads and
+enumeration still surface ENOTDIR. Generic JSON
 helpers remain available for separately owned nonruntime outputs.
 This boundary does not establish hardlink or in-place writer exclusion, native source provenance,
 or authority over mutable regular-record contents. Other runtime readers remain separately scoped.

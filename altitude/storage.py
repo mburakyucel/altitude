@@ -149,7 +149,11 @@ def exists(directory: int, name: str, *, kind: str = "file") -> bool:
     if stat.S_ISLNK(info.st_mode):
         raise StorageRefused("runtime link refused")
     if kind == "directory":
-        return stat.S_ISDIR(info.st_mode)
+        if stat.S_ISDIR(info.st_mode):
+            return True
+        if stat.S_ISREG(info.st_mode):
+            return False
+        raise StorageRefused("runtime special entry refused")
     if not stat.S_ISREG(info.st_mode):
         raise NotRegularFile("not a regular file")
     return True
@@ -170,6 +174,8 @@ def runtime_entry_exists(path: Path) -> bool:
             info = os.stat(name, dir_fd=parent, follow_symlinks=False)
             if stat.S_ISLNK(info.st_mode):
                 raise StorageRefused("runtime link refused")
+            if not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
+                raise StorageRefused("runtime special entry refused")
             return True
     except (FileNotFoundError, OrdinaryNonDirectory):
         return False

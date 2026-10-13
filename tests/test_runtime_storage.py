@@ -203,6 +203,26 @@ class RuntimeStorage(AltitudeCase):
             T._archive(self.project, "fictional-task")
         self.assertTrue((archived / "status.json").is_file())
 
+    def test_special_task_parent_and_slug_refuse_directory_predicates(self):
+        self.directory.mkdir()
+        tasks_parent = S.tasks_dir(self.project)
+        os.mkfifo(tasks_parent)
+        with self.assertRaises(storage.StorageRefused):
+            S.list_tasks(self.project)
+        with self.assertRaises(storage.StorageRefused):
+            S.task_dir(self.project, "fictional-task")
+        with self.assertRaises(storage.StorageRefused):
+            T._archive(self.project, "fictional-task")
+        self.assertFalse(S.archive_dir(self.project).exists())
+        tasks_parent.unlink()
+        tasks_parent.mkdir()
+        os.mkfifo(tasks_parent / "fictional-task")
+        with self.assertRaises(storage.StorageRefused):
+            S.task_dir(self.project, "fictional-task")
+        with self.assertRaises(storage.StorageRefused):
+            T._archive(self.project, "fictional-task")
+        self.assertFalse(S.archive_dir(self.project).exists())
+
     def test_task_selector_surfaces_corrupt_decode_link_and_special_status(self):
         live = S.tasks_dir(self.project) / "fictional-task"
         archived = S.archive_dir(self.project) / "fictional-task"
