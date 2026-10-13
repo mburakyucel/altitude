@@ -423,8 +423,8 @@ def _projection(project: str, slug: str, task: dict, engine: str, raw: bool, sou
                     if tool_id and item["kind"] in _CALLS:
                         known = calls.get(tool_id)
                         if known:
-                            identity, order = known["id"], known["order"]
-                            known.update(item, id=identity, order=order)
+                            identity, order, at = known["id"], known["order"], known["at"]
+                            known.update(item, id=identity, order=order, at=at)
                             folded.add(item["id"])
                         else:
                             calls[tool_id] = item

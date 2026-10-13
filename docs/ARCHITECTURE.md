@@ -3198,6 +3198,11 @@ results fold on the server before paging; stable row identities are distinct fro
 order, so late events and updates to old commands merge into their correct positions. Raw events
 shows one preview per source record. Full record opens an explicit 4,000-character chunk, with
 Show more for subsequent chunks; the complete redacted record remains accessible.
+Translated item notifications record their local UTC receipt time in the engine adapter; native
+session records retain their source timestamps. A folded command keeps its first event's time
+through output updates, history and reconnect. This is recorded event time, not elapsed duration
+or an exact OS process-start time. Records without timing evidence remain unavailable; launch,
+poll and file modification times never fill a command's missing timestamp.
 
 Transcript polling sends a scoped epoch/version cursor and the oldest loaded order boundary.
 The server retains only row signatures, order and change versions for active/recent viewer scopes.
