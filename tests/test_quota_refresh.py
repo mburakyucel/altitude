@@ -220,7 +220,8 @@ class TestRefreshRouting(QuotaFixture):
                     self.assertIsNone(reading[f"{name}_resets"])
                     self.assertEqual(self.choice()["engine"], "claude")
                     self.assertEqual(route.pick_engine("l3", project=self.project_config,
-                                                       current=current)["engine"], "claude")
+                                                       current=current["engine"],
+                                                       current_model=current["model"])["engine"], "claude")
                     self.assertIsNone(self.choice({"engine": "codex"})["engine"])
                     self.assertIsNotNone(route.resume_hold(current["engine"], current["model"]))
                     windows[name] = {"usedPercent": 0, "windowDurationMins": duration, "resetsAt": 4070908800}
