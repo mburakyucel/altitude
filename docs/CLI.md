@@ -229,13 +229,8 @@ The saved `ci_recheck` names its status, next action/time, evidence and delivery
 registration retries return the same receipt; another active probe refuses replacement. L2 asks L3
 to register the probe. Registration starts no worker and needs no free worker slot.
 
-Report a scheduling acknowledgement in project chat or retain it in project tracking, without
-`alt task message` to the blocked owner. An ordinary coordinator message wakes a question-blocked
-owner and invalidates the registered probe. If necessary owner coordination changes lifecycle,
-the old schedule no longer promises observation: name the next actor and trigger. If the owner
-blocks again on pending CI, register a new probe against that block and verify its saved next
-action/time before reporting the replacement schedule. Stop, attempt/session identity, questions
-and merge holds retain their existing rules; scheduling supplies no resume or approval authority.
+A task message to the blocked owner wakes it and invalidates the probe, so L3 reports a schedule in
+project chat.
 
 An owner's ordinary block gets a wait, so the recheck observes and never makes a failed run green.
 For a failed flaky shard, the owner first reruns the failed jobs on the same head
@@ -1182,14 +1177,8 @@ unchanged members queues nothing new. Faults keep their existing separate incide
 
 ### Planned tasks
 
-Use a planned task for decided short-term work whose verified prerequisite prevents useful
-authorized progress. Under the [coordinator guidance](../personas/l3.md#authority-and-coordination),
-check supplied reference locations within existing read access before declaring evidence missing;
-an incomplete checkout search is insufficient. Pass evidence and unresolved investigation to the
-owner and create actionable work without `--wait` or `--after`. An inaccessible indispensable input
-still warrants a wait naming what was checked, who acts next and the release trigger.
-
-Create prerequisite-bound work with a written brief on stdin and one wait:
+Create decided work that cannot make progress until a prerequisite is met with a written brief on
+stdin and one wait:
 
 ```sh
 alt task new --title "Enable the merge CI gate" --wait "PR #376 and the browser fix to land" -

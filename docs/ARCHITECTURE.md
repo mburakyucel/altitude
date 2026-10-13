@@ -91,12 +91,6 @@ or exact missing operator action; legitimate waits and running workers need no r
 Its task briefs convey the actual problem, intended outcome, acceptance and material project context;
 brainstorming stays distinct from requirements. The [L2 persona](../personas/l2.md) owns investigation,
 approach, relevant system implications, source assessment, questions and verified delivery within that outcome.
-L3 checks supplied reference locations within existing read access before declaring evidence missing,
-including a named sibling beside the checkout when implied by the request. It hands relevant private
-evidence and unresolved investigation to L2 and creates actionable work without a planned wait.
-A wait needs a verified indispensable prerequisite that prevents useful authorized progress, with
-the checked evidence, next actor and release trigger recorded. This guidance grants no broader
-filesystem access or crawling and preserves genuine operator decisions and merge holds.
 These responsibilities use existing task operations, with no broadcast, runtime classifier or
 memory store. Project-local authority, proposal checkpoints, merge holds and verified recovery
 remain governed by the existing boundaries.
@@ -1655,10 +1649,6 @@ same project-bound coordinator transport. The task's `ci_recheck` record binds i
 worker/session and lifecycle request identities, selected run, due time, budgets, evidence and L3
 receipt. The existing tick/keyed executor owns IO; `resume_after` and `daemon_request` retain their
 ordinary lifecycle meaning. A lifecycle change invalidates further probe actions.
-L3 reports a schedule in project chat or retains it in project tracking, without a task-message
-acknowledgement that wakes the blocked owner and invalidates its probe. Necessary coordination
-that changes lifecycle replaces the old promise with a named next actor and trigger; a renewed CI
-wait needs registration against the current block and verification of the saved next action/time.
 The daemon prefers a relevant fresh run of the same workflow, branch, event and PR identity from
 the latest twenty runs. Otherwise a probe on a fault-blocked task submits one rerun of the selected
 project-origin run after persisting its baseline attempt and submission intent; a probe on a task
