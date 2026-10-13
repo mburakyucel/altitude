@@ -310,8 +310,12 @@ def incident_repository() -> str | None:
 def validate_incident_repository(value) -> None:
     if value is None or value is False:
         return
-    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", value):
-        raise ValueError("the incident repository must be a GitHub owner/name")
+    if isinstance(value, str):
+        owner, separator, name = value.partition("/")
+        allowed = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-"
+        if separator and owner and name and all(character in allowed for part in (owner, name) for character in part):
+            return
+    raise ValueError("the incident repository must be a GitHub owner/name")
 
 
 def validate_projects_folder(value) -> None:
