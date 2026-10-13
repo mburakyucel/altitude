@@ -641,7 +641,7 @@ class TestOperatorGrant(AltitudeCase):
         self.assertEqual(json.loads(result.stdout)["actor"], "l3")
 
     def test_transient_unit_keeps_the_bus_the_limit_the_owner_identity_and_its_own_record(self):
-        env = engines.codex_env(dispatch.l2_env(self.project, self.slug, 1), retain_user_bus=True)
+        env = engines.launch_env(dispatch.l2_env(self.project, self.slug, 1), retain_user_bus=True)
         argv = platform.logged_job_command("altitude-machine-x-1.service", "systemctl --user daemon-reload",
                                                 log=self.tmp / "machine.log", status=self.tmp / "unit.exit",
                                                 env=env, timeout=config.MACHINE_COMMAND_TIMEOUT)

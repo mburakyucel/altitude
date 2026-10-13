@@ -17,6 +17,11 @@ SHORT_MINUTES = 5 * 60
 FRESH_SECONDS = 1800
 
 
+def quota_file(engine: str) -> str:
+    """The persisted seat reading the unattended refresh writes for this engine."""
+    return {"claude": QUOTA_CLAUDE, "codex": QUOTA_CODEX}[engine]
+
+
 def quota_codex() -> dict:
     """The persisted Codex seat reading. ``known`` requires a snapshot no older than 30 minutes; an
     older one keeps its figures and is marked ``stale`` so a page can show an old number as old."""

@@ -29,7 +29,7 @@ class TaskToolCache(AltitudeCase):
 
     def test_both_platforms_and_engines_launch_resume_and_report_failure_with_writable_caches(self):
         make_repo(self.repo)
-        self.patch(engines.common, "_codex_processes", {})
+        self.patch(engines.common, "_worker_processes", {})
         self.patch(engines.claude, "claude_agents", return_value=[])
         self.patch(platform, "job_active", return_value=False)
         for host in ("linux", "darwin"):
@@ -85,7 +85,7 @@ class TaskToolCache(AltitudeCase):
                                            "XDG_CACHE_HOME":"/unwritable/service-cache", "PIP_CACHE_DIR":"/unwritable/pip"})
                             self.assertEqual(result["returncode"], 0, result)
                             worker_id = result["agent"]["id"]
-                            process = engines.common._codex_processes.get(worker_id)
+                            process = engines.common._worker_processes.get(worker_id)
                             if process is not None:
                                 process.wait(timeout=5)
                             row = engines.worker(engine, {"agent_id":worker_id}, job_root=root)

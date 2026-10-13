@@ -99,7 +99,7 @@ class TestAvailability(AltitudeCase):
         self.assertEqual(result["text"], "")
 
     def test_a_task_owner_ending_on_a_revoked_sign_in_has_the_same_rejection(self):
-        paths = engines.common._codex_paths(self.tmp, "claude")
+        paths = engines.common._worker_paths(self.tmp, "claude")
         S.write_json(paths["record"], {"engine": "claude", "unit": "owned.service", "started_at": S.now(),
                                        "launch_model": "opus"})
         paths["stderr"].write_text("")
@@ -200,7 +200,7 @@ class TestFailureEvidence(AltitudeCase):
             ("codex", {"type": "thread.started", "thread_id": "session"},
              {"type": "turn.failed", "error": {"code": "model_not_found", "message": "missing"}}),
         ):
-            paths = engines.common._codex_paths(self.tmp, engine)
+            paths = engines.common._worker_paths(self.tmp, engine)
             S.write_json(paths["record"], {"engine": engine, "unit": "owned.service", "started_at": S.now(),
                                            "launch_model": "fable", "resume": True})
             paths["stderr"].write_text("")

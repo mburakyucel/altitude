@@ -205,7 +205,7 @@ class TestEffortCommand(AltitudeCase):
     def test_claude_worker_fresh_and_resume_honor_effort_without_inherited_override(self):
         self.quiet_engines()
         self.patch(platform, "job_active", return_value=False)
-        self.patch(engines.common, "_codex_processes", {})
+        self.patch(engines.common, "_worker_processes", {})
         self.setenv("CLAUDE_CODE_EFFORT_LEVEL", "low")
         for resume in (False, True):
             for effort in (None, "medium", "xhigh", "max"):

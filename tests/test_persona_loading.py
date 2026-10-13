@@ -116,7 +116,7 @@ class PersonaLoading(AltitudeCase):
         for role in ("l1", "l2", "l3"):
             (self.personas / f"{role}.md").write_text((config.PERSONAS / f"{role}.md").read_text())
         self.patch(config, "PERSONAS", self.personas)
-        self.patch(engines.common, "_codex_processes", {})
+        self.patch(engines.common, "_worker_processes", {})
         self.patch(platform, "job_active", return_value=False)
         self.patch(engines.common, "window_hold", return_value=None)
         self.processes = []

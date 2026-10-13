@@ -156,7 +156,7 @@ class TaskTokenUsage(AltitudeCase):
 
     def test_cumulative_task_consumption_is_never_context_occupancy(self):
         self.launch(engine="codex")
-        self.patch(engines, "codex_worker", return_value={"usage": {"input_tokens": 5_000_000}})
+        self.patch(engines, "owned_worker", return_value={"usage": {"input_tokens": 5_000_000}})
         row = next(row for row in server.monitor.sessions() if row.get("slug") == self.slug)
         self.assertIsNone(row["context_percent"])
 

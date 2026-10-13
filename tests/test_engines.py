@@ -39,7 +39,7 @@ class TestForegroundUnits(AltitudeCase):
         self.settings.write_text('{"modelSettings":{"fable":{"maxTokens":1000}}}')
         self.persona = self.tmp / "persona.md"
         self.persona.write_text("Worker instructions")
-        self.patch(engines.common, "_codex_processes", {})
+        self.patch(engines.common, "_worker_processes", {})
 
     def launch(self, *, resume=False, model=None):
         kw = dict(cwd=self.repo, persona=self.persona, model=model, settings=self.settings,
@@ -92,7 +92,7 @@ class TestForegroundUnits(AltitudeCase):
                     self.assertFalse(any(arg.startswith("DBUS_SESSION_BUS_ADDRESS=") for arg in child))
                     driver = engines.common._driver_command()
                     self.assertEqual(child[-len(driver):], driver)
-                    spec = json.loads(engines.common._codex_processes[row["id"]].stdin.getvalue())
+                    spec = json.loads(engines.common._worker_processes[row["id"]].stdin.getvalue())
                     cli = spec["command"]
                     self.assertEqual(cli[0], config.CLAUDE_BIN)
                     self.assertEqual(cli[cli.index("--input-format") + 1], "stream-json")
@@ -233,7 +233,7 @@ print(json.dumps({"type": "result", "is_error": error, "result": detail}), flush
         record = S.read_json(next(self.job_root.glob("*.json")))
         self.assertTrue(record["stopped"])
         self.assertEqual(run.call_args.args[0], [platform.SYSTEMCTL, "--user", "stop", record["unit"]])
-        self.assertNotIn(record["id"], engines.common._codex_processes)
+        self.assertNotIn(record["id"], engines.common._worker_processes)
 
     def test_incident_171446_launch_and_resume_stop_only_the_named_orphan_first(self):
         rows = [{"id": "orphan", "name": "project/worker-1", "state": "working"},
@@ -278,7 +278,7 @@ print(json.dumps({"type": "result", "is_error": error, "result": detail}), flush
                         engines.claude_stop("old")
 
     def test_incident_171446_failure_time_survives_later_record_writes(self):
-        paths = engines.common._codex_paths(self.job_root, "worker")
+        paths = engines.common._worker_paths(self.job_root, "worker")
         S.write_json(paths["record"], {"engine": "claude", "unit": "owned.service"})
         paths["stdout"].write_text('{"type":"result","is_error":true,"result":"resets 8pm"}\n')
         paths["stderr"].write_text("")
@@ -289,7 +289,7 @@ print(json.dumps({"type": "result", "is_error": error, "result": detail}), flush
         self.assertEqual(engines.worker_detail("claude", row)[1].timestamp(), 100)
 
     def test_incident_171446_stop_uses_the_owned_unit_and_refuses_live_descendants(self):
-        paths = engines.common._codex_paths(self.job_root, "worker")
+        paths = engines.common._worker_paths(self.job_root, "worker")
         unit = engines.claude._claude_unit("worker")
         S.write_json(paths["record"], {"engine": "claude", "id": "worker", "unit": unit})
         for alive in (True, False):
@@ -334,7 +334,7 @@ class TestWorkerTokenInput(AltitudeCase):
     def setUp(self):
         super().setUp()
         self.patch(engines.common, "github_token", return_value=self.TOKEN)
-        self.patch(engines.common, "_codex_processes", {})
+        self.patch(engines.common, "_worker_processes", {})
         self.patch(engines.claude, "claude_agents", return_value=[])
         self.patch(platform, "job_active", return_value=True)
         self.fake_engines()

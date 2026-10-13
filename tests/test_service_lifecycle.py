@@ -46,7 +46,7 @@ class TestDecision11WorkerContinuity(AltitudeCase):
         outputs = {}
         for task in tasks:
             engine = task["l2_engine"]
-            paths = engines.common._codex_paths(dispatch.l2_job_root(self.project, task["slug"]), task["agent_id"])
+            paths = engines.common._worker_paths(dispatch.l2_job_root(self.project, task["slug"]), task["agent_id"])
             S.write_json(paths["record"], {"id": task["agent_id"], "session_id": task["session_id"],
                                           "engine": engine, "name": task["slug"], "pid": 1002,
                                           "unit": f"test-{engine}.service", "started_at": S.now(),
@@ -57,7 +57,7 @@ class TestDecision11WorkerContinuity(AltitudeCase):
             paths["stderr"].write_text("")
             outputs[engine] = paths["stdout"]
         # I-20260907-171446: replacement altd adopts both engines from records and units, without registry polling.
-        with mock.patch.dict(engines.common._codex_processes, {}, clear=True), \
+        with mock.patch.dict(engines.common._worker_processes, {}, clear=True), \
              mock.patch.object(engines, "claude_agents", side_effect=AssertionError("unexpected registry polling")), \
              mock.patch.object(platform, "job_active", return_value=True) as unit_active:
             self.assertEqual(dispatch.poll(self.project), [])
@@ -99,7 +99,7 @@ class TestDecision11WorkerContinuity(AltitudeCase):
         self.assertEqual(T.pending(self.project, task["slug"]), [])
 
     def test_decision_11_worker_path_resolves_the_deployment_cli(self):
-        for env in (engines.clean_env(), engines.codex_env()):
+        for env in (engines.clean_env(), engines.launch_env()):
             self.assertEqual(shutil.which("alt", path=env["PATH"]), str(config.REPO / "bin" / "alt"))
 
 

@@ -10,9 +10,9 @@ class TestContextWindow(AltitudeCase):
     def test_umbrella_numbers(self):
         self.assertEqual(config.CONTEXT_WINDOW, 1_000_000)
         self.assertEqual(config.AUTOCOMPACT_WINDOW, 300_000)
-        self.assertEqual(engines.context_percent(300_000), 30.0)
-        self.assertEqual(engines.context_state(30.0), "act")
-        self.assertEqual(engines.context_state(6.3), "ok")
+        self.assertEqual(engines.context_percent(300_000, "claude"), 30.0)
+        self.assertEqual(engines.context_state(30.0, "claude"), "act")
+        self.assertEqual(engines.context_state(6.3, "claude"), "ok")
 
     def test_every_launch_states_the_window_explicitly(self):
         self.setenv("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", "30")  # a stray override in the parent must not reach children

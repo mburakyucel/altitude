@@ -17,7 +17,7 @@ from .. import config, platform, state as S
 from . import common
 
 
-def _claude_quota() -> dict:
+def read_quota() -> dict:
     """Read live-only /usage rows (CLI 2.1.277+), never cached control-API windows."""
     from .. import route
     unknown = {"known": False, "why": "No live plan quota: /usage requires CLI 2.1.277+ and subscription login"}
@@ -360,8 +360,8 @@ def claude_print(prompt: str, *, cwd: Path, resume: str | None = None, persona: 
     unit = _claude_unit(f"sync-{uuid.uuid4().hex}")
     driver = common._driver_command()
     if durable_timeout or sends is not None:
-        driver = platform.job_command(unit, driver, common.codex_env(env), runtime_max=timeout, writable=writable)
-        env = common.codex_env(env, retain_user_bus=True)
+        driver = platform.job_command(unit, driver, common.launch_env(env), runtime_max=timeout, writable=writable)
+        env = common.launch_env(env, retain_user_bus=True)
     else:
         driver = platform.confined(driver, writable)
     # prompt goes through the driver's input: --allowedTools is variadic and would swallow a positional prompt
@@ -633,9 +633,12 @@ CLAUDE_RESULT_FACTS = {
 }
 
 
-def _review_result_facts(record: dict) -> dict:
-    """#665: the fixed failure facts a Claude result carries, so a failure that matches no category still says
+def review_result_facts(records: list[dict]) -> dict:
+    """#665: the fixed failure facts the final result carries, so a failure that matches no category still says
     where it ended (setup, API status, error kind) without its prose."""
+    record = next((record for record in reversed(records) if record.get("type") == "result"), None)
+    if record is None:
+        return {}
     facts = {key: (record[key] if record[key] in allowed else "unknown")
              for key, allowed in CLAUDE_RESULT_FACTS.items() if isinstance(record.get(key), str)}
     status = record.get("api_error_status")
@@ -759,19 +762,14 @@ def review_input(prompt, images):
 
 
 def token_numbers(usage):
-    def number(key):
-        value = usage.get(key)
-        return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
-
-    reads, writes = number("cache_read_input_tokens"), number("cache_creation_input_tokens")
-    plain = number("input_tokens")
+    """Messages are repeated streaming snapshots; inclusive input is input + cache read + cache write."""
+    plain, reads, writes, outputs = (common._token_count(usage.get(key)) for key in (
+        "input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "output_tokens"))
     inputs = sum(v for v in (plain, reads, writes) if v is not None) if any(v is not None for v in (plain, reads, writes)) else None
-    details = usage.get("output_tokens_details") or {}
-    reasoning = details.get("thinking_tokens") if isinstance(details, dict) else None
-    return {**dict(zip(common._TOKEN_FIELDS, (inputs, number("output_tokens"), reads, writes,
-                                     reasoning if isinstance(reasoning, int) and not isinstance(reasoning, bool) and reasoning >= 0 else None))),
-            "incomplete": inputs is None or number("output_tokens") is None or
-                          (plain is None or reads is None or writes is None)}
+    details = usage.get("output_tokens_details")
+    reasoning = common._token_count(details.get("thinking_tokens")) if isinstance(details, dict) else None
+    return {**dict(zip(common._TOKEN_FIELDS, (inputs, outputs, reads, writes, reasoning))),
+            "incomplete": None in (plain, reads, writes, outputs)}
 
 
 def token_sources(home, owners, register):
@@ -790,8 +788,7 @@ def token_sources(home, owners, register):
 
 def token_event(path, sid, kind, row, file, event, offset):
     at = event.get("timestamp")
-    payload = event.get("payload") or {}
-    values, key, turn = None, None, None
+    values, key = None, None
     if kind == "messages" and event.get("type") == "assistant":
         parent = row["parent_session_id"] or sid
         identity = event.get("sessionId") or event.get("session_id")
@@ -821,8 +818,6 @@ def context_window():
 
 
 def event_error(event):
-    if event.get("type") in ("error", "turn.failed"):
-        return event.get("error") or event.get("message") or event
     if event.get("type") == "result" and event.get("is_error"):
         return {key: event.get(key) for key in ("error", "errors", "result", "api_error_status")}
     message = event.get("message") or {}
@@ -843,8 +838,6 @@ def rejection_flags(text, said, model, auth, model_missing):
 
 def safe_event(event):
     typ = event.get("type")
-    if typ in ("thread.started", "turn.started", "turn.failed", "error"):
-        return True
     if typ == "system" and event.get("subtype") in ("init", "status", "api_retry"):
         return True
     if typ == "result":
@@ -857,7 +850,7 @@ def safe_event(event):
 
 
 def worker_events(path):
-    events = common._codex_events(path)
+    events = common._read_events(path)
     # I-20260907-171446: read the owned CLI's actual result/error, not the shared daemon registry.
     return [{"type": "thread.started", "thread_id": e.get("session_id"), "model": e.get("model")}
             if e.get("type") == "system" and e.get("subtype") == "init" else
@@ -872,6 +865,16 @@ IMAGE_READER = 'Read'
 EFFORT_ENV = "CLAUDE_CODE_EFFORT_LEVEL"
 NATIVE_SEND = True
 AUTO_ROTATION = True
+WINDOW_HOLD = True  # an exhausted window is recorded machine-wide until its reset
+NESTED_ENV_PREFIXES = ("CLAUDE",)  # a nested launch must not inherit the parent session's variables
+REVIEW_ENV = ()
+TRANSCRIPT_IN_JOB = False
+STATUS_EVENTS = ("system", "rate_limit_event")  # background-task and status notices, not turn activity
+session_context_source = _claude_path
+
+
+def worker_record(env):
+    return {}
 
 def binary():
     return config.CLAUDE_BIN
@@ -899,7 +902,7 @@ def legacy_worker(task):
         raise RuntimeError("Worker unit identity is unavailable")
     unit = _claude_unit(job["name"])
     transcript = next((config.HOME / ".claude/projects").glob(f"*/{task['session_id']}.jsonl"), None)
-    alive = platform.job_active(unit, common.codex_env(retain_user_bus=True)) and transcript is not None
+    alive = platform.job_active(unit, common.launch_env(retain_user_bus=True)) and transcript is not None
     state = job.get("state") if job.get("state") in ("done", "failed", "stopped") else "working" if alive else "failed"
     detail, at = claude_job_detail(task["agent_id"])
     return {"id": task["agent_id"], "sessionId": task["session_id"], "unit": unit,
@@ -913,7 +916,7 @@ def stop_legacy_worker(worker_id):
     if not isinstance(job, dict) or not isinstance(job.get("name"), str) or not job["name"].strip():
         raise RuntimeError("Worker ownership record is unavailable; stop is unconfirmed")
     note = claude_stop(worker_id)
-    if platform.job_active(_claude_unit(job["name"]), common.codex_env(retain_user_bus=True)):
+    if platform.job_active(_claude_unit(job["name"]), common.launch_env(retain_user_bus=True)):
         raise RuntimeError(f"Worker {worker_id} is still running after stop")
     return note
 

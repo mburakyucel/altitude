@@ -197,7 +197,7 @@ class TestEngineDriver(AltitudeCase):
         events = [call.args[0] for call in driver.emit.call_args_list]
         self.assertEqual([event["type"] for event in events], ["item.completed"] * 4 + ["turn.completed"])
         self.assertEqual(engines.common._agent_messages(events), ["Checking.", "Finished."])
-        self.assertEqual(engines.common._codex_usage(events), {"input_tokens": 200})
+        self.assertEqual(engines.common._event_usage(events), {"input_tokens": 200})
 
     def test_poll_keeps_waiting_owner_then_recovers_its_actual_clean_exit(self):
         self.private_ledgers()
@@ -206,7 +206,7 @@ class TestEngineDriver(AltitudeCase):
                     hold_merge="Review before merge")
         S.save_task(self.project, task)
         root = dispatch.l2_job_root(self.project, task["slug"])
-        paths = engines.common._codex_paths(root, "worker")
+        paths = engines.common._worker_paths(root, "worker")
         S.write_json(paths["record"], {"id": "worker", "engine": "codex", "unit": "fixture.service",
                                       "session_id": "fake-thread", "started_at": S.now()})
         paths["stderr"].write_text("")
