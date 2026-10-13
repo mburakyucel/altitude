@@ -1788,7 +1788,8 @@ class NamespacePath:
 
 @contextmanager
 def namespace_path(root: int, base: Path, path: Path, places: tuple[str, ...], anchors: tuple[Path, ...],
-                   *, parent=None, limit: int | None = None, real: bool = False, open_leaf: bool = True):
+                   *, parent=None, limit: int | None = None, real: bool = False, open_leaf: bool = True,
+                   clamp_root: bool = False):
     """Normalize within a pinned namespace; links never cause an unchecked target lookup."""
     flags = directory_search_access() | os.O_DIRECTORY | os.O_NOFOLLOW
     frames = []
@@ -1831,7 +1832,7 @@ def namespace_path(root: int, base: Path, path: Path, places: tuple[str, ...], a
                 continue
             if part == "..":
                 if len(frames) == 1:
-                    if real and base == Path("/"):
+                    if clamp_root:
                         continue
                     raise ValueError("website path leaves its root")
                 pop()
@@ -1966,7 +1967,7 @@ def inspected_path(path: Path, *, limit: int | None, real: bool = True, open_lea
     root = os.open("/", directory_search_access() | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         with namespace_path(root, Path("/"), Path(*absolute.parts[1:]), places, (Path("/"),),
-                            limit=limit, real=real, open_leaf=open_leaf) as inspected:
+                            limit=limit, real=real, open_leaf=open_leaf, clamp_root=True) as inspected:
             yield inspected
     finally:
         os.close(root)
@@ -1979,7 +1980,7 @@ def inspected_child(parent: NamespacePath, name: str, *, inherited_links: int, o
         raise ValueError("not a directory entry name")
     with namespace_path(parent.frames[0][1], Path("/"), Path(name), private_places(), (Path("/"),),
                         parent=replace(parent, links=inherited_links), limit=folder_link_limit(),
-                        real=True, open_leaf=open_leaf) as inspected:
+                        real=True, open_leaf=open_leaf, clamp_root=True) as inspected:
         yield inspected
 
 

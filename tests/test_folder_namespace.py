@@ -12,6 +12,12 @@ from altitude import config, platform, server
 
 
 class FolderNamespace(FolderCase):
+    def test_folder_normalization_keeps_posix_parent_at_filesystem_root(self):
+        path = Path("/.." + str(self.home / "Projects"))
+        self.assertEqual(path.resolve(), self.home / "Projects")
+        self.assertEqual(server.folders(str(path))["path"], str(self.home / "Projects"))
+        config.validate_projects_folder(str(path))
+
     def chain(self, parent, count, target, prefix="link"):
         for index in reversed(range(count)):
             (parent / f"{prefix}{index}").symlink_to(target if index == count - 1 else f"{prefix}{index + 1}")
