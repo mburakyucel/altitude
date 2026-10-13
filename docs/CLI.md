@@ -142,8 +142,10 @@ and an unchanged effective selection creates no attempt. The confirmed selection
 preparation and dispatch, independent of later defaults. Project and global Settings stay unchanged.
 Unanswered decisions precede contextual transfer controls; quota offers use a secondary **Change model…** button.
 A usage-limit stop also offers switching beside its explanation. Confirmation warns that some session
-context may not carry over and the new engine uses extra tokens to get up to speed. A conversation card
-keeps **Switch now** and **Cancel switch** visible during preparation; neither a slow response nor a
+context may not carry over and the new engine uses extra tokens to get up to speed. Opening or browsing the chooser requests nothing. A conversation card
+names who started the switch (the operator, or the coordinator with its `--reason`) and keeps
+**Switch now** and **Cancel switch** visible during preparation; the model button then leads to that
+card instead of the chooser; neither a slow response nor a
 disconnection imposes a cutoff. **Check status** reconciles an uncertain submission without repeating it.
 
 L3 or the operator can transfer a running or stopped owner to a fresh attempt on another configured engine:
