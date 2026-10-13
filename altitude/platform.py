@@ -247,10 +247,14 @@ def container_git_guards() -> tuple[Path, Path, str] | None:
 def require_container_project(inspected, *, folder: bool = False) -> None:
     """Chooser containment compares inspected addresses, never an unchecked pre-resolution."""
     if containerized():
-        with inspected_path(CONTAINER_PROJECTS, limit=None, real=False) as volume:
+        with inspected_path(CONTAINER_PROJECTS, limit=None, real=False, open_leaf=False) as volume:
             target, root = inspected.address, volume.address
-            if not directory_type(volume) or not target.is_relative_to(root) or not folder and target == root:
+            if not target.is_relative_to(root) or not folder and target == root:
                 raise ValueError("Choose a project folder inside the container's /home/altitude/Projects volume")
+            target_info = inspected.frames[len(root.parts) - 1][2]
+            if ((volume.info is None) != (target_info is None) or
+                    volume.info is not None and _path_identity(volume.info) != _path_identity(target_info)):
+                raise ValueError("Container projects volume changed during inspection")
 
 
 def _container_instance() -> str:

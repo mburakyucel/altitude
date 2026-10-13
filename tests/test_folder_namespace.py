@@ -284,6 +284,29 @@ class FolderNamespace(FolderCase):
             with config.add_project("volume-root", path=self.home / "Projects"):
                 pass
 
+    def test_missing_container_root_remains_a_configured_unavailable_root(self):
+        volume = self.home / "not-created"
+        self.patch(platform, "containerized", return_value=True)
+        self.patch(platform, "CONTAINER_PROJECTS", volume)
+        self.assertEqual(config.project_roots(), [volume])
+        with self.assertRaisesRegex(ValueError, "not a directory"):
+            config.validate_projects_folder(str(volume))
+
+    def test_container_volume_replacement_cannot_relabel_an_old_namespace(self):
+        volume = self.home / "Projects"
+        child = volume / "repository"
+        child.mkdir()
+        self.patch(platform, "containerized", return_value=True)
+        self.patch(platform, "CONTAINER_PROJECTS", volume)
+        moved = self.home / "old-volume"
+        with platform.inspected_path(child, limit=None, open_leaf=False) as inspected:
+            volume.rename(moved)
+            volume.mkdir()
+            with self.assertRaisesRegex(ValueError, "volume changed"):
+                platform.require_container_project(inspected)
+        volume.rmdir()
+        moved.rename(volume)
+
     def test_descriptor_cleanup_includes_partial_dup_failure(self):
         original_dup, original_close = os.dup, os.close
         duplicates, closed = [], []
