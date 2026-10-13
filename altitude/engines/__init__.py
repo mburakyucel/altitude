@@ -108,7 +108,7 @@ from .codex import (
     codex_exec,
 )
 
-from .common import _shell_command
+from .common import _safe_output, _shell_command
 
 INSTALL = {engine: native.INSTALL_COMMAND for engine, native in (("claude", claude), ("codex", codex))}
 SIGN_IN = {engine: native.SIGN_IN for engine, native in (("claude", claude), ("codex", codex))}
