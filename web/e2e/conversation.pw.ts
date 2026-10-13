@@ -78,7 +78,7 @@ function views(page: Page, info: TestInfo) {
     stop: main.getByRole("button", { name: "Stop voice input", exact: true }),
     cancel: main.getByRole("button", { name: "Cancel voice input", exact: true }),
     hint: main.locator(".composer-hint"),
-    pill: main.getByRole("button", { name: /^L3 model: / }),
+    pill: main.getByRole("link", { name: "Model settings", exact: true }),
     loading: convo.getByLabel("Loading", { exact: true }),
     lines: convo.locator(".sys-line"),
     bubble: (text: string) => convo.locator(".bubble", { hasText: text }),
@@ -572,55 +572,21 @@ test("busy: the arrow queues, the queued row with Remove, the typing indicator, 
   expect(removed).toEqual(["ui-q1"]);
 });
 
-test("the L3 model button: Auto, the Models dialog on L3, the choice posts and is read back", async ({ page, request }, info) => {
+test("the model shortcut opens global Settings and Back preserves the chat draft", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const v = views(page, info);
-  const read = async () => (await (await request.get(`/api/defaults/${project.name}`)).json()) as {
-    l3_choice: Record<string, string> | null; models: { engine: string; model: string | null; label: string }[];
-    efforts: Record<string, { value: string; label: string }[]>; engines: { value: string }[] };
-  const initial = await read();
-  // The engine the fixture can run, so the choice is in use rather than unavailable.
-  const model = initial.models.find((row) => row.engine === initial.engines[0]!.value && row.model)!;
-  const effort = initial.efforts[model.engine]!.at(-1)!;
-  const dialog = page.getByRole("dialog", { name: `Models · L3 · ${project.name} only`, exact: true });
-  const use = dialog.getByRole("button", { name: `Use for L3 in ${project.name}`, exact: true });
-  const posts: unknown[] = [];
-  page.on("request", (req) => { if (new URL(req.url()).pathname === "/api/defaults" && req.method() === "POST") posts.push(req.postDataJSON()); });
-
   await walk.open(project.path);
-  await walk.state("01-auto", { visible: [v.pill, v.field], hidden: [dialog] });
-  await expect(v.pill).toHaveAccessibleName("L3 model: Auto");
-  await expect(v.pill).toHaveText("L3 · Auto");
-  await walk.state("02-models-on-l3", {
-    action: () => v.pill.click(),
-    visible: [dialog, dialog.getByRole("tab", { name: /^L3/, selected: true }), dialog.getByRole("radio", { name: /^Auto/ })],
-    hidden: [dialog.getByRole("button", { name: "Back to Auto", exact: true })],
-  });
-  await expect(dialog.getByRole("radio", { name: /^Auto/ })).toBeChecked();
-  await expect(use).toBeDisabled();
-  await dialog.getByRole("radio", { name: new RegExp(`^${model.label}`) }).check();
-  await dialog.getByRole("radio", { name: effort.label, exact: true }).check();
-  await walk.state("03-chosen", {
-    action: () => use.click(), visible: [v.pill], hidden: [dialog],
-  });
-  await expect(v.pill).toHaveAccessibleName(`L3 model: ${model.label} · ${effort.label}`);
-  await expect(v.pill).toBeFocused();
-  expect((await read()).l3_choice).toEqual({ engine: model.engine, model: model.model, effort: effort.value });
-  await page.reload();
-  await expect(v.pill).toHaveAccessibleName(`L3 model: ${model.label} · ${effort.label}`);
+  await v.field.fill("Keep this unsent model question");
+  await walk.state("01-model-settings-shortcut", { visible: [v.pill, v.field], hidden: [page.getByRole("dialog")] });
   await v.pill.click();
-  await expect(dialog.getByRole("radio", { name: new RegExp(`^${model.label}`) })).toBeChecked();
-  await walk.state("04-back-to-auto", {
-    action: () => dialog.getByRole("button", { name: "Back to Auto", exact: true }).click(),
-    visible: [v.pill], hidden: [dialog],
-  });
-  await expect(v.pill).toHaveAccessibleName("L3 model: Auto");
-  expect((await read()).l3_choice).toBeNull();
-  expect(posts).toEqual([
-    { project: project.name, setting: "l3_choice", value: { engine: model.engine, model: model.model, effort: effort.value }, expected: null },
-    { project: project.name, setting: "l3_choice", value: null, expected: { engine: model.engine, model: model.model, effort: effort.value } },
-  ]);
+  const heading = page.getByRole("heading", { name: "Models and effort · All projects", exact: true });
+  await walk.state("02-global-settings", { visible: [heading], hidden: [page.getByRole("dialog")] });
+  await expect(page).toHaveURL(/\/settings#models$/);
+  await expect(heading).toBeFocused();
+  await page.goBack();
+  await walk.state("03-back-to-unsent-draft", { visible: [v.pill, v.field], hidden: [heading] });
+  await expect(v.field).toHaveValue("Keep this unsent model question");
 });
 
 /** The browser's fake microphone, which the test can hold while it opens (`window.fixtureMicGate`). On the

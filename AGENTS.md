@@ -43,7 +43,11 @@ on the required CI. The PR merges with `Addresses #N`, and the issue closes once
 records the evidence. By the operator's decision of 2026-10-10, L3 comments, labels and closes these
 issues, filing one when the change has none, as [pending device
 verification](docs/DEVELOPMENT.md#pending-device-verification) describes. Linux merge checks and holds
-are unchanged. By the operator's decisions of 2026-10-09 and 2026-10-10, the early preview supports
+are unchanged. A task completes when its own installation's authorized work and required checks are
+satisfied. Verification owed only by the other installation stays on the change's issue for that
+installation; it does not hold local task completion or require the operator to route the work.
+Explicit acceptance and release gates still apply, and Linux evidence does not establish Mac
+acceptance. By the operator's decisions of 2026-10-09 and 2026-10-10, the early preview supports
 Linux with a systemd user manager and macOS 15 or newer, validated on Ubuntu 24.04 x86_64 and Apple
 silicon; the [roadmap](docs/ROADMAP.md#native-macos-runtime) lists the native confirmation still open.
 

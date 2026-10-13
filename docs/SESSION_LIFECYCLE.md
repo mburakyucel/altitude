@@ -55,7 +55,7 @@ queued tasks and later fresh attempts. Default remains High on Codex and native 
 `native` removes the override. Auto excludes engines that cannot accept an explicit level;
 unsupported pins refuse. Model compatibility and provider effort caps are separate from the
 configured intent. Messages and resumes keep saved `launch_effort`, `launch_model`, attempt and
-conversation even when project defaults, routing or native configuration change; a resume with no
+conversation even when global model/effort defaults, project overrides, routing or native configuration change; a resume with no
 saved override stays native. Provider effort failures remain launch/turn failures without an
 application downgrade or engine switch. Observations never become requested settings and start
 unknown on each resumed turn.
@@ -857,7 +857,7 @@ crossed an unexpected daemon exit, it reports a real recovery fault instead of r
    systemd's `inactive` result with exit code 4 confirms a collected transient unit has ended.
    Unknown or unavailable status refuses the launch and preserves the claimed inbox for recovery;
 4. the attempt's original engine, provider conversation and recorded `launch_model` are resumed with the
-   inbox text (or "Continue from your progress file."); changed Auto preferences and project defaults do not
+   inbox text (or "Continue from your progress file."); changed Auto preferences, global model/effort defaults and project overrides do not
    alter that attempt. The replacement worker is bound atomically; a superseded bind stops the unowned
    worker and keeps the newer question. Launch failures and uncertain worker ownership retain incident
    evidence without changing a newer question's wait. A genuine

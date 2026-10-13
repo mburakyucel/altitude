@@ -209,7 +209,7 @@ hard-codes one, and one configured engine means one row.
 | Needs you badge | unanswered operator questions plus operational attention items across projects; hidden at known zero; unknown or stale reads are explicit |
 | Unmanaged folders line | N folders found in the projects folder; click opens First run for the picked folder; hidden at zero |
 | Engine readout | one row per engine: name, "N% of week", a 4px meter; the meter turns `--danger` past the 70% reserve line; "no reading" in muted text when `quota.known` is false; "reading 2h old" appended when `stale` |
-| New tasks | "New tasks · Auto", "New tasks · Fable · High", or "New tasks · Fable unavailable · Auto meanwhile" with a chevron, under the engine readout because quota belongs to the account; tinted while a choice is active; opens the Models dialog on its Tasks tab (§3.6.1); disabled while the overview loads |
+| New tasks | "New tasks · Auto", "New tasks · Fable · High", or "New tasks · Fable unavailable · Auto meanwhile" with a chevron, under the engine readout because quota belongs to the account; tinted while a choice is active; opens global model and effort Settings (§3.6.1); disabled while the overview loads |
 | Operator row | name from configuration; theme toggle (light default, dark, persisted per browser) |
 
 ### 3.2 Project header
@@ -229,7 +229,7 @@ The phone combines project identity and a short **L3 Ready / Answering / Handlin
 single 54px shell header. The project name opens the switcher; a non-Auto pin stays named in the
 compact status. There is no second status row. The three dots open the same project actions menu as
 desktop, above any keyboard. L3's model choice is the button under the message box (§3.6.1); default
-models, routing and removal live on the project's Settings page (§3.15).
+models and effort live in global Settings; routing and removal live on the project's Settings page (§3.15).
 A healthy project's header holds no Setup control. **Setup…** in the overflow menu always opens the
 configuration checklist without replacing the conversation or draft; the header shows Setup only
 while setup needs attention (§3.12).
@@ -722,48 +722,17 @@ The approved [image interaction contract](IMAGE_INPUT.md) explains retention and
 agent delivery. `web/e2e/image-input.pw.ts` drives these states with real storage/API and deterministic
 engine fixtures at 390×844 and 1440×900; named screenshots live in `web/ui-artifacts/results/image-input*`.
 
-### 3.6.1 Models dialog
+### 3.6.1 Model settings shortcuts
 
-One dialog chooses a model and effort ahead of routing, for two scopes, each where it lives. The **L3**
-button under the message box describes who answers what is typed there and opens the dialog on
-**L3 · <project> only**; the **New tasks** control beside the quota (rail, phone Monitor and Work) opens
-it on **Tasks · All projects**. Outside a project only the Tasks tab exists. Each tab's label says how
-far it reaches; the tabs are a tab list, and arrow keys, Home and End switch them. The dialog's name
-includes the open tab. On phone it is a bottom sheet; on desktop a centered dialog.
+The coordinator model button under the composer and the New tasks shortcut beside quota open
+**Settings → Models and effort · All projects** (§3.15), preserving Back navigation and the chat
+draft. They do not open a second editor or create a project model choice. The selected/requested
+model and effort remain distinct from the last reply's reported values; missing observations say
+not reported. The single global editor uses engine-owned names and options, including **6.1 Sol**
+(`gpt-6.1-sol`), without claiming access from a shared account allowance.
 
-Each tab starts with **In use: <choice>** and its scope: "who answers you in <project>'s chat", or
-"every project; tasks that start from now, including queued ones. Started tasks keep theirs." The
-models are a radio group: **Auto** (project routing and defaults), each alias and engine default the
-engine seam names with its engine, and **Other model…** with an engine and an exact model id (no
-spaces). **Effort** is a radio group of Default and the levels the chosen model's engine accepts; Auto
-offers every engine's levels and requests that effort on whichever engine routing picks. Focus starts
-on the current choice. The dialog holds one unsaved choice, owned by the open tab: switching tabs or
-closing drops it, and the tab shows its saved value again.
-
-**Use for L3 in <project>** or **Use for all new tasks** saves the model and effort together, only for
-that tab, and closes the dialog; the closed control then shows the new value. It is enabled only for
-a changed, valid choice. **Back to Auto**, shown while a choice is saved, removes it in one tap.
-The L3 tab says "Applies from L3's next reply." with the last reply's reported model and effort. The
-Tasks tab says that each project's Auto picks while the chosen model is unavailable, lists every
-project whose **Only <engine>** routing keeps its tasks elsewhere ("harbor runs tasks only on Codex,
-so it keeps its Codex model. Change", linking to its Routing), and ends with the hint "For one task,
-tell L3: “use Opus at Max for this”." With a saved L3 choice, the L3 tab adds "When <model> is
-unavailable, Auto answers instead."
-
-| State | What appears and what actions do |
-| --- | --- |
-| Loading | The closed control is disabled; an opened tab says Loading models…. |
-| Read failed | "Could not load models" with Retry. |
-| Saving | **Use** holds its width and shows a spinner with accessible name Saving…; choices and the other tab are locked. |
-| Save failed | The server's reason and Retry on the tab that saved; In use keeps the earlier value. |
-| Changed elsewhere | "Changed in another window." with Reload, which drops the draft and shows the current value. A save compares against the value the draft started from, so a refresh while editing does not hide another window's change. |
-| Unavailable | The closed control reads "Fable unavailable · Auto meanwhile"; the tab names the reason. |
-
-Escape, × and, on phone, the scrim close the dialog and return focus to the control that opened it.
-Data: `GET /api/overview` `new_tasks` and `POST /api/new-tasks`; `GET /api/defaults/<project>`
-`l3_choice` and `POST /api/defaults` with setting `l3_choice`. Both writes send the value shown as
-`expected`, so a change made elsewhere is refused instead of overwritten. `web/e2e/models.pw.ts` walks
-these states at 390×844 and 1440×900. Board: ModelsStates.
+Board: ModelsStates. `web/e2e/models.pw.ts` walks shortcut navigation and the paired editor on phone
+and desktop; no model dialog or separate role tabs remain.
 
 ### 3.7 Work panel
 
@@ -1796,11 +1765,15 @@ A direct overview visit returns to `/projects`; entry from another view returns 
 
 The overview groups rows by where a setting applies, in two columns on desktop and one on phone.
 **Your name** comes first: the name, or "Not set · screens say “you”", opening `/settings/name`.
-**This project**, present only when Settings opens from a project, has one row naming it with its L3
-choice and routing ("L3: Fable · Low · tasks prefer Codex"), opening `/settings/projects/<name>`.
-**Models** holds **New tasks**, the same value and Models dialog as the control beside the quota
-(§3.6.1). **Projects** holds **All projects** ("2 projects · folder ~/Projects"), opening
-`/settings/projects`: every managed project, each opening its page, then **Projects folder**.
+**This project**, present only when Settings opens from a project, links to
+`/settings/projects/<name>` for engine routing and project controls.
+**Models and effort · All projects** contains one row per engine with native **Model** and **Effort**
+dropdowns. The existing defaults-table layout has engine, model and effort columns on desktop;
+on phone the engine name sits above its two controls. Both remain together, with at least 44px
+targets. Neither is disabled because routing prefers another engine. **Engines** separately holds
+**New tasks · All projects**, choosing Auto or a preferred engine. **Projects** holds **All projects**
+("2 projects · folder ~/Projects"), opening `/settings/projects`: every managed project, each opening
+its page, then **Projects folder**.
 **Voice** holds **Voice input**. **Notifications** holds this device's decision alerts (below).
 **Devices and access** holds Devices, the Terminal switch and the
 read-only Network row (address and HTTPS). **Coding agents** holds Prerequisites, the Validation
@@ -1931,6 +1904,35 @@ next capture; a recording keeps the selection it started with and stops when it 
 | Saving | A spinner named Saving… and disabled choices until the request answers. |
 | Failed/denied save | Server explanation and Retry; the saved choice is preserved. A choice changed elsewhere offers Reload settings. |
 
+Model and effort save as one engine-scoped pair. Changing one field preserves the other, and
+other engines remain unchanged. During a save both controls are guarded with aria-disabled while
+focus stays native; the other engine remains usable. A stale expected pair offers Reload.
+Model offers **Altitude default**, engine-owned names, the current custom ID and **Other model…**.
+Effort offers **Altitude default**, **Native**, and supported engine levels. Inherited effort says
+"Native for all roles" for Claude and "Tasks: High · Chat/reviews: Native" for Codex; explicit Native
+says "Provider chooses effort". Engine-level support does not assert model support or provider caps.
+
+Other model reveals a fixed-engine ID editor with **Saved: <ID>** beneath its draft. Enter or leaving
+a valid ID saves; blank blur or Escape restores without a write. Whitespace-invalid input stays
+with its error. After success the editor disappears and focus returns to its select. Failure keeps
+the draft and Retry; denial restores without automatic retry. Loading shows no placeholder value;
+read failure offers Retry. Known unavailable models remain selected and editable with their reason;
+unknown access says **Access unverified**. IDs wrap without overflow; native menus stay browser-owned.
+
+**Existing overrides** appears only for saved model/effort exceptions. Each row names scope, engine
+and values; **Use global defaults** clears its model and effort while preserving engine/routing.
+**Routing details** links to the saved custom tier text; editing custom tiers uses the existing
+`alt project set --routing` CLI option. No tier editor is added. Individual task pins are not reset. Pending/error rows
+stay visible; successful reset removes the row and focuses the next row or heading. Changing an
+engine preference clears its old engine-specific fields, explained when an override exists.
+
+The global pairs apply to coordinator next turns, fresh task starts including queued tasks, and
+ordinary review starts. Started task sessions retain launch values. Native helpers and specialized
+improvement reviews keep their existing policy. Explicit task/review requests, saved choice fields,
+project role defaults and explicit routing models retain precedence. No defaults change on upgrade.
+Listening is not a state of these controls. Phone/desktop walkthroughs cover both independent pairs,
+save/success/error/denied/conflict, custom/native/inherited values, unavailable access and resets.
+Boards: SettingsStates, ModelsStates and ProjectSettings.
 **Your speech service** says “Words appear after you stop. Audio passes through this computer to
 the service you choose. Its privacy policy and charges apply.” It shows **Transcription URL**, a full
 endpoint input, and “Use a compatible audio transcription endpoint reachable from the computer
@@ -1959,27 +1961,18 @@ address.” with the Voice settings link. Malformed saved configuration says “
 settings are invalid. Re-enter them in Voice settings.” in Settings; the composer replaces the
 last words with the same Settings link and keeps the microphone closed until repaired.
 
-The project page `/settings/projects/<name>` has a labelled **Settings** back button, the line
-"Applies to this project only. A model or effort L3 sets for one task wins over these." and its
-sections, model choices in the order they are applied:
+The project page `/settings/projects/<name>` has a labelled **Settings** back button and the line
+"Applies to this project only." Model/effort defaults live in global Settings; this page contains
+no role-by-engine model/effort tables.
 
-- **L3**: the closed L3 choice ("Fable · Low", "Auto", or "Fable unavailable · Auto meanwhile" with
-  the reason), and what L3's last reply
-  reported ("L3 has not replied yet" before one). **Back to Auto** while a choice is saved, and
-  **Change…**, which opens the Models dialog on its L3 tab.
-- **Auto defaults**: one row per role and engine ("Tasks · Codex", "L3 · Claude") with **Model** and
-  **Effort**, used under Auto and as the fallback. The model is free text with alias suggestions and
-  a "Default: <model>" placeholder, saved on Enter or leaving the field, restored by Escape and
-  cleared to Default when empty; effort offers "Default (<level>)", Native and only the levels that
-  engine accepts, saved on choice. Each field saves alone with its own status. While New tasks holds
-  a choice the copy names it. At 390px each row stacks model above effort.
-- **Routing** (`#routing`): **Tasks** is Auto, Prefer <engine> or Only <engine>; L3 has no routing
-  row, its choice in the **L3** section being its one engine setting. The copy names the order Auto
-  tries (the default weekly-headroom split or the custom routing), that Only keeps tasks on that engine
-  even with a model choice and waits while it is unavailable, and when a preferred engine is missing
-  from custom routing. A change saves on choice
-  with the value shown as `expected`; one changed elsewhere says "Changed in another window." and
-  the page shows the current routing.
+- **Coordinator engine**: Auto or a preferred engine, effective from its next turn. Changing a
+  preference with saved model/effort overrides clears those fields and uses global defaults.
+- **Routing** (`#routing`): **Tasks** is Auto, Prefer <engine> or Only <engine>. Auto explains its
+  configured tier order and weekly headroom policy. Only keeps tasks on that engine and waits
+  when it cannot run. Saved routing tiers with explicit models remain visible here and editable through
+  the existing `alt project set --routing` CLI option. Saves compare `expected`; a conflict says "Changed in another window."
+- **Models and effort**: link to the global Settings section. Existing scoped overrides remain
+  visible there until explicitly cleared, rather than becoming a second project editing table.
 - **Improvement suggestions** (`#improvement`, the Altitude project only;
   [design](improvement-review/PROPOSAL.md#turning-it-on-the-settings-section)): "Finds friction that
   keeps coming back in this project's tasks and suggests fixes." over one card. **Weekly** is a switch
@@ -2226,7 +2219,7 @@ retain phone/desktop state verification and accessible review evidence.
 | --- | --- | --- |
 | Rail, Needs you, badges | `GET /api/overview` | `POST /api/project/add`, `POST /api/project/remove` |
 | Project conversation | `GET /api/chat/<project>` | `POST /api/chat` (message, queue, Create task press), `POST /api/chat/remove`, `POST /api/l3/reset` |
-| Models and settings | `GET /api/overview` `new_tasks`, `GET /api/defaults/<project>` | `POST /api/new-tasks`, `POST /api/defaults` (choice, defaults, routing; each with `expected`) |
+| Models and settings | `GET /api/model-defaults`, `GET /api/overview` `new_tasks`, `GET /api/defaults/<project>` | `POST /api/model-defaults` (engine pair), `POST /api/model-defaults/reset` (scoped override), `POST /api/new-tasks`, `POST /api/defaults`; each with `expected` |
 | Project setup | `GET /api/setup/<project>` | `POST /api/project/setup` (check, repair, operator-approved hook integration) |
 | Work panel | `GET /api/project/<name>`, `GET /api/overview` `queue` | none; rows open the owning conversation |
 | Needs you | `GET /api/overview` plus project reference context | `POST /api/decide` |

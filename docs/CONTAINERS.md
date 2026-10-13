@@ -557,6 +557,8 @@ replacement by a distinct fixture release image, and restoration of the matching
 The restore retains operator settings, task session and hold, starts paused, and excludes a marker
 created after the backup. Both versions share one schema; the lane makes no migration claim.
 Named screenshots and failures are retained by the runner. No application response is intercepted.
+TLS negative controls use separate pages or trust contexts, closed before application navigation;
+certificate-error navigation cannot interrupt the phone or desktop journey.
 It neither changes host trust nor establishes physical phone or Mac access. The separate emulated
 iPhone container walkthrough passes in desktop WebKit; this is not physical iOS acceptance.
 
