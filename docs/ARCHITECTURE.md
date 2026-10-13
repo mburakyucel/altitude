@@ -229,8 +229,8 @@ See [source references and bounds](CLI.md#historical-evidence-search).
 Tasks and L3 session records carry `engine_model` and `engine_reasoning_effort`. The engine adapter
 reads Codex's rollout `turn_context` after the thread starts, recording the actual model and effort
 for the current turn. altd reads the provider home; the sandboxed worker does not. Missing or delayed
-rollouts leave the observation unknown and are retried while the turn runs. The launch model pin is
-kept separately, so recording a default does not turn it into an override on resume. Status, task
+rollouts leave the observation unknown and are retried while the turn runs. `engine_model` holds only
+what the engine reported; the launch model and effort are kept separately and are what resumes ask for. Status, task
 header chips, and the Monitor API expose the observation; old records remain readable.
 `GET /api/task/<project>/<slug>` returns `engine_model` and `engine_reasoning_effort`;
 a missing task returns HTTP 404 without a failure traceback. Archival only renames the live task
@@ -268,11 +268,13 @@ The CLI retains reason-bearing project settings requests; these apply on a daemo
 of worker capacity. A conflicting pending request refuses a save until applied.
 
 Fresh task dispatch records resolved `launch_model` and `launch_effort`. Message/resume keeps those
-saved values, including null, without re-resolving global defaults or copying observed provider values.
+saved values without re-resolving global defaults or copying observed provider values. Every role has
+a built-in model on each engine, and every Codex launch passes its model and effort explicitly.
 L3 resolves each turn, including same-conversation resumes; a running turn keeps its launch choice.
-Inherited effort retains built-in behavior: native on Claude, High for Codex tasks and native
+Inherited effort retains built-in behavior: native on Claude, High for Codex tasks and Medium
 for Codex chat/reviews. Ordinary reviews use an explicit global effort when set; otherwise they
-retain native effort rather than inheriting project task effort overrides. Explicit `native` requests no override. Unsupported explicit efforts refuse; Auto
+use the chat role's effort rather than inheriting project task effort overrides. Explicit `native` passes no
+effort to Claude and Medium to Codex. Unsupported explicit efforts refuse; Auto
 excludes engines that cannot accept an explicit level. Provider caps and model compatibility remain
 native decisions; effort failures do not cause application-side downgrading.
 

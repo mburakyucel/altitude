@@ -39,6 +39,7 @@ const running = {
   session_id: "0123456789abcdef",
   l2_engine: "claude",
   engine_model: "opus",
+  running_model: { engine: "Claude", model: "Opus 5.5", effort: "Native", chosen: null, launched: "Opus · Native", reported: "Opus 5.5 · effort not reported" },
   dispatched: ago(7),
   updated: ago(1),
   live: { state: "running", context_percent: 34 },
@@ -555,7 +556,7 @@ describe("Task on desktop", () => {
     await screen.findByRole("heading", { level: 1, name: "Fix the timer" });
     expect(screen.getByRole("button", { name: "Back" })).toHaveTextContent("‹ altitude");
     expect(screen.getByText("L2 working")).toBeInTheDocument();
-    expect(screen.getByText("Opus 5 on Claude")).toBeInTheDocument();
+    expect(screen.getByText("Opus 5.5 on Claude · Native")).toBeInTheDocument();
     expect(screen.queryByText("attempt 1 · started 7 min ago · 34% of its context used")).toBeNull();
 
     const convo = screen.getByRole("region", { name: "Task conversation" });

@@ -43,20 +43,22 @@ identities on purpose:
 | `agent_id` | current unit-owned CLI worker | every physical replacement |
 | `routing` | one sentence saying why this engine was chosen | written once with fresh dispatch |
 | `routing_pinned` | whether this attempt launched with an explicit task, turn or project pin | fresh dispatch; preserves strictness during quota/rejection recovery |
-| `launch_model` | model override passed at launch, or null for the CLI default | fresh dispatch |
+| `launch_model` | resolved model passed at launch | fresh dispatch |
 | `effort` | explicit task creation choice, or null for the project/engine default | task creation |
-| `launch_effort` | resolved effort override passed to the worker, or null for native configuration | fresh dispatch; reused on resume |
+| `launch_effort` | resolved effort passed to the worker; null only for native Claude configuration | fresh dispatch; reused on resume |
 | `engine_model` | model observed from the provider's turn | each worker/turn records its selection |
 | `engine_reasoning_effort` | observed effort when supplied by the provider | with the model observation |
 
 Fresh L2 attempts resolve explicit task effort, then the project's L2 effort for the routed engine
 (`l2_effort` on Claude, `l2_codex_effort` on Codex), then the existing engine default. This includes
 queued tasks and later fresh attempts. Default remains High on Codex and native on Claude; explicit
-`native` removes the override. Auto excludes engines that cannot accept an explicit level;
+`native` passes no effort to Claude and Medium to Codex. Every
+Codex launch, fresh or resumed, owner, coordinator or reviewer, names its model and effort, so the
+Codex CLI's own defaults and the operator's Codex configuration never choose silently. Auto excludes engines that cannot accept an explicit level;
 unsupported pins refuse. Model compatibility and provider effort caps are separate from the
 configured intent. Messages and resumes keep saved `launch_effort`, `launch_model`, attempt and
-conversation even when global model/effort defaults, project overrides, routing or native configuration change; a resume with no
-saved override stays native. Provider effort failures remain launch/turn failures without an
+conversation even when global model/effort defaults, project overrides, routing or native configuration change.
+A session saved before every launch named its model and effort resumes on the built-in task defaults. Provider effort failures remain launch/turn failures without an
 application downgrade or engine switch. Observations never become requested settings and start
 unknown on each resumed turn.
 
