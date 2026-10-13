@@ -149,7 +149,7 @@ class TestChatIsolation(AltitudeCase):
                 with self.assertRaises(transcript.TranscriptAccessError):
                     transcript.view(project, slug, engine=engine, session_id=f"{engine}-{other}", attempt=1)
 
-    def test_command_times_reach_http_without_borrowing_missing_evidence(self):
+    def test_command_times_reach_http_from_the_first_recorded_event(self):
         started, ended = "2026-09-03T10:00:01+00:00", "2026-09-03T10:00:05+00:00"
         for engine in ("claude", "codex"):
             for timestamp in (started, None):
@@ -185,10 +185,29 @@ class TestChatIsolation(AltitudeCase):
                     delta = json.loads(self.request(url + f"&mode=delta&cursor={first['cursor']}"))
                     updated, = delta["events"]
                     self.assertEqual((updated["id"], updated["at"], updated["status"], updated["output"]),
-                                     (command["id"], timestamp, "completed", "fixture"))
+                                     (command["id"], timestamp or ended, "completed", "fixture"))
                     reconnect = json.loads(self.request(url))
                     command, = [row for row in reconnect["events"] if row["kind"] == "command"]
-                    self.assertEqual(command["at"], timestamp)
+                    self.assertEqual(command["at"], timestamp or ended)
+
+    def test_an_untimed_command_takes_the_first_timed_result(self):
+        ended = "2026-09-03T10:00:05+00:00"
+        task = T.new(self.project, "Command time from results", "Observe")
+        sid, slug = "time-results", task["slug"]
+        task.update(state="running", attempt=1, l2_engine="claude", session_id=sid)
+        S.save_task(self.project, task)
+        path = config.HOME / ".claude" / "projects" / "fictional" / f"{sid}.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(path.unlink, True)
+        result = lambda timestamp, text: {"type": "user", "timestamp": timestamp, "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "call", "content": text}]}}
+        rows = [{"type": "assistant", "timestamp": None, "message": {"content": [
+            {"type": "tool_use", "id": "call", "name": "Bash", "input": {"command": "echo fixture"}}]}},
+            result(None, "first"), result(ended, "second")]
+        path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+        view = json.loads(self.request(f"/api/transcript/{self.project}/{slug}?engine=claude&session_id={sid}&attempt=1"))
+        command, = [row for row in view["events"] if row["kind"] == "command"]
+        self.assertEqual((command["at"], command["status"]), (ended, "completed"))
 
 
 if __name__ == "__main__":

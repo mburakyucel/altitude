@@ -2979,20 +2979,19 @@ remains available without voice.
 #### Operator-supplied service
 
 Paired Settings reads expose URL/model/key-present, never the key. Machine output exposes the backend
-only. Before capturing service audio, the browser reads the current selection and paired owner;
-both are checked again before accepting and forwarding `POST /api/voice/service`, and before the
-server releases its result. Local settings and unpairing events also invalidate pending captures.
-Saving URL/model/key changes the service selection identity independently
-of the built-in installation identity. Re-pairing or selection changes invalidate unfinished work.
+only. A capture carries the selection its composer read; the server checks it against the saved
+choice when the upload starts and again before forwarding `POST /api/voice/service`, and a transcript
+the service has returned reaches the capture. A Settings read showing another selection invalidates pending captures.
+Saving a changed URL/model/key changes the service selection identity independently of the built-in
+installation identity; saving unchanged settings keeps it.
 
 The browser retains raw mono 16 kHz signed 16-bit PCM in page memory until Stop/Send, at most
 19,200,000 bytes per capture and two captures including a pending Send. The authenticated service
 route creates WAV/multipart framing and sends one request to the exact saved endpoint, without
 redirects, environment proxies, probes or retries. It accepts JSON text, limits the response to
 1 MiB, limits concurrent requests to two, and bounds upload and upstream response separately to
-120 seconds each. Each admitted outbound request runs in a disposable child process; its timeout
-kills and reaps that process, including stalled DNS or response reads. The key and audio travel on
-stdin, never command arguments or disk. HTTPS uses normal certificate verification.
+120 seconds each; the outbound request runs in the daemon and is cut off 120 seconds after it starts,
+apart from the system resolver's own name lookup limit. The key and audio never touch disk. HTTPS uses normal certificate verification.
 
 Stop appends text to its draft; Send carries text/images and completion to its original conversation.
 Cancellation and late results never alter another draft. Errors are sanitized and preserve typed
@@ -3032,8 +3031,11 @@ rename. Before promotion, the actual isolated worker loads the model and perform
 the load deadline. Completed runtimes explicitly supported by this release keep serving during an
 update; unknown, incompatible or revoked runtimes read as `outdated` and cannot serve recordings.
 Support is an explicit per-platform/interpreter digest list, never inferred from age or a completion
-marker alone. Retained model files are copied only after matching the target size and SHA-256; wheel
-archives are downloaded and deleted after unpacking. There is no download cache.
+marker alone. Retained model files are hard-linked into the replacement and kept only after matching
+the target size and SHA-256; wheel archives are downloaded and deleted after unpacking. There is no
+download cache. Setup needs free disk space for the files it downloads plus the unpacked-library cap.
+Superseded runtimes are removed after promotion; one that cannot be removed then is removed by the
+next setup and never fails the finished update.
 
 The support set retains the preceding Linux onnxruntime 1.22 manifests for CPython 3.12 and 3.13;
 both load and warm up with the current worker and the exact pinned model. The supported-table test
@@ -3291,8 +3293,9 @@ order, so late events and updates to old commands merge into their correct posit
 shows one preview per source record. Full record opens an explicit 4,000-character chunk, with
 Show more for subsequent chunks; the complete redacted record remains accessible.
 Translated item notifications record their local UTC receipt time in the engine adapter; native
-session records retain their source timestamps. A folded command keeps its first event's time
-through output updates, history and reconnect. This is recorded event time, not elapsed duration
+session records retain their source timestamps. A folded command keeps its first recorded event
+time through output updates, history and reconnect; a command whose start is untimed takes its
+completion's recorded time. This is recorded event time, not elapsed duration
 or an exact OS process-start time. Records without timing evidence remain unavailable; launch,
 poll and file modification times never fill a command's missing timestamp.
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useReducer, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from "react";
-import { readVoiceSettings, type VoiceSettings } from "../data/api";
+import type { VoiceSettings } from "../data/api";
 import { documentRecovery, heldFields, liveSubmissions, recoveryKey } from "../data/recovery";
 import type { SendFailure, SubmittedText } from "../data/recovery";
 import { Link } from "react-router";
@@ -10,7 +10,7 @@ import type { ImagePreview } from "./MessageImages";
 import { HostCapture, MAX_RETAINED, UNREACHED, serviceFailures, type ServiceFailure } from "./hostCapture";
 import { useLiveReveal } from "./liveReveal";
 import { RecognitionCapture, recognitionAvailable } from "./recognition";
-import { INVALID_SERVICE, refreshVoiceBackend, updateVoiceSettings, useVoiceBackend } from "./voiceBackend";
+import { INVALID_SERVICE, refreshVoiceBackend, useVoiceBackend } from "./voiceBackend";
 import { traceVoice, traceVoiceTracks, voiceError } from "./voiceTrace";
 
 /*
@@ -735,7 +735,7 @@ export default function Composer({
       setPhase("idle");
       if (finished.failure === "denied") setDenied(true);
       else if (unreached) setVoiceFailure(UNREACHED);
-      else if (finished instanceof HostCapture && finished.reason) setVoiceFailure(finished.serviceOwner ? finished.reason : `${finished.reason} Typing works.`);
+      else if (finished instanceof HostCapture && finished.reason) setVoiceFailure(finished.service ? finished.reason : `${finished.reason} Typing works.`);
       else if (finished.failure) setVoiceFailure("Could not transcribe. Typing works.");
       if (text.trim()) setUnpunctuated(finished.unpunctuated);
       if (text.trim()) {
@@ -801,6 +801,10 @@ export default function Composer({
       refreshVoiceBackend();
       return;
     }
+    if (voice?.backend === "service" && voice.error) {
+      setVoiceFailure(INVALID_SERVICE);
+      return;
+    }
     if (voice?.backend !== "browser" && HostCapture.retained.size >= MAX_RETAINED) {
       setVoiceFailure("Voice is still sending an earlier recording. Typing works.");
       return;
@@ -829,17 +833,6 @@ export default function Composer({
     }
     let opened: MediaStream | null = null;
     try {
-      let owner: string | undefined;
-      if (backend === "service") {
-        const current = await readVoiceSettings(AbortSignal.any([opening.signal, AbortSignal.timeout(12_000)]));
-        if (!mounted.current || opening.signal.aborted) return;
-        updateVoiceSettings(current);
-        if (current.error) { setPhase("idle"); setVoiceFailure(INVALID_SERVICE); return; }
-        if (current.backend !== "service" || current.selection !== captureSelection.current || !current.owner) {
-          setPhase("idle"); setVoiceFailure(serviceFailures.selection_changed); return;
-        }
-        owner = current.owner;
-      }
       // Every backend opens the microphone: the waveform draws from it, and the browser backend's
       // recognizer needs the same permission.
       traceVoice("microphone.request", opening);
@@ -854,7 +847,7 @@ export default function Composer({
       // waveform first, after the old capture's release gate, with no await before start().
       waveform.current = openWaveform(opened);
       if (backend === "host" || backend === "service") {
-        const host = new HostCapture(opened, captureSelection.current, owner);
+        const host = new HostCapture(opened, captureSelection.current, backend === "service");
         host.onupdate = (text) => { if (recorder.current === host && !cancelled.current) setLive(text); };
         host.onstop = () => finish(host, used);
         host.oninterrupted = () => stop();
@@ -893,7 +886,7 @@ export default function Composer({
       const name = cause instanceof DOMException ? cause.name : "";
       setPhase("idle");
       if (name === "NotAllowedError" || name === "SecurityError") setDenied(true);
-      else setVoiceFailure(backend === "service" && !opened ? serviceFailures.service_unavailable : "Could not open the microphone. Typing works.");
+      else setVoiceFailure("Could not open the microphone. Typing works.");
       focusField();
     }
   }, [backend, voice, disabled, finish, focusField, phase, releaseStream, stop, unavailable]);
@@ -994,7 +987,7 @@ export default function Composer({
   let hintRole: "alert" | "status" | undefined;
   // A voice Send keeps its capture after this composer remounts; otherwise the capture is this composer's own.
   const shown = voiceSend?.capture ?? recorder.current;
-  const servicePending = transcribing && shown instanceof HostCapture && !!shown.serviceOwner;
+  const servicePending = transcribing && shown instanceof HostCapture && shown.service;
   const connection = shown instanceof HostCapture ? shown.connection : "ok";
   if (transcribing) {
     hintRole = "status";

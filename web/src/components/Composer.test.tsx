@@ -1142,7 +1142,7 @@ describe("Composer", () => {
   // ---- host voice: the microphone streams to this computer, whose words appear while listening ----
   it("service sends only after Stop, shows pending text and removes all recording UI on success", async () => {
     installVoiceBrowser({ backend: "service" });
-    const settings = { backend: "service" as const, selection: "service-one", owner: "device", service: { url: "https://speech.example.test/v1/audio/transcriptions", key_present: false }, host: { state: "absent" as const, download_bytes: 0 } };
+    const settings = { backend: "service" as const, selection: "service-one", service: { url: "https://speech.example.test/v1/audio/transcriptions", key_present: false }, host: { state: "absent" as const, download_bytes: 0 } };
     updateVoiceSettings(settings);
     let release: (response: Response) => void = () => {};
     const uploads: RequestInit[] = [];
@@ -1164,21 +1164,23 @@ describe("Composer", () => {
     expect(uploads).toHaveLength(1);
   });
 
-  it("service reads current selection before opening the microphone and requires another tap if changed", async () => {
+  it("service opens the microphone without another settings read and names a microphone failure as one", async () => {
     const { getUserMedia } = installVoiceBrowser({ backend: "service" });
-    const settings = { backend: "service" as const, selection: "service-one", owner: "device", service: { url: "https://speech.example.test/v1/audio/transcriptions", key_present: false }, host: { state: "absent" as const, download_bytes: 0 } };
-    updateVoiceSettings(settings);
-    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ ...settings, selection: "service-two" })));
+    updateVoiceSettings({ backend: "service", selection: "service-one", service: { url: "https://speech.example.test/v1/audio/transcriptions", key_present: false }, host: { state: "absent", download_bytes: 0 } });
+    const fetchMock = vi.fn(async () => jsonResponse({ error: "not expected" }, 500));
+    vi.stubGlobal("fetch", fetchMock);
+    getUserMedia.mockRejectedValueOnce(new DOMException("No microphone", "NotFoundError"));
     const user = userEvent.setup();
     render(<MemoryRouter><Harness /></MemoryRouter>);
     await user.click(screen.getByRole("button", { name: "Start voice input" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Voice settings changed. Record again using the current choice.");
-    expect(getUserMedia).not.toHaveBeenCalled();
+    expect(await screen.findByRole("alert")).toHaveTextContent(/^Could not open the microphone\. Typing works\.$/);
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("invalid service settings explain repair without opening the microphone or changing backend", async () => {
     const { getUserMedia } = installVoiceBrowser({ backend: "service" });
-    const settings = { backend: "service" as const, selection: "invalid-service", owner: "device", error: "service_response" as const, host: { state: "absent" as const, download_bytes: 0 } };
+    const settings = { backend: "service" as const, selection: "invalid-service", error: "service_response" as const, host: { state: "absent" as const, download_bytes: 0 } };
     updateVoiceSettings(settings);
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(settings)));
     const user = userEvent.setup();
@@ -1193,7 +1195,7 @@ describe("Composer", () => {
 
   it("keeps typing and settings reachable when a saved service host cannot be parsed by this browser", async () => {
     installVoiceBrowser({ backend: "service" });
-    updateVoiceSettings({ backend: "service", selection: "s", owner: "device", service: { url: "https://bad|host/transcribe", key_present: false }, host: { state: "absent", download_bytes: 0 } });
+    updateVoiceSettings({ backend: "service", selection: "s", service: { url: "https://bad|host/transcribe", key_present: false }, host: { state: "absent", download_bytes: 0 } });
     const user = userEvent.setup();
     render(<MemoryRouter><Harness /></MemoryRouter>);
     await user.type(screen.getByRole("textbox"), "Typing works");

@@ -484,21 +484,38 @@ class TestSetup(SpeechCase):
             speech._download("https://files.example/fixture", self.tmp / "download", 7,
                              hashlib.sha256(b"fixture").hexdigest(), lambda _: None, attempt)
 
-    def test_cleanup_failure_reports_cleanup_and_keeps_verified_replacement(self):
+    def test_cleanup_failure_still_finishes_the_update_and_the_next_setup_removes_leftovers(self):
         old = self.replacement()
         remove = speech.shutil.rmtree
 
         def fail_old(path, *args, **kwargs):
             if path == old:
-                raise OSError("fixture cleanup refusal")
+                return  # fixture: the old folder cannot be removed now
             return remove(path, *args, **kwargs)
 
         self.patch(speech.shutil, "rmtree", new=fail_old)
-        with self.assertRaisesRegex(speech.SpeechError, "old files could not be removed"):
+        new = speech.setup()
+        self.assertEqual(speech.runtime(), new)
+        self.assertEqual(speech.status(), {"state": "ready", "download_bytes": speech.status()["download_bytes"]})
+        self.assertTrue(old.exists())
+        self.assertFalse((old / "complete.json").exists())  # leftovers never read as installed
+        self.patch(speech.shutil, "rmtree", new=remove)
+        speech.setup()
+        self.assertFalse(old.exists())
+        self.assertEqual(speech.runtime(), new)
+
+    def test_disk_check_counts_only_what_the_update_downloads(self):
+        self.replacement()
+        wheel = len(self.served["https://files.example/wheels/lib.whl"])
+        usage = speech.shutil.disk_usage(speech.ROOT)
+        self.patch(speech.shutil, "disk_usage", return_value=usage._replace(free=wheel + speech.UNPACKED_LIMIT))
+        speech.setup()
+        self.patch(speech.shutil, "disk_usage", return_value=usage._replace(free=wheel + speech.UNPACKED_LIMIT - 1))
+        self.install({"model/encoder.onnx": b"weights" * 100,
+                      "wheels/lib.whl": _wheel({"lib/__init__.py": b"VALUE = 3\n"})})
+        with self.assertRaisesRegex(speech.SpeechError, r"^Voice needs [0-9.]+ GB of free disk space\.$"):
             speech.setup()
-        self.assertNotEqual(speech.runtime(), old)
-        self.assertEqual(speech.status()["state"], "ready")
-        self.assertIn("old files", speech.status()["update"]["reason"])
+        self.assertEqual(speech.status()["update"]["state"], "failed")
 
     def test_interrupted_removal_can_be_reinstalled(self):
         old = self.replacement()
@@ -595,10 +612,19 @@ class TestSetup(SpeechCase):
         old = self.replacement()
         identity = speech.installation_id()
         self.assertEqual(speech.runtime(), old)
+        model = os.stat(old / "model/encoder.onnx")
         new = speech.setup()
         self.assertEqual(self.fetched, ["https://files.example/wheels/lib.whl"])
+        self.assertEqual(os.stat(new / "model/encoder.onnx").st_ino, model.st_ino)  # linked, not copied
         self.assertEqual(speech.installation_id(), identity)
         self.assertFalse(old.exists())
+        self.assertEqual(speech.runtime(), new)
+
+    def test_a_volume_without_hard_links_downloads_the_model(self):
+        self.replacement()
+        self.patch(speech.os, "link", side_effect=PermissionError("fixture: links refused"))
+        new = speech.setup()
+        self.assertIn("https://files.example/model/encoder.onnx", self.fetched)
         self.assertEqual(speech.runtime(), new)
 
     def test_corrupt_retained_model_is_downloaded_again(self):

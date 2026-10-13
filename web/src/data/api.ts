@@ -964,7 +964,7 @@ const HostVoiceSchema = z.union([
 ]);
 const VoiceSchema = z.object({ backend: z.enum(["browser", "host", "service"]), selection: z.string(), host: HostVoiceSchema,
   error: z.literal("service_response").optional(),
-  owner: z.string().optional(), service: z.object({ url: z.string(), model: z.string().optional(), key_present: z.boolean() }).optional() });
+  service: z.object({ url: z.string(), model: z.string().optional(), key_present: z.boolean() }).optional() });
 export type VoiceBackend = z.infer<typeof VoiceSchema>["backend"];
 export type VoiceSettings = z.infer<typeof VoiceSchema>;
 export type HostVoice = z.infer<typeof HostVoiceSchema>;
@@ -1138,10 +1138,10 @@ export async function cancelHostVoice(id: string): Promise<void> {
 }
 
 /** One after-stop upload; never retried because an unanswered request may already have reached the service. */
-export async function sendServiceVoice(selection: string, owner: string, pcm: Int16Array, signal: AbortSignal) {
+export async function sendServiceVoice(selection: string, pcm: Int16Array, signal: AbortSignal) {
   return z.object({ text: z.string() }).parse(await api("/api/voice/service", {
     method: "POST", body: pcm as Int16Array<ArrayBuffer>, signal,
-    headers: { "Content-Type": "application/octet-stream", "X-Voice-Selection": selection, "X-Voice-Owner": owner },
+    headers: { "Content-Type": "application/octet-stream", "X-Voice-Selection": selection },
   }));
 }
 
