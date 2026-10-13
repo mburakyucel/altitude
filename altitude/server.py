@@ -1993,19 +1993,23 @@ class Handler(BaseHTTPRequestHandler):
 
     def _certificate_download(self, name: str) -> None:
         """The public CA certificate a device installs to trust Altitude: the iPhone/iPad profile or the file."""
-        kinds = {"altitude.mobileconfig": "application/x-apple-aspen-config", "altitude.crt": "application/x-x509-ca-cert"}
+        downloads = {
+            "altitude.mobileconfig": ("application/x-apple-aspen-config", 'attachment; filename="altitude.mobileconfig"'),
+            "altitude.crt": ("application/x-x509-ca-cert", 'attachment; filename="altitude.crt"'),
+        }
         ca = config.TLS_DIR / "ca.crt"
-        if name not in kinds or not config.TLS or not ca.exists():
+        if name not in downloads or not config.TLS or not ca.exists():
             return self._json({"error": "not found"}, 404)
+        content_type, disposition = downloads[name]
         try:
             body = ca.read_bytes()
             data = tls.profile(body, tls.identity(ca)) if name.endswith(".mobileconfig") else body
         except (tls.TLSFailure, OSError, ValueError) as exc:
             return self._json({"error": f"Could not read the certificate: {self._detail(exc)}"}, 409)
         self.send_response(200)
-        self.send_header("Content-Type", kinds[name])
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+        self.send_header("Content-Disposition", disposition)
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
