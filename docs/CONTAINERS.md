@@ -515,9 +515,11 @@ These are fictional data and small-archive checks, not real-account or maximum-s
 On an Apple silicon Mac, the owner uses `alt task validate --container-browser`. The deployed
 controller builds a minimal architecture-correct Chromium image and the two fixture releases in a
 throwaway Ubuntu guest. It records candidate commit/tree/archive, controller digest, guest runtime,
-image identities and received-byte counters. Provisioning denies private network destinations and
-the hosting service's port; the controller physically disconnects guest NAT before candidate fixture
-code, application containers or Chromium run. Positive and negative network controls accompany that
+image identities and received-byte counters. Online rootless builders execute candidate-derived
+dependency, release and image build steps under a filter denying every Mac interface address,
+special-purpose IPv4 ranges, IPv6 and the hosting service's port (with DNS allowed). They receive no
+guest administration credentials or host mounts. The controller physically disconnects guest NAT
+before candidate guest administration, application daemons or Chromium run. Network controls accompany that
 transition. The lane shares the single-guest lock, uses at most half the host CPUs (up to four), 6 GiB
 memory and a 24 GiB sparse disk, keeps 10 GiB free and stops provisioning before its 1 GB download
 limit. Images, fixture storage, socket endpoints and the guest disk are disposable.
@@ -528,7 +530,10 @@ fixture actions in viewport order; it exposes no shell, arbitrary path or guest 
 A separate Unix socket relays raw HTTPS bytes only to the fixture's published loopback endpoint.
 Chromium verifies the public fictional CA in fresh NSS storage and rejects an untrusted CA and wrong
 hostname. Shared launch configuration keeps `chromiumSandbox:true`; a finite Linux preflight records
-browser version, namespaces and seccomp alongside the inspected container boundary. Failure artifacts
+browser version, namespaces and seccomp alongside the inspected container boundary. The deployed
+preflight runs before candidate fixture imports, and its evidence is copied to the Mac and checked
+there before candidate guest administration. Later journey receipts are candidate-reachable in the
+disposable guest; they establish tested fictional behavior, not hostile guest-kernel resistance. Failure artifacts
 and process/guest cleanup remain part of the validation receipt. Mac Seatbelt harness results do not
 substitute for these two protections. Fresh native evidence for this route remains tracked in
 [#883](https://github.com/mburakyucel/altitude/issues/883) until deployment and its recorded run.

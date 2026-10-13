@@ -172,9 +172,10 @@ def browser_controller() -> Path:
     return config.SOURCE / "scripts" / "container_browser_vm.py"
 
 
-def browser_script(area: Path, ident: str, commit: str, tree: str) -> str:
+def browser_script(area: Path, ident: str, commit: str, tree: str, timeout: int = 3300) -> str:
     command = [sys.executable, str(browser_controller()), "--area", str(area), "--cache", str(home() / "cache"),
-               "--run-id", ident, "--commit", commit, "--tree", tree, "--port", str(config.PORT)]
+               "--run-id", ident, "--commit", commit, "--tree", tree, "--port", str(config.PORT),
+               "--timeout", str(timeout)]
     return "\n".join(["set -u", f"[ ! -e {shlex.quote(str(area / 'stopped'))} ] || exit 125",
                       "exec " + shlex.join(command)])
 
@@ -747,7 +748,7 @@ def _run(project: str, slug: str, task: dict, argv: list[str], *, kvm: bool, pub
                     recording = device.record(area / "simulator.mp4")
                 except (OSError, subprocess.SubprocessError) as exc:
                     unrecorded = f"the screen recording did not start: {exc}"
-            script = browser_script(area, ident, commit, tree) if container_browser else run_script(
+            script = browser_script(area, ident, commit, tree, budget) if container_browser else run_script(
                 f"{UNIT_PREFIX}{ident}", area, argv, kvm=kvm, publish=ports, simulator=bool(phone))
             result = _job(unit, script, area, budget, limits=True)
         with _state:

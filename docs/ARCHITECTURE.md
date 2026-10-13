@@ -4,8 +4,9 @@
 
 The Mac actual-image browser validation entrypoint is the fixed `alt task validate --container-browser`
 lane. The deployed controller owns a bounded throwaway Ubuntu guest under the task's standing VM
-policy grant; candidate host commands are never accepted. Provisioning is separate from offline
-candidate execution. A non-root rootless browser container has no network interface or guest
+policy grant; candidate host commands are never accepted. Online rootless builders receive candidate
+build inputs under a filter denying Mac/private addresses and IPv6; candidate guest administration
+starts only after physical network cutoff. A non-root rootless browser container has no network interface or guest
 administration credentials: bounded local fixture-control IPC and a fixed raw HTTPS socket relay
 connect it to fictional application containers. Physical guest NAT cutoff, inspected container
 configuration and a finite Chromium sandbox preflight establish the execution boundary. Validation's

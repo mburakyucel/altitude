@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import select
+import shutil
 import socket
 import socketserver
 import struct
@@ -268,8 +269,7 @@ def cleanup():
             'sockets_removed': not any(SOCKETS.glob('*.sock'))}
 
 
-def run():
-    global fixture
+def disconnected_context():
     marker = json.loads((INPUT / 'network-unplugged.json').read_text())
     identity = json.loads((INPUT / 'validation-identity.json').read_text())
     # Independently inspect guest link state; the controller receipt alone is insufficient.
@@ -283,17 +283,60 @@ def run():
         actual = subprocess.check_output(['git', '-C', str(CANDIDATE), *args], text=True, timeout=10).strip()
         if identity[field] != actual:
             raise RuntimeError('Candidate ' + field + ' differs from validation identity')
-    # Candidate fixture administration is imported only after the physical cutoff.
-    spec = importlib.util.spec_from_file_location('candidate_browser_fixture', CANDIDATE / 'tests/container_browser_probe.py')
-    candidate_fixture = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(candidate_fixture)
-    fixture = candidate_fixture
+    return marker, identity, links
+
+
+def browser_config(identity):
     RESULTS.mkdir(exist_ok=True)
     SOCKETS.mkdir(mode=0o700, exist_ok=True)
     config = {'results': '/results', 'certutil': '/usr/bin/certutil',
               'control_socket': '/sockets/control.sock', 'https_socket': '/sockets/https.sock',
               'network_targets': identity['network_targets']}
     (RESULTS / 'config.json').write_text(json.dumps(config))
+
+
+def browser_stage(name, command, bound):
+    start = time.monotonic()
+    try:
+        output = browser_command(launch_arguments(command), timeout=bound)
+        (RESULTS / (name + '.log')).write_text(output.stdout + output.stderr)
+        inspect = browser_command(['inspect', BROWSER], timeout=10)
+        (RESULTS / (name + '-container.json')).write_text(inspect.stdout)
+        if output.returncode or inspect.returncode:
+            raise RuntimeError(f'Browser {name} failed; evidence retained')
+        return {'exit': output.returncode, 'seconds': time.monotonic() - start,
+                'configuration': container_identity(inspect.stdout)}
+    finally:
+        removed = browser_command(['rm', '--force', '--ignore', BROWSER], timeout=20)
+        if removed.returncode:
+            raise RuntimeError('Browser stage cleanup failed')
+
+
+def preflight():
+    """Deployed protection code runs before importing any candidate guest administration."""
+    marker, identity, links = disconnected_context()
+    browser_config(identity)
+    receipt = {'passed': False, 'identity': identity, 'network_unplugged': marker, 'guest_links': links}
+    for name in ('browser_sandbox.mjs', 'browser_launch.mjs', 'container_browser_network.mjs'):
+        shutil.copyfile(SOURCE / 'scripts' / name, RESULTS / name)
+    try:
+        receipt['network'] = browser_stage('network', ['node', '/results/container_browser_network.mjs', '/results/config.json'], 20)
+        receipt['sandbox'] = browser_stage('sandbox', ['node', '/results/browser_sandbox.mjs', '/results/browser-sandbox.json'], 60)
+        receipt['passed'] = True
+    finally:
+        (RESULTS / 'protection.json').write_text(json.dumps(receipt, indent=2) + '\n')
+    return receipt
+
+
+def run():
+    global fixture
+    marker, identity, links = disconnected_context()
+    # Candidate fixture administration is imported only after the physical cutoff.
+    spec = importlib.util.spec_from_file_location('candidate_browser_fixture', CANDIDATE / 'tests/container_browser_probe.py')
+    candidate_fixture = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(candidate_fixture)
+    fixture = candidate_fixture
+    browser_config(identity)
     receipt = {'passed': False, 'identity': identity, 'network_unplugged': marker, 'guest_links': links}
     servers = []
     try:
@@ -304,22 +347,7 @@ def run():
             threading.Thread(target=server.serve_forever, daemon=True).start()
         receipt['ipc'] = ipc_negative_controls(SOCKETS / 'control.sock')
         (RESULTS / 'ipc-controls.json').write_text(json.dumps(receipt['ipc']))
-        for name, command, bound in (
-            ('network', ['node', 'scripts/container_browser_network.mjs', '/results/config.json'], 20),
-            ('sandbox', ['node', 'scripts/browser_sandbox.mjs', '/results/browser-sandbox.json'], 60),
-            ('journeys', ['node', 'scripts/container_browser.mjs', '/results/config.json'], 1050)):
-            start = time.monotonic()
-            output = browser_command(launch_arguments(command), timeout=bound)
-            (RESULTS / (name + '.log')).write_text(output.stdout + output.stderr)
-            receipt[name] = {'exit': output.returncode, 'seconds': time.monotonic() - start}
-            inspect = browser_command(['inspect', BROWSER], timeout=10)
-            (RESULTS / (name + '-container.json')).write_text(inspect.stdout)
-            receipt[name]['container_identity_exit'] = inspect.returncode
-            if not inspect.returncode:
-                receipt[name]['configuration'] = container_identity(inspect.stdout)
-            removed = browser_command(['rm', '--force', BROWSER], timeout=20)
-            if output.returncode or inspect.returncode or removed.returncode:
-                raise RuntimeError(f'Browser {name} failed; evidence retained')
+        receipt['journeys'] = browser_stage('journeys', ['node', 'scripts/container_browser.mjs', '/results/config.json'], 1050)
         receipt['passed'] = True
     except Exception as error:
         receipt['error'] = repr(error)
@@ -348,9 +376,9 @@ def run():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('prepare', 'run', 'cleanup'))
+    parser.add_argument('action', choices=('prepare', 'preflight', 'run', 'cleanup'))
     action = parser.parse_args().action
-    result = fixture.prepare_bases() if action == 'prepare' else run() if action == 'run' else cleanup()
+    result = fixture.prepare_bases() if action == 'prepare' else preflight() if action == 'preflight' else run() if action == 'run' else cleanup()
     print(json.dumps(result))
     return 1 if result.get('passed') is False else 0
 

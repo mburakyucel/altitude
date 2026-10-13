@@ -50,3 +50,64 @@ class ContainerBrowserControllerTests(AltitudeCase):
             with self.assertRaisesRegex(RuntimeError, 'remains alive'):
                 controller.cleanup(self.tmp, self.tmp)
         self.assertTrue((self.tmp / 'guest').exists())
+
+    def test_missing_startup_receipt_retains_disk_and_refuses_false_cleanup(self):
+        (self.tmp / 'guest').mkdir()
+        (self.tmp / 'guest/disk.img').touch()
+        with self.assertRaisesRegex(RuntimeError, 'no process ownership receipt'):
+            controller.cleanup(self.tmp, self.tmp)
+        self.assertTrue((self.tmp / 'guest/disk.img').exists())
+
+    def test_provisioning_denies_public_host_and_vpn_addresses_and_ipv6(self):
+        machine = mock.Mock()
+        controller.network_filter(machine, 8890, ['100.80.0.5', '198.51.100.3', '2001:db8::3'])
+        rules = machine.ssh.call_args_list[0].args[0]
+        for rule in ('100.64.0.0/10', '100.80.0.5', '198.51.100.3', 'meta nfproto ipv6 reject'):
+            self.assertIn(rule, rules)
+
+    def test_spawn_receipt_precedes_waiting_for_guest_start(self):
+        machine = object.__new__(controller.vm.Machine)
+        machine.work = machine.image = self.tmp
+        machine.disk = self.tmp / 'disk.img'
+        machine.socket = self.tmp / 'ssh.sock'
+        machine.lock = mock.Mock()
+        machine.lock.fileno.return_value = 20
+        process = mock.Mock(pid=1234)
+        seen = []
+        def capture(pid):
+            seen.append(pid)
+            raise RuntimeError('receipt captured before event wait')
+        with mock.patch.object(controller.vm.subprocess, 'Popen', return_value=process), \
+                mock.patch.object(controller.vm.macos, 'helper', return_value=self.tmp / 'helper'):
+            with self.assertRaisesRegex(RuntimeError, 'receipt captured'):
+                machine.start(on_spawn=capture)
+        machine.log.close()
+        self.assertEqual(seen, [1234])
+
+    def test_host_rejects_weakened_or_missing_renderer_evidence(self):
+        identity = {'run_id': 'fictional-run'}
+        sandbox = {'passed': True, 'options': {'chromiumSandbox': True}, 'version': '123',
+                   'executable_sha256': 'a' * 64, 'sandbox': 'You are adequately sandboxed.',
+                   'renderers': [{'uid': '1000', 'seccomp': '2', 'own_user_namespace': True,
+                                  'own_pid_namespace': True}]}
+        network = {'passed': True, 'attempts': {n: {'refused': True}
+                   for n in ('gateway', 'host_listener', 'internet')}}
+        container = {'Image': 'fictional-image', 'Config': {'User': '1000:1000'},
+                     'HostConfig': {'NetworkMode': 'none'},
+                     'Mounts': [{'Destination': n, 'RW': n != '/candidate'}
+                                for n in ('/candidate', '/results', '/sockets')]}
+        for name, value in [('protection', {'passed': True, 'identity': identity}),
+                            ('browser-sandbox', sandbox), ('network-controls', network),
+                            ('network-container', [container]), ('sandbox-container', [container])]:
+            (self.tmp / (name + '.json')).write_text(json.dumps(value))
+        self.assertTrue(controller.verify_protection(self.tmp, identity)['passed'])
+        for key, value in [('chromiumSandbox', False), ('chromiumSandbox', None)]:
+            sandbox['options'][key] = value
+            (self.tmp / 'browser-sandbox.json').write_text(json.dumps(sandbox))
+            with self.assertRaisesRegex(RuntimeError, 'Chromium protection'):
+                controller.verify_protection(self.tmp, identity)
+        sandbox['options']['chromiumSandbox'] = True
+        sandbox['renderers'][0].pop('uid')
+        (self.tmp / 'browser-sandbox.json').write_text(json.dumps(sandbox))
+        with self.assertRaisesRegex(RuntimeError, 'Chromium protection'):
+            controller.verify_protection(self.tmp, identity)

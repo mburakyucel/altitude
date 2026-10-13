@@ -2458,6 +2458,16 @@ def validation_guest_cpus() -> int:
     return min(4, max(1, (os.cpu_count() or 2) // 2))
 
 
+def validation_guest_host_addresses() -> list[str]:
+    """Provisioning denies every Mac interface address, including VPN/public interfaces."""
+    if not _darwin():
+        raise RuntimeError("Guest browser provisioning needs the Mac platform")
+    result = subprocess.run(["/sbin/ifconfig", "-a"], check=True, capture_output=True, text=True, timeout=10)
+    addresses = {ipaddress.ip_address(value.split("%")[0])
+                 for value in re.findall(r"\binet6?\s+([^\s]+)", result.stdout)}
+    return sorted(str(address) for address in addresses if not address.is_loopback)
+
+
 def validation_guest_seed_cache() -> Path | None:
     """Only the eligible Mac's existing VM lane cache seeds the protected validation cache."""
     if _darwin() and host_platform.machine() == "arm64":

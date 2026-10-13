@@ -114,6 +114,8 @@ def cleanup(area, cache):
     receipt = area / 'guest-owner.json'
     owner = json.loads(receipt.read_text()) if receipt.exists() else {}
     process = owner.get('process')
+    if not process and (area / 'guest/disk.img').exists():
+        raise RuntimeError('Guest disk has no process ownership receipt; retain it for recovery')
     if process and platform.process_identity_live(process):
         os.kill(process['pid'], signal.SIGTERM)
         deadline = time.monotonic() + 5
@@ -153,21 +155,63 @@ print(json.dumps(result))'''
     return json.loads(machine.ssh(shlex.join(['python3', '-c', program, json.dumps(targets)]), timeout=15).stdout)
 
 
-def network_filter(machine, denied_port):
+def network_filter(machine, denied_port, host_addresses):
     # Private destinations include the Mac's NAT gateway; DNS is the only exception.
+    host_ipv4 = ', '.join(str(ipaddress.ip_address(a)) for a in host_addresses
+                         if ipaddress.ip_address(a).version == 4)
+    hosts = f'ip daddr {{ {host_ipv4} }} reject' if host_ipv4 else ''
     rules = f'''table inet altitude_validation {{
  chain output {{ type filter hook output priority 0; policy accept;
  tcp dport {denied_port} reject
  udp dport 53 accept
  tcp dport 53 accept
  oifname "lo" accept
- ip daddr {{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 }} reject
- ip6 daddr {{ ::1, fc00::/7, fe80::/10 }} reject
+ {hosts}
+ ip daddr {{ 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 192.0.0.0/24, 198.18.0.0/15, 224.0.0.0/4, 240.0.0.0/4 }} reject
+ meta nfproto ipv6 reject
  }}
 }}'''
     machine.ssh('printf %s ' + shlex.quote(rules) + ' > input/network.nft && sudo -n nft -f input/network.nft')
     # A finite 8 MB/s ingress cap makes the 128 MB stop margin cover polling and shutdown.
     machine.ssh('sudo -n tc qdisc add dev enp0s1 clsact && sudo -n tc filter add dev enp0s1 ingress protocol all matchall action police rate 64mbit burst 8mb conform-exceed drop')
+
+
+def verify_protection(root, identity):
+    """Check deployed preflight evidence copied before candidate guest administration runs."""
+    protection = json.loads((root / 'protection.json').read_text())
+    sandbox = json.loads((root / 'browser-sandbox.json').read_text())
+    network = json.loads((root / 'network-controls.json').read_text())
+    if protection['identity'] != identity or protection['passed'] is not True:
+        raise RuntimeError('Protection preflight identity differs')
+    renderers = sandbox.get('renderers', [])
+    if (sandbox.get('passed') is not True or sandbox.get('options', {}).get('chromiumSandbox') is not True
+            or not sandbox.get('version') or not re.fullmatch('[0-9a-f]{64}', str(sandbox.get('executable_sha256', '')))
+            or 'You are adequately sandboxed.' not in sandbox.get('sandbox', '')
+            or not renderers or any(not str(r.get('uid', '')).isdigit() or r.get('uid') == '0' or r.get('seccomp') != '2'
+                                    or r.get('own_user_namespace') is not True
+                                    or r.get('own_pid_namespace') is not True for r in renderers)):
+        raise RuntimeError('Required Chromium protection evidence failed')
+    if network.get('passed') is not True or set(network.get('attempts', {})) != {'gateway', 'host_listener', 'internet'} or any(a.get('refused') is not True for a in network['attempts'].values()):
+        raise RuntimeError('Browser network control evidence failed')
+    for name in ('network', 'sandbox'):
+        container = json.loads((root / (name + '-container.json')).read_text())[0]
+        host, mounts = container['HostConfig'], {m['Destination']: m for m in container['Mounts']}
+        if (host.get('NetworkMode') != 'none' or host.get('Privileged') or host.get('Devices')
+                or container['Config']['User'] != '1000:1000' or not container.get('Image')
+                or set(mounts) != {'/candidate', '/results', '/sockets'} or mounts['/candidate']['RW']):
+            raise RuntimeError('Browser container protection evidence differs')
+    return {'passed': True, 'version': sandbox['version'], 'executable_sha256': sandbox['executable_sha256']}
+
+
+def verify_journeys(root):
+    browser = json.loads((root / 'browser.json').read_text())
+    ipc = json.loads((root / 'ipc-controls.json').read_text())
+    if browser.get('passed') is not True or ipc.get('passed') is not True or set(ipc.get('refused', [])) != {'version', 'action', 'instance', 'keys', 'values', 'order'}:
+        raise RuntimeError('Browser journey or fixture IPC controls failed')
+    for viewport in ('phone', 'desktop'):
+        tls = json.loads((root / viewport / 'tls-controls.json').read_text())
+        if tls != {'untrusted_ca_rejected': True, 'wrong_hostname_rejected': True}:
+            raise RuntimeError('Browser TLS controls failed')
 
 
 def run(args):
@@ -178,10 +222,16 @@ def run(args):
     record = {'passed': False, 'run_id': args.run_id, 'commit': args.commit, 'tree': args.tree,
               'scope': 'non-browser bootstrap diagnostic' if args.bootstrap_only else 'fixed Mac validation guest actual-image fictional browser',
               'controller_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
-    machine = thread = monitor = None
+    machine = thread = monitor = original_ssh = None
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     budget = Budget(results)
     started = time.monotonic()
+    deadline = started + args.timeout
+    def phase_seconds(bound):
+        remaining = int(deadline - time.monotonic() - 90)
+        if remaining <= 0:
+            raise RuntimeError('Guest phase budget exhausted; time reserved for cleanup')
+        return min(bound, remaining)
     try:
         candidate = area / 'work'
         _, commit, tree = identity(candidate)
@@ -194,9 +244,10 @@ def run(args):
             'packages: [git, gh, openssl, podman, crun, uidmap, dbus-bin, slirp4netns, nftables]')
         vm.CPUS = platform.validation_guest_cpus()
         machine = vm.Machine(work, cache / vm.IMAGE)
-        machine.start()
-        dump(area / 'guest-owner.json', {'process': platform.process_identity(machine.process.pid)})
-        machine.wait_ready(time.monotonic() + 600)
+        machine.start(on_spawn=lambda pid: dump(area / 'guest-owner.json', {'process': platform.process_identity(pid)}))
+        original_ssh = machine.ssh
+        machine.ssh = lambda command, timeout=60, check=True: original_ssh(command, timeout=phase_seconds(timeout), check=check)
+        machine.wait_ready(time.monotonic() + phase_seconds(600))
         record['boot_seconds'] = time.monotonic() - started
         record['guest_runtime'] = machine.ssh('uname -a; podman --version; crun --version').stdout
         budget.observe(machine)
@@ -216,18 +267,24 @@ def run(args):
         identity_record = {key: record[key] for key in ('run_id', 'commit', 'tree', 'controller_sha256')}
         identity_record['source_sha256'] = record['source']['sha256']
         gateway = str(ipaddress.ip_address(machine.ssh("ip -4 route show default | awk '{print $3}'").stdout.strip()))
-        with socket.create_server(('0.0.0.0', 0)) as listener:
+        host_addresses = platform.validation_guest_host_addresses()
+        record['denied_host_addresses'] = host_addresses
+        with socket.create_server((gateway, 0)) as listener:
             listener.settimeout(1)
             targets = {'gateway': [gateway, listener.getsockname()[1]], 'host_listener': [gateway, listener.getsockname()[1]], 'internet': ['1.1.1.1', 443]}
             record['network_before_filter'] = network_probe(machine, targets)
             if not all(record['network_before_filter'].values()):
                 raise RuntimeError('Guest network positive controls failed')
-            network_filter(machine, args.port)
+            network_filter(machine, args.port, host_addresses)
             record['network_after_filter'] = network_probe(machine, targets)
             if record['network_after_filter']['host_listener']:
                 raise RuntimeError('Guest provisioning can reach Mac stand-in listener')
             identity_record['network_targets'] = targets
             guest_file(machine, identity_record, 'input/validation-identity.json', work)
+            monitor = pool.submit(machine.ssh, 'sudo -n env ALTITUDE_FICTIONAL_VM=1 timeout 3300s python3 input/controller/tests/container_bus_monitor.py input/bus-evidence', timeout=3310, check=False)
+            machine.ssh("timeout 10s sh -c 'until test -f input/bus-evidence/ready; do sleep .1; done'")
+            control = 'timeout 8s busctl --system call org.freedesktop.systemd1 /org/freedesktop/systemd1 org.freedesktop.systemd1.Manager StopUnit ss '
+            machine.ssh(control + 'altitude-fictional-missing.scope replace', check=False)
             # Image context contains public dependency manifests only, never a guest key.
             for name in ('package.json', 'pnpm-lock.yaml'):
                 machine.copy(str(candidate / 'web' / name), GUEST + 'input/browser-build/')
@@ -247,10 +304,6 @@ def run(args):
                 if result.returncode:
                     raise RuntimeError('Guest stage failed: ' + name)
             machine.ssh('cp input/releases/altitude-v0.1.0-rc.2.tar.gz input/releases/altitude-v0.1.0-rc.3.tar.gz input/')
-            monitor = pool.submit(machine.ssh, 'sudo -n env ALTITUDE_FICTIONAL_VM=1 timeout 1300s python3 input/controller/tests/container_bus_monitor.py input/bus-evidence', timeout=1310, check=False)
-            machine.ssh("timeout 10s sh -c 'until test -f input/bus-evidence/ready; do sleep .1; done'")
-            control = 'timeout 8s busctl --system call org.freedesktop.systemd1 /org/freedesktop/systemd1 org.freedesktop.systemd1.Manager StopUnit ss '
-            machine.ssh(control + 'altitude-fictional-missing.scope replace', check=False)
             before = time.monotonic()
             prepared = machine.ssh('python3 input/controller/scripts/container_browser_guest.py prepare', timeout=600, check=False)
             (results / 'prepare.log').write_text(prepared.stdout + prepared.stderr)
@@ -267,6 +320,14 @@ def run(args):
         marker = {'run_id': args.run_id, 'unplugged': True, 'helper_event': 'unplugged', 'probes': record['network_after_unplug']}
         guest_file(machine, marker, 'input/network-unplugged.json', work)
         if not args.bootstrap_only:
+            preflight = machine.ssh('python3 input/controller/scripts/container_browser_guest.py preflight', timeout=120, check=False)
+            (results / 'preflight.log').write_text(preflight.stdout + preflight.stderr)
+            protected = results / 'protection-evidence'
+            protected.mkdir()
+            machine.copy(GUEST + 'input/browser-results/.', str(protected))
+            if preflight.returncode:
+                raise RuntimeError('Deployed protection preflight failed')
+            record['protection'] = verify_protection(protected, identity_record)
             result = machine.ssh('python3 input/controller/scripts/container_browser_guest.py run', timeout=1180, check=False)
             (results / 'browser.log').write_text(result.stdout + result.stderr)
             record['browser_exit'] = result.returncode
@@ -274,7 +335,8 @@ def run(args):
             inner = json.loads((results / 'browser-results/guest.json').read_text())
             if result.returncode or not inner['passed']:
                 raise RuntimeError('Guest browser acceptance failed')
-        cleaned = machine.ssh('python3 input/controller/scripts/container_browser_guest.py cleanup', timeout=60, check=False)
+            verify_journeys(results / 'browser-results')
+        cleaned = original_ssh('python3 input/controller/scripts/container_browser_guest.py cleanup', timeout=60, check=False)
         (results / 'fixture-cleanup.log').write_text(cleaned.stdout + cleaned.stderr)
         if cleaned.returncode:
             raise RuntimeError('Guest fixture cleanup failed')
@@ -327,6 +389,7 @@ def main():
     parser.add_argument('--tree')
     parser.add_argument('--port', type=int)
     parser.add_argument('--bootstrap-only', action='store_true')
+    parser.add_argument('--timeout', type=int, default=3300, help='total finite controller budget, including cleanup')
     args = parser.parse_args()
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     if args.operation == 'cleanup':
@@ -334,6 +397,8 @@ def main():
         return 0
     if not all((args.run_id, args.commit, args.tree, args.port)):
         parser.error('fixed validation identity and denied port required')
+    if not 120 <= args.timeout <= 3480:
+        parser.error('controller timeout must fit the validation hour and cleanup reserve')
     return run(args)
 
 

@@ -175,7 +175,7 @@ class Machine:
             self.lock.close()
             raise
 
-    def start(self) -> None:
+    def start(self, *, on_spawn=None) -> None:
         self.log = (self.work / "helper.log").open("w")
         self.events = queue.Queue()
         self.process = subprocess.Popen(
@@ -184,6 +184,8 @@ class Machine:
              str(self.work / "console.log"), str(self.socket), str(CPUS), str(MEMORY_GIB)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
             pass_fds=(self.lock.fileno(),))
+        if on_spawn:
+            on_spawn(self.process.pid)
         self.reader = threading.Thread(target=self._read, daemon=True)
         self.reader.start()
         threading.Thread(target=self._watch_disk, daemon=True).start()
