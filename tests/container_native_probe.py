@@ -39,7 +39,7 @@ config.PROJECTS_FILE.write_text(json.dumps({'fixture': {'path': str(project)}}))
 task = T.new('fixture', 'Confined status fixture', 'Provider-free image identity probe.', hold_merge='Fixture hold')
 task.update(worktree=str(workspace), branch='task')
 S.save_task('fixture', task)
-git_roots = engines._git_dirs(workspace)
+git_roots = engines.common._git_dirs(workspace)
 targets = {'workspace': workspace, 'git_common': git_roots[0], 'git_worktree': git_roots[-1],
            'state': config.ROOT, 'project': project, 'sibling': sibling,
            'deployment': config.SOURCE, 'tls': tls, 'runtime': runtime,

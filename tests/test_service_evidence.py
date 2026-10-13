@@ -2,6 +2,7 @@
 import json
 import socket
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
@@ -16,7 +17,7 @@ class TestServiceEvidence(AltitudeCase):
         super().setUp()
         self.register(self.project, path=self.repo)
         self.owned = self.tmp / ".config/systemd/user/altitude.service.d/90-altitude-source-tls.conf"
-        self.patch(engines.Path, "home", return_value=self.tmp)
+        self.patch(Path, "home", return_value=self.tmp)
         self.native = {
             "ActiveState": "active", "SubState": "running", "MainPID": "99",
             "ActiveEnterTimestamp": "Tue 2026-09-15 10:00:00 UTC", "LoadState": "loaded",
@@ -31,7 +32,7 @@ class TestServiceEvidence(AltitudeCase):
         completed = SimpleNamespace(returncode=0, stderr="", stdout="".join(
             f"{key}={value}\n" for key, value in native.items()))
         completed.__dict__.update(result)
-        with mock.patch.object(engines.subprocess, "run", return_value=completed) as run:
+        with mock.patch.object(engines.common.subprocess, "run", return_value=completed) as run:
             record = engines.service_status(unit)
         self.assertEqual(run.call_count, 1)
         self.assertEqual(run.call_args.args[0][:4], [platform.SYSTEMCTL, "--user", "show", unit])
@@ -45,7 +46,7 @@ class TestServiceEvidence(AltitudeCase):
                                      ("exit-code", "1", "137"), ("core-dump", "3", "11"),
                                      ("success", "1", "0"), ("timeout", "2", "15"),
                                      ("resources", "0", "0")):
-            with self.subTest(result=result), mock.patch.object(engines.Path, "lstat") as disk:
+            with self.subTest(result=result), mock.patch.object(Path, "lstat") as disk:
                 record = self.read(native | {"Result": result, "ExecMainCode": code, "ExecMainStatus": status},
                                    unit="altitude-worker-fixture.service")
                 disk.assert_not_called()
@@ -116,7 +117,7 @@ class TestServiceEvidence(AltitudeCase):
         self.assertIsNone(record["result"])
         for error in (FileNotFoundError("SECRET"), PermissionError("SECRET"),
                       subprocess.TimeoutExpired("SECRET", 15, output="SECRET")):
-            with mock.patch.object(engines.subprocess, "run", side_effect=error):
+            with mock.patch.object(engines.common.subprocess, "run", side_effect=error):
                 failed = engines.service_status(unit)
             self.assertEqual(failed, record)
         self.assertNotIn("SECRET", json.dumps(record))
@@ -219,7 +220,7 @@ class TestServiceEvidence(AltitudeCase):
     def test_owned_drop_in_requires_exact_path_and_unreadable_disk_is_unknown(self):
         record = self.read(self.native | {"DropInPaths": "/other/90-altitude-source-tls.conf"})
         self.assertIs(record["owned_tls_drop_in_loaded"], False)
-        with mock.patch.object(engines.Path, "lstat", side_effect=PermissionError("SECRET")):
+        with mock.patch.object(Path, "lstat", side_effect=PermissionError("SECRET")):
             record = self.read()
         self.assertIsNone(record["owned_tls_drop_in_present"])
         self.assertTrue(record["error"])
@@ -232,7 +233,7 @@ class TestServiceEvidence(AltitudeCase):
         self.assertIsNone(record["loaded_tls_environment"])
         self.assertNotIn("SECRET", json.dumps(record))
         for error in (OSError("SECRET"), subprocess.TimeoutExpired("SECRET", 15, output="SECRET")):
-            with mock.patch.object(engines.subprocess, "run", side_effect=error):
+            with mock.patch.object(engines.common.subprocess, "run", side_effect=error):
                 record = engines.service_status()
             self.assertTrue(record["error"])
             self.assertNotIn("SECRET", json.dumps(record))
@@ -251,7 +252,7 @@ class TestServiceEvidence(AltitudeCase):
                 client.shutdown(socket.SHUT_WR)
                 return json.loads(client.makefile().read())
 
-        with mock.patch.object(engines.subprocess, "run", return_value=result) as run:
+        with mock.patch.object(engines.common.subprocess, "run", return_value=result) as run:
             record = request({"kind": "service", "unit": "altitude.service", "properties": ["Environment"],
                               "args": ["restart", "foreign.service"], "path": "/SECRET"})
             command = run.call_args.args[0]

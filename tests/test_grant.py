@@ -82,7 +82,7 @@ class TestOperatorGrant(AltitudeCase):
                    worktree=str(self.worktree), branch="work")
         root = dispatch.l2_job_root(self.project, self.slug)
         root.mkdir(parents=True, exist_ok=True)
-        S.write_json(root / "agent.json", {"id": "agent", "engine": "claude", "unit": engines._claude_unit("agent")})
+        S.write_json(root / "agent.json", {"id": "agent", "engine": "claude", "unit": engines.claude._claude_unit("agent")})
         self.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         self.httpd.daemon_threads = True
         threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": .01}, daemon=True).start()

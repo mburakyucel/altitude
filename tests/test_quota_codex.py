@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from unittest.mock import patch
 
 from tests import support  # noqa: F401 — isolate runtime before importing Altitude
-from altitude import quota_codex
+from altitude.engines import codex as quota_codex
 
 _default_primary = object()
 
@@ -37,7 +37,7 @@ def transcript(*, primary=_default_primary, secondary=None) -> list[str]:
 class TestRead(unittest.TestCase):
     def test_interleaved_transcript_maps_primary_limit(self):
         with patch.object(quota_codex, "_talk", return_value=transcript()):
-            result = quota_codex.read()
+            result = quota_codex.read_quota()
         self.assertTrue(result["known"])
         self.assertEqual(result["primary_used"], 1.0)
         self.assertEqual(result["primary_resets"], datetime.fromtimestamp(1788646278, timezone.utc).isoformat())
@@ -46,7 +46,7 @@ class TestRead(unittest.TestCase):
     def test_secondary_limit_is_mapped_when_present(self):
         secondary = {"usedPercent": 23, "windowDurationMins": 300, "resetsAt": 1788649878}
         with patch.object(quota_codex, "_talk", return_value=transcript(secondary=secondary)):
-            result = quota_codex.read()
+            result = quota_codex.read_quota()
         self.assertEqual(result["secondary_used"], 23.0)
         self.assertEqual(result["secondary_resets"], datetime.fromtimestamp(1788649878, timezone.utc).isoformat())
         self.assertEqual(result["secondary_window_minutes"], 300)
@@ -54,13 +54,13 @@ class TestRead(unittest.TestCase):
     def test_json_rpc_error_message_is_returned_as_unknown(self):
         lines = [json.dumps({"id": 2, "error": {"code": -32000, "message": "account unavailable"}})]
         with patch.object(quota_codex, "_talk", return_value=lines):
-            result = quota_codex.read()
+            result = quota_codex.read_quota()
         self.assertFalse(result["known"])
         self.assertIn("account unavailable", result["why"])
 
     def test_null_primary_is_unknown(self):
         with patch.object(quota_codex, "_talk", return_value=transcript(primary=None)):
-            result = quota_codex.read()
+            result = quota_codex.read_quota()
         self.assertFalse(result["known"])
         self.assertIn("primary.usedPercent", result["why"])
 
@@ -73,14 +73,14 @@ class TestRead(unittest.TestCase):
                     "resetsAt": 1788646278,
                 }
                 with patch.object(quota_codex, "_talk", return_value=transcript(primary=primary)):
-                    result = quota_codex.read()
+                    result = quota_codex.read_quota()
                 self.assertFalse(result["known"])
                 self.assertIn(repr(used_percent), result["why"])
 
     def test_missing_reset_keeps_the_reported_window_without_inventing_a_deadline(self):
         primary = {"usedPercent": 100, "windowDurationMins": 10080}
         with patch.object(quota_codex, "_talk", return_value=transcript(primary=primary)):
-            result = quota_codex.read()
+            result = quota_codex.read_quota()
         self.assertTrue(result["known"])
         self.assertEqual((result["primary_used"], result["primary_window_minutes"]), (100, 10080))
         self.assertIsNone(result["primary_resets"])
@@ -91,7 +91,7 @@ class TestRead(unittest.TestCase):
                         {"usedPercent": 5, "resetsAt": "invalid"}):
             with self.subTest(primary=primary), patch.object(
                     quota_codex, "_talk", return_value=transcript(primary=primary, secondary=secondary)):
-                result = quota_codex.read()
+                result = quota_codex.read_quota()
                 self.assertTrue(result["known"])
                 self.assertIsNone(result["primary_used"])
                 self.assertEqual((result["secondary_used"], result["secondary_window_minutes"]), (0, 300))
@@ -100,7 +100,7 @@ class TestRead(unittest.TestCase):
     def test_invalid_secondary_used_percent_is_dropped(self):
         secondary = {"usedPercent": "garbage", "windowDurationMins": 300, "resetsAt": 1788649878}
         with patch.object(quota_codex, "_talk", return_value=transcript(secondary=secondary)):
-            result = quota_codex.read()
+            result = quota_codex.read_quota()
         self.assertTrue(result["known"])
         self.assertEqual(result["primary_used"], 1.0)
         self.assertIsNone(result["secondary_used"])
@@ -112,7 +112,7 @@ class TestRead(unittest.TestCase):
             f"Codex app-server output exceeded {quota_codex._MAX_OUTPUT_BYTES} bytes"
         )
         with patch.object(quota_codex, "_talk", side_effect=failure):
-            result = quota_codex.read()
+            result = quota_codex.read_quota()
         self.assertFalse(result["known"])
         self.assertIn("exceeded", result["why"])
 
@@ -120,7 +120,7 @@ class TestRead(unittest.TestCase):
         for failure in (FileNotFoundError("codex"), TimeoutError("late")):
             with self.subTest(failure=type(failure).__name__):
                 with patch.object(quota_codex, "_talk", side_effect=failure):
-                    result = quota_codex.read()
+                    result = quota_codex.read_quota()
                 self.assertFalse(result["known"])
                 self.assertIn("why", result)
 

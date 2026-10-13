@@ -29,6 +29,7 @@ def main():
     l3._finish_image_queue = finish
     engines.image_capability = lambda _engine: {"available": mode["value"] != "unavailable",
                                                "why": "Image input unavailable in this fixture."}
+    engines.common.image_capability = engines.image_capability
 
     def answer(_prompt, **options):
         project = options["extra_env"]["ALTITUDE_PROJECT"]

@@ -63,8 +63,8 @@ class TestCoordinatorContext(AltitudeCase):
 
         with mock.patch.object(l3, "_select", return_value={"engine": "codex", "why": "fixture"}), \
              mock.patch.object(platform, "_darwin", return_value=darwin), \
-             mock.patch.object(engines, "_codex_home", return_value=self.home), \
-             mock.patch.object(engines.subprocess, "Popen", side_effect=launch):
+             mock.patch.object(engines.codex, "_codex_home", return_value=self.home), \
+             mock.patch.object(engines.common.subprocess, "Popen", side_effect=launch):
             for tokens, failed in scenarios:
                 result = l3.turn(self.project, "Continue the authorized work.")
                 self.assertEqual(result["completed"], not failed)
@@ -105,7 +105,7 @@ class TestCoordinatorContext(AltitudeCase):
                     "usage": {"input_tokens": 90000, "output_tokens": 100}}, "2030-01-01T00:00:02+00:00")
         self.append("token_usage_record", {"thread_id": "context-thread", "response_id": "incomplete",
                     "usage": {"input_tokens": 100000}}, "2030-01-01T00:00:03+00:00")
-        self.assertIsNone(engines._codex_session_context("context-thread", "2030-01-01T00:00:00+00:00", self.home))
+        self.assertIsNone(engines.codex._codex_session_context("context-thread", "2030-01-01T00:00:00+00:00", self.home))
         result = {"text": "answer", "reported_session_id": "context-thread",
                   "usage": {"input_tokens": 3000000}, "context": None}
         with mock.patch.object(l3, "_select", return_value={"engine": "codex", "why": "fixture"}), \
@@ -122,7 +122,7 @@ class TestCoordinatorContext(AltitudeCase):
                     "usage": {"input_tokens": 80000, "output_tokens": 100}}, "2030-01-01T00:00:01+00:00")
         with self.rollout.open("a") as stream:
             stream.write('{"type": "event_msg"')  # unfinished provider write
-        result = engines._codex_session_context("context-thread", "2030-01-01T00:00:00+00:00", self.home)
+        result = engines.codex._codex_session_context("context-thread", "2030-01-01T00:00:00+00:00", self.home)
         self.assertEqual(result["tokens"], 80000)
         self.assertIsNone(result["window"])
         self.assertIsNone(result["percent"])

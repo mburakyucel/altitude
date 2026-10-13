@@ -29,8 +29,8 @@ class TaskToolCache(AltitudeCase):
 
     def test_both_platforms_and_engines_launch_resume_and_report_failure_with_writable_caches(self):
         make_repo(self.repo)
-        self.patch(engines, "_codex_processes", {})
-        self.patch(engines, "claude_agents", return_value=[])
+        self.patch(engines.common, "_codex_processes", {})
+        self.patch(engines.claude, "claude_agents", return_value=[])
         self.patch(platform, "job_active", return_value=False)
         for host in ("linux", "darwin"):
             for engine in ("claude", "codex"):
@@ -65,7 +65,7 @@ class TaskToolCache(AltitudeCase):
                         native.chmod(0o755)
                         caches = {}
                         def command(unit, argv, child_env, **kw):
-                            self.assertEqual(argv, engines._driver_command())
+                            self.assertEqual(argv, engines.common._driver_command())
                             self.assertEqual(child_env["ALTITUDE_TASK"], task["slug"])
                             self.assertEqual(child_env["COREPACK_HOME"], "/fixture/managers")
                             for key in ("XDG_CACHE_HOME", "npm_config_cache", "npm_config_store_dir", "PIP_CACHE_DIR"):
@@ -79,13 +79,13 @@ class TaskToolCache(AltitudeCase):
                              mock.patch.object(config, "CLAUDE_BIN", str(native)), \
                              mock.patch.object(config, "CODEX_BIN", str(native)), \
                              mock.patch.object(platform, "job_command", side_effect=command):
-                            result = engines._start_worker(engine, "fixture", "continue", cwd=self.repo,
+                            result = engines.common._start_worker(engine, "fixture", "continue", cwd=self.repo,
                                 job_root=root, resume="session" if resume else None,
                                 extra_env={"ALTITUDE_TASK":task["slug"], "COREPACK_HOME":"/fixture/managers",
                                            "XDG_CACHE_HOME":"/unwritable/service-cache", "PIP_CACHE_DIR":"/unwritable/pip"})
                             self.assertEqual(result["returncode"], 0, result)
                             worker_id = result["agent"]["id"]
-                            process = engines._codex_processes.get(worker_id)
+                            process = engines.common._codex_processes.get(worker_id)
                             if process is not None:
                                 process.wait(timeout=5)
                             row = engines.worker(engine, {"agent_id":worker_id}, job_root=root)

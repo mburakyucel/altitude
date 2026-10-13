@@ -123,8 +123,8 @@ class TestToolchain(AltitudeCase):
     def test_fresh_and_resumed_workers_execute_tools_with_identity_and_failure_intact(self):
         make_repo(self.repo)
         nvm_fixture(self)
-        self.patch(engines, "_codex_processes", {})
-        self.patch(engines, "claude_agents", return_value=[])
+        self.patch(engines.common, "_codex_processes", {})
+        self.patch(engines.claude, "claude_agents", return_value=[])
         self.patch(platform, "job_active", return_value=False)
         check_tools = (
             "import json, os, subprocess, sys\n"
@@ -168,21 +168,21 @@ class TestToolchain(AltitudeCase):
                     self.patch(config, "CLAUDE_BIN" if engine == "claude" else "CODEX_BIN", str(fake))
 
                     def service_command(unit, command, child_env, **_):
-                        self.assertEqual(command, engines._driver_command())
+                        self.assertEqual(command, engines.common._driver_command())
                         # Preserve the real transient unit's clean child environment without contacting systemd.
                         return ["/usr/bin/env", "-i", *(f"{k}={v}" for k, v in child_env.items()), *command]
 
                     with mock.patch.object(platform, "job_command", side_effect=service_command):
-                        result = engines._start_worker(
+                        result = engines.common._start_worker(
                             engine, "fixture", "continue", cwd=self.repo, job_root=self.tmp / "jobs",
                             resume="session" if resume else None,
                             extra_env={"ALTITUDE_TASK": "toolchain-task", "ALTITUDE_ATTEMPT": "1"})
                     self.assertEqual(result["returncode"], 0, result)
                     worker_id = result["agent"]["id"]
-                    process = engines._codex_processes.get(worker_id)
+                    process = engines.common._codex_processes.get(worker_id)
                     if process:
                         process.wait(timeout=5)
-                    self.assertEqual(engines._codex_paths(self.tmp / "jobs", worker_id)["stderr"].read_text(), "")
+                    self.assertEqual(engines.common._codex_paths(self.tmp / "jobs", worker_id)["stderr"].read_text(), "")
                     row = engines.worker(engine, {"agent_id": worker_id}, job_root=self.tmp / "jobs")
                     self.assertEqual(row["sessionId"], "session")
                     self.assertEqual(row["state"], "failed")

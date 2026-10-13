@@ -123,7 +123,7 @@ class TestPickEngine(AltitudeCase):
         project = {"routing": config.parse_routing("claude:fable>claude:opus>codex")}
         route.note_rejection({"engine": "claude", "model": "fable"}, {"scope": "engine", "why": "sign in"})
         self.assertEqual(route.pick_engine("l2", project=project)["engine"], "codex")
-        route.note_limit("codex", engines._usage_limit("2099-01-01T00:00:00+00:00"))
+        route.note_limit("codex", engines.common._usage_limit("2099-01-01T00:00:00+00:00"))
         choice = route.pick_engine("l2", project=project)
         self.assertIsNone(choice["engine"])
         self.assertIn("sign in", choice["why"])

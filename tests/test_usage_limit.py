@@ -72,7 +72,7 @@ class TestPollAndResume(AltitudeCase):
         self.assertEqual(out[0]["limited"]["until"], "2026-08-30T03:00:00+00:00", "read relative to when the worker wrote it, not to now")
 
     def test_job_detail_reads_the_file_and_its_time(self):
-        d = engines.JOBS_DIR / "t-detail"; d.mkdir(parents=True, exist_ok=True)
+        d = engines.claude.JOBS_DIR / "t-detail"; d.mkdir(parents=True, exist_ok=True)
         (d / "state.json").write_text(json.dumps({"state": "idle", "detail": LIMIT}))
         text, at = engines.claude_job_detail("t-detail")
         self.assertEqual(text, LIMIT)
@@ -88,7 +88,7 @@ class TestPollAndResume(AltitudeCase):
             S.save_task(self.project, {**base, "slug": slug, "title": slug, "created": f"2026-08-30T0{['3', '1', '2'][i]}:00:00+00:00"})
         holds = iter([None, None, "WIP limit: 3 running"])
         with mock.patch.object(dispatch, "wip_hold", side_effect=lambda project, task=None: next(holds)), \
-             mock.patch.object(engines, "usage_hold", return_value=None):
+             mock.patch.object(engines.common, "usage_hold", return_value=None):
             back = dispatch.resume_due(self.project)
         self.assertEqual(back, ["a-oldest", "b-middle"])
         # the one still held is Altitude's to resume: not a "Needs you" card, but listed as waiting for a slot

@@ -474,14 +474,14 @@ print(json.dumps({{"type": "item.completed", "item": {{"type": "agent_message", 
         real_popen, jobs = subprocess.Popen, []
 
         def popen(command, **kwargs):
-            if command[0] != engines.platform.SYSTEMD_RUN:
+            if command[0] != engines.common.platform.SYSTEMD_RUN:
                 return real_popen(command, **kwargs)
             jobs.append(command)  # the job's own command, without the user service manager
             return real_popen(command[command.index("--") + 1:], **kwargs)
 
         choice = {**self.choice("codex"), "model": "gpt-fixture"}
         with mock.patch.object(config, "CODEX_BIN", str(fake)), mock.patch.object(l3, "_select", return_value=choice), \
-             mock.patch.object(engines.subprocess, "Popen", side_effect=popen):
+             mock.patch.object(engines.common.subprocess, "Popen", side_effect=popen):
             result = l3.turn(self.project, "Check the configuration.")
 
         self.assertEqual((result["text"], result["session_id"], result["error"]), ("Done.", "fake-thread", None))
@@ -753,13 +753,13 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
                 return seen[engine][1]
             return start
         claude = popen("claude", [{"type": "result", "result": "ok", "session_id": "sid", "is_error": False}])
-        with mock.patch.object(engines, "usage_hold", return_value=None), \
-             mock.patch.object(engines.subprocess, "Popen", side_effect=claude):
+        with mock.patch.object(engines.common, "usage_hold", return_value=None), \
+             mock.patch.object(engines.common.subprocess, "Popen", side_effect=claude):
             engines.claude_print("prompt", cwd=runtime, permission_mode="dontAsk", permission_prompts="none",
                                  restricted=True, tools=l3.L3_TOOLS, allowed_tools=engines.L3_ALLOWED_TOOLS,
                                  add_dirs=(self.repo, config.ROOT), settings=self.tmp / "settings.json")
         job, process = seen["claude"]
-        self.assertEqual(job[-len(engines._driver_command()):], engines._driver_command())
+        self.assertEqual(job[-len(engines.common._driver_command()):], engines.common._driver_command())
         self.assertTrue(process.stdin.fed.wait(5))
         command = process.stdin.spec["command"]
         self.assertIn("--restricted", command)
@@ -771,7 +771,7 @@ print("native sandbox: reads and scratch writes pass; checkout/state/Git/broker/
         settings = engines.codex_l3_permissions(runtime, project=self.project)
         process = mock.MagicMock(pid=1, returncode=0)
         process.communicate.return_value = (json.dumps({"type": "thread.started", "thread_id": "sid"}), "")
-        with mock.patch.object(engines.subprocess, "Popen", return_value=process) as execute:
+        with mock.patch.object(engines.common.subprocess, "Popen", return_value=process) as execute:
             engines.codex_exec("prompt", cwd=runtime, sandbox_settings=settings, ignore_user_config=True)
         command = execute.call_args.args[0]
         self.assertIn("exec", command)

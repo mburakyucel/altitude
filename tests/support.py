@@ -394,7 +394,7 @@ class AltitudeCase(unittest.TestCase):
         if not self.gated:
             self.patch(access, "is_machine", return_value=True)
         if not self.github:
-            self.patch(engines, "github_token", return_value="")
+            self.patch(engines.common, "github_token", return_value="")
         self.patch(platform, "local_names", return_value={"host": set(), "user": set()})
         self.tmp = Path(tempfile.mkdtemp(prefix="case-", dir=SUITE))
         self.addCleanup(shutil.rmtree, self.tmp, True)
@@ -473,9 +473,12 @@ class AltitudeCase(unittest.TestCase):
 
     def quiet_engines(self, agents: list[dict] | None = None) -> None:
         """No usage hold, known quota, and only the given Claude agents: the dispatcher sees a free machine."""
-        self.patch(engines, "claude_agents", return_value=list(agents or []))
-        self.patch(engines, "usage_hold", return_value=None)
-        self.patch(engines, "installation", return_value={"available": None, "why": "test installation"})
+        agents_fixture = self.patch(engines, "claude_agents", return_value=list(agents or []))
+        self.patch(engines.claude, "claude_agents", new=agents_fixture)
+        hold = self.patch(engines, "usage_hold", return_value=None)
+        self.patch(engines.common, "usage_hold", new=hold)
+        installation = self.patch(engines, "installation", return_value={"available": None, "why": "test installation"})
+        self.patch(engines.common, "installation", new=installation)
         self.patch(monitor, "quota", return_value={"known": True})
 
     def private_ledgers(self) -> None:

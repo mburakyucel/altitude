@@ -28,11 +28,11 @@ class TestAvailability(AltitudeCase):
     def test_installation_does_not_claim_authentication_or_entitlement(self):
         for engine, binary in (("claude", config.CLAUDE_BIN), ("codex", config.CODEX_BIN)):
             with self.subTest(engine=engine), \
-                    mock.patch.object(engines, "clean_env", return_value={"PATH": "/fixture/tools"}), \
-                    mock.patch.object(engines.shutil, "which", return_value=None) as which:
+                    mock.patch.object(engines.common, "clean_env", return_value={"PATH": "/fixture/tools"}), \
+                    mock.patch.object(engines.common.shutil, "which", return_value=None) as which:
                 self.assertIs(engines.installation(engine)["available"], False)
                 which.assert_called_once_with(binary, path="/fixture/tools")
-            with mock.patch.object(engines.shutil, "which", return_value="/installed/cli"):
+            with mock.patch.object(engines.common.shutil, "which", return_value="/installed/cli"):
                 self.assertIsNone(engines.installation(engine)["available"])
 
     def test_verified_model_rejections_are_model_scoped_and_sanitized(self):
@@ -91,21 +91,21 @@ class TestAvailability(AltitudeCase):
     def test_a_coordinator_turn_failing_on_a_revoked_sign_in_is_a_safe_sign_in_rejection(self):
         process = mock.Mock(pid=123, returncode=1, stdout=io.StringIO(revoked_stream()), stderr=io.StringIO(""),
                             stdin=io.StringIO())
-        with mock.patch.object(engines.subprocess, "Popen", return_value=process), \
-             mock.patch.object(engines, "usage_hold", return_value=None):
+        with mock.patch.object(engines.common.subprocess, "Popen", return_value=process), \
+             mock.patch.object(engines.common, "usage_hold", return_value=None):
             result = engines.claude_print("hello", cwd=self.repo)
         self.assertTrue(result["rejection"]["sign_in"])
         self.assertTrue(result["safe_to_retry"])
         self.assertEqual(result["text"], "")
 
     def test_a_task_owner_ending_on_a_revoked_sign_in_has_the_same_rejection(self):
-        paths = engines._codex_paths(self.tmp, "claude")
+        paths = engines.common._codex_paths(self.tmp, "claude")
         S.write_json(paths["record"], {"engine": "claude", "unit": "owned.service", "started_at": S.now(),
                                        "launch_model": "opus"})
         paths["stderr"].write_text("")
         paths["stdout"].write_text(revoked_stream())
         with mock.patch.object(platform, "job_active", return_value=False), \
-             mock.patch.object(engines, "_codex_session_model", return_value={}):
+             mock.patch.object(engines.codex, "_codex_session_model", return_value={}):
             row = engines.worker("claude", {"agent_id": "claude"}, job_root=self.tmp)
         self.assertTrue(row["rejection"]["sign_in"])
         self.assertIn("sign in, then Retry or Resume", row["rejection"]["why"])
@@ -133,9 +133,9 @@ class TestAvailability(AltitudeCase):
         ]
         for engine, event in events:
             with self.subTest(event=event):
-                self.assertFalse(engines._safe_output(engine, stream(event, {"type": "turn.failed"})))
-        self.assertFalse(engines._safe_output("codex", '{"type":"item.started"'))
-        self.assertFalse(engines._safe_output("codex", '{"type":"unknown"}\n'))
+                self.assertFalse(engines.common._safe_output(engine, stream(event, {"type": "turn.failed"})))
+        self.assertFalse(engines.common._safe_output("codex", '{"type":"item.started"'))
+        self.assertFalse(engines.common._safe_output("codex", '{"type":"unknown"}\n'))
 
 
 class TestFailureEvidence(AltitudeCase):
@@ -145,8 +145,8 @@ class TestFailureEvidence(AltitudeCase):
         process = mock.Mock(pid=123, returncode=1, stdout=io.StringIO(stdout), stderr=io.StringIO(""),
                             stdin=io.StringIO())
         self.private_ledgers()
-        with mock.patch.object(engines.subprocess, "Popen", return_value=process), \
-             mock.patch.object(engines, "usage_hold", return_value=None):
+        with mock.patch.object(engines.common.subprocess, "Popen", return_value=process), \
+             mock.patch.object(engines.common, "usage_hold", return_value=None):
             result = engines.claude_print("hello", cwd=self.repo, model="fable")
         self.assertEqual((result["limited"]["scope"], result["limited"]["model"], result["limited"]["until"]),
                          ("model", "fable", None))
@@ -157,8 +157,8 @@ class TestFailureEvidence(AltitudeCase):
                         {"type": "turn.failed", "error": {"code": "model_not_found", "message": "missing"}})
         process = mock.Mock(pid=123, returncode=1, stdin=io.StringIO())
         process.communicate.return_value = (stdout, "")
-        with mock.patch.object(engines.subprocess, "Popen", return_value=process), \
-             mock.patch.object(engines, "_codex_session_model", return_value={}):
+        with mock.patch.object(engines.common.subprocess, "Popen", return_value=process), \
+             mock.patch.object(engines.codex, "_codex_session_model", return_value={}):
             result = engines.codex_exec("hello", cwd=self.repo, model="missing")
         self.assertIn("model_not_found", result["error"])
         self.assertEqual(result["rejection"]["scope"], "model")
@@ -170,8 +170,8 @@ class TestFailureEvidence(AltitudeCase):
                             {"type": "turn.failed", "error": {"message": "You've hit your usage limit"}})
             process = mock.Mock(pid=123, returncode=1, stdin=io.StringIO())
             process.communicate.return_value = (stdout, "")
-            with self.subTest(activity=activity), mock.patch.object(engines.subprocess, "Popen", return_value=process), \
-                 mock.patch.object(engines, "_codex_session_model", return_value={}):
+            with self.subTest(activity=activity), mock.patch.object(engines.common.subprocess, "Popen", return_value=process), \
+                 mock.patch.object(engines.codex, "_codex_session_model", return_value={}):
                 result = engines.codex_exec("hello", cwd=self.repo)
             self.assertTrue(result["limited"])
             self.assertIsNone(result["rejection"])
@@ -185,9 +185,9 @@ class TestFailureEvidence(AltitudeCase):
             process = mock.Mock(pid=123, returncode=1, stdout=io.StringIO(stdout), stderr=io.StringIO(""),
                                 stdin=io.StringIO())
             with self.subTest(activity=activity), \
-                 mock.patch.object(engines.subprocess, "Popen", return_value=process), \
-                 mock.patch.object(engines, "usage_hold", return_value=None), \
-                 mock.patch.object(engines, "RAW_CAPTURE_CAP", 80):
+                 mock.patch.object(engines.common.subprocess, "Popen", return_value=process), \
+                 mock.patch.object(engines.common, "usage_hold", return_value=None), \
+                 mock.patch.object(engines.common, "RAW_CAPTURE_CAP", 80):
                 result = engines.claude_print("hello", cwd=self.repo, model="fable")
             self.assertEqual(result["rejection"]["scope"], "model")
             self.assertEqual(result["safe_to_retry"], not activity)
@@ -200,7 +200,7 @@ class TestFailureEvidence(AltitudeCase):
             ("codex", {"type": "thread.started", "thread_id": "session"},
              {"type": "turn.failed", "error": {"code": "model_not_found", "message": "missing"}}),
         ):
-            paths = engines._codex_paths(self.tmp, engine)
+            paths = engines.common._codex_paths(self.tmp, engine)
             S.write_json(paths["record"], {"engine": engine, "unit": "owned.service", "started_at": S.now(),
                                            "launch_model": "fable", "resume": True})
             paths["stderr"].write_text("")
@@ -209,7 +209,7 @@ class TestFailureEvidence(AltitudeCase):
                 paths["stdout"].write_text(stream(init, *activity, failed))
                 with self.subTest(engine=engine, live=live, activity=activity), \
                      mock.patch.object(platform, "job_active", return_value=live), \
-                     mock.patch.object(engines, "_codex_session_model", return_value={}):
+                     mock.patch.object(engines.codex, "_codex_session_model", return_value={}):
                     row = engines.worker(engine, {"agent_id": engine}, job_root=self.tmp)
                 self.assertEqual(row["sessionId"], "session")
                 self.assertTrue(row["resumed"])

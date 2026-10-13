@@ -350,7 +350,7 @@ class TestInspectionCLI(AltitudeCase):
 
     def test_engine_command_capture_and_l3_persistence_are_bounded_for_both_engines(self):
         long = "x" * 250
-        self.assertEqual(len(l3._tool_log([engines._tool("Bash", long)])[0]["command"]), 200)
+        self.assertEqual(len(l3._tool_log([engines.common._tool("Bash", long)])[0]["command"]), 200)
         choices = [{"engine": "claude", "why": "test", "quota": {}},
                    {"engine": "codex", "why": "test", "quota": {}}]
         claude = {"text": "done", "session_id": "cl", "usage": {}, "context_tokens": 1, "cost": 0,
@@ -382,7 +382,7 @@ class TestInspectionCLI(AltitudeCase):
             def kill(self): self.returncode = -9
 
         with mock.patch.object(engines, "usage_hold", return_value=None), \
-             mock.patch.object(engines.subprocess, "Popen", return_value=Process()):
+             mock.patch.object(engines.common.subprocess, "Popen", return_value=Process()):
             parsed = engines.claude_print("prompt", cwd=self.tmp, settings=self.tmp / "settings.json")
         self.assertEqual(parsed["tools"], [{"name": "Bash", "command": "alt queue"}])
 
@@ -390,7 +390,7 @@ class TestInspectionCLI(AltitudeCase):
                              json.dumps({"type": "item.completed", "item": {
                                  "type": "command_execution", "command": wrapped}})]) + "\n"
         process = SimpleNamespace(pid=1, returncode=0, stdin=io.StringIO(), communicate=lambda *_a, **_k: (events, ""))
-        with mock.patch.object(engines.subprocess, "Popen", return_value=process):
+        with mock.patch.object(engines.common.subprocess, "Popen", return_value=process):
             parsed = engines.codex_exec("prompt", cwd=self.tmp)
         self.assertEqual(parsed["tools"], [{"name": "Bash", "command": wrapped}])
 
@@ -398,7 +398,7 @@ class TestInspectionCLI(AltitudeCase):
         result = SimpleNamespace(returncode=0, stderr="", stdout=(
             "ActiveState=active\nSubState=running\nMainPID=99\n"
             "ActiveEnterTimestamp=Thu 2026-09-04 00:00:00 PDT\n"))
-        with mock.patch.object(engines.subprocess, "run", return_value=result) as run:
+        with mock.patch.object(engines.common.subprocess, "run", return_value=result) as run:
             record = engines.service_status()
         self.assertEqual(run.call_count, 1)
         self.assertEqual((record["state"], record["pid"], record["last_restart"]),
