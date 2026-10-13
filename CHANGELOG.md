@@ -7,9 +7,9 @@ preview; see [release checkpoints](docs/RELEASING.md). An Unreleased entry is no
 
 Feature release of the early preview.
 
-- Installation ends with a private link: after you trust the certificate, opening it pairs that
-  first browser and goes straight to First run, with no separate `alt pair` step. On a Mac, an
-  installed Homebrew OpenSSL is found without changing PATH.
+- A fresh installation ends with a private link: after you trust the certificate, opening it
+  pairs that first browser and goes straight to First run, with no separate `alt pair` step. On a
+  Mac, an installed Homebrew OpenSSL is found without changing PATH.
 - Settings holds one model and effort default for each engine, and a task's composer can move
   that task to another engine, model or effort while keeping its work, questions and merge holds.
   Opening the chooser starts nothing, and a switch in progress shows who started it.
@@ -18,9 +18,9 @@ Feature release of the early preview.
 - Project names, runtime records and file reads are checked more strictly.
 
 Known limits: an installation whose earlier version wrote Python cache files into its release
-folder can leave an automatic update stuck (#912); its repair is not in this release. Native
-installer and device confirmation of first-browser pairing remains open (#926). Live providers
-are not part of release testing.
+folder cannot update to this release, and an automatic attempt can stay stuck (#912); the repair
+is not in this release. Native installer and device confirmation of first-browser pairing
+remains open (#926). Live providers are not part of release testing.
 
 ## v0.5.0 — 2026-10-13
 
