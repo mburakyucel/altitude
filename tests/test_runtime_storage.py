@@ -70,6 +70,20 @@ class RuntimeStorage(AltitudeCase):
                     self.assertTrue(acquired)
                     self.assertEqual(transcript._turn_prompt(self.project, "fictional-task", {}, {}), "native full brief")
 
+    def test_existing_write_only_lock_keeps_its_bytes_and_can_serialize(self):
+        self.assertNotEqual(os.geteuid(), 0, "root cannot establish lock access parity")
+        self.directory.mkdir()
+        for name, locked in self.locks():
+            leaf = self.directory / name
+            leaf.write_bytes(b"existing lock bytes")
+            leaf.chmod(0o200)
+            try:
+                with locked() as acquired:
+                    self.assertTrue(acquired)
+            finally:
+                leaf.chmod(0o600)
+            self.assertEqual(leaf.read_bytes(), b"existing lock bytes")
+
     def test_serialization_waits_for_existing_writer_without_truncating(self):
         script = ("from altitude import state; import sys; print('ready',flush=True); "
                   "\nwith state.project_lock(sys.argv[1]): print('acquired',flush=True)")

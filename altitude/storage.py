@@ -72,7 +72,7 @@ def regular_reader(directory: int, name: str):
 def lock_file(directory: int, name: str):
     """Create a fixed regular lock leaf without following links or truncating existing bytes."""
     _component(name)
-    fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=directory)
+    fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=directory)
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             raise NotRegularFile("not a regular lock file")
