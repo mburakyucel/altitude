@@ -29,6 +29,11 @@ test("patient transfer cancels without losing the draft, then readiness starts a
   const target = before.transfer.targets.find((item: { available: boolean }) => item.available);
   const walk = walkthrough(page, info);
   await walk.open(`/projects/atlas/tasks/${slug}`);
+  await walk.state("00a-task-before-switch", { visible: [page.getByRole("button", { name: /Task details$/ })], hidden: [card(page)] });
+  await page.getByRole("button", { name: /Task details$/ }).click();
+  const details = page.getByRole("dialog", { name: "Task details", exact: true });
+  await walk.state("00b-switch-entry-in-task-details", { visible: [details, details.getByRole("button", { name: "Switch engine…", exact: true })], hidden: [card(page)] });
+  await page.keyboard.press("Escape");
   await draft(page).fill("Keep this unsent instruction.");
   await draft(page).evaluate((node: HTMLTextAreaElement) => node.setSelectionRange(5, 9));
   await start(page);
