@@ -161,7 +161,8 @@ for (const entry of entries) {
 for (const entry of ["file", "shown"] as const) {
   test(`failed content transport retains API Retry: ${entry}`, async ({ page, request }, info) => {
     // A transport overlay affects only the first content read; Retry still uses the real API/storage.
-    const content = entry === "file" ? "**/api/files/atlas?*" : "**/api/shown/atlas/**";
+    const content = (url: URL) => entry === "file" ? url.pathname === "/api/files/atlas"
+      : url.pathname.startsWith("/api/shown/atlas/") && !url.pathname.includes("/files/");
     await page.route(content, route => route.abort("connectionfailed"), { times: 1 });
     const view = await prepare(page, request, entry);
     await view.show();
