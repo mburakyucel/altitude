@@ -351,7 +351,15 @@ class TestServiceConfiguration(TestVoiceSettingsRoute):
         self.configure()
         outgoing = self.patch(speech, "transcribe_service")
         view = self.request("GET", "/api/voice")[1]
-        with mock.patch.object(speech, "SERVICE_UPLOAD_SECONDS", 0.05):
+        finished = threading.Event()
+        actual_handler = server.Handler._service_voice
+        def observe_handler(handler):
+            try:
+                return actual_handler(handler)
+            finally:
+                finished.set()
+        with mock.patch.object(speech, "SERVICE_UPLOAD_SECONDS", 0.05), \
+             mock.patch.object(server.Handler, "_service_voice", observe_handler):
             connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=2)
             connection.putrequest("POST", "/api/voice/service")
             for field, value in {"Content-Length": "4", "X-Voice-Selection": view["selection"],
@@ -361,6 +369,7 @@ class TestServiceConfiguration(TestVoiceSettingsRoute):
             response = connection.getresponse()
             self.assertEqual(json.loads(response.read())["code"], "service_unavailable")
             connection.close()
+            self.assertTrue(finished.wait(2), "the handler must release its slot before inspection")
         outgoing.assert_not_called()
         self.assertTrue(speech.SERVICE_SLOTS.acquire(blocking=False))
         self.assertTrue(speech.SERVICE_SLOTS.acquire(blocking=False))

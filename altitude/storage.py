@@ -25,6 +25,8 @@ class OrdinaryNonDirectory(NotADirectoryError):
 def _component(name: str) -> str:
     if not name or name in (".", "..") or "/" in name or "\\" in name:
         raise StorageRefused("invalid relative storage path")
+    if type(name) is str:
+        return os.path.basename(name)
     return name
 
 

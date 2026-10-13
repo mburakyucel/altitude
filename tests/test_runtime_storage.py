@@ -34,6 +34,14 @@ class RuntimeStorage(AltitudeCase):
     def locks(self):
         return ((".lock", self.serialized), (".activity.lock", lambda: config.project_activity(self.project)))
 
+    def test_checked_component_preserves_unicode_and_subclass_identity(self):
+        for name in ("naïve-工作", "three...dots", ".hidden", "name with spaces"):
+            self.assertEqual(storage._component(name), name)
+        class Component(str):
+            pass
+        unusual = Component("naïve-工作")
+        self.assertIs(storage._component(unusual), unusual)
+
     def test_registry_and_settings_writes_fsync_the_pinned_search_parent(self):
         config.ensure_root()
         with config.projects_lock() as parent:
