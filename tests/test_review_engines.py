@@ -342,6 +342,21 @@ class ReviewEngineTests(AltitudeCase):
                     self.assertNotIn("PRIVATE", json.dumps(result))
                     self.assertNotIn("fictional", json.dumps(result))
 
+    def test_failed_review_retains_observed_completed_turn_usage(self):
+        usage = {"input_tokens": 20, "output_tokens": 3}
+        stdout = '\n'.join(map(json.dumps, [
+            {"type": "turn.completed", "usage": usage},
+            {"type": "turn.failed", "error": {"message": "MCP connection refused"}},
+        ]))
+        service = self.fixture(served=False)
+        service.return_value = [sys.executable, "-I", "-c",
+            f"import sys; sys.stdin.read(); print({stdout!r})"]
+        result = engines.review("Review checkpoint", engine="codex", snapshot=self.snapshot, runtime=self.runtime)
+        self.assertTrue(result["error"])
+        self.assertEqual(result["findings"], [])
+        self.assertEqual(result["usage"], usage)
+        self.assertEqual(result["diagnostics"]["stdout_errors"], ["connection", "captured_input"])
+
     def test_stdout_diagnostic_states_never_retain_unknown_or_partial_output(self):
         cases = [
             ("", "empty"), ('{"is_error":true', "malformed"),

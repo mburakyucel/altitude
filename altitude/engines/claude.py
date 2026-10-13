@@ -885,7 +885,7 @@ def session_timeout():
 
 
 def image_cli_support(executable):
-    result = subprocess.run([executable, *[], "--help"], capture_output=True, text=True, timeout=5, env=common.clean_env())
+    result = subprocess.run([executable, "--help"], capture_output=True, text=True, timeout=5, env=common.clean_env())
     return not result.returncode and all(marker in result.stdout for marker in ('--input-format', 'stream-json'))
 
 

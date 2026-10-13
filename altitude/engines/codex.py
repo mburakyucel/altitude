@@ -974,7 +974,7 @@ def session_timeout():
 
 
 def image_cli_support(executable):
-    result = subprocess.run([executable, *['app-server'], "--help"], capture_output=True, text=True, timeout=5, env=common.clean_env())
+    result = subprocess.run([executable, "app-server", "--help"], capture_output=True, text=True, timeout=5, env=common.clean_env())
     return not result.returncode and all(marker in result.stdout for marker in ('--strict-config',))
 
 
@@ -1018,7 +1018,7 @@ def review_output(stdout):
     text = messages[-1] if messages else ""
     usage = common._codex_usage(events)
     if any(event.get("type") == "turn.failed" for event in events):
-        return "", {}, True
+        return "", usage, True
     return text, usage, False
 
 
