@@ -49,6 +49,7 @@
 .default-field :disabled { opacity: .6; }
 .default-field [aria-disabled="true"] { opacity: .6; }
 .settings-model-row { padding: 16px; display: grid; gap: 12px; min-width: 0; }
+.settings-model-row > .settings-row { padding: 0; border: 0; }
 .model-other-fields { display: grid; gap: 10px; min-width: 0; }
 .model-other-fields label { display: grid; gap: 4px; min-width: 0; }
 .model-detail { overflow-wrap: anywhere; }
