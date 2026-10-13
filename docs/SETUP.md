@@ -12,10 +12,13 @@ voice remains usable; failed or cancelled updates wait for your Retry in Setting
 
 - **Linux** with a working systemd user manager (`systemctl --user status` answers), or **macOS 15
   or newer** with your account logged in (the screen may stay locked).
-- **Python 3.12 or newer, Git, `curl` and OpenSSL** on PATH. On a Mac, run
-  `brew install python@3.12 openssl@3` and put Homebrew's `openssl@3` ahead of `/usr/bin` on PATH,
-  since macOS's own LibreSSL cannot check a certificate's host name; Git comes with the Xcode
-  command line tools.
+- **Python 3.12 or newer, Git, `curl` and OpenSSL.** On a Mac, run
+  `brew install python@3.12 openssl@3`; Git comes with the Xcode command line tools. Altitude
+  finds OpenSSL 3 or newer on PATH or Homebrew's `openssl@3` in its standard Apple silicon and
+  Intel locations, even when macOS's LibreSSL is first. No OpenSSL PATH or shell-profile change
+  is needed. A custom OpenSSL installation must be available on the installing shell's PATH.
+  OpenSSL verifies certificate names, expiry, chain purpose and CA constraints; the installer
+  stops before downloading if the required tool is missing. Linux uses OpenSSL on PATH.
 - **GitHub CLI (`gh`) 2.72 or newer.** Debian and Ubuntu package an older release that fails at the
   first landing, so install it from
   [GitHub's package repository](https://github.com/cli/cli/blob/trunk/docs/install_linux.md);

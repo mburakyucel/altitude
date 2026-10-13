@@ -109,11 +109,12 @@ class TestPush(AltitudeCase):
 
         # The service can check the signature, which is the whole point of sending one.
         public = self.tmp / "vapid.pub"
-        subprocess.run(["openssl", "ec", "-in", push.KEY_DIR / "vapid.key", "-pubout", "-out", public],
+        from altitude import platform
+        subprocess.run([platform.openssl(), "ec", "-in", push.KEY_DIR / "vapid.key", "-pubout", "-out", public],
                        check=True, capture_output=True)
         (self.tmp / "signed").write_text(f"{header}.{claims}")
         (self.tmp / "signature").write_bytes(_der(_unpad(signature)))
-        verified = subprocess.run(["openssl", "dgst", "-sha256", "-verify", public,
+        verified = subprocess.run([platform.openssl(), "dgst", "-sha256", "-verify", public,
                                    "-signature", self.tmp / "signature", self.tmp / "signed"],
                                   capture_output=True, text=True)
         self.assertIn("Verified OK", verified.stdout)
