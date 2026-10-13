@@ -174,17 +174,31 @@ for (const entry of ["file", "shown"] as const) {
     await view.close();
   });
   test(`offline content read resumes on reconnect: ${entry}`, async ({ page, request, context }, info) => {
-    const view = await prepare(page, request, entry);
-    await context.setOffline(true);
-    await view.show();
+    let view: Awaited<ReturnType<typeof prepare>> | undefined;
+    if (entry === "file") {
+      const { path } = await (await request.get("/fixture/documents")).json();
+      expect((await page.goto("/projects/atlas"))?.ok()).toBe(true);
+      await expect(draft(page, "system")).toBeVisible();
+      await context.setOffline(true);
+      // Start the read after going offline, using the real router's history event. Holding an already
+      // in-flight request in interception lets WebKit complete it during the offline transition.
+      await page.evaluate(route => {
+        window.history.pushState(null, "", route);
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      }, `/projects/atlas/file?${new URLSearchParams({ path })}`);
+    } else {
+      view = await prepare(page, request, entry);
+      await context.setOffline(true);
+      await view.show();
+    }
     await walkthrough(page, info).state(`${entry}-offline-content`, {
-      visible: [entry === "file" ? page.getByRole("heading", { name: "File unavailable", exact: true })
+      visible: [entry === "file" ? page.getByText("Loading file…", { exact: true })
         : page.getByRole("status", { name: "Loading PLAN.md", exact: true })],
       hidden: [page.getByText("Formatting unavailable", { exact: true })],
     });
     await context.setOffline(false);
     await expect(page.getByRole("heading", { name: "Migration plan", exact: true })).toBeVisible();
-    await view.close();
+    await view?.close();
   });
 }
 
