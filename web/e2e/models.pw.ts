@@ -3,6 +3,8 @@ import { test } from "./fixtures";
 import { fixtureProject } from "./fixture-data";
 import { walkthrough } from "./walkthrough";
 
+test.use({ deviceScaleFactor: 2 });
+
 // Global pairs persist through the real API; route overlays only force boundary failures.
 type Choice = { engine?: string; model?: string | null; effort?: string } | null;
 type Options = {

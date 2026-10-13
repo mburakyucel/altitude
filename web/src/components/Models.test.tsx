@@ -37,7 +37,10 @@ function server({ status = 200, hold = null as Promise<void> | null, overrides =
   }));
   return { values, posts, failure };
 }
-beforeEach(() => setViewport(1440));
+beforeEach(() => {
+  setViewport(1440);
+  HTMLElement.prototype.scrollIntoView = vi.fn();
+});
 const model = (name = "Alpha") => screen.getByRole("combobox", { name: `${name} model` });
 const effort = (name = "Alpha") => screen.getByRole("combobox", { name: `${name} effort` });
 const ready = () => screen.findByRole("combobox", { name: "Alpha model" });
@@ -92,6 +95,8 @@ describe("Altitude-wide model and effort pairs", () => {
     await user.keyboard("{Enter}");
     expect(await screen.findByText("Changed in another window.")).toBeVisible();
     expect(posts[0]).toMatchObject({ expected: pair() });
+    await user.tab();
+    expect(posts).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: "Reload" }));
     await waitFor(() => expect(screen.queryByRole("textbox", { name: "Model ID" })).toBeNull());
     expect(effort()).toHaveValue("high");

@@ -53,7 +53,7 @@ export function ModelSelect({ value, models, engines, emptyLabel, busy, onChange
   const label = (engine: string) => engineRows.find((e) => e.engine === engine)?.label ?? engine;
   const listed = !value?.model || models.some((m) => modelKey(m) === modelKey(value));
   const commit = async () => {
-    if (!other || busy || committing.current) return;
+    if (!other || other.submitted || busy || committing.current) return;
     const model = other.model.trim();
     if (!model) { setOther(null); setInvalid(false); return; }
     if (/\s/.test(model)) { setInvalid(true); return; }
