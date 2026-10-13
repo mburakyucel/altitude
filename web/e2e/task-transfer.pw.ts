@@ -100,7 +100,8 @@ test("a switch the coordinator started says so and why, and the pill shows it wi
   await expect(card(page)).toBeFocused();
   await expect(chooser).toBeHidden();
   const after = await read();
-  expect(after.daemon_request.by ?? after.transfer.request.by).toBe("l3");
+  expect(after.daemon_request.actor).toBe("l3");
+  expect(after.transfer.request.by).toBe("l3");
   expect(after.transfer.request.status).toBe("executing");
 });
 

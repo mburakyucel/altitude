@@ -35,7 +35,9 @@ export function useTaskTransfer(project: string, task: TaskView, refresh: () => 
       : document.querySelector<HTMLElement>('[aria-label="Task details"], .phone-header [aria-haspopup="dialog"]')))?.focus({ preventScroll: true });
   }, [dialog, pending]);
   // A switch someone else starts while the chooser is open takes over: its card, not the chooser, shows it.
-  useEffect(() => { if (dialog === "start" && active && !submitting.current) setDialog(""); }, [dialog, active]);
+  // A blocked task switches at once, so a new request can be done before any read sees it active.
+  const seen = shown?.request?.id;
+  useEffect(() => { if (dialog === "start" && !submitting.current && (active || request?.id !== seen)) setDialog(""); }, [dialog, active, request?.id, seen]);
   const openDialog = (value: "" | "start" | "now") => {
     if (value) { opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setShown(info); beforeDialog(); }
     setDialog(value);
@@ -154,8 +156,8 @@ export function TransferCard({ transfer: t }: { transfer: Transfer }) {
     <div className="review-main">
     <p className="review-name">{title}</p>
     <p className="review-meta" role="status">{status}</p>
-    {!quota && t.request && (t.active || t.label) ? <p className="review-meta">{t.request.by === "operator" ? "Started by you"
-      : `Started by ${t.request.by === "l3" ? "the coordinator" : t.request.by || "Altitude"}${t.request.reason ? ` · ${t.request.reason}` : ""}`}</p> : null}
+    {!quota && !t.uncertain && (t.active || t.queued) && t.request?.by ? <p className="review-meta">{t.request.by === "l3"
+      ? `Started by the coordinator${t.request.reason ? ` · ${t.request.reason}` : ""}` : "Started by you"}</p> : null}
     {t.error ? <p role="alert">{t.error}</p> : null}
     {t.controls && (t.uncertain || !t.disabled) ? <div className="transfer-actions">
       {t.uncertain ? <button type="button" className="btn" disabled={t.pending} onClick={() => void t.recheck()}>Check status</button> : <>

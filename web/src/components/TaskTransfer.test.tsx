@@ -134,3 +134,27 @@ it("a switch someone else starts closes an open chooser without submitting it", 
   expect(screen.getByText(/Started by the coordinator/)).toBeVisible();
   expect(taskAction).not.toHaveBeenCalled();
 });
+it("a switch that finishes between reads also closes the chooser", async () => {
+  function Live({ task }: { task: TaskView }) {
+    const t=useTaskTransfer("sample",task,async()=>undefined,false,()=>undefined,()=>undefined);
+    return <><TransferModelButton transfer={t}/><TransferCard transfer={t}/><TransferDialog transfer={t}/></>;
+  }
+  const u=userEvent.setup();
+  const blocked={...initial,state:"blocked"} as TaskView;
+  const {rerender}=render(<Live task={blocked}/>);
+  await u.click(screen.getByRole("button",{name:/Task model:/}));
+  rerender(<Live task={{...byCoordinator,state:"queued",transfer:{...byCoordinator.transfer!,request:{...byCoordinator.transfer!.request!,status:"done"}}}}/>);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.getByText("Waiting for Engine B")).toBeVisible();
+  expect(screen.getByText(/Started by the coordinator/)).toBeVisible();
+  expect(taskAction).not.toHaveBeenCalled();
+});
+it("an unconfirmed switch of your own never borrows an earlier request's author", async () => {
+  vi.mocked(taskAction).mockRejectedValue(new Error("response lost"));
+  const cancelled={...byCoordinator,transfer:{...byCoordinator.transfer!,eligible:true,request:{...byCoordinator.transfer!.request!,status:"cancelled"}}};
+  const u=userEvent.setup();render(<Harness task={cancelled} next={cancelled}/>);
+  await u.click(screen.getByRole("button",{name:/Task model:/}));
+  await u.click(screen.getByRole("button",{name:"Prepare change"}));
+  expect(await screen.findByText("Switch unconfirmed")).toBeVisible();
+  expect(screen.queryByText(/Started by/)).not.toBeInTheDocument();
+});
