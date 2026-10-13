@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config
+from . import config, storage
 
 STATES = ("queued", "running", "reported", "done", "rejected", "blocked")
 OPEN_STATES = ("queued", "running", "reported", "blocked")
@@ -67,9 +67,9 @@ def write_json(path: Path, obj) -> None:
 @contextmanager
 def project_lock(project: str):
     """One writer per project across processes (server and `alt` CLI)."""
-    d = config.project_dir(project)
-    d.mkdir(parents=True, exist_ok=True)
-    with open(d / ".lock", "w") as f:
+    project = config.require_project_name(project)
+    with storage.runtime_directory([project], create=True, search=True) as directory, \
+            storage.lock_file(directory, ".lock") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         try:
             yield

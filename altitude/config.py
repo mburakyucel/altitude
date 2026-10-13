@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from urllib.parse import urlsplit
-from . import platform
+from . import platform, storage
 
 HOME = Path.home()
 SOURCE = Path(__file__).resolve().parent.parent
@@ -39,6 +39,8 @@ if "unittest" in sys.modules and ROOT.expanduser().resolve() == (HOME / ".altitu
         "refusing to use the live ~/.altitude state from a unittest process; "
         "set ALTITUDE_HOME to a throwaway directory before importing altitude"
     )
+# Resolve operator-selected root aliases once; mutable descendants never supply a new anchor.
+RUNTIME_ROOT = ROOT.resolve()
 REPO = SOURCE.parent.parent if RELEASE is None and SOURCE.parent.name == ".altitude-source" else SOURCE
 if RELEASE is None and SOURCE == REPO and (REPO / ".altitude-source/current").is_dir():
     SOURCE = (REPO / ".altitude-source/current").resolve()
@@ -728,9 +730,9 @@ class ProjectBusy(ValueError):
 @contextmanager
 def project_activity(name: str, *, exclusive: bool = False):
     """Fence removal against L3 turns and report/timer processing, including CLI processes."""
-    directory = project_dir(name)
-    directory.mkdir(parents=True, exist_ok=True)
-    with (directory / ".activity.lock").open("a") as handle:
+    name = require_project_name(name)
+    with storage.runtime_directory([name], create=True, search=True) as directory, \
+            storage.lock_file(directory, ".activity.lock") as handle:
         try:
             fcntl.flock(handle, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
         except BlockingIOError:

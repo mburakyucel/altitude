@@ -1798,6 +1798,21 @@ authorization and post-change health verification.
 
 ## Interfaces and storage
 
+Project serialization and activity locks open their fixed leaves without following links or
+truncating existing bytes, and verify opened regular files before locking. The activity fence keeps
+shared/exclusive nonblocking contention; serialization waits for the current writer. Both use the
+shared descriptor walk from the canonical runtime root selected at initialization, preserving the
+configured root's display spelling and legitimate startup aliases. Missing project directories are
+created relative to pinned parents. Search-only traversal supports execute-only ancestors; callers
+that create durable task documents use readable descriptors for directory fsync.
+
+The same walk serves task documents and copies, and the non-resume transcript prompt's fixed
+`brief.md`. Brief reads retain complete UTF-8 text and universal newlines without the task-document
+size quota. An existing live task with no brief never borrows an archived brief. Linked ancestors,
+linked leaves and nonregular briefs are unavailable. This boundary does not cover ordinary task-view
+document reads, status/registry or invocation discovery, invocation output, native session selection
+or other runtime readers. It supplies no authority over regular records modified in place.
+
 ### Times
 
 Records, events and JSON carry every instant as ISO 8601 with an explicit offset (`+00:00`), and

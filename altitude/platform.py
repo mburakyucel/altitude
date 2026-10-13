@@ -2536,7 +2536,8 @@ def validation_guest_seed_cache() -> Path | None:
 
 def directory_search_access() -> int:
     """Look up names without requiring directory listing permission on either platform."""
-    return os.O_SEARCH if _darwin() else os.O_PATH
+    # The interpreter's constants describe the kernel doing the actual filesystem lookup.
+    return os.O_SEARCH if hasattr(os, "O_SEARCH") else os.O_PATH
 
 
 def validation_browser_environment(temp: Path) -> dict[str, str]:

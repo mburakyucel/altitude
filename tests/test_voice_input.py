@@ -20,6 +20,7 @@ class VoiceCase(AltitudeCase):
     def setUp(self):
         super().setUp()
         self.patch(config, "ROOT", self.tmp / "machine")
+        self.patch(config, "RUNTIME_ROOT", (self.tmp / "machine").resolve())
         config.ensure_root()
 
     def runs_here(self, supported: bool):

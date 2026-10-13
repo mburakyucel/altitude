@@ -838,6 +838,7 @@ class TestHostVoiceRoutes(SpeechCase):
     def setUp(self):
         super().setUp()
         self.patch(config, "ROOT", self.tmp / "machine")
+        self.patch(config, "RUNTIME_ROOT", (self.tmp / "machine").resolve())
         config.ensure_root()
         S.write_json(config.ROOT / "settings.json", {"voice": "host"})
         self.patch(platform, "speech_runtime", return_value=("linux-x86_64-cp312", ""))
