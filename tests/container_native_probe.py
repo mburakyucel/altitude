@@ -58,7 +58,10 @@ unix_server.bind(str(broker)); unix_server.listen(8)
 tcp_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 tcp_server.bind(('127.0.0.1', 0)); tcp_server.listen(8)
 assert tcp_server.getsockname()[1] not in (8890, 8891)
-spec = {'targets': {k: str(v) for k, v in targets.items()}, 'broker': str(broker),
+(git_roots[0] / 'commondir').write_text(str(sibling / '.git') + '\n')  # a read-only file in the shared folder
+git_files = {'git_commondir': git_roots[0] / 'commondir', 'git_config_worktree_absent': git_roots[0] / 'config.worktree'}
+spec = {'targets': {k: str(v) for k, v in targets.items()},
+        'git_files': {k: str(v) for k, v in git_files.items()}, 'broker': str(broker),
         'task': task['slug'],
         'port': tcp_server.getsockname()[1],
         # Probe the real endpoints independently of how the profile represents denial.
@@ -92,6 +95,13 @@ for name, directory in spec['targets'].items():
     path = Path(directory) / ('probe-' + role)
     try:
         path.write_text('fictional write'); path.unlink()
+        out['writes'][name] = {'allowed': True}
+    except OSError as e:
+        out['writes'][name] = {'allowed': False, 'errno': e.errno}
+for name, file in spec.get('git_files', {}).items():
+    try:
+        fd = os.open(file, os.O_WRONLY | os.O_CREAT, 0o600)  # existing or absent; never truncates
+        os.close(fd)
         out['writes'][name] = {'allowed': True}
     except OSError as e:
         out['writes'][name] = {'allowed': False, 'errno': e.errno}
@@ -187,6 +197,9 @@ for role, writable in [('task', {'workspace', 'git_common', 'git_worktree', 'sta
         expected = role == 'task' and name in {'broker', 'loopback'}
         if outcome['connected'] != expected:
             failures.append(role + ': unexpected connection permission for ' + name)
+    for name in spec.get('git_files', {}):
+        if observed['writes'].get(name, {}).get('allowed', True):
+            failures.append(role + ': a read-only file in the shared Git folder was writable: ' + name)
     if role == 'task' and observed['git_commit']['exit'] != 0:
         failures.append('task: git commit failed')
     if role == 'task':

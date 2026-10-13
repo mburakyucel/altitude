@@ -81,6 +81,20 @@ class WorkerGitFolders(AltitudeCase):
         dispatch._validate_task_worktree(self.project, self.slug, require_clean=True)
         self.assertFalse(self.ran.exists())
 
+    def test_a_commondir_in_the_shared_folder_is_read_only_and_not_followed(self):
+        # The shared folder's commondir and gitdir are read-only to workers, so a worker cannot redirect the
+        # repository-level Git Altitude runs there; altd also names the folder explicitly rather than discovering it.
+        writable, read_only = git_policy.worker_git_access(self.worktree)
+        self.assertIn(self.repo / ".git" / "commondir", read_only)
+        (self.repo / ".git" / "commondir").write_text(f"{self.outside / '.git'}\n")
+        subprocess.run(["git", "status"], cwd=self.repo, capture_output=True)
+        self.assertTrue(self.ran.exists(), "the fixture's program runs when the file is followed")
+        self.ran.unlink()
+        self.assertEqual(git_policy.inspect_repository(self.repo).branch, "main")
+        env = git_policy.git_env(self.repo)
+        self.assertEqual((env["GIT_DIR"], env["GIT_COMMON_DIR"]), (str(self.repo / ".git"), str(self.repo / ".git")))
+        self.assertFalse(self.ran.exists())
+
     def test_validation_copies_the_task_commit_from_the_projects_own_git_folder(self):
         (self.worktree / "change.txt").write_text("fictional\n")
         git("add", "change.txt", cwd=self.worktree)
@@ -97,6 +111,7 @@ class WorkerGitFolders(AltitudeCase):
         self.assertEqual(writable, (common, record))
         self.assertEqual(set(read_only), {common / "config", common / "config.worktree", common / "hooks",
                                           common / "info", common / "modules", common / "worktrees",
+                                          common / "commondir", common / "gitdir",
                                           record / "commondir", record / "gitdir", record / "config.worktree"})
 
     def test_seatbelt_applies_the_most_specific_git_rule(self):
@@ -127,22 +142,26 @@ class SourceCopy(AltitudeCase):
         forged = git("commit-tree", tree, "-p", self.head, "-m", "Forged", cwd=self.repo).strip()
         for ref in ("refs/heads/main", "refs/remotes/origin/main"):
             git("update-ref", ref, forged, cwd=self.repo)
-        with self.assertRaisesRegex(git_policy.GitPolicyError, "not in Altitude's copy"):
+        with self.assertRaisesRegex(git_policy.GitPolicyError, "not on main in Altitude's copy"):
             git_policy.source_head(self.repo, "main")
         git("update-ref", "refs/heads/main", self.head, cwd=self.repo)
         # The fast-forward target comes from the origin, fetched into the copy; the forged origin ref is ignored.
         self.assertEqual(git_policy.deploy_source(self.repo, "main"), (self.head, self.head, []))
         self.assertEqual(git("rev-parse", "HEAD", cwd=self.repo).strip(), self.head)
 
-    def test_the_checkout_advances_to_its_origin_through_the_copy(self):
-        git_policy.source_head(self.repo, "main")
+    def push_next(self) -> str:
+        """A later commit on the origin's main; returns it."""
         other = self.tmp / "other"
         git("clone", "-q", "-b", "main", str(self.tmp / "origin.git"), str(other), cwd=self.tmp)
         (other / "next.txt").write_text("next\n")
         git("add", "next.txt", cwd=other)
         git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "Next", cwd=other)
         git("push", "-q", "origin", "HEAD:main", cwd=other)
-        tip = git("rev-parse", "HEAD", cwd=other).strip()
+        return git("rev-parse", "HEAD", cwd=other).strip()
+
+    def test_the_checkout_advances_to_its_origin_through_the_copy(self):
+        git_policy.source_head(self.repo, "main")
+        tip = self.push_next()
         self.assertEqual(git_policy.deploy_source(self.repo, "main"), (self.head, tip, ["next.txt"]))
         self.assertEqual((self.repo / "next.txt").read_text(), "next\n")
         self.assertEqual(git_policy.source_head(self.repo, "main"), tip)
@@ -155,3 +174,9 @@ class SourceCopy(AltitudeCase):
         git("update-index", "--assume-unchanged", "README.md", cwd=self.repo)
         with self.assertRaisesRegex(git_policy.GitPolicyError, "uncommitted changes"):
             git_policy.source_head(self.repo, "main")
+
+    def test_a_pull_by_hand_is_fetched_into_the_copy(self):
+        git_policy.source_head(self.repo, "main")
+        tip = self.push_next()
+        git("pull", "-q", "--ff-only", "origin", "main", cwd=self.repo)
+        self.assertEqual(git_policy.source_head(self.repo, "main"), tip)

@@ -3659,7 +3659,7 @@ def pr_close(project: str, number: int, *, actor: str, body: str = "") -> dict:
         raise ValueError("alt pr close: a positive PR number is required; no body is accepted")
     checkout = config.project_path(project)
     origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=checkout,
-                            capture_output=True, text=True, timeout=10)
+                            capture_output=True, text=True, timeout=10, env=git_policy.git_env(checkout))
     repository = repository_url(origin.stdout) if origin.returncode == 0 else None
     if not repository:
         raise ValueError("alt pr close: checkout origin must identify a GitHub repository")
@@ -3784,7 +3784,7 @@ def issue_write(project: str, operation: str, body: str, *, actor: str, title: s
     incidents.check_public("\n".join([body, title, *(labels or []), *(add or []), *(remove or [])]))
     checkout = config.project_path(project)
     origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=checkout,
-                            capture_output=True, text=True, timeout=10)
+                            capture_output=True, text=True, timeout=10, env=git_policy.git_env(checkout))
     repository = repository_url(origin.stdout) if origin.returncode == 0 else None
     if not repository:
         raise ValueError("alt issue: checkout origin must identify a GitHub repository")
@@ -3855,8 +3855,8 @@ def project_repository(name: str) -> str | None:
     """The project's GitHub page, or None when a detached, moved or unreadable checkout has none to give."""
     try:
         origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=config.project_path(name),
-                                capture_output=True, text=True, timeout=2)
-    except (KeyError, OSError, subprocess.SubprocessError):
+                                capture_output=True, text=True, timeout=2, env=git_policy.git_env(config.project_path(name)))
+    except (KeyError, OSError, subprocess.SubprocessError, git_policy.GitPolicyError):
         return None
     return repository_url(origin.stdout)
 

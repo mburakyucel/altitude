@@ -69,7 +69,7 @@ def _run(repo: Path, *args: str, timeout: int = 120, env: dict | None = None) ->
             capture_output=True,
             text=True,
             timeout=timeout,
-            env=env,
+            env=git_env(repo, env),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise GitPolicyError(f"git {' '.join(args[:3])}: {exc}") from exc
@@ -87,17 +87,20 @@ def _git_dir(repo: Path) -> Path:
     return Path(raw)
 
 
+def _in_layout(path: Path) -> bool:
+    from . import config
+    return path.parent.parts[-len(config.WORKTREE_ROOT.parts):] == config.WORKTREE_ROOT.parts
+
+
 def _task_layout(worktree: str | Path) -> tuple[Path, Path, Path]:
     """A task worktree, its repository's Git folder and the worktree's record in it, from Altitude's layout alone:
     a worker can rewrite its worktree's `.git` file and its task record, so neither decides where Altitude looks.
     Refuses a redirected layout: a Git folder replaced by a link, or a `.git` file naming another record."""
     from . import config
-    worktree = repo = Path(os.path.abspath(worktree))
-    for part in reversed(config.WORKTREE_ROOT.parts):
-        repo = repo.parent
-        if repo.name != part:
-            raise GitPolicyError(f"{worktree} is not a task worktree")
-    common = repo.parent / ".git"
+    worktree = Path(os.path.abspath(worktree))
+    if not _in_layout(worktree):
+        raise GitPolicyError(f"{worktree} is not a task worktree")
+    common = worktree.parents[len(config.WORKTREE_ROOT.parts)] / ".git"
     record = common / "worktrees" / worktree.name
     try:
         if not all(stat.S_ISDIR(os.lstat(path).st_mode) for path in (common, common / "worktrees", record)):
@@ -118,14 +121,35 @@ def task_git(worktree: str | Path, env: dict[str, str] | None = None) -> dict[st
             "GIT_WORK_TREE": str(worktree), "GIT_NO_REPLACE_OBJECTS": "1"}
 
 
+def git_env(path: str | Path, env: dict[str, str] | None = None) -> dict[str, str]:
+    """`env` (by default this process's) for Altitude's own Git command at `path`, with its Git folder named
+    explicitly so that nothing a task worker writes inside a shared Git folder decides where Git looks: a task
+    worktree's folders from the layout, a checkout's own `.git` folder, or `path` itself as a bare repository.
+    Another linked worktree, such as one of the operator's own, finds its folders through its record, which names
+    the shared folder itself, so Git's own discovery stays."""
+    path = Path(os.path.abspath(path))
+    try:
+        dot = os.lstat(path / ".git").st_mode
+    except FileNotFoundError:
+        dot = None
+    except OSError as exc:
+        raise GitPolicyError(f"cannot read the Git folder of {path}: {exc}") from exc
+    if dot is not None and not stat.S_ISDIR(dot):
+        return task_git(path, env) if _in_layout(path) else dict(os.environ if env is None else env)
+    folder = path / ".git" if dot is not None else path
+    return {**(os.environ if env is None else env), "GIT_DIR": str(folder), "GIT_COMMON_DIR": str(folder),
+            **({"GIT_WORK_TREE": str(path)} if dot is not None else {}), "GIT_NO_REPLACE_OBJECTS": "1"}
+
+
 def worker_git_access(worktree: str | Path) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
     """The Git folders a task's worker writes, and the paths inside them it only reads; the most specific path
     decides. It writes objects, branches and its own worktree's state, but not what makes Git run a program or look
     in another folder: the settings, hooks, attribute rules, submodules and every worktree's record, its own
     pointers included, all of which Altitude's own Git commands read outside any sandbox."""
     _, common, record = _task_layout(worktree)
+    names = ("config", "config.worktree", "hooks", "info", "modules", "worktrees", "commondir", "gitdir")
     return ((common, record),
-            (*(common / name for name in ("config", "config.worktree", "hooks", "info", "modules", "worktrees")),
+            (*(common / name for name in names),
              *(record / name for name in ("commondir", "gitdir", "config.worktree"))))
 
 
@@ -423,29 +447,42 @@ def _seed_source_copy(repo: Path, branch: str) -> None:
         shutil.rmtree(staging, ignore_errors=True)
 
 
+def _fetch_source_copy(branch: str) -> None:
+    try:
+        _copy("fetch", "--quiet", "--no-tags", "origin", f"+refs/heads/{branch}:refs/heads/{branch}", timeout=300)
+    except GitPolicyError as exc:
+        raise FetchError(str(exc)) from exc
+
+
 def source_head(repo: str | Path, branch: str) -> str:
     """The commit Altitude's source checkout holds: on `branch`, its files exactly that commit, and the commit on
     `branch` in Altitude's copy of its repository. Task workers write the checkout's Git store, so its objects, index
-    and references only name what to check: the commit comes from the copy and the files are compared by content."""
+    and references only name what to check: the commit comes from the copy and the files are compared by content.
+    A commit the copy does not hold yet, as after a pull by hand, fetches the copy from the origin once."""
     from . import config
     root = Path(repo).resolve()
     _seed_source_copy(root, branch)
-    tip = _copy("rev-parse", "--verify", f"refs/heads/{branch}^{{commit}}")
-    with tempfile.TemporaryDirectory(prefix="altitude-source-index-") as temporary:
-        env = {**_copy_objects(), "GIT_INDEX_FILE": str(Path(temporary) / "index")}
-        current = _run(root, "symbolic-ref", "--quiet", "--short", "HEAD", env=env).stdout.strip()
-        if current != branch:
-            raise GitPolicyError(f"service checkout is on {current or 'detached HEAD'}, expected {branch}")
-        head = _output(_run(root, "rev-parse", "--verify", "HEAD^{commit}", env=env),
-                       "service checkout's commit is not in Altitude's copy of its repository")
-        _output(_run(root, "read-tree", head, env=env), "cannot read the service checkout's commit")
-        if _output(_run(root, "status", "--porcelain", "--untracked-files=all", env=env),
-                   "cannot compare the service checkout with its commit"):
-            raise GitPolicyError("service checkout has uncommitted changes")
-    if _run(config.SOURCE_COPY, "merge-base", "--is-ancestor", head, tip).returncode:
-        raise GitPolicyError(f"service checkout is at {head[:12]}, which is not on {branch} in Altitude's copy of "
-                             "its repository")
-    return head
+    for fetched in (False, True):
+        if fetched:
+            _fetch_source_copy(branch)
+        tip = _copy("rev-parse", "--verify", f"refs/heads/{branch}^{{commit}}")
+        with tempfile.TemporaryDirectory(prefix="altitude-source-index-") as temporary:
+            env = {**_copy_objects(), "GIT_INDEX_FILE": str(Path(temporary) / "index")}
+            current = _run(root, "symbolic-ref", "--quiet", "--short", "HEAD", env=env).stdout.strip()
+            if current != branch:
+                raise GitPolicyError(f"service checkout is on {current or 'detached HEAD'}, expected {branch}")
+            found = _run(root, "rev-parse", "--verify", "HEAD^{commit}", env=env)
+            if found.returncode:
+                continue
+            head = found.stdout.strip()
+            if _run(config.SOURCE_COPY, "merge-base", "--is-ancestor", head, tip).returncode:
+                continue
+            _output(_run(root, "read-tree", head, env=env), "cannot read the service checkout's commit")
+            if _output(_run(root, "status", "--porcelain", "--untracked-files=all", env=env),
+                       "cannot compare the service checkout with its commit"):
+                raise GitPolicyError("service checkout has uncommitted changes")
+            return head
+    raise GitPolicyError(f"service checkout's commit is not on {branch} in Altitude's copy of its repository")
 
 
 def deploy_source(repo: str | Path, branch: str) -> tuple[str, str, list[str]]:
@@ -453,10 +490,7 @@ def deploy_source(repo: str | Path, branch: str) -> tuple[str, str, list[str]]:
     repository and written from the copy's objects. Returns the commits before and after and the files changed."""
     root = Path(repo).resolve()
     _seed_source_copy(root, branch)
-    try:
-        _copy("fetch", "--quiet", "--no-tags", "origin", f"+refs/heads/{branch}:refs/heads/{branch}", timeout=300)
-    except GitPolicyError as exc:
-        raise FetchError(str(exc)) from exc
+    _fetch_source_copy(branch)
     tip = _copy("rev-parse", "--verify", f"refs/heads/{branch}^{{commit}}")
     head = source_head(root, branch)
     if head == tip:

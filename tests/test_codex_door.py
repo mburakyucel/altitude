@@ -77,7 +77,7 @@ class TestCodexAdapter(AltitudeCase):
         self.assertEqual(profile["extends"], ":workspace", "retain native protected paths and temporary roots")
         self.assertEqual(profile["filesystem"], {
             ":root": "read",
-            **{str(common / name): "read" for name in ("config", "config.worktree", "hooks", "info", "modules", "worktrees")},
+            **{str(common / name): "read" for name in ("config", "config.worktree", "hooks", "info", "modules", "worktrees", "commondir", "gitdir")},
             **{str(record / name): "read" for name in ("commondir", "gitdir", "config.worktree")},
             **{str(path): "deny" for path in (*platform.job_control_paths(), *platform.private_places())}})
         self.assertTrue(profile["network"]["enabled"])

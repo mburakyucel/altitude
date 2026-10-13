@@ -5,7 +5,7 @@ import json
 import re
 import subprocess
 
-from . import config, engines
+from . import config, engines, git_policy
 
 
 class IssueIntakeError(RuntimeError):
@@ -55,7 +55,7 @@ def task_reference(title: str, request: str, repository: tuple[str, str]) -> int
 def _run(args: list[str], project: str, timeout: int) -> subprocess.CompletedProcess:
     try:
         return subprocess.run(args, cwd=str(config.project_path(project)), capture_output=True, text=True,
-                              timeout=timeout, env=engines.clean_env())
+                              timeout=timeout, env=git_policy.git_env(config.project_path(project), engines.clean_env()))
     except subprocess.TimeoutExpired as exc:
         raise IssueIntakeError(f"{args[0]} timed out") from exc
     except OSError as exc:

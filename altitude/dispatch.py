@@ -190,7 +190,8 @@ def run_ci_recheck(project: str, slug: str) -> None:
         return
     try:
         origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=config.project_path(project),
-                                capture_output=True, text=True, timeout=10)
+                                capture_output=True, text=True, timeout=10,
+                                env=git_policy.git_env(config.project_path(project)))
         url = server.repository_url(origin.stdout) if origin.returncode == 0 else None
         if not url:
             raise ValueError("CI recheck requires a GitHub project origin")
@@ -1026,7 +1027,8 @@ def _task_worktree(repo: Path, project: str, slug: str, origin_sha: str) -> Path
     worktree = config.task_worktree(project, slug)
 
     def git(*args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, timeout=120)
+        return subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, timeout=120,
+                              env=git_policy.git_env(repo))
 
     branch_exists = git("show-ref", "--verify", "--quiet", f"refs/heads/{expected_branch}").returncode == 0
     if not worktree.exists():
@@ -1935,12 +1937,14 @@ def _self_deploy_fast_forward(project: str, slug: str | None = None) -> list[str
         if not state.behind:
             return []
         head = state.head
-        pull = subprocess.run(["git", "merge", "-q", "--ff-only", f"origin/{branch}"], cwd=str(repo), capture_output=True, text=True, timeout=120)
+        pull = subprocess.run(["git", "merge", "-q", "--ff-only", f"origin/{branch}"], cwd=str(repo), capture_output=True, text=True, timeout=120,
+                              env=git_policy.git_env(repo))
         if pull.returncode != 0:
             raise git_policy.GitPolicyError(
                 f"fast-forward failed: {(pull.stderr or pull.stdout).strip()[:300] or f'exit {pull.returncode}'}"
             )
-        files = subprocess.run(["git", "diff", "--name-only", head, origin_sha], cwd=str(repo), capture_output=True, text=True, timeout=30).stdout.split()
+        files = subprocess.run(["git", "diff", "--name-only", head, origin_sha], cwd=str(repo), capture_output=True, text=True, timeout=30,
+                               env=git_policy.git_env(repo)).stdout.split()
     changed = [f for f in files if activation_component(f)]
     notes = [f"self-deploy: {branch} {head[:7]} → {origin_sha[:7]} ({len(files)} files)"]
     if changed and config.RELEASE is None:
@@ -2050,7 +2054,7 @@ def cleanup_task(project: str, task: dict) -> list[str]:
 
     def git(*args: str, cwd: Path = repo) -> subprocess.CompletedProcess:
         return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=120,
-                              env=None if cwd == repo else git_policy.task_git(cwd))
+                              env=git_policy.git_env(cwd))
 
     def finish() -> list[str]:
         return notes + (pull_after_done(project, task) if task.get("state") == "done" else [])

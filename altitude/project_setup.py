@@ -112,8 +112,8 @@ def _repository(project: str) -> tuple[dict, bool]:
     repo = config.project_path(project)
     if not repo.is_dir():
         return _step("repository", "Git repository", "failed", "The registered folder is unavailable.", action="discuss"), False
-    result = subprocess.run(["git", "-C", str(repo), "rev-parse", "--show-toplevel"],
-                            capture_output=True, text=True, timeout=10, env={**os.environ, "LC_ALL": "C"})
+    result = subprocess.run(["git", "-C", str(repo), "rev-parse", "--show-toplevel"], capture_output=True, text=True,
+                            timeout=10, env=git_policy.git_env(repo, {**os.environ, "LC_ALL": "C"}))
     if result.returncode:
         if "not a git repository" in result.stderr.lower():
             return _step("repository", "Git repository", "not_applicable",

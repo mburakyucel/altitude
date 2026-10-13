@@ -206,7 +206,8 @@ def browser_grant(project: str, task: dict) -> dict:
         raise PermissionError(refused)
     try:
         pinned = subprocess.run(["git", "show", f"{policy['commit']}:AGENTS.md"], cwd=config.project_path(project),
-                                check=True, capture_output=True, text=True, timeout=30).stdout
+                                check=True, capture_output=True, text=True, timeout=30,
+                                env=git_policy.git_env(config.project_path(project))).stdout
         deployed = (config.SOURCE / "AGENTS.md").read_text()
         for document in (pinned, deployed):
             sections = re.findall(r"^#{1,6} VM lane runs on this Mac\n(.*?)(?=^#{1,6} |\Z)",
@@ -289,8 +290,8 @@ def _clone(worktree: Path, target: Path, project: str) -> tuple[str, str]:
                   "+refs/remotes/origin/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*"],
                  ["-C", str(target), "checkout", "--quiet", "--detach", commit]):
         subprocess.run([*git, *step], capture_output=True, text=True, timeout=600, check=True)
-    origin = subprocess.run(["git", "-C", str(config.project_path(project)), "remote", "get-url", "origin"],
-                            capture_output=True, text=True, timeout=10).stdout.strip()
+    origin = subprocess.run(["git", "remote", "get-url", "origin"], cwd=common, capture_output=True, text=True,
+                            timeout=10, env=git_policy.git_env(common)).stdout.strip()
     if re.fullmatch(r"(https://github\.com/|git@github\.com:)[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", origin):
         subprocess.run([*git, "-C", str(target), "remote", "set-url", "origin", origin], check=True, timeout=10)
     return commit, tree

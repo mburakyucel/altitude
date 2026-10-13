@@ -3014,11 +3014,12 @@ def _standing_policy(project: str, heading: str, approval: str) -> dict:
     """Capture one approved purpose from main, never a task's editable policy."""
     root = config.project_path(project)
     try:
+        env = git_policy.git_env(root)
         commit = subprocess.run(["git", "rev-parse", "--verify", "refs/heads/main^{commit}"], cwd=root,
-                                check=True, capture_output=True, text=True, timeout=30).stdout.strip()
+                                check=True, capture_output=True, text=True, timeout=30, env=env).stdout.strip()
         document = subprocess.run(["git", "show", f"{commit}:AGENTS.md"], cwd=root,
-                                  check=True, capture_output=True, text=True, timeout=30).stdout
-    except (OSError, subprocess.SubprocessError) as exc:
+                                  check=True, capture_output=True, text=True, timeout=30, env=env).stdout
+    except (OSError, subprocess.SubprocessError, git_policy.GitPolicyError) as exc:
         raise ValueError("standing policy requires AGENTS.md committed on the registered project's main") from exc
     headings = list(re.finditer(r"^#{1,6} ([^\n]+)$", document, re.MULTILINE))
     matches = [i for i, match in enumerate(headings) if match.group(1) == heading]

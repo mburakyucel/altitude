@@ -1020,9 +1020,11 @@ unless the common folder, `.git/worktrees` and the record are plain folders and 
 that record, and Altitude's Git commands in a worktree run with `GIT_DIR`, `GIT_COMMON_DIR` and
 `GIT_WORK_TREE` set to these paths and replacement objects off. Validation clones a task's commit
 from the common folder. Workers on both engines keep the common folder's `config`, `config.worktree`,
-`hooks`, `info`, `modules` and `worktrees` and their record's `commondir`, `gitdir` and
-`config.worktree` read-only (`git_policy.worker_git_access`): the repository's settings, hooks and
-worktree records stay as the operator and Altitude wrote them. Workers
+`hooks`, `info`, `modules`, `worktrees`, `commondir` and `gitdir` and their record's `commondir`,
+`gitdir` and `config.worktree` read-only (`git_policy.worker_git_access`): the repository's settings,
+hooks and worktree records stay as the operator and Altitude wrote them. Altitude's repository-level
+Git commands outside a task worktree (`git_policy.git_env`) name the Git folder explicitly too, so a
+redirection a worker plants in a shared folder does not steer them. Workers
 create branches with `--no-track` and pass a one-off setting with `git -c`; landing pushes without
 recording an upstream.
 
