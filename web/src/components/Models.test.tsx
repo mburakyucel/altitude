@@ -13,7 +13,7 @@ function server({ status = 200, hold = null as Promise<void> | null, overrides =
   const engines = ["alpha", "beta"].map((engine) => ({ engine, label: engine === "alpha" ? "Alpha" : "Beta", known: false }));
   let newTasks: Record<string, string> | null = { engine: "alpha", model: "old", effort: "high" };
   const view = () => ({ engines: engines.map(({ engine, label }) => ({ engine, label, value: values[engine as keyof typeof values], models: [{ value: "deep", label: "Deep" }],
-    efforts: [{ value: "native", label: "Native" }, { value: "high", label: "High" }, { value: "ultra", label: "Ultra" }], default_model: "Provider default", default_effort: "Tasks/reviews: High · Chat: Native", unavailable: null })), overrides });
+    efforts: [{ value: "native", label: "Native" }, { value: "high", label: "High" }, { value: "ultra", label: "Ultra" }], default_model: "Provider default", default_effort: "Tasks/reviews: High · Chat: Native", native_effort: "Provider chooses effort", unavailable: null })), overrides });
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url === "/api/overview") return json({ projects: [{ name: "example", managed: true }], queue: [], engines, wip: { machine: 0, per_project: {}, waiting: [] }, quota: { known: false }, new_tasks: { ...options, value: newTasks, only: [] } });

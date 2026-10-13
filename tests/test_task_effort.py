@@ -82,7 +82,7 @@ class TestTaskEffort(AltitudeCase):
         set_effort(self.project, "max")
         self.assertEqual(self.launch(queued).kwargs["effort"], "max")
         self.assertEqual(self.launch(explicit).kwargs["effort"], "low")
-        self.assertIsNone(self.launch(native).kwargs["effort"])
+        self.assertEqual(self.launch(native).kwargs["effort"], "medium")
         saved = S.load_task(self.project, queued["slug"])
         self.assertIsNone(saved["effort"])
         self.assertEqual(saved["launch_effort"], "max")
@@ -95,15 +95,46 @@ class TestTaskEffort(AltitudeCase):
         self.assertEqual(resume.call_args.args[2], "conversation")
         self.assertEqual(self.launch(T.new(self.project, "After change", "request")).kwargs["effort"], "low")
 
-    def test_native_started_task_stays_native_after_project_default_change(self):
+    def test_codex_owner_launches_and_resumes_on_a_resolved_model_and_effort(self):
+        """Codex owners once ran on the CLI's own default model because Altitude passed none."""
+        unconfigured = T.new(self.project, "Unconfigured", "request")
+        launched = self.launch(unconfigured)
+        self.assertEqual((launched.args[0], launched.kwargs["model"], launched.kwargs["effort"]),
+                         ("codex", "gpt-6.1-sol", "high"))
+        saved = S.load_task(self.project, unconfigured["slug"])
+        self.assertEqual((saved["launch_model"], saved["engine_model"]), ("gpt-6.1-sol", None),
+                         "the engine's report stays unknown until the engine gives one")
+        dispatch.request_setting(self.project, "l2_codex_model", "chosen-model", "Set test model", actor="burak")
+        dispatch._run_setting(self.project, "l2_codex_model")
         set_effort(self.project, "native")
-        task = T.new(self.project, "Native project default", "request")
-        self.assertIsNone(self.launch(task).kwargs["effort"])
-        set_effort(self.project, "high")
+        configured = T.new(self.project, "Configured", "request")
+        launched = self.launch(configured)
+        self.assertEqual((launched.kwargs["model"], launched.kwargs["effort"]), ("chosen-model", "medium"))
+        saved = S.load_task(self.project, configured["slug"])
+        self.assertEqual((saved["launch_model"], saved["launch_effort"]), ("chosen-model", "medium"))
+        dispatch.request_setting(self.project, "l2_codex_model", None, "Restore the model", actor="burak")
+        dispatch._run_setting(self.project, "l2_codex_model")
+        set_effort(self.project, "xhigh")
+        T.block(self.project, configured["slug"], "Paused")
+        with mock.patch.object(engines, "resume_l2", return_value=self.launched()) as resume:
+            dispatch.resume(self.project, configured["slug"])
+        self.assertEqual((resume.call_args.args[0], resume.call_args.kwargs["model"], resume.call_args.kwargs["effort"]),
+                         ("codex", "chosen-model", "medium"))
+
+    def test_codex_session_saved_without_a_model_resumes_on_the_built_in_defaults(self):
+        """Owners launched before every Codex launch named a model saved none; their resumes name one too."""
+        task = T.new(self.project, "Saved earlier", "request")
+        self.launch(task)
+        saved = S.load_task(self.project, task["slug"])
+        saved.update(launch_model=None, launch_effort=None)
+        S.save_task(self.project, saved)
+        dispatch.request_setting(self.project, "l2_codex_model", "chosen-model", "Set test model", actor="burak")
+        dispatch._run_setting(self.project, "l2_codex_model")
         T.block(self.project, task["slug"], "Paused")
         with mock.patch.object(engines, "resume_l2", return_value=self.launched()) as resume:
             dispatch.resume(self.project, task["slug"])
-        self.assertIsNone(resume.call_args.kwargs["effort"])
+        self.assertEqual((resume.call_args.kwargs["model"], resume.call_args.kwargs["effort"]), ("gpt-6.1-sol", "high"),
+                         "the built-in default, never the later configured choice")
 
     def test_invalid_and_pinned_unsupported_effort_refuse_before_task_creation(self):
         for kwargs in ({"effort": "invalid"}, {"effort": ""}, {"effort": "ultra", "engine": "claude"},

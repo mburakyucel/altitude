@@ -11,7 +11,7 @@ import type { Decision, Overview, TaskMessage, TaskView } from "../data/api";
 import { InlineProse, ProseScope } from "../components/Prose";
 import { ProseTerminal } from "../components/CodeBlock";
 import { requestCommand } from "../data/terminalCommand";
-import { agoText, dayText, localTimes, modelName, when } from "../data/observed";
+import { agoText, dayText, localTimes, when } from "../data/observed";
 import { questionPath, selections, turnLabel } from "../data/decisions";
 import { stoppedByCoordinator, taskExplanation } from "../data/taskStatus";
 import { holdText } from "../components/TaskCard";
@@ -108,36 +108,23 @@ interface Facts {
   repository?: string | null;
 }
 
-const effortName = (value: string) => value === "xhigh" ? "Extra High" : value === "native" ? "engine default" : sentence(value);
-
-interface ModelFacts { chip: string; rows: [string, string][]; note: string }
+interface ModelFacts { chip: Chip | null; rows: [string, string][]; note: string }
 
 /**
- * The chip says only what is known: "Requested · Opus on Claude · Max" before the engine reports, then what
- * it reported, with "(requested Max)" when the two differ. Details keep the requested, launch and reported
- * values and routing's recorded reason.
+ * The chip names what the task runs with, in its model button's words: "6.1 Sol on Codex · High". Details keep the
+ * chosen, launched and reported values and routing's recorded reason.
  */
-function modelFacts(task: TaskView, engineLabel: string): ModelFacts {
-  const launchModel = str(task["launch_model"]) || str(task["model"]);
-  const launchEffort = str(task["launch_effort"]);
-  const reportedEffort = str(task["engine_reasoning_effort"]);
-  const engineModel = str(task["engine_model"]);
-  const reportedModel = engineModel && engineModel !== launchModel ? engineModel : "";
-  const reported = Boolean(reportedModel || reportedEffort);
-  const model = reportedModel || launchModel;
-  const name = [model ? modelName(model) : "", engineLabel].filter(Boolean).join(" on ");
-  const effort = reportedEffort ? effortName(reportedEffort) + (launchEffort && launchEffort !== reportedEffort ? ` (requested ${effortName(launchEffort)})` : "")
-    : launchEffort ? `${effortName(launchEffort)}${reported ? " requested" : ""}` : "";
-  const chip = !name ? "" : [reported || !(launchModel || launchEffort) ? "" : "Requested", name, effort].filter(Boolean).join(" · ");
-  const asked = [str(task["model"]), str(task["effort"]) ? effortName(str(task["effort"])) : ""].filter(Boolean).join(" · ");
-  const rows: [string, string][] = !name ? [] : [
-    ["Requested", asked ? `${asked} · set for this task` : "Project choice or defaults"],
-    ["Launched", [launchModel || "engine default model", launchEffort ? effortName(launchEffort) : "engine default effort"].join(" · ")],
-    ["Engine reports", [engineModel && reportedModel ? engineModel : "model not reported", reportedEffort ? effortName(reportedEffort) : "effort not reported"].join(" · ")],
+function modelFacts(task: TaskView): ModelFacts {
+  const running = task.running_model;
+  if (!running) return { chip: null, rows: [], note: "" };
+  const chip: Chip = { text: [[running.model, running.engine].filter(Boolean).join(" on "), running.effort].join(" · ") };
+  const rows: [string, string][] = [
+    ["Requested", running.chosen ? `${running.chosen} · set for this task` : "Project choice or defaults"],
+    ["Launched", running.launched],
+    ["Engine reports", running.reported ?? "Not reported yet"],
     ...(str(task["routing"]) ? [["Routing", sentence(str(task["routing"]))] as [string, string]] : []),
   ];
-  const differs = Boolean(reportedEffort && launchEffort && reportedEffort !== launchEffort);
-  return { chip, rows, note: `${differs ? "The engine reported a different level. " : ""}Messages and resumes keep the current model and effort.` };
+  return { chip, rows, note: `Messages and resumes ask for ${running.launched}.` };
 }
 
 export function taskFacts(task: TaskView, overview: Overview | undefined, project: string, repository?: string | null): Facts {
@@ -158,7 +145,7 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
 
   const engineId = str(task["l2_engine"]) || str(task["engine"]);
   const engineLabel = overview?.engines.find((e) => e.engine === engineId)?.label ?? engineId;
-  const selection = modelFacts(task, engineLabel);
+  const selection = modelFacts(task);
 
   const prs = arr(task["prs"]).map((n) => num(n)).filter((n): n is number => n != null);
   const number = prs[prs.length - 1];
@@ -203,7 +190,7 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
     state,
     label,
     dot,
-    chips: [{ text: label, tone: dot === "danger" ? "danger" as const : undefined }, ...(selection.chip ? [{ text: selection.chip }] : []), ...(prChip ? [prChip] : []), ...(hold ? [{ text: "Merge held", tone: "held" as const }] : [])],
+    chips: [{ text: label, tone: dot === "danger" ? "danger" as const : undefined }, ...(selection.chip ? [selection.chip] : []), ...(prChip ? [prChip] : []), ...(hold ? [{ text: "Merge held", tone: "held" as const }] : [])],
     sub,
     waiting,
     explanation: !faultKind && (state === "queued" || held) ? planned || wait?.hold ? waiting : null : explanation,

@@ -1001,7 +1001,7 @@ def _on_l2_finished(project: str, item: dict) -> None:
         return
     if item.get("rejection"):
         engine = dispatch.l2_engine(t)
-        option = {"engine": engine, "model": t.get("launch_model"), "role": "l2"}
+        option = {"engine": engine, "model": dispatch.launched(t)[0]}
         route.note_rejection(option, item["rejection"])
         why = item["rejection"]["why"] + ". Check engine authentication/model access or change Auto routing."
         block_snapshot(why)
@@ -1020,7 +1020,7 @@ def _on_l2_finished(project: str, item: dict) -> None:
         delay = CAPACITY_RETRY_DELAYS[min(retry - 1, len(CAPACITY_RETRY_DELAYS) - 1)]
         until = (datetime.now(timezone.utc) + timedelta(seconds=delay)).isoformat(timespec="seconds")
         engine = t.get("l2_engine") or "claude"
-        model = t.get("engine_model") or "provider default"
+        model = t.get("engine_model") or t.get("launch_model") or "provider default"
         updates = {"capacity_retries": retry, "resume_after": until}
         try:
             block_snapshot(f"{engine} model {model} is temporarily at capacity; "
@@ -3897,8 +3897,7 @@ def task_transfer_view(project: str, task: dict) -> dict:
         configured = {}
     targets = []
     catalog = config.choice_options()
-    current_model = task.get("launch_model", task.get("engine_model"))
-    current_effort = task.get("launch_effort")
+    current_model, current_effort = dispatch.launched(task) if task.get("l2_engine") else (None, None)
     for engine in configured:
         names = {row["model"]: row["label"] for row in catalog["models"]
                  if row["engine"] == engine and row["model"]}
@@ -3945,9 +3944,7 @@ def task_transfer_view(project: str, task: dict) -> dict:
         transfer["reason"] = request.get("reason") if transfer["by"] != "operator" else None
     return {"current_engine": current, "current_label": config.ENGINE_LABELS.get(current, current),
             "current_model": current_model,
-            "current_model_label": next((row["label"] for row in catalog["models"]
-                                          if row["engine"] == current and row["model"] == current_model and current_model),
-                                         config.model_label(current_model) if current_model else None),
+            "current_model_label": config.model_name(current, current_model) if current_model else None,
             "current_effort": current_effort, "current_effort_label": config.effort_label(current_effort or "native"),
             "targets": targets, "eligible": eligible,
             "reason": None if eligible else (targets[0]["reason"] if targets else "No other engine is configured."),
@@ -3955,6 +3952,25 @@ def task_transfer_view(project: str, task: dict) -> dict:
             "resume_hold": (dispatch.resume_engine_hold(task)
                             if task.get("state") == "blocked" and task.get("usage_limit") else None),
             "observed": {key: task.get(key) for key in ("attempt", "agent_id", "session_id", "block_id")}}
+
+
+def task_model_view(task: dict) -> dict | None:
+    """The engine, model and effort a task runs with, in its chooser's words: the engine's report once it arrives,
+    else the launch values Altitude passed."""
+    engine = task.get("l2_engine")
+    if not engine:
+        return None
+    launched, effort = dispatch.launched(task)
+    seen, seen_effort = task.get("engine_model"), task.get("engine_reasoning_effort")
+    name = lambda model: config.model_name(engine, model) if model else None
+    chosen = [name(task.get("model")), config.effort_label(task["effort"]) if task.get("effort") else None]
+    return {"engine": config.ENGINE_LABELS.get(engine, engine), "model": name(seen or launched),
+            "effort": config.effort_label(seen_effort or effort),
+            "chosen": " · ".join(filter(None, chosen)) or None,
+            "launched": f"{name(launched) or 'engine default model'} · {config.effort_label(effort)}",
+            "reported": (f"{name(seen) or 'model not reported'} · "
+                         f"{config.effort_label(seen_effort) if seen_effort else 'effort not reported'}"
+                         if seen or seen_effort else None)}
 
 
 def task_view(project: str, slug: str) -> dict:
@@ -3974,7 +3990,7 @@ def task_view(project: str, slug: str) -> dict:
         activity = {"generation": t.get("agent_id"), "state": "unavailable", "commentary": None,
                     "observation": None, "delivered": [], "background": None, "error": "The worker changed. Refresh this task."}
     return {**{k: v for k, v in t.items() if k not in TASK_VIEW_OMITTED},
-            "transfer": task_transfer_view(project, t),
+            "transfer": task_transfer_view(project, t), "running_model": task_model_view(t),
             "repository": project_repository(project),
             "can_continue": T.reported_continuable(t, report),
             "question": questions[-1] if questions else None, "questions": questions,

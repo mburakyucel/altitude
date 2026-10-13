@@ -225,9 +225,7 @@ def option_label(option: dict) -> str:
 def _rejection_path(option: dict, scope: str, model: str | None = None):
     from hashlib import sha256
     model = (model or option.get("model")) if scope == "model" else None
-    # Native defaults can differ by role (one launcher ignores user model configuration).
-    role = option.get("role") if scope == "model" and model is None else None
-    name = sha256(repr((option["engine"], model, role, scope)).encode()).hexdigest()[:24]
+    name = sha256(repr((option["engine"], model, scope)).encode()).hexdigest()[:24]
     return config.MONITOR_DIR / f"route-unavailable-{name}.json"
 
 
@@ -309,8 +307,7 @@ def choice_unavailable(role: str, choice: dict | None, project: dict | None = No
     from . import engines
     if not choice or not choice.get("engine"):
         return None
-    option = {"engine": choice["engine"], "role": role,
-              "model": choice.get("model") or config.default_model(role, choice["engine"], project)}
+    option = {"engine": choice["engine"], "model": choice.get("model") or config.default_model(role, choice["engine"], project)}
     installed = engines.installation(option["engine"])
     if installed["available"] is False:
         return installed["why"]
@@ -325,7 +322,7 @@ def resume_hold(engine: str, model: str | None) -> str | None:
     installed = engines.installation(engine)
     if installed["available"] is False:
         return installed["why"]
-    option = {"engine": engine, "model": model, "role": "l2"}
+    option = {"engine": engine, "model": model}
     return (_hold(option, _readings()) or {}).get("why")
 
 
@@ -453,7 +450,7 @@ def pick_engine(role: str, *, forced: str | None = None, model: str | None = Non
         available = []
         for configured in tier:
             option = {"engine": configured["engine"],
-                      "model": configured.get("model") or config.default_model(role, configured["engine"], project), "role": role}
+                      "model": configured.get("model") or config.default_model(role, configured["engine"], project)}
             if option_key(option) in considered:
                 continue  # a lower tier never repeats an option a higher tier already resolved
             considered.add(option_key(option))

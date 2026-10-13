@@ -205,14 +205,14 @@ class TestResumePriority(AltitudeCase):
             self.launch("Still available", "other")
         self.assertEqual(digest.wip()["machine"], 1)
 
-    def test_native_default_model_denial_does_not_reserve_resume_capacity(self):
-        engine = next(engine for engine in config.ENGINES if config.default_model("l2", engine) is None)
+    def test_default_model_denial_does_not_reserve_resume_capacity(self):
+        engine = config.ENGINES[-1]
         self.register(self.project, routing=[[{"engine": engine}]])
-        original = self.launch("Native default model")
+        original = self.launch("Default model")
         self.pause(original)
         T.message(self.project, original["slug"], "burak", "Continue when allowance returns")
-        route.note_rejection({"engine": engine, "model": None, "role": "l2"},
-                             {"scope": "model", "why": "Native default allowance exhausted"})
+        route.note_rejection({"engine": engine, "model": config.default_model("l2", engine)},
+                             {"scope": "model", "why": "Default model allowance exhausted"})
         self.assertEqual(dispatch.resume_due(self.project), [])
         self.assertIn("allowance exhausted", dispatch.resume(self.project, original["slug"])["held"])
         self.register("other", routing=[[{"engine": engine, "model": "available-model"}]])

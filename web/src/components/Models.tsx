@@ -143,7 +143,7 @@ function ModelPairRow({ row }: { row: ModelDefaults["engines"][number] }) {
         {shown.effort && !row.efforts.some((item) => item.value === shown.effort) ? <option value={shown.effort}>{shown.effort}</option> : null}
         {row.efforts.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
       </select>
-      {!shown.effort ? <span className="text-meta text-muted">{row.default_effort}</span> : shown.effort === "native" ? <span className="text-meta text-muted">Provider chooses effort</span> : null}
+      {!shown.effort ? <span className="text-meta text-muted">{row.default_effort}</span> : shown.effort === "native" ? <span className="text-meta text-muted">{row.native_effort}</span> : null}
       <SaveResult save={save} reload={reload} retry={() => save.variables && void submit(save.variables.value, save.variables.expected).catch(() => {})} />
     </div>
   </div>;

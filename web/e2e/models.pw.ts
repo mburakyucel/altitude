@@ -30,7 +30,7 @@ function runnable(view: Options) {
 type Pair = { model: string | null; effort: string | null };
 type GlobalView = { engines: { engine: string; label: string; value: Pair;
   models: { value: string; label: string }[]; efforts: { value: string; label: string }[];
-  default_model: string; default_effort: string; unavailable: string | null }[];
+  default_model: string; default_effort: string; native_effort: string; unavailable: string | null }[];
   overrides: { id: string; label: string; expected: unknown }[] };
 const globalView = async (request: APIRequestContext): Promise<GlobalView> => (await request.get("/api/model-defaults")).json();
 const pair = async (request: APIRequestContext, engine: string) => (await globalView(request)).engines.find((row) => row.engine === engine)!.value;
@@ -66,7 +66,7 @@ test("global model and effort pairs: named choices, independent saves, Native an
   const effort = section.getByRole("combobox", { name: `${row.label} effort`, exact: true });
   await effort.selectOption("native");
   await expect.poll(() => pair(request, row.engine)).toEqual({ model: row.models[0]!.value, effort: "native" });
-  await walk.state("03-explicit-native", { visible: [section.getByText("Provider chooses effort", { exact: true })], hidden: [section.getByRole("alert")] });
+  await walk.state("03-explicit-native", { visible: [section.getByText(row.native_effort, { exact: true })], hidden: [section.getByRole("alert")] });
   const other = initial.engines[1]!;
   expect(await pair(request, other.engine)).toEqual({ model: other.models[0]!.value, effort: "high" });
   await section.getByRole("combobox", { name: `${row.label} model`, exact: true }).selectOption("");
@@ -237,7 +237,7 @@ test.describe("Remove project", () => {
   });
 });
 
-test("the task's model: requested before the engine reports, then reported, and Model and effort in details", async ({ page, request }, info) => {
+test("the task's model: launched before the engine reports, then reported, and Model and effort in details", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const phone = info.project.name === "phone";
   const walk = walkthrough(page, info);
@@ -252,33 +252,36 @@ test("the task's model: requested before the engine reports, then reported, and 
   expect(record.l2_engine).toBe(engine);
   // Presentation overlay: the fixture's dispatch predates model choice, so the launch facts are served here.
   let reported: string | null = null;
+  const launched = `${first!.label} · ${top.label}`;
   await page.route((url) => url.pathname === `/api/task/${project.name}/${slug}`, (route) => route.fulfill({ json: {
     ...record, launch_model: first!.model, launch_effort: top.value, engine_model: first!.model, engine_reasoning_effort: reported,
     model: first!.model, effort: top.value, routing: "set for this task by L3",
+    running_model: { engine: engineLabel, model: first!.label, effort: reported ? high.label : top.label,
+      chosen: launched, launched, reported: reported ? `${first!.label} · ${high.label}` : null },
   } }));
   const chip = (text: RegExp) => page.locator(".task-chips").getByText(text).first();
   const details = page.getByRole("dialog", { name: "Task details", exact: true });
   const facts = details.getByRole("region", { name: "Model and effort", exact: true });
-  const requested = new RegExp(`^Requested · ${first!.label}\\b.* on ${engineLabel} · ${top.label}$`);
-  const mismatch = new RegExp(`^${first!.label}\\b.* on ${engineLabel} · ${high.label} \\(requested ${top.label}\\)$`);
+  const requested = new RegExp(`^${first!.label}\\b.* on ${engineLabel} · ${top.label}$`);
+  const reportedChip = new RegExp(`^${first!.label}\\b.* on ${engineLabel} · ${high.label}$`);
 
   await walk.open(`/projects/${project.name}/tasks/${slug}`);
   await page.getByRole("button", { name: /Task details$/ }).click();
   await walk.state("01-requested-before-report", {
-    visible: [details, chip(requested), facts, facts.getByText(`${first!.model} · ${top.label}`, { exact: true }), facts.getByText("model not reported · effort not reported", { exact: true })],
-    hidden: [chip(mismatch)],
+    visible: [details, chip(requested), facts, facts.getByText(launched, { exact: true }), facts.getByText("Not reported yet", { exact: true })],
+    hidden: [chip(reportedChip)],
   });
   await expect(facts.getByRole("term")).toHaveText(["Requested", "Launched", "Engine reports", "Routing"]);
-  await expect(facts.getByText(`${first!.model} · ${top.label} · set for this task`, { exact: true })).toBeVisible();
+  await expect(facts.getByText(`${launched} · set for this task`, { exact: true })).toBeVisible();
   await expect(facts.getByText("Set for this task by L3", { exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
 
   reported = high.value;
   await page.reload();
-  if (!phone) await expect(chip(mismatch)).toBeVisible();
+  if (!phone) await expect(chip(reportedChip)).toBeVisible();
   await page.getByRole("button", { name: /Task details$/ }).click();
-  await walk.state("02-reported-differs", {
-    visible: [chip(mismatch), facts.getByText(`model not reported · ${high.label}`, { exact: true }), facts.getByText(/^The engine reported a different level\./)],
+  await walk.state("02-reported", {
+    visible: [chip(reportedChip), facts.getByText(`${first!.label} · ${high.label}`, { exact: true }), facts.getByText(`Messages and resumes ask for ${launched}.`, { exact: true })],
     hidden: [chip(requested)],
   });
 });

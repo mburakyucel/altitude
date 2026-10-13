@@ -130,13 +130,6 @@ class TestPickEngine(AltitudeCase):
         self.assertIn("resets", choice["why"])
         self.assertIn("--routing", choice["why"])
 
-    def test_unresolved_native_default_rejection_is_scoped_to_its_role(self):
-        project = {"routing": config.parse_routing("codex")}
-        choice = route.pick_engine("l2", project=project)
-        route.note_rejection(choice, {"scope": "model", "why": "default model not accessible"})
-        self.assertIsNone(route.pick_engine("l2", project=project)["engine"])
-        self.assertEqual(route.pick_engine("l3", project=project)["engine"], "codex")
-
     def test_exhausted_model_allowance_leaves_other_models_and_engines_eligible(self):
         project = {"routing": config.parse_routing("claude:fable>claude:opus>codex")}
         limit = engines.usage_limit_in("You've reached your Fable limit. Switch to another model.")
@@ -183,7 +176,7 @@ class TestPickEngine(AltitudeCase):
     def test_fable_l2_only_by_explicit_task_model_or_project_default(self):
         pinned = route.pick_engine("l2", model="fable")
         self.assertEqual((pinned["engine"], pinned["model"], pinned["pinned"]), ("claude", "fable", True))
-        preferred = route.pick_engine("l2", project={"l2_model": "fable"}, excluded=(("codex", None),))
+        preferred = route.pick_engine("l2", project={"l2_model": "fable"}, excluded=(("codex", config.default_model("l2", "codex")),))
         self.assertEqual((preferred["engine"], preferred["model"], preferred["pinned"]), ("claude", "fable", False))
         self.assertEqual(route.pick_engine("l2", project={"l2_model": "fable"})["engine"], config.PRIMARY_DEFAULT_ENGINE,
                          "a project default model is a preference for its engine, never an engine pin")
@@ -193,8 +186,9 @@ class TestPickEngine(AltitudeCase):
         project = {"l2_model": "fable", "l2_codex_model": "chosen-model"}
         self.assertEqual(route.pick_engine("l2", project=project)["model"], "chosen-model")
         self.assertEqual(route.pick_engine("l2", project=project, excluded=(("codex", "chosen-model"),))["model"], "fable")
-        self.assertIsNone(route.pick_engine("l3", project=project)["model"], "L2 defaults never reach L3 options")
-        self.assertEqual(route.pick_engine("l3", project=project, excluded=(("codex", None),))["model"], "fable")
+        l3_codex = config.default_model("l3", "codex")
+        self.assertEqual(route.pick_engine("l3", project=project)["model"], l3_codex, "L2 defaults never reach L3 options")
+        self.assertEqual(route.pick_engine("l3", project=project, excluded=(("codex", l3_codex),))["model"], "fable")
         project["routing"] = config.parse_routing("claude:opus>codex")
         self.assertEqual(route.pick_engine("l2", project=project)["model"], "opus")
         self.assertEqual(route.pick_engine("l2", forced="codex", project=project)["model"], "chosen-model")
