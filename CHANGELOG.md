@@ -25,8 +25,15 @@ Feature release of the early preview.
 - A task with a long session opens faster.
 - Voice input in a Linux WebKit browser no longer freezes the page when the machine is busy.
 
-Known limits: native Mac confirmation of several of these changes is tracked on its issues, and
-live providers are not part of release testing.
+Updating keeps configuration, TLS identity and data; speech-service keys removed earlier must be
+entered again. A failed update restores the previous version by itself; `alt recover` finishes an
+interrupted recovery.
+
+Known limits: native Mac confirmation (#896, #873, #877, #872, #884, #225, #818) and physical
+iPhone voice (#884, #894) stay open on their issues; desktop WebKit emulation is not iPhone
+acceptance. Live providers are not part of release testing.
+
+Release files are built by the task owner; this publication path provides no hosted build attestation.
 
 ## v0.4.0 — 2026-10-12
 
