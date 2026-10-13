@@ -112,8 +112,8 @@ def _repository(project: str) -> tuple[dict, bool]:
     repo = config.project_path(project)
     if not repo.is_dir():
         return _step("repository", "Git repository", "failed", "The registered folder is unavailable.", action="discuss"), False
-    result = subprocess.run(["git", "-C", str(repo), "rev-parse", "--show-toplevel"],
-                            capture_output=True, text=True, timeout=10, env={**os.environ, "LC_ALL": "C"})
+    result = subprocess.run(["git", "-C", str(repo), "rev-parse", "--show-toplevel"], capture_output=True, text=True,
+                            timeout=10, env=git_policy.git_env(repo, {**os.environ, "LC_ALL": "C"}))
     if result.returncode:
         if "not a git repository" in result.stderr.lower():
             return _step("repository", "Git repository", "not_applicable",
@@ -155,20 +155,19 @@ def _guard_paths(project: str, slug: str | None = None) -> list[tuple[str, str, 
     """Only recorded task checkouts of this repository belong to project repair."""
     repo = config.project_path(project).resolve()
     paths = [("guards", "Git guards", repo)]
-    common = git_policy._output(git_policy._run(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"),
-                                "Cannot inspect the project's shared Git directory")
     for task in S.list_tasks(project):
         if slug is not None and task["slug"] != slug:
             continue
         if not task.get("worktree"):
             continue
-        worktree = Path(task["worktree"])
+        worktree = config.task_worktree(project, task["slug"])
         if not worktree.exists():
             continue  # Removed checkouts have no hook configuration to maintain.
-        expected = repo / config.WORKTREE_ROOT / task["slug"]
-        actual = git_policy._run(worktree, "rev-parse", "--path-format=absolute", "--git-common-dir")
-        if worktree.resolve() != expected.resolve() or actual.returncode or actual.stdout.strip() != common:
-            raise SetupError(f"Task {task['slug']} has a checkout outside its registered repository; L3 needs to inspect it.")
+        try:
+            git_policy.task_git(worktree)
+        except git_policy.GitPolicyError as exc:
+            raise SetupError(f"Task {task['slug']} has a checkout outside its registered repository; "
+                             "L3 needs to inspect it.") from exc
         # Inherited healthy configuration is already represented by the project row.
         if git_policy._selection(worktree)[1] == "worktree" or git_policy.inspect_hooks(worktree)["status"] != "ready":
             paths.append((f"guards:{task['slug']}", f"Git guards · {task['slug']}", worktree))

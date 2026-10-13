@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import config, engines, images as image_store, platform, route, state as S, storage, transcript
+from . import config, engines, git_policy, images as image_store, platform, route, state as S, storage, transcript
 
 _locks: dict[str, threading.Lock] = {}
 _active: dict[str, dict] = {}
@@ -194,7 +194,8 @@ def _l3_env(project: str, runtime: Path) -> dict[str, str]:
     env = {"ALTITUDE_ACTOR": "l3", "ALTITUDE_PROJECT": project, "ALTITUDE_HOME": str(config.ROOT),
            "PATH": str(runtime / "bin") + os.pathsep + engines.clean_env()["PATH"]}
     remote = subprocess.run([shutil.which("git") or "git", "remote", "get-url", "origin"],
-                            cwd=str(config.project_path(project)), capture_output=True, text=True, timeout=15)
+                            cwd=str(config.project_path(project)), capture_output=True, text=True, timeout=15,
+                            env=git_policy.git_env(config.project_path(project)))
     match = re.search(r"github\.com[/:]([^/]+/[^/]+?)(?:\.git)?$", remote.stdout.strip()) if not remote.returncode else None
     if match:
         env["GH_REPO"] = match.group(1)

@@ -123,7 +123,7 @@ def folder(project: str, slug: str | None) -> Path:
             raise TerminalError("Task is not available.", 404) from None
         if task.get("state") in ("done", "rejected") or not task.get("worktree"):
             raise TerminalError("This task has no worktree to open a terminal in.")
-        path = Path(task["worktree"])
+        path = config.task_worktree(project, slug)
     if not path.is_dir():
         raise TerminalError("The folder is missing." if slug is None else "The worktree is missing.")
     return path

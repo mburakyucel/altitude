@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from tests.support import AltitudeCase, add_worktree, make_repo
-from altitude import config, dispatch, engines, platform, state as S, tasks as T
+from altitude import config, dispatch, engines, git_policy, platform, state as S, tasks as T
 
 PROJECT = "door"
 
@@ -64,19 +64,22 @@ class TestCodexAdapter(AltitudeCase):
     def test_sandbox_roots_are_the_worktree_both_git_dirs_and_altitude_home(self):
         # Codex leaves a linked worktree's own metadata read-only unless it is a root of its own, which blocked
         # `git fetch` for task give-the-chat-section-its-own-scrollbar on 2026-09-03.
-        settings = engines.codex_sandbox(self.worktree, extra_roots=engines.common._git_dirs(self.worktree))
+        git_roots, read_only = git_policy.worker_git_access(self.worktree)
+        settings = engines.codex_sandbox(self.worktree, extra_roots=git_roots, read_only=read_only)
         parsed = tomllib.loads("\n".join(settings))
         self.assertEqual(parsed["default_permissions"], "altitude-task")
         profile = parsed["permissions"]["altitude-task"]
         roots = list(profile["workspace_roots"])
-        self.assertEqual(roots, [str(self.worktree.resolve()), str((self.repo / ".git").resolve()),
-                                 str((self.repo / ".git" / "worktrees" / "wt").resolve()),
-                                 str(config.ROOT.resolve())])
+        common, record = (self.repo / ".git").resolve(), (self.repo / ".git" / "worktrees" / "wt").resolve()
+        self.assertEqual(roots, [str(self.worktree.resolve()), str(common), str(record), str(config.ROOT.resolve())])
         self.assertTrue(all(Path(r).is_dir() for r in roots), "Codex bind-mounts writable roots; they must exist")
         self.assertTrue(all(profile["workspace_roots"].values()))
         self.assertEqual(profile["extends"], ":workspace", "retain native protected paths and temporary roots")
-        self.assertEqual(profile["filesystem"], {":root": "read", **{str(path): "deny" for path in (
-                         *platform.job_control_paths(), *platform.private_places())}})
+        self.assertEqual(profile["filesystem"], {
+            ":root": "read",
+            **{str(common / name): "read" for name in ("config", "config.worktree", "hooks", "info", "modules", "worktrees", "commondir", "gitdir")},
+            **{str(record / name): "read" for name in ("commondir", "gitdir", "config.worktree")},
+            **{str(path): "deny" for path in (*platform.job_control_paths(), *platform.private_places())}})
         self.assertTrue(profile["network"]["enabled"])
         self.assertNotIn("sandbox_mode", parsed, "legacy selection must not override the named profile")
         self.assertNotIn("sandbox_workspace_write", parsed)
@@ -118,10 +121,11 @@ class TestCodexAdapter(AltitudeCase):
             self.job_env = env
             return ["svc", unit, *command]
 
-        settings = engines.codex_sandbox(self.worktree, extra_roots=[self.repo / ".git"]) if actual_settings else ["s1", "s2"]
+        git_roots, read_only = git_policy.worker_git_access(self.worktree)
+        settings = (engines.codex_sandbox(self.worktree, extra_roots=git_roots, read_only=read_only)
+                    if actual_settings else ["s1", "s2"])
         with mock.patch.object(engines.common.subprocess, "Popen", side_effect=popen), \
              mock.patch.object(engines.codex, "codex_sandbox", return_value=settings), \
-             mock.patch.object(engines.common, "_git_dirs", return_value=[self.repo / ".git"]), \
              mock.patch.object(platform, "job_command", side_effect=job_command), \
              mock.patch.object(platform, "job_active", return_value=False):
             res = engines.codex_bg("door/t-1", "brief", cwd=self.worktree, job_root=self.job_root,

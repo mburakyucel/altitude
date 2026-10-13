@@ -402,6 +402,7 @@ class AltitudeCase(unittest.TestCase):
         self.runtime_tmp = config.ROOT / "cases" / self.tmp.name
         self.runtime_tmp.mkdir(parents=True)
         self.addCleanup(shutil.rmtree, self.runtime_tmp, True)
+        self.patch(config, "SOURCE_COPY", self.tmp / "source-copy")
         if self.host == "linux" and NATIVE_PLATFORM != "linux":
             self.linux_process_facts()
         self.repo = self.tmp / "repo"
@@ -456,6 +457,18 @@ class AltitudeCase(unittest.TestCase):
         patcher = mock.patch.object(target, name, *new, **kwargs)
         self.addCleanup(patcher.stop)
         return patcher.start()
+
+    def task_worktree(self, slug: str = "task", *args) -> Path:
+        """The case project's task worktree for `slug`, made with the project's repository when missing; the extra
+        arguments let it stand in for `dispatch._task_worktree(repo, project, slug, sha)` as `side_effect`."""
+        if args:
+            slug = args[1]
+        path = self.repo / ".claude" / "worktrees" / slug
+        if not path.is_dir():
+            if not (self.repo / ".git").exists():
+                make_repo(self.repo)
+            add_worktree(self.repo, slug)
+        return path
 
     def fake_engines(self) -> Path:
         """Both engine executables become `tests/fake_engine.py`, which the real engine driver runs for the case."""

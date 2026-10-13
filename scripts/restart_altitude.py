@@ -79,8 +79,9 @@ def unit_environment() -> dict[str, str]:
 
 
 def require_deployed_checkout() -> str:
-    """The deployed checkout's head, held to the service's own startup rule: clean, on its branch, not ahead or
-    diverged. Behind is fine: the unit activates the head it builds and the deployment tick pends the rest
+    """The deployed checkout's head, held to the service's own startup rule: on its branch, its files exactly that
+    commit, and the commit on the branch in Altitude's copy of its repository, so the web app builds from what the
+    service starts. Behind is fine: the unit activates the head it builds and the deployment tick pends the rest
     (I-20261010-214654: origin moved during the build and the refusal parked the activation for hours)."""
     deployed = unit_properties().get("WorkingDirectory", "")
     if not deployed or Path(deployed).expanduser().resolve() != ROOT.resolve():
@@ -94,7 +95,7 @@ def require_deployed_checkout() -> str:
         )
     try:
         # The service's branch, as it runs: this detached job inherits only PATH.
-        return git_policy.service_preflight(ROOT, unit_environment().get("ALTITUDE_SOURCE_BRANCH") or "main").head
+        return git_policy.source_head(ROOT, unit_environment().get("ALTITUDE_SOURCE_BRANCH") or "main")
     except git_policy.GitPolicyError as exc:
         raise RestartError(str(exc)) from exc
 

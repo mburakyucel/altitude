@@ -14,7 +14,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
-from . import config, engines, state as S, storage, tasks as T
+from . import config, engines, git_policy, state as S, storage, tasks as T
 
 # Room for a long task's complete mandatory history plus selected evidence (I-20260927-193716), well
 # under the captured-input tool's 2 MiB file limit, while keeping a review's context finite.
@@ -61,12 +61,12 @@ def _open(task):
     return task.get("state") in ("running", "blocked", "queued")
 
 
-def _eligible(task, subject="changes"):
+def _eligible(project, task, subject="changes"):
     if not _open(task):
         return "This task has no open delivery to review."
     if not task.get("worktree") or not task.get("l2_engine"):
         return "Review is available once L2 has started."
-    if subject == "changes" and task.get("review_merged_head") and task["review_merged_head"] == _git(Path(task["worktree"]), "rev-parse", "HEAD"):
+    if subject == "changes" and task.get("review_merged_head") and task["review_merged_head"] == _git(_worktree(project, task), "rev-parse", "HEAD"):
         return "This delivery already merged. Prepare the next delivery's checkpoint before requesting review."
     return None
 
@@ -114,9 +114,17 @@ def _capacity(task):
     return None
 
 
+def _worktree(project, task):
+    return config.task_worktree(project, task["slug"])
+
+
 def _git(root, *args, binary=False, stdin=None, conflict_ok=False):
+    try:
+        env = git_policy.task_git(root)
+    except git_policy.GitPolicyError as exc:
+        raise T.TransitionError(f"Review checkpoint unavailable: {exc}") from exc
     result = subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-c", "diff.external=", *args],
-                            cwd=root, input=stdin, capture_output=True, timeout=120)
+                            cwd=root, input=stdin, capture_output=True, timeout=120, env=env)
     if result.returncode and not (conflict_ok and result.returncode == 1):
         reason = (result.stderr.strip() or result.stdout.strip()).decode(errors="replace")[-300:].strip()
         raise T.TransitionError(f"Review checkpoint unavailable: git {args[0]} failed: "
@@ -161,9 +169,9 @@ def _hash(value):
 
 
 def _identity(project, task, *, fetch=False, candidate=True, proposal_id=None):
-    root = Path(task["worktree"])
+    root = _worktree(project, task)
     from . import dispatch
-    dispatch._validate_task_worktree(config.project_path(project), project, task["slug"], root, require_clean=False)
+    dispatch._validate_task_worktree(project, task["slug"], require_clean=False)
     if _git(root, "status", "--porcelain", "--untracked-files=no"):
         raise T.TransitionError("Commit the selected task changes before capturing or assessing review.")
     if fetch:
@@ -275,10 +283,10 @@ def view(project, slug):
     gate = {subject: _open_findings(task, subject) for subject in ("proposal", "changes")}
     for row in history:
         subject = row.get("subject", "changes")
-        row["can_again"] = row["can_again"] and not (gate[subject] or _eligible(task, subject) or common or _request_wait(task, subject, row["id"]))
+        row["can_again"] = row["can_again"] and not (gate[subject] or _eligible(project, task, subject) or common or _request_wait(task, subject, row["id"]))
     for subject in ("proposal", "changes"):
         latest = next((r for r in reversed(history) if r.get("subject", "changes") == subject), None)
-        why = _eligible(task, subject) or common or _request_wait(task, subject)
+        why = _eligible(project, task, subject) or common or _request_wait(task, subject)
         # A kind with a review keeps showing it; an unreviewed kind shows only while a request could start.
         if latest or _open(task):
             subjects[subject] = {"available": latest["can_again"] if latest else not why, "why": why or "", "latest": latest,
@@ -342,7 +350,7 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
             # A replacement leaves the gate, so its silence cannot stand in for resolving known findings.
             raise T.TransitionError("Fix or dismiss the review's open findings with evidence before replacing it, "
                                     "or request an additional review that leaves them in the merge gate.")
-        if why := _eligible(task, subject):
+        if why := _eligible(project, task, subject):
             raise T.TransitionError(why)
         latest = next((r for r in reversed(rows) if r.get("subject", "changes") == subject), None)
         # Naming a waiting request with a different explicit selection replaces it; nothing else re-selects.
@@ -359,7 +367,7 @@ def request(project, slug, *, actor, request_id, focus="", source_id=None, previ
         if why := _request_wait(task, subject, previous):
             raise T.TransitionError(why)
         if subject == "changes":
-            root = Path(task["worktree"])
+            root = _worktree(project, task)
             _candidate_tree(root, _git(root, "rev-parse", "origin/main"), _git(root, "rev-parse", "HEAD"))
         choice = route.pick_review(task, config.project(project), **(selection or {}))
         if not choice.get("engine"):
@@ -432,7 +440,7 @@ def _capture(project, task, review, context_ids, proposal_id=None, show=None):
     # Files over 2 MiB stay out of source and patch; the capture names them instead (issue #533).
     for tree in ((identity["tree"],) if proposal else (identity["base"], identity["tree"])):
         total = count = 0
-        for raw in _git(Path(task["worktree"]), "ls-tree", "-rlz", tree, binary=True).split(b"\0"):
+        for raw in _git(_worktree(project, task), "ls-tree", "-rlz", tree, binary=True).split(b"\0"):
             if not raw:
                 continue
             metadata, name = raw.split(b"\t", 1)
@@ -496,7 +504,7 @@ def _capture(project, task, review, context_ids, proposal_id=None, show=None):
         with storage.directory(review_folder, ["snapshot", "source"], create=True, search=True):
             pass
         # Blob reads preserve exact Git content even when export-ignore/export-subst attributes exist.
-        content = io.BytesIO(_git(Path(task["worktree"]), "cat-file", "--batch", binary=True,
+        content = io.BytesIO(_git(_worktree(project, task), "cat-file", "--batch", binary=True,
                                  stdin="".join(oid + "\n" for _, oid in entries).encode()))
         for path, oid in entries:
             header = content.readline().decode().split()
@@ -507,7 +515,7 @@ def _capture(project, task, review, context_ids, proposal_id=None, show=None):
                 raise T.TransitionError("The captured Git blob is incomplete.")
             write(["source", *path.parts], data)
         excluded = ("--", ".", *(f":(exclude,literal){path}" for path in sorted(omitted))) if omitted else ()
-        patch = b"" if proposal else _git(Path(task["worktree"]), "diff", "--no-ext-diff", "--no-textconv",
+        patch = b"" if proposal else _git(_worktree(project, task), "diff", "--no-ext-diff", "--no-textconv",
                                           identity["base"], identity["tree"], *excluded, binary=True)
         write(["changes.patch"], patch)
         write(["context.json"], text.encode())
@@ -587,7 +595,7 @@ def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None,
             return _project_review(review, task, None)
         if task.get("state") != "running":
             raise T.TransitionError("Resume the current owner before running the requested review.")
-        if why := _eligible(task, review.get("subject", "changes")):
+        if why := _eligible(project, task, review.get("subject", "changes")):
             raise T.TransitionError(why)
         if review["owner"] != {k: task.get(k) for k in ("attempt", "l2_engine")}:
             raise T.TransitionError("The owner changed. Withdraw or explicitly retry this review on the current attempt.")

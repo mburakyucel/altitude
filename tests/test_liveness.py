@@ -168,7 +168,7 @@ class TestResumeRebinds(AltitudeCase):
         self.assertEqual((current["state"], current["agent_id"]), ("running", "agent-b"))
 
     def test_resume_binds_task_to_the_new_worker_in_its_worktree(self):
-        wt = self.tmp / "wt-resume"; wt.mkdir()
+        wt = self.task_worktree("resume-me")
         S.task_dir(self.project, "resume-me").mkdir(parents=True, exist_ok=True)
         S.save_task(self.project, {"slug": "resume-me", "title": "resume-me", "created": S.now(), "updated": S.now(),
                                    "state": "blocked", "session_id": "old-sid", "agent_id": "old",
@@ -207,7 +207,7 @@ class TestResumeRebinds(AltitudeCase):
                 dispatch.resume(self.project, "no-wt")
 
     def test_resume_without_a_concrete_replacement_never_rebinds(self):
-        wt = self.tmp / "wt-no-replacement"; wt.mkdir()
+        wt = self.task_worktree("no-replacement")
         S.task_dir(self.project, "no-replacement").mkdir(parents=True, exist_ok=True)
         original = {"slug": "no-replacement", "title": "no-replacement", "created": S.now(),
                     "state": "blocked", "session_id": "old-sid", "agent_id": "old-agent",
@@ -230,7 +230,7 @@ class TestResumeRebinds(AltitudeCase):
         fault.assert_called_once()
 
     def test_resume_provenance_failure_never_launches_the_engine(self):
-        wt = self.tmp / "wt-refused-resume"; wt.mkdir()
+        wt = self.task_worktree("refused-resume")
         S.task_dir(self.project, "refused-resume").mkdir(parents=True, exist_ok=True)
         S.save_task(self.project, {
             "slug": "refused-resume", "title": "refused-resume", "created": S.now(), "updated": S.now(),

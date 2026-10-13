@@ -113,7 +113,8 @@ tar -tzf ~/Backups/altitude-2026-10-10.tar.gz > /dev/null && echo complete
 
 The first command writes an archive only you can read; the second reads the whole archive and fails
 on a truncated or damaged file. Both assume the default `ALTITUDE_HOME`. The voice runtime lives beside it in
-`~/.altitude-speech` and downloads again when needed, so the copy leaves it out. Records are replaced whole, so a copy taken while
+`~/.altitude-speech` and downloads again when needed, and Altitude's copy of its repository in
+`~/.altitude-repository` is fetched again from the origin, so the archive leaves both out. Records are replaced whole, so a copy taken while
 Altitude runs holds intact files, but activity during the copy can leave one record without its
 counterpart, such as an incident index line without its incident. For an exact copy, take it while
 no task runs and the coordinator is idle. Task folders keep their check evidence, so
@@ -286,7 +287,7 @@ project checkouts stay where they are. Keep those directories separate.
 | `ALTITUDE_OPERATOR` | Initial name shown for the operator; unset falls back to Git's global `user.name`, and with neither, screens say “you”. First run or **Settings → Your name** stores a name that replaces it; clearing that name returns to this value. |
 | `ALTITUDE_HOST`, `ALTITUDE_PORT`, `ALTITUDE_TLS` | Default `127.0.0.1:8890` over HTTPS. For other devices, bind the specific private address they reach; a wildcard bind is certified for `localhost` only. Explicit source/development HTTP remains available; TLS failures never select it automatically. |
 | `ALTITUDE_TLS_DIR` | Private certificates, default `~/.config/altitude/tls`, outside application/runtime/project writable roots. |
-| `ALTITUDE_SOURCE_BRANCH` | The branch a source service runs and self-deploys, default `main`. The service refuses to start unless its checkout is clean, on this branch and not ahead of `origin/<branch>`; task worktrees still branch from `main`. On a Mac, `make install-service` sets it to the checked-out branch when that is not `main`. |
+| `ALTITUDE_SOURCE_BRANCH` | The branch a source service runs and self-deploys, default `main`. The service refuses to start unless its checkout is on this branch and its files are exactly a commit on it in Altitude's copy of the repository; task worktrees still branch from `main`. On a Mac, `make install-service` sets it to the checked-out branch when that is not `main`. |
 | `ALTITUDE_CONFIG` | Installed settings, default `~/.config/altitude/install.json`, outside application/runtime/project directories. CLI overrides are explicit; the generated service pins saved values against its inherited environment. Source checkouts ignore this file. |
 | `CODEX_BIN`, `CLAUDE_BIN` | Engine executable locations. The default locations and role/model settings are in the engine configuration module. |
 | `ALTITUDE_PUSH_CONTACT` | Address a push service may use to reach the sender of decision alerts, default `mailto:altitude@example.com`, which names no one. Set your own `mailto:` address if a device's push service refuses that one. |
@@ -440,9 +441,11 @@ It installs Altitude's Git guards in the checkout and starts the service at `htt
   find `gh`, the coding CLIs and pnpm, and runs the checked-out branch. Run it again to change any
   of them, for example `ALTITUDE_HOST=<private address> make install-service`.
 
-The service starts only while the checkout is clean, on its branch and not ahead of
-`origin/<branch>` ([`ALTITUDE_SOURCE_BRANCH`](#configuration)). Each start runs the committed code,
-exported under the ignored `.altitude-source/`. `alt service status` and `alt service logs` read it.
+The service starts only while the checkout is on its branch and its files are exactly a commit on that
+branch in Altitude's copy of the repository, `~/.altitude-repository`
+([`ALTITUDE_SOURCE_BRANCH`](#configuration)). Altitude creates the copy from the checkout's
+`origin/<branch>` on first start and fetches it from the origin afterwards; only Altitude writes it.
+Each start runs the committed code, exported from the copy under the ignored `.altitude-source/`. `alt service status` and `alt service logs` read it.
 A phone or another computer needs a private address; the target prints the firewall command for
 `ufw`. Continue with [device trust](SETUP.md#trust-https-on-each-device),
 [pairing](SETUP.md#pair-each-device) and [First run](SETUP.md#first-run-in-the-browser).

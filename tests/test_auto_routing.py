@@ -22,7 +22,7 @@ class TestAutoIntegration(AltitudeCase):
         self.quota = self.patch(monitor, "quota", return_value={"known": False})
         self.other_quota = self.patch(route, "quota_codex", return_value={"known": False})
         self.patch(dispatch.git_policy, "fetch_origin", return_value="a" * 40)
-        self.patch(dispatch, "_task_worktree", return_value=self.repo)
+        self.patch(dispatch, "_task_worktree", side_effect=self.task_worktree)
         self.patch(dispatch, "_validate_task_worktree")
         self.patch(engines, "worker_live", return_value=False)
         self.patch(engines, "stop_l2_worker")

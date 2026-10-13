@@ -810,6 +810,11 @@ def project_path(name: str) -> Path:
     return Path(project(name)["path"]).expanduser()
 
 
+def task_worktree(name: str, slug: str) -> Path:
+    """A task's checkout, from Altitude's layout rather than its record, which the task's worker can rewrite."""
+    return project_path(name) / WORKTREE_ROOT / slug
+
+
 def project_dir(name: str) -> Path:
     return ROOT / require_project_name(name)
 
@@ -818,6 +823,11 @@ def beside_root(name: str) -> Path:
     """`~/.altitude-<name>`: beside Altitude's home rather than in it. Task workers can write the home, so what altd
     runs, mounts or writes as its own must not sit at a path a worker could have replaced."""
     return ROOT.with_name(f"{ROOT.name}-{name}")
+
+
+# A source install's own copy of Altitude's repository (bare), the only Git store Altitude trusts for its own code:
+# task workers write the checkout's shared Git store, never this one.
+SOURCE_COPY = beside_root("repository")
 
 
 def discover_projects() -> list[dict]:
