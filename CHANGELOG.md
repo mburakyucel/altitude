@@ -33,7 +33,6 @@ or `v0.1.1` need one manual update. Configuration, TLS identity and data are kep
   with an explicit Reload page action. A shared conversation draft stays intact until reload.
 - Native helper notifications stay with their owner thread, keeping another helper's completion
   from ending the owner's wait or redirecting its messages.
-
 - Repair or Check again pressed in project setup just as a previous check finishes now runs at once,
   instead of waiting up to half a minute for the next scheduled pass.
 - A task with a long session opens faster: its activity records are redacted once per read instead of
@@ -50,8 +49,8 @@ trusted installer's `--recover`; code recovery does not roll back data.
 
 Known limits: native Mac confirmation of the coordinator repair (#896), helper notifications
 (#873), transfers (#877), host voice updates (#872) and speech-service cleanup (#884) remains
-open. Physical iPhone voice and failure recovery (#884, #894), notification preferences (#829),
-broader native Mac checks (#225, #818) and the container browser lane's final acceptance (#883)
+open. Physical iPhone voice and failure recovery (#884, #894), broader native Mac checks
+(#225, #818) and the container browser lane's final acceptance (#883)
 stay on their issues. Desktop WebKit emulation is not physical iPhone acceptance. Release tests
 use fixture engines; live-provider compatibility remains unverified.
 
