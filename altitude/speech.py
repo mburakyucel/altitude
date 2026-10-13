@@ -35,7 +35,7 @@ from urllib.parse import urlsplit
 from pathlib import Path, PurePosixPath
 from typing import Callable
 
-from . import config, platform, state as S
+from . import config, platform, state as S, storage
 
 ROOT = config.ROOT / "speech"
 WORKER = Path(__file__).resolve().parent / "speech_worker.py"
@@ -258,7 +258,7 @@ def _write_state(value: dict) -> None:
 
 def _guard():
     ROOT.mkdir(parents=True, exist_ok=True)
-    handle = open(ROOT / ".control", "a")
+    handle = storage.runtime_lock(ROOT / ".control")
     fcntl.flock(handle, fcntl.LOCK_EX)
     return handle
 
@@ -300,7 +300,7 @@ def installation_id() -> str:
 def _setting_up() -> bool:
     if not (ROOT / ".lock").exists():
         return False
-    with open(ROOT / ".lock", "a") as handle:
+    with storage.runtime_lock(ROOT / ".lock") as handle:
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -418,7 +418,7 @@ def _unpack(wheel: Path, site: Path) -> int:
 
 def _lock(wait: float = 0):
     ROOT.mkdir(parents=True, exist_ok=True)
-    handle = open(ROOT / ".lock", "a")
+    handle = storage.runtime_lock(ROOT / ".lock")
     deadline = time.monotonic() + wait
     while True:
         try:
@@ -433,7 +433,7 @@ def _lock(wait: float = 0):
 
 def _lease(exclusive: bool, cancel=None, timeout: float | None = None):
     """Workers inherit shared use; verification, promotion and deletion need exclusive use."""
-    handle = open(ROOT / ".use", "a")
+    handle = storage.runtime_lock(ROOT / ".use")
     deadline = time.monotonic() + timeout if timeout is not None else None
     try:
         while True:
@@ -460,7 +460,7 @@ def _verify(path: Path, cancel: _Attempt) -> None:
     memory = platform.available_memory()
     if memory is not None and memory < MEMORY_NEEDED:
         raise SpeechError("Voice needs 2.5 GB of free memory to check the speech model.")
-    with open(ROOT / "verification.log", "w") as errors:
+    with storage.runtime_log(ROOT / "verification.log") as errors:
         worker = subprocess.Popen([sys.executable, "-I", str(WORKER), str(path)], stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, stderr=errors, text=True, env=_environment())
         try:
@@ -832,7 +832,7 @@ class Host:
             path = runtime()
             if path is None:
                 raise SpeechError("Voice needs an update on this computer.", 409)
-            with open(ROOT / "worker.log", "w") as errors:
+            with storage.runtime_log(ROOT / "worker.log") as errors:
                 self.worker = subprocess.Popen(self.command(path), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                                stderr=errors, text=True, env=_environment(), close_fds=True,
                                                pass_fds=(lease.fileno(),))

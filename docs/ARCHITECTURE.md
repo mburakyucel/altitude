@@ -1818,20 +1818,20 @@ authorization and post-change health verification.
 
 ## Interfaces and storage
 
-Project serialization and activity locks open their fixed leaves without following links or
-truncating existing bytes, and verify opened regular files before locking. The activity fence keeps
-shared/exclusive nonblocking contention; serialization waits for the current writer. Both use the
-shared descriptor walk from the canonical runtime root selected at initialization, preserving the
-configured root's display spelling and legitimate startup aliases. Missing project directories are
-created relative to pinned parents. Search-only traversal supports execute-only ancestors; callers
-that create durable task documents use readable descriptors for directory fsync.
+Workers can write the runtime root, so the daemon never writes there through a link: a planted link
+would let a sandboxed worker have Altitude write outside its sandbox. Every record replacement, log
+append and lock in the runtime root goes through `storage.py`, which walks from the runtime root
+fixed at startup without following a link at any component and opens a leaf only when it is one
+singly linked regular file. Record replacement writes a new file and renames it over the leaf, so a
+planted leaf link is replaced, never followed. A refused file is an error, not a fallback. Locks never
+truncate; serialization waits for the current writer and the activity fence keeps shared/exclusive
+nonblocking contention.
 
-The same walk serves task documents and copies, and the non-resume transcript prompt's fixed
-`brief.md`. Brief reads retain complete UTF-8 text and universal newlines without the task-document
-size quota. An existing live task with no brief never borrows an archived brief. Linked ancestors,
-linked leaves and nonregular briefs are unavailable. This boundary does not cover ordinary task-view
-document reads, status/registry or invocation discovery, invocation output, native session selection
-or other runtime readers. It supplies no authority over regular records modified in place.
+Reads that reach another engine or the task record use the same walk: the task's `brief.md` and
+`request.md` for reviews and the transcript, task documents, invocation output and a failed worker's
+error tail. Brief reads keep complete UTF-8 text and universal newlines; a live task without a brief
+never borrows an archived one. Other runtime reads still open by path, and a worker can change the
+contents of any regular record it can write.
 
 ### Times
 

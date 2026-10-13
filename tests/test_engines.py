@@ -34,7 +34,7 @@ class TestForegroundUnits(AltitudeCase):
 
     def setUp(self):
         super().setUp()
-        self.job_root = self.tmp / "jobs"
+        self.job_root = self.runtime_tmp / "jobs"
         self.settings = self.tmp / "settings.json"
         self.settings.write_text('{"modelSettings":{"fable":{"maxTokens":1000}}}')
         self.persona = self.tmp / "persona.md"

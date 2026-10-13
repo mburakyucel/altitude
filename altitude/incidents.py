@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import unquote
 
-from . import config, engines, platform, state as S, tasks as T
+from . import config, engines, platform, state as S, storage, tasks as T
 
 STATUSES = ("open", "watch", "closed")
 ISSUE_LABEL = "incident"
@@ -31,8 +31,7 @@ _BULLET = re.compile(r"^(?:- (" + "|".join(re.escape(x) for x in INCIDENT_LABELS
 
 
 def _index_append(row: dict) -> None:
-    with open(config.INCIDENT_INDEX, "a") as f:
-        f.write(json.dumps(row, sort_keys=True) + "\n")
+    storage.append(config.INCIDENT_INDEX, json.dumps(row, sort_keys=True) + "\n")
 
 
 FAULTS = config.ROOT / "monitor" / "faults.json"
@@ -46,8 +45,7 @@ def fault_lock_path() -> Path:
 @contextmanager
 def _fault_lock():
     """Serialize fault evidence RMW and dedupe, independently of project dispatch locks."""
-    FAULTS.parent.mkdir(parents=True, exist_ok=True)
-    with open(fault_lock_path(), "w") as handle:
+    with storage.runtime_lock(fault_lock_path()) as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         try:
             yield
@@ -492,9 +490,7 @@ def _gh(project: str, args: list[str], *, timeout: int, input: str | None = None
 def _incident_lock(project: str):
     """One publisher or amender per project across processes: a retry cannot race the daemon into a second
     issue, and an amendment never lands on a snapshot another writer has replaced."""
-    directory = config.project_dir(project) / "incidents"
-    directory.mkdir(parents=True, exist_ok=True)
-    with open(directory / ".lock", "w") as handle:
+    with storage.runtime_lock(config.project_dir(project) / "incidents" / ".lock") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         try:
             yield

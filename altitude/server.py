@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
-from . import access, config, digest, dispatch, engines, git_policy, images, improve, incidents, installation, l3, line, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, tasks as T, terminal, tls, transcript, validation, verify
+from . import access, config, digest, dispatch, engines, git_policy, images, improve, incidents, installation, l3, line, monitor, platform, project_setup, push, qr, reviews, route, speech, state as S, storage, tasks as T, terminal, tls, transcript, validation, verify
 
 
 class ThreadingHTTPServer(http.server.ThreadingHTTPServer):
@@ -383,9 +383,8 @@ def require_image_capability(project: str, slug: str | None = None) -> None:
 def log(msg: str) -> None:
     line = f"{S.now()} {msg}\n"
     try:
-        with open(LOG, "a") as f:
-            f.write(line)
-    except OSError:
+        storage.append(LOG, line)
+    except (OSError, ValueError):
         pass
     print(line, end="", flush=True)
 

@@ -14,7 +14,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlencode
 
-from . import config, engines, git_policy, images, platform, project_setup, route, state as S, tasks as T
+from . import config, engines, git_policy, images, platform, project_setup, route, state as S, storage, tasks as T
 
 
 class DispatchFailure(T.TransitionError):
@@ -966,9 +966,7 @@ def _run_task_operation(project: str, slug: str, *, admission_held: str | None =
 @contextmanager
 def publication_settlement(project: str):
     """Serialize project fetch, deployment and explicit checkout preservation."""
-    path = config.project_dir(project) / ".publication-settlement.lock"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as handle:
+    with storage.runtime_lock(config.project_dir(project) / ".publication-settlement.lock") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         try:
             yield
@@ -1745,7 +1743,7 @@ def leases(project: str, exclude: str | None = None) -> list[dict]:
 @contextmanager
 def launch_lock(*, wait: bool = True):
     """Serialize machine capacity admission through worker binding, across threads and processes."""
-    with open(config.ROOT / ".launch.lock", "w") as handle:
+    with storage.runtime_lock(config.ROOT / ".launch.lock") as handle:
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
         except BlockingIOError:

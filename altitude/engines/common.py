@@ -17,7 +17,7 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import unquote
 from zoneinfo import ZoneInfo
-from .. import config, platform, state as S
+from .. import config, platform, state as S, storage
 from . import invocation
 
 
@@ -1212,9 +1212,9 @@ def owned_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
         detail = str(failed.get("message") or failed.get("error") or failed)[:500]
     elif not alive and not completed:
         try:
-            detail = (paths["stderr"].read_text(errors="replace")[-500:]
-                      or paths["stdout"].read_text(errors="replace")[-500:] or "Worker exited without a result")
-        except OSError:
+            detail = (storage.tail(paths["stderr"], 500) or storage.tail(paths["stdout"], 500)
+                      or "Worker exited without a result")
+        except (OSError, ValueError):
             detail = "Worker exited without a result"
     row = {"id": worker_id, "sessionId": _event_session(events) or record.get("session_id"),
             "name": record.get("name"), "pid": record.get("pid"), "unit": record.get("unit"),

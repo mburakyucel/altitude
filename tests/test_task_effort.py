@@ -248,7 +248,7 @@ class TestEffortCommand(AltitudeCase):
                     with mock.patch.object(engines.common.subprocess, "Popen", side_effect=popen) as launch:
                         kwargs = dict(cwd=self.repo, persona=config.PERSONAS / "l2.md", model="opus",
                                       effort=effort, settings=self.tmp / "settings.json", extra_env={},
-                                      job_root=self.tmp / "jobs")
+                                      job_root=self.runtime_tmp / "jobs")
                         result = (engines.resume_l2("claude", "task", "conversation", "message", **kwargs) if resume
                                   else engines.start_l2("claude", "task", "request", **kwargs))
                     self.assertEqual(result["returncode"], 0)
@@ -261,7 +261,7 @@ class TestEffortCommand(AltitudeCase):
                         self.assertEqual(command[command.index("--effort") + 1], effort)
                         self.assertNotIn("CLAUDE_CODE_EFFORT_LEVEL", launch.call_args.kwargs["env"])
                         self.assertFalse(any(arg.startswith("CLAUDE_CODE_EFFORT_LEVEL=") for arg in job))
-                    record = S.read_json(self.tmp / "jobs" / (result["agent"]["id"] + ".json"))
+                    record = S.read_json(self.runtime_tmp / "jobs" / (result["agent"]["id"] + ".json"))
                     self.assertEqual(record["launch_effort"], effort)
 
     def test_claude_l3_fresh_and_resume_native_arguments(self):
@@ -299,7 +299,7 @@ class TestEffortCommand(AltitudeCase):
                          mock.patch.object(platform, "job_active", return_value=False):
                         kwargs = dict(cwd=self.repo, persona=config.PERSONAS / "l2.md", model=None,
                                       effort=effort, settings=self.tmp / "settings.json", extra_env={},
-                                      job_root=self.tmp / "jobs")
+                                      job_root=self.runtime_tmp / "jobs")
                         result = (engines.resume_l2("codex", "task", "conversation", "message", **kwargs) if resume
                                   else engines.start_l2("codex", "task", "request", **kwargs))
                     self.assertEqual(result["returncode"], 0)
@@ -307,7 +307,7 @@ class TestEffortCommand(AltitudeCase):
                     selected = [arg for arg in spec["command"] if arg.startswith("model_reasoning_effort=")]
                     self.assertEqual(selected, [] if effort is None else [f'model_reasoning_effort="{effort}"'])
                     self.assertEqual(spec["resume"], "conversation" if resume else None)
-                    record = S.read_json(self.tmp / "jobs" / (result["agent"]["id"] + ".json"))
+                    record = S.read_json(self.runtime_tmp / "jobs" / (result["agent"]["id"] + ".json"))
                     self.assertEqual(record["launch_effort"], effort)
                     self.assertNotIn("engine_reasoning_effort", record)
 
@@ -330,6 +330,6 @@ class TestEffortCommand(AltitudeCase):
             with self.assertRaisesRegex(ValueError, "does not support reasoning effort"):
                 engines.start_l2("claude", "task", "request", cwd=self.repo, persona=config.PERSONAS / "l2.md",
                                  model="opus", effort="ultra", settings=self.tmp / "settings.json",
-                                 extra_env={}, job_root=self.tmp / "jobs")
+                                 extra_env={}, job_root=self.runtime_tmp / "jobs")
         launch.assert_not_called()
-        self.assertFalse((self.tmp / "jobs").exists())
+        self.assertFalse((self.runtime_tmp / "jobs").exists())

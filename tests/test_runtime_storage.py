@@ -10,7 +10,8 @@ from contextlib import contextmanager
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import config, platform, state as S, storage, transcript
+from altitude import (config, dispatch, engines, incidents, l3, platform, project_setup, reviews, server,
+                      speech, state as S, storage, transcript)
 
 
 class RuntimeStorage(AltitudeCase):
@@ -123,6 +124,121 @@ class RuntimeStorage(AltitudeCase):
             self.assertEqual(target.read_bytes(), b"outside sentinel")
             leaf.unlink()
             self.directory.rmdir()
+
+    def runtime_writers(self):
+        """Every daemon append, log and lock in the runtime root, with the file each one opens."""
+        project, slug = self.directory, self.directory / "tasks" / "demo"
+        self.patch(config, "MONITOR_DIR", self.runtime / "monitor")
+        self.patch(config, "INCIDENT_INDEX", self.runtime / "incidents.jsonl")
+        self.patch(incidents, "FAULTS", self.runtime / "monitor" / "faults.json")
+        self.patch(server, "LOG", self.runtime / "altd.log")
+        self.patch(speech, "ROOT", self.runtime / "speech")
+
+        @contextmanager
+        def entered(manager):
+            with manager:
+                yield
+
+        @contextmanager
+        def called(function, *args, **kwargs):
+            function(*args, **kwargs)
+            yield
+        return (
+            (slug / "events.log", lambda: called(S.append_event, self.project, "demo", "worker-exit",
+                                                 reason="$(planted command)")),
+            (project / "events.log", lambda: called(S.project_log, self.project, "note", text="$(planted)")),
+            (project / "chat.jsonl", lambda: called(l3.chat_log, self.project, "l2", "$(planted)")),
+            (project / "chat.lock", lambda: called(l3.chat_log, self.project, "l2", "text")),
+            (project / ".publication-settlement.lock", lambda: dispatch.publication_settlement(self.project)),
+            (project / ".setup.lock", lambda: project_setup.operation_lock(self.project)),
+            (project / "incidents" / ".lock", lambda: incidents._incident_lock(self.project)),
+            (self.runtime / ".launch.lock", lambda: dispatch.launch_lock()),
+            (self.runtime / ".projects.lock", lambda: config.projects_lock()),
+            (self.runtime / "monitor" / "restart.lock", lambda: config.restart_lock()),
+            (self.runtime / "monitor" / "faults.lock", lambda: incidents._fault_lock()),
+            (self.runtime / "incidents.jsonl", lambda: called(incidents._index_append, {"id": "x"})),
+            (self.runtime / "speech" / ".lock", lambda: entered(speech._lock())),
+            (self.runtime / "speech" / ".use", lambda: entered(speech._lease(False))),
+            (self.runtime / "speech" / "worker.log", lambda: storage.runtime_log(self.runtime / "speech" / "worker.log")),
+        )
+
+    def test_runtime_writers_never_write_through_planted_links(self):
+        # A worker can write the runtime root; a writer following its link would write outside the sandbox for it.
+        victim = self.outside / "shell-startup"
+        for leaf, written in self.runtime_writers():
+            with self.subTest(leaf=leaf.relative_to(self.runtime)):
+                victim.write_text("precious\n")
+                with written():
+                    pass  # creates the leaf and its folders
+                leaf.unlink()
+                leaf.symlink_to(victim)
+                with self.assertRaises((OSError, ValueError)), written():
+                    pass
+                leaf.unlink()
+                os.link(victim, leaf)
+                with self.assertRaises((OSError, ValueError)), written():
+                    pass
+                leaf.unlink()
+                parent = leaf.parent
+                if parent != self.runtime:  # a worker cannot replace the runtime root itself
+                    parent.rename(self.tmp / "moved")
+                    parent.symlink_to(self.outside, target_is_directory=True)
+                    with self.assertRaises((OSError, ValueError)), written():
+                        pass
+                    parent.unlink()
+                    (self.tmp / "moved").rename(parent)
+                self.assertEqual(victim.read_text(), "precious\n")
+                self.assertEqual(sorted(p.name for p in self.outside.iterdir()), ["shell-startup"])
+
+    def test_record_replacement_replaces_links_and_refuses_linked_folders(self):
+        victim = self.outside / "shell-startup"
+        folder = S.task_dir(self.project, "demo")
+        folder.mkdir(parents=True)
+        record = folder / "status.json"
+        for plant in (record.symlink_to, lambda target: os.link(target, record)):
+            victim.write_text("precious\n")
+            plant(victim)
+            S.write_json(record, {"text": "$(planted)"})
+            self.assertFalse(record.is_symlink())
+            self.assertEqual(os.stat(record).st_nlink, 1)
+            self.assertEqual(S.read_json(record), {"text": "$(planted)"})
+            self.assertEqual(victim.read_text(), "precious\n")
+            record.unlink()
+        folder.rmdir()
+        folder.symlink_to(self.outside, target_is_directory=True)
+        with self.assertRaises((OSError, ValueError)):
+            S.write_json(record, {"text": "$(planted)"})
+        self.assertEqual(sorted(p.name for p in self.outside.iterdir()), ["shell-startup"])
+
+    def test_server_log_drops_a_line_rather_than_follow_a_link(self):
+        self.patch(server, "LOG", self.runtime / "altd.log")
+        victim = self.outside / "shell-startup"
+        victim.write_text("precious\n")
+        self.runtime.joinpath("altd.log").symlink_to(victim)
+        server.log("$(planted)")
+        self.assertEqual(victim.read_text(), "precious\n")
+
+    def test_review_context_and_worker_failure_never_read_through_links(self):
+        secret = self.outside / "secret"
+        secret.write_text("OUTSIDE SECRET\n")
+        folder = S.task_dir(self.project, "demo")
+        folder.mkdir(parents=True)
+        (folder / "request.md").write_text("request\n")
+        (folder / "brief.md").symlink_to(secret)
+        self.patch(reviews.T, "task_messages", return_value=[])
+        with self.assertRaises((OSError, ValueError)):
+            reviews._context(self.project, {"slug": "demo"})
+        (folder / "brief.md").unlink()
+        self.assertEqual(reviews._context(self.project, {"slug": "demo"})["brief"], "")
+        jobs = folder / "l2-engine"
+        jobs.mkdir()
+        S.write_json(jobs / "w1.json", {"id": "w1", "engine": "codex", "unit": "", "started_at": S.now()})
+        (jobs / "w1.stdout.jsonl").write_text("")
+        (jobs / "w1.stderr.log").symlink_to(secret)
+        self.patch(platform, "job_active", return_value=False)
+        row = engines.owned_worker("w1", job_root=jobs)
+        self.assertEqual(row["state"], "failed")
+        self.assertNotIn("SECRET", row["detail"])
 
     def test_fifo_directory_and_lock_failure_close_descriptors(self):
         self.directory.mkdir()

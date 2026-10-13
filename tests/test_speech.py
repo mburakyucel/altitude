@@ -57,7 +57,7 @@ for line in sys.stdin:
 class SpeechCase(AltitudeCase):
     def setUp(self):
         super().setUp()
-        self.patch(speech, "ROOT", self.tmp / "speech")
+        self.patch(speech, "ROOT", self.runtime_tmp / "speech")
         self.patch(speech, "WATCH_S", 0.05)
         self.worker_file = self.tmp / "fake_worker.py"
         self.worker_file.write_text(FAKE_WORKER)
@@ -865,6 +865,7 @@ class TestHostVoiceRoutes(SpeechCase):
         super().setUp()
         self.patch(config, "ROOT", self.tmp / "machine")
         self.patch(config, "RUNTIME_ROOT", (self.tmp / "machine").resolve())
+        self.patch(speech, "ROOT", config.ROOT / "speech")
         config.ensure_root()
         S.write_json(config.ROOT / "settings.json", {"voice": "host"})
         self.patch(platform, "speech_runtime", return_value=("linux-x86_64-cp312", ""))

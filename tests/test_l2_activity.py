@@ -413,10 +413,10 @@ class TestInputHandoff(AltitudeCase):
                      mock.patch.object(engines.common.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")), \
                      mock.patch.object(engines.common.subprocess, "Popen", side_effect=lambda cmd, **kw: Process(kw["stdout"])):
                     result = engines.common._start_worker(engine, "fixture", "Exact input", cwd=self.repo,
-                                                   settings=self.tmp / "settings.json", job_root=self.tmp / "jobs")
+                                                   settings=self.tmp / "settings.json", job_root=self.runtime_tmp / "jobs")
                     self.assertEqual(result["returncode"], 1 if failure else 0)
                     self.assertEqual(result["agent"]["input_delivered"], failure is None)
-                    record = S.read_json(self.tmp / "jobs" / f"{result['agent']['id']}.json")
+                    record = S.read_json(self.runtime_tmp / "jobs" / f"{result['agent']['id']}.json")
                     self.assertEqual(record["input_delivered"], failure is None)
                     if failure:
                         self.assertIn("input handoff failed", result["stderr"])
@@ -449,11 +449,11 @@ class TestInputHandoff(AltitudeCase):
                      mock.patch.object(engines.common.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")), \
                      mock.patch.object(engines.common.subprocess, "Popen", side_effect=lambda cmd, **kw: Process(kw["stdout"])):
                     result = engines.common._start_worker(engine, "fixture", "Exact resume input", cwd=self.repo,
-                                                   settings=self.tmp / "settings.json", job_root=self.tmp / "jobs",
+                                                   settings=self.tmp / "settings.json", job_root=self.runtime_tmp / "jobs",
                                                    resume="original-session", start_timeout=0)
                 self.assertEqual(result["returncode"], 1)
                 self.assertFalse(result["agent"]["input_delivered"])
-                record = S.read_json(self.tmp / "jobs" / f"{result['agent']['id']}.json")
+                record = S.read_json(self.runtime_tmp / "jobs" / f"{result['agent']['id']}.json")
                 self.assertEqual(record["session_id"], "original-session")
                 self.assertFalse(record["input_delivered"])
                 self.assertTrue(record["stopped"])
@@ -465,7 +465,7 @@ class TestStopEvidence(AltitudeCase):
 
     def setUp(self):
         super().setUp()
-        self.root = self.tmp / "stop-jobs"
+        self.root = self.runtime_tmp / "stop-jobs"
         self.paths = engines.common._worker_paths(self.root, "worker")
         self.patch(engines.common, "_worker_processes", {})
         self.patch(engines.claude, "JOBS_DIR", self.tmp / "adopted-jobs")

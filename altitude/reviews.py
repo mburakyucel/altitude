@@ -134,13 +134,20 @@ def _candidate_tree(root, base, head):
     return lines[0]
 
 
+def _document(path):
+    """A task's fixed document, read without following a link the worker could have planted."""
+    try:
+        return T._runtime_bytes(str(path.relative_to(config.ROOT)), T.TASK_FILE_LIMIT).decode()
+    except FileNotFoundError:
+        return ""
+
+
 def _context(project, task):
     rows = [{k: row.get(k) for k in ("id", "at", "role", "text", "images")}
             for row in T.task_messages(project, task["slug"])
             if row.get("role") in (T.OPERATOR_MESSAGE_ROLE, "l3", "l2") and not row.get("removed_at")]
     folder = S.task_dir(project, task["slug"])
-    return {"request": (folder / "request.md").read_text(),
-            "brief": (folder / "brief.md").read_text() if (folder / "brief.md").exists() else "",
+    return {"request": _document(folder / "request.md"), "brief": _document(folder / "brief.md"),
             "messages": rows, "decisions": [q.get("resolution") for q in task.get("questions", []) if q.get("resolution")]}
 
 

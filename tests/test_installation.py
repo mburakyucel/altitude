@@ -49,6 +49,7 @@ class InstallationCase(unittest.TestCase):
         for target, name, value in (
             (Path, "home", mock.Mock(return_value=self.home)),
             (config, "ROOT", self.runtime),
+            (config, "RUNTIME_ROOT", self.runtime.resolve()),
             (config, "PROJECTS_FILE", self.runtime / "projects.json"),
             (config, "MONITOR_DIR", self.runtime / "monitor"),
             (config, "PROJECT_ROOTS", [self.home / "Projects"]),

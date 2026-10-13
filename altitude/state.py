@@ -31,6 +31,9 @@ def _fsync_directory(directory: Path) -> None:
 
 def atomic_write(path: Path, text: str) -> None:
     path = Path(path)
+    if storage.runtime_parts(path):
+        storage.replace(path, text.encode())
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
     try:
@@ -163,12 +166,7 @@ def list_tasks(project: str, include_archive: bool = False) -> list[dict]:
 
 def append_event(project: str, slug: str, kind: str, **data) -> dict:
     ev = {"at": now(), "kind": kind, **data}
-    p = task_dir(project, slug) / "events.log"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with open(p, "a") as f:
-        f.write(json.dumps(ev, sort_keys=True) + "\n")
-        f.flush()
-        os.fsync(f.fileno())
+    storage.append(task_dir(project, slug) / "events.log", json.dumps(ev, sort_keys=True) + "\n", sync=True)
     return ev
 
 
@@ -187,10 +185,8 @@ def read_events(project: str, slug: str) -> list[dict]:
 
 def project_log(project: str, kind: str, **data) -> None:
     """Project-level events such as L3 rotations and incidents, not tied to a task."""
-    p = config.project_dir(project) / "events.log"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with open(p, "a") as f:
-        f.write(json.dumps({"at": now(), "kind": kind, **data}, sort_keys=True) + "\n")
+    storage.append(config.project_dir(project) / "events.log",
+                   json.dumps({"at": now(), "kind": kind, **data}, sort_keys=True) + "\n")
 
 
 def read_project_log(project: str, limit: int = 200) -> list[dict]:

@@ -586,8 +586,7 @@ def restart_lock(*, exclusive: bool = False):
     Shared holders are dispatch, review admission, L3, validation and report handling. The exclusive requester
     checks quiet and records requested_at before another holder can enter, across processes.
     """
-    MONITOR_DIR.mkdir(parents=True, exist_ok=True)
-    with (MONITOR_DIR / "restart.lock").open("a") as handle:
+    with storage.runtime_lock(MONITOR_DIR / "restart.lock") as handle:
         try:
             fcntl.flock(handle, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -670,7 +669,7 @@ def load_projects() -> dict:
 def projects_lock():
     """Serialize registry edits across projects without losing concurrent changes."""
     ensure_root()
-    with open(ROOT / ".projects.lock", "a") as lock:
+    with storage.runtime_lock(ROOT / ".projects.lock") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
             yield
