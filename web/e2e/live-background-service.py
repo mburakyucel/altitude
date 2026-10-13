@@ -3,11 +3,12 @@
 Each configured engine's task gets records in that engine's own output form, read by the real engine seam,
 so the walkthrough exercises the parsing the Live session depends on. Only the worker launch is a fixture.
 """
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 
-from service_support import configure, serve
+from service_support import FixtureSource, configure, serve
 from tests.support import add_worktree, make_repo
 from tests.fakes import FakeL2
 from altitude import config, engines, server, state as S, tasks as T
@@ -68,8 +69,18 @@ def main():
     outputs: dict[str, tuple[Path, dict]] = {}
     for name in ("start_l2", "worker", "worker_sends", "remove_l2_worker", "stop_l2_worker"):
         setattr(engines, name, getattr(fake, name))
-    engines.activity_source = lambda task, **_kwargs: outputs.get(task.get("agent_id"))
-    engines.transcript_sources = lambda task, **_kwargs: [(outputs[task["agent_id"]][0], {})] if task.get("agent_id") in outputs else []
+    @contextmanager
+    def activity_source(_project, _slug, task):
+        selected = outputs.get(task.get("agent_id"))
+        yield FixtureSource(*selected) if selected else None
+
+    @contextmanager
+    def transcript_sources(_project, _slug, task):
+        selected = outputs.get(task.get("agent_id"))
+        yield [(FixtureSource(selected[0], {}), {})] if selected else []
+
+    engines.activity_source = activity_source
+    engines.transcript_sources = transcript_sources
     engines.session_context_source = lambda _task: None
 
     def task(title, engine, records):

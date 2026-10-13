@@ -1,5 +1,6 @@
 """Test-only server bootstrap. Real handlers/routing/storage, isolated engine I/O."""
 import json
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -11,6 +12,28 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tests.support import SUITE  # imports the offline guards before application paths freeze
 from altitude import access, config, engines, installation, platform, server, terminal
+
+
+class FixtureSource:
+    """The source interface supplied by fictional browser workers at the engine seam."""
+    def __init__(self, path, record):
+        self.path = path
+        self.record = record
+
+    def __str__(self):
+        return str(self.path)
+
+    def stat(self):
+        try:
+            info = self.path.stat()
+            return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+        except OSError:
+            return ()
+
+    def read(self):
+        with self.path.open("rb") as stream:
+            data = stream.read()
+            return data, os.fstat(stream.fileno())
 
 
 def copy_build(source: Path) -> Path:
