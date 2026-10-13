@@ -59,8 +59,28 @@ curl --proto '=https' --tlsv1.2 -fsSL https://github.com/mburakyucel/altitude/re
 The script checks the machine first and stops with the fix for anything missing. It downloads the
 latest stable release anonymously, runs nothing that does not match the checksums built into it,
 installs into your home folder and starts Altitude as a per-user service. It ends by printing the
-address, the certificate's fingerprint, whether Altitude keeps running after logout and the next
-steps. Then put `~/.local/bin` on PATH, in your shell profile as well, and check the result:
+address, the certificate's name and fingerprint, whether Altitude keeps running after logout and
+the next steps. On a fresh installation without paired devices or an unexpired pairing code,
+it also prints a private link for the first browser after verified HTTPS readiness.
+[Trust the certificate](#trust-https-on-each-device), then open that link: the browser pairs
+automatically after its existing trust check and opens [First run](#first-run-in-the-browser).
+The link works once, for ten minutes. Keep it private, including in terminal recordings and
+screenshots. If it expires or is refused, run `~/.local/bin/alt pair` on the computer running
+Altitude and follow [manual pairing](#pair-each-device).
+
+The installer opens no browser and changes no trust stores. Clicking the link uses the terminal
+or operating system's normal link handler, usually the default browser; some terminals require
+a modifier click. Over SSH, that browser opens on the device viewing the terminal:
+`127.0.0.1` refers to that device, not the server. Remote use needs the configured reachable
+address, its certificate trust and network access; the installer creates no tunnel.
+
+Reruns and updates retain paired devices and existing codes and print no new pairing link.
+A fresh installation retaining an unexpired manual code leaves it intact; run
+`~/.local/bin/alt pair` when ready to replace it. If link issuance fails after the service starts,
+the installer reports the running installation and the same manual recovery command.
+
+Terminal setup is optional before First run, which checks tools and sign-ins. When ready, put
+`~/.local/bin` on PATH, in your shell profile as well, and check the result:
 
 ```sh
 export PATH="$HOME/.local/bin:$PATH"
@@ -68,7 +88,7 @@ alt doctor
 ```
 
 `alt doctor` checks the tools, sign-ins and service, and shows the command that fixes each failure.
-It cannot see whether your browsers trust Altitude's certificate; the next step covers that.
+It cannot see whether your browsers trust Altitude's certificate.
 
 The command trusts GitHub's HTTPS and the published release for `install.sh` itself. To verify the
 script before running it with GitHub's release attestation, run the commands below; to install one
@@ -127,13 +147,14 @@ certificate and choosing a project stay your decisions.
 ## Trust HTTPS on each device
 
 Altitude serves HTTPS with its own certificate authority (CA). Trust that CA in every browser you
-use, including on the computer running Altitude. `alt doctor` shows the public `ca.crt` path and the
+use, including on the computer running Altitude. The installer shows the public `ca.crt` path,
+CA name and SHA-256 fingerprint. `alt doctor` shows the path and the
 CA's name, SHA-256 fingerprint, expiry and what trusting it allows; **Settings → Devices** shows the
 same on a device that already trusts Altitude.
 
 - Only `ca.crt` goes to another device, by any channel. Never copy `ca.key` or `server.key`.
-- Before trusting a copy, compare its name and full SHA-256 fingerprint with `alt doctor` or
-  **Settings → Devices** on a trusted device. Delete it if anything differs.
+- Before trusting a copy, compare its name and full SHA-256 fingerprint with the installer,
+  `alt doctor` or **Settings → Devices** on a trusted device. Delete it if anything differs.
 - Never click through a browser warning to reach Altitude.
 
 A CA that Altitude generates can vouch only for loopback and private-network addresses, the private
@@ -146,8 +167,8 @@ and Altitude renews its server certificate by itself, so a device trusts it once
 
 ### Share with a desktop or phone
 
-On the computer running Altitude, use the `ca.crt` path `alt doctor` reports and continue with
-[Linux](#linux-desktop) or [macOS](#macos-desktop). Another device needs Altitude on a
+On the computer running Altitude, use the `ca.crt` path the installer or `alt doctor` reports and
+continue with [Linux](#linux-desktop) or [macOS](#macos-desktop). Another device needs Altitude on a
 [private-network address](#install-the-application). Open **Settings → Devices → Set up a device**
 on a trusted device, or run this on the computer running Altitude, locally or over SSH:
 
@@ -168,9 +189,9 @@ From the folder holding `ca.crt`, run:
 openssl x509 -in ca.crt -noout -subject -fingerprint -sha256
 ```
 
-The name and the entire fingerprint must match `alt doctor` on the computer running Altitude. Open
-the file in a text editor as well: it holds exactly one `BEGIN CERTIFICATE` / `END CERTIFICATE`
-block and nothing else.
+The name and the entire fingerprint must match the installer or `alt doctor` on the computer
+running Altitude. Open the file in a text editor as well: it holds exactly one `BEGIN CERTIFICATE`
+/ `END CERTIFICATE` block and nothing else.
 
 ### Linux desktop
 
@@ -184,7 +205,9 @@ you use:
 - **Firefox:** open **Settings → Privacy & Security → Certificates → View Certificates → Authorities
   → Import**, select `ca.crt` and tick **Trust this CA to identify websites**.
 
-Quit and reopen the browser, then [verify HTTPS](#verify-https-before-pairing).
+Quit and reopen the browser, then [verify HTTPS](#verify-https-before-pairing). For the first browser,
+reopen the original private link from the installer; closing or reloading the page clears its code.
+If it expires, run `~/.local/bin/alt pair` for a new code.
 
 ### macOS desktop
 
@@ -195,6 +218,10 @@ Quit and reopen the browser, then [verify HTTPS](#verify-https-before-pairing).
 4. Quit and reopen Safari or Chrome, then [verify HTTPS](#verify-https-before-pairing).
 
 Firefox may not read the login keychain: import the same file with the Firefox steps above.
+
+For the first browser, reopen the original private link from the installer after restarting;
+the cleaned page address cannot restore its code. If it expires, run `~/.local/bin/alt pair`
+for a new code.
 
 ### Set up a phone
 
@@ -231,18 +258,22 @@ in the same certificate manager, or its profile on an iPhone.
 
 ## Pair each device
 
-Altitude opens only in browsers you pair, including the one on the computer running it. In a
-terminal on that computer, locally or over SSH, run:
+Altitude opens only in browsers you pair, including the one on the computer running it. The
+fresh installer's private link pairs the first browser after certificate trust. An already-paired
+browser opens the app without consuming the link. For another browser, or an expired, used or
+invalid link, run this in a terminal on the computer running Altitude, locally or over SSH:
 
 ```sh
-alt pair
+~/.local/bin/alt pair
 ```
 
 It prints an eight-character code, the address with a QR code a phone can scan, and the end of the
 certificate's fingerprint. Open the address on the device and follow **Pair this device**. A code
-works once, for ten minutes. A paired device stays paired until it goes 400 days unused, its site
-data is cleared or you remove it in **Settings → Devices**, where it can also make a code for
-another device. Lost every paired browser? Run `alt pair` again
+works once, for ten minutes; making a new code replaces the previous one, and five wrong attempts
+cancel it. Once `~/.local/bin` is on PATH, the command is `alt pair`. A paired device stays paired
+until it goes 400 days unused, its site data is cleared or you remove it in **Settings → Devices**,
+where it can also make a code for
+another device. Lost every paired browser? Run `~/.local/bin/alt pair` again
 ([lockout recovery](OPERATIONS.md#devices-and-lockout-recovery)).
 
 **Home Screen app:** after the address loads without a warning, use Safari's **Share → Add to Home

@@ -21,7 +21,7 @@ from unittest import mock
 
 from tests.fakes import FakeL2
 from tests.support import REPO, SUITE, make_repo
-from altitude import config, dispatch, engines, git_policy, installation, monitor, platform, state as S, tasks as T, tls
+from altitude import access, config, dispatch, engines, git_policy, installation, monitor, platform, state as S, tasks as T, tls
 
 
 class InstallationCase(unittest.TestCase):
@@ -56,6 +56,7 @@ class InstallationCase(unittest.TestCase):
             (config, "HOST", "127.0.0.1"),
             (config, "PORT", 19443),
             (config, "INSTALL_PREFIX", self.prefix),
+            (access, "DIR", self.home / ".config/altitude/access"),
             (platform.sys, "platform", self.HOST),
             (platform, "require_supported", lambda: None),
         ):
@@ -157,6 +158,155 @@ class InstallationCase(unittest.TestCase):
 
 
 class Installation(InstallationCase):
+    def test_first_install_pairs_only_after_healthy_activation_without_persisting_the_link(self):
+        receipts = []
+        atomic, issue_code = installation.atomic, access.issue_code
+
+        def write(path, content, *args):
+            if path.name == "pending.json":
+                receipts.append(content)
+            return atomic(path, content, *args)
+
+        def issue(**kwargs):
+            self.assertEqual(kwargs, {"first_browser": True})
+            self.assertEqual(self.active, "active")
+            probe.assert_called_once_with("v0.1.0", prefix=self.prefix)
+            self.assertFalse((self.prefix / "pending.json").exists())
+            return issue_code(**kwargs)
+
+        with mock.patch.object(installation, "atomic", side_effect=write), \
+                mock.patch.object(installation, "_probe", wraps=self.probe) as probe, \
+                mock.patch.object(access, "issue_code", side_effect=issue):
+            result = self.install()
+        self.assertEqual(result["service"], "running")
+        self.assertEqual(result["pairing"]["minutes"], 10)
+        base, separator, code = result["pairing"]["url"].partition("/projects#pair=")
+        self.assertEqual((base, separator), (result["url"], "/projects#pair="))
+        self.assertRegex(code, r"^[2-9A-HJ-NP-Z]{4}-[2-9A-HJ-NP-Z]{4}$")
+        self.assertTrue(receipts)
+        persistent = self.settings.read_text() + "".join(receipts) + (access.DIR / "devices.json").read_text()
+        self.assertNotIn(code, persistent)
+        self.assertNotIn(code.replace("-", ""), persistent)
+        self.assertNotIn(result["pairing"]["url"], persistent)
+        key, row = access.redeem(code, "Installed fixture browser")
+        self.assertEqual(access.device(key), row)
+        with self.assertRaises(access.AccessError) as used:
+            access.redeem(code, "Another fixture browser")
+        self.assertEqual(used.exception.status, 410)
+
+    def test_first_install_retains_active_manual_pairing_code(self):
+        issued = access.issue_code()
+        before = (access.DIR / "devices.json").read_bytes()
+        result = self.install()
+        self.assertNotIn("pairing", result)
+        self.assertNotIn("pairing_error", result)
+        self.assertEqual((access.DIR / "devices.json").read_bytes(), before)
+        access.redeem(issued["code"], "Retained manual fixture browser")
+
+    def test_first_install_retains_paired_devices(self):
+        issued = access.issue_code()
+        key, row = access.redeem(issued["code"], "Retained fixture browser")
+        before = (access.DIR / "devices.json").read_bytes()
+        result = self.install()
+        self.assertNotIn("pairing", result)
+        self.assertEqual((access.DIR / "devices.json").read_bytes(), before)
+        self.assertEqual(access.device(key), row)
+
+    def test_rerun_and_update_never_issue_or_replace_a_manual_code(self):
+        self.install()
+        manual = access.issue_code()
+        before = (access.DIR / "devices.json").read_bytes()
+        with mock.patch.object(access, "issue_code", side_effect=AssertionError("rerun/update issued a code")):
+            rerun = self.install()
+            updated = self.install("v0.1.1", edited=True)
+        self.assertNotIn("pairing", rerun)
+        self.assertNotIn("pairing", updated)
+        self.assertEqual((access.DIR / "devices.json").read_bytes(), before)
+        access.redeem(manual["code"], "Retained manual fixture browser")
+
+    def test_rerun_and_update_preserve_paired_devices_without_issuing_a_code(self):
+        first = self.install()
+        code = first["pairing"]["url"].partition("#pair=")[2]
+        key, row = access.redeem(code, "Retained fixture browser")
+        before = (access.DIR / "devices.json").read_bytes()
+        with mock.patch.object(access, "issue_code", side_effect=AssertionError("rerun/update issued a code")):
+            rerun = self.install()
+            updated = self.install("v0.1.1", edited=True)
+        self.assertNotIn("pairing", rerun)
+        self.assertNotIn("pairing", updated)
+        self.assertEqual((access.DIR / "devices.json").read_bytes(), before)
+        self.assertEqual(access.device(key), row)
+
+    def test_failed_first_activation_never_issues_a_code(self):
+        self.probes = [RuntimeError("candidate API unavailable")]
+        with mock.patch.object(access, "issue_code", side_effect=AssertionError("failed activation issued a code")):
+            with self.assertRaisesRegex(RuntimeError, "previous installation restored"):
+                self.install()
+        self.assertFalse((access.DIR / "devices.json").exists())
+        self.assertEqual(self.active, "inactive")
+
+    def test_failed_update_and_explicit_recovery_preserve_manual_pairing(self):
+        self.install()
+        manual = access.issue_code()
+        before = (access.DIR / "devices.json").read_bytes()
+        self.failures["stop"] = 1
+        self.probes = [RuntimeError("candidate API unavailable")]
+        with mock.patch.object(access, "issue_code", side_effect=AssertionError("rollback/recovery issued a code")):
+            with self.assertRaisesRegex(RuntimeError, "recovery is incomplete"):
+                self.install("v0.1.1", edited=True)
+            recovered = installation.recover(self.prefix)
+        self.assertEqual(recovered["version"], "v0.1.0")
+        self.assertNotIn("pairing", recovered)
+        self.assertEqual((access.DIR / "devices.json").read_bytes(), before)
+        self.assertEqual(self.active, "active")
+        access.redeem(manual["code"], "Retained manual fixture browser")
+
+    def _pairing_issuance_error(self, error):
+        with mock.patch.object(access, "issue_code", side_effect=error), \
+                mock.patch.dict(os.environ, {"PATH": str(self.tmp / "absent-bin")}), \
+                mock.patch.object(platform, "openssl", return_value=Path("/fixture/bin/openssl")):
+            result = self.install()
+        self.assertEqual(result["service"], "running")
+        self.assertEqual(self.active, "active")
+        self.assertNotIn("pairing", result)
+        self.assertEqual(result["pairing_error"], "Run ~/.local/bin/alt pair to pair this browser.")
+        self.assertNotIn(str(error), json.dumps(result))
+        self.assertTrue(self.launcher.is_file())
+        self.assertFalse((self.prefix / "pending.json").exists())
+
+    def test_pairing_storage_error_keeps_running_installation_and_recovery_without_path(self):
+        self._pairing_issuance_error(OSError("private fixture storage detail"))
+
+    def test_pairing_record_error_keeps_running_installation_and_recovery_without_path(self):
+        self._pairing_issuance_error(ValueError("private fixture corrupt record detail"))
+
+    def test_malformed_retained_pairing_records_do_not_fail_healthy_installation(self):
+        for record in ({}, [], {"devices": None}, {"devices": [], "code": []},
+                       {"devices": [], "code": {"expires": None}},
+                       {"devices": [], "code": {"hash": "fixture", "expires": "2026-10-13T12:00:00", "wrong": 0}}):
+            with self.subTest(record=record):
+                retained = json.dumps(record)
+                access.DIR.mkdir(parents=True, exist_ok=True)
+                store = access.DIR / "devices.json"
+                store.write_text(retained)
+                # A separate fresh prefix per case keeps the real retained store in the tested path.
+                prefix = self.prefix
+                with mock.patch.object(installation, "_settings", return_value=self.settings), \
+                        mock.patch.dict(os.environ, {"PATH": str(self.tmp / "absent-bin")}), \
+                        mock.patch.object(platform, "openssl", return_value=Path("/fixture/bin/openssl")):
+                    result = self.install()
+                self.assertEqual(result["service"], "running")
+                self.assertEqual(result["pairing_error"], "Run ~/.local/bin/alt pair to pair this browser.")
+                self.assertNotIn("pairing", result)
+                self.assertEqual(store.read_text(), retained)
+                self.assertFalse((prefix / "pending.json").exists())
+                # Reset only this fixture's install resources; access bytes remain untouched.
+                shutil.rmtree(prefix)
+                self.settings.unlink()
+                self.launcher.unlink()
+                self.unit.unlink()
+                self.active, self.enabled = "inactive", "disabled"
+
     def test_installer_refuses_missing_tool_before_persistent_effects(self):
         archive, checksum = self.archive()
         with mock.patch.object(platform, "openssl", side_effect=RuntimeError("brew install openssl@3")):
@@ -1206,6 +1356,20 @@ class AutomaticUpdates(NoticeCase):
             self.assertFalse(config.restart_in_progress())
         self.assertEqual((status["attempt"], status["installed"]),
                          (None, {"version": "v0.2.0", "notes": f"{self.RELEASES}/tag/v0.2.0"}))
+
+    def test_automatic_update_preserves_devices_and_manual_code_without_issuing_pairing(self):
+        first = access.issue_code()
+        key, row = access.redeem(first["code"], "Retained fixture browser")
+        manual = access.issue_code()
+        before = (access.DIR / "devices.json").read_bytes()
+        self.publish("v0.2.0")
+        with mock.patch.object(access, "issue_code", side_effect=AssertionError("automatic update issued a code")):
+            self.server.auto_update()
+            self.run_detached()
+        self.assertEqual((self.prefix / "current").resolve(), self.prefix / "versions/v0.2.0")
+        self.assertEqual((access.DIR / "devices.json").read_bytes(), before)
+        self.assertEqual(access.device(key), row)
+        access.redeem(manual["code"], "Second retained fixture browser")
 
     def test_detached_child_can_start_before_the_launcher_returns(self):
         self.publish("v0.2.0")

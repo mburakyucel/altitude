@@ -32,7 +32,8 @@ class InstallScript(unittest.TestCase):
             pathlib.Path({str(self.tmp / 'installer-args.json')!r}).write_text(json.dumps(sys.argv[1:]))
             lingering = json.loads(pathlib.Path({str(self.tmp / 'lingering.json')!r}).read_text() or "null")
             print(json.dumps({{"version": "v0.1.0", "service": "running", "url": "https://localhost:8443", "lingering": lingering,
-                              "trust": {{"ca_cert": {str(self.tmp / 'home/.altitude/tls/ca.crt')!r}, "ca_sha256": {FINGERPRINT!r}}}}}))
+                              "pairing": {{"url": "https://localhost:8443/projects#pair=ABCD-2345", "minutes": 10}},
+                              "trust": {{"ca_cert": {str(self.tmp / 'home/.altitude/tls/ca.crt')!r}, "ca_name": "Altitude CA DEMO", "ca_sha256": {FINGERPRINT!r}}}}}))
             """))
         (self.tmp / "lingering.json").write_text("")
         digest = {name: hashlib.sha256((self.release / name).read_bytes()).hexdigest()
@@ -90,14 +91,43 @@ class InstallScript(unittest.TestCase):
         self.assertIn("Its fingerprint: AA:BB:CC", result.stdout)
         self.assertIn("Certificate authority: ~/.altitude/tls/ca.crt", result.stdout)
         self.assertNotIn(str(self.tmp / "home"), result.stdout)
-        self.assertIn('1. Put alt on your PATH', result.stdout)
+        self.assertIn('1. Trust the certificate authority', result.stdout)
+        self.assertIn('2. Open this private link', result.stdout)
+        self.assertIn('https://localhost:8443/projects#pair=ABCD-2345', result.stdout)
+        self.assertIn('Works once, for 10 minutes. Keep it private.', result.stdout)
+        self.assertIn('If it expires, run ~/.local/bin/alt pair.', result.stdout)
+        self.assertLess(result.stdout.index('private link'), result.stdout.index('Terminal setup (optional now)'))
+        self.assertIn('Put alt on your PATH', result.stdout)
         self.assertIn('export PATH="$HOME/.local/bin:$PATH"', result.stdout)
-        self.assertIn("2. Run: alt doctor", result.stdout)
+        self.assertIn("Check tools and sign-ins with alt doctor.", result.stdout)
         self.assertIn(f"{REPOSITORY}/blob/v0.1.0/docs/SETUP.md#trust-https-on-each-device", result.stdout)
         self.assertEqual(list(self.tmp.glob("altitude-install.*")), [], "the download folder is removed")
         on_path = self.run_script(PATH=f"{self.bin}:{self.tmp}/home/.local/bin")
         self.assertNotIn("Put alt on your PATH", on_path.stdout)
-        self.assertIn("1. Run: alt doctor", on_path.stdout)
+        self.assertIn("Check tools and sign-ins with alt doctor.", on_path.stdout)
+
+    def test_no_link_output_has_one_clear_recovery_path(self):
+        script = (REPO / "scripts/install.sh").read_text()
+        renderer = script.split('    "$python" - "$workdir/result.json"', 1)[1].split("\n", 1)[1].split("\nEOF", 1)[0]
+        result_file = self.tmp / "result.json"
+        base = {"version": "v0.1.0", "service": "running", "url": "https://localhost:8443", "trust": {}}
+        for failed in (False, True):
+            with self.subTest(issuance_failed=failed):
+                result_file.write_text(json.dumps({**base, **({"pairing_error": "Run ~/.local/bin/alt pair to pair this browser."} if failed else {})}))
+                rendered = subprocess.run([sys.executable, "-", str(result_file), "https://example.invalid/setup"],
+                                          input=renderer, env=self.env, capture_output=True, text=True)
+                self.assertEqual(rendered.returncode, 0, rendered.stderr)
+                self.assertIn("is installed and its service is running", rendered.stdout)
+                self.assertNotIn("#pair=", rendered.stdout)
+                self.assertNotIn("your existing code", rendered.stdout)
+                self.assertEqual(rendered.stdout.count("~/.local/bin/alt pair"), 1)
+                if failed:
+                    self.assertIn("Run ~/.local/bin/alt pair to pair this browser.", rendered.stdout)
+                    self.assertNotIn("still-valid", rendered.stdout)
+                    self.assertNotIn("Making a new code", rendered.stdout)
+                else:
+                    self.assertIn("use a still-valid code or run ~/.local/bin/alt pair", rendered.stdout)
+                    self.assertIn("Making a new code replaces any earlier one.", rendered.stdout)
 
     def test_says_whether_altitude_keeps_running_without_a_login(self):
         refused = ("Altitude stops when alice's last login session ends and starts again only at the next login. "

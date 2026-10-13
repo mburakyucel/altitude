@@ -64,12 +64,17 @@ and one authenticated coding CLI. Agent work uses your coding account's allowanc
    nothing it downloads unless it matches the release's checksums and prints the next steps. The
    [installation steps](docs/SETUP.md#install-the-application) explain what it trusts and how to
    verify a release's script before running it.
-2. Put `~/.local/bin` on your PATH and run `alt doctor`. Installation enables a per-user service.
-3. Trust Altitude's certificate on each device with the
+2. Trust Altitude's certificate with the
    [certificate guide for Linux, macOS and phones](docs/SETUP.md#trust-https-on-each-device), then
-   run `alt pair` and open its address or QR code on your phone to
-   [pair it](docs/SETUP.md#pair-each-device). [First run](docs/SETUP.md#first-run-in-the-browser)
-   adds your project.
+   open the private link printed by the installer. It pairs the first browser and opens
+   [First run](docs/SETUP.md#first-run-in-the-browser), where you add your project. The link works
+   once, for ten minutes; if it expires, run `~/.local/bin/alt pair` on the computer running Altitude.
+3. For terminal use, put `~/.local/bin` on your PATH and run `alt doctor` when ready.
+   [Pair additional devices](docs/SETUP.md#pair-each-device) with `alt pair` or Settings → Devices.
+
+Installation enables a per-user service. The installer opens no browser and changes no certificate
+trust. Clicking its link uses your terminal's normal browser handler on the device viewing it;
+over SSH, `127.0.0.1` points to that device, so remote use needs a configured reachable address.
 
 <details>
 <summary>Ask your coding agent to help install</summary>

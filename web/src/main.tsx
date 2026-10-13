@@ -11,8 +11,11 @@ import { RouterProvider } from "react-router/dom";
 import { ToastProvider } from "./data/Toast";
 import { routes } from "./routes";
 import PairGate from "./shell/PairGate";
+import { takePairingLink } from "./shell/pairingLink";
 import { readTheme, setTheme } from "./shell/theme";
 import "./styles.css";
+
+const pairingLink = takePairingLink();
 
 // Applies the stored theme and stores the light default, so index.html's pre-paint agrees next time.
 setTheme(readTheme());
@@ -24,7 +27,7 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
-        <PairGate>
+        <PairGate pairingLink={pairingLink}>
           <RouterProvider router={router} />
         </PairGate>
       </ToastProvider>
