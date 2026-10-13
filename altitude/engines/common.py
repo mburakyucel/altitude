@@ -83,8 +83,9 @@ def owner_prompt(cwd: Path, persona: Path | None, *, resume: bool) -> str:
                                                          ("your role", persona)) if path]
     held = f"{' and '.join(sources)} still {'apply' if len(sources) > 1 else 'applies'}, and " if sources else ""
     return ("[altitude] Resumed session: " + held +
-            f"the L1 read instruction for native helpers now names `{l1}`. Consult these as needed "
-            "instead of rereading them in full.\n\n")
+            f"native helper assignments now name `{l1}`. Consult these as needed instead of rereading them in "
+            "full, and reread any part no longer in your context, such as the role's browser verification rules "
+            "before a browser check.\n\n")
 
 
 RAW_CAPTURE_CAP = 2 * 1024 * 1024

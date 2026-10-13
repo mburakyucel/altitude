@@ -88,6 +88,7 @@ development/admin exposure grants no new privilege model, generic flag framework
 - Ship the docs with the change: update the linked system documentation wherever it describes
   changed behavior, including architecture, session lifecycle, setup and operations as applicable.
   Update `README.md` when its public introduction, workflow or getting-started guidance changes.
+  A new documentation section also gets its link in `docs/OVERVIEW.md`, which stays one short read.
   Keep these updates in the same PR and in present tense.
 - Major UX changes, cost-accruing infrastructure, identity, or security changes hold for operator review.
   A hold report explains the strategy and decisions made. Explicit task authorization governs the hold.

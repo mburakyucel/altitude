@@ -165,9 +165,9 @@ keys the edit-count telemetry across worker replacements.
 ## Native helper instructions
 
 The shared [L1 persona](../personas/l1.md) describes bounded helper work and return evidence. Each
-L2 launch and resume supplies an absolute path from the activated installation's `personas/l1.md`,
-alongside the assigned worktree. L2 puts that explicit read instruction in the native helper's
-assignment and adds only task-specific context, allowed actions, exclusions and expected evidence.
+L2 launch and resume supplies an absolute path from the activated installation's `personas/l1.md`;
+a launch also names the assigned worktree, and the L2 persona holds the instruction's wording. L2 puts
+that explicit read instruction in the native helper's assignment and adds only task-specific context, allowed actions, exclusions and expected evidence.
 The helper reads the persona and repository rules before working; missing instructions go back to
 the parent. L2 verifies the result and retains decisions, publication, lifecycle and final reporting.
 The persona contents are not copied into the owner prompt or repository instruction files.
@@ -1095,7 +1095,9 @@ confirms the recorded VM process lifetime ended and removes its disk before rele
 That lane's Linux preflight establishes the required container and Chromium protections; it does
 not expand the fictional Mac Seatbelt harness's scope.
 The instruction takes effect as any persona change does, after normal source activation; running
-turns retain their delivered instructions. Deterministic fixtures prove the persona text and its
+turns retain their delivered instructions. A Codex thread holds the persona from its first message, so
+each resume line directs the owner to reread the browser rules before a browser check when they are
+no longer in context. Deterministic fixtures prove the persona text and its
 delivery, not provider adherence or live browser isolation. See
 [browser verification](DEVELOPMENT.md#browser-verification).
 

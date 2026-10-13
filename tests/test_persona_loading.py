@@ -155,7 +155,7 @@ class PersonaLoading(AltitudeCase):
         path = self.personas / "l1.md"
         self.assertEqual(process.prompt.count(str(path)), 1)
         if resumed:  # A resume names the current helper persona path; the launch instruction stays in the session.
-            self.assertIn(f"the L1 read instruction for native helpers now names `{path}`", process.prompt)
+            self.assertIn(f"native helper assignments now name `{path}`", process.prompt)
         else:
             self.assertIn(f'You are an L1 helper. Read `{path}` before working.', process.prompt)
             self.assertIn(f'Your assigned repository is `{repo.resolve()}`.', process.prompt)

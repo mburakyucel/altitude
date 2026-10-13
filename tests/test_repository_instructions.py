@@ -59,20 +59,22 @@ class TestRepositoryInstructions(AltitudeCase):
         self.assertIn(f"your role at `{config.PERSONAS / 'l2.md'}`", line)
         self.assertIn(f"`{config.PERSONAS / 'l1.md'}`", line)
         self.assertIn("instead of rereading them in full", line)
+        self.assertIn("browser verification rules before a browser check", line)
 
     def test_resume_text_is_one_line_naming_current_rules_role_and_helper_persona(self):
         rules = self.layout("shared")
-        persona = config.PERSONAS / "l2.md"
+        persona, helper = config.PERSONAS / "l2.md", config.PERSONAS / "l1.md"
+        tail = ("Consult these as needed instead of rereading them in full, and reread any part no longer in your "
+                "context, such as the role's browser verification rules before a browser check.\n\n")
         self.assertEqual(engines.common.owner_prompt(self.repo, persona, resume=True), (
             f"[altitude] Resumed session: the repository rules at `{rules}` and your role at `{persona}` still "
-            f"apply, and the L1 read instruction for native helpers now names `{config.PERSONAS / 'l1.md'}`. "
-            "Consult these as needed instead of rereading them in full.\n\n"))
+            f"apply, and native helper assignments now name `{helper}`. " + tail))
         self.layout("absent")
-        self.assertEqual(engines.common.owner_prompt(self.repo, None, resume=True), (
-            f"[altitude] Resumed session: the L1 read instruction for native helpers now names "
-            f"`{config.PERSONAS / 'l1.md'}`. Consult these as needed instead of rereading them in full.\n\n"))
+        self.assertEqual(engines.common.owner_prompt(self.repo, persona, resume=True), (
+            f"[altitude] Resumed session: your role at `{persona}` still applies, and native helper assignments "
+            f"now name `{helper}`. " + tail))
 
-    def test_owner_persona_carries_the_browser_verification_rules(self):
+    def test_owner_persona_carries_the_browser_and_helper_rules(self):
         # #441: every owner learns where the browser keeps its sandbox, even without project rules; the persona
         # reaches fresh and resumed owners without a per-launch note.
         persona = " ".join((config.PERSONAS / "l2.md").read_text().split())
@@ -81,7 +83,8 @@ class TestRepositoryInstructions(AltitudeCase):
                             "fails its required preflight, fault with the evidence",
                             "explicitly approved project's local-fictional harness", "Mac validation Seatbelt runner",
                             "not native-worker, deployed/private-content", "Record actual runner identity",
-                            "outside-worker browser run", "`launchOptions` or sandbox flags"):
+                            "outside-worker browser run", "`launchOptions` or sandbox flags",
+                            "You are an L1 helper. Read `<l1.md>` before working."):
             self.assertIn(requirement, persona)
 
     def test_l2_fresh_and_resume_pass_rules_to_both_native_clis(self):
