@@ -50,7 +50,7 @@ class ServiceError(RuntimeError):
 
     MESSAGES = {
         "service_auth": "The speech service rejected its key. Update it in Voice settings.",
-        "service_unavailable": "Could not reach your speech service. Check its address in Voice settings.",
+        "service_unavailable": "Transcription did not finish. Check your connection and service address in Voice settings.",
         "service_response": "The speech service returned no usable transcription. Check its endpoint and model.",
         "service_empty": "No words were returned. Try recording again.",
         "selection_changed": "Voice settings changed. Record again using the current choice.",
