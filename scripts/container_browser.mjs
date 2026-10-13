@@ -120,8 +120,11 @@ try {
       await expect(panel.getByText("Using AGENTS.md; its contents are unchanged.")).toBeVisible();
       await panel.getByRole("button",{name:"Open conversation"}).click();
       // The real daemon records setup turns as system events; open their actual
-      // conversation group instead of replacing history with a fixture response.
-      await page.getByRole('button',{name:'Show',exact:true}).click();
+      // completed failure/retry group before expanding it. The initial history
+      // read can still contain only the first turn while the real poll catches up.
+      const setupHistory=page.getByText('L3 handled 2 system events between your messages',{exact:true});
+      await expect(setupHistory).toBeVisible();
+      await setupHistory.locator('..').getByRole('button',{name:'Show',exact:true}).click();
       await state("11-coordinator-connected",page.getByText("Fictional container coordinator connected.",{exact:true}).last());
       await page.getByRole('textbox',{name:'Message L3 about atlas'}).fill('Create the fictional browser task.');
       await page.getByRole('button',{name:'Send',exact:true}).click();
