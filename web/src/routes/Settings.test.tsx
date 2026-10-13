@@ -205,11 +205,12 @@ describe("Voice settings", () => {
     expect(calls).toEqual([{ backend: "service", selection: "host-one", url: originalUrl, model: "edited", key: "", remove_key: false }]);
   });
 
-  it("a denied form save preserves the draft choice and service fields", async () => {
-    fixture();
+  it("a denied form save preserves fields and Retry saves subsequent edits", async () => {
+    const calls = fixture();
     const original = globalThis.fetch;
+    let denied = true;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
-      String(input) === "/api/voice" && init?.method === "POST" ? json({ error: "Action denied." }, 403) : original(input, init)));
+      denied && String(input) === "/api/voice" && init?.method === "POST" ? json({ error: "Action denied." }, 403) : original(input, init)));
     const { user } = renderApp({ route: "/settings/voice" });
     await user.click(await screen.findByRole("radio", { name: "Your speech service" }));
     await user.type(screen.getByLabelText("Transcription URL"), "https://speech.example.test/transcribe");
@@ -222,6 +223,14 @@ describe("Voice settings", () => {
     expect(screen.getByLabelText("Transcription URL")).toHaveValue("https://speech.example.test/transcribe");
     expect(screen.getByLabelText("API key")).toHaveValue("fictional-key");
     expect(screen.getByLabelText("Model")).toHaveValue("small");
+    await user.clear(screen.getByLabelText("API key"));
+    await user.type(screen.getByLabelText("API key"), "corrected-key");
+    await user.clear(screen.getByLabelText("Model"));
+    await user.type(screen.getByLabelText("Model"), "corrected-model");
+    denied = false;
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText("Saved.");
+    expect(calls).toEqual([{ backend: "service", selection: "host-one", url: "https://speech.example.test/transcribe", key: "corrected-key", model: "corrected-model", remove_key: false }]);
   });
   it("fresh settings replace an untouched cached form but preserve an edit's original selection", async () => {
     const calls = fixture();

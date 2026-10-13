@@ -33,7 +33,7 @@ function voiceSummary(settings: VoiceSettings) {
   return settings.host.state === "ready" ? labels.host
     : `${labels.host} · ${settings.host.state === "outdated" ? "update required" : "not set up"}`;
 }
-type SaveState = { status: "idle" } | { status: "saving" | "saved" } | { status: "failed"; value: VoiceUpdate; error: Error };
+type SaveState = { status: "idle" } | { status: "saving" | "saved" } | { status: "failed"; error: Error };
 
 const megabytes = (bytes: number) => `${Math.round(bytes / 1e6)} MB`;
 
@@ -141,7 +141,7 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
       reset(value);
       setSave({ status: "saved" });
     } catch (error) {
-      setSave({ status: "failed", value: update, error: error as Error });
+      setSave({ status: "failed", error: error as Error });
     }
   };
   const choose = (backend: VoiceBackend) => {
@@ -200,7 +200,7 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
       </fieldset>
       {save.status === "saved" ? <StatusMark busy={false} label="Saved." /> : null}
       {save.status === "failed" ? <p role="alert" className="text-meta text-danger">{stale ? "Voice settings changed. Reload settings and try again." : "Could not save voice settings."}{" "}
-        <button type="button" className="link" onClick={() => stale ? reload() : void submit(save.value)}>{stale ? "Reload settings" : "Retry"}</button>
+        <button type="button" className="link" onClick={() => stale ? reload() : saveDraft()}>{stale ? "Reload settings" : "Retry"}</button>
       </p> : null}
     </form>
     <VoiceDiagnostics />
