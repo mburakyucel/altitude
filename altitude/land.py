@@ -1126,6 +1126,9 @@ def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority, de
     while True:
         if line:
             line.require_turn()
+        # Checks first: the assessment read after them is the one the decision acts on, so a review or context
+        # change made while the checks were read is not missed until the turn.
+        checks = _checks_value(root, pair["number"], pair, strict=strict)
         stale = refused = None
         if merge:
             # Only local review reads share admission's lock; network reads and sleeps
@@ -1143,7 +1146,6 @@ def _wait_for_candidate(root, project, slug, pair, *, merge, wait, authority, de
         if refused:
             _assert_pair_current(root, pair, strict=strict)  # BaseMoved when the review differs only by a moved base
             raise LandError(str(refused)) from refused
-        checks = _checks_value(root, pair["number"], pair, strict=strict)
         notice = str(stale) if stale else None
         if stale and notice != notified:
             _note(f"waiting for owner assessment on head {pair['head_sha']}"
