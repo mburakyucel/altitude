@@ -523,8 +523,11 @@ while True:
   home, and a path a worker replaced must not become a mount or a place the run writes.
 - **Results.** Regular files that the command writes to `$VALIDATION_RESULTS` are copied to the task
   folder's `validation/<n>/`, up to 256 MiB, and the run's output to `validation/<n>.log`. altd reaches
-  that folder from Altitude's home without following links. Links and oversized files are skipped and
-  listed. The run's container or processes, clone and area are removed afterwards, including after a
+  that folder from Altitude's home without following links. Across the whole results tree, JSON/JSONL
+  receipts are copied first, then LOG/TXT failure logs, then other artifacts such as traces and images,
+  all sharing the same budget. Each group visits files before subfolders, in name order. Evidence must
+  itself fit the limit; links and files that exceed the remaining budget are skipped and listed without
+  truncation. The run's container or processes, clone and area are removed afterwards, including after a
   timeout or a stop. Cleanup of the processes and of every folder the candidate could write comes
   before the record: a run whose cleanup does not finish ends as `cleanup failed`, with the first entry
   that stayed and why, and keeps its area. The runner's own files in the area (the run's identity,

@@ -324,13 +324,14 @@ def _copy_file(source: str, dst_fd: int, name: str) -> None:
 
 def copy_results(source: Path, parent_fd: int, name: str) -> list[str]:
     """Copy the run's results into a new folder `name` under `parent_fd` as regular files and folders only, opened
-    without following links, up to RESULTS_LIMIT. Returns what was skipped."""
+    without following links, up to RESULTS_LIMIT. Receipts, then text logs, precede optional artifacts across the
+    whole tree, sharing one budget. Returns what was skipped."""
     skipped, budget = [], [RESULTS_LIMIT]
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
-    def walk(src: Path, dst_fd: int, rel: str) -> None:
+    def walk(src: Path, dst_fd: int, rel: str, priority: int) -> None:
         try:
-            entries = sorted(os.scandir(src), key=lambda e: e.name)
+            entries = sorted(os.scandir(src), key=lambda e: (e.is_dir(follow_symlinks=False), e.name))
         except OSError as exc:
             skipped.append(f"{rel or '.'}: {exc.strerror}")
             return
@@ -339,20 +340,25 @@ def copy_results(source: Path, parent_fd: int, name: str) -> list[str]:
             try:
                 mode = entry.stat(follow_symlinks=False).st_mode
                 if stat.S_ISDIR(mode):
-                    os.mkdir(entry.name, 0o700, dir_fd=dst_fd)
+                    if priority == 0:
+                        os.mkdir(entry.name, 0o700, dir_fd=dst_fd)
                     child = os.open(entry.name, flags, dir_fd=dst_fd)
                     try:
-                        walk(Path(entry.path), child, path + "/")
+                        walk(Path(entry.path), child, path + "/", priority)
                     finally:
                         os.close(child)
                 elif stat.S_ISREG(mode):
+                    suffix = Path(entry.name).suffix
+                    order = 0 if suffix in (".json", ".jsonl") else 1 if suffix in (".log", ".txt") else 2
+                    if order != priority:
+                        continue
                     size = entry.stat(follow_symlinks=False).st_size
                     if size > budget[0]:
                         skipped.append(f"{path}: over the {RESULTS_LIMIT >> 20} MiB results limit")
                         continue
                     _copy_file(entry.path, dst_fd, entry.name)
                     budget[0] -= size
-                else:
+                elif priority == 0:
                     skipped.append(f"{path}: not a regular file or folder")
             except OSError as exc:
                 skipped.append(f"{path}: {exc.strerror}")
@@ -360,10 +366,11 @@ def copy_results(source: Path, parent_fd: int, name: str) -> list[str]:
     os.mkdir(name, 0o700, dir_fd=parent_fd)
     top = os.open(name, flags, dir_fd=parent_fd)
     try:
-        walk(source, top, "")
+        for priority in range(3):
+            walk(source, top, "", priority)
     finally:
         os.close(top)
-    return skipped
+    return sorted(skipped)
 
 
 def _deliver(project: str, slug: str, n: int, area: Path, unit: str) -> tuple[Path, list[str]]:
