@@ -100,6 +100,15 @@ The Linux execute-only case requires a non-root runner, denied directory listing
 full brief reads and lock acquisition. No provider, private-place or native sandbox probe runs.
 Fixtures may select another service backend while using the runner's real filesystem; directory
 search flags follow the interpreter's native platform constants in both cases.
+Invocation-reader fixtures use fictional registered projects and worker records. They cover live
+and archived selection with missing, ordinary-file and linked live parents, historical headers,
+current activity, normal/Raw/record reads, complete
+UTF-8 and partial lines, replacement of JSON and stdout between discovery and consumption,
+late regular-file replacement before publication, unavailable discovery followed by creation,
+closed refusal without outside-marker disclosure, unchanged transcript index on refusal,
+quiet polls without a full stdout read, and descriptor cleanup. They establish application
+behavior through the runtime reader; external native provenance, in-place writer mutation,
+earlier status and registry reads, and worker runtime writability remain separate boundaries.
 
 On macOS the suite runs natively with Homebrew's `python@3.12`, `node@24`, `openssl@3`, `ffmpeg`,
 `lcms2`, `webp` (Homebrew's `ffmpeg` decodes WebP but cannot encode it, so the image fixtures use

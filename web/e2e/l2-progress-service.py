@@ -1,11 +1,12 @@
 """Real task/API storage with deterministic worker output and controllable worker termination."""
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
 import threading
 
-from service_support import configure, serve
+from service_support import FixtureSource, configure, serve
 from tests.support import add_worktree, make_repo
 from tests.fakes import FakeL2
 from altitude import config, dispatch, engines, server, state as S, tasks as T
@@ -52,8 +53,17 @@ def main():
         setattr(engines, name, getattr(fake, name))
     engines.resume_l2 = resume
     engines.stop_l2_worker = stop
-    engines.activity_source = lambda task, **_kwargs: sources.get(task.get("agent_id"))
-    engines.transcript_sources = lambda task, **_kwargs: history.get(task.get("session_id"), [])
+    @contextmanager
+    def activity_source(_project, _slug, task):
+        selected = sources.get(task.get("agent_id"))
+        yield FixtureSource(*selected) if selected else None
+
+    @contextmanager
+    def transcript_sources(_project, _slug, task):
+        yield [(FixtureSource(path, record), record) for path, record in history.get(task.get("session_id"), [])]
+
+    engines.activity_source = activity_source
+    engines.transcript_sources = transcript_sources
     engines.session_context_source = lambda _task: None
     engines.transcript_rows = lambda engine, record, _worktree: [
         {"source": engine, "kind": "message", "role": "assistant", "type": "public", "at": record.get("at"), "text": record["fixture_text"]}
