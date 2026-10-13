@@ -13,7 +13,7 @@ class TestWorkerStatus(AltitudeCase):
     def setUp(self):
         super().setUp()
         self.private_ledgers()
-        self.patch(engines.common, "_codex_processes", {})
+        self.patch(engines.common, "_worker_processes", {})
         self.real_publish = incidents.publish_issue
         self.publish = self.patch(incidents, "publish_issue", return_value={"pending": "fictional publisher"})
         self.patch(dispatch, "resume_engine_hold", return_value=None)
@@ -24,7 +24,7 @@ class TestWorkerStatus(AltitudeCase):
         task.update(state="running", attempt=3, l2_engine=engine, agent_id=slug,
                     session_id=f"session-{slug}", hold_merge="Retain review hold")
         S.save_task(self.project, task)
-        paths = engines.common._codex_paths(dispatch.l2_job_root(self.project, slug), slug)
+        paths = engines.common._worker_paths(dispatch.l2_job_root(self.project, slug), slug)
         unit = engines.codex._codex_unit(slug) if engine == "codex" else engines.claude._claude_unit(slug)
         record = {"id": slug, "engine": engine, "unit": unit, "session_id": task["session_id"],
                   "engine_model": "fictional-model", "started_at": S.now(), "input_delivered": True}
@@ -52,7 +52,7 @@ class TestWorkerStatus(AltitudeCase):
                         (S.task_dir(self.project, slug) / "report.json").write_text("{}")
                         T.message(self.project, slug, config.OPERATOR_ACTOR, "Keep this steering")
                         if exited:
-                            engines.common._codex_processes[slug] = mock.Mock(poll=mock.Mock(return_value=0))
+                            engines.common._worker_processes[slug] = mock.Mock(poll=mock.Mock(return_value=0))
                         before = S.load_task(self.project, slug)
                         inbox = T.pending(self.project, slug)
                         with mock.patch.object(platform, "job_stop") as stop, \

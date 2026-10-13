@@ -1161,6 +1161,40 @@ directory is private evidence; the PR carries the table.
 
 ## Installation lifecycle acceptance
 
+First-browser install-link evidence connects a disposable verified archive's fresh activation,
+CA-verified readiness and actual `install.sh` output to the built app on fixture HTTPS with a
+trusted generated CA, real access storage and API. Native service operations use fixtures;
+the journey must reach First run through one redemption and no second CLI command. Close the
+page/browser context after certificate setup and reopen the original terminal link in a fresh
+trusted context; reloading the cleaned address does not recover its code.
+
+`install-pair-https.pw.ts` uses the actual result renderer from `install.sh` and the built SPA in
+the verified fixture archive; bootstrap prerequisites/downloads remain covered by release tests.
+Its shared `playwright.config.ts` fixture imports only the public fictional CA into a temporary Linux NSS
+database using `certutil` (`libnss3-tools`), keeps the runner's shared launch options and sandbox
+policy, and removes the owned browser/home at cleanup. A separate untrusted context refuses the
+same certificate; verification stays enabled. This Chromium-specific trust lane is tagged
+`@chromium` and establishes Linux fixture HTTPS, not OS/device trust. `install-pair.pw.ts` walks
+the same presentation and real pairing API/storage at both viewports and in emulated iPhone
+WebKit using named trust-response overlays on the fictional loopback service.
+
+Coverage includes no link before successful readiness; failed issuance with a running installation;
+fresh activation retaining a manual code or paired devices; access-lock concurrency with manual
+issuance/redemption; reruns, updates and recovery retaining access; single-use, expired, malformed
+and denied links; lost replies and access rechecks; fragment cleanup before router and access reads;
+no secret request outside the pair JSON body; reload/Back; remote untrusted/unknown/trusted states,
+external-certificate Continue, local exemption and plain remote HTTP refusal. Expiry and issuance
+failure exercise the displayed `~/.local/bin/alt pair` recovery with that directory absent from PATH.
+Walk loading, unreachable/Retry, trust instructions and checks, Pairing…, success/already-paired,
+every refusal and manual recovery on phone and desktop, plus `make ui-ios`. Pairing has no listening
+state. Retain state captures in ignored review artifacts and report runs and gaps explicitly.
+
+Fixture and browser evidence does not establish native installation, OS URL handlers, physical-phone
+trust or provider compatibility. Native Linux/macOS first-browser installation checks stay on
+[#926](https://github.com/mburakyucel/altitude/issues/926), with `verify:linux` and `verify:macos`;
+the upgrade prevention and acceptance scope on [#912](https://github.com/mburakyucel/altitude/issues/912)
+remains separate. Candidate acceptance requires a recorded run and its results.
+
 `.github/workflows/installation-lifecycle.yml` is an independent, manually dispatched Ubuntu 24.04
 x86_64 workflow. It is outside `make check`, PR triggers and release gates; its failure or pending
 state does not hold other tasks. The required PR `check` and all review requirements

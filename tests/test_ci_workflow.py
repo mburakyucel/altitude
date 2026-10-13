@@ -113,8 +113,9 @@ class TestRequiredCheckWorkflow(AltitudeCase):
         self.assertNotIn('--dir', install)
         self.assertIn('pnpm install --frozen-lockfile', install)
         self.assertIn('pnpm exec playwright install --with-deps chromium', install)
-        converter = next(step for step in steps if step.startswith('name: Install the image converter'))
+        converter = next(step for step in steps if step.startswith('name: Install fixture tools'))
         self.assertIn('apt-get install -y --no-install-recommends ffmpeg liblcms2-2', converter)
+        self.assertIn('libnss3-tools', converter)
         report = steps[-1]
         self.assertIn("if: failure() && matrix.suite == 'web'", report)
         self.assertIn('actions/upload-artifact@', report)

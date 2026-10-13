@@ -2048,7 +2048,21 @@ Composer listening, denied, unavailable, cancellation and transcript states rema
 
 An unpaired browser sees one centred card instead of the app, at every route: the Altitude mark and
 **Pair this device** with three items, each with a mark (✓ done, ○ to do, a spinner while checking, ! needs
-attention). The code never rides in a URL. Pairing opens the route the browser asked for.
+attention). Manual pairing keeps its code separate from the address. The first-browser installer
+link carries a code in a dedicated `#pair=` fragment; it is removed before router creation and
+access/trust requests, including for malformed links and already-paired browsers. Pairing opens
+the route the browser asked for, with First run when no project exists.
+
+The installer prints certificate trust and the private link before optional PATH/doctor guidance.
+The link occupies one unbroken line, followed by "Works once, for 10 minutes. Keep it private."
+and "If it expires, run ~/.local/bin/alt pair." Normal terminal/OS link handlers choose the browser
+on the viewing device; over SSH, loopback refers to that device. The installer launches no browser
+and changes no trust stores.
+
+The card is at most 28rem wide, with 16px outer margin and horizontal padding on phone, 24px
+card padding on desktop, and 48px controls. Text and errors wrap naturally without truncation;
+commands use monospace, setup links are underlined and buttons have a border or fill. Phone is
+390×844, desktop 1440×900; long trust instructions scroll with the page.
 
 1. **HTTPS address**: "You opened Altitude's HTTPS address.", or on the computer running Altitude over plain
    HTTP "This is the computer running Altitude." Plain HTTP elsewhere fails with "This Altitude serves plain
@@ -2056,11 +2070,14 @@ attention). The code never rides in a URL. Pairing opens the route the browser a
 2. **Trust Altitude's certificate** with a pill: Not trusted yet, Checking…, Trusted or Couldn't check. The
    computer running Altitude is Trusted at once. Elsewhere the item shows instructions for the device:
    iPhone and iPad (including iPadOS reporting a Mac with touch) get **Download the profile**, the Profile
-   Downloaded check (one Certificate named "<CA name>", SHA-256 ending with the 8 pairs `alt pair` shows,
-   otherwise Remove and stop), the Certificate Trust Settings switch and "Come back here; this checks
+   Downloaded check (one Certificate named "<CA name>", SHA-256 ending with the 8 pairs the installer
+   or `alt pair` shows, otherwise Remove and stop), the Certificate Trust Settings switch and "Come back here; this checks
    itself."; Android gets **Download the certificate** and the CA certificate install; other browsers get
    **Download the certificate**, the name and SHA-256 check, importing it as a trusted authority and
-   restarting the browser, and a **Setup guide** link. The page never shows the SHA-256 itself: the
+   restarting the browser, and a **Setup guide** link. With a pending link, the desktop instructions
+   end with "Restart the browser, then reopen the original private link from the installer. If it
+   has expired, run ~/.local/bin/alt pair for a new code." Manual pairing keeps its reopen-page
+   guidance. The page never shows the SHA-256 itself: the
    reference is the computer. The check runs as the page opens, whenever it becomes visible again and on
    **Check again**; Trusted collapses the instructions. With an externally supplied certificate Altitude
    cannot check: "Altitude can't check this automatically. Open this address in a new Private tab; if it
@@ -2069,6 +2086,18 @@ attention). The code never rides in a URL. Pairing opens the route the browser a
    a paired device.", a large monospace **Pairing code** field (one-time-code autofill), a
    full-width **Pair** button, disabled while the field is empty, and "Each code works once, for 10
    minutes. This device stays paired until you remove it in Settings."
+   With a pending install link, Pair instead shows a spinner and "Pairing…", with no code field
+   or button, and redeems automatically once trust completes. The managed-CA check, local exemption
+   and external-certificate Continue remain the same; plain remote HTTP never redeems the link.
+
+The iPhone/iPad trust instructions retain the complete safe sequence:
+
+1. **Download the profile**.
+2. "Open Settings › Profile Downloaded. It must list one Certificate, “<CA name>”. Tap More Details:
+   the SHA-256 must end with the 8 pairs the installer or alt pair shows on your computer. Anything
+   else: tap Remove and stop. Otherwise tap Install."
+3. "Turn it on: Settings › General › About › Certificate Trust Settings › “<CA name>”."
+4. "Come back here; this checks itself."
 
 | State | What appears and what actions do |
 | --- | --- |
@@ -2087,7 +2116,30 @@ attention). The code never rides in a URL. Pairing opens the route the browser a
 | Cancelled or used code | "Too many wrong codes, so this one is cancelled. Make a new one." or "This code has expired or was already used. Make a new one." |
 | Removed | Any 401 returns here with "This device is no longer paired. Pair it again to continue." above the items. |
 
-Application walkthroughs: `web/e2e/pairing.pw.ts` at 390×844 and 1440×900 walks every state above: the
+Install links add these states to the same card:
+
+| State | What appears and what actions do |
+| --- | --- |
+| Initial TLS refusal | The browser's warning/error; the app cannot render or clean the link yet. Trust the checked certificate, then reopen the original link. |
+| Loading / unreachable | Existing mark and aria-busy screen; "Could not reach Altitude." with **Retry** after a failed access read. The code waits in page memory; Retry rereads access without a pair POST. |
+| Trust checking / untrusted / unknown | Existing status, device instructions and **Check again**. No Pair field or redemption while trust is pending. |
+| Trusted valid link | Completed HTTPS/trust steps and the Pair spinner with "Pairing…"; one redemption. |
+| Success / already paired | First run or the current app; the card disappears with no success dwell or new banner. Already-paired access discards the link without redemption or another device. |
+| Expired / used | "This pairing link has expired or was already used. Run ~/.local/bin/alt pair on the computer running Altitude for a new code." The link is discarded; the blank manual field and Pair button appear. |
+| Malformed | "This pairing link is not valid. Run ~/.local/bin/alt pair on the computer running Altitude for a new code." Clean URL, blank manual field, no wrong-code attempt. |
+| Wrong / denied | Existing API wrong-code/tries or refusal text, followed by "Run ~/.local/bin/alt pair on the computer running Altitude for a new code." Discard the link; blank manual field, no automatic retry. |
+| Lost redemption reply | Recheck access; paired access opens the app. Otherwise show "Could not confirm pairing. Reopen the install link, or run ~/.local/bin/alt pair for a new code." Discard the link and offer the manual field. |
+| Manual recovery | Typing clears the link error. The empty Pair button stays disabled; no pending link remains. |
+
+The pending code lives only in page memory until success, refusal, manual replacement or page
+disposal. It survives no reload/restart, so trust setup that closes the browser requires reopening
+the original terminal link. The cleaned URL cannot restore it. It enters only the same-origin pair
+POST JSON body, never DOM text, browser storage, history state, query caches or logs. Pairing has
+no listening state. The [installation acceptance checklist](../../docs/DEVELOPMENT.md#installation-lifecycle-acceptance)
+requires phone/desktop walks and emulated iPhone evidence for these link states; recorded results
+establish coverage.
+
+Manual-pairing walkthroughs: `web/e2e/pairing.pw.ts` at 390×844 and 1440×900 walks the manual states: the
 local states and pairing with a real code, Settings › Devices with a new code, Remove with Cancel, removing
 the current device, and with answered access and trust replies a device on the network not trusted,
 checking, trusted and paired, Couldn't check, plain HTTP with and without an address and an external

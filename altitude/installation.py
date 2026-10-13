@@ -852,10 +852,23 @@ def _activate(stage: Path, release: dict, prefix: Path, settings: Path, *, newer
         if time.monotonic() >= deadline:
             raise RuntimeError("Update staged; activation waits for dispatch, L3 or report verification. Retry this version.")
         time.sleep(0.25)
-    return {"version": release["version"], "prefix": str(prefix), "url": tls.url(),
+    result = {"version": release["version"], "prefix": str(prefix), "url": tls.url(),
             "service": "running" if previous_service is None or receipt["active"] else "stopped",
             # The first installation keeps the service running without a login; an update leaves the account's choice.
-            "lingering": platform.lingering(enable=previous_service is None), "trust": tls.info(), "retained": "previous versions and all user data", "next": "Follow trust.trust_steps in each desktop or phone browser. Use the public ca_cert file locally, or alt tls-share on a configured private network. Compare the CA name and full fingerprint before trusting it, then verify the exact HTTPS URL without a warning and pair with the code `alt pair` prints."}
+            "lingering": platform.lingering(enable=previous_service is None), "trust": tls.info(), "retained": "previous versions and all user data",
+            "next": "Compare the CA name and full fingerprint and follow trust.trust_steps before opening the HTTPS address. Open the private pairing link when present to continue to First run; for additional devices or recovery, run ~/.local/bin/alt pair."}
+    if previous is None:
+        from . import access
+        try:
+            code = access.issue_code(first_browser=True)
+            if code:
+                result["pairing"] = {"url": result["url"].rstrip("/") + "/projects#pair=" + code["code"],
+                                     "minutes": code["minutes"]}
+        except (OSError, ValueError):
+            # Activation is already verified. A pairing-store failure must not report a failed install
+            # or persist a raw capability in its recovery receipt or diagnostic output.
+            result["pairing_error"] = "Run ~/.local/bin/alt pair to pair this browser."
+    return result
 
 
 def uninstall() -> dict:

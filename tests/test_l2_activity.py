@@ -403,7 +403,7 @@ class TestInputHandoff(AltitudeCase):
             def wait(self, timeout=None):
                 return 0
 
-        self.patch(engines.common, "_codex_processes", {})
+        self.patch(engines.common, "_worker_processes", {})
         for engine in ("claude", "codex"):
             for failure in (None, "write", "close", "short"):
                 with self.subTest(engine=engine, failure=failure), \
@@ -439,7 +439,7 @@ class TestInputHandoff(AltitudeCase):
             def wait(self, timeout=None):
                 return 0
 
-        self.patch(engines.common, "_codex_processes", {})
+        self.patch(engines.common, "_worker_processes", {})
         for engine in ("claude", "codex"):
             for session in (None, "wrong-session"):
                 with self.subTest(engine=engine, session=session), \
@@ -457,7 +457,7 @@ class TestInputHandoff(AltitudeCase):
                 self.assertEqual(record["session_id"], "original-session")
                 self.assertFalse(record["input_delivered"])
                 self.assertTrue(record["stopped"])
-                self.assertNotIn(result["agent"]["id"], engines.common._codex_processes)
+                self.assertNotIn(result["agent"]["id"], engines.common._worker_processes)
 
 
 class TestStopEvidence(AltitudeCase):
@@ -466,8 +466,8 @@ class TestStopEvidence(AltitudeCase):
     def setUp(self):
         super().setUp()
         self.root = self.tmp / "stop-jobs"
-        self.paths = engines.common._codex_paths(self.root, "worker")
-        self.patch(engines.common, "_codex_processes", {})
+        self.paths = engines.common._worker_paths(self.root, "worker")
+        self.patch(engines.common, "_worker_processes", {})
         self.patch(engines.claude, "JOBS_DIR", self.tmp / "adopted-jobs")
 
     def record(self, engine):
@@ -495,11 +495,11 @@ class TestStopEvidence(AltitudeCase):
     def test_missing_corrupt_or_wrong_owned_unit_never_confirms_or_stops_another_unit(self):
         with mock.patch.object(engines.common.subprocess, "run") as run:
             with self.assertRaisesRegex(RuntimeError, "ownership record"):
-                engines.codex_stop("worker", job_root=self.root)
+                engines.stop_owned_worker("worker", job_root=self.root)
             self.paths["record"].parent.mkdir(parents=True, exist_ok=True)
             self.paths["record"].write_text('{corrupt}')
             with self.assertRaises(ValueError):
-                engines.codex_stop("worker", job_root=self.root)
+                engines.stop_owned_worker("worker", job_root=self.root)
             for engine in ("claude", "codex"):
                 for unit in (None, "another-worker.service"):
                     row = self.record(engine)

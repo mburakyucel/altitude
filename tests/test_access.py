@@ -9,6 +9,7 @@ import socket
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 from tests.support import ALT, AltitudeCase
 from tests.test_restart_command import load_script
@@ -23,6 +24,137 @@ def alt_pair() -> str:
     with contextlib.redirect_stdout(output):
         runpy.run_path(str(ALT))["main"](["pair"])
     return output.getvalue().split("Pairing code: ")[1].split()[0]
+
+
+class TestFirstBrowserCode(AltitudeCase):
+    """Installer eligibility uses the same locked, hashed store as manual pairing."""
+
+    def setUp(self):
+        super().setUp()
+        self.patch(access, "DIR", self.tmp / "first-browser-access")
+        self.now = datetime(2026, 10, 13, tzinfo=timezone.utc)
+        self.patch(access, "_now", new=lambda: self.now)
+
+    def test_first_browser_code_keeps_manual_policy_and_is_single_use(self):
+        issued = access.issue_code(first_browser=True)
+        self.assertRegex(issued["code"], r"^[2-9A-HJ-NP-Z]{4}-[2-9A-HJ-NP-Z]{4}$")
+        self.assertEqual(issued["minutes"], 10)
+        self.assertEqual(datetime.fromisoformat(issued["expires"]), self.now + timedelta(minutes=10))
+        stored = (access.DIR / "devices.json").read_text()
+        self.assertNotIn(issued["code"], stored)
+        self.assertNotIn(issued["code"].replace("-", ""), stored)
+        key, row = access.redeem(issued["code"], "Fixture browser")
+        self.assertEqual(access.device(key), row)
+        self.assertNotIn(key, (access.DIR / "devices.json").read_text())
+        with self.assertRaises(access.AccessError) as used:
+            access.redeem(issued["code"], "Another fixture browser")
+        self.assertEqual(used.exception.status, 410)
+        self.assertEqual(len(access.devices()), 1)
+
+    def test_first_browser_preserves_active_manual_code_and_its_wrong_tries(self):
+        manual = access.issue_code()
+        with self.assertRaises(access.AccessError):
+            access.redeem("not-a-valid-code", "Fixture browser")
+        before = (access.DIR / "devices.json").read_bytes()
+        self.assertIsNone(access.issue_code(first_browser=True))
+        self.assertEqual((access.DIR / "devices.json").read_bytes(), before)
+        access.redeem(manual["code"], "Fixture browser")
+
+    def test_first_browser_preserves_devices_even_with_no_active_code(self):
+        manual = access.issue_code()
+        key, row = access.redeem(manual["code"], "Retained fixture browser")
+        before = (access.DIR / "devices.json").read_bytes()
+        self.assertIsNone(access.issue_code(first_browser=True))
+        self.assertEqual((access.DIR / "devices.json").read_bytes(), before)
+        self.assertEqual(access.device(key), row)
+
+    def test_expiry_allows_a_fresh_first_browser_code_but_not_redemption(self):
+        manual = access.issue_code()
+        self.now += timedelta(minutes=10)
+        fresh = access.issue_code(first_browser=True)
+        self.assertIsNotNone(fresh)
+        with self.assertRaises(access.AccessError) as expired:
+            access.redeem(manual["code"], "Fixture browser")
+        self.assertEqual(expired.exception.status, 403)
+        self.now += timedelta(minutes=10)
+        with self.assertRaises(access.AccessError) as expired:
+            access.redeem(fresh["code"], "Fixture browser")
+        self.assertEqual(expired.exception.status, 410)
+        self.assertEqual(access.devices(), [])
+
+    def test_first_browser_wrong_codes_cancel_on_the_fifth_attempt(self):
+        issued = access.issue_code(first_browser=True)
+        for left in range(4, -1, -1):
+            with self.assertRaises(access.AccessError) as wrong:
+                access.redeem("not-a-valid-code", "Fixture browser")
+            self.assertEqual(wrong.exception.status, 403)
+            if left:
+                self.assertIn(f"{left} ", str(wrong.exception))
+        with self.assertRaises(access.AccessError) as cancelled:
+            access.redeem(issued["code"], "Fixture browser")
+        self.assertEqual(cancelled.exception.status, 410)
+
+    def _concurrent_first_browser(self, operation):
+        """Pause a real store read under its lock, then start installer eligibility behind it."""
+        read_started, contender_started, release = threading.Event(), threading.Event(), threading.Event()
+        results, failures = {}, []
+        original_read, original_locked = access._read, access._locked
+
+        def read():
+            record = original_read()
+            if threading.current_thread().name == "store-owner":
+                read_started.set()
+                if not release.wait(5):
+                    raise AssertionError("store owner was not released")
+            return record
+
+        @contextlib.contextmanager
+        def locked():
+            if threading.current_thread().name == "installer-contender":
+                contender_started.set()
+            with original_locked():
+                yield
+
+        def run(name, action):
+            try:
+                results[name] = action()
+            except BaseException as error:
+                failures.append(error)
+
+        with mock.patch.object(access, "_read", side_effect=read), mock.patch.object(access, "_locked", new=locked):
+            owner = threading.Thread(target=run, args=("owner", operation), name="store-owner")
+            contender = threading.Thread(target=run, args=("first", lambda: access.issue_code(first_browser=True)),
+                                         name="installer-contender")
+            owner.start()
+            try:
+                self.assertTrue(read_started.wait(5), "store owner never read its record")
+                contender.start()
+                self.assertTrue(contender_started.wait(5), "installer did not enter the access lock")
+            finally:
+                release.set()
+                owner.join(5)
+                if contender.ident is not None:
+                    contender.join(5)
+            self.assertFalse(owner.is_alive())
+            self.assertFalse(contender.is_alive())
+        if failures:
+            raise failures[0]
+        self.assertIsNone(results["first"])
+        return results["owner"]
+
+    def test_manual_issuance_wins_before_concurrent_installer_eligibility(self):
+        manual = self._concurrent_first_browser(access.issue_code)
+        access.redeem(manual["code"], "Fixture browser")
+
+    def test_redemption_wins_before_concurrent_installer_eligibility(self):
+        manual = access.issue_code()
+        key, row = self._concurrent_first_browser(lambda: access.redeem(manual["code"], "Fixture browser"))
+        self.assertEqual(access.device(key), row)
+        self.assertIsNone(access._read()["code"])
+
+    def test_only_one_concurrent_first_browser_issuance_succeeds(self):
+        issued = self._concurrent_first_browser(lambda: access.issue_code(first_browser=True))
+        access.redeem(issued["code"], "Fixture browser")
 
 
 class TestAccess(AltitudeCase):
@@ -66,6 +198,24 @@ class TestAccess(AltitudeCase):
         status, reply, cookie = self.pair(alt_pair(), **fields)
         self.assertEqual(status, 200, reply)
         return cookie.split(";")[0].split("=", 1)[1], reply["device"]
+
+    def test_malformed_invitation_does_not_revoke_paired_access_or_prevent_manual_replacement(self):
+        key, row = self.paired()
+        for invalid in ([], {"expires": "2026-10-13T12:00:00"},
+                        {"hash": "fixture", "expires": "2026-10-13T12:00:00", "wrong": 0}):
+            with self.subTest(code=invalid):
+                record = access._read()
+                record["code"] = invalid
+                access._write(record)
+                retained = (access.DIR / "devices.json").read_bytes()
+                status, body, _ = self.request("GET", "/api/access", device=key)
+                self.assertEqual((status, body["paired"]), (200, True))
+                self.assertTrue(access.known(row["id"]))
+                self.assertIsNone(access.issue_code(first_browser=True))
+                self.assertEqual((access.DIR / "devices.json").read_bytes(), retained)
+                manual = access.issue_code()
+                self.assertEqual(access.device(key)["id"], row["id"])
+                access.redeem(manual["code"], "Manual recovery fixture")
 
     def test_an_unpaired_browser_sees_only_the_page_and_the_way_to_pair(self):
         for method, path in (("GET", "/api/overview"), ("GET", "/api/devices"), ("GET", "/design/x/board.html"),

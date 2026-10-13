@@ -1404,9 +1404,7 @@ The engine adapter scopes worker notifications to the launched owner session. Na
 starts, output, usage, failures and completion cannot replace the owner's steering target or end
 its wait. Only the owner's notifications enter its worker stream; helper usage remains separately
 attributed from native records. A real owner completion, failure or server exit still follows normal
-worker recovery, and explicit Stop still terminates the whole job, including descendants. The
-deterministic helper-interleaving regression covers this adapter boundary on either platform; it
-does not establish live-provider compatibility or native activation/effectiveness.
+worker recovery, and explicit Stop still terminates the whole job, including descendants.
 This adapter requires `threadId` on the app-server notifications it consumes, as the installed
 0.160.1 protocol schema specifies; no minimum CLI version is enforced. Notifications without that
 identity are ignored rather than attributed to the owner. An incompatible server omitting it can
@@ -1738,8 +1736,9 @@ Codex retains its native `account/rateLimits/read` reader.
 Its primary and secondary windows are independently optional. Either valid window is retained,
 including zero usage, when the other is absent or malformed. A missing reset deadline stays unknown;
 it does not discard the window's reported usage or exhaustion. Refresh reads replace the snapshot
-with the account's current percentages and deadlines; they do not consume earned reset credits or
-reset provider conversations, task token counters or routing preferences.
+with the account's current percentages and deadlines. Refresh only reads: it never resets or redeems
+provider allowance, and leaves provider conversations, task token counters and routing preferences
+unchanged.
 
 Missing login, unsupported CLI/schema, missing account windows, malformed responses, command failure
 or timeout yield unknown quota and replace the prior success. A read refused for sign-in also records

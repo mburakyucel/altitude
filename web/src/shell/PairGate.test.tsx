@@ -1,8 +1,12 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { StrictMode } from "react";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import PairGate from "./PairGate";
+import type { Trust } from "../data/api";
+import { takePairingLink } from "./pairingLink";
+import type { PairingLink } from "./pairingLink";
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
 const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
@@ -42,10 +46,11 @@ function service(trust: Record<string, unknown>, answers: Answer[] = []) {
   return calls;
 }
 
-function renderGate() {
+function renderGate(pairingLink: PairingLink = null, strict = false) {
   const user = userEvent.setup();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<QueryClientProvider client={client}><PairGate><h1>The app</h1></PairGate></QueryClientProvider>);
+  const gate = <QueryClientProvider client={client}><PairGate pairingLink={pairingLink ? { ...pairingLink } : null}><h1>The app</h1></PairGate></QueryClientProvider>;
+  render(strict ? <StrictMode>{gate}</StrictMode> : gate);
   return user;
 }
 
@@ -55,6 +60,282 @@ function agent(value: string) {
 }
 
 const step = (name: RegExp) => screen.getByRole("heading", { name }).closest("li") as HTMLElement;
+
+const installLink: PairingLink = { code: "ABCD-2345" };
+const localHttps = { local: true, https: true, check: false, certificate: null };
+const recovery = "Run ~/.local/bin/alt pair on the computer running Altitude for a new code.";
+const transportRecovery = "Could not confirm pairing. Reopen the install link, or run ~/.local/bin/alt pair for a new code.";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+/** Keep the application's access/trust/pair API real while controlling only fixture HTTP replies. */
+function linkService(trust: Trust = localHttps, answers: Answer[] = []) {
+  service(trust, answers);
+  const original = globalThis.fetch;
+  const fixture = {
+    paired: false,
+    inaccessible: false,
+    accessWait: null as Promise<void> | null,
+    pairReply: null as (() => Promise<Response>) | null,
+    accessReads: 0,
+    pairs: [] as { code: string; standalone: boolean }[],
+    requests: [] as { path: string; method: string; body?: BodyInit | null }[],
+  };
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    fixture.requests.push({ path, method: init?.method ?? "GET", body: init?.body });
+    if (path === "/api/access") {
+      fixture.accessReads++;
+      if (fixture.accessWait) await fixture.accessWait;
+      if (fixture.inaccessible) throw new TypeError("Failed to fetch");
+      return json({ paired: fixture.paired, device: fixture.paired ? "fictional-device" : null, trust });
+    }
+    if (path === "/api/pair") {
+      fixture.pairs.push(JSON.parse(String(init?.body)));
+      if (fixture.pairReply) return fixture.pairReply();
+      fixture.paired = true;
+      return json({ paired: true });
+    }
+    return original(input, init);
+  }));
+  return fixture;
+}
+
+describe("Install pairing link", () => {
+  it("waits for access, submits once under StrictMode, and never displays or stores the code while pairing", async () => {
+    const fixture = linkService();
+    const access = deferred<void>();
+    const pair = deferred<Response>();
+    fixture.accessWait = access.promise;
+    fixture.pairReply = () => pair.promise;
+    const store = vi.spyOn(Storage.prototype, "setItem");
+    onTestFinished(() => store.mockRestore());
+    renderGate(installLink, true);
+    expect(document.querySelector('main[aria-busy="true"]')).toBeInTheDocument();
+    expect(fixture.pairs).toHaveLength(0);
+    await act(async () => access.resolve());
+    expect(await screen.findByText("Pairing…")).toBeVisible();
+    expect(screen.queryByLabelText("Pairing code")).toBeNull();
+    expect(document.body.textContent).not.toContain("ABCD-2345");
+    expect(document.querySelector('input[value="ABCD-2345"]')).toBeNull();
+    expect(fixture.pairs).toEqual([{ code: "ABCD-2345", standalone: false }]);
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+    expect(fixture.pairs).toHaveLength(1);
+    fixture.paired = true;
+    await act(async () => pair.resolve(json({ paired: true })));
+    expect(await screen.findByRole("heading", { name: "The app" })).toBeVisible();
+    expect(fixture.pairs).toHaveLength(1);
+    fixture.paired = false;
+    await act(async () => window.dispatchEvent(new Event("altitude:unpaired")));
+    expect(await screen.findByLabelText("Pairing code")).toHaveValue("");
+    expect(fixture.pairs).toHaveLength(1);
+    expect(store).not.toHaveBeenCalled();
+    for (const request of fixture.requests) {
+      expect(request.path).not.toContain("2345");
+      if (request.path !== "/api/pair") expect(String(request.body)).not.toContain("2345");
+    }
+  });
+
+  it("keeps the cleaned link in page memory while access is unreachable and redeems after Retry", async () => {
+    const fixture = linkService();
+    fixture.inaccessible = true;
+    const original = window.location.href;
+    const originalState = window.history.state;
+    window.history.replaceState(null, "", "/projects/demo#pair=ABCD-2345");
+    onTestFinished(() => window.history.replaceState(originalState, "", original));
+    const link = takePairingLink();
+    expect(window.location.hash).toBe("");
+    const user = renderGate(link);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not reach Altitude.");
+    expect(fixture.pairs).toHaveLength(0);
+    fixture.inaccessible = false;
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("heading", { name: "The app" })).toBeVisible();
+    expect(fixture.pairs).toHaveLength(1);
+  });
+
+  it.each<[string, Answer[], string]>([
+    ["untrusted", ["untrusted", "trusted"] as Answer[], "Not trusted yet"],
+    ["unknown", ["retry", "retry", "retry", "trusted"] as Answer[], "Couldn’t check."],
+  ])("waits while remote trust is %s and submits once after Check again", async (_state, answers, message) => {
+    const fixture = linkService(remote, answers);
+    const user = renderGate(installLink, true);
+    expect(await screen.findByText(message)).toBeVisible();
+    expect(fixture.pairs).toHaveLength(0);
+    expect(screen.queryByLabelText("Pairing code")).toBeNull();
+    expect(document.body.textContent).not.toContain("ABCD-2345");
+    await user.click(screen.getByRole("button", { name: "Check again" }));
+    expect(await screen.findByRole("heading", { name: "The app" })).toBeVisible();
+    expect(fixture.pairs).toHaveLength(1);
+    const pairAt = fixture.requests.findIndex((request) => request.path === "/api/pair");
+    const checks = fixture.requests.slice(0, pairAt).filter((request) => request.path.startsWith("/api/trust/"));
+    expect(checks.length).toBeGreaterThan(0);
+  });
+
+  it("waits for an in-flight managed trust challenge before sending the capability", async () => {
+    const fixture = linkService(remote, ["trusted"]);
+    const original = globalThis.fetch;
+    const trust = deferred<void>();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).startsWith("/api/trust/")) await trust.promise;
+      return original(input, init);
+    }));
+    renderGate(installLink);
+    expect(await screen.findByRole("status", { name: "Checking…" })).toBeVisible();
+    expect(fixture.pairs).toHaveLength(0);
+    await act(async () => trust.resolve());
+    expect(await screen.findByRole("heading", { name: "The app" })).toBeVisible();
+    expect(fixture.pairs).toHaveLength(1);
+  });
+
+  it("keeps the link pending until an external certificate is confirmed", async () => {
+    const fixture = linkService({ ...remote, check: false, certificate: null });
+    const user = renderGate(installLink);
+    expect(await screen.findByText(/Altitude can’t check this automatically\./)).toBeVisible();
+    expect(fixture.pairs).toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByRole("heading", { name: "The app" })).toBeVisible();
+    expect(fixture.pairs).toHaveLength(1);
+    expect(fixture.requests.some((request) => request.path.startsWith("/api/trust"))).toBe(false);
+  });
+
+  it("never redeems over remote HTTP", async () => {
+    const fixture = linkService({ local: false, https: false, check: false, certificate: null });
+    renderGate(installLink);
+    expect(await screen.findByText("This Altitude serves plain HTTP. Pair on the computer running it.")).toBeVisible();
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+    expect(fixture.pairs).toHaveLength(0);
+    expect(screen.queryByLabelText("Pairing code")).toBeNull();
+  });
+
+  it("does not automatically redeem on loopback HTTP but preserves manual pairing", async () => {
+    const fixture = linkService({ ...localHttps, https: false });
+    const user = renderGate(installLink);
+    const field = await screen.findByLabelText("Pairing code");
+    expect(field).toHaveValue("");
+    expect(fixture.pairs).toHaveLength(0);
+    await user.type(field, "EFGH-6789");
+    await user.click(screen.getByRole("button", { name: "Pair" }));
+    expect(await screen.findByRole("heading", { name: "The app" })).toBeVisible();
+    expect(fixture.pairs).toEqual([{ code: "EFGH-6789", standalone: false }]);
+  });
+
+  it("discards a link when already paired and cannot reuse it after pairing is removed", async () => {
+    const fixture = linkService();
+    fixture.paired = true;
+    renderGate(installLink, true);
+    expect(await screen.findByRole("heading", { name: "The app" })).toBeVisible();
+    expect(fixture.pairs).toHaveLength(0);
+    fixture.paired = false;
+    await act(async () => window.dispatchEvent(new Event("altitude:unpaired")));
+    expect(await screen.findByLabelText("Pairing code")).toHaveValue("");
+    expect(screen.getByText("This device is no longer paired. Pair it again to continue.")).toBeVisible();
+    expect(fixture.pairs).toHaveLength(0);
+  });
+
+  it("reports a malformed link without burning an attempt and typing clears its error", async () => {
+    const fixture = linkService();
+    const user = renderGate({ invalid: true });
+    expect(await screen.findByRole("alert")).toHaveTextContent(`This pairing link is not valid. ${recovery}`);
+    const field = screen.getByLabelText("Pairing code");
+    expect(field).toHaveValue("");
+    expect(fixture.pairs).toHaveLength(0);
+    await user.type(field, "E");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it.each([
+    [410, "This code has expired or was already used. Make a new one.", "This pairing link has expired or was already used."],
+    [403, "That code is not right. 4 tries left.", "That code is not right. 4 tries left."],
+    [403, "Pairing is denied.", "Pairing is denied."],
+  ])("discards a refused link (%s), leaves a blank manual field and never retries", async (status, error, shown) => {
+    const fixture = linkService();
+    fixture.pairReply = async () => json({ error }, status);
+    const user = renderGate(installLink, true);
+    expect(await screen.findByRole("alert")).toHaveTextContent(`${shown} ${recovery}`);
+    const field = screen.getByLabelText("Pairing code");
+    expect(field).toHaveValue("");
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+    expect(fixture.pairs).toHaveLength(1);
+    fixture.pairReply = null;
+    await user.type(field, "EFGH-6789");
+    expect(screen.queryByRole("alert")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Pair" }));
+    expect(await screen.findByRole("heading", { name: "The app" })).toBeVisible();
+    expect(fixture.pairs.map((pair) => pair.code)).toEqual(["ABCD-2345", "EFGH-6789"]);
+  });
+
+  it("observes a successful pairing cookie after a lost response and opens the app without retrying", async () => {
+    const fixture = linkService();
+    fixture.pairReply = async () => {
+      fixture.paired = true;
+      throw new TypeError("Failed to fetch");
+    };
+    renderGate(installLink, true);
+    expect(await screen.findByRole("heading", { name: "The app" })).toBeVisible();
+    expect(fixture.pairs).toHaveLength(1);
+    expect(fixture.accessReads).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it.each([false, true])("rechecks access before recovery after transport failure (access unavailable: %s)", async (accessUnavailable) => {
+    const fixture = linkService();
+    const access = deferred<void>();
+    fixture.pairReply = async () => {
+      fixture.accessWait = access.promise;
+      fixture.inaccessible = accessUnavailable;
+      throw new TypeError("Failed to fetch");
+    };
+    const user = renderGate(installLink);
+    await waitFor(() => expect(fixture.accessReads).toBe(2));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByLabelText("Pairing code")).toBeNull();
+    await act(async () => access.resolve());
+    expect(await screen.findByRole("alert")).toHaveTextContent(transportRecovery);
+    const field = screen.getByLabelText("Pairing code");
+    expect(field).toHaveValue("");
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+    expect(fixture.pairs).toHaveLength(1);
+    await user.type(field, "E");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("disposes a pending page link and does not restore it from the cleaned URL", async () => {
+    const fixture = linkService(remote, ["untrusted", "trusted"]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const original = window.location.href;
+    const originalState = window.history.state;
+    window.history.replaceState(null, "", "/#pair=ABCD-2345");
+    onTestFinished(() => window.history.replaceState(originalState, "", original));
+    const view = render(<QueryClientProvider client={client}><PairGate pairingLink={takePairingLink()}><h1>The app</h1></PairGate></QueryClientProvider>);
+    expect(await screen.findByText("Not trusted yet")).toBeVisible();
+    view.unmount();
+    renderGate(takePairingLink());
+    expect(await screen.findByLabelText("Pairing code")).toHaveValue("");
+    expect(fixture.pairs).toHaveLength(0);
+  });
+
+  it("never sends a disposed link when an outstanding trust check finishes", async () => {
+    const fixture = linkService(remote, ["trusted"]);
+    const original = globalThis.fetch;
+    const trust = deferred<void>();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).startsWith("/api/trust/")) await trust.promise;
+      return original(input, init);
+    }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = render(<QueryClientProvider client={client}><PairGate pairingLink={{ ...installLink }}><h1>The app</h1></PairGate></QueryClientProvider>);
+    expect(await screen.findByRole("status", { name: "Checking…" })).toBeVisible();
+    view.unmount();
+    await act(async () => trust.resolve());
+    expect(fixture.pairs).toHaveLength(0);
+    expect(screen.queryByRole("heading", { name: "The app" })).toBeNull();
+  });
+});
 
 describe("Pair this device", () => {
   it("on the computer running Altitude, needs no certificate step and pairs with a code", async () => {

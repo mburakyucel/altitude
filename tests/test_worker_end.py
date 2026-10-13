@@ -47,7 +47,7 @@ class TestWorkerEnd(AltitudeCase):
     def setUp(self):
         super().setUp()
         self.private_ledgers()
-        self.patch(engines.common, "_codex_processes", {})
+        self.patch(engines.common, "_worker_processes", {})
         self.patch(engines.claude, "claude_agents", return_value=[])
         engine = self.tmp / "engine"
         engine.write_text(f"#!{sys.executable}\n{ENGINE}")
@@ -96,7 +96,7 @@ class TestWorkerEnd(AltitudeCase):
         for unit in self.jobs.iterdir():
             for pid in self.job_members(unit.name):
                 os.kill(pid, signal.SIGKILL)
-        for engine in engines.common._codex_processes.values():
+        for engine in engines.common._worker_processes.values():
             engine.wait(timeout=10)
 
     def launch(self, slug, *, engine_ends: bool, result: str, recovers: bool = False):
@@ -115,7 +115,7 @@ class TestWorkerEnd(AltitudeCase):
         while ('"assistant"' if recovers else '"result"') not in stdout.read_text() or not self.command.exists():
             self.assertLess(time.monotonic(), deadline, "fixture engine never reported its turn")
             time.sleep(.05)
-        if engine_ends and (engine := engines.common._codex_processes.get(launched["agent"]["id"])):
+        if engine_ends and (engine := engines.common._worker_processes.get(launched["agent"]["id"])):
             engine.wait(timeout=30)
         return S.load_task(self.project, slug), job_root
 

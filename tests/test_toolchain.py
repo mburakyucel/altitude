@@ -123,7 +123,7 @@ class TestToolchain(AltitudeCase):
     def test_fresh_and_resumed_workers_execute_tools_with_identity_and_failure_intact(self):
         make_repo(self.repo)
         nvm_fixture(self)
-        self.patch(engines.common, "_codex_processes", {})
+        self.patch(engines.common, "_worker_processes", {})
         self.patch(engines.claude, "claude_agents", return_value=[])
         self.patch(platform, "job_active", return_value=False)
         check_tools = (
@@ -179,10 +179,10 @@ class TestToolchain(AltitudeCase):
                             extra_env={"ALTITUDE_TASK": "toolchain-task", "ALTITUDE_ATTEMPT": "1"})
                     self.assertEqual(result["returncode"], 0, result)
                     worker_id = result["agent"]["id"]
-                    process = engines.common._codex_processes.get(worker_id)
+                    process = engines.common._worker_processes.get(worker_id)
                     if process:
                         process.wait(timeout=5)
-                    self.assertEqual(engines.common._codex_paths(self.tmp / "jobs", worker_id)["stderr"].read_text(), "")
+                    self.assertEqual(engines.common._worker_paths(self.tmp / "jobs", worker_id)["stderr"].read_text(), "")
                     row = engines.worker(engine, {"agent_id": worker_id}, job_root=self.tmp / "jobs")
                     self.assertEqual(row["sessionId"], "session")
                     self.assertEqual(row["state"], "failed")

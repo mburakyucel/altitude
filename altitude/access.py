@@ -60,9 +60,12 @@ def _locked():
 
 def _read() -> dict:
     try:
-        return json.loads((DIR / "devices.json").read_text())
+        record = json.loads((DIR / "devices.json").read_text())
     except FileNotFoundError:
         return {"devices": [], "code": None}
+    if not isinstance(record, dict) or not isinstance(record.get("devices"), list):
+        raise ValueError("Pairing data is invalid; the file is retained.")
+    return record
 
 
 def _write(record: dict) -> None:
@@ -117,12 +120,29 @@ def design_pass_valid(project: str, presented: str) -> bool:
             and known(device_id))
 
 
-def issue_code() -> dict:
-    """A fresh one-time code; it replaces any earlier one."""
+def issue_code(*, first_browser: bool = False) -> dict | None:
+    """A fresh one-time code; manual issuance replaces any earlier one.
+
+    First-install issuance leaves existing devices and an unexpired code intact. Its eligibility
+    and write share the redemption lock, so manual issuance or redemption cannot cross them.
+    """
     raw = "".join(secrets.choice(CODE_ALPHABET) for _ in range(CODE_LENGTH))
     expires = _now() + timedelta(minutes=CODE_MINUTES)
     with _locked():
         record = _read()
+        active = record.get("code")
+        if first_browser:
+            if record["devices"]:
+                return None
+            if active is not None:
+                if (not isinstance(active, dict) or not isinstance(active.get("hash"), str)
+                        or not isinstance(active.get("expires"), str) or not isinstance(active.get("wrong"), int)):
+                    raise ValueError("Pairing data is invalid; the file is retained.")
+                deadline = datetime.fromisoformat(active["expires"])
+                if deadline.tzinfo is None:
+                    raise ValueError("Pairing data is invalid; the file is retained.")
+                if deadline > _now():
+                    return None
         record["code"] = {"hash": _hash(raw), "expires": expires.isoformat(), "wrong": 0}
         _write(record)
     return {"code": f"{raw[:4]}-{raw[4:]}", "expires": expires.isoformat(), "minutes": CODE_MINUTES}

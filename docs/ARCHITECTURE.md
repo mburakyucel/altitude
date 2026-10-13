@@ -314,7 +314,19 @@ CLI environment settings override saved values. The generated service pins its s
 including binding and runtime paths, against ambient user-manager values. Source deployments ignore installed configuration.
 New installation settings capture the discovered toolchain PATH, including a custom nvm default;
 updates retain the saved environment.
-`installation.py` owns archive validation, activation receipts, recovery and retention;
+`installation.py` owns archive validation, activation receipts, recovery and retention.
+After a successful fresh activation and CA-verified readiness probe, it issues the first-browser
+link through the existing access-code writer. Eligibility requires no previous application version,
+no paired devices and no unexpired pairing code; device/code checks and issuance share the access
+lock with manual issuance and redemption. A retained manual code stays intact. Reruns, updates,
+rollback and recovery issue no code and retain access. Issuance failure reports the running
+installation with manual recovery through `~/.local/bin/alt pair`. The successful installer result
+and terminal output carry the link; configuration, activation/update receipts and diagnostics do
+not retain its raw code. The shell's private result file is removed by its existing exit cleanup.
+Trust guidance and the link lead the output; PATH setup and `alt doctor` are optional follow-up.
+The installer launches no browser and changes no trust store. Terminal/OS link handlers open a
+browser on the viewing device, so an SSH link using loopback refers to that device.
+
 `platform.py` is the platform seam: it owns the generated per-user daemon service, the jobs that run
 workers, reviews, machine commands, updates and restarts, their status and stop, resource limits, and the
 process and socket facts behind worker identity, terminal Stop and the terminal's agent check. On Linux
@@ -503,6 +515,25 @@ ends this way still finishes and is logged. The file store needs only POSIX file
 behaves the same. The web app shows only the pairing screen until `GET /api/access` reports the
 browser paired, and returns to it on any 401.
 
+The fresh install link carries that same single-use code in `#pair=`. Before router creation or
+access/trust requests, the web entrypoint removes this dedicated fragment from the history entry,
+including malformed links and visits by already-paired browsers; ordinary route anchors keep their
+behavior. The gate keeps a pending code only in page memory, discarding it on success, refusal,
+manual replacement or page disposal. Reload or browser restart requires reopening the original
+terminal link while valid. It sends the code only in the existing same-origin `POST /api/pair`
+JSON body, never in paths, queries, referrers, DOM text, browser storage, caches, logs or errors.
+The originally clicked URL can reach terminal/OS handlers, browser history synchronization,
+extensions or an initial TLS warning before cleanup; cleanup does not erase those systems' copies.
+
+Automatic redemption waits for the existing managed-CA challenge on remote devices, or explicit
+Continue after the external-certificate Private-tab check; the local exemption stays unchanged.
+Ordinary TLS verification precedes page load, and plain remote HTTP never redeems a link. An
+unreachable access read holds the pending code for Retry; already-paired access discards it without
+adding a device. A lost redemption response triggers an access recheck, never a blind retry of the
+single-use code. Refused links return to the blank manual field with recovery through the installed
+launcher. Successful redemption opens First run, or the existing app when projects exist. Server
+authentication, origin checks, cookies and the manual code's lifetime/replacement policy are unchanged.
+
 ### Linux and macOS
 
 Everything above the platform seam is the same on both hosts. These are the behaviors that differ;
@@ -626,9 +657,11 @@ its sender. Streamed launch input with images is marked as the human's, as a tex
 | [`route.py`](../altitude/route.py) | Select an engine/model from explicit pins or ordered Auto tiers, installation, rejection and quota evidence; expose the same routing reasons to callers and Monitor. |
 | [`config.py`](../altitude/config.py) | Engine names, executable paths, defaults, preference syntax and context settings, alongside runtime configuration. |
 
-Callers continue importing `altitude.engines` and using its existing callable interface. Each native
-implementation adapts the same execution and authority contract; shared behavior lives in common
-code, with no separate provider policy system or new base-class hierarchy.
+Callers import `altitude.engines` and use its callable interface. Each native module adapts the same
+execution and authority contract. Shared code loads the module named after a `config.ENGINES` entry
+and reaches native behavior only through the names every native module defines, never by comparing
+engine names; `tests/test_engine_interface.py` checks both. Adding or dropping an engine changes its
+module and the registry, with no provider policy system or base-class hierarchy.
 
 The interface is internal and evolves with the integrations. Additional CLI engines such as
 OpenCode are candidates for future support. Provider access is a separate integration concern:
