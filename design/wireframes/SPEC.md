@@ -1199,11 +1199,14 @@ Left is the operator's conversation with
 the L2 (same bubbles and composer as §3.3 and §3.6); right the live session panel (480px, toggled by
 the header button). Task details contains the muted line "attempt 1 · started 32 min ago"
 when those values are available; a finished task reads "done 2h ago" or "rejected 2h ago". The model
-chip says only what is known: "Requested · Opus 5 on Claude · Max" until the engine reports, then
-what it reported ("Opus 5 on Claude · High"), with "(requested Max)" when the levels differ. Task
+chip names the engine, model and effort the task runs with, in the model pill's words: what the engine
+reported, else what Altitude launched it with ("6.1 Sol on Codex · High"; a Claude alias reads as the
+model it resolved to, "Opus 5.5 on Claude · Native"; an unknown model keeps its reported id). On phone
+the chip lives in Task details. Every Codex task launches with a named model and effort, so the chip
+never reads an engine default. Task
 details holds **Model and effort**: Requested (what L3 set for this task, or the project choice and
-defaults), Launched, Engine reports ("not reported" when absent) and routing's recorded reason, with
-"Messages and resumes keep this model and effort; to redo the work on another one, ask L3." The PR chip reads "PR #N merged · main checks passed" or its open
+defaults), Launched, Engine reports ("Not reported yet" until it does) and routing's recorded reason,
+with "Messages and resumes ask for 6.1 Sol · High." naming the launch values. The PR chip reads "PR #N merged · main checks passed" or its open
 and check states, in danger tone when main checks failed. It links to the PR when the repository
 URL is known, otherwise it is a plain chip. **Merge held** is concise and independent of execution
 or question state. Its complete reason opens in task details and wraps without truncation.
@@ -1917,8 +1920,8 @@ other engines remain unchanged. During a save both controls are guarded with ari
 focus stays native; the other engine remains usable. A stale expected pair offers Reload.
 Model offers **Altitude default**, engine-owned names, the current custom ID and **Other model…**.
 Effort offers **Altitude default**, **Native**, and supported engine levels. Inherited effort says
-"Native for all roles" for Claude and "Tasks: High · Chat/reviews: Native" for Codex; explicit Native
-says "Provider chooses effort". Engine-level support does not assert model support or provider caps.
+"Native for all roles" for Claude and "Tasks: High · Chat/reviews: Medium" for Codex; explicit Native
+says "Provider chooses effort" for Claude and "Altitude sends Medium" for Codex. Engine-level support does not assert model support or provider caps.
 
 Other model reveals a fixed-engine ID editor with **Saved: <ID>** beneath its draft. Enter or leaving
 a valid ID saves; blank blur or Escape restores without a write. Whitespace-invalid input stays

@@ -1019,8 +1019,8 @@ existing `alt project set --routing` CLI option to edit those tiers. Individual 
 are not cleared here. Project Settings contains engine routing, not another model/effort table.
 
 **Altitude default** inherits built-in role behavior. Inherited effort is Native for Claude;
-Codex uses High for tasks and Native for chat/reviews. **Native** explicitly delegates effort to the
-provider, including for Codex tasks. The available effort list is engine support, not a claim that
+Codex uses High for tasks and Medium for chat/reviews. **Native** delegates effort to the provider:
+Claude receives no effort, and Codex receives Medium. The available effort list is engine support, not a claim that
 every model accepts every level. Provider caps remain separate from the requested effort.
 **Other model…** accepts an exact ID. Selecting Other alone writes nothing; Enter or leaving a
 valid ID saves, and blank input or Escape restores the saved value. Explicit choices show the ID
@@ -1226,8 +1226,10 @@ Each role has one flag per engine: `--l3-model`/`--l2-model` for Claude (registr
 nothing else and passes it to the engine, which reports an inaccessible model as a routing rejection.
 The Claude aliases `opus`, `sonnet`, `haiku` and `fable` resolve to the current model of that family in
 the Claude CLI, so new models arrive with CLI updates without an Altitude change; a specific id can
-always be typed. Without an explicit model, Codex tasks use its external settings and L3 uses its
-built-in default; the reported model is known after it runs. Altitude uses the execution integration
+always be typed. Without an explicit model, every role uses Altitude's built-in default: Opus for
+Claude tasks and reviews, Fable for Claude chat, and `gpt-6.1-sol` (6.1 Sol) for every Codex role.
+Altitude passes a model and an effort on every Codex launch, so the Codex CLI's own defaults and the
+operator's Codex configuration never choose silently. Altitude uses the execution integration
 and maintained model shortcuts, not the app-server model catalog or automatic account discovery.
 The [official configuration documentation](https://learn.chatgpt.com/docs/config-file/config-basic)
 establishes the `gpt-6.1-sol` ID, not account access.
@@ -1239,8 +1241,8 @@ Fresh launches resolve an explicit task/turn model, a selected choice/routing mo
 role override, the global engine model, then the built-in role default. L2 resolves at dispatch,
 including queued tasks; messages/resumes keep the attempt's saved `launch_model`. L3 resolves
 from its next turn. An ordinary review uses the task-role model default unless it has an explicit request.
-For effort, an explicit global engine value applies; absent that value, ordinary reviews retain
-native effort rather than inheriting a task effort override. A model default does not select an engine.
+For effort, an explicit global engine value applies; absent that value, ordinary reviews use the
+chat role's built-in effort (native on Claude, Medium on Codex) rather than inheriting a task effort override. A model default does not select an engine.
 
 ### Task reasoning effort
 
@@ -1250,7 +1252,7 @@ Global Settings keeps effort beside each engine's model. Explicit project overri
 alt project set example --l3-effort low --reason 'Light coordination on Claude'
 alt project set example --l3-codex-effort medium --reason 'Medium coordination on Codex'
 alt project set example --l2-effort high --reason 'High effort for Claude task owners'
-alt project set example --l2-codex-effort native --reason 'Use native Codex task configuration'
+alt project set example --l2-codex-effort native --reason 'Use the Codex default level for tasks'
 alt project set example --unset-l3-effort --reason 'Restore the existing L3 default'
 alt project list
 ```
@@ -1261,8 +1263,9 @@ Each accepts only the levels its engine supports. The operator and the project's
 reason-bearing settings requests; L2 cannot change project defaults. Altd applies them on its next
 tick, without a free worker slot or service restart. Existing project overrides appear in global
 Settings with a deliberate reset action. An absent project effort inherits the global engine effort,
-then the built-in default: native, except High for a Codex L2. Native explicitly requests no
-Altitude override, including for a Codex L2.
+then the built-in default: native on Claude; on Codex, High for L2 and Medium for L3 and reviews.
+Native passes no effort to Claude and Medium, the documented Codex default level, to Codex, so every
+Codex launch names its level.
 
 Levels are `native`, `low`, `medium`, `high`, `xhigh` (Extra High), `max`, and `ultra`.
 The current adapters accept Low through Max on both engines and Ultra on Codex. Engine support
@@ -1281,7 +1284,7 @@ edited. Model-specific incompatibility stays a launch/turn failure with its diag
 application-side downgrade or engine fallback.
 
 `alt task status <slug>` exposes `effort` (explicit request, null if omitted), `launch_effort`
-(the actual launch override, null for native configuration), and `engine_reasoning_effort`
+(the actual launch override, null for native Claude configuration and never null on Codex), and `engine_reasoning_effort`
 (the provider observation, null until reported for the turn). Worker records retain launch effort
 as evidence. An observation may differ from the selection and never replaces it. Message/resume
 preserves the attempt, owner conversation and saved override through provider configuration and
@@ -1760,8 +1763,8 @@ findings and coverage gaps without a duration cutoff. A reviewer that never read
 fails with that reason rather than completing with no coverage. L2 observes the run and can cancel if
 it gets stuck or goes off scope. No suitable engine means explicitly unavailable; there is no automatic
 retry or engine switch after launch. Fallback cannot bypass unavailable observation or cancellation.
-Reviewers use native reasoning defaults; the project's L2 owner effort setting does not change
-reviewer eligibility.
+Reviewers use the chat role's built-in effort (native on Claude, Medium on Codex); the project's L2
+owner effort setting does not change reviewer eligibility.
 `--engine` and `--model` select the reviewer for one request without changing project defaults or
 other launches. The selection is the only candidate: installation, account/model rejection, quota and
 captured-input capability checks still apply, unknown allowance stays explicit, and an unavailable

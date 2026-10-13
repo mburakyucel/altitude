@@ -351,7 +351,8 @@ These defaults apply across projects to coordinator replies, fresh task starts (
 tasks) and ordinary reviews. Started tasks keep their launch model and effort. Existing explicit
 project or task requests still win; **Existing overrides** shows saved exceptions and lets you
 clear a model/effort override with **Use global defaults**, retaining its engine preference.
-**Altitude default** restores inheritance; **Native** effort asks the provider to choose.
+**Altitude default** restores inheritance; **Native** effort asks Claude to choose and sends Codex
+Medium, since Altitude names the level on every Codex launch.
 Named choices and shared account allowance do not prove model access. Requested and reported
 values remain distinct. See [model choices](CLI.md#model-choices) for precedence and timing.
 

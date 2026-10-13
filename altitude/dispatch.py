@@ -1122,7 +1122,7 @@ def build_brief(project: str, slug: str, *, choice: dict | None = None) -> str:
         merge_policy = {"default": "Merge when the applicable checks and any appropriate review are complete.",
                         "open-pr-only": "Open PRs and stop; never merge.", "merge-all": "Merge when the review is addressed and CI is green."}.get(policy, policy)
     engine = choice["engine"] if choice else task.get("l2_engine") or task.get("engine") or "pending quota route"
-    model = choice.get("model") if choice else task.get("engine_model") or task.get("model")
+    model = choice.get("model") if choice else task.get("launch_model") or task.get("model")
     other_leases = leases(project, exclude=slug)
     overlaps = [f"`{other['slug']}` on {', '.join(shared)}" for other in other_leases
                 if (shared := shared_paths(task_paths(project, task), other["paths"]))]
@@ -1290,7 +1290,7 @@ def _run(project: str, slug: str, model: str | None = None) -> dict:
         worktree = str(worktree_path)
         T.dispatch(project, slug, attempt=attempt, session_id=agent["sessionId"], agent_id=agent["id"],
                    worktree=worktree, branch=worktree_branch(slug, worktree),
-                   l2_engine=engine, engine_model=agent.get("engine_model", selected_model), routing=choice["why"],
+                   l2_engine=engine, engine_model=agent.get("engine_model"), routing=choice["why"],
                    launch_model=selected_model, launch_effort=selected_effort, routing_pinned=choice.get("pinned", False),
                    messages=messages, input_delivered=agent.get("input_delivered") is True)
     except T.TransitionError as exc:

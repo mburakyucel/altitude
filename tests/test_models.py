@@ -5,14 +5,33 @@ import unittest
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import config, dispatch, engines, platform, state as S, tasks as T
+from altitude import config, dispatch, engines, platform, server, state as S, tasks as T
 
 
 class TestModels(AltitudeCase):
     def test_tiers(self):
-        self.assertEqual(config.MODELS["l3"], "fable")            # judgement at the top
-        self.assertEqual(config.MODELS["l2"], "opus")             # coding at least Opus
-        self.assertEqual(set(config.MODELS), {"l3", "l2"})
+        self.assertEqual(config.MODELS["claude"]["l3"], "fable")  # judgement at the top
+        self.assertEqual(config.MODELS["claude"]["l2"], "opus")   # coding at least Opus
+        self.assertEqual(set(config.MODELS), set(config.ENGINES))
+        for engine in config.ENGINES:
+            self.assertEqual(set(config.MODELS[engine]), set(config.ROLES))
+
+    def test_task_page_names_what_the_engine_runs_in_the_choosers_words(self):
+        view = lambda **task: server.task_model_view({"l2_engine": "codex", "launch_model": "gpt-6.1-sol",
+                                                      "launch_effort": "high", "engine_model": None, **task})
+        self.assertIsNone(server.task_model_view({"engine": "codex"}), "nothing runs before dispatch")
+        self.assertEqual(view(), {"engine": "Codex", "model": "6.1 Sol", "effort": "High", "chosen": None,
+                                  "launched": "6.1 Sol · High", "reported": None})
+        self.assertEqual(view(engine_reasoning_effort="high")["reported"], "model not reported · High",
+                         "an effort-only report never confirms the model")
+        self.assertEqual(view(engine_model="gpt-6.1-sol")["reported"], "6.1 Sol · effort not reported")
+        substituted = view(engine_model="gpt-6-astra", engine_reasoning_effort="medium", model="gpt-6.1-sol", effort="high")
+        self.assertEqual(substituted, {"engine": "Codex", "model": "gpt-6-astra", "effort": "Medium",
+                                       "chosen": "6.1 Sol · High", "launched": "6.1 Sol · High",
+                                       "reported": "gpt-6-astra · Medium"}, "the chip names what the engine reports")
+        claude = server.task_model_view({"l2_engine": "claude", "launch_model": "opus", "launch_effort": None,
+                                         "engine_model": "claude-opus-5-5", "engine_reasoning_effort": None})
+        self.assertEqual((claude["model"], claude["effort"]), ("Opus 5.5", "Native"))
 
     def test_task_carries_explicit_model_only(self):
         t = T.new(self.project, "plain", "r", actor="burak")
