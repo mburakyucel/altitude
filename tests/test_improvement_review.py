@@ -31,6 +31,7 @@ class ImprovementCase(AltitudeCase):
     def setUp(self):
         super().setUp()
         self.patch(config, "ROOT", self.tmp / "home")
+        self.patch(config, "RUNTIME_ROOT", (self.tmp / "home").resolve())
 
     def load(self, tasks: list[dict], **extra) -> tuple[str, dict]:
         scenario = {"project": "orchard", "now": NOW.isoformat(), "tasks": tasks, **extra}
@@ -303,6 +304,7 @@ class TestEval(ImprovementCase):
         for half in improve_eval.HALVES:
             with self.subTest(half=half):
                 self.patch(config, "ROOT", self.tmp / half)
+                self.patch(config, "RUNTIME_ROOT", (self.tmp / half).resolve())
                 self.assertEqual(improve_eval.check(half), [])
 
     def test_only_the_full_held_back_matrix_can_pass_a_model(self):
@@ -312,6 +314,7 @@ class TestEval(ImprovementCase):
 
         def score(scenarios, repeats, complete=True):
             self.patch(config, "ROOT", self.tmp / f"home-{len(scenarios)}-{repeats}-{complete}")
+            self.patch(config, "RUNTIME_ROOT", (self.tmp / f"home-{len(scenarios)}-{repeats}-{complete}").resolve())
             out.mkdir(exist_ok=True)
             S.write_json(out / "run.json", {"models": ["sonnet"], "repeats": repeats, "scenarios": scenarios,
                                             "complete": complete, "stopped": None, "spent": 0, "ceiling": 1})

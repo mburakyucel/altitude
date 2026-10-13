@@ -39,6 +39,7 @@ class TestHead(AltitudeCase):
 
         (self.tmp / "digest.wav").write_bytes(b"RIFF-altitude-test-audio")
         self.patch(config, "ROOT", new=self.tmp)
+        self.patch(config, "RUNTIME_ROOT", self.tmp.resolve())
 
         self.patch(server, "overview", new=lambda: {"state": "ready"})
         self.logs = []

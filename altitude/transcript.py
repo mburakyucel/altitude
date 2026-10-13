@@ -15,16 +15,18 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
 import re
 import struct
 import threading
 import time
 import uuid
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, dispatch, engines, state as S, tasks
+from . import config, dispatch, engines, state as S, storage, tasks
 from .engines import _shell_command  # Shared projection formatter used by the coordinator tool log.
 
 MAX_DEFAULT_TEXT = 4000
@@ -134,8 +136,18 @@ def _turn_prompt(project: str, slug: str, task: dict, turn: dict) -> str:
     for the first turn, the task messages a resume delivered for a later one."""
     if not turn.get("resume"):
         try:
-            return (S.task_dir(project, slug) / "brief.md").read_text()
-        except OSError:
+            project, slug = config.require_project_name(project), S.require_task_slug(slug)
+            with storage.runtime_directory([project], search=True) as root:
+                # Only absence of the live task directory selects the archive. A missing live brief does not.
+                with ExitStack() as selected:
+                    try:
+                        directory = selected.enter_context(storage.directory(root, ["tasks", slug], search=True))
+                    except FileNotFoundError:
+                        directory = selected.enter_context(storage.directory(root, ["archive", slug], search=True))
+                    with storage.regular_reader(directory, "brief.md") as fd, \
+                            os.fdopen(fd, "r", encoding="utf-8", closefd=False) as stream:
+                        return stream.read()
+        except (OSError, storage.NotRegularFile):
             return ""
     receipts = task.get("message_deliveries") or {}
     delivered = [m for m in tasks.task_messages(project, slug)
