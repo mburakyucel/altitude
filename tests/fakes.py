@@ -12,7 +12,7 @@ class FakeL2:
         self.on_resume = None
 
     def install(self, case):
-        for name in ("start_l2", "resume_l2", "worker", "worker_sends", "stop_l2_worker", "remove_l2_worker"):
+        for name in ("start_l2", "resume_l2", "worker", "worker_sends", "worker_termination", "stop_l2_worker", "remove_l2_worker"):
             case.patch(engines, name, new=getattr(self, name))
 
     def _launch(self, engine, name, prompt, session_id, kwargs):
@@ -50,5 +50,9 @@ class FakeL2:
         if worker_id in self.workers:
             self.workers[worker_id].update(state="stopped", status="exited")
         return "fixture worker stopped"
+
+    def worker_termination(self, task, *, job_root):
+        row = self.workers.get(task.get("agent_id"))
+        return None if row is None else row.get("state") != "working" and not row.get("job_active")
 
     remove_l2_worker = stop_l2_worker

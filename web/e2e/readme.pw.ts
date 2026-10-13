@@ -80,7 +80,7 @@ test("project, work, task steering, live session and a decision", async ({ page 
 
 // The README's opening loop: the phone answers the backfill decision while the desktop project view watches the
 // task go back to work. One run drives both screens on the same service; ALTITUDE_README_IMAGES receives
-// `opening-<frame>-desktop.png` and `opening-<frame>-phone.png` for design/readme/opening.py.
+// `opening-<frame>-desktop.png` and `opening-<frame>-phone.png` for design/readme/compose.py.
 test("the phone answers a decision and the desktop sees the task resume @desktop-only", async ({ page, browser, altitude }) => {
   const errors: string[] = [];
   const phoneContext = await browser.newContext({

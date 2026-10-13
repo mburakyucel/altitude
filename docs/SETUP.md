@@ -4,6 +4,10 @@ Altitude runs for one person on Linux with a systemd user manager, or on macOS 1
 these steps top to bottom on the computer that will run it. To run it in a Linux container
 instead, see [container deployment](CONTAINERS.md).
 
+Optional [host voice](OPERATIONS.md#host-voice) needs a one-time download started by you. Once installed
+and selected, it receives one automatic update attempt when a release changes its runtime. Supported
+voice remains usable; failed or cancelled updates wait for your Retry in Settings.
+
 ## Prerequisites
 
 - **Linux** with a working systemd user manager (`systemctl --user status` answers), or **macOS 15

@@ -1,0 +1,25 @@
+<!doctype html>
+<!-- Layout of a README feature picture: two phone screens side by side, each cropped to its top or bottom.
+     design/readme/compose.py fills it with the captures; see design/readme/README.md#feature-pictures -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; width: 1720px; height: 1200px; background: transparent; overflow: hidden; }
+  .screen {
+    position: absolute; top: 40px; width: 780px; height: 1120px; overflow: hidden;
+    display: flex; flex-direction: column; justify-content: flex-start;
+    border-radius: 40px; border: 2px solid #d1d9e0; background: #f6f8fa;
+    box-shadow: 0 10px 30px rgba(15, 23, 42, .16);
+  }
+  .screen.bottom { justify-content: flex-end; }
+  .screen img { width: 780px; flex: none; }
+  .left { left: 38px; }
+  .right { left: 898px; }
+</style>
+</head>
+<body>
+  <div class="screen left top"><img src="../../docs/images/task-phone.png" alt=""></div>
+  <div class="screen right top"><img src="../../docs/images/session-phone.png" alt=""></div>
+</body>
+</html>

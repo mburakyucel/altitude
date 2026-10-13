@@ -10,6 +10,7 @@ import http.client
 import io
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -386,6 +387,8 @@ def _wheel(entries: dict[str, bytes], link: str | None = None) -> bytes:
 class TestSetup(SpeechCase):
     def setUp(self):
         super().setUp()
+        self.patch(speech, "WORKER", self.worker_file)
+        self.patch(platform, "available_memory", return_value=8_000_000_000)
         self.served: dict[str, bytes] = {}
         self.fetched: list[str] = []
         self.patch(speech.urllib.request, "urlopen", new=self.urlopen)
@@ -424,6 +427,262 @@ class TestSetup(SpeechCase):
         speech.setup()
         self.assertEqual(self.fetched, [])
 
+    def replacement(self):
+        old = speech.setup()
+        key, _ = platform.speech_runtime()
+        self.patch(speech, "SUPPORTED", {key: (old.name.removeprefix("runtime-"),)})
+        self.install({"model/encoder.onnx": b"weights" * 100,
+                      "wheels/lib.whl": _wheel({"lib/__init__.py": b"VALUE = 2\n"})})
+        self.fetched.clear()
+        return old
+
+    def test_the_support_set_is_only_the_prior_linux_122_manifests(self):
+        # Exact preceding wheels from #847's parent; model, decoder and numpy are unchanged.
+        previous = {
+            "linux-x86_64-cp312": "6964a975731afc19dc3418fad8d4e08c48920144ff590149429a5ebe0d15fb3c",
+            "linux-x86_64-cp313": "9fe45ee3e756300fccfd8d61b91129a121d3d80e9d38e01f03ff1295badc32b8",
+        }
+        expected = {}
+        for key, sha in previous.items():
+            current = [*speech.MODEL_FILES, speech._DECODER, *speech.WHEELS[key]]
+            prior = [(name.replace("onnxruntime-1.28.0", "onnxruntime-1.22.0"), url, size,
+                      sha if "onnxruntime-" in name else digest) for name, url, size, digest in current]
+            expected[key] = (speech._digest(prior),)
+            self.assertNotEqual(speech._digest(prior), speech._digest(current))
+        # Direct _digest output of historical speech.py at 7474162 (the parent of #847).
+        historical = {"linux-x86_64-cp312": ("a99b5413cbe7fbf9",),
+                      "linux-x86_64-cp313": ("ecfca085ff6ad628",)}
+        self.assertEqual(expected, historical)
+        self.assertEqual(speech.SUPPORTED, historical)
+
+    def test_cancel_timeout_reports_the_request_was_recorded(self):
+        self.replacement()
+        speech._begin()
+        self.patch(speech, "_lock", side_effect=speech.SpeechError("busy", 409))
+        with self.assertRaisesRegex(speech.SpeechError, "Cancellation is requested"):
+            speech.cancel_setup()
+        self.assertEqual(speech._state()["update"]["cancel"], "cancelled")
+
+    def test_download_checks_cancellation_between_partial_reads(self):
+        self.replacement()
+        attempt = speech._begin()
+
+        class Trickle(io.BytesIO):
+            def read(self, count=-1):
+                raise AssertionError("must not wait for an entire block")
+
+            def read1(self, count=-1):
+                speech._cancel_setup("cancelled")
+                return super().read1(1)
+
+        self.patch(speech.urllib.request, "urlopen", return_value=Trickle(b"fixture"))
+        with self.assertRaisesRegex(speech.SpeechError, "cancelled"):
+            speech._download("https://files.example/fixture", self.tmp / "download", 7,
+                             hashlib.sha256(b"fixture").hexdigest(), lambda _: None, attempt)
+
+    def test_cleanup_failure_reports_cleanup_and_keeps_verified_replacement(self):
+        old = self.replacement()
+        remove = speech.shutil.rmtree
+
+        def fail_old(path, *args, **kwargs):
+            if path == old:
+                raise OSError("fixture cleanup refusal")
+            return remove(path, *args, **kwargs)
+
+        self.patch(speech.shutil, "rmtree", new=fail_old)
+        with self.assertRaisesRegex(speech.SpeechError, "old files could not be removed"):
+            speech.setup()
+        self.assertNotEqual(speech.runtime(), old)
+        self.assertEqual(speech.status()["state"], "ready")
+        self.assertIn("old files", speech.status()["update"]["reason"])
+
+    def test_interrupted_removal_can_be_reinstalled(self):
+        old = self.replacement()
+        # Durable state after a remover exits before it can delete, or after completion is invalidated.
+        for incomplete in (False, True):
+            S.write_json(speech.ROOT / "installation.json", {"removed": True, "generation": "removed-installation"})
+            if incomplete:
+                (old / "complete.json").unlink(missing_ok=True)
+            path = speech.setup()
+            self.assertEqual(speech.runtime(), path)
+            self.assertNotEqual(speech.installation_id(), "removed-installation")
+
+    def test_removal_timeout_keeps_files_usable_with_new_identity(self):
+        old = self.replacement()
+        identity = speech.installation_id()
+        self.patch(speech, "_lease", side_effect=speech.SpeechError("busy", 425))
+        with self.assertRaisesRegex(speech.SpeechError, "removal did not finish"):
+            speech.remove_runtime()
+        self.assertEqual(speech.runtime(), old)
+        self.assertNotEqual(speech.installation_id(), identity)
+
+    def test_later_explicit_setup_is_not_deleted_by_an_earlier_remover(self):
+        self.replacement()
+        marked, release = threading.Event(), threading.Event()
+        lock = speech._lock
+
+        def delayed(wait=0):
+            if wait:
+                marked.set()
+                release.wait(5)
+            return lock(wait)
+
+        self.patch(speech, "_lock", new=delayed)
+        failures = []
+
+        def remove():
+            try:
+                speech.remove_runtime()
+            except Exception as exc:
+                failures.append(exc)
+
+        remover = threading.Thread(target=remove)
+        remover.start()
+        try:
+            self.assertTrue(marked.wait(5))
+            new = speech.setup()
+        finally:
+            release.set()
+            remover.join(5)
+        self.assertFalse(remover.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(speech.runtime(), new)
+
+    def test_cancel_during_model_check_preserves_old_runtime(self):
+        old = self.replacement()
+        self.worker_file.write_text('import time; time.sleep(60)\n')
+        host = self.host()
+        host.start_setup()
+        self.wait(lambda: speech.status().get("update", {}).get("state") == "checking")
+        host.cancel_setup()
+        self.wait(lambda: host.setup_attempt is None)
+        self.assertEqual(speech.status()["update"]["state"], "cancelled")
+        self.assertEqual(speech.runtime(), old)
+        self.assertFalse((speech.ROOT / ".staging").exists())
+
+    def test_separate_remover_waits_for_the_daemon_worker_to_exit(self):
+        old = self.replacement()
+        host = self.host()
+        host.open(None)
+        worker = host.worker
+        script = ('import sys; from pathlib import Path; from altitude import speech, platform; '
+                  'speech.ROOT=Path(sys.argv[1]); platform.container_unavailable=lambda _: None; '
+                  'speech.remove_runtime()')
+        removed = subprocess.run([sys.executable, "-c", script, str(speech.ROOT)],
+                                 capture_output=True, text=True, timeout=15)
+        self.assertEqual(removed.returncode, 0, removed.stderr)
+        self.assertIsNotNone(worker.poll())
+        self.assertFalse(old.exists())
+        self.assertIsNone(speech.runtime())
+
+    def test_shutdown_records_interruption_not_operator_cancellation(self):
+        old = self.replacement()
+        host = self.host()
+        host.open(None)
+        host.start_setup()
+        self.wait(lambda: speech.status().get("update", {}).get("state") == "waiting")
+        host.shutdown()
+        self.wait(lambda: host.setup_attempt is None)
+        self.assertEqual(speech.status()["update"]["state"], "failed")
+        self.assertIn("interrupted", speech.status()["update"]["reason"])
+        self.assertEqual(speech.runtime(), old)
+
+    def test_replacement_reuses_verified_model_and_preserves_selection(self):
+        old = self.replacement()
+        identity = speech.installation_id()
+        self.assertEqual(speech.runtime(), old)
+        new = speech.setup()
+        self.assertEqual(self.fetched, ["https://files.example/wheels/lib.whl"])
+        self.assertEqual(speech.installation_id(), identity)
+        self.assertFalse(old.exists())
+        self.assertEqual(speech.runtime(), new)
+
+    def test_corrupt_retained_model_is_downloaded_again(self):
+        old = self.replacement()
+        (old / "model/encoder.onnx").write_bytes(b"changed" * 100)
+        speech.setup()
+        self.assertIn("https://files.example/model/encoder.onnx", self.fetched)
+
+    def test_failed_verification_preserves_serving_runtime(self):
+        old = self.replacement()
+        self.worker_file.write_text('import sys; sys.exit(1)\n')
+        with self.assertRaisesRegex(speech.SpeechError, "could not run"):
+            speech.setup()
+        self.assertEqual(speech.runtime(), old)
+        self.assertEqual(speech.status()["state"], "ready")
+        self.assertEqual(speech.status()["update"]["state"], "failed")
+        self.assertEqual(speech._runtimes(), [old])
+
+    def test_start_during_verification_is_retryable_without_allocating_a_recording(self):
+        self.replacement()
+        host = self.host()
+        memory = self.patch(platform, "available_memory", return_value=1_000_000_000)
+        with speech._lease(True):
+            with self.assertRaises(speech.SpeechError) as caught:
+                host.open(None)
+            self.assertEqual(caught.exception.status, 425)
+            self.assertEqual(host.recordings, {})
+        memory.return_value = 8_000_000_000
+        ident = host.open(None)["id"]
+        self.assertEqual(self.text(host, ident, 0, 100, final=True)["text"], "100 samples.")
+
+    def test_active_recording_delays_promotion_and_final_replay_survives(self):
+        old = self.replacement()
+        host = self.host()
+        ident = host.open("phone")["id"]
+        self.text(host, ident, 0, 800, "phone")
+        host.start_setup()
+        self.wait(lambda: speech.status().get("update", {}).get("state") == "waiting")
+        self.assertTrue(old.exists())
+        self.assertEqual(speech.runtime(), old)
+        final = self.text(host, ident, 1, 200, "phone", final=True)
+        self.wait(lambda: host.setup_attempt is None)
+        self.assertFalse(old.exists())
+        self.assertEqual(self.text(host, ident, 1, 200, "phone", final=True), final)
+        next_id = host.open("phone")["id"]
+        self.assertEqual(self.text(host, next_id, 0, 100, "phone", final=True)["text"], "100 samples.")
+
+    def test_cancel_while_waiting_preserves_active_recording_and_requires_retry(self):
+        old = self.replacement()
+        self.patch(config, "voice_setting", return_value={"backend": "host"})
+        host = self.host()
+        ident = host.open(None)["id"]
+        host.update_installed()
+        self.wait(lambda: speech.status().get("update", {}).get("state") == "waiting")
+        host.cancel_setup()
+        self.wait(lambda: host.setup_attempt is None)
+        self.assertEqual(speech.status()["update"]["state"], "cancelled")
+        self.assertEqual(speech.runtime(), old)
+        self.assertEqual(self.text(host, ident, 0, 100, final=True)["text"], "100 samples.")
+        restarted = self.host()
+        restarted.update_installed()
+        self.assertIsNone(restarted.setup_attempt)
+        restarted.start_setup()
+        self.wait(lambda: restarted.setup_attempt is None)
+        self.assertNotEqual(speech.runtime(), old)
+
+    def test_automatic_update_never_installs_absent_voice_or_retries_interruption(self):
+        self.patch(config, "voice_setting", return_value={"backend": "host"})
+        host = self.host()
+        host.update_installed()
+        self.assertIsNone(host.setup_attempt)
+        self.assertEqual(self.fetched, [])
+        old = self.replacement()
+        speech._begin(automatic=True)
+        self.assertEqual(speech.status()["update"]["state"], "failed")
+        host.update_installed()
+        self.assertIsNone(host.setup_attempt)
+        self.assertEqual(speech.runtime(), old)
+
+    def test_unapproved_runtime_is_not_served_but_its_verified_model_can_be_reused(self):
+        old = self.replacement()
+        self.patch(speech, "SUPPORTED", {})
+        self.assertIsNone(speech.runtime())
+        self.assertEqual(speech.status()["state"], "outdated")
+        speech.setup()
+        self.assertEqual(self.fetched, ["https://files.example/wheels/lib.whl"])
+        self.assertFalse(old.exists())
+
     def test_a_file_that_does_not_match_its_checksum_is_refused_and_remembered(self):
         self.install({"model/encoder.onnx": b"tampered" * 100, "wheels/lib.whl": self.served["https://files.example/wheels/lib.whl"]},
                      pinned={"model/encoder.onnx": b"weights!" * 100, "wheels/lib.whl": self.served["https://files.example/wheels/lib.whl"]})
@@ -459,10 +718,10 @@ class TestSetup(SpeechCase):
         self.assertEqual(speech.status()["state"], "ready")
 
     def test_cancel_leaves_nothing_behind_and_no_failure(self):
-        cancel = threading.Event()
-        cancel.set()
+        attempt = speech._begin()
+        speech.cancel_setup()
         with self.assertRaisesRegex(speech.SpeechError, "cancelled"):
-            speech.setup(cancel)
+            speech.setup(attempt=attempt)
         self.assertFalse((speech.ROOT / ".staging").exists())
         self.assertEqual(speech.status()["state"], "absent")
 
@@ -475,17 +734,31 @@ class TestSetup(SpeechCase):
             return io.BytesIO(self.served[url])
 
         self.patch(speech.urllib.request, "urlopen", new=slow)
-        worker = threading.Thread(target=speech.setup)
+        errors = []
+
+        def setup():
+            try:
+                speech.setup()
+            except speech.SpeechError as exc:
+                errors.append(str(exc))
+
+        worker = threading.Thread(target=setup)
         worker.start()
         started.wait(5)
         self.assertEqual(speech.status()["state"], "setting-up")
         with self.assertRaisesRegex(speech.SpeechError, "already being set up"):
             speech.setup()
-        with self.assertRaisesRegex(speech.SpeechError, "Cancel setup first"):
-            speech.remove_runtime()
+        remover = threading.Thread(target=speech.remove_runtime)
+        remover.start()
+        self.wait(lambda: speech._state().get("removed"))
         release.set()
         worker.join(5)
-        self.assertEqual(speech.status()["state"], "ready")
+        remover.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(remover.is_alive())
+        self.assertTrue(any("cancelled" in reason for reason in errors))
+        self.assertEqual(speech.status()["state"], "absent")
+        self.assertEqual(speech._runtimes(), [])
 
     def test_setup_replaces_an_outdated_runtime(self):
         (speech.ROOT / "runtime-0000").mkdir(parents=True)
@@ -506,13 +779,13 @@ class TestSetup(SpeechCase):
         with self.assertRaisesRegex(speech.SpeechError, "already being set up"):
             speech.setup()
         release.set()
-        self.wait(lambda: host.setup_cancel is None)
+        self.wait(lambda: host.setup_attempt is None)
         self.assertEqual(speech.status()["state"], "ready")
 
     def test_the_daemon_sets_up_in_the_background_and_can_cancel(self):
         host = self.host()
         host.start_setup()
-        self.wait(lambda: host.setup_cancel is None)
+        self.wait(lambda: host.setup_attempt is None)
         self.assertEqual(speech.status()["state"], "ready")
         self.assertTrue(any("set up" in line for line in self.logs))
 
@@ -620,8 +893,12 @@ class TestHostVoiceRoutes(SpeechCase):
         self.assertEqual((status, payload["error"]), (409, "Voice settings changed. Record again with the new setting."))
         S.write_json(config.ROOT / "settings.json", {"voice": "host"})
         self.patch(speech, "runtime", return_value=speech.ROOT / "runtime-updated")
-        self.assertNotEqual(server.voice_view()["selection"], selection, "a new runtime is a new selection")
+        self.assertEqual(server.voice_view()["selection"], selection, "supported replacement preserves replay")
         self.assertEqual(self.post(f"/api/voice/live/{ident}/audio?seq=1", b"", "application/octet-stream",
+                                   **chunk)[0], 200)
+        server.SPEECH.remove()
+        self.assertNotEqual(server.voice_view()["selection"], selection, "removal invalidates recordings")
+        self.assertEqual(self.post(f"/api/voice/live/{ident}/audio?seq=2", b"", "application/octet-stream",
                                    **chunk)[0], 409)
 
     def test_a_replay_stays_with_the_device_that_opened_the_first_recording(self):

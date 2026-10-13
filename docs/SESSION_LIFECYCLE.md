@@ -740,7 +740,9 @@ Every terminal result reaches only the originating L3, including unchanged failu
 a concrete next step and gives a concise heads-up for significant stalled work. Repeated observations
 stay quiet; a finished probe schedules no further CI check. A changed block,
 attempt or lifecycle request invalidates the probe. Fault, questions, hold and provider ownership
-stay intact; probing does not resume implementation. See [bounds and evidence](CLI.md#durable-ci-recheck).
+stay intact; probing does not resume implementation. L3 reports schedules in project chat without
+waking the owner merely to acknowledge registration; necessary lifecycle changes require a truthful
+replacement next action. See [scheduling, bounds and evidence](CLI.md#durable-ci-recheck).
 
 The owner applies the operator's task-chat approval of a held PR with `alt land --merge --approval`;
 L3 applies a project-chat approval through [`hold-merge --approval`](CLI.md#recorded-merge-approval).
@@ -921,13 +923,29 @@ No eligible alternative leaves the task blocked. Only a provider-reported reset 
 unknown reset times create no timer. The existing thirty-minute routing observation expiry is an
 availability recheck, not a reset claim. Ordinary resume preserves the provider conversation and launch model.
 
-For an already exited owner blocked by worker death or a recognized usage limit, L3 or the operator
+For a running owner, an operator/L3-stopped owner, or one blocked by worker death or a recognized usage limit, L3 or the operator
 uses [`alt task handoff`](CLI.md#explicit-provider-handoff) with the observed attempt, target engine
-and reason. The daemon fences worker/session and block identity, refuses live workers, in-flight claims,
+and reason. A running owner gets one native checkpoint instruction to refresh `progress.md` and write a
+request-specific readiness file identifying its attempt and worker/session. That receipt replaces
+the normal block/report at turn end; the owner ends its turn without another lifecycle command.
+This works with workers
+whose immutable CLI predates handoff. Readiness does not depend on file modification time or a send receipt.
+There is no automatic timeout. Confirmed engine exit, a recorded usage limit, an existing Stop or an
+explicit `--now` allows saved-context transfer without a new note; silence and network failure do not.
+`--request <id> --cancel` cancels while the request waits and sends a correction to the same owner.
+Once the daemon records its stopping phase, cancellation refuses. The daemon stops the entire owned
+job and requires confirmed termination before requeue. A restart retains the request and readiness
+identity, does not resend a claimed checkpoint instruction, and recognizes a completed requeue.
+Workers without native message delivery expose that limitation and wait for explicit switch-now or
+cancel. Cancellation/refusal/failure leaves a correction in the task inbox, steered into the current
+turn when possible and retained for its next turn otherwise. Owner blocks and explicit Stop/Reject
+supersede preparation; a newly finished report proceeds to verification. Pending native commands
+may move to background when the checkpoint is delivered; their unfinished status stays explicit.
+The daemon fences worker/session and block identity, refuses in-flight claims and active reviews,
 finished tasks and decision-only waits, and checks task/project pins and target availability. It retains
 the old worker records and requeues the same task with a one-attempt `next_engine`. Requeue clears the
 current verification snapshot; prior reports and delivery history remain. Dispatch checks pins
-and configured target options again, preserves committed and uncommitted work in the existing worktree,
+and configured target options again, ignores new-task model choices, preserves committed and uncommitted work in the existing worktree,
 validates isolation and adopted ancestry, and increments the attempt only when the fresh worker binds. The target is then
 consumed. Task identity, PRs, expected files, saved messages, unanswered questions, decisions and merge holds
 survive; continuation supplies no missing approval. L3 verifies activation and fresh task state before

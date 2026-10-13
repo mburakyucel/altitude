@@ -943,6 +943,10 @@ const HostVoiceSchema = z.union([
   z.object({
     state: z.enum(["absent", "setting-up", "ready", "failed", "outdated"]), download_bytes: z.number(),
     done_bytes: z.number().optional(), reason: z.string().optional(),
+    update: z.object({
+      state: z.enum(["preparing", "downloading", "waiting", "checking", "failed", "cancelled"]),
+      done_bytes: z.number().optional(), download_bytes: z.number().optional(), reason: z.string().optional(),
+    }).optional(),
   }),
 ]);
 const VoiceSchema = z.object({ backend: z.enum(["browser", "host"]), selection: z.string(), host: HostVoiceSchema });

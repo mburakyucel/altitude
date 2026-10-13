@@ -138,13 +138,20 @@ state and worker/session identity, refuses a stale target, and treats a retry of
 request as idempotent while the terminal receipt still matches; an intervening lifecycle gets a new
 identity-fenced request before altd relaunches, stops, or removes a worker.
 `alt task handoff <slug> --engine <engine> --attempt <N> --reason '…'` uses this same coordinator
-transport and daemon request for an exited owner blocked by worker death or a recognized usage
-limit. It fences the observed attempt, worker/session and block, refuses live workers, active claims
-and explicit pins, and requeues the same task. Its `next_engine` confines the next launch to that
+transport and daemon request for a running owner, an operator/L3-stopped owner, or one blocked by
+worker death or a recognized usage limit. The running owner receives a native instruction to refresh
+`progress.md` and write a request/attempt/worker-bound readiness file; no updated owner CLI is required.
+The daemon waits without a timeout. Confirmed exit, a recorded usage limit, existing Stop or explicit
+`--now` permits transfer using saved context. `--request <id> --cancel` keeps the current owner until
+the stopping phase commits. Neither silence nor network failure forces a switch. The entire worker
+job must be confirmed stopped before requeue. The durable request fences the observed attempt,
+worker/session and block, refuses active claims/reviews and explicit pins, and retains its receipt
+across restart. Its `next_engine` confines the next launch to that
 engine's configured options and is consumed when dispatch binds the fresh attempt. Pins and
 availability are checked again before execution and launch. `route.pick_task` supplies the same
 target-aware availability and pin explanation to dispatch and the queue. A fresh attempt clears current
-verification while retaining prior reports and delivery history. Ordinary resume remains unchanged.
+verification while retaining prior reports and delivery history. Handoff ignores new-task model choices
+and reports whether a fresh handoff note was obtained. Ordinary resume remains unchanged.
 The attempt number fences every L2 command to the current attempt: an L2 may reply, block, complete,
 resolve a dilemma against its source message, and land only its own task.
 
@@ -1596,6 +1603,10 @@ same project-bound coordinator transport. The task's `ci_recheck` record binds i
 worker/session and lifecycle request identities, selected run, due time, budgets, evidence and L3
 receipt. The existing tick/keyed executor owns IO; `resume_after` and `daemon_request` retain their
 ordinary lifecycle meaning. A lifecycle change invalidates further probe actions.
+L3 reports a schedule in project chat or retains it in project tracking, without a task-message
+acknowledgement that wakes the blocked owner and invalidates its probe. Necessary coordination
+that changes lifecycle replaces the old promise with a named next actor and trigger; a renewed CI
+wait needs registration against the current block and verification of the saved next action/time.
 The daemon prefers a relevant fresh run of the same workflow, branch, event and PR identity from
 the latest twenty runs. Otherwise a probe on a fault-blocked task submits one rerun of the selected
 project-origin run after persisting its baseline attempt and submission intent; a probe on a task
@@ -2808,7 +2819,8 @@ Voice transcription sits behind the capability seam as one machine setting, `voi
 settings file: `host` or `browser`. Without a saved choice the backend is `host` when this release's
 speech manifest names a runtime this computer can run, and `browser` elsewhere.
 `GET /api/voice` reports the backend, an opaque selection identity over the backend and, for `host`,
-the pinned runtime, and `host`, where host voice stands on this computer. `alt machine set --voice`
+the installation identity, and `host`, where host voice stands on this computer. Supported runtime
+replacement preserves that identity; removal invalidates it. `alt machine set --voice`
 requests a change through the same durable request that carries `wip`; `--unset-voice` returns to the
 default.
 
@@ -2850,11 +2862,40 @@ Each file streams into `~/.altitude/speech/.staging` with a size cap and must ma
 SHA-256. The wheels are unpacked with the release installer's path rules (no absolute, parent,
 backslash or link entries, a total size cap) into `site/`, not installed with pip. A completion record
 naming the manifest digest is written last and the folder is moved to `runtime-<digest>` in one
-rename; only a runtime whose record matches this release's manifest is used, and a changed manifest
-reads as `outdated`. An exclusive file lock admits one setup across the daemon and the CLI. Cancel or
-any failure deletes staging; a failure, not a cancel, is remembered for Settings until the next setup.
-`remove` refuses during setup, stops the worker and deletes every runtime; the daemon also stops its
-worker within a second when its runtime disappears under it (`alt voice remove`).
+rename. Before promotion, the actual isolated worker loads the model and performs its warmup within
+the load deadline. Completed runtimes explicitly supported by this release keep serving during an
+update; unknown, incompatible or revoked runtimes read as `outdated` and cannot serve recordings.
+Support is an explicit per-platform/interpreter digest list, never inferred from age or a completion
+marker alone. Retained model files are copied only after matching the target size and SHA-256; wheel
+archives are downloaded and deleted after unpacking. There is no download cache.
+
+The support set retains the preceding Linux onnxruntime 1.22 manifests for CPython 3.12 and 3.13;
+both load and warm up with the current worker and the exact pinned model. The supported-table test
+derives their identities from those prior wheel checksums and the unchanged model/decoder/numpy.
+There is no preceding macOS manifest for this transition, so no prior macOS runtime is admitted.
+Future pin changes review and test their preceding platform manifests explicitly. This is fixed-model compatibility, not general support for arbitrary
+ONNX graphs: clients provide bounded PCM, never graph attributes or tensors. A release removes a
+digest if a relevant unsafe runtime is identified; an offline release cannot learn future revocations.
+
+At daemon startup, selected, already-installed host voice gets one automatic attempt per target
+manifest. First installation stays manual. The installation record persists the attempt, cancellation,
+failure and stable selection identity. An interrupted attempt also requires explicit Retry; switching
+to browser recognition cancels an automatic attempt. Availability (`ready` or `outdated`) is independent
+of `host.update`: `preparing`, `downloading` with bytes, `waiting`, `checking`, `failed` or `cancelled`.
+Settings shows phase/progress with Cancel or Retry; ready voice remains usable. Unsupported voice links
+to the running update instead of offering a duplicate setup.
+
+One file lock admits setup across CLI and daemon. Workers inherit a shared use lock; verification,
+promotion and cleanup acquire it exclusively. Active recordings finish before the idle worker exits
+for the update. Finished response replay remains available. Staging temporarily uses another runtime's
+disk space; preflight budgets downloads and bounded wheel expansion. Cancel or failure deletes staging
+and leaves supported voice available. `alt voice cancel` and Settings cancel the shared attempt.
+Remove records an invalidating tombstone first, cancels setup, drains worker use and deletes runtimes;
+the daemon observes removal within a second. Successful promotion cleans superseded runtimes only
+after their readers exit.
+Removal invalidates completion before deleting a runtime's files, so interruption cannot leave a
+partially deleted runtime usable. A later explicit setup can recover an interrupted removal. A lock
+timeout restores availability without restoring old recording identity, and reports removal unfinished.
 
 The worker (`altitude/speech_worker.py`) runs as `python -I` with the daemon's interpreter and a
 minimal environment, imports only the runtime's unpacked wheels, runs the model on onnxruntime's CPU

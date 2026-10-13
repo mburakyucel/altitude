@@ -233,7 +233,12 @@ function hostVoiceHint(voice: VoiceSettings): ReactNode {
   if (host.state === "unavailable") return `Voice isn't available on this computer: ${host.reason}. Typing works.`;
   if (host.state === "failed") return <>Voice setup did not finish. <Link className="link" to="/settings/voice">Retry in Settings</Link>. Typing works.</>;
   if (host.state === "setting-up") return "Voice is being set up on this computer. Typing works.";
-  return <>{host.state === "outdated" ? "Voice needs an update on this computer." : "Voice needs a one-time download on this computer."}{" "}
+  if (host.state === "outdated") {
+    const updating = host.update && host.update.state !== "failed" && host.update.state !== "cancelled";
+    return <>{updating ? "Voice is updating on this computer." : "Voice needs an update on this computer."}{" "}
+      <Link className="link" to="/settings/voice">{updating ? "View update" : "Update voice"}</Link></>;
+  }
+  return <>Voice needs a one-time download on this computer.{" "}
     <Link className="link" to="/settings/voice">Set up voice</Link></>;
 }
 

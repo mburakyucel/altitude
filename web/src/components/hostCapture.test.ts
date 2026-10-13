@@ -69,6 +69,27 @@ describe("HostCapture", () => {
     expect(mic.unlisten).toHaveBeenCalled();
   });
 
+  it("retains samples while runtime verification defers opening a recording", async () => {
+    const mic = microphone();
+    let checking = true;
+    reply = (call) => call.path === "/api/voice/live"
+      ? checking ? answer({ error: "Voice is checking an update. Try again shortly." }, 425) : answer({ id: "rec", owner: "device" })
+      : answer({ text: "Retained words.", final: true });
+    const capture = new HostCapture(mic.stream, "selection-1");
+    capture.start();
+    await vi.advanceTimersByTimeAsync(0);
+    mic.speak(8000);
+    expect(capture.connection).toBe("catching-up");
+    expect(capture.failure).toBeNull();
+    checking = false;
+    capture.stop();
+    await vi.advanceTimersByTimeAsync(3000);
+    const audio = calls.find((call) => call.path.includes("/audio"));
+    expect((audio!.body as Int16Array).length).toBe(8000);
+    expect(capture.failure).toBeNull();
+    expect(capture.state).toBe("inactive");
+  });
+
   it("gathers samples while a request is in flight and sends them together, at most ten seconds each", async () => {
     const mic = microphone();
     let release: () => void = () => undefined;
