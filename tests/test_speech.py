@@ -856,20 +856,27 @@ class TestSetup(SpeechCase):
                     for root in roots:
                         self.assertFalse(runtime.is_relative_to(root), f"{engine} may write {runtime} through {root}")
 
+    def home(self) -> Path:
+        """A fixture home; storage writes walk from RUNTIME_ROOT, so it moves with ROOT."""
+        home = self.tmp / "home"
+        home.mkdir()
+        self.patch(config, "ROOT", home)
+        self.patch(config, "RUNTIME_ROOT", home.resolve())
+        return home
+
     def old_runtime(self, home: Path, finished: bool = True) -> Path:
         old = home / "speech"
         runtime = old / "runtime-earlier"
         (runtime / "site").mkdir(parents=True)
         (runtime / "site" / "numpy.py").write_text("raise SystemExit('planted')\n")
         if finished:
-            (runtime / "complete.json").write_text('{"digest": "earlier"}')
+            S.write_json(runtime / "complete.json", {"digest": "earlier"})
         for name in ("installation.json", ".control", ".lock", ".use", "worker.log", "verification.log"):
             (old / name).write_text("{}" if name.endswith(".json") else "")
         return old
 
     def test_startup_deletes_the_home_runtime_and_sets_host_voice_up_again_beside_it(self):
-        home = self.tmp / "home"
-        self.patch(config, "ROOT", home)
+        home = self.home()
         old = self.old_runtime(home)
         outside = self.tmp / "outside"
         outside.mkdir()
@@ -887,8 +894,7 @@ class TestSetup(SpeechCase):
         self.assertIn("voice: setting up again beside Altitude's home", self.logs)
 
     def test_voice_is_set_up_again_only_for_a_finished_runtime_and_host_voice(self):
-        home = self.tmp / "home"
-        self.patch(config, "ROOT", home)
+        home = self.home()
         self.old_runtime(home, finished=False)
         self.assertFalse(speech.remove_home_runtime())
         self.old_runtime(home)
@@ -900,8 +906,7 @@ class TestSetup(SpeechCase):
         self.assertEqual(self.fetched, [])
 
     def test_a_project_sharing_the_name_keeps_its_state(self):
-        home = self.tmp / "home"
-        self.patch(config, "ROOT", home)
+        home = self.home()
         old = self.old_runtime(home)
         (old / "tasks" / "fictional").mkdir(parents=True)
         self.patch(config, "load_projects", return_value={"speech": {}})
@@ -913,8 +918,7 @@ class TestSetup(SpeechCase):
         self.assertEqual(sorted(path.name for path in old.iterdir()), [".lock", "tasks"])
 
     def test_entries_a_worker_made_unreadable_never_stop_startup(self):
-        home = self.tmp / "home"
-        self.patch(config, "ROOT", home)
+        home = self.home()
         old = self.old_runtime(home)
         for path in (old / "runtime-earlier", old):
             path.chmod(0)
@@ -939,9 +943,7 @@ class TestSetup(SpeechCase):
         self.assertTrue(any(line.startswith("voice: automatic update unavailable") for line in self.logs))
 
     def test_a_link_in_place_of_the_folder_is_never_followed(self):
-        home = self.tmp / "home"
-        home.mkdir()
-        self.patch(config, "ROOT", home)
+        home = self.home()
         target = self.old_runtime(self.tmp / "elsewhere").parent
         (home / "speech").symlink_to(target / "speech")
         self.assertFalse(speech.remove_home_runtime())
