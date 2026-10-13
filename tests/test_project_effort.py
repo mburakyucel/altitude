@@ -200,7 +200,7 @@ class TestProjectEffortHTTP(AltitudeCase):
         self.assertEqual(field(view, "l2", "codex", "effort")["default"], "High")
         self.assertEqual(field(view, "l3", "codex", "effort")["default"], "Medium")
         self.assertEqual([c["value"] for c in field(view, "l3", "claude", "effort")["choices"]], list(config.ENGINE_EFFORTS["claude"]))
-        self.assertEqual([c["value"] for c in field(view, "l3", "codex", "effort")["choices"]], list(config.TASK_EFFORTS))
+        self.assertEqual([c["value"] for c in field(view, "l3", "codex", "effort")["choices"]], list(config.ENGINE_EFFORTS["codex"]))
         for setting, value in (("l3_effort", "high"), ("l2_codex_effort", "ultra"), ("l3_codex_model", "codex-model"), ("l3_effort", None)):
             status, view = self.call("POST", "/api/defaults", {"project": self.project, "setting": setting, "value": value})
             role, engine, kind = config.DEFAULT_SETTINGS[setting]

@@ -6,7 +6,7 @@ import { decisionsFor, dotFor, managedProjects, unmanagedFolders } from "./proje
 import { BrandMark } from "./BrandMark";
 import { ThemeToggle } from "./theme";
 import { attentionCount } from "../data/decisions";
-import { NewTasksButton } from "../components/Models";
+import { RoleModelButton } from "../components/ModelMenu";
 
 /** "78% of week", "no reading", "52% of week · reading 3h old" (SPEC.md §3.1). */
 export function readoutText(row: EngineReadout): string {
@@ -92,7 +92,7 @@ export function Rail({
           ))}
         </ul>
       ) : null}
-      {data ? <div className="rail-new-tasks"><NewTasksButton overview={data} project={/^\/projects\/([^/]+)/.exec(location.pathname)?.[1]} /></div> : null}
+      {data ? <div className="rail-new-tasks"><RoleModelButton variant="row" /></div> : null}
         <NavLink to="/monitor" className="rail-item">
           Monitor
         </NavLink>

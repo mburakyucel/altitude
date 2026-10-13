@@ -8,7 +8,7 @@ import type { ChatView, Decision, EngineReadout, Overview, ProjectView, TaskRow 
 import { agoText } from "../data/observed";
 import { attentionSummary } from "../data/decisions";
 import { TaskCard } from "../components/TaskCard";
-import { NewTasksButton } from "../components/Models";
+import { RoleModelButton } from "../components/ModelMenu";
 import { handling } from "../components/SystemLine";
 import { useViewport } from "../shell/breakpoints";
 import { Overlay } from "../shell/Overlay";
@@ -86,7 +86,7 @@ export function WorkPanel({
           {current.length} current · {doneThisWeek.length} done this week{project.isError ? " · saved" : ""}
         </p> : null}
       </div>
-      {phone ? <NewTasksButton overview={overview.data} project={name} wide /> : null}
+      {phone ? <RoleModelButton variant="row" /> : null}
       {project.isError ? <p className="text-meta text-danger" role="alert">
         {project.data ? "Showing saved work." : "Could not read the project's work."}{" "}
         <button type="button" className="link" onClick={() => project.refetch()}>Retry</button>

@@ -1,0 +1,46 @@
+/* The model menus (SPEC.md §3.6.1): one button per place showing model and effort; its panel lists both side by side. */
+.model-pair-labelled { display: grid; gap: 6px; justify-items: start; min-width: 0; }
+.model-pair-label { color: var(--text-muted); font-size: var(--text-meta); }
+.model-menu-anchor { position: relative; display: inline-flex; min-width: 0; max-width: 100%; }
+/* The effort keeps its whole value; the model gives way first. On a phone the role prefix and "effort" go before either. */
+.models-pill .model-pair-model { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.models-pill .model-pair-effort { flex: none; white-space: nowrap; }
+.shell[data-phone] .model-pair-hint { display: none; }
+.models-pill .model-pair-failed { color: var(--danger); }
+/* A button that cannot open now looks it: muted, without its chevron. */
+.models-pill:disabled, .models-pill[data-muted] { color: var(--text-muted); cursor: default; }
+.models-pill:disabled strong, .models-pill[data-muted] strong { color: var(--text-muted); }
+.models-pill:disabled .model-menu-chevron { display: none; }
+.shell[data-phone] .model-menu-anchor > .models-pill { min-height: 44px; }
+.model-menu-chevron { color: var(--text-muted); margin-left: 2px; flex: none; }
+.menu.model-menu { position: fixed; z-index: 40; overflow: hidden; gap: 0; padding: 6px; }
+.model-menu-title, .model-menu-heading, .model-menu-column-titles { margin: 0; padding: 10px 12px 4px; color: var(--text-muted); font-size: var(--text-meta); }
+.model-menu-title { color: var(--text-secondary); font-weight: 600; }
+.model-menu-column-titles { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 4px; padding: 6px 0 4px; }
+.model-menu-column-titles > span { padding: 0 12px; }
+.model-menu-column-titles > span + span { padding-left: 17px; }
+.model-menu-heading { padding-top: 12px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+/* Only the columns scroll, so the title, notes and a pending confirmation stay in view. */
+.model-menu-columns { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 4px; align-items: start; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.model-menu-column + .model-menu-column { border-left: 1px solid var(--border); padding-left: 4px; }
+.model-menu-row { gap: 8px; align-items: center; padding-block: 6px; }
+.model-menu-row[data-checked] { background: var(--accent-tint); font-weight: 600; }
+.model-menu-row[data-pending] { box-shadow: inset 0 0 0 1.5px var(--accent); font-weight: 600; }
+/* Hover tints only under a pointer that hovers; keyboard focus is an outline, so neither reads as a second selection. */
+.model-menu-row:not([data-checked]):hover { background: transparent; }
+@media (hover: hover) { .model-menu-row:not([data-checked]):hover { background: var(--hairline); } }
+.model-menu-row:focus { outline: none; }
+.model-menu-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.model-menu-row[aria-disabled] { color: var(--text-muted); cursor: default; }
+.model-menu-label { display: grid; min-width: 0; text-align: left; }
+.model-menu-label > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-menu-label .menu-item-meta { margin: 0; padding: 0; font-weight: 400; white-space: normal; }
+.model-menu-mark { display: inline-flex; width: 18px; height: 18px; margin-left: auto; flex: none; color: var(--accent); }
+.model-menu-why, .model-menu-note { margin: 0; padding: 4px 12px 8px; color: var(--text-muted); font-size: var(--text-meta); }
+.model-menu-note[data-tone="warn"] { color: var(--text-secondary); }
+.model-menu-note[data-tone="danger"] { color: var(--danger); }
+.model-menu-confirm { display: grid; flex: none; gap: 8px; margin: 6px -6px -6px; padding: 12px 14px 14px; border-top: 1px solid var(--border); }
+.model-menu-confirm .model-menu-note { padding: 0; }
+.model-menu-confirm-title { margin: 0; font-weight: 600; }
+.model-menu-actions { display: flex; gap: 8px; }
+.shell[data-phone] .model-menu-row { min-height: 44px; }

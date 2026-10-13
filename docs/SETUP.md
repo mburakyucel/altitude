@@ -339,18 +339,15 @@ Open the project and send:
 The coordinator, shown as L3, replies. When you settle on a change, ask it to create a task, then
 follow the task's owner (L2), its session and its pull request in the work panel. Ask for a merge
 hold to review a result yourself before it merges. Agent work uses your coding account's allowance
-and normal charges. Altitude picks engines automatically. Open **Settings → Models and effort ·
-All projects** to choose a model and matching effort for each engine. For example, select **6.1 Sol**
-in the Codex Model dropdown; no external CLI configuration is needed. Each selection saves
-immediately and leaves the other engine's pair unchanged. **Engines** separately chooses how new
-work is routed.
-
-These defaults apply across projects to coordinator replies, fresh task starts (including queued
-tasks) and ordinary reviews. Started tasks keep their launch model and effort. Existing explicit
-project or task requests still win; **Existing overrides** shows saved exceptions and lets you
-clear a model/effort override with **Use global defaults**, retaining its engine preference.
-**Altitude default** restores inheritance; **Native** effort asks Claude to choose and sends Codex
-Medium, since Altitude names the level on every Codex launch.
+and normal charges. Altitude picks engines automatically. To choose a model and effort yourself,
+press the model and effort button where the work runs: under the chat's message box for the
+coordinator, **New tasks** beside quota for new tasks in every project, or in a task to switch that
+task. For example, pick **6.1 Sol** and **High** to run on Codex at High; no external CLI
+configuration is needed. Coordinator and New tasks picks save at once; a task asks you to confirm
+the switch first, since a fresh session continues from its saved work. Started tasks keep their
+model and effort until you switch them, and a task that reaches its usage limit waits for the reset
+or for your switch. A project's own settings appear in Settings under **Project settings**, where
+**Reset** clears one.
 Named choices and shared account allowance do not prove model access. Requested and reported
 values remain distinct. See [model choices](CLI.md#model-choices) for precedence and timing.
 

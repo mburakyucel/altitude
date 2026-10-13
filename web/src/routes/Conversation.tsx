@@ -14,7 +14,7 @@ import { carries, inFlight, readOf, retired, settleOutgoing, startOutgoing, upda
 import type { Outgoing } from "../data/outbox";
 import { Bubble, DayDivider, RemoveMessage, Reply, Typing, notDone, useEntrance } from "../components/Bubbles";
 import Composer, { markSubmitted, releaseSubmitted, returnToComposer } from "../components/Composer";
-import { L3ModelButton } from "../components/Models";
+import { RoleModelButton } from "../components/ModelMenu";
 import type { ImageSubmission } from "../components/ImageDraft";
 import { MessageImages, PendingImages } from "../components/MessageImages";
 import { SystemGroup, SystemLine, notable, subjectOf } from "../components/SystemLine";
@@ -603,7 +603,7 @@ export default function Conversation({
           placeholder={`Message L3 about ${name}`}
           ariaLabel={`Message L3 about ${name}`}
           busy={busy}
-          pill={<L3ModelButton project={name} />}
+          pill={<RoleModelButton project={name} />}
           hint="L3 answers or creates one task. Shift + Enter for a new line."
         />
       </div>

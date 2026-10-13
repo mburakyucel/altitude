@@ -17,26 +17,17 @@ async function defaults(request: APIRequestContext, name: string) {
   expect(response.ok()).toBe(true);
   return await response.json() as Defaults;
 }
-test("project settings keeps engine selection separate from global models", async ({ page, request }, info) => {
+test("project settings has routing and no model controls; the coordinator's model lives under its chat", async ({ page, request }, info) => {
   const project = await fixtureProject(request);
   const walk = walkthrough(page, info);
   const main = page.getByRole("main");
-  const initial = await defaults(request, project.name);
-  const engine = initial.engines[0]!;
   await walk.open(`/settings/projects/${encodeURIComponent(project.name)}`);
-  const select = main.getByRole("combobox", { name: "Coordinator engine", exact: true });
-  await walk.state("01-project-engine-controls", {
-    visible: [select, main.getByRole("combobox", { name: "Tasks routing" }), main.getByRole("link", { name: "Models and effort · All projects", exact: true })],
-    hidden: [main.getByRole("heading", { name: "Auto defaults", exact: true }), main.getByRole("combobox", { name: / effort$/ })],
+  const l3 = main.getByRole("region", { name: "L3", exact: true });
+  await walk.state("01-routing-without-model-controls", {
+    visible: [l3.getByText("Who answers in this project's chat. Its model and effort are under the chat's message box.", { exact: true }), main.getByRole("combobox", { name: "Tasks routing" })],
+    hidden: [main.getByRole("combobox", { name: "Coordinator engine", exact: true }), main.getByRole("link", { name: /Models and effort/ }),
+      main.getByRole("heading", { name: "Auto defaults", exact: true }), main.getByRole("combobox", { name: / effort$/ })],
   });
-  await select.selectOption(engine.value);
-  await expect.poll(async () => (await defaults(request, project.name)).l3_choice).toEqual({ engine: engine.value });
-  await page.reload();
-  await expect(select).toHaveValue(engine.value);
-  await walk.state("02-engine-preference-saved", { visible: [select], hidden: [main.getByRole("alert")] });
-  await select.selectOption("");
-  await expect.poll(async () => (await defaults(request, project.name)).l3_choice).toBeNull();
-  await walk.state("03-auto-restored", { visible: [select], hidden: [main.getByRole("alert")] });
 });
 
 test("Tasks routing Prefer and Only save, survive reload and restore Auto", async ({ page, request }, info) => {
@@ -139,16 +130,16 @@ test("project settings loading and read failure can retry; the project section s
   });
   try {
     await walk.open(`/settings/projects/${encodeURIComponent(project.name)}`);
-    await walk.state("01-loading", { visible: [main.getByRole("status", { name: "Loading settings…", exact: true })], hidden: [main.getByRole("combobox", { name: "Coordinator engine", exact: true })] });
+    await walk.state("01-loading", { visible: [main.getByRole("status", { name: "Loading settings…", exact: true })], hidden: [main.getByRole("region", { name: "L3", exact: true })] });
     release();
     await walk.state("02-read-error", {
       visible: [main.getByText("Could not load settings."), main.getByRole("button", { name: "Retry", exact: true }), remove],
-      hidden: [main.getByRole("status", { name: "Loading settings…", exact: true }), main.getByRole("combobox", { name: "Coordinator engine", exact: true }), main.getByRole("region", { name: "Routing", exact: true })],
+      hidden: [main.getByRole("status", { name: "Loading settings…", exact: true }), main.getByRole("region", { name: "L3", exact: true }), main.getByRole("region", { name: "Routing", exact: true })],
     });
     fail = false;
     await walk.state("03-recovered", {
       action: () => main.getByRole("button", { name: "Retry", exact: true }).click(),
-      visible: [main.getByRole("combobox", { name: "Coordinator engine", exact: true }), main.getByRole("combobox", { name: "Tasks routing" }), remove], hidden: [main.getByRole("alert")],
+      visible: [main.getByRole("region", { name: "L3", exact: true }), main.getByRole("combobox", { name: "Tasks routing" }), remove], hidden: [main.getByRole("alert")],
     });
   } finally { release(); }
 });

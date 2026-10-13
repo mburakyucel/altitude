@@ -15,15 +15,19 @@ test("fixture control only addresses its own created tasks", async ({ request })
 
 const path = (slug: string) => `/api/task/atlas/${slug}`;
 const card = (page: Page) => page.getByRole("region", { name: "Task conversation", exact: true })
-  .getByRole("region", { name: /^(Preparing change|Task change)$/ });
+  .getByRole("region", { name: "Model switch" });
 const draft = (page: Page) => page.getByRole("textbox", { name: "Message the L2", exact: true });
+const button = (page: Page) => page.getByRole("button", { name: /^Task model and effort:/ });
+const panel = (page: Page) => page.getByRole("menu", { name: "This task’s model and effort", exact: true });
+const confirmation = (page: Page) => panel(page).getByRole("group", { name: "Confirm the switch", exact: true });
+const switchButton = (page: Page) => confirmation(page).getByRole("button", { name: "Switch", exact: true });
+/** Opens the task's panel and picks the first model on another engine that can run, which shows the confirmation. */
 async function start(page: Page) {
-  await page.getByRole("button", {name:/^Task model:/}).click();
-  const engine=page.getByRole("combobox",{name:"Engine",exact:true});
+  await button(page).click();
   const slug=new URL(page.url()).pathname.split("/").at(-1);
   const task=await (await page.request.get(`/api/task/atlas/${slug}`)).json();
   const other=task.transfer.targets.find((item:{engine:string;available:boolean})=>item.engine!==task.transfer.current_engine && item.available);
-  if(other) await engine.selectOption(other.engine);
+  await panel(page).getByRole("group",{name:"Model",exact:true}).getByRole("group",{name:other.label,exact:true}).getByRole("menuitemradio").first().click();
 }
 
 test("patient transfer cancels without losing the draft, then readiness starts a fresh owner", async ({ page, request }, info) => {
@@ -39,14 +43,14 @@ test("patient transfer cancels without losing the draft, then readiness starts a
   await expect(details.getByRole("button",{name:"Switch engine…"})).toBeHidden();
   await page.keyboard.press("Escape");
   await expect(details).toBeHidden();
-  const pill=page.getByRole("button",{name:/^Task model:/});
+  const pill=button(page);
   const box=await pill.boundingBox();
   expect(box!.height).toBeGreaterThanOrEqual(44);
   await walk.state("00b-task-composer-model-entry",{visible:[pill],hidden:[details]});
   await draft(page).fill("Keep this unsent instruction.");
   await draft(page).evaluate((node: HTMLTextAreaElement) => node.setSelectionRange(5, 9));
   await start(page);
-  const confirm = page.getByRole("dialog", { name: "This task’s model", exact: true });
+  const confirm = confirmation(page);
   await walk.state("01-confirm-context-and-cost", { visible: [confirm, confirm.getByText(/Some context may be lost/)], hidden: [card(page)] });
   // Opening the chooser and choosing a target only shows choices; nothing is requested until confirmed.
   expect((await read()).daemon_request).toBeFalsy();
@@ -55,7 +59,7 @@ test("patient transfer cancels without losing the draft, then readiness starts a
   expect((await read()).daemon_request).toBeFalsy();
   await expect(draft(page)).toHaveValue("Keep this unsent instruction.");
   await start(page);
-  await confirm.getByRole("button", { name: "Prepare change", exact: true }).click();
+  await switchButton(page).click();
   await walk.state("02-preparing-card-stop-and-draft", { visible: [card(page), card(page).getByRole("button", { name: "Switch now", exact: true }), card(page).getByRole("button", { name: "Cancel switch", exact: true }), page.getByRole("button", { name: "Stop", exact: true }).first()], hidden: [confirm] });
   expect((await read()).attempt).toBe(before.attempt);
   await card(page).getByRole("button", { name: "Cancel switch", exact: true }).click();
@@ -63,7 +67,7 @@ test("patient transfer cancels without losing the draft, then readiness starts a
   await walk.state("03-cancelled-restores-owner", { visible: [draft(page)], hidden: [card(page).getByRole("button", { name: "Switch now", exact: true })] });
   await expect(draft(page)).toHaveValue("Keep this unsent instruction.");
   await start(page);
-  await confirm.getByRole("button", { name: "Prepare change", exact: true }).click();
+  await switchButton(page).click();
   await expect(card(page)).toBeVisible();
   // While it prepares, the pill leads to the switch's card; it never reopens the chooser over it.
   await page.getByRole("button", { name: /^Task model: switching to .+\. Show the switch$/ }).click();
@@ -86,8 +90,8 @@ test("a switch the coordinator started says so and why, and the pill shows it wi
   const read = async () => (await (await request.get(path(slug))).json());
   const walk = walkthrough(page, info);
   await walk.open(`/projects/atlas/tasks/${slug}`);
-  const chooser = page.getByRole("dialog", { name: "This task’s model", exact: true });
-  await page.getByRole("button", { name: /^Task model:/ }).click();
+  const chooser = panel(page);
+  await button(page).click();
   await expect(chooser).toBeVisible();
   expect((await read()).daemon_request).toBeFalsy();
   // The coordinator starts a switch while the operator is only looking at the choices.
@@ -111,7 +115,7 @@ test("explicit switch now replaces a running owner and preserves the merge hold"
   const walk = walkthrough(page, info);
   await walk.open(`/projects/atlas/tasks/${slug}`);
   await start(page);
-  await page.getByRole("button", { name: "Prepare change", exact: true }).click();
+  await switchButton(page).click();
   await card(page).getByRole("button", { name: "Switch now", exact: true }).click();
   const confirm = page.getByRole("dialog", { name: "Switch without a fresh note?", exact: true });
   await walk.state("01-switch-now-confirmation", { visible: [confirm, confirm.getByRole("button", { name: "Keep waiting", exact: true })], hidden: [] });
@@ -135,32 +139,32 @@ test("same-engine effort change names the new effort while it prepares and appli
   const walk=walkthrough(page,info);
   await walk.open(`/projects/atlas/tasks/${slug}`);
   await draft(page).fill("Keep the unsent task instruction.");
-  await page.getByRole("button",{name:/^Task model:/}).click();
-  await page.getByRole("combobox",{name:"Engine",exact:true}).selectOption(before.transfer.current_engine);
-  await page.getByRole("combobox",{name:"Model",exact:true}).selectOption(before.transfer.current_model);
-  await expect(page.getByRole("button",{name:"Prepare change",exact:true})).toBeDisabled();
-  await page.getByRole("combobox",{name:"Effort",exact:true}).selectOption("medium");
-  await walk.state("01-same-engine-effort-confirmation",{visible:[page.getByRole("dialog",{name:"This task’s model"})],hidden:[]});
-  await page.getByRole("button",{name:"Prepare change",exact:true}).click();
+  await button(page).click();
+  // Picking the model already running changes nothing, so no confirmation appears.
+  await panel(page).getByRole("group",{name:"Model",exact:true}).getByRole("menuitemradio",{name:/Current$/}).click();
+  await expect(confirmation(page)).toBeHidden();
+  await panel(page).getByRole("group",{name:"Effort",exact:true}).getByRole("menuitemradio",{name:"Medium",exact:true}).click();
+  await walk.state("01-same-engine-effort-confirmation",{visible:[confirmation(page).getByText("Switch to Medium effort?",{exact:true})],hidden:[]});
+  await switchButton(page).click();
   await expect.poll(async ()=>(await read()).daemon_request?.selection).toEqual({model:before.transfer.current_model,effort:"medium"});
   await expect(page.getByRole("button",{name:/^Task model: switching to .* · Medium\. Show the switch$/})).toBeVisible();
-  await expect(page.getByRole("region",{name:"Preparing change"})).toContainText("Started by you");
+  await expect(page.getByRole("region",{name:"Model switch"})).toContainText("Started by you");
   expect((await request.post("/fixture/transfer",{data:{slug,ready:true}})).ok()).toBe(true);
   await expect.poll(async ()=>(await read()).state).toBe("queued");
-  await expect(page.getByRole("button",{name:/^Task model:/})).toContainText("High");
-  await expect(page.getByRole("button",{name:/^Task model:/})).toBeDisabled();
+  await expect(button(page)).toContainText("High");
+  await expect(button(page)).toBeDisabled();
   expect((await request.post("/fixture/transfer",{data:{slug,launch:true}})).ok()).toBe(true);
   await expect.poll(async ()=>(await read()).attempt).toBe(2);
-  await expect(page.getByRole("button",{name:/^Task model:/})).toContainText("Medium");
-  await page.getByRole("button",{name:/^Task model:/}).click();
-  await expect(page.getByRole("dialog").locator(".models-in-use")).toContainText("Medium");
+  await expect(button(page)).toContainText("Medium");
+  await button(page).click();
+  await expect(panel(page).getByRole("menuitemradio",{name:"Medium Current",exact:true})).toHaveAttribute("aria-checked","true");
   await page.keyboard.press("Escape");
   const after=await read();
   expect(after.l2_engine).toBe(before.l2_engine);
   expect(after.session_id).not.toBe(before.session_id);
   expect(after.hold_merge).toEqual(before.hold_merge);
   await expect(draft(page)).toHaveValue("Keep the unsent task instruction.");
-  await walk.state("02-new-effort-applied",{visible:[draft(page),page.getByRole("button",{name:/^Task model:/})],hidden:[page.getByRole("dialog")]});
+  await walk.state("02-new-effort-applied",{visible:[draft(page),button(page)],hidden:[panel(page)]});
 });
 
 test("a blocked question owner switches from saved context without answering the question", async ({ page, request }, info) => {
@@ -174,9 +178,9 @@ test("a blocked question owner switches from saved context without answering the
   const walk = walkthrough(page, info);
   await walk.open(`/projects/atlas/tasks/${slug}`);
   await start(page);
-  const confirm = page.getByRole("dialog", { name: "This task’s model", exact: true });
-  await walk.state("01-blocked-question-saved-context", { visible: [confirm, confirm.getByText(/Starts a fresh session from saved context/)], hidden: [confirm.getByRole("button", { name: "Prepare change", exact: true })] });
-  await confirm.getByRole("button", { name: "Start fresh session", exact: true }).click();
+  const confirm = confirmation(page);
+  await walk.state("01-blocked-question-saved-context", { visible: [confirm, confirm.getByText(/^A fresh session continues from the task’s saved work\./)], hidden: [confirm.getByText(/handoff note/)] });
+  await switchButton(page).click();
   await expect.poll(async () => (await read()).state).toBe("queued");
   expect((await request.post("/fixture/transfer", { data: { slug, launch: true } })).ok()).toBe(true);
   const after = await read();
@@ -187,7 +191,7 @@ test("a blocked question owner switches from saved context without answering the
   await expect(page.getByText(/^L2 working(?: ·|$)/).first()).toBeVisible();
   await walk.state("02-new-owner-question-stays-open", { visible: [page.getByText("Keep the bounded validation scope?", { exact: true }).first(), page.locator('[data-tone="held"]').filter({ hasText: "Merge held" }).first()], hidden: [confirm, page.getByRole("button", { name: "Resume", exact: true })] });
   await start(page);
-  await page.getByRole("button", { name: "Prepare change", exact: true }).click();
+  await switchButton(page).click();
   await expect(confirm).toBeHidden();
   const answer = page.getByPlaceholder("Your answer or a follow-up question…");
   await answer.fill("Keep this unanswered decision.");
@@ -220,14 +224,20 @@ test("quota stop offers saved-context confirmation; pinned work explains unavail
   expect(row.transfer.resume_hold).toBeTruthy();
   if (info.project.name === "desktop") await expect(page.getByRole("button", { name: "Resume", exact: true })).toBeDisabled();
   await page.getByRole("button", { name: "Change model…", exact: true }).click();
-  const confirm = page.getByRole("dialog", { name: "This task’s model", exact: true });
-  await walk.state("02-quota-saved-context", { visible: [confirm, confirm.getByText(/Starts a fresh session from saved context/)], hidden: [confirm.getByRole("button", { name: "Prepare change", exact: true })] });
-  await confirm.getByRole("button", { name: "Start fresh session", exact: true }).click();
+  // The card opens the task's panel; picking another engine's model shows the confirmation.
+  await panel(page).getByRole("group",{name:"Model",exact:true}).getByRole("group",{name:target.label,exact:true}).getByRole("menuitemradio").first().click();
+  const confirm = confirmation(page);
+  await walk.state("02-quota-saved-context", { visible: [confirm, confirm.getByText(/^A fresh session continues from the task’s saved work\./)], hidden: [confirm.getByText(/handoff note/)] });
+  await switchButton(page).click();
   await expect.poll(async () => (await (await request.get(path(slug))).json()).state).toBe("queued");
   await walk.open("/projects/atlas/tasks/transfer-pinned-work");
-  await page.getByRole("button",{name:/^Task model:/}).click();
-  const pinned=page.getByRole("dialog",{name:"This task’s model"});
-  await expect(pinned.getByRole("button",{name:"Prepare change"})).toBeDisabled();
+  await button(page).click();
+  // A model the pin rules out is muted; pressing it explains why and starts nothing.
+  const pinned=panel(page);
+  const ruledOut=pinned.locator('[role="menuitemradio"][aria-disabled="true"]').first();
+  // A muted row stays pressable to explain itself; Playwright would wait on its aria-disabled.
+  await ruledOut.click({ force: true });
+  await expect(confirmation(page)).toBeHidden();
   await walk.state("03-pin-explains-unavailable",{visible:[pinned,pinned.getByRole("status")],hidden:[]});
 });
 
@@ -245,8 +255,8 @@ test("lost switch response remains uncertain with Stop available and reconciles 
   await walk.open(`/projects/atlas/tasks/${slug}`);
   await draft(page).fill("Retain this draft across the lost receipt.");
   await start(page);
-  await page.getByRole("button", { name: "Prepare change", exact: true }).click();
-  await walk.state("01-unconfirmed-stop-retained", { visible: [card(page).getByRole("button", { name: "Check status", exact: true }), page.getByRole("button", { name: "Stop", exact: true }).first()], hidden: [page.getByRole("button", { name: "Prepare change", exact: true })] });
+  await switchButton(page).click();
+  await walk.state("01-unconfirmed-stop-retained", { visible: [card(page).getByRole("button", { name: "Check status", exact: true }), page.getByRole("button", { name: "Stop", exact: true }).first()], hidden: [panel(page)] });
   await card(page).getByRole("button", { name: "Check status", exact: true }).focus();
   await page.keyboard.press("Escape");
   expect((await (await request.get(path(slug))).json()).daemon_request.operation).toBe("handoff");
@@ -264,8 +274,8 @@ test("new permission denial removes transfer actions", async ({ page }, info) =>
     ? route.fulfill({ status: 403, json: { error: "Permission denied" } }) : route.continue());
   await walk.open("/projects/atlas/tasks/transfer-running-work");
   await start(page);
-  await page.getByRole("button", { name: "Prepare change", exact: true }).click();
-  await walk.state("01-permission-denied", { visible: [page.getByText("You do not have permission to switch this task.", { exact: true })], hidden: [page.getByRole("button", { name: "Prepare change", exact: true }), card(page).getByRole("button", { name: "Switch now", exact: true })] });
+  await switchButton(page).click();
+  await walk.state("01-permission-denied", { visible: [page.getByText("You do not have permission to switch this task.", { exact: true })], hidden: [panel(page), card(page).getByRole("button", { name: "Switch now", exact: true })] });
 });
 
 test("@chromium listening survives confirmation and an accepted transfer without sending the draft", async ({ page, request }, info) => {
@@ -280,12 +290,12 @@ test("@chromium listening survives confirmation and an accepted transfer without
   await conversation.getByRole("button", { name: "Start voice input", exact: true }).click();
   await expect(draft(page)).toHaveValue("Unsent text. preserve the recorded instruction");
   await start(page);
-  await walk.state("01-listening-during-confirmation", { visible: [page.getByRole("button", { name: "Prepare change", exact: true })], hidden: [] });
+  await walk.state("01-listening-during-confirmation", { visible: [switchButton(page)], hidden: [] });
   await page.keyboard.press("Escape");
   await expect(stopVoice).toBeVisible();
   expect(host.finals).toBe(0);
   await start(page);
-  await page.getByRole("button", { name: "Prepare change", exact: true }).click();
+  await switchButton(page).click();
   await walk.state("02-listening-while-preparing", { visible: [stopVoice, card(page)], hidden: [] });
   expect((await request.post("/fixture/transfer", { data: { slug, ready: true } })).ok()).toBe(true);
   await expect.poll(async () => (await (await request.get(path(slug))).json()).state).toBe("queued");
@@ -312,7 +322,7 @@ test("@desktop-only compact transfer header remains readable at 1024 pixels", as
   const walk = walkthrough(page, info);
   await walk.open("/projects/atlas/tasks/transfer-running-work");
   await start(page);
-  await page.getByRole("button", { name: "Prepare change", exact: true }).click();
+  await switchButton(page).click();
   await walk.state("01-1024-preparing-with-stop", { visible: [card(page), page.getByRole("button", { name: "Stop", exact: true }).first(), page.locator('[data-tone="held"]').filter({ hasText: "Merge held" }).first()], hidden: [] });
   expect(await page.locator(".task-header .task-chips").evaluate(node => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
@@ -325,7 +335,7 @@ test("Stop supersedes preparation and uncertain termination never launches a rep
   const walk = walkthrough(page, info);
   await walk.open(`/projects/atlas/tasks/${slug}`);
   await start(page);
-  await page.getByRole("button", { name: "Prepare change", exact: true }).click();
+  await switchButton(page).click();
   await expect(card(page)).toBeVisible();
   expect((await request.post("/fixture/transfer", { data: { slug, unknown_termination: true, stop_failure: true } })).ok()).toBe(true);
   await page.getByRole("button", { name: "Stop", exact: true }).first().click();
@@ -345,7 +355,7 @@ test("switch-now waits for confirmed old-worker termination", async ({ page, req
   const walk = walkthrough(page, info);
   await walk.open(`/projects/atlas/tasks/${slug}`);
   await start(page);
-  await page.getByRole("button", { name: "Prepare change", exact: true }).click();
+  await switchButton(page).click();
   expect((await request.post("/fixture/transfer", { data: { slug, unknown_termination: true } })).ok()).toBe(true);
   await card(page).getByRole("button", { name: "Switch now", exact: true }).click();
   await page.getByRole("dialog", { name: "Switch without a fresh note?", exact: true }).getByRole("button", { name: "Switch now", exact: true }).click();
@@ -366,7 +376,7 @@ for (const outcome of ["question", "report", "unavailable"] as const) test(`prep
   await walk.open(`/projects/atlas/tasks/${slug}`);
   await draft(page).fill("Retain the next instruction.");
   await start(page);
-  await page.getByRole("button", { name: "Prepare change", exact: true }).click();
+  await switchButton(page).click();
   await expect(card(page).getByRole("button", { name: "Cancel switch", exact: true })).toBeVisible();
   expect((await request.post("/fixture/transfer", { data: { slug, outcome } })).ok()).toBe(true);
   await expect.poll(async () => (await read()).transfer.request.status).toBe(outcome === "question" ? "cancelled" : "refused");
