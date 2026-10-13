@@ -18,6 +18,8 @@ from altitude import access, config, installation, server
 
 class BrowserInstallation(NoticeCase):
     INSTALLED = "v0.4.0"
+    # Native effects are simulated, while the real server uses this host's filesystem operations.
+    HOST = sys.platform
 
 
 def main():
