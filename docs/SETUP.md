@@ -264,6 +264,27 @@ After pairing, the browser opens First run. Each step can be skipped and changed
 | **Voice** | Sets up dictation on this computer where it can run, or uses the browser's recognition. |
 | **Add your projects** | Lists the folders inside your projects folder (`~/Projects` unless you pick another). **Add project** registers one and opens its Setup. |
 
+## Your speech service
+
+To use a transcription server you run or choose, open **Settings → Voice input → Your speech
+service**. Enter its complete transcription endpoint, for example
+`https://speech.example.test/v1/audio/transcriptions`, and expand **Key or model (optional)** if
+your server requires them. Choose **Save and use service**. Saving does not contact the endpoint.
+The computer running Altitude must be able to reach it; a loopback address refers to that computer,
+not the phone. Existing defaults and first-run setup stay unchanged.
+
+The server accepts a multipart POST with `file` containing mono 16 kHz signed 16-bit PCM WAV,
+`response_format=json`, an optional `model`, and optional `Authorization: Bearer` key. It returns
+JSON with a string `text`. Configure your server's own compatible transcription route using its
+documentation; Altitude neither installs nor operates that server. The example address is fictional.
+Redirects and environment proxies are not used. HTTPS uses the computer's normal certificate trust;
+HTTP is available with an explicit unencrypted-audio/key warning.
+
+Audio passes through Altitude to that endpoint after you stop recording. Its privacy policy and
+charges apply. Failed recordings are discarded, so record again; typed text and images remain.
+See [service operation and limits](OPERATIONS.md#your-speech-service). Previously deleted service
+credentials cannot be recovered and must be entered again.
+
 ## Register a project and start a conversation
 
 Use a small GitHub project you are comfortable letting agents change through pull requests. Add it in

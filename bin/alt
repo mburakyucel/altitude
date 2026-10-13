@@ -397,6 +397,7 @@ def main(argv=None) -> None:
     rn.add_argument("slug"); rn.add_argument("command")
     vl = ts.add_parser("validate", help="current L2: run a command against its own committed candidate in a disposable, isolated validation run, no grant needed")
     vl.add_argument("--kvm", action="store_true", help="Linux: add /dev/kvm for a virtual machine")
+    vl.add_argument("--container-browser", action="store_true", help="macOS: fixed actual-image browser lane in a disposable Linux guest; requires the current VM policy grant")
     vl.add_argument("--publish", type=int, metavar="PORT", help="Linux: publish this container port on a free 127.0.0.1 port")
     vl.add_argument("--simulator", action="store_true", help="macOS: a disposable iOS Simulator iPhone whose Safari the command drives through $SIMULATOR_INSPECTOR")
     vl.add_argument("--capture", action="store_true", help="with --simulator: record the iPhone's screen as a small GIF beside its screenshot")
@@ -532,7 +533,9 @@ def main(argv=None) -> None:
         args.command = args.command[1:] if args.command[:1] == ["--"] else args.command
         if ACTOR != "l2" or not args.slug or not os.environ.get("ALTITUDE_ATTEMPT"):
             sys.exit("alt task validate: only the current L2 runs validation, and only for its own task")
-        if not args.command:
+        if args.container_browser and (args.command or args.kvm or args.publish is not None or args.simulator or args.capture):
+            ap.error("alt task validate: --container-browser takes no command or other lane options")
+        if not args.command and not args.container_browser:
             ap.error("alt task validate: give the command after --")
         from altitude import platform
         platform.end_with_parent()   # a cancelled launcher ends this client, which stops its run
@@ -556,7 +559,7 @@ def main(argv=None) -> None:
         body = "" if setup_command or machine_run or validation_run or review_run or terminal_read or sys.stdin.isatty() and (closing_pr or args.operation in ("close", "label")) else sys.stdin.read()
         payload = {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"],
                    "review_id": args.review_id, "context_ids": args.context_message, "proposal_id": args.proposal_message,
-                   "show": args.show} if review_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"]} if terminal_read else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "request": uuid.uuid4().hex} if machine_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "kvm": args.kvm, "publish": args.publish, "simulator": args.simulator, "capture": args.capture} if validation_run else {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
+                   "show": args.show} if review_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"]} if terminal_read else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "request": uuid.uuid4().hex} if machine_run else {"project": _project(args), "slug": args.slug, "attempt": os.environ["ALTITUDE_ATTEMPT"], "command": args.command, "kvm": args.kvm, "publish": args.publish, "simulator": args.simulator, "capture": args.capture, "container_browser": args.container_browser} if validation_run else {"project": args.name, "action": "repair", "reason": args.reason} if setup_command else {"project": _project(args), "number": args.number, "body": body} if closing_pr else {
                    "project": _project(args), "operation": args.operation, "body": body,
                    **{key: getattr(args, key) for key in ("title", "labels", "number", "reason", "add", "remove") if hasattr(args, key)}}
         # An option left unset sends nothing, so a checkout awaiting activation keeps working against the older
@@ -719,14 +722,15 @@ def main(argv=None) -> None:
             else:
                 out(dispatch.request_setting(None, "wip", args.wip, args.reason, actor=ACTOR))
         else:
-            # A receipt from before the speech-service removal can name a service key until altd next starts.
+            # Pending and historical voice receipts may contain private service details.
             voice_request = S.read_json(config.ROOT / "voice-request.json", None)
             if isinstance(voice_request, dict):
-                voice_request = {k: "removed speech service" if isinstance(v, dict) else v for k, v in voice_request.items()}
+                voice_request = {k: config.voice_receipt(v) for k, v in voice_request.items()}
+            voice = config.voice_setting()
             out({"wip": config.machine_wip(), "override": config.machine_settings().get("wip"),
                  "default": config.WIP_PER_MACHINE, "machine_runs": config.MACHINE_RUNS,
                  "request": S.read_json(config.ROOT / "wip-request.json", None),
-                 "voice": config.voice_setting(),
+                 "voice": {"backend": voice["backend"]},
                  "voice_request": voice_request,
                  "projects_folder": [str(root) for root in config.project_roots()],
                  "new_tasks": config.machine_settings().get("new_tasks"),

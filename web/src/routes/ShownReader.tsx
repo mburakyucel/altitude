@@ -1,12 +1,11 @@
-import { lazy, Suspense, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { ApiError, useShownFiles } from "../data/api";
 import type { Shown } from "../data/api";
 import { useGallery } from "../components/MessageImages";
 import { Icon, SavedImage } from "../components/Shown";
 import { useBack } from "../components/useTaskBack";
-
-const MarkdownDocument = lazy(() => import("../components/MarkdownDocument"));
+import Document from "../components/Document";
 
 function Skeleton({ name }: { name: string }) {
   return <div className="shown-skeleton" role="status" aria-label={`Loading ${name}`}>
@@ -73,9 +72,8 @@ export function ShownReader({ project, slug, shownId, revision, known, panel }: 
         {data.images.map((image, index) => image.embedded ? null
           : <SavedImage key={image.url} className="shown-extra" image={image} alt={image.name} open={() => open(index)} />)}
         {!data.document ? null : data.document.markdown
-          ? <Suspense fallback={<Skeleton name={name} />}>
-            <MarkdownDocument text={data.document.text} path={data.document.path} images={data.images} onOpenImage={open} />
-          </Suspense>
+          ? <Document text={data.document.text} path={data.document.path} images={data.images} onOpenImage={open}
+              loading={<Skeleton name={name} />} warnUnsent />
           : <pre className="shown-text">{data.document.text}</pre>}
       </>}
     </div>

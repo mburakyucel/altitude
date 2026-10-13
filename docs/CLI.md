@@ -901,6 +901,12 @@ alt machine set --unset-voice --reason 'Back to the default'
 can run the speech model and `browser` elsewhere; `machine show` reports the backend in effect. See
 [voice input](OPERATIONS.md#voice-input) for what each backend needs and where audio goes.
 
+An operator-supplied transcription service is configured in **Settings → Voice input → Your speech
+service**. No CLI key or endpoint argument is exposed. `machine show` reports the backend without
+service credentials or address. Setting `host`, `browser`, or `--unset-voice` replaces the complete
+voice setting and removes saved service details. Voice setup/status/remove commands operate only
+on the built-in runtime, including when a service is selected.
+
 `alt voice status` reports whether [host voice](OPERATIONS.md#host-voice) can run here and its setup
 state. `alt voice setup` downloads and checks the speech model and its runtime once (about 700 MB),
 printing progress and the final state; it also retries a failed or cancelled update. `alt voice cancel`
@@ -2148,6 +2154,7 @@ not which local process calls; the grant record and its per-command log are the 
 
 ```text
 alt task validate [--kvm] [--publish PORT] [--simulator [--capture]] -- <command>
+alt task validate --container-browser
 ```
 
 The current owner runs one command against a throwaway clone of its task's committed `HEAD`, isolated
@@ -2175,6 +2182,16 @@ it, or losing its connection takes the request out of the line or stops its run 
 `stopped`, and frees the machine. A newer `alt task validate` from the same task replaces the task's earlier request
 the same way, recorded as `replaced`. The
 [validation runner](DEVELOPMENT.md#validation-runner) describes the isolation, its limits and cleanup.
+
+The fixed `--container-browser` lane checks the actual container image's fictional phone/desktop
+journeys from an Apple silicon Mac. It accepts no command or other lane flags and is available only
+to an owner in the registered Altitude source project with its current standing VM-policy grant.
+Deployed controller code owns a throwaway Ubuntu guest; captured candidate code runs inside that
+guest, with Chromium in a non-root, rootless container with no network interface. The usual validation
+queue, execution limit, client-stop/replacement handling and activation fence own the whole run.
+Cleanup must confirm the guest stopped and its disk was removed before releasing the runner.
+See [container browser validation](CONTAINERS.md#container-browser-validation) for protection and
+resource evidence. An operator grant alone does not make a browser run through `task run` acceptable.
 
 ### Reading the task terminal
 

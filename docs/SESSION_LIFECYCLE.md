@@ -764,7 +764,10 @@ the recording keeps going through a lost connection and its words catch up, and 
 waits at most two minutes for the connection. With browser recognition, recognized words appear in
 the read-only draft while listening and **Stop** lands them once the last phrase is punctuated. A
 recording that stops early keeps the words already shown and says why. The send arrow lands, appends
-and sends at once. Both sending paths use
+and sends at once. With an operator-supplied service, audio stays in page memory while listening;
+Stop uploads it and adds the returned words, while Send waits for transcription before submitting.
+Service mode has no streaming transcript or reconnect replay. Failed uploads discard audio and
+preserve typed text/images; a failed Send restores them only to its original conversation. All sending paths use
 the same chat or L2-message endpoint as typed text, so a busy L3 durably queues the combined text
 and an L2 message follows the same checkpoint/resume rules. Cancel, permission denial and
 transcription failure create no conversation or queue record and preserve the typed draft.
@@ -795,7 +798,8 @@ or provider call. The overview stays compact; the nested voice page contains bac
 credentials. Back returns to Settings without saving unfinished endpoint edits. Successful saves
 change the next capture in the document. An upload carries its capture's backend/destination identity;
 if it no longer matches the saved choice, transcription is refused before forwarding and the typed
-draft is preserved. A transcription already accepted completes with its captured settings.
+draft is preserved. A transcription already forwarded uses its captured settings, but a changed
+service selection or paired owner invalidates its result. Cancellation cannot recall forwarded audio.
 
 Message acceptance is separate from the answer or wake succeeding. A saved L2 message receipt,
 L3 turn ID or queue receipt keeps the composer cleared, including after a broken stream or failed
@@ -1075,6 +1079,13 @@ existing Seatbelt validation runner without Chromium's inner sandbox; it changes
 permissions and establishes only the fictional journeys actually run. Shared configuration owns
 launch options, and actual runner identity/profile, finite preflight and cleanup remain evidence
 requirements. It grants no private/live-content, Simulator or native-worker acceptance.
+The fixed Mac `--container-browser` validation lane owns its throwaway Linux guest through the same
+admission, time limit, client-stop/replacement and activation fence. Only deployed controller code
+runs on the Mac; candidate execution is in the disconnected guest and rootless browser container.
+Its current standing VM-policy grant is checked at admission and revocation stops the run. Recovery
+confirms the recorded VM process lifetime ended and removes its disk before releasing the runner.
+That lane's Linux preflight establishes the required container and Chromium protections; it does
+not expand the fictional Mac Seatbelt harness's scope.
 The instruction takes effect on launches/resumes after normal source
 activation; running turns retain their delivered instructions. Deterministic launch fixtures prove
 delivery, not provider adherence or live browser isolation. See
@@ -1673,6 +1684,12 @@ subset, requests, engine and owner/delegated/provider coverage.
 Claude L2 settings explicitly supply `autoCompactWindow` from `config.AUTOCOMPACT_WINDOW` through
 the engine boundary. Native compaction remains the engine's responsibility; Altitude keeps the
 owner's small progress checkpoint for recovery and handoffs.
+
+Codex coordinator turns also keep native compaction and the same provider conversation. Altitude
+does not rotate that conversation at a context threshold. Explicit coordinator reset and a changed
+confinement policy still start a fresh conversation. Its context reading is the newest complete own
+request from this invocation's rollout, against the reported model window. Missing request or window
+evidence stays unknown; cumulative `turn.completed` input remains usage, never context occupancy.
 
 A task's context is the inclusive input of the current owner session's newest own request, read by
 the same passive collection as task tokens and stored as `token_usage.context` with its tokens,

@@ -10,15 +10,19 @@ import { walkthrough } from "./walkthrough";
  */
 test.use({ serviceScript: "improvement-settings-service.py" });
 
-/** Holds every settings press until released, so its saving state can be captured. */
+/** Holds every settings press until released, so its saving state can be captured; release waits for the press to arrive. */
 async function hold(page: Page, reply?: (route: Route) => Promise<void>) {
+  let arrive = () => {};
+  const arrived = new Promise<void>((resolve) => { arrive = resolve; });
   let release = () => {};
   const released = new Promise<void>((resolve) => { release = resolve; });
   await page.route("**/api/improve", async (route) => {
+    arrive();
     await released;
     await (reply ? reply(route) : route.continue());
   });
   return async () => {
+    await arrived;
     release();
     await page.unrouteAll({ behavior: "wait" });
   };

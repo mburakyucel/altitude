@@ -36,6 +36,8 @@ class TestL3Continuity(AltitudeCase):
     def test_same_provider_fresh_causes_restore_discussion_then_resume_natively(self):
         for engine in config.ENGINES:
             for cause in ("reset", "context", "confinement", "missing-session"):
+                if cause == "context" and not engines.context_rotation_due(100, engine):
+                    continue  # this engine compacts natively; its continuity is tested separately
                 with self.subTest(engine=engine, cause=cause):
                     project = f"{engine}-{cause}"
                     self.register(project)

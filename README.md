@@ -35,12 +35,15 @@ One engine is enough, and each integration is
 - **Nothing ships unchecked.** Your checks gate every merge, complex work gets an independent review,
   and the final say is yours whenever you want it.
 - **Decide from anywhere.** Your phone alerts you when a decision needs you; answer with a tap or
-  your voice.
+  your voice. Dictate with built-in recognition, your browser, or [your own speech service](docs/SETUP.md#your-speech-service).
 - **Power with a fence.** Agents leave their sandbox only for a purpose you approve.
 
 <img src="docs/images/balance.svg" alt="Two subscriptions, Claude and Codex, each with a meter for the share of its week used. New tasks arrive one at a time, each goes to the engine marked as less used, and that engine's meter fills, so both rise evenly until a new week empties them." width="760">
 
 [See it all in the desktop and phone walkthrough](docs/WALKTHROUGH.md#see-the-features)
+
+[Container browser validation](docs/CONTAINERS.md#container-browser-validation) on an Apple silicon Mac
+uses a disposable Linux guest with a sandboxed browser container.
 
 ## Get started
 
