@@ -140,7 +140,7 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       await expect(main.getByRole("combobox", { name: "New tasks engine", exact: true })).toHaveValue("");
       await expect(main.getByRole("combobox", { name: "New tasks engine", exact: true })).toBeEnabled();
       await expect(main.getByRole("link", { name: /^All projects 1 project · folder / })).toHaveAttribute("href", "/settings/projects");
-      await expect(main.getByText(`${new URL(page.url()).origin} · HTTPS off`, { exact: true })).toBeVisible();
+      await expect(main.getByRole("link", { name: /Network.*This computer only/ })).toHaveAttribute("href", "/settings/network");
       await expect(main.getByRole("radio")).toHaveCount(0);
       await expect(main.getByRole("status", { name: "Loading settings…", exact: true })).toHaveCount(0);
     } else if (route === "/settings/voice") {
@@ -165,6 +165,12 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       await expect(main.getByRole("region", { name: "Choose a folder", exact: true })).toBeVisible();
       await expect(main.getByRole("button", { name: "Use “Home”", exact: true })).toBeEnabled();
       await expect(main.getByRole("link", { name: "‹ Settings", exact: true })).toHaveAttribute("href", "/settings");
+    } else if (route === "/settings/network") {
+      await expect(main.getByRole("heading", { name: "Where Altitude runs", exact: true })).toBeVisible();
+      await expect(main.getByText("Atlas host", { exact: true })).toBeVisible();
+      await expect(main.getByText("Only the hosting computer", { exact: true })).toBeVisible();
+      await expect(main.getByRole("link", { name: new URL(page.url()).origin, exact: true })).toBeVisible();
+      await expect(main.getByText(/A VPN changes neither Altitude’s address, certificate trust nor pairing/)).toBeVisible();
     } else if (route === "/settings/name") {
       await expect(main.getByRole("heading", { name: "Your name", exact: true })).toBeVisible();
       await expect(main.getByLabel("Your name")).toBeEditable();

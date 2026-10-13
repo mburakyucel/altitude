@@ -1,5 +1,6 @@
 """Actual HTTPS/process identity stays separate from the calling shell and device trust."""
 import os
+import json
 import shlex
 from unittest import mock
 
@@ -45,6 +46,21 @@ class Hosting(ProbeCase):
         self.assertEqual(status["state"], "stopped")
         self.assertFalse(status["verified"])
         self.assertIn("Configured address (not serving)", installation.describe_hosting(status))
+
+    def test_unavailable_native_manager_keeps_saved_configuration_without_claiming_it_is_serving(self):
+        saved = self.tmp / "install.json"
+        saved.write_text(json.dumps({"environment": {"ALTITUDE_HOST": "127.0.0.1", "ALTITUDE_PORT": str(config.PORT),
+                                    "ALTITUDE_TLS_DIR": str(config.TLS_DIR), "ALTITUDE_TLS": "1"}}))
+        with mock.patch.object(config, "RELEASE", {"version": self.version}), \
+             mock.patch.object(installation, "_settings", return_value=saved), \
+             mock.patch.object(platform, "status", side_effect=RuntimeError("native manager unavailable")):
+            status = installation.hosting_status()
+        self.assertEqual(status["state"], "unknown")
+        self.assertIsNone(status["url"])
+        self.assertFalse(status["verified"])
+        self.assertEqual(status["tls_dir"], str(config.TLS_DIR))
+        self.assertIn("Configured address (not verified)", installation.describe_hosting(status))
+        self.assertNotIn("not serving", installation.describe_hosting(status))
 
     def test_stale_record_other_process_bad_tls_and_foreign_unit_are_unverified(self):
         original = dict(self.native)

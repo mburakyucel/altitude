@@ -591,7 +591,6 @@ def hosting_status(native: dict | None = None) -> dict:
     result = {"state": "unknown", "computer": platform.computer_name(), "native": native,
               "url": None, "configured_url": None, "verified": False, "overrides": []}
     try:
-        native = platform.status() if native is None else native
         if config.RELEASE is not None and _settings().exists():
             saved = json.loads(_settings().read_text())["environment"]
         else:
@@ -606,6 +605,8 @@ def hosting_status(native: dict | None = None) -> dict:
                   "computer": platform.computer_name(), "verified": False,
                   "tls_dir": str(configured["tls_dir"]) if configured else None,
                   "host": configured and configured["host"]}
+        native = platform.status() if native is None else native
+        result["native"] = native
         if native.get("ActiveState") != "active":
             if native.get("ActiveState") not in ("inactive", "failed"):
                 result.update(state="unknown", detail="The service manager could not confirm the service state.")
@@ -630,7 +631,7 @@ def hosting_status(native: dict | None = None) -> dict:
 def describe_hosting(hosting: dict) -> str:
     lines = [f"Altitude runs on {hosting['computer']}.", f"Service: {hosting['state']}."]
     if hosting.get("url"):
-        label = "Open Altitude" if hosting["verified"] else "Configured address (not serving)"
+        label = "Open Altitude" if hosting["verified"] else "Configured address (not serving)" if hosting["state"] == "stopped" else "Configured address (not verified)"
         lines.append(f"{label}: {hosting['url']}")
         lines.append("Listening: all interfaces; the localhost certificate URL is for the hosting computer. Other-device reachability is unverified."
                      if hosting.get("listener_scope") == "all" else

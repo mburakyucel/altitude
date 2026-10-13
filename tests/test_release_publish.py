@@ -14,7 +14,7 @@ from tests.support import REPO, git, make_repo
 from scripts import build_release
 
 REPOSITORY = "https://github.com/example/altitude"
-FINGERPRINT = "sha256 Fingerprint=AA:BB:CC"
+FINGERPRINT = "sha256 Fingerprint=" + ":".join(["AB"] * 32)
 
 
 class InstallScript(unittest.TestCase):
@@ -32,7 +32,8 @@ class InstallScript(unittest.TestCase):
             pathlib.Path({str(self.tmp / 'installer-args.json')!r}).write_text(json.dumps(sys.argv[1:]))
             lingering = json.loads(pathlib.Path({str(self.tmp / 'lingering.json')!r}).read_text() or "null")
             print(json.dumps({{"version": "v0.1.0", "service": "running", "url": "https://localhost:8443", "lingering": lingering,
-                              "trust": {{"ca_cert": {str(self.tmp / 'home/.altitude/tls/ca.crt')!r}, "ca_sha256": {FINGERPRINT!r}}}}}))
+                              "network": {{"listener_scope": "local"}}, "lifecycle": "Fictional login service lifecycle.",
+                              "trust": {{"ca_name": "Altitude CA TEST", "ca_cert": {str(self.tmp / 'home/.altitude/tls/ca.crt')!r}, "ca_sha256": {FINGERPRINT!r}}}}}))
             """))
         (self.tmp / "lingering.json").write_text("")
         digest = {name: hashlib.sha256((self.release / name).read_bytes()).hexdigest()
@@ -85,19 +86,28 @@ class InstallScript(unittest.TestCase):
         self.assertEqual(arguments[0::2], ["--archive", "--sha256"])
         self.assertEqual(arguments[3], hashlib.sha256(b"fictional archive").hexdigest())
         self.assertEqual(Path(arguments[1]).parent.parent, self.tmp, "downloads stay in TMPDIR")
-        self.assertIn("Altitude v0.1.0 is installed and its service is running.", result.stdout)
-        self.assertIn("Address: https://localhost:8443", result.stdout)
-        self.assertIn("Its fingerprint: AA:BB:CC", result.stdout)
-        self.assertIn("Certificate authority: ~/.altitude/tls/ca.crt", result.stdout)
-        self.assertNotIn(str(self.tmp / "home"), result.stdout)
-        self.assertIn('1. Put alt on your PATH', result.stdout)
+        self.assertIn("Altitude v0.1.0 is installed.", result.stdout)
+        self.assertIn("Open Altitude: https://localhost:8443", result.stdout)
+        self.assertIn("SHA-256: " + FINGERPRINT.split("=", 1)[1], result.stdout)
+        self.assertIn("Certificate name: Altitude CA TEST", result.stdout)
+        self.assertIn("Public CA file: ~/.altitude/tls/ca.crt", result.stdout)
+        self.assertIn(str(self.tmp / "home/.local/bin/alt") + " pair", result.stdout)
+        self.assertIn("You can close this terminal", result.stdout)
+        self.assertIn("This URL opens only on this computer", result.stdout)
+        self.assertIn("stop on mismatch", result.stdout)
+        self.assertIn("new private window without a warning before entering a pairing code", result.stdout)
+        self.assertIn("reinstall preserves your preference", result.stdout)
+        self.assertIn("keeps application resources needed by registered project hooks", result.stdout)
+        self.assertNotIn("Automatic updates are enabled", result.stdout)
+        self.assertLess(result.stdout.index("Open Altitude:"), result.stdout.index("Expect a certificate warning"))
+        self.assertLess(result.stdout.index("Open Altitude:"), result.stdout.index("Troubleshooting:"))
         self.assertIn('export PATH="$HOME/.local/bin:$PATH"', result.stdout)
-        self.assertIn("2. Run: alt doctor", result.stdout)
+        self.assertIn("Troubleshooting: alt doctor", result.stdout)
         self.assertIn(f"{REPOSITORY}/blob/v0.1.0/docs/SETUP.md#trust-https-on-each-device", result.stdout)
         self.assertEqual(list(self.tmp.glob("altitude-install.*")), [], "the download folder is removed")
         on_path = self.run_script(PATH=f"{self.bin}:{self.tmp}/home/.local/bin")
-        self.assertNotIn("Put alt on your PATH", on_path.stdout)
-        self.assertIn("1. Run: alt doctor", on_path.stdout)
+        self.assertNotIn("To use alt by name", on_path.stdout)
+        self.assertIn("Open Altitude:", on_path.stdout)
 
     def test_says_whether_altitude_keeps_running_without_a_login(self):
         refused = ("Altitude stops when alice's last login session ends and starts again only at the next login. "
@@ -105,7 +115,7 @@ class InstallScript(unittest.TestCase):
         (self.tmp / "lingering.json").write_text(json.dumps({"enabled": False, "detail": refused}))
         result = self.run_script()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(f"\n{refused}\n\nNext:", result.stdout)
+        self.assertIn(f"\n{refused}\n", result.stdout)
         (self.tmp / "lingering.json").write_text("")  # a Mac: its LaunchAgent belongs to the desktop login
         self.assertNotIn("login session", self.run_script().stdout)
 
@@ -135,7 +145,7 @@ class InstallScript(unittest.TestCase):
         self.assertEqual([line.split()[-1] for line in self.downloads()],
                          [f"{REPOSITORY}/releases/download/v0.1.0/altitude-v0.1.0.tar.gz",
                           f"{REPOSITORY}/releases/download/v0.1.0/install.py"])
-        self.assertIn("Altitude v0.1.0 is installed and its service is running.", result.stdout)
+        self.assertIn("Altitude v0.1.0 is installed.", result.stdout)
         self.assertNotIn("not yet validated", result.stdout)
 
     def test_a_host_releases_are_not_validated_on_installs_and_says_so_once(self):
@@ -148,7 +158,7 @@ class InstallScript(unittest.TestCase):
                 self.assertEqual(result.stdout.count("not yet validated"), 1)
                 self.assertIn(f"Altitude is not yet validated on {host}; please report anything that does not work at "
                               f"{REPOSITORY}/issues.", result.stdout)
-                self.assertIn("Altitude v0.1.0 is installed and its service is running.", result.stdout)
+                self.assertIn("Altitude v0.1.0 is installed.", result.stdout)
         result = self.run_script()
         self.assertNotIn("not yet validated", result.stdout)
 

@@ -439,7 +439,7 @@ class TestTrustCheck(AltitudeCase):
         self.patch(server.Handler, "_local", new=lambda _self: False)
         _, view = self.call(self.trusting, "GET", "/api/access")
         self.assertEqual(view["trust"], {"local": False, "https": True,
-                                         "check": True, "certificate": {"name": "Altitude CA TEST"}})
+                                         "check": True, "certificate": {"name": "Altitude CA TEST"}, "guide": tls.setup_guide()})
         self.patch(server, "TRUST", None)  # an externally supplied certificate: nothing to check with
         self.assertFalse(self.call(self.trusting, "GET", "/api/access")[1]["trust"]["check"])
         self.assertEqual(self.call(self.trusting, "POST", "/api/trust", {}),
