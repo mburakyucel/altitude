@@ -20,6 +20,8 @@ import json
 import os
 import queue
 import shutil
+import socket
+import ssl
 import stat
 import subprocess
 import sys
@@ -80,14 +82,31 @@ def transcribe_service(setting: dict, pcm: bytes) -> str:
                   'Content-Type: audio/wav\r\n\r\n'.encode(), wav.getvalue(), f'\r\n--{boundary}--\r\n'.encode()])
     try:
         parsed = urlsplit(setting["url"])
-        connection_type = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
-        connection = connection_type(parsed.hostname, parsed.port, timeout=SERVICE_RESPONSE_SECONDS)
+        connection = (http.client.HTTPSConnection(parsed.hostname, parsed.port, timeout=SERVICE_RESPONSE_SECONDS,
+                                                  context=ssl.create_default_context())
+                      if parsed.scheme == "https" else
+                      http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=SERVICE_RESPONSE_SECONDS))
     except ValueError:
         raise ServiceError("service_unavailable") from None
+
+    expired = threading.Event()
+
+    def expire() -> None:
+        # The socket timeout bounds each read; this bounds a service that answers a little at a time.
+        expired.set()
+        try:
+            socket.socket.shutdown(connection.sock, socket.SHUT_RDWR)
+        except (OSError, TypeError):
+            pass  # Not connected yet, or already closed.
+    deadline = threading.Timer(SERVICE_RESPONSE_SECONDS, expire)
+    deadline.start()
     try:
         headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
         if setting.get("key"):
             headers["Authorization"] = "Bearer " + setting["key"]
+        connection.connect()
+        if expired.is_set():  # The deadline passed before there was a socket to close.
+            raise ServiceError("service_unavailable")
         connection.request("POST", parsed.path or "/", b"".join(parts), headers)
         response = connection.getresponse()
         if response.status in (401, 403):
@@ -109,9 +128,14 @@ def transcribe_service(setting: dict, pcm: bytes) -> str:
         if not text:
             raise ServiceError("service_empty")
         return text
+    except ServiceError:
+        if expired.is_set():
+            raise ServiceError("service_unavailable") from None
+        raise
     except (OSError, http.client.HTTPException, UnicodeError, ValueError):
         raise ServiceError("service_unavailable") from None
     finally:
+        deadline.cancel()
         connection.close()
 
 _MODEL = "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx/resolve/0bbb45a3365852604aef28b538a8f066f4ccaa85/"
@@ -519,6 +543,8 @@ def _finish_setup(target: Path) -> None:
     # Leftovers that cannot be removed now go with the next setup; the update itself has finished.
     for old in _runtimes():
         if old != target:
+            # Without its marker, a partly removed runtime never reads as installed.
+            (old / "complete.json").unlink(missing_ok=True)
             shutil.rmtree(old, ignore_errors=True)
     state = _state()
     state.pop("update", None)
@@ -538,7 +564,10 @@ def _stage(files, staging: Path, digest: str, cancel: _Attempt) -> None:
                 source = old / name
                 if not source.is_file() or source.is_symlink() or source.stat().st_size != size:
                     continue
-                os.link(source, staging / name)
+                try:
+                    os.link(source, staging / name)
+                except OSError:
+                    break  # This volume refuses hard links: download the file.
                 hashed = hashlib.sha256()
                 with (staging / name).open("rb") as inp:
                     while block := inp.read(BLOCK):

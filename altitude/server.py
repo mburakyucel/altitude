@@ -1970,12 +1970,16 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
             return self._json({"error": denied or "Pair this device to use your speech service."}, 403)
         acquired = False
-        try:
+
+        def current() -> dict:
             setting = config.voice_setting()
             if setting["backend"] != "service" or setting["selection"] != self.headers.get("X-Voice-Selection"):
                 raise speech.ServiceError("selection_changed")
             if setting.get("error"):
                 raise speech.ServiceError("service_response")
+            return setting
+        try:
+            current()
             try:
                 length = int(self.headers.get("Content-Length", ""))
             except ValueError:
@@ -1997,7 +2001,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not chunk:
                     raise speech.ServiceError("service_unavailable")
                 pcm.extend(chunk)
-            answer, code = {"text": speech.transcribe_service(setting, bytes(pcm))}, 200
+            # Settings saved during the upload refuse it before anything is forwarded.
+            answer, code = {"text": speech.transcribe_service(current(), bytes(pcm))}, 200
         except (TimeoutError, OSError):
             error = speech.ServiceError("service_unavailable")
             answer, code = {"error": str(error), "code": error.code}, 502

@@ -469,7 +469,7 @@ def _projection(project: str, slug: str, task: dict, engine: str, raw: bool, sou
                     call["error"] = call.get("error", False) or any(result.get("error") for result in results)
                     call["status"] = "completed"
                     if _when(call["at"]) is None:
-                        call["at"] = results[0]["at"]
+                        call["at"] = next((result["at"] for result in results if _when(result["at"]) is not None), call["at"])
                     for result in results:
                         folded.add(result["id"])
     if set(previous_sources) - set(source_state):

@@ -2969,8 +2969,8 @@ remains available without voice.
 
 Paired Settings reads expose URL/model/key-present, never the key. Machine output exposes the backend
 only. A capture carries the selection its composer read; the server checks it against the saved
-choice before accepting and forwarding `POST /api/voice/service`, and a transcript the service has
-returned reaches the capture. A Settings read showing another selection invalidates pending captures.
+choice when the upload starts and again before forwarding `POST /api/voice/service`, and a transcript
+the service has returned reaches the capture. A Settings read showing another selection invalidates pending captures.
 Saving a changed URL/model/key changes the service selection identity independently of the built-in
 installation identity; saving unchanged settings keeps it.
 
@@ -2979,8 +2979,8 @@ The browser retains raw mono 16 kHz signed 16-bit PCM in page memory until Stop/
 route creates WAV/multipart framing and sends one request to the exact saved endpoint, without
 redirects, environment proxies, probes or retries. It accepts JSON text, limits the response to
 1 MiB, limits concurrent requests to two, and bounds upload and upstream response separately to
-120 seconds each; the outbound request runs in the daemon with a 120-second socket timeout, and the
-key and audio never touch disk. HTTPS uses normal certificate verification.
+120 seconds each; the outbound request runs in the daemon and is cut off 120 seconds after it starts,
+apart from the system resolver's own name lookup limit. The key and audio never touch disk. HTTPS uses normal certificate verification.
 
 Stop appends text to its draft; Send carries text/images and completion to its original conversation.
 Cancellation and late results never alter another draft. Errors are sanitized and preserve typed

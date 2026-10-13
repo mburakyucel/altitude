@@ -494,6 +494,7 @@ class TestSetup(SpeechCase):
         self.assertEqual(speech.runtime(), new)
         self.assertEqual(speech.status(), {"state": "ready", "download_bytes": speech.status()["download_bytes"]})
         self.assertTrue(old.exists())
+        self.assertFalse((old / "complete.json").exists())  # leftovers never read as installed
         self.patch(speech.shutil, "rmtree", new=remove)
         speech.setup()
         self.assertFalse(old.exists())
@@ -613,6 +614,13 @@ class TestSetup(SpeechCase):
         self.assertEqual(os.stat(new / "model/encoder.onnx").st_ino, model.st_ino)  # linked, not copied
         self.assertEqual(speech.installation_id(), identity)
         self.assertFalse(old.exists())
+        self.assertEqual(speech.runtime(), new)
+
+    def test_a_volume_without_hard_links_downloads_the_model(self):
+        self.replacement()
+        self.patch(speech.os, "link", side_effect=PermissionError("fixture: links refused"))
+        new = speech.setup()
+        self.assertIn("https://files.example/model/encoder.onnx", self.fetched)
         self.assertEqual(speech.runtime(), new)
 
     def test_corrupt_retained_model_is_downloaded_again(self):

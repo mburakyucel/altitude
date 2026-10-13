@@ -190,6 +190,25 @@ class TestChatIsolation(AltitudeCase):
                     command, = [row for row in reconnect["events"] if row["kind"] == "command"]
                     self.assertEqual(command["at"], timestamp or ended)
 
+    def test_an_untimed_command_takes_the_first_timed_result(self):
+        ended = "2026-09-03T10:00:05+00:00"
+        task = T.new(self.project, "Command time from results", "Observe")
+        sid, slug = "time-results", task["slug"]
+        task.update(state="running", attempt=1, l2_engine="claude", session_id=sid)
+        S.save_task(self.project, task)
+        path = config.HOME / ".claude" / "projects" / "fictional" / f"{sid}.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(path.unlink, True)
+        result = lambda timestamp, text: {"type": "user", "timestamp": timestamp, "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "call", "content": text}]}}
+        rows = [{"type": "assistant", "timestamp": None, "message": {"content": [
+            {"type": "tool_use", "id": "call", "name": "Bash", "input": {"command": "echo fixture"}}]}},
+            result(None, "first"), result(ended, "second")]
+        path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+        view = json.loads(self.request(f"/api/transcript/{self.project}/{slug}?engine=claude&session_id={sid}&attempt=1"))
+        command, = [row for row in view["events"] if row["kind"] == "command"]
+        self.assertEqual((command["at"], command["status"]), (ended, "completed"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -612,7 +612,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
             if (node) anchors.current.set("review", node); else anchors.current.delete("review");
           }}>
             <p className="conversation-turn">Your turn · review before merge</p>
-            <ReviewDecision decision={facts.review} repository={facts.repository} chat disabled={readOnly || checking || denied} />
+            <ReviewDecision key={`${facts.review.pr}:${facts.review.review_hold_id ?? ""}`} decision={facts.review} repository={facts.repository} chat disabled={readOnly || checking || denied} />
           </div> : null}
           {/* What the task waits on ends the chat, after any card, under the header's state; L3's open question already says it (SPEC.md §3.10). */}
           {facts.explanation && !(transfer.quotaOffer && !readOnly && !denied) && !(answering && !task["fault"]) ? <p className="conversation-status" data-tone={task["fault"] ? "danger" : undefined} role="status">

@@ -319,6 +319,28 @@ class TestServiceConfiguration(TestVoiceSettingsRoute):
         self.patch(speech, "transcribe_service", side_effect=changed)
         self.assertEqual(self.audio()[1], {"text": "already transcribed"})
 
+    def test_a_settings_change_during_the_upload_forwards_nothing(self):
+        self.configure()
+        selection = self.request("GET", "/api/voice")[1]["selection"]
+        outgoing = self.patch(speech, "transcribe_service", return_value="hello")
+        accepted, acquire = threading.Event(), speech.SERVICE_SLOTS.acquire
+        def accept(*args, **kwargs):
+            accepted.set()
+            return acquire(*args, **kwargs)
+        connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=5)
+        self.addCleanup(connection.close)
+        with mock.patch.object(speech.SERVICE_SLOTS, "acquire", side_effect=accept):
+            connection.putrequest("POST", "/api/voice/service")
+            connection.putheader("Content-Length", "4")
+            connection.putheader("X-Voice-Selection", selection)
+            connection.endheaders(b"\0\0")
+            self.assertTrue(accepted.wait(5))
+            S.write_json(config.ROOT / "settings.json", {"voice": "browser"})
+            connection.send(b"\0\0")
+            response = connection.getresponse()
+            self.assertEqual((response.status, json.loads(response.read())["code"]), (409, "selection_changed"))
+        outgoing.assert_not_called()
+
     def test_service_errors_are_structured_and_never_pairing_401(self):
         self.configure()
         for code in speech.ServiceError.MESSAGES:
@@ -520,6 +542,27 @@ class TestServiceTransport(VoiceCase):
             speech.transcribe_service({**self.setting, "url": "http://127.0.0.1:invalid/transcribe"}, b"\0\0")
         self.assertEqual(caught.exception.code, "service_unavailable")
         self.assertEqual(self.received, [])
+
+    def test_a_service_answering_a_little_at_a_time_is_cut_off_at_the_deadline(self):
+        slow = socket.create_server(("127.0.0.1", 0))
+        self.addCleanup(slow.close)
+        def trickle():
+            peer = slow.accept()[0]
+            with peer:
+                try:
+                    for byte in b"HTTP/1.1 200 OK\r\n" + b"X-Fixture: " + b"x" * 1000:
+                        peer.sendall(bytes([byte]))
+                        time.sleep(0.02)
+                except OSError:
+                    pass
+        threading.Thread(target=trickle, daemon=True).start()
+        setting = {**self.setting, "url": f"http://127.0.0.1:{slow.getsockname()[1]}/transcribe"}
+        with mock.patch.object(speech, "SERVICE_RESPONSE_SECONDS", 0.5):
+            start = time.monotonic()
+            with self.assertRaises(speech.ServiceError) as caught:
+                speech.transcribe_service(setting, b"\0\0")
+        self.assertEqual(caught.exception.code, "service_unavailable")
+        self.assertLess(time.monotonic() - start, 3)
 
     def test_a_service_that_never_answers_times_out(self):
         silent = socket.create_server(("127.0.0.1", 0))

@@ -265,7 +265,6 @@ export class HostCapture {
       const answer = await sendServiceVoice(this.selection, this.slice(0, this.recorded), request.signal);
       if (this.state === "inactive") return;
       // The server forwards only to the destination this capture was recorded for.
-      // Local Settings and unpairing events invalidate this capture while it waits.
       if (!answer.text.trim()) { this.serviceFail("service_empty"); return; }
       this.text = answer.text;
       this.finished = true;
