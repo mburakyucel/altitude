@@ -314,8 +314,11 @@ def remove_home_runtime() -> bool:
     try:
         if not any(name.lower() == "speech" for name in config.load_projects()):
             names.add(".lock")
+    except Exception:  # noqa: BLE001 — workers can write the registry; an unreadable one keeps the lock
+        pass
+    try:
         home = os.open(config.ROOT, os.O_RDONLY | os.O_DIRECTORY)
-    except (OSError, ValueError):
+    except OSError:
         return False
     finished = False
     try:
@@ -328,8 +331,12 @@ def remove_home_runtime() -> bool:
                     if entry.is_dir(follow_symlinks=False):
                         if entry.name.startswith("runtime-") and not finished:
                             try:
-                                complete = os.stat(f"{entry.name}/complete.json", dir_fd=folder, follow_symlinks=False)
-                                finished = stat.S_ISREG(complete.st_mode)
+                                runtime = os.open(entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=folder)
+                                try:
+                                    complete = os.stat("complete.json", dir_fd=runtime, follow_symlinks=False)
+                                    finished = stat.S_ISREG(complete.st_mode)
+                                finally:
+                                    os.close(runtime)
                             except OSError:
                                 pass
                         shutil.rmtree(entry.name, dir_fd=folder, ignore_errors=True)

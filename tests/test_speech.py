@@ -823,7 +823,7 @@ class TestSetup(SpeechCase):
         for home in (config.ROOT, self.tmp / "linked", self.tmp / "custom-home"):
             with self.subTest(home=home.name):
                 self.patch(config, "ROOT", home)
-                runtime = config.beside_root("speech")
+                runtime = Path(os.path.realpath(config.beside_root("speech")))  # roots are resolved too
                 self.assertFalse(runtime.is_relative_to(home.resolve()))
                 for engine, roots in self.writable_roots(tree).items():
                     self.assertIn(home.resolve(), roots, engine)
@@ -879,6 +879,10 @@ class TestSetup(SpeechCase):
         old = self.old_runtime(home)
         (old / "tasks" / "fictional").mkdir(parents=True)
         self.patch(config, "load_projects", return_value={"speech": {}})
+        self.assertTrue(speech.remove_home_runtime())
+        self.assertEqual(sorted(path.name for path in old.iterdir()), [".lock", "tasks"])
+        self.old_runtime(home)
+        config.load_projects.side_effect = AttributeError("a registry of the wrong shape")
         self.assertTrue(speech.remove_home_runtime())
         self.assertEqual(sorted(path.name for path in old.iterdir()), [".lock", "tasks"])
 
