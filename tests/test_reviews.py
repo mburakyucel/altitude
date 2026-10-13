@@ -455,6 +455,25 @@ class TestReviews(AltitudeCase):
         self.assertIn("visual", result["snapshot"]["context_ids"])
         self.assertIn("Original image bytes are not reviewed", result["snapshot"]["limitations"][0])
 
+    def test_a_link_planted_while_the_snapshot_fills_is_never_written_through(self):
+        # The worker knows the review id, so it could swap a snapshot folder for a link while Git blobs are read.
+        outside = self.tmp / "outside"
+        outside.mkdir()
+        original = reviews._git
+        def plant(root, *args, **kwargs):
+            if args[:1] == ("cat-file",):
+                source = next((S.task_dir(self.project, self.slug) / "reviews").glob("*/snapshot/source"))
+                source.rmdir()
+                source.symlink_to(outside, target_is_directory=True)
+            return original(root, *args, **kwargs)
+        self.patch(reviews, "_git", side_effect=plant)
+        try:
+            self.run_review()
+        except (OSError, ValueError, T.TransitionError):
+            pass  # how the failed capture is reported is not this test's concern
+        self.assertEqual(list(outside.iterdir()), [])
+        self.engine.assert_not_called()
+
     def test_snapshot_matches_git_candidate_and_excludes_untracked_inputs(self):
         self.commit("AGENTS.md", "Keep the public API stable.\n")
         (self.worktree / "untracked-secret.txt").write_text("not selected")
@@ -500,6 +519,13 @@ class TestReviews(AltitudeCase):
         result = self.run_review(retry)
         self.assertEqual(result["state"], "failed")
         self.assertIn("links", result["error"])
+        self.engine.assert_not_called()
+
+    def test_a_backslash_file_name_fails_the_review_with_its_name(self):
+        self.commit("odd\\name.txt", "fixture\n")  # one POSIX file name containing a backslash
+        result = self.run_review()
+        self.assertEqual(result["state"], "failed")
+        self.assertIn("backslash", result["error"])
         self.engine.assert_not_called()
 
     def test_conflict_with_current_main_names_paths_and_records_no_request(self):

@@ -10,7 +10,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import config, engines, git_policy, l3, platform, state as S, tasks as T
+from . import config, engines, git_policy, l3, platform, state as S, storage, tasks as T
 
 
 class SetupError(git_policy.GitPolicyError):
@@ -43,9 +43,7 @@ def operation_lock(project: str, *, wait: bool = False):
     Probes never wait. The runner waits, so a read holding the lock delays an accepted repair
     instead of losing its wake (setup walkthrough interrupted-retry, 2026-09-23).
     """
-    directory = config.project_dir(project)
-    directory.mkdir(parents=True, exist_ok=True)
-    with (directory / ".setup.lock").open("a") as handle:
+    with storage.runtime_lock(config.project_dir(project) / ".setup.lock") as handle:
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
         except BlockingIOError:

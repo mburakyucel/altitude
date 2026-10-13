@@ -67,10 +67,10 @@ class ConversationDecisions(AltitudeCase):
         prefix = path.read_bytes()
         replace = os.replace
 
-        def fail_inbox(source, destination):
-            if destination == path:
+        def fail_inbox(source, destination, **kwargs):
+            if os.fspath(destination) in (os.fspath(path), path.name):
                 raise OSError("inbox publication interrupted")
-            return replace(source, destination)
+            return replace(source, destination, **kwargs)
 
         with mock.patch.object(S.os, "replace", side_effect=fail_inbox), self.assertRaises(OSError):
             T.accept_question(self.project, self.slug, question["id"], 1)

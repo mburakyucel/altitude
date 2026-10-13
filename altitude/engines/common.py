@@ -17,7 +17,7 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import unquote
 from zoneinfo import ZoneInfo
-from .. import config, platform, state as S
+from .. import config, platform, state as S, storage
 from . import invocation
 
 
@@ -364,9 +364,8 @@ def note_usage_limit(until: str, detail: str = "") -> bool:
         cur = {}
     if cur.get("until") == until:
         return False
-    tmp = p.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"until": until, "seen": datetime.now(timezone.utc).isoformat(timespec="seconds"), "detail": detail[:200]}))
-    os.replace(tmp, p)
+    S.atomic_write(p, json.dumps({"until": until, "seen": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                  "detail": detail[:200]}))
     return True
 
 
@@ -1212,9 +1211,9 @@ def owned_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
         detail = str(failed.get("message") or failed.get("error") or failed)[:500]
     elif not alive and not completed:
         try:
-            detail = (paths["stderr"].read_text(errors="replace")[-500:]
-                      or paths["stdout"].read_text(errors="replace")[-500:] or "Worker exited without a result")
-        except OSError:
+            detail = (storage.tail(paths["stderr"], 500) or storage.tail(paths["stdout"], 500)
+                      or "Worker exited without a result")
+        except (OSError, ValueError):
             detail = "Worker exited without a result"
     row = {"id": worker_id, "sessionId": _event_session(events) or record.get("session_id"),
             "name": record.get("name"), "pid": record.get("pid"), "unit": record.get("unit"),
@@ -1262,7 +1261,8 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
         worker_env.pop(native.EFFORT_ENV, None)
     job_env = {key: value for key, value in launch_env(worker_env).items() if key not in GITHUB_TOKEN_VARIABLES}
     try:
-        with open(paths["stdout"], "ab", buffering=0) as out, open(paths["stderr"], "ab", buffering=0) as err:
+        with open(paths["stdout"], "ab", buffering=0, opener=storage.opener) as out, \
+                open(paths["stderr"], "ab", buffering=0, opener=storage.opener) as err:
             proc = subprocess.Popen(platform.job_command(unit, _driver_command(), job_env, writable=writable),
                                     cwd=str(cwd), stdin=subprocess.PIPE, stdout=out, stderr=err,
                                     env=worker_env, start_new_session=True)

@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import unquote
 
-from . import config, engines, platform, state as S, tasks as T
+from . import config, engines, platform, state as S, storage, tasks as T
 
 STATUSES = ("open", "watch", "closed")
 ISSUE_LABEL = "incident"
@@ -31,8 +31,7 @@ _BULLET = re.compile(r"^(?:- (" + "|".join(re.escape(x) for x in INCIDENT_LABELS
 
 
 def _index_append(row: dict) -> None:
-    with open(config.INCIDENT_INDEX, "a") as f:
-        f.write(json.dumps(row, sort_keys=True) + "\n")
+    storage.append(config.INCIDENT_INDEX, json.dumps(row, sort_keys=True) + "\n")
 
 
 FAULTS = config.ROOT / "monitor" / "faults.json"
@@ -46,8 +45,7 @@ def fault_lock_path() -> Path:
 @contextmanager
 def _fault_lock():
     """Serialize fault evidence RMW and dedupe, independently of project dispatch locks."""
-    FAULTS.parent.mkdir(parents=True, exist_ok=True)
-    with open(fault_lock_path(), "w") as handle:
+    with storage.runtime_lock(fault_lock_path()) as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         try:
             yield
@@ -492,9 +490,7 @@ def _gh(project: str, args: list[str], *, timeout: int, input: str | None = None
 def _incident_lock(project: str):
     """One publisher or amender per project across processes: a retry cannot race the daemon into a second
     issue, and an amendment never lands on a snapshot another writer has replaced."""
-    directory = config.project_dir(project) / "incidents"
-    directory.mkdir(parents=True, exist_ok=True)
-    with open(directory / ".lock", "w") as handle:
+    with storage.runtime_lock(config.project_dir(project) / "incidents" / ".lock") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         try:
             yield
@@ -658,7 +654,7 @@ def _reserve_incident_file(directory: Path) -> tuple[str, Path]:
         iid = f"I-{stamp}" if n == 1 else f"I-{stamp}-{n}"
         path = directory / f"{iid}.md"
         try:
-            os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            os.close(storage.open_runtime(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
             return iid, path
         except FileExistsError:
             continue
@@ -688,9 +684,7 @@ def new_incident(project: str, *, title: str, task: str | None, what: str, evide
     fields = dict(title=title, date=S.now()[:10], task=task or "-", project=project, system=system,
                   what=_one_field(what), summary=_one_field(summary or ""),
                   evidence=_one_field(evidence), cause=_one_field(cause), status="watch", issue="")
-    d = config.project_dir(project) / "incidents"
-    d.mkdir(parents=True, exist_ok=True)
-    iid, path = _reserve_incident_file(d)
+    iid, path = _reserve_incident_file(config.project_dir(project) / "incidents")
     try:
         S.atomic_write(path, template.format(id=iid, **fields))
     except Exception:
@@ -698,8 +692,7 @@ def new_incident(project: str, *, title: str, task: str | None, what: str, evide
         raise
     row = {"at": S.now(), "project": project, "id": iid, "title": title, "task": task, "tags": sorted(set(tags)),
            "cause": cause.strip()[:200]}
-    with open(config.project_dir(project) / "incidents.jsonl", "a") as f:
-        f.write(json.dumps(row, sort_keys=True) + "\n")
+    storage.append(config.project_dir(project) / "incidents.jsonl", json.dumps(row, sort_keys=True) + "\n")
     _index_append(row)
     if task:
         S.append_event(project, task, "incident", id=iid, tags=row["tags"], by=actor)
