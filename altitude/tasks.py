@@ -961,13 +961,16 @@ def steering_view(task: dict, events: list[dict], *, job_root=None) -> dict:
     stop_id = task.get("stop_id")
     current_stop = request.get("operation") == "stop" and request.get("id") == stop_id
     active_request = request.get("status") in ("pending", "executing")
+    handoff_stop = (request.get("operation") == "handoff" and request.get("phase") == "stopping"
+                    and request.get("status") in ("pending", "executing", "refused", "failed")
+                    and all(request.get(key) == task.get(key) for key in ("attempt", "agent_id", "session_id")))
     confirmed = stop_id and any(e.get("kind") == "stopped" and e.get("stop_id") == stop_id for e in events)
-    if stop_id and not confirmed and not active_request and job_root is not None:
+    if (stop_id or handoff_stop) and not confirmed and not active_request and job_root is not None:
         from . import engines
         confirmed = engines.worker_termination(task, job_root=job_root) is True
     state = "running" if task.get("state") == "running" else "idle"
-    if stop_id and task.get("state") in ("running", "blocked"):
-        if current_stop and active_request:
+    if (stop_id or handoff_stop) and task.get("state") in ("running", "blocked"):
+        if (current_stop or handoff_stop) and active_request:
             state = "stopping"
         elif task.get("resume_after") or (request.get("operation") == "resume" and active_request):
             state = "resuming"

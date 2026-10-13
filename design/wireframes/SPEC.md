@@ -1146,6 +1146,21 @@ unavailable.** with **Retry capture**, and recovery removes the error.
 
 ### 3.10 Task page
 
+**Engine transfer.** Existing Task details offers **Switch engine…**; a quota-stop explanation also
+offers **Switch to {engine}**. A confirmation identifies the target and warns **Some session context
+may not carry over. The new engine uses extra tokens to get up to speed.** It preserves saved work,
+questions and merge holds. A running owner prepares its note with no timeout; stopped/exhausted work
+uses saved context. No alternative hides the entry; pins and unavailable targets reveal a reason on press.
+After admission, a conversation card shows **Preparing switch to {engine}**, **Switch now** and
+**Cancel switch**. The compact header state replaces ordinary activity; Stop stays in its existing
+slot. Reading history offers **Switch controls ↓** in the jump area. Details provides the same
+controls from Live session/Terminal. Switch now confirms stopping pending commands without a fresh
+note. Once stopping starts, now/cancel disappear. An uncertain response keeps **Switch unconfirmed**
+and **Check status**, without another mutation; unknown termination uses the shared Stop-unconfirmed
+state. Outcomes become concise conversation messages. Draft, selection, recording and view survive;
+polling never steals focus. Escape closes a dialog before applying page shortcuts. There is no new
+browser cache or persistent transfer state.
+
 The [maintained task states](TaskStates.html) describe activity and steering. Task actions stay
 directly accessible in the compact header, with one consistent button treatment.
 

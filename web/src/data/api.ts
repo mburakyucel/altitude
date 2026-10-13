@@ -765,6 +765,13 @@ export const TaskViewSchema = z
       state: z.enum(["running", "stopping", "stopped", "resuming", "stop_unconfirmed", "idle"]),
       stop_id: z.string().nullable(), generation: z.string().nullable(), error: z.string().nullable(),
     }).nullish(),
+    transfer: z.object({
+      current_engine: z.string().nullable(), current_label: z.string().nullable(), eligible: z.boolean(), reason: z.string().nullish(),
+      quota_limited: z.boolean(), preparation: z.boolean(),
+      targets: z.array(z.object({ engine: z.string(), label: z.string(), available: z.boolean(), reason: z.string().nullish() })),
+      observed: z.object({ attempt: z.number().nullable(), agent_id: z.string().nullable(), session_id: z.string().nullable(), block_id: z.string().nullable() }),
+      request: z.object({ id: z.string(), status: z.string(), phase: z.string().nullish(), engine: z.string(), target_label: z.string(), at: z.string().nullish(), note: z.string().nullish(), now: z.boolean().nullish() }).nullish(),
+    }).nullish(),
   })
   .passthrough();
 
@@ -1479,6 +1486,9 @@ export interface TaskActionInput {
   generation?: string | null;
   stop_id?: string | null;
   reason?: string;
+  engine?: string;
+  request_id?: string;
+  observed?: { attempt: number | null; agent_id: string | null; session_id: string | null; block_id: string | null };
 }
 
 export function useTaskAction(project: string) {

@@ -135,6 +135,12 @@ policy. L3 still verifies the actual cause and recovery before resuming work.
 
 ### Explicit provider handoff
 
+The task page offers the same operation in **Task details → Engine transfer → Switch engine…**.
+A usage-limit stop also offers switching beside its explanation. Confirmation warns that some session
+context may not carry over and the new engine uses extra tokens to get up to speed. A conversation card
+keeps **Switch now** and **Cancel switch** visible during preparation; neither a slow response nor a
+disconnection imposes a cutoff. **Check status** reconciles an uncertain submission without repeating it.
+
 L3 or the operator can transfer a running or stopped owner to a fresh attempt on another configured engine:
 
 ```sh

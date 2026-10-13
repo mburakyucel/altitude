@@ -948,7 +948,14 @@ current verification snapshot; prior reports and delivery history remain. Dispat
 and configured target options again, ignores new-task model choices, preserves committed and uncommitted work in the existing worktree,
 validates isolation and adopted ancestry, and increments the attempt only when the fresh worker binds. The target is then
 consumed. Task identity, PRs, expected files, saved messages, unanswered questions, decisions and merge holds
-survive; continuation supplies no missing approval. L3 verifies activation and fresh task state before
+survive; continuation supplies no missing approval. The task-page confirmation submits the observed
+attempt, worker, session and block together; a stale confirmation refuses. Its waiting card follows
+the daemon request, and switch-now/cancel address that exact request. Network uncertainty disables
+further switch mutations until a successful status read. Stop remains independently available.
+Transfer actions preserve the composer draft and recording; Send addresses the current task, retains
+undelivered messages for its successor, and never bypasses a known quota hold. Concise conversation
+receipts describe the outcome while the old worker receives its complete checkpoint correction.
+L3 verifies activation and fresh task state before
 requesting a live handoff, and observes the new running attempt before reporting recovery.
 
 Claude resume uses foreground `claude -p --resume` inside the task's transient unit; Codex resume

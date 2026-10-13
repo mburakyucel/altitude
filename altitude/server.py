@@ -240,11 +240,12 @@ def request_task_resume(project: str, slug: str, *, due: bool = True) -> bool:
 
 
 def request_daemon_task_operation(project: str, slug: str, operation: str, reason: str, *, actor: str,
-                                  generation: object = T._UNSET, stop_id: object = T._UNSET) -> dict:
+                                  generation: object = T._UNSET, stop_id: object = T._UNSET,
+                                  **options) -> dict:
     """Persist an operator request before scheduling its one daemon-side runner."""
     observed = {key: value for key, value in (("generation", generation), ("stop_id", stop_id)) if value is not T._UNSET}
     result = dispatch.request_task_operation(project, slug, operation, reason, actor=actor, deliver_reason=False,
-                                             **observed)
+                                             **observed, **options)
     if result.get("queued"):
         try:
             spawn(f"task-operation:{project}:{slug}", dispatch.run_task_operation, project, slug)
@@ -2554,7 +2555,20 @@ class Handler(BaseHTTPRequestHandler):
                 project, slug, action = o["project"], o["slug"], o["action"]
                 reason = o.get("reason") or f"{action} by the operator"
                 try:
-                    if action == "reject":
+                    if action == "handoff":
+                        observed = o.get("observed")
+                        if not isinstance(observed, dict) or not isinstance(o.get("engine"), str):
+                            return self._json({"error": "Refresh the task and choose a target engine."}, 400)
+                        request_daemon_task_operation(
+                            project, slug, "handoff", reason, actor=config.OPERATOR_ACTOR,
+                            engine=o["engine"], expected_attempt=observed.get("attempt"), handoff_observed=observed)
+                    elif action in ("handoff-now", "handoff-cancel"):
+                        dispatch.handoff_control(project, slug, str(o.get("request_id") or ""),
+                                                 action.removeprefix("handoff-"), actor=config.OPERATOR_ACTOR,
+                                                 reason=reason)
+                        if action == "handoff-now":
+                            spawn(f"task-operation:{project}:{slug}", dispatch.run_task_operation, project, slug)
+                    elif action == "reject":
                         request_daemon_task_operation(project, slug, "reject", reason, actor=config.OPERATOR_ACTOR)
                     elif action == "resume":
                         request_daemon_task_operation(project, slug, "resume", reason, actor=T.OPERATOR_MESSAGE_ROLE,
@@ -3536,6 +3550,44 @@ TASK_VIEW_OMITTED = ("reviews", "question_groups", "message_deliveries")
 TASK_VIEW_EVENTS = 20      # the newest events, as many as the task page shows
 
 
+def task_transfer_view(project: str, task: dict) -> dict:
+    """A fresh task snapshot offers only explicit, route-eligible engine transfers."""
+    current = task.get("l2_engine") or task.get("engine")
+    request = task.get("daemon_request") or {}
+    active = request.get("status") in ("pending", "executing")
+    configured = dict.fromkeys(option["engine"] for tier in config.role_routing("l2", config.project(project))
+                               for option in tier)
+    if task.get("state") not in ("running", "blocked") or not task.get("attempt") or not task.get("l2_engine"):
+        configured = {}
+    targets = []
+    for engine in configured:
+        if engine == current:
+            continue
+        reason = None
+        try:
+            if active:
+                raise T.TransitionError("A task action is already in progress.")
+            dispatch._require_handoff(project, task, engine, task.get("attempt"))
+        except T.TransitionError as exc:
+            reason = str(exc)
+        targets.append({"engine": engine, "label": config.ENGINE_LABELS.get(engine, engine),
+                        "available": reason is None, "reason": reason})
+    eligible = any(target["available"] for target in targets)
+    preparation = False
+    if eligible and not task.get("usage_limit") and T.stopped_by(task) not in dispatch.DAEMON_REQUEST_ACTORS:
+        worker = engines.worker(dispatch.l2_engine(task), task, job_root=dispatch.l2_job_root(project, task["slug"]))
+        preparation = not (worker and worker.get("state") in ("done", "failed", "stopped"))
+    transfer = None
+    if request.get("operation") == "handoff":
+        transfer = {key: request.get(key) for key in ("id", "status", "phase", "engine", "at", "note", "now", "checkpoint", "result_state")}
+        transfer["target_label"] = config.ENGINE_LABELS.get(request.get("engine"), request.get("engine"))
+    return {"current_engine": current, "current_label": config.ENGINE_LABELS.get(current, current),
+            "targets": targets, "eligible": eligible,
+            "reason": None if eligible else (targets[0]["reason"] if targets else "No other engine is configured."),
+            "quota_limited": bool(task.get("usage_limit")), "preparation": bool(preparation), "request": transfer,
+            "observed": {key: task.get(key) for key in ("attempt", "agent_id", "session_id", "block_id")}}
+
+
 def task_view(project: str, slug: str) -> dict:
     questions = T.question_views(project, slug)
     with S.project_lock(project):
@@ -3553,11 +3605,13 @@ def task_view(project: str, slug: str) -> dict:
         activity = {"generation": t.get("agent_id"), "state": "unavailable", "commentary": None,
                     "observation": None, "delivered": [], "background": None, "error": "The worker changed. Refresh this task."}
     return {**{k: v for k, v in t.items() if k not in TASK_VIEW_OMITTED},
+            "transfer": task_transfer_view(project, t),
             "repository": project_repository(project),
             "can_continue": T.reported_continuable(t, report),
             "question": questions[-1] if questions else None, "questions": questions,
             "question_group": T.question_group_view(project, t),
-            "files": files, "messages": T.message_views(project, slug, activity["delivered"]),
+            "files": files, "messages": [{**row, "text": row.get("display_text", row["text"])}
+                                         for row in T.message_views(project, slug, activity["delivered"])],
             "events": events[-TASK_VIEW_EVENTS:], "activity": activity, "review": reviews.view(project, slug),
             "steering": T.steering_view(t, events, job_root=d / "l2-engine"),
             "report_json": report, "live": next((s for s in monitor.sessions() if s.get("kind") == "l2" and s.get("slug") == slug and s.get("project") == project), None)}

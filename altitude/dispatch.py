@@ -402,6 +402,7 @@ def _notify_handoff_cancelled(project: str, task: dict) -> None:
     """End checkpoint instructions durably, including if the old turn has already exited."""
     request = task["daemon_request"]
     if request.get("cancel_notified"):
+        _record_handoff_outcome(project, task)
         return
     if (request.get("checkpoint_requested")
             and all(request.get(key) == task.get(key) for key in ("attempt", "agent_id", "session_id"))):
@@ -409,7 +410,8 @@ def _notify_handoff_cancelled(project: str, task: dict) -> None:
         row_id = request["id"] + "-cancel"
         row = next((row for row in T._rows(folder / "conversation.jsonl", "task conversation") if row["id"] == row_id), None)
         if row is None:
-            row = {"id": row_id, "at": S.now(), "role": "system", "by": "altd",
+            row = {"id": row_id, "at": T._conversation_time(), "role": "system", "by": "altd",
+                   "display_text": _handoff_outcome_text(request),
                    "text": f"Engine transfer {request['id']} ended ({request['status']}). Stop waiting for that transfer. "
                            "Continue the same authorized work only as the current task state permits; newer transfer "
                            "requests, unanswered questions, Stop actions and merge holds remain in force.",
@@ -426,6 +428,31 @@ def _notify_handoff_cancelled(project: str, task: dict) -> None:
                 T.claim_send_now(project, task, [row], sends, once=True)
     request["cancel_notified"] = True
     S.save_task(project, task)
+    _record_handoff_outcome(project, task)
+
+
+def _handoff_outcome_text(request: dict) -> str:
+    target = config.ENGINE_LABELS.get(request.get("engine"), request.get("engine"))
+    status, note = request.get("status"), request.get("note") or ""
+    if status == "done":
+        return f"Switch to {target} queued."
+    if status == "cancelled":
+        return {"Superseded by stop": "Switch cancelled by Stop.",
+                "Superseded by reject": "Switch cancelled because the task was rejected.",
+                "Owner needs to block": "Switch cancelled because the current engine needs a decision or dependency."}.get(
+                    note, "Switch cancelled.")
+    return f"Switch to {target} did not finish." + (f" {note}" if note else " Check task status.")
+
+
+def _record_handoff_outcome(project: str, task: dict) -> None:
+    """One durable conversation receipt; a native correction already carries its display text."""
+    request = task["daemon_request"]
+    path = S.task_dir(project, task["slug"]) / "conversation.jsonl"
+    row_id = request["id"] + "-outcome"
+    if any(row["id"] in (row_id, request["id"] + "-cancel") for row in T._rows(path, "task conversation")):
+        return
+    T._append_jsonl(path, {"id": row_id, "at": T._conversation_time(), "role": "system", "by": "altd",
+                          "text": _handoff_outcome_text(request), "wake": False})
 
 
 def request_task_operation(project: str, slug: str, operation: str, reason: str, *, actor: str, **options) -> dict:
@@ -442,7 +469,8 @@ def request_task_operation(project: str, slug: str, operation: str, reason: str,
 def _request_task_operation(project: str, slug: str, operation: str, reason: str, *, actor: str,
                             engine: str | None = None, expected_attempt: int | None = None,
                             generation: object = T._UNSET, stop_id: object = T._UNSET,
-                            deliver_reason: bool = True, handoff_now: bool = False) -> dict:
+                            deliver_reason: bool = True, handoff_now: bool = False,
+                            handoff_observed: dict | None = None) -> dict:
     """A resume's authored reason reaches the resumed owner; the UI's buttons send fixed text and deliver none.
 
     I-20260904-062512: the request and its audit event land under the project lock before the daemon acts. The
@@ -458,6 +486,10 @@ def _request_task_operation(project: str, slug: str, operation: str, reason: str
     contract = DAEMON_TASK_OPERATIONS[operation]
     with S.project_lock(project):
         task = S.load_task(project, slug)
+        if operation == "handoff" and handoff_observed is not None:
+            if any(key not in handoff_observed or handoff_observed[key] != task.get(key)
+                   for key in ("attempt", "agent_id", "session_id", "block_id")):
+                raise T.TransitionError("The task attempt, worker or block changed. Refresh before switching engines.")
         if operation == "stop" and generation is not T._UNSET and generation != task.get("agent_id"):
             raise T.TransitionError("The worker changed. Refresh before stopping it.")
         if operation == "resume" and stop_id is not T._UNSET:
@@ -753,6 +785,7 @@ def _finish_task_operation_locked(project: str, task: dict, request_id: str | No
     if request.get("id") != request_id:
         return {"stale": True}
     if request.get("operation") == "handoff" and request.get("status") in ("done", "cancelled"):
+        _record_handoff_outcome(project, task)
         return {"request": request, "state": task.get("state"), "idempotent": True}
     if _handoff_requeued(task, request):
         status, note = "done", "handoff requeued the observed attempt"
@@ -766,6 +799,8 @@ def _finish_task_operation_locked(project: str, task: dict, request_id: str | No
     S.save_task(project, task)
     if request.get("operation") == "handoff" and status in ("cancelled", "refused", "failed"):
         _notify_handoff_cancelled(project, task)
+    elif request.get("operation") == "handoff" and status == "done":
+        _record_handoff_outcome(project, task)
     return {"request": request, "state": task.get("state")}
 
 

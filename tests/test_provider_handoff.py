@@ -91,7 +91,9 @@ class TestProviderHandoff(AltitudeCase):
         self.assertFalse(current.get("engine") or current.get("model") or current.get("routing_pinned"))
         for key in ("slug", "title", "request", "worktree", "branch", "paths", "prs", "adopted_pr", "delivery", "questions", "hold_merge"):
             self.assertEqual(current.get(key), before.get(key), key)
-        self.assertEqual(T.task_messages(self.project, slug), conversation)
+        messages = T.task_messages(self.project, slug)
+        self.assertEqual(messages[:-1], conversation)
+        self.assertEqual(messages[-1]["text"], "Switch to Codex queued.")
         self.assertEqual(S.read_events(self.project, slug)[:len(events)], events)
         self.assertIn(before["agent_id"], self.engine.workers, "earlier worker evidence stays available")
         self.assertIn({"engine": "claude", "session_id": before["session_id"], "attempt": 1, "attempts": [1]},
@@ -133,7 +135,9 @@ class TestProviderHandoff(AltitudeCase):
         self.assertEqual((current["attempt"], launch["engine"]), (2, "codex"))
         self.assertIsNone(launch["session_id"], "An explicit handoff uses a fresh native session")
         self.assertEqual(current["hold_merge"], before["hold_merge"])
-        self.assertEqual(T.task_messages(self.project, slug), rows)
+        messages = T.task_messages(self.project, slug)
+        self.assertEqual(messages[:-1], rows)
+        self.assertEqual(messages[-1]["text"], "Switch to Codex queued.")
         self.assertEqual(T.pending(self.project, slug), [], "Historical context must not requeue delivered messages")
         self.assertEqual(len(launch["images"]), len(rows))
         content = engines._engine_input(launch["engine"], launch["prompt"], launch["images"])
