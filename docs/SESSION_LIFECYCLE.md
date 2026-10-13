@@ -522,7 +522,10 @@ concurrent reads see complete messages. The owner receives the exact text with i
 message ID, plus the answered question's ID for a Needs you answer; it already holds the brief,
 persona and its own questions, so no question state or procedure is attached. Hooks fired inside a
 helper subagent leave the inbox to the owner. Ordinary sends do not interrupt work. The engine seam supplies the inbox at a native hook
-checkpoint when supported, or resumes the saved session after a clean CLI turn finishes. The operator's own
+checkpoint when supported. A Codex owner has no hook checkpoint, so its driver claims the waiting messages
+itself, as Send now does, and writes them into the running turn within a second of their arrival, in arrival
+order up to the first message with images. Messages it cannot take, including every message after the engine
+refuses one in that turn, wait until the turn finishes and altd resumes the saved session with them. The operator's own
 messages always arrive as a user turn, because the engine's action classifier reads only user turns as the
 user's intent (#612). At a hook checkpoint, a running Claude owner reads L3, server and other-owner messages as
 hook context and a notice naming the operator's waiting messages by ID. When it stops with only operator
@@ -975,7 +978,8 @@ requesting a live handoff, and observes the new running attempt before reporting
 
 Claude resume uses foreground `claude -p --resume` inside the task's transient unit; Codex resume
 runs `codex app-server` and resumes the thread with the inbox as its next turn, from the same task worktree.
-Both run through the job's engine driver, which keeps the engine's input open for Send now.
+Both run through the job's engine driver, which keeps the engine's input open for Send now and, on Codex, for
+the messages that arrive during the turn.
 Both engines have one contract: the persona may invoke the scoped Altitude
 CLI, and the backend applies the identity, clean-Git, isolation, and merge-policy checks relevant to each
 command and effect boundary. Claude hooks add telemetry, coordination delivery and the operator-message notice;

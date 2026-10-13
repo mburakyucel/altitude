@@ -80,7 +80,9 @@ class _Ended(RuntimeError):
 
 class _CodexDriver(common._Driver):
     """Codex runs as `codex app-server` for one turn: `turn/steer` adds a message to the running turn without
-    stopping its commands. Every request the server makes of its client is refused, as `codex exec` refuses them."""
+    stopping its commands. Every request the server makes of its client is refused, as `codex exec` refuses them.
+    Codex has no hook checkpoint, so an owner's driver steers its task's waiting messages into the turn as they
+    arrive; once the server refuses one, the rest wait for the next turn with it."""
 
     def __init__(self, spec: dict, env: dict):
         super().__init__(spec, env)
@@ -89,6 +91,7 @@ class _CodexDriver(common._Driver):
         self.ids = iter(range(1, 1 << 62))
         self.turn: str | None = None
         self.steers: dict[int, str] = {}
+        self.held = False
         self.completed = False
         self.usage: dict = {}
         self.model: str | None = None
@@ -123,6 +126,19 @@ class _CodexDriver(common._Driver):
                 return "returned"
             self.steers[identity] = message["id"]
             return None
+
+    def collect(self) -> None:
+        task = self.spec.get("task")
+        with self.lock:
+            steering = bool(task and self.turn) and not (self.closed or self.held)
+        if not steering:
+            return
+        try:
+            from .. import tasks
+            tasks.steer_waiting(task["project"], task["slug"], self.spec.get("worker_id"), self.sends)
+        except Exception as exc:  # noqa: BLE001 — the messages keep waiting in the inbox for the next turn
+            self.held = True
+            print(f"altitude-driver: waiting messages stay for the next turn: {exc}", file=sys.stderr, flush=True)
 
     def unsettled(self) -> list[str]:
         """Written, but the server ended before answering."""
@@ -195,6 +211,8 @@ class _CodexDriver(common._Driver):
                     steered = self.steers.pop(message["id"], None)
                     if steered is None:
                         self.replies[message["id"]] = message
+                    elif "error" in message:
+                        self.held = True
                 if steered:  # a refused steer found no active turn, or another one
                     self.settle(steered, "returned" if "error" in message else "delivered")
                 with self.lock:

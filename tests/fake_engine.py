@@ -5,12 +5,14 @@ protocol. FAKE_ENGINE_LOG receives its arguments and GitHub token variable, then
 FAKE_ENGINE_MODEL and FAKE_ENGINE_TEXT replace the session or thread identity, model and reply. With FAKE_ENGINE_TOOL set,
 the first turn starts a long command and writes "running" to that path; the command finishes only once a Send now
 message reaches the turn (for Claude, its input line and the `background_tasks` request). With FAKE_ENGINE_ASK set,
-the Codex server asks the client for an approval first and records the answer.
+the Codex server asks the client for an approval first and records the answer. With FAKE_ENGINE_REFUSE_STEER set, the
+Codex server refuses the first steer of a running turn and ends that turn a second later.
 """
 import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 TOOL = os.environ.get("FAKE_ENGINE_TOOL")
@@ -153,6 +155,13 @@ def codex() -> None:
         elif method == "turn/steer":
             if active != params.get("expectedTurnId"):
                 reply(identity, error={"code": -32600, "message": "no active turn to steer"})
+                continue
+            if os.environ.get("FAKE_ENGINE_REFUSE_STEER"):
+                reply(identity, error={"code": -32600, "message": "steer refused"})
+                time.sleep(1)
+                finish_command(child)
+                active = None
+                complete(TEXT)
                 continue
             if not os.environ.get("FAKE_ENGINE_DROP_STEER_ACK"):
                 reply(identity, {"turnId": active})

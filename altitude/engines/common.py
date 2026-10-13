@@ -447,7 +447,8 @@ def send_into_turn_once(sends: Path, message_id: str, text: str) -> None:
 
 
 class _Driver:
-    """Hold an engine's input open for one job, so a Send now message reaches the running turn without stopping it.
+    """Hold an engine's input open for one job, so a Send now message, or on an engine without hook checkpoints any
+    message waiting for the owner (`collect`), reaches the running turn without stopping it.
 
     The engine's events go to the job's output; the native `worker_events` reads them in the shared worker event
     form (`thread.started`, `item.*`, `turn.completed`/`turn.failed`) the rest of Altitude reads. A message file in `sends` is claimed by renaming, written to the engine, and settled once
@@ -488,6 +489,8 @@ class _Driver:
     def watch(self) -> None:
         while self.sends is not None:
             done = self.finished
+            if not done:
+                self.collect()
             for drop in sorted(self.sends.glob("*.json")):
                 claimed = drop.with_suffix(".writing")
                 try:
@@ -501,6 +504,9 @@ class _Driver:
             if done:
                 return
             time.sleep(SEND_POLL)
+
+    def collect(self) -> None:
+        """An engine without a hook checkpoint claims its task's waiting messages here, for this poll to write."""
 
     def settle(self, message_id: str, outcome: str) -> None:
         if self.sends is not None:
