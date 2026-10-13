@@ -271,6 +271,7 @@ test("Settings model dropdowns: named choices, separate scopes, custom IDs, pend
     await expect.poll(() => newTasks(request)).toEqual({ engine: item.engine, model: item.model });
     await expect(tasks).toContainText(`${item.model} · Access unverified`);
   }
+  await tasks.scrollIntoViewIfNeeded();
   await walk.state("02-explicit-model-access-unverified", { visible: [model, tasks.getByText(/Access unverified/)], hidden: [id] });
   await model.selectOption(key(first!));
   await expect.poll(() => newTasks(request)).toEqual({ engine, model: first!.model });
