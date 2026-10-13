@@ -539,8 +539,8 @@ preflight runs before candidate fixture imports, and its evidence is copied to t
 there before candidate guest administration. Later journey receipts are candidate-reachable in the
 disposable guest; they establish tested fictional behavior, not hostile guest-kernel resistance. Failure artifacts
 and process/guest cleanup remain part of the validation receipt. Mac Seatbelt harness results do not
-substitute for these two protections. Fresh native evidence for this route remains tracked in
-[#883](https://github.com/mburakyucel/altitude/issues/883) until deployment and its recorded run.
+substitute for these two protections. Fresh native evidence for this route is tracked in
+[#643](https://github.com/mburakyucel/altitude/issues/643).
 
 On Linux, `scripts/container_vm.py <new-results> --browser` runs the actual image daemon with deterministic
 external engine/tool observations through its published HTTPS endpoint. Chromium runs in the
