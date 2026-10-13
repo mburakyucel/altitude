@@ -1,4 +1,8 @@
 """Shared callable engine interface; native implementations live beside it."""
+from __future__ import annotations
+
+from pathlib import Path
+
 from . import common, claude, codex
 
 from .common import (
@@ -66,7 +70,6 @@ from .common import (
     window_hold,
     worker,
     worker_detail,
-    worker_live,
     cli_version,
     worker_confinement,
     review_capability,
@@ -112,3 +115,9 @@ from .common import _safe_output, _shell_command
 
 INSTALL = {engine: native.INSTALL_COMMAND for engine, native in (("claude", claude), ("codex", codex))}
 SIGN_IN = {engine: native.SIGN_IN for engine, native in (("claude", claude), ("codex", codex))}
+
+
+def worker_live(engine: str, task: dict, *, job_root: Path) -> bool:
+    """Whether anything of the worker still runs, including commands its ended engine left in the job."""
+    row = worker(engine, task, job_root=job_root)
+    return bool(row and (row.get("state") == "working" or row.get("job_active")))

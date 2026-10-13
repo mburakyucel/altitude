@@ -14,7 +14,6 @@ class FakeL2:
     def install(self, case):
         for name in ("start_l2", "resume_l2", "worker", "worker_sends", "worker_termination", "stop_l2_worker", "remove_l2_worker"):
             case.patch(engines, name, new=getattr(self, name))
-        case.patch(engines.common, "worker", new=self.worker)
 
     def _launch(self, engine, name, prompt, session_id, kwargs):
         self.calls.append({"engine": engine, "name": name, "prompt": prompt,

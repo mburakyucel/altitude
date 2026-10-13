@@ -1381,12 +1381,6 @@ def worker_detail(engine: str, row: dict | None) -> tuple[str, datetime | None]:
     return str((row or {}).get("detail") or ""), datetime.fromtimestamp(at, timezone.utc) if at else datetime.now(timezone.utc)
 
 
-def worker_live(engine: str, task: dict, *, job_root: Path) -> bool:
-    """Whether anything of the worker still runs, including commands its ended engine left in the job."""
-    row = worker(engine, task, job_root=job_root)
-    return bool(row and (row.get("state") == "working" or row.get("job_active")))
-
-
 def _agent_messages(events: list[dict]) -> list[str]:
     return [str((event.get("item") or {}).get("text") or "") for event in events
             if event.get("type") == "item.completed" and (event.get("item") or {}).get("type") == "agent_message"]
