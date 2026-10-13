@@ -1381,7 +1381,9 @@ it and the installation keeps them, so no request reaches GitHub. It then:
 - creates only declared-source Python caches in the installed tree and publishes healthy `v0.0.6`;
   its automatic preflight fails without restarting the daemon, releases its receipt/fence and
   preserves attempt history. Explicit `alt recover --generated-bytecode` quarantines caches,
-  preserves identity/registration and does not upgrade; a paired explicit retry succeeds with a
+  preserves identity/registration and does not upgrade. A second affected-cache state exercises
+  the checksum-verified standalone archive repair entry point without activation, service restart
+  or attempt-history changes; a paired explicit retry then succeeds with a
   replacement PID and `automatic=false`. This manual recovery is distinct from unattended success;
 - uninstalls: the LaunchAgent, its launchd job and the update job are gone, settings, TLS identity
   and fictional history and project files remain.

@@ -297,8 +297,23 @@ class FolderNamespace(FolderCase):
         with self.assertRaisesRegex(ValueError, "inside the container"):
             config.validate_projects_folder(str(self.tmp / "outside"))
         with self.assertRaisesRegex(ValueError, "inside the container"):
+            config.validate_projects_folder(str(self.tmp / "missing-outside" / "Projects"))
+        with self.assertRaisesRegex(ValueError, "inside the container"):
             with config.add_project("volume-root", path=self.home / "Projects"):
                 pass
+
+    def test_selection_keeps_kernel_directory_semantics_after_safe_normalization(self):
+        for first in (self.home / "missing", self.home / "regular"):
+            if first.name == "regular":
+                first.write_text("fictional file")
+            path = first / ".." / "Projects"
+            # Browser component normalization permits these paths; raw directory operations do not.
+            self.assertEqual(server.folders(str(path))["path"], str(self.home / "Projects"))
+            with self.assertRaisesRegex(ValueError, "not a directory"):
+                config.validate_projects_folder(str(path))
+            with self.assertRaisesRegex(ValueError, "not a directory"):
+                with config.add_project("unsearchable", path=path):
+                    pass
 
     def test_missing_container_root_remains_a_configured_unavailable_root(self):
         volume = self.home / "not-created"

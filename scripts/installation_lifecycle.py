@@ -945,13 +945,31 @@ class MacLifecycle(Lifecycle):
         assert all((Path(repair["backup"]) / name).is_file() for name in receipt["files"])
         assert self.record()["automatic_attempts"] == history
         assert self.healthy("cache-manually-repaired-service", current)["pid"] == initial["pid"]
+        # The documented fallback also repairs an affected installation without importing that tree.
+        # This bootstrap was verified against the baseline archive during prepare(); it does not activate it.
+        self.run("cache-bootstrap-affected-state", sys.executable, "-I", "-B", "-c", code, self.prefix / "current")
+        archive = next(self.baseline.glob("altitude-*.tar.gz"))
+        checksum = (self.baseline / (archive.name + ".sha256")).read_text().strip()
+        bootstrap = json.loads(self.run("cache-verified-standalone-repair", sys.executable, "-B",
+                                       self.baseline / "install.py", "--archive", archive, "--sha256", checksum,
+                                       "--prefix", self.prefix, "--repair-generated-bytecode"))
+        assert bootstrap["repaired"] and bootstrap["version"] == current["version"], bootstrap
+        assert bootstrap["service"] == "unchanged", bootstrap
+        bootstrap_receipt = json.loads((Path(bootstrap["backup"]) / "recovery.json").read_text())
+        assert bootstrap_receipt["complete"] and len(bootstrap_receipt["files"]) == 4, bootstrap_receipt
+        assert all((Path(bootstrap["backup"]) / name).is_file() for name in bootstrap_receipt["files"])
+        assert self.record()["automatic_attempts"] == history
+        assert self.record()["attempt"] == failed
+        assert self.healthy("cache-bootstrap-repaired-service", current)["pid"] == initial["pid"]
+        assert all(digest(p) == h for p, h in retained.items()), "Standalone repair altered retained state"
         self.request("/api/update", {"version": version})
         succeeded = self.wait_attempt(version, "succeeded")
         assert not succeeded["automatic"], "Explicit retry is not an unattended upgrade"
         assert self.healthy("cache-retry-succeeded", candidate["release"])["pid"] != initial["pid"]
         assert self.request("/api/access")["paired"]
         assert all(digest(p) == h for p, h in retained.items()), "Cache recovery/retry altered retained state"
-        write_json(self.results / "cache-recovery-retry.json", {"manual_repair": repair, "failed": failed,
+        write_json(self.results / "cache-recovery-retry.json", {"manual_repair": repair,
+                   "standalone_manual_repair": bootstrap, "failed": failed,
                    "succeeded": succeeded, "automatic_attempts": history, "preserved": True})
 
     def pair(self):

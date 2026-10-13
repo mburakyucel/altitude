@@ -322,9 +322,10 @@ def validate_projects_folder(value) -> None:
     if not isinstance(value, str) or not Path(value).is_absolute():
         raise ValueError("the projects folder must be an absolute path")
     try:
-        with platform.inspected_path(Path(value), limit=platform.folder_link_limit(), open_leaf=False) as inspected:
+        with platform.inspected_path(Path(value), limit=platform.folder_link_limit(), real=False,
+                                     open_leaf=False) as inspected:
             platform.require_container_project(inspected, folder=True)
-            if not platform.directory_type(inspected):
+            if not inspected.searchable or not platform.directory_type(inspected):
                 raise ValueError(f"{value} is not a directory")
             try:
                 with platform.readable_directory(inspected):
@@ -712,9 +713,10 @@ def add_project(name: str, *, path=None, approval="default", l2_engine=None):
     path = Path(path or (project_roots()[0] / name)).expanduser()
     try:
         # Registration inspects final type without requiring final-directory execute/read/list.
-        with platform.inspected_path(path, limit=platform.folder_link_limit(), open_leaf=False) as inspected:
+        with platform.inspected_path(path, limit=platform.folder_link_limit(), real=False,
+                                     open_leaf=False) as inspected:
             platform.require_container_project(inspected)
-            if not platform.directory_type(inspected):
+            if not inspected.searchable or not platform.directory_type(inspected):
                 raise ValueError(f"{path} is not a directory")
     except platform.PrivatePath:
         raise ValueError(PRIVATE_FOLDER) from None

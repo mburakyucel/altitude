@@ -2,6 +2,8 @@
 import ipaddress
 import json
 import plistlib
+import os
+import io
 from pathlib import Path
 import sys
 from unittest import mock
@@ -212,3 +214,58 @@ class CacheRecovery(InstallationCase):
                     path.unlink()
                 else:
                     path.write_bytes(before)
+
+    def test_interrupted_quarantine_retains_backup_and_explicit_retry_finishes_without_activation(self):
+        original = self.retained_data()
+        other = self.cache.with_name(f"__init__.{sys.implementation.cache_tag}.pyc")
+        other.write_bytes(b"second generated cache")
+        moving = os.replace
+        cache_source = self.cache.resolve()
+        def interrupted(source, destination):
+            if Path(source) == cache_source:
+                raise OSError("fictional interrupted second cache move")
+            return moving(source, destination)
+        with mock.patch.object(os, "replace", side_effect=interrupted):
+            with self.assertRaisesRegex(OSError, "interrupted"):
+                installation.recover(generated_bytecode=True)
+        backup = next((self.prefix / "recovery").iterdir())
+        receipt = json.loads((backup / "recovery.json").read_text())
+        self.assertFalse(receipt["complete"])
+        self.assertEqual((backup / other.relative_to(self.root)).read_bytes(), b"second generated cache")
+        self.assertTrue(self.cache.exists())
+        with self.assertRaisesRegex(ValueError, "manifest"):
+            installation.metadata(self.root.resolve())
+        recovered = installation.recover(generated_bytecode=True)
+        self.assertTrue(recovered["repaired"])
+        self.assertEqual(recovered["quarantined"], [str(self.cache.relative_to(self.root))])
+        self.assertTrue(json.loads((Path(recovered["backup"]) / "recovery.json").read_text())["complete"])
+        self.assertEqual(installation.metadata(self.root.resolve())["version"], "v0.1.0")
+        self.assertEqual({path: path.read_bytes() for path in original}, original)
+        self.assertEqual(self.actions, [])
+        self.assertFalse((self.prefix / "pending.json").exists())
+        self.assertFalse(installation.recover(generated_bytecode=True)["repaired"])
+
+    def test_archive_repair_cli_verifies_checksum_before_quarantine_and_never_activates_archive(self):
+        archive, checksum = self.archive("v0.2.0")
+        retained = self.retained_data()
+        for trusted in ("0" * 64, checksum):
+            with mock.patch.object(sys, "argv", ["install.py", "--archive", str(archive), "--sha256", trusted,
+                                               "--prefix", str(self.prefix), "--repair-generated-bytecode"]), \
+                    mock.patch.object(sys, "stdout", new_callable=io.StringIO) as output, \
+                    mock.patch.object(sys, "stderr", new_callable=io.StringIO) as error:
+                if trusted != checksum:
+                    with self.assertRaises(SystemExit) as exited:
+                        installation.main()
+                    self.assertEqual(exited.exception.code, 1)
+                    self.assertIn("checksum mismatch", error.getvalue())
+                    self.assertTrue(self.cache.exists())
+                    self.assertFalse((self.prefix / "recovery").exists())
+                else:
+                    installation.main()
+                    repaired = json.loads(output.getvalue())
+                    self.assertTrue(repaired["repaired"])
+                    self.assertEqual(repaired["version"], "v0.1.0")
+        self.assertFalse((self.prefix / "versions/v0.2.0").exists())
+        self.assertEqual(installation.metadata(self.root.resolve())["version"], "v0.1.0")
+        self.assertEqual(self.actions, [])
+        self.assertEqual({path: path.read_bytes() for path in retained}, retained)

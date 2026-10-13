@@ -1784,6 +1784,7 @@ class NamespacePath:
     info: object
     links: int
     frames: tuple
+    searchable: bool
 
 
 @contextmanager
@@ -1798,6 +1799,7 @@ def namespace_path(root: int, base: Path, path: Path, places: tuple[str, ...], a
     unchecked = object()
     active, completed = {}, {}
     pending = deque(path.parts)
+    searchable = parent.searchable if parent is not None else True
 
     def pop():
         _, fd, _ = frames.pop()
@@ -1844,6 +1846,7 @@ def namespace_path(root: int, base: Path, path: Path, places: tuple[str, ...], a
             if parent is None:
                 if real:
                     raise NotADirectoryError(candidate)
+                searchable = False
                 if expected is not unchecked and expected is not None:
                     raise ValueError("website target changed")
                 frames.append((part, None, None))
@@ -1853,6 +1856,7 @@ def namespace_path(root: int, base: Path, path: Path, places: tuple[str, ...], a
             except FileNotFoundError:
                 if real:
                     raise
+                searchable = False
                 if expected is not unchecked and expected is not None:
                     raise ValueError("website target changed") from None
                 frames.append((part, None, None))
@@ -1907,6 +1911,8 @@ def namespace_path(root: int, base: Path, path: Path, places: tuple[str, ...], a
             elif stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode):
                 if real and not leaf():
                     raise NotADirectoryError(candidate)
+                if not leaf():
+                    searchable = False
                 frames.append((part, None, info))
             elif real and leaf():
                 # Folder metadata never opens marker contents, including a nonregular leaf.
@@ -1915,7 +1921,7 @@ def namespace_path(root: int, base: Path, path: Path, places: tuple[str, ...], a
                 raise ValueError("not a regular website path")
         relative = Path(*(f[0] for f in frames[1:]))
         yield NamespacePath(frames[-2][1] if len(frames) > 1 else root, base / relative,
-                            relative, frames[-1][1], frames[-1][2], cost, tuple(frames))
+                            relative, frames[-1][1], frames[-1][2], cost, tuple(frames), searchable)
     finally:
         # Keep only live frames. ExitStack completes all closes even if one close raises.
         with ExitStack() as closing:
