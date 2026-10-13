@@ -860,7 +860,9 @@ def lifecycle(guest: Guest, results: Path, record: dict, baseline: Path, candida
     if phase == "mac-published":
         # The published baseline may predate discovery; its own installer contract still applies.
         path = "/opt/homebrew/opt/openssl@3/bin:" + path
-    script = (f'temp=$(getconf DARWIN_USER_TEMP_DIR); work="$temp/altitude-installation-mac"; '
+    # The user temp prefix makes a registered project's AF_UNIX broker exceed macOS's pathname limit.
+    # Keep the disposable home in the launcher's existing guest-owned shared tree, never on the host.
+    script = (f'temp=$(getconf DARWIN_USER_TEMP_DIR); work="{SHARED}/altitude-installation-mac"; '
               f'mkdir -m 700 "$work" "$work/home" && mkdir "$work/home/results" && cd "$work/home" && '
               f'env -i HOME="$work/home" USER={ACCOUNT} LOGNAME={ACCOUNT} SHELL=/bin/zsh LANG=en_US.UTF-8 TMPDIR="$temp" '
               f'PATH="{path}" '

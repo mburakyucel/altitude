@@ -1327,6 +1327,8 @@ it and the installation keeps them, so no request reaches GitHub. It then:
   byte is refused with nothing installed, and the unaltered one installs the LaunchAgent and a
   service whose HTTPS health on the generated CA reports the release's version and commit, with
   `alt doctor` passing apart from its expected findings;
+- binds a finite throwaway coordinator socket before address transactions; the disposable Mac VM
+  home stays in the launcher's guest-owned shared tree so macOS's Unix socket pathname limit is met;
 - pairs a fixture device and records one fictional project without task dispatch; previews and
   applies IPv4/IPv6 loopback changes while running and stopped, verifies actual HTTPS/native PID,
   later-start loading and preserved CA/keys/pairing/registration; process loss after the durable

@@ -1054,6 +1054,14 @@ class MacLifecycle(Lifecycle):
             self.run("address-fictional-registration", sys.executable, "-B", "-c", register,
                      self.prefix / "current", self.home / "Projects/fictional")
             registration = digest(registry)
+            # Test the real kernel path before attributing later startup failures to an address transaction.
+            preflight = ("import json,socket,sys; sys.path.insert(0,sys.argv[1]); from altitude import l3\n"
+                         "path=l3.verb_socket_path('fictional-preflight'); path.parent.mkdir(parents=True,exist_ok=True)\n"
+                         "with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as probe:\n"
+                         " probe.bind(str(path))\n"
+                         "path.unlink(); print(json.dumps({'broker_path_bytes':len(str(path).encode()),'bound':True}))\n")
+            self.run("registered-project-broker-preflight", sys.executable, "-B", "-c", preflight,
+                     self.prefix / "current")
             self.native_address_recovery(before)
             # Address changes intentionally reissue the leaf under the same retained CA and server key.
             retained[self.tls / "server.crt"] = digest(self.tls / "server.crt")
