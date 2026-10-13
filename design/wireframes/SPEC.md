@@ -343,6 +343,7 @@ and bounded task-document access with rendered Markdown on 2026-09-15 Pacific.
 | Hover / focus / touch | Ordinary link focus styling; keyboard activation or tap opens the same reader in another tab. |
 | Loading / retry | Loading file; previous contents disappear while the new read is pending. |
 | Readable Markdown / text | Rendered Markdown with Raw toggle, or plain text; commands remain selectable text. |
+| Formatting code unavailable | Exact wrapped source remains readable under **Formatting unavailable** and a bordered **Reload page** button. No draft warning: this is a separate tab. Raw retains its pressed state and hides the formatting notice; returning to formatting shows it again while the shared import remains failed. |
 | Empty file | This file is empty; full target remains visible. |
 | Missing / unreadable / denied / unsupported | File unavailable with the reason and Retry. The full target stays selectable and copyable. |
 | Copy succeeds / clipboard denied | Path copied confirmation, or a manual-copy hint with selectable path. |
@@ -1099,6 +1100,13 @@ Inside it:
 - Wide tables and code scroll inside their own block; the reader never scrolls sideways. Code has no
   Copy or terminal action. No script, style, frame or form from the document runs or renders.
 
+The formatting recovery notice is left aligned with 8 px gaps and 20 px before source text. In an
+expanded system information message it also has 16 px above it, separating it from card metadata;
+the same notice and inert source retain Hide and the conversation draft. Reload page explicitly
+reloads the whole page, clearing unsent text only on that action. The button has a 44 px phone touch
+target. Content-read failures keep their existing Retry, and unrelated renderer errors retain the
+route's error page. Document styles load with the app; formatting code remains deferred.
+
 **Gallery.** The image viewer shows one set's images in order (extra images, then the document's in
 document order), with a quiet **2 / 5** count in its header, **Zoom image** and **Close image**, and
 previous and next arrows at the sides (hidden at the ends). Arrow keys and a horizontal swipe move
@@ -1116,6 +1124,7 @@ the gallery to the exact place it was opened from, and the next Back closes the 
 | Card | Saved files missing or resized | No cover or chevron, a broken-document icon and **Preview unavailable** under the name; not a control. Its question's answers are disabled until the owner shows the files again; the conversation stays open. Previews saved before shown files existed show the same card with their title. A copy whose content changed at its saved size opens to the reader's Unavailable state. |
 | Reader | Loading | A page skeleton (heading bar, text lines, image block), static under reduced motion; "Loading README.md". |
 | Reader | Ready | Header and document. |
+| Reader | Formatting code unavailable | Header and Close remain. **Formatting unavailable**, "Reloading clears text you have typed but not sent.", and a bordered **Reload page** button precede exact wrapped monospace source. Saved embedded images follow as full-width gallery controls; extra images keep their position. The conversation stays mounted and its draft survives Close. Nothing reloads automatically. |
 | Reader | Image loading / failed | A grey block at the saved size; on failure an outlined box with a broken-image icon, **Image unavailable** and **Retry**. |
 | Reader | Earlier | **Newer** in the header. |
 | Reader | Unavailable | A broken-document icon, **Preview unavailable**, "It could not be loaded. Try again, or ask in the conversation." and **Retry**; × still closes. |
