@@ -1720,16 +1720,22 @@ def private_places() -> tuple[str, ...]:
     return (*(os.path.join(root, place) for root in homes for place in PRIVATE_HOME), *PRIVATE_VOLUMES)
 
 
+def private_prefix(path: str | Path, places: tuple[str, ...]) -> bool:
+    """Judge a normalized candidate against the existing private places without filesystem I/O."""
+    candidate = str(path).casefold()
+    return any(candidate == place.casefold() or candidate.startswith(place.casefold() + "/") for place in places)
+
+
 def private(path: str | Path) -> bool:
     """Whether `path` is in one of macOS's private places, judged without looking inside one. Components are taken in
     the order the disk resolves them: each link on the way is read, and its target judged, before it is followed, and
     `..` leaves the folder a link led to. Names compare case-insensitively, as macOS's disk does."""
-    places = [place.casefold() for place in private_places()]
+    places = private_places()
     if not places:
         return False
     remaining, current, links = list(Path(os.path.join(os.getcwd(), path)).parts[1:]), "/", 0
     while True:
-        if any(current.casefold() == place or current.casefold().startswith(place + "/") for place in places):
+        if private_prefix(current, places):
             return True
         if not remaining:
             return False
@@ -1738,6 +1744,8 @@ def private(path: str | Path) -> bool:
             current = os.path.dirname(current)
             continue
         candidate = os.path.join(current, part)
+        if private_prefix(candidate, places):
+            return True
         if not os.path.islink(candidate):
             current = candidate
             continue
@@ -2527,8 +2535,8 @@ def validation_guest_seed_cache() -> Path | None:
 
 
 def directory_search_access() -> int:
-    """Look up names without reading hidden ancestors on Mac (#625); keep Linux directory access."""
-    return os.O_SEARCH if _darwin() else os.O_RDONLY
+    """Look up names without requiring directory listing permission on either platform."""
+    return os.O_SEARCH if _darwin() else os.O_PATH
 
 
 def validation_browser_environment(temp: Path) -> dict[str, str]:

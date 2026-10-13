@@ -1946,13 +1946,67 @@ def fyi(project: str, slug: str | None, text: str, actor: str = "altd") -> dict:
 
 
 #: "Option A:" / "Option 1)" anywhere, or a sentence-initial "A:" / "A (recommended, ...):".
-_OPTION_MARK = re.compile(
-    r"(?:\bOption\s+(?P<key>[A-Za-z0-9])\s*(?:\((?P<note>[^)]*)\))?\s*[:)]\s+"
-    r"|(?:^|(?<=[.!?;]\s)|(?<=\n))(?P<key2>[A-H])\s*(?:\((?P<note2>[^)]*)\))?\s*[:)]\s+)")
+_OPTION_START = re.compile(r"\bOption\s++(?P<key>[A-Za-z0-9])"
+                           r"|(?:^|(?<=[.!?;]\s)|(?<=\n))(?P<key2>[A-H])")
+_OPTION_END = re.compile(r"[:)]\s++")
+_NOTE_END = re.compile(r"\)(?P<tail>\s*+[:)]\s++)?")
 _RECOMMEND = re.compile(r"recommend", re.IGNORECASE)
-_RECOMMENDED_KEY = re.compile(r"recommend\w*\s+(?:is\s+|would\s+be\s+|option\s+)*(?P<key>[A-Za-z0-9])\b(?![\w-])",
-                              re.IGNORECASE)
+_RECOMMENDED_WORD = re.compile(r"(?<!\w)(?P<word>\w++)\s++")
+_RECOMMENDED_TAIL = re.compile(r"(?:is\s++|would\s++be\s++|option\s++)*+"
+                               r"(?P<key>[A-Za-z0-9])\b(?![\w-])", re.IGNORECASE)
+_INLINE_RECOMMENDED = re.compile(r"\brecommended\b", re.IGNORECASE)
 LABEL_LIMIT = 48
+
+
+def _option_marks(text: str):
+    """Read candidate labels and their next closing parenthesis without rescanning notes."""
+    closes = iter(_NOTE_END.finditer(text))
+    close, consumed = None, 0
+    for mark in _OPTION_START.finditer(text):
+        if mark.start() < consumed:
+            continue
+        end = mark.end()
+        while end < len(text) and text[end].isspace():
+            end += 1
+        note = ""
+        if end < len(text) and text[end] == "(":
+            while close is None or close.start() < end:
+                close = next(closes, None)
+                if close is None:
+                    break
+            if close is None or close.group("tail") is None:
+                continue
+            note, end = text[end + 1:close.start()], close.end()
+        else:
+            tail = _OPTION_END.match(text, end)
+            if tail is None:
+                continue
+            end = tail.end()
+        consumed = end
+        yield mark.start(), end, (mark.group("key") or mark.group("key2")).upper(), note
+
+
+def _inline_recommendation(text: str) -> tuple[int, int] | None:
+    """The first recommended parenthesized region, including its preceding whitespace."""
+    start = 0
+    for close in re.finditer(r"\)", text):
+        opening = text.find("(", start, close.start())
+        if opening >= 0 and _INLINE_RECOMMENDED.search(text, opening + 1, close.start()):
+            while opening > 0 and text[opening - 1].isspace():
+                opening -= 1
+            return opening, close.end()
+        start = close.end()
+    return None
+
+
+def _prose_recommendation(text: str) -> str | None:
+    """A recommendation's key; inspect each word and following filler sequence once."""
+    for word in _RECOMMENDED_WORD.finditer(text):
+        if _RECOMMEND.search(text, word.start(), word.end("word")):
+            found = _RECOMMENDED_TAIL.match(text, word.end())
+            if found:
+                return found.group("key").upper()
+    return None
 
 
 def option_label(text: str, key: str) -> str:
@@ -1973,18 +2027,17 @@ def parse_dilemma(text: str) -> dict:
     ``[{key, label, text}]`` (empty when fewer than two parse), and ``recommendation`` ``{option, why}``."""
     text = (text or "").strip()
     marks = []
-    for m in _OPTION_MARK.finditer(text):
-        key = (m.group("key") or m.group("key2") or "").upper()
+    for start, end, key, note in _option_marks(text):
         if key and key not in [k for k, *_ in marks]:
-            marks.append((key, m, (m.group("note") or m.group("note2") or "")))
+            marks.append((key, start, end, note))
     if len(marks) < 2:
         parts = _sentences(text)
         why = " ".join(s for s in parts if _RECOMMEND.search(s)) if len(parts) > 1 else ""
         return {"question": text, "options": [], "recommendation": {"option": None, "why": why}}
-    question = text[:marks[0][1].start()].strip()
+    question = text[:marks[0][1]].strip()
     options, recommended, tail = [], None, ""
-    for i, (key, m, note) in enumerate(marks):
-        body = text[m.end():marks[i + 1][1].start()] if i + 1 < len(marks) else text[m.end():]
+    for i, (key, start, end, note) in enumerate(marks):
+        body = text[end:marks[i + 1][1]] if i + 1 < len(marks) else text[end:]
         if i + 1 == len(marks):  # the last option ends where the recommendation starts
             parts, rest = _sentences(body), []
             for j, s in enumerate(parts):
@@ -1992,9 +2045,9 @@ def parse_dilemma(text: str) -> dict:
                     rest, parts = parts[j:], parts[:j]
                     break
             body, tail = " ".join(parts), " ".join(rest)
-        inline = re.search(r"\s*\((?:[^)]*\b)?recommended\b[^)]*\)", body, re.IGNORECASE)
+        inline = _inline_recommendation(body)
         if inline:  # "keep it (recommended)" marks the option as well
-            body = body[:inline.start()] + body[inline.end():]
+            body = body[:inline[0]] + body[inline[1]:]
         if _RECOMMEND.search(note) or inline:
             recommended = key
         options.append({"key": key, "label": option_label(body, key), "text": body.strip()})
@@ -2005,9 +2058,9 @@ def parse_dilemma(text: str) -> dict:
     # "Reply A or B" is the asker's instruction; the option buttons replace it.
     why = " ".join(s for s in _sentences(tail) if not re.match(r"(?:Reply|Answer|Choose|Pick)\b", s)).strip()
     if recommended is None:
-        found = _RECOMMENDED_KEY.search(why) or _RECOMMENDED_KEY.search(question)
-        if found and found.group("key").upper() in [o["key"] for o in options]:
-            recommended = found.group("key").upper()
+        found = _prose_recommendation(why) or _prose_recommendation(question)
+        if found in [o["key"] for o in options]:
+            recommended = found
     return {"question": question or text, "options": options,
             "recommendation": {"option": recommended, "why": why}}
 

@@ -2,7 +2,6 @@
 from __future__ import annotations
 import argparse
 import base64
-import functools
 import gzip
 import hashlib
 import ipaddress
@@ -21,7 +20,8 @@ import threading
 import time
 import traceback
 import uuid
-from contextlib import ExitStack
+from collections import OrderedDict, deque
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
 from http.cookies import CookieError, SimpleCookie
 import http.server
@@ -112,10 +112,159 @@ def design_entry(project: str, device_id: str) -> str:
 GZIP_ASSETS = {".js", ".mjs", ".css", ".wasm", ".tsv", ".svg", ".json"}
 
 
-@functools.lru_cache(maxsize=64)
-def _gzipped(path: Path) -> bytes:
-    """An asset's gzip encoding, made once per process: a hashed asset's name changes with its content."""
-    return gzip.compress(path.read_bytes(), compresslevel=9, mtime=0)
+_gzip_cache: OrderedDict[Path, tuple[tuple[int, ...], bytes]] = OrderedDict()
+_gzip_guard = threading.Lock()
+
+
+def _gzipped(path: Path, stream) -> bytes:
+    """Cache at most 64 encodings, bound to the verified open file's identity and signature."""
+    def signature():
+        info = os.fstat(stream.fileno())
+        return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+    with _gzip_guard:
+        before = signature()
+        cached = _gzip_cache.get(path)
+        if cached is not None and cached[0] == before:
+            _gzip_cache.move_to_end(path)
+            return cached[1]
+        data = gzip.compress(stream.read(), compresslevel=9, mtime=0)
+        if signature() != before:
+            raise ValueError("asset changed while it was read")
+        _gzip_cache[path] = (before, data)
+        _gzip_cache.move_to_end(path)
+        if len(_gzip_cache) > 64:
+            _gzip_cache.popitem(last=False)
+        return data
+
+
+@contextmanager
+def _static_path(root: int, base: Path, path: Path, places: tuple[str, ...], anchors: tuple[Path, ...]):
+    """Normalize within a pinned namespace; links never cause an unchecked target lookup."""
+    flags = platform.directory_search_access() | os.O_DIRECTORY | os.O_NOFOLLOW
+    frames = [("", os.dup(root), None)]
+    unchecked = object()
+    active, completed = {}, {}
+    pending = deque(path.parts)
+
+    def pop():
+        _, fd, _ = frames.pop()
+        if fd is not None:
+            os.close(fd)
+
+    def identity(info):
+        return info.st_dev, info.st_ino, info.st_mode
+
+    try:
+        frames[0] = ("", frames[0][1], os.fstat(frames[0][1]))
+        while pending:
+            part = pending.popleft()
+            expected = unchecked
+            if isinstance(part, tuple):
+                if len(part) == 3:  # A completion marker ends this link's active expansion.
+                    completed[part] = active.pop(part), tuple((name, info) for name, _, info in frames[1:])
+                    continue
+                part, expected = part  # A reused address still requires fresh lookup/identity checks.
+            if part in ("", "."):
+                continue
+            if part == "..":
+                if len(frames) == 1:
+                    raise ValueError("website path leaves its root")
+                pop()
+                continue
+            candidate = base.joinpath(*(f[0] for f in frames[1:]), part)
+            if platform.private_prefix(candidate, places):
+                raise ValueError("private website path")
+            parent = frames[-1][1]
+            if parent is None:
+                if expected is not unchecked and expected is not None:
+                    raise ValueError("website target changed")
+                frames.append((part, None, None))
+                continue
+            try:
+                info = os.stat(part, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                if expected is not unchecked and expected is not None:
+                    raise ValueError("website target changed") from None
+                frames.append((part, None, None))
+                continue
+            if expected is not unchecked and (expected is None or identity(info) != identity(expected)):
+                raise ValueError("website target changed")
+            if stat.S_ISLNK(info.st_mode):
+                parent_info = frames[-1][2]
+                key = parent_info.st_dev, parent_info.st_ino, part
+                if key in active:
+                    raise ValueError("cyclic website link")
+                signature = info.st_dev, info.st_ino, info.st_mtime_ns, info.st_ctime_ns
+                saved = completed.get(key)
+                if saved is not None:
+                    if saved[0] != signature:
+                        raise ValueError("website link changed")
+                    # Request-local verified addresses are rewalked through the same pinned root.
+                    # They contain no links; each component keeps private/no-follow/identity checks.
+                    while len(frames) > 1:
+                        pop()
+                    pending.extendleft(reversed(saved[1]))
+                    continue
+                target = Path(os.readlink(part, dir_fd=parent))
+                after = os.stat(part, dir_fd=parent, follow_symlinks=False)
+                if signature != (after.st_dev, after.st_ino, after.st_mtime_ns, after.st_ctime_ns):
+                    raise ValueError("website link changed")
+                active[key] = signature
+                if target.is_absolute():
+                    # Known spellings address the held root, never a mutable alias rewalk.
+                    parts = ("/", *target.parts[1:])
+                    anchor = next((a for a in sorted(anchors, key=lambda a: len(a.parts), reverse=True)
+                                   if parts[:len(a.parts)] == a.parts), None)
+                    if anchor is None:
+                        raise ValueError("website link leaves its root")
+                    while len(frames) > 1:
+                        pop()
+                    target_parts = parts[len(anchor.parts):]
+                else:
+                    target_parts = target.parts
+                pending.extendleft(reversed((*target_parts, key)))
+                continue
+            if stat.S_ISDIR(info.st_mode):
+                child = os.open(part, flags, dir_fd=parent)
+                frames.append((part, child, info))
+                if identity(os.fstat(child)) != identity(info):
+                    raise ValueError("website directory changed")
+            elif stat.S_ISREG(info.st_mode):
+                frames.append((part, None, info))
+            else:
+                raise ValueError("not a regular website path")
+        relative = Path(*(f[0] for f in frames[1:]))
+        yield frames[-2][1] if len(frames) > 1 else root, relative, frames[-1][1], frames[-1][2]
+    finally:
+        # Keep only live frames. ExitStack completes all closes even if one close raises.
+        with ExitStack() as closing:
+            for _, fd, _ in frames:
+                if fd is not None:
+                    closing.callback(os.close, fd)
+
+
+@contextmanager
+def _static_file(parent: int | None, relative: Path, info):
+    """Read the inspected regular file without following replacements or blocking on a FIFO."""
+    if info is None:
+        raise FileNotFoundError(relative)
+    if stat.S_ISDIR(info.st_mode):
+        raise IsADirectoryError(relative)
+    if parent is None:
+        raise NotADirectoryError(relative)
+    try:
+        fd = os.open(relative.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+    except (FileNotFoundError, NotADirectoryError, IsADirectoryError):
+        raise ValueError("website file changed") from None
+    try:
+        actual = os.fstat(fd)
+        if not stat.S_ISREG(actual.st_mode) or (actual.st_dev, actual.st_ino) != (info.st_dev, info.st_ino):
+            raise ValueError("website file changed")
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            yield stream
+    finally:
+        os.close(fd)
 
 
 def _accepts_gzip(header: str | None) -> bool:
@@ -1647,29 +1796,51 @@ class Handler(BaseHTTPRequestHandler):
         """The built SPA (web/dist): hashed /assets/* immutable, index.html no-store, and any
         other GET falls back to index.html so client-side routes deep-link. A missing build is
         an explicit 503 naming `make web`, never a silent fallback."""
-        dist = config.WEB_DIST.resolve()
-        index = dist / "index.html"
-        if not index.is_file():
-            return self._json({"error": "web UI not built: web/dist is missing — run `make web` first"}, 503)
-        rel = unquote(raw_path).lstrip("/")
         try:
-            resolved = (dist / rel).resolve() if rel else index
-        except (OSError, ValueError):  # embedded NUL and friends
+            places = platform.private_places()
+            configured = config.WEB_DIST
+            if not configured.is_absolute():
+                configured = Path.cwd() / configured
+            configured = Path("/", *configured.parts[1:])
+            with ExitStack() as opened:
+                filesystem = os.open("/", platform.directory_search_access() | os.O_DIRECTORY | os.O_NOFOLLOW)
+                opened.callback(os.close, filesystem)
+                _, normalized, root, info = opened.enter_context(
+                    _static_path(filesystem, Path("/"), Path(*configured.parts[1:]), places, (Path("/"),)))
+                if root is None or info is None or not stat.S_ISDIR(info.st_mode):
+                    return self._json({"error": "web UI not built: web/dist is missing — run `make web` first"}, 503)
+                dist = Path("/") / normalized
+                anchors = (dist, configured)
+                parent, index_relative, _, info = opened.enter_context(
+                    _static_path(root, dist, Path("index.html"), places, anchors))
+                index = dist / index_relative
+                try:
+                    page = opened.enter_context(_static_file(parent, index_relative, info))
+                except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
+                    return self._json({"error": "web UI not built: web/dist is missing — run `make web` first"}, 503)
+                rel = unquote(raw_path).lstrip("/")
+                html = not rel
+                if html:
+                    stream, resolved, relative = page, index, index_relative
+                else:
+                    parent, relative, _, info = opened.enter_context(
+                        _static_path(root, dist, Path(rel), places, anchors))
+                    resolved = dist / relative
+                    try:
+                        stream = opened.enter_context(_static_file(parent, relative, info))
+                    except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
+                        if relative.parts[:1] == ("assets",):
+                            # Missing resolved build assets are stale imports, never client-side routes.
+                            return self._json({"error": "not found"}, 404)
+                        stream, resolved, relative, html = page, index, index_relative, True
+                immutable = not html and resolved != dist / "index.html" and relative.parts[:1] == ("assets",)
+                compressible = immutable and resolved.suffix in GZIP_ASSETS
+                encoded = compressible and _accepts_gzip(self.headers.get("Accept-Encoding"))
+                data = _gzipped(resolved, stream) if encoded else stream.read()
+                ctype = "text/html; charset=utf-8" if html or resolved.suffix == ".html" else (
+                    mimetypes.guess_type(str(resolved))[0] or "application/octet-stream")
+        except (OSError, ValueError, RuntimeError):
             return self._json({"error": "not found"}, 404)
-        if not resolved.is_relative_to(dist):  # traversal (incl. percent-encoded) and symlink escapes
-            return self._json({"error": "not found"}, 404)
-        if not resolved.is_file():
-            if resolved.relative_to(dist).parts[:1] == ("assets",):
-                # a miss under the hashed build output is a stale index, not a client route:
-                # serving index.html there hands JS/CSS a text/html body (MIME parse error)
-                return self._json({"error": "not found"}, 404)
-            resolved = index  # SPA fallback: /projects/x, /chat/y, ... render client-side
-        immutable = resolved != index and resolved.relative_to(dist).parts[:1] == ("assets",)
-        compressible = immutable and resolved.suffix in GZIP_ASSETS
-        encoded = compressible and _accepts_gzip(self.headers.get("Accept-Encoding"))
-        data = _gzipped(resolved) if encoded else resolved.read_bytes()
-        ctype = "text/html; charset=utf-8" if resolved.suffix == ".html" else (
-            mimetypes.guess_type(str(resolved))[0] or "application/octet-stream")
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
