@@ -152,16 +152,17 @@ request as idempotent while the terminal receipt still matches; an intervening l
 identity-fenced request before altd relaunches, stops, or removes a worker.
 `alt task handoff <slug> --engine <engine> --attempt <N> --reason '…'` uses this same coordinator
 transport and daemon request for a running owner, an operator/L3-stopped owner, or one blocked by
-worker death or a recognized usage limit, or an unanswered question whose owner has exited without a recovery fault.
+worker death, a recognized usage limit or an engine refusal, or an unanswered question whose owner has exited without a recovery fault.
 The running owner receives a native instruction to refresh
 `progress.md` and write a request/attempt/worker-bound readiness file; no updated owner CLI is required.
-The task page invokes that same request from its composer chooser or a quota-stop action, with an atomic fence
+The task page invokes that same request from its composer model button, which a usage-limit or refusal stop's
+**Change model…** opens, with an atomic fence
 on the observed attempt, worker/session and block. A conversation card exposes now/cancel while
 preparing. Confirmation retains the observed identity even if polling sees a replacement; uncertain
 responses require a status read, not a duplicate mutation. Task polling derives target eligibility
 from the routing seam, and concise conversation outcomes retain full native checkpoint instructions
 for the old worker. No browser storage or parallel transfer lifecycle is added.
-The daemon waits without a timeout. Confirmed exit, a recorded usage limit, existing Stop or explicit
+The daemon waits without a timeout. Confirmed exit, a recorded usage limit or refusal, existing Stop or explicit
 `--now` permits transfer using saved context. `--request <id> --cancel` keeps the current owner until
 the stopping phase commits. Neither silence nor network failure forces a switch. The entire worker
 job must be confirmed stopped before requeue. The durable request fences the observed attempt,
@@ -242,38 +243,33 @@ running, blocked or reported L2 tasks. Other sessions on the machine are not rea
 when available. An unknown Monitor model is an absent key rather than null.
 
 The configuration seam resolves model and effort through the existing routing paths. Explicit
-requests, applicable choice/routing fields and project role overrides precede the machine-wide
-engine pair; built-in role/provider defaults apply when neither supplies a value. Global pairs
-apply to both coordinator and task roles and ordinary reviews. Native helper settings and
-specialized improvement review policy retain their existing scope. Engine choice is independent:
-Only-engine routing and task/turn pins remain strict.
+task/turn requests come first, then the role's choice (the project's coordinator choice or the
+installation's New tasks choice) and routing models, then the project's own per-engine role
+settings, then built-in role/provider defaults. Native helper settings and specialized improvement
+review policy retain their existing scope. Engine choice is independent: Only-engine routing and
+task/turn pins remain strict.
 
-Settings exposes one native Model/Effort pair per engine under **Models and effort · All projects**.
-The seam supplies names, exact IDs, inherited descriptions and supported effort levels. Each save
-compares the complete expected pair and atomically merges the new pair into machine settings;
-a stale write refuses instead of overwriting another window. `GET /api/model-defaults` returns
-pairs and existing overrides; `POST /api/model-defaults` writes `{engine, value, expected}`, with
-`model` and `effort` present in each pair (null means inherited). `POST /api/model-defaults/reset`
-clears one scoped override using `{id, expected}`. The affected pair is guarded while
-saving; other engines remain editable. Model changes preserve effort and vice versa. No browser
-model/effort cache or model-specific remembered effort is added.
-
-Existing project role and choice overrides remain stored and visible. A deliberate **Use global
-defaults** action clears that row's model and effort, preserving its engine/routing intent. Explicit
-routing models link to routing details; custom tiers remain editable with the existing `--routing`
-CLI option, not a new UI editor. Individual task pins remain outside this reset.
-Project Settings exposes engine preferences/routing; chat and quota shortcuts navigate to global
-Settings. Changing the engine in an old combined preference drops its engine-specific fields.
+The coordinator, New tasks and task model buttons are the only model and effort editors
+(`ModelMenu.tsx`, [model choices](CLI.md#model-choices)). The coordinator and New tasks buttons
+save their choice through `POST /api/defaults` (`l3_choice`) and `POST /api/new-tasks`, each with
+the `expected` value shown, so a stale write refuses instead of overwriting another window; the
+task button drafts a selection and confirms it as an explicit handoff. No browser model or effort
+cache is added. `GET /api/project-model-settings` lists each project's own per-engine model and
+effort and its explicit routing models; `POST /api/project-model-settings/reset` clears one
+editable row using `{id, expected}`. Settings shows these under **Project settings** with
+**Reset**, only when any exist; routing models link to routing details, and custom tiers remain
+editable with the `--routing` CLI option. Individual task pins remain outside this reset. Project
+Settings exposes task routing and what the coordinator's last reply reported.
 The CLI retains reason-bearing project settings requests; these apply on a daemon tick, independently
 of worker capacity. A conflicting pending request refuses a save until applied.
 
 Fresh task dispatch records resolved `launch_model` and `launch_effort`. Message/resume keeps those
-saved values without re-resolving global defaults or copying observed provider values. Every role has
+saved values without re-resolving choices or project settings or copying observed provider values. Every role has
 a built-in model on each engine, and every Codex launch passes its model and effort explicitly.
 L3 resolves each turn, including same-conversation resumes; a running turn keeps its launch choice.
 Inherited effort retains built-in behavior: native on Claude, High for Codex tasks and Medium
-for Codex chat/reviews. Ordinary reviews use an explicit global effort when set; otherwise they
-use the chat role's effort rather than inheriting project task effort overrides. Explicit `native` passes no
+for Codex chat/reviews. Ordinary reviews use the chat role's effort rather than inheriting project
+task effort overrides. Explicit `native` passes no
 effort to Claude and Medium to Codex. Unsupported explicit efforts refuse; Auto
 excludes engines that cannot accept an explicit level. Provider caps and model compatibility remain
 native decisions; effort failures do not cause application-side downgrading.
@@ -1650,12 +1646,12 @@ verified activation before suggesting a retry.
 ## Faults
 
 A system fault is project-scoped and two-tier. Tier one is code: a temporary capacity stop is retried
-with backoff; a usage-limit stop starts a fresh attempt on an eligible configured alternative from
-the task's `progress.md`, or parks the task when no alternative is eligible or it is explicitly pinned.
+with backoff; a usage-limit stop or an engine refusal parks the task on its engine and session with
+the reason, and only the operator's or L3's explicit handoff moves it to another model or engine.
 The engine seam reports allowance scope and an optional reset. A named model allowance excludes only
 that model, never unrelated models or engines. An unknown reset creates no resume timer or global
 timed hold; the existing routing observation expires after thirty minutes without claiming a reset.
-A provider-reported reset schedules resumption. Fresh attempts retain the existing worktree, including
+A provider-reported reset schedules resumption on the same engine. Fresh attempts retain the existing worktree, including
 uncommitted work, and validate its checkout and adopted ancestry. Task conversations, worker evidence,
 PRs, expected files, questions and merge holds remain. Tier two is L3: whatever remains blocks only its own
 task, files private incident evidence (one incident per source project and fault kind per 24-hour

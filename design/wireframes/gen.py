@@ -375,7 +375,7 @@ def rail(selected, needs=3, first_run=False):
             '<div class="engines">'
             '<div class="erow"><div class="t"><b>Claude</b><span>21% of week</span></div><div class="meter"><i style="width:21%"></i></div></div>'
             '<div class="erow"><div class="t"><b>Codex</b><span>71% of week</span></div><div class="meter hot"><i style="width:71%"></i></div></div>'
-            f'<span class="newtasks">New tasks · <b>Auto</b>{I("chev-d","i sm")}</span>'
+            f'<span class="muted" style="display:block;font-size:11px;margin:8px 0 4px">New tasks</span><span class="newtasks"><span><b>Auto</b> · Default effort</span>{I("chev-d","i sm")}</span>'
             '</div>'
         )
     return (
@@ -389,8 +389,11 @@ def rail(selected, needs=3, first_run=False):
     )
 
 # ---------- shared pieces ----------
-def composer(placeholder="Message L3 about altitude", engine=True, mobile=False, draft=None, hint=None, to=None):
-    eng = f'<span class="l3pill">L3 · <b>Auto</b>{I("chev-d","i sm")}</span>' if engine else (f'<span class="pillbtn">To {to}{I("chev-d","i sm")}</span>' if to else '<span style="flex:1"></span>')
+def composer(placeholder="Message L3 about altitude", engine=True, mobile=False, draft=None, hint=None, to=None, model=None):
+    # Phone drops the L3/L2 prefix and shortens "Default effort", leaving room for image, voice and send.
+    label = model or "L3 · <b>Auto</b> · Default effort"
+    label = label[5:].replace("Default effort", "Default") if mobile else label
+    eng = f'<span class="l3pill">{label}{I("chev-d","i sm")}</span>' if engine or model else (f'<span class="pillbtn">To {to}{I("chev-d","i sm")}</span>' if to else '<span style="flex:1"></span>')
     body = f'<div class="draft">{draft}</div>' if draft else f'<div class="ph2">{placeholder}</div>'
     h = f'<div class="hint{"" if "danger" in hint else " routine"}">{hint}</div>' if hint else ""
     return (
@@ -543,7 +546,7 @@ task_inner = (
     '<div class="l3"><p>Understood: every board ships at both sizes in this PR. The mobile boards respect the iPhone safe areas and keep the composer at 16px.</p></div>'
     '<div class="l3"><p>PR #176 is open and green. It is held for your review as the brief says; the README lists the three assumptions I made where the record was silent.</p>'
     '</div></div><div style="height:22px"></div>'
-    + task_activity() + composer("Message the L2", engine=False, hint="Reaches the L2 at its next checkpoint.") +
+    + task_activity() + composer("Message the L2", engine=False, hint="Reaches the L2 at its next checkpoint.", model="L2 · <b>Opus</b> · High") +
     '</div></main>' + live + '</div>'
 )
 board("Task", 1440, 900, task_inner)
@@ -627,7 +630,7 @@ board("MobileSwitcher", 390, 844, mobile_chat(True))
 mobile_work = (
     '<div class="m"><div></div>' + mheader_project() +
     '<div class="mbody top"><div class="wh"><h2>Work</h2><span>5 current · 1 done this week</span></div>'
-    + f'<span class="newtasks" style="margin:0 0 10px">New tasks · <b>Auto</b>{I("chev-d","i sm")}</span>'
+    + f'<span class="muted" style="display:block;font-size:11px;margin:0 0 4px">New tasks</span><span class="newtasks" style="margin:0 0 10px"><span><b>Auto</b> · Default</span>{I("chev-d","i sm")}</span>'
     + work_rows(mobile=True) + '</div><div></div>' + tabbar("work") + '</div>'
 )
 board("MobileWork", 390, 844, mobile_work)
@@ -703,7 +706,7 @@ def vrow(label, note, draft, phase, hint="", danger=False):
     cancel = f'<span class="icb" aria-label="Cancel">{I("x","i lg")}</span>'
     stop = f'<span class="icb rec" aria-label="Stop">{I("stop","i lg")}</span>'
     mic = f'<span class="icb">{I("mic","i lg")}</span>'
-    pill = f'<span class="l3pill">L3 · <b>Auto</b></span><span style="flex:1"></span>'
+    pill = f'<span class="l3pill">L3 · <b>Auto</b> · Default effort</span><span style="flex:1"></span>'
     if phase == "listening":
         desk = pill + cancel + wave(W[:14]).replace('class="wave"', 'class="wave bounded"') + '<span class="status">0:07</span>' + stop + arrow()
         phone = cancel + wave(W[:6]) + '<span class="status">0:07</span>' + stop + arrow()
@@ -769,19 +772,9 @@ def voice_options(chosen="host", host="ready"):
         rows += '</div>'
     return rows
 
-def model_select(label, choices):
-    options = ''.join(f'<option>{choice}</option>' for choice in choices)
-    return f'<label style="display:block;margin:8px 0">{label}<select class="field" style="width:100%;min-height:44px">{options}</select></label>'
-
-def global_pairs(phone=False):
-    def row(engine, model, effort):
-        columns = "1fr 1fr" if phone else "6rem minmax(0,1fr) minmax(0,1fr)"
-        label = f'<b style="grid-column:{"1 / -1" if phone else "auto"}">{engine}</b>'
-        return (f'<div style="display:grid;grid-template-columns:{columns};gap:12px;align-items:start;padding:12px;border-bottom:1px solid var(--hairline)">'
-                + label + model_select("Model", (model, "Altitude default", "Other model…"))
-                + model_select("Effort", (effort, "Altitude default", "Native", "Medium", "Extra High", "Max")) + '</div>')
-    return (row("Claude", "Opus", "High") + row("Codex", "6.1 Sol", "High")
-            + '<p class="muted" style="padding:0 12px">Access unverified · gpt-6.1-sol</p>')
+def project_model_row():
+    return ('<div class="setting-link"><span><b>atlas · Tasks</b><small>Codex · 6.1 Sol · High</small></span>'
+            '<span style="color:var(--accent);text-decoration:underline">Reset</span></div>')
 
 def settings_content(phone=False):
     target = "MobileVoiceSettings.html" if phone else "VoiceSettings.html"
@@ -792,8 +785,7 @@ def settings_content(phone=False):
     group = lambda title, rows: f'<div class="sgroup"><h2>{title}</h2><div class="card">{rows}</div></div>'
     left = (f'<div class="sgroup" style="margin-top:0"><div class="card">{link("Operator", "Your name on every screen")}</div></div>'
         + group("This project", link("altitude", "tasks prefer Codex", project))
-        + group("Models and effort · All projects", global_pairs(phone))
-        + group("Engines", model_select("New tasks · All projects", ("Auto", "Prefer Claude", "Prefer Codex")))
+        + group("Project settings", '<p class="muted" style="margin:0;padding:8px 12px 0;font-size:12px">Used where a model button says Default or Auto.</p>' + project_model_row())
         + group("Projects", link("All projects", "2 projects · folder ~/Projects")))
     right = (group("Voice", link("Voice input", "This computer", target))
         + group("Devices and access", link("Devices", "2 paired · pair another, certificate")
@@ -811,8 +803,7 @@ def project_settings_content(phone=False):
     select = lambda title, note, value: (f'<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;padding:6px 0">'
         f'<span><b>{title}</b><br><small class="muted">{note}</small></span><span class="field" style="min-width:9rem">{value}</span></div>')
     return (heading + '<p class="muted" style="margin:0 0 6px">Applies to this project only.</p>'
-        + section("Coordinator engine", "Applies from the next reply.", model_select("Engine", ("Auto", "Prefer Claude", "Prefer Codex")))
-        + section("Models and effort", "Across all projects.", '<a href="Settings.html#models">Open global model and effort settings ›</a>')
+        + section("L3", "Who answers in this project's chat. Its model and effort are under the chat's message box.", '<p style="margin:0">Last reply reported Opus · High.</p>')
         + section("Routing", "The order Auto tries: Claude and Codex share work by weekly headroom.",
             select("Tasks", "Auto, Prefer or Only an engine.", "Prefer Codex"))
         + section("Project", "", f'<a class="setting-link" style="border:0;margin:0;padding:0 0 10px" href="#"><span><b>Setup</b><small>Ready</small></span>{I("chev-r")}</a>'
@@ -866,7 +857,6 @@ settings_inner = (
     '<p class="muted" style="margin:6px 0 18px">Settings opens an overview grouped by where each setting applies. The voice choices live inside Voice input at /settings/voice. Desktop left; phone right.</p></div>'
     '<div class="sgrid">'
     + srow("Entry points", "the rail gear and the project three dots on desktop; the project three dots on phone. The menu holds no destructive item", None).split('<div class="vdesk"')[0] + entry_desktop + entry_phone
-    + '<div class="vlab">Models and effort · All projects<span>One pair per engine; routing remains separate.</span></div>' + global_pairs()
     + srow("Loading", "no selected default or editable controls", None, "Loading settings…")
     + srow("Read failed", "Retry reads again; typing elsewhere is unaffected", None, 'Could not load settings. <span style="color:var(--accent);text-decoration:underline">Retry</span>')
     + srow("Saved host", "Use this computer saves at once; its setup panel shows the current state; the overview reads This computer, with · not set up until ready", "host", "Saved.")
@@ -949,14 +939,14 @@ phone_task_convo = (
 for name, is_live in [("MobileTask", False), ("MobileTaskLive", True)]:
     tabs = f'<div class="task-tabs"><span class="{"" if is_live else "on"}">Conversation</span><span class="{"on" if is_live else ""}">Live session</span></div>'
     content = live if is_live else '<div class="mbody"><div class="mcol">' + phone_task_convo + '</div></div>'
-    field = '<div></div>' if is_live else '<div class="mcomp">' + task_activity("MobileTaskLive.html") + composer("Message the L2", engine=False, hint="Reaches the L2 at its next checkpoint.") + '</div>'
+    field = '<div></div>' if is_live else '<div class="mcomp">' + task_activity("MobileTaskLive.html") + composer("Message the L2", engine=False, mobile=True, hint="Reaches the L2 at its next checkpoint.", model="L2 · <b>Opus</b> · High") + '</div>'
     board(name, 390, 844, '<div class="m task-phone">' + phone_task_header + tabs + content + field + tabbar("work") + '</div>')
 
 # The same live panel overlays the main pane from 1024 through 1279px.
 board("TaskOverlay", 1100, 900,
       '<div style="display:grid;grid-template-columns:260px minmax(0,1fr);height:100%">' + rail("altitude") +
       '<main class="pane"><header class="ph"><h1>Design wireframes for the simplified product</h1></header>'
-      '<div class="convo"><div class="col">' + phone_task_convo + '</div>' + composer("Message the L2", engine=False) + '</div></main></div>'
+      '<div class="convo"><div class="col">' + phone_task_convo + '</div>' + composer("Message the L2", engine=False, model="L2 · <b>Opus</b> · High") + '</div></main></div>'
       '<div class="scrim"></div><div style="position:absolute;inset:0 0 0 auto;width:480px;display:flex">' + live + '</div>')
 
 def state_sheet(name, title, examples, height):
@@ -997,18 +987,51 @@ state_sheet("ProjectLifecycleStates", "Remove project: detach L3", [
     ("Restored", "registration succeeds; saved queue resumes", '<p>Saved project history.</p><p>Queued request answered.</p>' + composer("Message L3 about example", engine=False)),
 ], 1400)
 
-state_sheet("ModelsStates", "Models and effort · All projects", [
-    ("Global defaults", "native paired controls, independent of engine routing", global_pairs()),
-    ("Phone pairs", "engine name above its Model and Effort controls", global_pairs(phone=True)),
-    ("Timing", "one setting across projects", '<p>Applies from the next chat reply and when tasks or reviews start. Started tasks keep theirs.</p>'),
-    ("Inherited effort", "Altitude default preserves role defaults; Native asks the provider", '<p>Claude: Native for all roles</p><p>Codex: Tasks: High · Chat/reviews: Native</p>'),
-    ("Existing override", "deliberate reset preserves engine routing", '<b>example · Coordinator</b><p>Codex · gpt-6-astra · High</p><button class="btn">Use global defaults</button>'),
-    ("Other model", "fixed engine; effort stays beside model", '<label>Model<input class="field" value="custom-model"></label><p class="muted">Saved: gpt-6.1-sol</p>'),
-    ("Saving / saved", "both fields in this pair guarded; other engine stays usable", '<p class="muted">Saving…</p><p class="muted">Saved.</p>'),
-    ("Changed elsewhere", "Reload reads the current pair", '<p class="danger">Changed in another window. <u>Reload</u></p>'),
-    ("Failed / denied", "committed pair retained; denial has no automatic retry", '<p class="danger">Could not save models. <u>Retry save</u></p><p class="danger">Permission denied.</p>'),
-    ("Loading / read failed", "no invented selected values", '<p class="muted">Loading models…</p><p class="danger">Could not load models. <u>Retry</u></p>'),
-], 2250)
+def model_panel(title, models, efforts, note="", foot=""):
+    """The one model and effort panel: models by engine on the left, effort on the right (SPEC.md §3.6.1).
+    A row is (name, line, mark), mark being "on" (saved or running), "pick" (pending), "busy" or "" (also the running row beside a pending pick)."""
+    def rows(items):
+        out = ""
+        for name, line, mark in items:
+            if mark == "head":
+                out += f'<div class="muted" style="font-size:11px;letter-spacing:.06em;padding:8px 10px 2px">{name}</div>'; continue
+            tint = "background:var(--accent-tint);" if mark == "on" else ("outline:2px solid var(--accent);outline-offset:-2px;" if mark == "pick" else "")
+            sign = {"on": "✓", "pick": "○", "busy": "◌"}.get(mark, "")
+            small = f'<small class="muted" style="display:block;font-size:11px">{line}</small>' if line else ""
+            out += f'<div style="{tint}border-radius:8px;padding:6px 10px;display:flex;justify-content:space-between;gap:8px"><span>{name}{small}</span><span>{sign}</span></div>'
+        return out
+    head = lambda text: f'<div class="muted" style="font-size:12px;font-weight:600;padding:0 10px 4px">{text}</div>'
+    note = f'<p style="margin:6px 0;font-size:12px">{note}</p>' if note else ""
+    foot = f'<div style="border-top:1px solid var(--hairline);margin-top:8px;padding-top:8px">{foot}</div>' if foot else ""
+    return (f'<div style="border:1px solid var(--border);border-radius:12px;padding:10px;max-width:440px"><b style="font-size:13px">{title}</b>{note}'
+            f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px"><div style="border-right:1px solid var(--hairline)">{head("Model")}{rows(models)}</div>'
+            f'<div>{head("Effort")}{rows(efforts)}</div></div>{foot}</div>')
+
+AUTO_MODELS = [("Auto", "Picks by quota", "on"), ("CLAUDE", "", "head"), ("Opus", "", ""), ("Sonnet", "", ""), ("CODEX", "", "head"), ("6.1 Sol", "", "")]
+AUTO_EFFORTS = [("Default", "Project · High", "on"), ("Low", "", ""), ("Medium", "", ""), ("High", "", ""), ("Max", "", "")]
+TASK_MODELS = [("CLAUDE", "", "head"), ("Opus", "Current", ""), ("Sonnet", "", ""), ("CODEX", "", "head"), ("6.1 Sol", "", "pick")]
+TASK_EFFORTS = [("Low", "", ""), ("Medium", "", ""), ("High", "Current", ""), ("Extra High", "", "pick"), ("Ultra", "", "")]
+SWITCH_FOOT = ('<b>Switch to 6.1 Sol on Codex · Extra High?</b><p class="muted" style="font-size:12px;margin:4px 0 8px">The current session writes a handoff note, then a fresh session '
+               'continues from the task\'s saved work. Some context may be lost, and catching up uses extra tokens. Work, questions and merge holds stay.</p>'
+               '<span class="btn primary">Switch</span> <span class="btn">Cancel</span>')
+pill = lambda text: f'<span class="l3pill">{text}{I("chev-d","i sm")}</span>'
+
+state_sheet("ModelsStates", "Model and effort: one button, one panel", [
+    ("Closed buttons", "under the chat's and the task's message box, and New tasks on the rail; phone drops the L3/L2 prefix",
+        '<p>' + pill("L3 · <b>Auto</b> · Default effort") + '</p><p>' + pill("L2 · <b>Opus</b> · High") + '</p><p class="muted" style="font-size:11px;margin:12px 0 4px">New tasks</p><span class="newtasks"><span><b>Auto</b> · Default effort</span>' + I("chev-d","i sm") + '</span>'),
+    ("Coordinator panel", "each pick saves at once and the panel stays open; Default says what it runs", model_panel("Coordinator (L3) · atlas", AUTO_MODELS, AUTO_EFFORTS)),
+    ("Saving / save failed", "progress mark on the pressed row; a failure names the pick and keeps the saved check",
+        model_panel("Coordinator (L3) · atlas", AUTO_MODELS[:1] + [("CLAUDE", "", "head"), ("Opus", "", "busy")], AUTO_EFFORTS[:2],
+            note='<span class="danger">Could not save Sonnet · High. Fixture refused. <u>Retry</u></span>')),
+    ("Task: pending switch", "browsing requests nothing; picks wait for Switch at the panel's foot", model_panel("This task (L2)", TASK_MODELS, TASK_EFFORTS, foot=SWITCH_FOOT)),
+    ("Switching", "one card in the conversation; the button leads to it", '<p><b>Switching to 6.1 Sol · Extra High</b></p><p class="muted">Waiting for the current session\'s handoff note.<br>Started by you</p><span class="btn">Switch now</span> <span class="btn">Cancel switch</span><p>' + '<span class="l3pill" style="opacity:.6">L2 · ◌ Switching…</span>' + '</p>'),
+    ("Engine stopped", "a usage limit or refusal stops the task on its engine; nothing moves without a press",
+        '<p><b>Engine refused the task</b></p><p class="muted">Claude: model not available on this account.</p><span class="btn">Change model…</span>'),
+    ("Changed elsewhere / read failed", "Reload reads the saved choice; the button shows no invented value",
+        '<p class="danger">Changed in another window. <u>Reload</u></p><p>' + pill('<b class="danger">Could not load</b>') + '</p><p class="danger">Could not load models. <u>Retry</u></p>'),
+    ("Project settings", "Settings lists a project's own model or effort only when one exists; Reset removes it",
+        '<b>Project settings</b><p class="muted" style="font-size:12px">Used where a model button says Default or Auto.</p>' + project_model_row()),
+], 1450)
 
 state_sheet("ConversationStates", "Conversation and report states", [
     ("L3 never ran", "header offers Start L3", '<span class="btn primary">Start L3</span><p class="muted">L3 has not started. Start L3 to begin the conversation.</p>'),
@@ -1145,7 +1168,7 @@ def restart_banner(mode="idle", mobile=False):
     return '<div class="banner"><div><p>Merged changes to the web app are waiting to activate. <span class="muted" title="7 September 2026, 10:00">4 files, landed 2h ago</span></p><p>' + message + '</p></div>' + action + '</div>'
 
 board("Monitor", 1440, 900, '<div style="display:grid;grid-template-columns:260px minmax(0,1fr);height:100%">' + rail("monitor") + '<main class="pane">' + restart_banner() + '<div class="route-content">' + monitor_content + '</div></main></div>')
-board("MobileMonitor", 390, 844, '<div class="m" style="grid-template-rows:auto 54px minmax(0,1fr) 0 84px">' + restart_banner("waiting", mobile=True) + mheader_global() + '<div class="route-content">' + monitor_content.replace('<h1>Monitor</h1>', f'<h1>Monitor</h1><span class="newtasks">New tasks · <b>Auto</b>{I("chev-d","i sm")}</span>', 1) + '</div><div></div>' + tabbar("monitor") + '</div>')
+board("MobileMonitor", 390, 844, '<div class="m" style="grid-template-rows:auto 54px minmax(0,1fr) 0 84px">' + restart_banner("waiting", mobile=True) + mheader_global() + '<div class="route-content">' + monitor_content.replace('<h1>Monitor</h1>', f'<h1>Monitor</h1><span class="muted" style="display:block;font-size:11px;margin:0 0 4px">New tasks</span><span class="newtasks"><span><b>Auto</b> · Default</span>{I("chev-d","i sm")}</span>', 1) + '</div><div></div>' + tabbar("monitor") + '</div>')
 
 state_sheet("MonitorStates", "Monitor states", [
     ("Loading", "skeleton in the page’s shape", '<div class="skel" style="width:30%"></div><div class="skel" style="height:100px"></div><div class="skel" style="height:60px"></div>'),
@@ -1193,7 +1216,7 @@ ROUTES = [
     ("Settings · Voice input", "VoiceSettings", "MobileVoiceSettings"),
     ("Settings · This project", "ProjectSettings", "MobileProjectSettings"),
     ("Settings states and entry points", "SettingsStates", None),
-    ("Models and effort settings", "ModelsStates", None),
+    ("Model and effort", "ModelsStates", None),
     ("System turns in chat: reports, faults, FYIs", "SystemTurnStates", None),
     ("Conversation and report states", "ConversationStates", None),
     ("Create task: a reply that could become a task", "ReplyTask", "MobileReplyTask"),

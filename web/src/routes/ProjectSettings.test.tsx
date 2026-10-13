@@ -36,6 +36,7 @@ function fixture({ refuse = "", l3 = {} as Record<string, unknown>, hold = null 
     if (url === "/api/overview") return json({ ...overview, projects: overview.projects.filter((row) => managed || row.name !== "example") });
     if (url === "/api/project/example") return json({ name: "example", tasks: [], l3 });
     if (url === "/api/defaults/example") return json(view());
+    if (url === "/api/project-model-settings") return json({ rows: [] });
     if (url === "/api/defaults" && init?.method === "POST") {
       const body = JSON.parse(String(init.body)); posts.push(body);
       if (body.setting === refuse) return json({ error: "Alpha does not support reasoning effort low" }, 400);
@@ -58,10 +59,12 @@ function fixture({ refuse = "", l3 = {} as Record<string, unknown>, hold = null 
 
 
 describe("Project settings", () => {
-  it("links global model and effort settings instead of project editors", async () => {
+  it("has no model editors: the coordinator's model button lives under the chat", async () => {
     fixture(); renderApp({ route: "/settings/projects/example" });
-    expect(await screen.findByRole("link", { name: "Models and effort · All projects" })).toHaveAttribute("href", "/settings#models");
-    expect(screen.queryByRole("region", { name: "Auto defaults" })).toBeNull();
+    const section = await screen.findByRole("region", { name: "L3" });
+    expect(section).toHaveTextContent("Its model and effort are under the chat's message box.");
+    expect(screen.queryByRole("combobox", { name: "Coordinator engine" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Models and effort/ })).toBeNull();
     expect(screen.queryByRole("combobox", { name: "Model" })).toBeNull();
   });
 
@@ -98,19 +101,13 @@ describe("Project settings", () => {
     expect(await within(routing).findByRole("alert")).toHaveTextContent("Changed in another window.");
   });
 
-  it("shows L3's requested choice separately from its last reply and selects Auto directly", async () => {
-    const { posts } = fixture({ initial: { l3_choice: { engine: "alpha", model: "deep", effort: "high" } },
-      l3: { engine_last: "alpha", engine_model: "alpha-deep-2", launch_effort: "high", engine_reasoning_effort: "low" } });
-    const { user } = renderApp({ route: "/settings/projects/example" });
+  it("shows what L3's last reply reported, and what it asked for when the engine answered with another model", async () => {
+    fixture({ initial: { l3_choice: { engine: "alpha", model: "deep", effort: "high" } },
+      l3: { engine_last: "alpha", engine_model: "alpha-deep-2", launch_model: "deep", launch_effort: "high", engine_reasoning_effort: "low" } });
+    renderApp({ route: "/settings/projects/example" });
     const section = await screen.findByRole("region", { name: "L3" });
-    const model = within(section).getByRole("combobox", { name: "Coordinator engine" });
-    expect(model).toHaveDisplayValue("Prefer Alpha");
-    expect(section).toHaveTextContent("last reply reported alpha-deep-2 · Low");
-    await user.selectOptions(model, "");
-    await waitFor(() => expect(model).toHaveDisplayValue("Auto"));
-    expect(posts).toEqual([{ project: "example", setting: "l3_choice", value: null, expected: { engine: "alpha", model: "deep", effort: "high" } }]);
-    expect(within(section).queryByRole("button", { name: "Back to Auto" })).toBeNull();
-    expect(section).toHaveTextContent("last reply reported alpha-deep-2");
+    expect(await within(section).findByText("Last reply reported alpha-deep-2 · Low.")).toBeVisible();
+    expect(within(section).getByText("Last reply requested: deep.")).toBeVisible();
   });
 
   it("says when L3 has not replied and shows Retry when the settings cannot load", async () => {
@@ -198,8 +195,9 @@ describe("Settings overview", () => {
   it("groups settings by destination and shows This project only when opened from one", async () => {
     fixture();
     const { router, user } = renderApp({ route: "/settings" });
-    for (const name of ["Models and effort · All projects", "Engines", "Projects", "Voice", "Devices and access", "Coding agents"])
+    for (const name of ["Projects", "Voice", "Devices and access", "Coding agents"])
       expect(await screen.findByRole("region", { name })).toBeVisible();
+    for (const name of ["Models and effort · All projects", "Engines", "Project settings"]) expect(screen.queryByRole("region", { name })).toBeNull();
     expect(screen.queryByRole("region", { name: "This project" })).toBeNull();
     await user.click(within(screen.getByRole("region", { name: "Projects" })).getByRole("link", { name: /All projects/ }));
     const links = await screen.findAllByRole("link", { name: "sample" });

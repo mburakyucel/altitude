@@ -135,18 +135,18 @@ policy. L3 still verifies the actual cause and recovery before resuming work.
 
 ### Explicit provider handoff
 
-The task conversation's model button opens a task-only chooser for engine, model and effort.
-**Prepare change** confirms a fresh attempt, including model or effort changes on the same engine.
-The chooser previews the resolved default model; a changed default requires a refreshed confirmation,
-and an unchanged effective selection creates no attempt. The confirmed selection stays fixed through
-preparation and dispatch, independent of later defaults. Project and global Settings stay unchanged.
-Unanswered decisions precede contextual transfer controls; quota offers use a secondary **Change model…** button.
-A usage-limit stop also offers switching beside its explanation. Confirmation warns that some session
-context may not carry over and the new engine uses extra tokens to get up to speed. Opening or browsing the chooser requests nothing. A conversation card
-names who started the switch (the operator, or the coordinator with its `--reason`) and keeps
-**Switch now** and **Cancel switch** visible during preparation; the model button then leads to that
-card instead of the chooser; neither a slow response nor a
-disconnection imposes a cutoff. **Check status** reconciles an uncertain submission without repeating it.
+The task composer's model and effort button opens the task's panel ([model choices](#model-choices)).
+**Switch** confirms a fresh attempt, including a model or effort change on the same engine; an
+unchanged selection creates no attempt. The confirmed selection stays fixed through preparation and
+dispatch, independent of later choices. Coordinator, New tasks and project settings stay unchanged.
+Unanswered decisions precede contextual transfer controls. A task stopped by a usage limit or an engine
+refusal shows that stop in its conversation with a secondary **Change model…** button, which opens the
+panel; nothing moves it to another engine without that press. The confirmation warns that some session
+context may not carry over and catching up uses extra tokens. Opening or browsing the panel requests
+nothing. A conversation card names who started the switch (the operator, or the coordinator with its
+`--reason`) and keeps **Switch now** and **Cancel switch** visible during preparation; the model button
+then leads to that card instead of the panel; neither a slow response nor a disconnection imposes a
+cutoff. **Check status** reconciles an uncertain submission without repeating it.
 
 L3 or the operator can transfer a running or stopped owner to a fresh attempt on another configured engine:
 
@@ -160,7 +160,7 @@ The coordinator transport takes the same argument list:
 `{"kind":"alt","args":["task","handoff","blocked-owner","--engine","<engine>","--attempt","2","--reason","Continue the authorized work"]}`.
 The CLI persists a daemon request; it launches no worker. The task must have a prior attempt and
 worker/session identity and be running, stopped by L3 or the operator, or blocked by worker death
-(`l2-died`) or a recognized usage limit. An owner waiting on an unanswered question also qualifies
+(`l2-died`), a recognized usage limit or an engine refusal. An owner waiting on an unanswered question also qualifies
 when its worker has ended and it has no recovery fault; switching does not answer the question. A running owner receives a request to refresh `progress.md`
 with its current work, completed checks, unfinished work and next steps, then write the exact
 request-scoped readiness receipt supplied in that instruction. Existing workers use their file tools;
@@ -171,7 +171,7 @@ command, silence or network interruption does not force a switch. Workers launch
 message delivery show that the note cannot be requested; use switch-now or cancel explicitly.
 Injected instructions can move pending commands into native background work; the note must distinguish
 finished checks from work still pending. A confirmed ended worker, a
-recorded usage limit or an explicit Stop permits transfer using saved context without a fresh note.
+recorded usage limit or refusal, or an explicit Stop permits transfer using saved context without a fresh note.
 
 The request ID in task status identifies the waiting transfer. Switch immediately or cancel it explicitly:
 
@@ -1004,37 +1004,36 @@ alt project set example --unset-l2-engine --reason 'Let routing choose tasks'
 
 ### Model choices
 
-**Settings → Models and effort · All projects** has one **Model + Effort** pair per engine.
-Choose **6.1 Sol** in the Codex row to request `gpt-6.1-sol` without changing external CLI
-configuration. Both pairs remain editable regardless of engine routing. Changing one field keeps
-its paired value and leaves other engines unchanged. Selections save immediately; the chat and
-quota shortcuts open this same Settings section.
+Each place that runs work has one model and effort button showing both values, such as **Opus · High**:
 
-The defaults apply to coordinator turns, fresh task starts (including queued tasks) and ordinary
-reviews across projects. Existing task/review pins, role choices, project defaults and explicit
-routing models keep their precedence. **Existing overrides** lists saved scoped exceptions;
-**Use global defaults** clears that row's model and effort while retaining engine/routing intent.
-Explicit routing tiers link to **Routing details** instead of being reset together; use the
-existing `alt project set --routing` CLI option to edit those tiers. Individual task pins
-are not cleared here. Project Settings contains engine routing, not another model/effort table.
+- under a project chat's message box, the coordinator (L3) button sets that project's coordinator choice;
+- beside quota, the **New tasks** button sets what every project's new tasks start on;
+- in a task's composer, the task button switches that one task.
 
-**Altitude default** inherits built-in role behavior. Inherited effort is Native for Claude;
-Codex uses High for tasks and Medium for chat/reviews. **Native** lets Claude choose
-its own effort and sends Codex Medium. The available effort list is engine support, not a claim that
-every model accepts every level. Provider caps remain separate from the requested effort.
-**Other model…** accepts an exact ID. Selecting Other alone writes nothing; Enter or leaving a
-valid ID saves, and blank input or Escape restores the saved value. Explicit choices show the ID
-and **Access unverified**. Named options are maintained requests, not a discovered account catalog.
-Known unavailable models retain their saved selection and recorded reason. Reported model and
-effort remain observations, separate from the requested defaults.
+A button opens one panel with a **Model** column beside an **Effort** column, on the current values;
+opening or browsing requests nothing. Models are grouped by engine under their maintained names, such
+as **6.1 Sol** for `gpt-6.1-sol`, and each engine lists only the effort levels it accepts. **Auto** lets
+routing pick the engine by quota; **Default** effort leaves the level to the next source below, and its
+row names what that is. A coordinator or New tasks pick saves at once and the panel stays open for the
+other column. A failed save names the pick with **Retry**; a value changed in another window offers
+**Reload**. A choice whose engine cannot run now reads "unavailable · Auto meanwhile" with the reason.
 
-**Engines → New tasks** controls engine preference across projects. Each project's coordinator
-engine preference and task routing remain in Project Settings. Changing an engine preference
-clears any model/effort fields saved in that preference and uses the target engine's defaults.
-A default does not pin an engine. Only-engine project routing and explicit task/turn pins remain
-strict; ordinary preferences still use existing routing fallback when unavailable.
+In a task, picks are a draft: the pick shows an open ring while the running values keep **Current**,
+and the panel's foot asks, for example, "Switch to 6.1 Sol on Codex · High?" or, for an effort-only
+change, "Switch to Medium effort?", with the cost: a fresh session continues from the task's saved
+work, some context may be lost and catching up uses extra tokens. **Switch** starts the
+[explicit handoff](#explicit-provider-handoff); **Cancel** or closing the panel drops the draft. Work,
+questions and merge holds stay. While a switch is under way or unconfirmed, the button leads to its
+conversation card instead.
 
-The CLI also supports scoped choices, tried ahead of routing tiers. A choice is
+A project's own per-engine model and effort ([task reasoning effort](#task-reasoning-effort)) apply
+only where a button says Default or Auto. Settings lists them under **Project settings** with
+**Reset**, only when any exist; explicit routing models link to **Routing details**. Settings has no
+other model controls, and Project Settings holds engine routing. A choice does not pin an engine:
+Only-engine project routing and explicit task/turn pins remain strict, and ordinary choices still
+use routing fallback when unavailable.
+
+The CLI sets the same coordinator and New tasks choices, which are tried ahead of routing tiers. A choice is
 `[engine][:model][@effort]`; a Claude alias alone names Claude:
 
 ```sh
@@ -1046,7 +1045,7 @@ alt project set example --unset-l3-choice --reason 'Back to Auto'
 ```
 
 Task/turn explicit requests win, followed by applicable scoped choices/routing model fields,
-project role defaults, the global engine pair and built-in role/provider defaults. A project's
+project role defaults and built-in role/provider defaults. A project's
 Only engine confines its tasks; a preference for another engine cannot move them. Explicit engine
 handoff ignores the New tasks choice. Native helpers and specialized improvement reviews retain
 their own policies. Coordinator changes apply from the next turn; a running turn finishes with its
@@ -1234,19 +1233,20 @@ and maintained model shortcuts, not the app-server model catalog or automatic ac
 The [official configuration documentation](https://learn.chatgpt.com/docs/config-file/config-basic)
 establishes the `gpt-6.1-sol` ID, not account access.
 
-The global Settings pair is the normal model/effort editor. Existing project CLI overrides remain
-supported and appear in **Existing overrides** until deliberately cleared.
+The coordinator, New tasks and task buttons are the model and effort editors
+([model choices](#model-choices)). Project CLI overrides remain supported, and Settings lists them under
+**Project settings** with **Reset**.
 
 Fresh launches resolve an explicit task/turn model, a selected choice/routing model, a project
-role override, the global engine model, then the built-in role default. L2 resolves at dispatch,
+role override, then the built-in role default. L2 resolves at dispatch,
 including queued tasks; messages/resumes keep the attempt's saved `launch_model`. L3 resolves
 from its next turn. An ordinary review uses the task-role model default unless it has an explicit request.
-For effort, an explicit global engine value applies; absent that value, ordinary reviews use the
-chat role's built-in effort (native on Claude, Medium on Codex) rather than inheriting a task effort override. A model default does not select an engine.
+Ordinary reviews use the chat role's built-in effort (native on Claude, Medium on Codex) rather
+than inheriting a task effort override. A model default does not select an engine.
 
 ### Task reasoning effort
 
-Global Settings keeps effort beside each engine's model. Explicit project overrides remain available through the CLI:
+The model and effort buttons set effort beside the model. Per-project, per-engine effort remains available through the CLI:
 
 ```sh
 alt project set example --l3-effort low --reason 'Light coordination on Claude'
@@ -1261,9 +1261,8 @@ alt project list
 `--l3-codex-effort`/`--l2-codex-effort` the Codex defaults (`l3_codex_effort`, `l2_codex_effort`).
 Each accepts only the levels its engine supports. The operator and the project's L3 use these
 reason-bearing settings requests; L2 cannot change project defaults. Altd applies them on its next
-tick, without a free worker slot or service restart. Existing project overrides appear in global
-Settings with a deliberate reset action. An absent project effort inherits the global engine effort,
-then the built-in default: native on Claude; on Codex, High for L2 and Medium for L3 and reviews.
+tick, without a free worker slot or service restart. Settings lists project overrides under **Project
+settings** with **Reset**. An absent project effort uses the built-in default: native on Claude; on Codex, High for L2 and Medium for L3 and reviews.
 Native passes no effort to Claude and Medium to Codex, so every
 Codex launch names its level.
 
@@ -1276,7 +1275,7 @@ Effort does not create an engine/model pin. Higher effort can use more time and 
 `alt task new --title "Investigate a difficult failure" --effort xhigh --paths src/,tests/ -`
 overrides the project defaults for that task without changing them; it is how L3 asks for more effort
 for one L2. Precedence is explicit task effort, the applicable choice, the project override for the routed
-engine, the global engine effort, then the built-in role/provider default. Fresh attempts
+engine, then the built-in role/provider default. Fresh attempts
 resolve at dispatch, including queued tasks; messages/resumes reuse their saved launch override.
 L3 resolves its project default for the engine of each turn, including in its existing conversation.
 A turn already running finishes with its original selection. No existing L2 session is migrated or

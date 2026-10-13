@@ -28,7 +28,7 @@ window.WIREFRAME_BOARDS = [
   { label: 'Settings · Voice input', desktop: 'VoiceSettings.html', mobile: 'MobileVoiceSettings.html' },
   { label: 'Settings · This project', desktop: 'ProjectSettings.html', mobile: 'MobileProjectSettings.html' },
   { label: 'Settings states and entry points', desktop: 'SettingsStates.html', desktopSize: { w: 1200, h: 3900, name: 'Sheet' } },
-  { label: 'Models and effort settings', desktop: 'ModelsStates.html', desktopSize: { w: 1200, h: 2250, name: 'Sheet' } },
+  { label: 'Model and effort', desktop: 'ModelsStates.html', desktopSize: { w: 1200, h: 1450, name: 'Sheet' } },
   { label: 'System turns in chat: reports, faults, FYIs', desktop: 'SystemTurnStates.html', desktopSize: { w: 1200, h: 1100, name: 'Sheet' } },
   { label: 'Conversation and report states', desktop: 'ConversationStates.html', desktopSize: { w: 1200, h: 740, name: 'Sheet' } },
   { label: 'Create task: a reply that could become a task', desktop: 'ReplyTask.html', mobile: 'MobileReplyTask.html' },

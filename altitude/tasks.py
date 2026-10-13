@@ -1358,7 +1358,7 @@ def _clear_block(project: str, task: dict) -> None:
     _ensure_question(project, task)
     task["blocked_reason"] = None
     _recover_send_now(project, task)
-    for key in ("resume_after", "resume_request", "resume_claim", "resume_failed", "waiting_on", "fault", "escalated", "block_actor", "usage_limit", "stop_id", "turn_released"):
+    for key in ("resume_after", "resume_request", "resume_claim", "resume_failed", "waiting_on", "fault", "escalated", "block_actor", "usage_limit", "engine_refusal", "stop_id", "turn_released"):
         task.pop(key, None)
 
 

@@ -722,17 +722,66 @@ The approved [image interaction contract](IMAGE_INPUT.md) explains retention and
 agent delivery. `web/e2e/image-input.pw.ts` drives these states with real storage/API and deterministic
 engine fixtures at 390×844 and 1440×900; named screenshots live in `web/ui-artifacts/results/image-input*`.
 
-### 3.6.1 Model settings shortcuts
+### 3.6.1 Model and effort
 
-The coordinator model button under the composer and the New tasks shortcut beside quota open
-**Settings → Models and effort · All projects** (§3.15), preserving Back navigation and the chat
-draft. They do not open a second editor or create a project model choice. The selected/requested
-model and effort remain distinct from the last reply's reported values; missing observations say
-not reported. The single global editor uses engine-owned names and options, including **6.1 Sol**
-(`gpt-6.1-sol`), without claiming access from a shared account allowance.
+Model and effort are one choice, so each place shows one button with both values and opens one
+panel; nothing navigates to Settings. The places are the project chat's message box (that project's
+coordinator), **New tasks** (on the desktop rail, and on phone at the top of Monitor and of a
+project's Work, under a small "New tasks" label; it applies to every project's new tasks), and a
+task's message box (§3.10).
 
-Board: ModelsStates. `web/e2e/models.pw.ts` walks shortcut navigation and the paired editor on phone
-and desktop; no model dialog or separate role tabs remain.
+**Closed button.** Desktop `L3 · <model> · <effort> ⌄` (`L2 ·` for a task, no prefix for New tasks);
+phone drops the prefix. The model is bold and the effort regular; an unpinned effort reads "Default
+effort" on desktop and "Default" on phone. Room runs out by dropping the prefix, then cutting the model
+name with "…"; the effort is never cut. The button shows what is saved or running, never a pending
+pick. While a switch request is sending, stopping or queued, the button is muted and drops its ⌄;
+after an unconfirmed switch, pressing it moves focus to the card that settles it. Phone buttons are 44
+px tall. Accessible names: "Coordinator model and effort: Opus · High", "Model and effort for new
+tasks: …", "Task model and effort: …". A coordinator or New tasks model that cannot start now reads
+`<model> unavailable · Auto meanwhile`.
+
+**Panel.** Anchored to its button (above a composer button, below the New tasks button); desktop 440
+px wide, phone the screen width minus 12 px each side, at most 60% of the screen tall. The title names
+the place: "Coordinator (L3) · <project>", "New tasks (L2) · all projects", "This task (L2)". Models sit
+on the left under their engine's heading, each once by its maintained name, with Auto first where it
+applies; effort levels sit on the right. Only the columns scroll; title, "Model" and "Effort" headings,
+notes and a task's confirmation stay in view. Notes sit between the title and columns in a panel that
+opens upward and below them in one that opens downward, so a note never moves the row under the finger.
+Rows are 40 px (44 px phone); a muted second line says what a row means ("Picks by quota", "Claude’s
+own", "Project · High", "Current"). A filled check on a tinted row is what is saved (coordinator, New
+tasks) or running (a task). Keys: opening focuses the checked model; Up/Down/Home/End move within a
+column; Left/Right move to the other column's checked row; Enter or Space presses; Escape closes and
+returns focus to the button. Names, headings and levels come from the engine seam.
+
+- **Effort lists only what the selected model's engine runs.** Coordinator and New tasks start with
+  **Default** (not pinned), whose line says what it runs: `Project · <level>` when the project sets
+  that engine's effort, otherwise the engine's own setting; for New tasks, `Project setting or
+  built-in`. With Auto they list the levels every engine runs.
+- Changing the model keeps the effort when the new engine runs it, otherwise the effort becomes Default
+  (coordinator, New tasks) or the engine's task default (a task). Changing effort never changes the model.
+- **Coordinator and New tasks** save each pick at once; the panel stays open so the other half can
+  follow. Saving shows a progress mark in the pressed row and the next press waits. A failure names the
+  pick, "Could not save Sonnet · High. <reason> Retry", and the check stays on the saved row; denial
+  gives the reason without Retry; a conflict says "Changed in another window. Reload".
+- **A task** has no Auto and no unpinned row. Browsing requests nothing. Picks in either column make
+  one pending choice: the picked rows get an accent outline and an open ring, the running ones keep a
+  check-free "Current" line, and a confirmation appears at the panel's foot under a divider. Its title
+  is `Switch to <level> effort?` (effort only), `Switch to <model> · <effort>?` (model), or `Switch to
+  <model> on <engine> · <effort>?` (engine). Its body while the worker runs: "The current session writes
+  a handoff note, then a fresh session continues from the task's saved work. Some context may be lost,
+  and catching up uses extra tokens. Work, questions and merge holds stay." When nothing runs, the first
+  sentence is "A fresh session continues from the task's saved work." **Switch** (primary,
+  "Switching…" while sending) and **Cancel**, which drops the pending choice and closes the panel.
+  Picking the running pair again removes the confirmation. An unavailable model is a muted row whose
+  press shows its reason under it.
+- Loading shows "… · …", muted and disabled; a failed read shows **Could not load** in red and the panel
+  "Could not load models. Retry". Opening never saves or requests anything.
+
+The selected/requested model and effort remain distinct from the last reply's reported values;
+missing observations say not reported. Nothing claims model access from a shared account allowance.
+
+Board: ModelsStates. `web/e2e/model-menu.pw.ts` walks the coordinator, New tasks and task panels on
+phone and desktop; `web/e2e/models.pw.ts` walks Settings' project settings (§3.15).
 
 ### 3.7 Work panel
 
@@ -1127,31 +1176,34 @@ unavailable.** with **Retry capture**, and recovery removes the error.
 
 ### 3.10 Task page
 
-**Task model.** The composer has a model pill matching the L3 control, with a downward chevron
-and an actual 44px minimum phone hit area. It shows the launched model and effort; pending choices
-never appear as already applied. Task details retains read-only launch facts, with no separate idle
-transfer card. The pill opens **This task’s model**, bottom sheet on phone and centered on desktop:
-current selection, then labeled Engine, Model and Effort selectors. Models and efforts come from the
-engine seam. **Default · {resolved model}** previews the concrete choice; changed defaults require
-refresh and an unchanged effective tuple cannot start another attempt. Only this task is affected.
+**Task model.** The composer has the task's model and effort button (§3.6.1): `L2 · <model> · <effort>
+⌄` on desktop, without the prefix on phone, with a 44 px phone hit area. It shows the running model and
+effort; a pending choice appears only as the panel's marks and confirmation. Task details keeps
+read-only launch facts. Picks and the confirmation live in the one panel; only this task is affected,
+and an unchanged effective pair cannot start another attempt. Unknown model facts stay explicitly
+unknown; unavailable or pinned choices give a reason and cannot be confirmed. Read-only/denied views
+remove mutation controls.
 
-One concise confirmation block says **Waits for a handoff note, then starts a fresh session. Some
-context may be lost; rebuilding it uses extra tokens. Saved work, questions and holds stay.** Its
-first sentence becomes **Starts a fresh session from saved context.** after confirmed quota exhaustion
-or worker exit. **Cancel** and **Prepare change** (or **Start fresh session**) complete the chooser.
-Unknown model facts stay explicitly unknown; unavailable/pinned choices give a reason and disable
-submission. Editing fields alone never changes the task. Read-only/denied views remove mutation controls.
+After **Switch** is admitted the panel closes and one review-style card in the conversation shows the
+switch: title `Switching to <model> · <effort>`, then "Waiting for the current session’s handoff note."
+(after **Switch now**: "Starting the fresh session."), then **Started by you** or **Started by the
+coordinator · <its reason>**, with **Switch now** and **Cancel switch**. The header state reads
+"Switching model"; its model chip keeps describing the running session until the new one starts. The
+card follows unanswered questions and merge actions, before activity evidence. Preparation has no
+timeout. Switch now confirms stopping pending work without a note; now/cancel vanish once stopping
+commits. Stop stays in its existing location. **Switch controls ↓** leads back from history; return to
+Conversation from Live session/Terminal to use the panel. During a switch the button reads `L2 · ◌
+Switching…`, muted, and pressing it moves focus to the card; it never opens the panel over a switch,
+and a switch started elsewhere closes an open panel and drops its pending choice. An unconfirmed
+switch reads "Switch unconfirmed" in the header; the card gives the reason with **Check status**,
+never a duplicate request. Outcomes become conversation messages.
 
-Opening the chooser and changing its fields requests nothing. After admission, a shared review-style
-card shows **Preparing change**, the requested model/effort, who started it (**Started by you**, or
-**Started by the coordinator · <its reason>**), **Switch now** and **Cancel switch**. It follows unanswered questions and merge actions, before activity
-evidence. A current quota offer uses secondary **Change model…** and no duplicate explanation.
-Preparation has no timeout. Switch now confirms stopping pending work without a note; now/cancel
-vanish once stopping commits. Stop stays in its existing location. **Switch controls ↓** leads back
-from history; return to Conversation from Live session/Terminal to use the chooser. During preparation the
-pill reads **Switching to <model · effort>** (the engine when no model is named) with a progress mark and moves focus to that card; it never opens
-the chooser over a switch, and a switch started elsewhere closes an open chooser. Uncertain
-responses offer **Check status**, never a duplicate mutation. Outcomes become conversation messages.
+**Engine stopped.** A usage limit or an engine refusal stops the task on its own engine and session;
+nothing moves engines without the operator's press. The card's title is **Engine usage limit**
+("<engine> reached its usage limit.") or **Engine refused the task** ("<engine>: <reason>."), with
+secondary **Change model…** opening the task's panel, whose confirmation then starts "A fresh session
+continues from the task's saved work." Only a provider-reported reset schedules a resume, on the same
+engine.
 Draft, selection, recording and view survive; polling never steals focus. Escape closes the active
 dialog first. Activity/warning/terminal cues accompany explicit state text and respect reduced motion.
 No browser cache or persistent client-side transfer state is added.
@@ -1779,11 +1831,14 @@ The overview groups rows by where a setting applies, in two columns on desktop a
 **Your name** comes first: the name, or "Not set · screens say “you”", opening `/settings/name`.
 **This project**, present only when Settings opens from a project, links to
 `/settings/projects/<name>` for engine routing and project controls.
-**Models and effort · All projects** contains one row per engine with native **Model** and **Effort**
-dropdowns. The existing defaults-table layout has engine, model and effort columns on desktop;
-on phone the engine name sits above its two controls. Both remain together, with at least 44px
-targets. Neither is disabled because routing prefers another engine. **Engines** separately holds
-**New tasks · All projects**, choosing Auto or a preferred engine. **Projects** holds **All projects**
+**Project settings**, present only when a project sets its own model or effort for a role and engine,
+says "Used where a model button says Default or Auto." over one row each: `<project> · Tasks`,
+`Coordinator` or `Routing`, with a muted line such as "Codex · 6.1 Sol · High". A task or coordinator
+row offers **Reset**, which removes that setting (pending "Resetting…"; a failure keeps the row with
+its reason and **Retry**; a conflict says "Changed in another window. Reload"). Focus moves to the
+section heading, or to the page heading when the last row goes and the section disappears. A routing
+row links **Routing details** on the project's page. Model and effort themselves are chosen on their
+buttons (§3.6.1), never here. **Projects** holds **All projects**
 ("2 projects · folder ~/Projects"), opening `/settings/projects`: every managed project, each opening
 its page, then **Projects folder**.
 **Voice** holds **Voice input**. **Notifications** holds this device's decision alerts (below).
@@ -1938,35 +1993,13 @@ stops when it changes.
 | Saving | The pressed button's spinner named Saving…; other Use buttons aria-disabled until the request answers. |
 | Failed/denied save | Explanation and Retry in the pressed card; **In use** stays on the saved choice. A choice changed elsewhere offers Reload settings. |
 
-Model and effort save as one engine-scoped pair. Changing one field preserves the other, and
-other engines remain unchanged. During a save both controls are guarded with aria-disabled while
-focus stays native; the other engine remains usable. A stale expected pair offers Reload.
-Model offers **Altitude default**, engine-owned names, the current custom ID and **Other model…**.
-Effort offers **Altitude default**, **Native**, and supported engine levels. Inherited effort says
-"Native for all roles" for Claude and "Tasks: High · Chat/reviews: Medium" for Codex; explicit Native
-says "Provider chooses effort" for Claude and "Altitude sends Medium" for Codex. Engine-level support does not assert model support or provider caps.
-
-Other model reveals a fixed-engine ID editor with **Saved: <ID>** beneath its draft. Enter or leaving
-a valid ID saves; blank blur or Escape restores without a write. Whitespace-invalid input stays
-with its error. After success the editor disappears and focus returns to its select. Failure keeps
-the draft and Retry; denial restores without automatic retry. Loading shows no placeholder value;
-read failure offers Retry. Known unavailable models remain selected and editable with their reason;
-unknown access says **Access unverified**. IDs wrap without overflow; native menus stay browser-owned.
-
-**Existing overrides** appears only for saved model/effort exceptions. Each row names scope, engine
-and values; **Use global defaults** clears its model and effort while preserving engine/routing.
-**Routing details** links to the saved custom tier text; editing custom tiers uses the existing
-`alt project set --routing` CLI option. No tier editor is added. Individual task pins are not reset. Pending/error rows
-stay visible; successful reset removes the row and focuses the next row or heading. Changing an
-engine preference clears its old engine-specific fields, explained when an override exists.
-
-The global pairs apply to coordinator next turns, fresh task starts including queued tasks, and
-ordinary review starts. Started task sessions retain launch values. Native helpers and specialized
-improvement reviews keep their existing policy. Explicit task/review requests, saved choice fields,
-project role defaults and explicit routing models retain precedence. No defaults change on upgrade.
-Listening is not a state of these controls. Phone/desktop walkthroughs cover both independent pairs,
-save/success/error/denied/conflict, custom/native/inherited values, unavailable access and resets.
-Boards: SettingsStates, ModelsStates and ProjectSettings.
+A project's own model or effort applies to its coordinator's next turns and its fresh task starts
+(including queued tasks) wherever the button's choice is Default or Auto; explicit task requests and
+the button's own choice take precedence. Started task sessions keep their launch values, and Reset on
+a project setting leaves engine routing and individual task pins alone. A routing row's custom tiers
+are edited with the existing `alt project set --routing` CLI option; no tier editor is added.
+`web/e2e/models.pw.ts` walks the Project settings states on phone and desktop. Boards: SettingsStates,
+ModelsStates and ProjectSettings.
 **Your speech service** says “Words appear after you stop. Audio passes through this computer to
 the service you choose. Its privacy policy and charges apply.” **Use your speech service** opens its
 fields in that card, focusing **Transcription URL**, a full endpoint input whose placeholder shows
@@ -1997,17 +2030,14 @@ settings are invalid. Re-enter them in Voice settings.” in Settings; the compo
 last words with the same Settings link and keeps the microphone closed until repaired.
 
 The project page `/settings/projects/<name>` has a labelled **Settings** back button and the line
-"Applies to this project only." Model/effort defaults live in global Settings; this page contains
-no role-by-engine model/effort tables.
+"Applies to this project only." It has no model or effort controls: those are the buttons of §3.6.1.
 
-- **Coordinator engine**: Auto or a preferred engine, effective from its next turn. Changing a
-  preference with saved model/effort overrides clears those fields and uses global defaults.
+- **L3**: "Who answers in this project's chat. Its model and effort are under the chat's message box."
+  over "Last reply reported <model> · <effort>." or "L3 has not replied yet."
 - **Routing** (`#routing`): **Tasks** is Auto, Prefer <engine> or Only <engine>. Auto explains its
   configured tier order and weekly headroom policy. Only keeps tasks on that engine and waits
   when it cannot run. Saved routing tiers with explicit models remain visible here and editable through
   the existing `alt project set --routing` CLI option. Saves compare `expected`; a conflict says "Changed in another window."
-- **Models and effort**: link to the global Settings section. Existing scoped overrides remain
-  visible there until explicitly cleared, rather than becoming a second project editing table.
 - **Improvement suggestions** (`#improvement`, the Altitude project only;
   [design](improvement-review/PROPOSAL.md#turning-it-on-the-settings-section)): "Finds friction that
   keeps coming back in this project's tasks and suggests fixes." over one card. **Weekly** is a switch
@@ -2306,7 +2336,7 @@ retain phone/desktop state verification and accessible review evidence.
 | --- | --- | --- |
 | Rail, Needs you, badges | `GET /api/overview` | `POST /api/project/add`, `POST /api/project/remove` |
 | Project conversation | `GET /api/chat/<project>` | `POST /api/chat` (message, queue, Create task press), `POST /api/chat/remove`, `POST /api/l3/reset` |
-| Models and settings | `GET /api/model-defaults`, `GET /api/overview` `new_tasks`, `GET /api/defaults/<project>` | `POST /api/model-defaults` (engine pair), `POST /api/model-defaults/reset` (scoped override), `POST /api/new-tasks`, `POST /api/defaults`; each with `expected` |
+| Models and settings | `GET /api/project-model-settings`, `GET /api/overview` `new_tasks`, `GET /api/defaults/<project>` | `POST /api/project-model-settings/reset` (a project's own setting), `POST /api/new-tasks`, `POST /api/defaults`; each with `expected` |
 | Project setup | `GET /api/setup/<project>` | `POST /api/project/setup` (check, repair, operator-approved hook integration) |
 | Work panel | `GET /api/project/<name>`, `GET /api/overview` `queue` | none; rows open the owning conversation |
 | Needs you | `GET /api/overview` plus project reference context | `POST /api/decide` |
