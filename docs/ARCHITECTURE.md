@@ -3158,8 +3158,10 @@ The record on the reply row or question revision holds paths, content names, siz
 document's first heading and opening paragraph, and a hash of itself as its identity; it never holds
 the document text. A question showing identical files keeps its revision, changed files advance it,
 and the answer fence binds the files the operator saw. A question is a proposal approval when it
-shows files, so its card carries the proposal review, and a review whose captured `--show` set differs
-from the latest question's counts as covering an earlier version. `require_shown` refuses both the
+shows files, so its card carries the proposal review; in a group, `tasks.shown_question` gives the
+files to the one member marked as the proposal and the other members publish without them. A review
+whose captured `--show` set differs from the latest showing question's counts as covering an earlier
+version. `require_shown` refuses both the
 operator's answer and the owner's resolution while any copy is missing or altered, or for a question
 saved with a design preview before shown files existed; the card disables that question's answers.
 
