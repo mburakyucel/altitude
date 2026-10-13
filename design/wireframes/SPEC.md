@@ -1286,8 +1286,14 @@ when newer messages are below the reader. If both lead to the bottom, show only 
 Each hides when its destination is visible. These labeled, keyboard-accessible 44px buttons occupy
 the conversation's lower corner without reducing its viewport. Shown files stay in the question
 and Needs you; View question stays in task details, useful from Live session. A held review-ready PR whose owner has stopped
-(#419) shows **Your turn · review before merge** at the end of the chat and in Needs you:
-**Approve merge** sends the operator's own message "Approved: merge PR #N." and the L2 merges
+(#419) shows **Your turn · review before merge** at the end of the chat and in Needs you once all
+active reviews are completed and assessed with no open findings and no L3 question or L3 wait
+remains (#902). Until then the existing review details, wait explanation and Merge held status
+remain; no generated approval card or operator-turn review label appears. Explicit operator
+questions keep their response surfaces independently.
+**Approve merge** checks its current PR, hold and readiness before sending the operator's own
+message "Approved: merge PR #N."; a stale card uses the existing Not sent/Retry state and sends
+nothing. The L2 merges
 with it after fresh checks of the current head (the press shows as its pill, §3.8.2, and the chat then shows "Sent · the L2 has your reply."); **View PR #N** opens it; asking below discusses it. A later,
 unrelated question never hides that review. An open operator question about the PR supplies its single
 response surface instead: one its owner marks as the merge question, or an unmarked one that links or

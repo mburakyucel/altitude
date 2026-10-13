@@ -328,7 +328,7 @@ class TestDecisions(AltitudeCase):
         held = S.load_task(self.project, slug)
         held.update(hold_merge="Operator review before merge", prs=[42], delivery={"number": 42, "head": "a" * 40, "at": "2026-01-01T00:00:00+00:00"})
         S.save_task(self.project, held)
-        self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"])
+        self.assertEqual(T.decisions(self.project), [], "an L3 prerequisite keeps automatic approval away")
         def approve_and_park(text):
             T.message(self.project, slug, "burak", text)
             T.resume(self.project, slug)
@@ -339,7 +339,7 @@ class TestDecisions(AltitudeCase):
         self.assertEqual(T.decisions(self.project), [])
         self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), "waiting on L3 · PR #42 approved")
         approve_and_park("Wait, only merge PR #42 after the export lands.")
-        self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"], "a later word about the PR re-asks")
+        self.assertEqual(T.decisions(self.project), [], "revocation does not settle the L3 prerequisite")
         approve_and_park("Approved: merge PR #42 at aaaaaaa.")
         self.assertEqual(T.decisions(self.project), [], "an earlier card's approval still counts")
         moved = S.load_task(self.project, slug)
@@ -349,7 +349,7 @@ class TestDecisions(AltitudeCase):
         self.assertEqual(T.wait_label(self.project, S.load_task(self.project, slug)), "waiting on L3 · PR #42 approved")
         time.sleep(1.1)  # records keep whole seconds
         T.set_hold_merge(self.project, slug, "Operator review after the export change", actor="l3")
-        self.assertEqual([row["kind"] for row in T.decisions(self.project)], ["review"], "a new hold asks again")
+        self.assertEqual(T.decisions(self.project), [], "a new hold does not settle the L3 prerequisite")
         time.sleep(1.1)
         approve_and_park("Approved: merge PR #42.")
         S.save_task(self.project, {**S.load_task(self.project, slug), "fault": "worker:x"})

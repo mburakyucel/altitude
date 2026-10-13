@@ -752,11 +752,8 @@ def skip(project, slug, *, actor, subject, reason, expected_attempt=None):
         return _project_review(row, task, None)
 
 
-def require_merge(project, slug, pair, *, strict=True):
-    """Current, resolved review evidence for the landing's pinned pair. Before its merge turn a landing passes
-    `strict=False`: a waiting candidate is judged on its own head and context, so main moving under it asks for
-    no reassessment until its turn integrates main (#777)."""
-    task = _load(project, slug)
+def require_resolved(task):
+    """The recorded review prerequisites shared by approval presentation and landing."""
     current = [review for review in _current_reviews(task) if review["state"] != "withdrawn"]
     for review in current:
         if review["state"] != "completed" or not review.get("reconciled"):
@@ -766,6 +763,15 @@ def require_merge(project, slug, pair, *, strict=True):
             raise T.TransitionError(f"Adversarial review {review['id']} ({review.get('subject', 'changes')}) "
                                     f"has unresolved findings: {', '.join(unresolved)}. Fix or dismiss each with evidence "
                                     "and reassess before merging.")
+    return current
+
+
+def require_merge(project, slug, pair, *, strict=True):
+    """Current, resolved review evidence for the landing's pinned pair. Before its merge turn a landing passes
+    `strict=False`: a waiting candidate is judged on its own head and context, so main moving under it asks for
+    no reassessment until its turn integrates main (#777)."""
+    task = _load(project, slug)
+    current = require_resolved(task)
     stale = []
     for review in current:
         proposal_id = review["reconciled"].get("proposal_id")
