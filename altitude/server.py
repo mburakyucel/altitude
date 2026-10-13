@@ -3720,7 +3720,7 @@ def task_transfer_view(project: str, task: dict) -> dict:
                                     for value in config.ENGINE_EFFORTS[engine]]})
     eligible = any(target["available"] for target in targets)
     preparation = False
-    if eligible and not task.get("usage_limit") and T.stopped_by(task) not in dispatch.DAEMON_REQUEST_ACTORS:
+    if configured and not task.get("usage_limit") and T.stopped_by(task) not in dispatch.DAEMON_REQUEST_ACTORS:
         worker = engines.worker(dispatch.l2_engine(task), task, job_root=dispatch.l2_job_root(project, task["slug"]))
         preparation = not (worker and worker.get("state") in ("done", "failed", "stopped"))
     transfer = None

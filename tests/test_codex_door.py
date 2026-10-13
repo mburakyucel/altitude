@@ -410,7 +410,7 @@ class TestFreshAttempt(AltitudeCase):
         super().setUp()
         self.register(PROJECT, path=self.repo)
 
-    def test_requeue_with_a_worker_needs_clear_worker_and_pins_the_next_engine(self):
+    def test_requeue_with_a_worker_needs_clear_worker_and_selects_the_next_engine(self):
         task = T.new(PROJECT, "Requeue fixture", "Do it.", actor="burak")
         task.update({"state": "blocked", "agent_id": "a", "session_id": "s", "l2_engine": "codex",
                      "engine_model": "m", "routing": "why", "resume_after": "x"})
@@ -419,7 +419,8 @@ class TestFreshAttempt(AltitudeCase):
             T.requeue(PROJECT, task["slug"])
         out = T.requeue(PROJECT, task["slug"], engine="claude", clear_worker=True)
         self.assertEqual((out["state"], out["l2_engine"], out["agent_id"], out["session_id"], out["engine_model"],
-                          out["routing"]), ("queued", "claude", None, None, None, None))
+                          out["routing"]), ("queued", "codex", None, None, None, None))
+        self.assertEqual(out["next_engine"], "claude")
         self.assertNotIn("resume_after", out)
 
     def test_brief_carries_the_previous_attempts_progress(self):
