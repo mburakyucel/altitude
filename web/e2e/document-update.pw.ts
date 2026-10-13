@@ -18,7 +18,7 @@ async function prepare(page: Page, request: APIRequestContext, entry: Entry, int
   let release = () => {};
   if (entry === "file" && interceptFile) {
     const gate = new Promise<void>(resolve => { release = resolve; });
-    await page.route("**/api/files/atlas?*", async route => { await gate; await route.continue(); });
+    await page.route("**/api/files/atlas?*", async route => { await gate; await route.fallback(); });
   }
   const route = entry === "file" ? `/projects/atlas/file?${new URLSearchParams({ path })}`
     : entry === "shown" ? `/projects/atlas/tasks/${slug}` : "/projects/atlas";
