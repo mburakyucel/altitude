@@ -283,6 +283,8 @@ def disconnected_context():
         actual = subprocess.check_output(['git', '-C', str(CANDIDATE), *args], text=True, timeout=10).strip()
         if identity[field] != actual:
             raise RuntimeError('Candidate ' + field + ' differs from validation identity')
+    if (CANDIDATE / 'scripts/browser_launch.mjs').read_bytes() != (SOURCE / 'scripts/browser_launch.mjs').read_bytes():
+        raise RuntimeError('Candidate browser launch contract differs from deployed protection preflight')
     return marker, identity, links
 
 
