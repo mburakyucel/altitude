@@ -51,6 +51,18 @@ class AddressConfiguration(InstallationCase):
         self.assertEqual(saved["environment"]["ALTITUDE_HOST"], "10.20.30.40")
         self.assertFalse((self.prefix / "pending.json").exists())
 
+    def test_ipv6_preview_and_stopped_apply_keep_a_certified_bracketed_url(self):
+        preview = installation.configure_address("::1")
+        self.assertEqual(preview["url"], "https://[::1]:19443")
+        self.assert_original()
+        installation.service("stop")
+        self.actions.clear()
+        result = installation.configure_address("::1", apply=True)
+        self.assertEqual(result["service"], "stopped")
+        self.assertEqual(self.actions, ["stop", "reload"])
+        self.assertEqual(json.loads(self.settings.read_text())["environment"]["ALTITUDE_HOST"], "::1")
+        tls._verify(self.certificates, "::1")
+
     def test_running_change_uses_explicit_new_network_and_rolls_back_failed_health(self):
         self.probes = [RuntimeError("candidate HTTPS failed"), None]
         with self.assertRaisesRegex(RuntimeError, "previous address restored"):

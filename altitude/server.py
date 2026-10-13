@@ -33,6 +33,10 @@ from . import access, config, digest, dispatch, engines, git_policy, images, imp
 
 
 class ThreadingHTTPServer(http.server.ThreadingHTTPServer):
+    def __init__(self, server_address, handler, bind_and_activate=True):
+        self.address_family = socket.AF_INET6 if ":" in server_address[0] else socket.AF_INET
+        super().__init__(server_address, handler, bind_and_activate)
+
     def server_bind(self) -> None:
         # http.server names itself by a reverse lookup of the address, which held a Mac guest without a network in mDNS
         # past the installation's health deadline; nothing reads that name.

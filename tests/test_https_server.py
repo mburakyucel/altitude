@@ -61,6 +61,28 @@ class TestHTTPSServer(AltitudeCase):
         self.patch(config, "TLS", False)
         self.assertIsNone(server.certificate_view())
 
+    def test_ipv6_listener_serves_certificate_verified_health(self):
+        server.tls_init()
+        httpd = server.ThreadingHTTPServer(("::1", 0), server.Handler)
+        self.addCleanup(httpd.server_close)
+        self.assertEqual(httpd.address_family, socket.AF_INET6)
+        httpd.socket = tls.check("::1").wrap_socket(httpd.socket, server_side=True)
+        worker = threading.Thread(target=httpd.serve_forever, daemon=True)
+        worker.start()
+        try:
+            context = ssl.create_default_context(cafile=str(config.TLS_DIR / "ca.crt"))
+            connection = http.client.HTTPSConnection("::1", httpd.server_port, context=context, timeout=5)
+            try:
+                connection.request("GET", "/api/health")
+                response = connection.getresponse()
+                self.assertEqual(response.status, 200)
+                self.assertEqual(json.load(response)["pid"], os.getpid())
+            finally:
+                connection.close()
+        finally:
+            httpd.shutdown()
+            worker.join(5)
+
     def test_mismatched_bind_host_refuses_before_binding(self):
         server.tls_init()
         with mock.patch.object(server, "ThreadingHTTPServer") as httpd:

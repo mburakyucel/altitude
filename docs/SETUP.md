@@ -102,6 +102,7 @@ alt service configure --host <private-address>
 alt service configure --host <private-address> --apply
 ```
 
+Both IPv4 and IPv6 addresses use matching daemon listeners; IPv6 URLs enclose the address in brackets.
 The preview shows current/proposed URLs, the retained CA fingerprint, certificate action and
 `alt recover`. Apply retains the port, CA, keys, pairing and projects, updates the owned service
 and verifies its HTTPS API and UI if running. Failure restores the original configuration and
