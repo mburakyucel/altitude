@@ -5,6 +5,8 @@ Real handlers and storage; only the engine processes are fixtures. Every message
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import json
+import os
+from unittest import mock
 
 from service_support import configure, serve
 from tests.support import SUITE, git, make_repo
@@ -37,6 +39,9 @@ def minutes_ago(minutes: float):
         S.now, T._conversation_time = real
 
 
+# The example's throwaway records need no power-loss durability. Flushing each of its 1,500 writes to disk made the
+# service miss its start limit when two started together on a loaded four-CPU runner.
+@mock.patch.object(os, "fsync", lambda _fd: None)
 def seed() -> dict:
     """Seed the example; readme-features-service.py adds the feature illustrations to it."""
     configure()
@@ -85,6 +90,22 @@ def seed() -> dict:
     l3.save_info(PROJECT, {"session_id": "readme-l3", "engine_last": engine, "last_turn": S.now(), "turns": 41,
                            "sessions": {engine: {"session_id": "readme-l3", "turns": 41,
                                                  "confinement_version": l3.L3_CONFINEMENT_VERSION}}})
+
+    # Work finished this week: each verb and area makes one delivered task. Seeded before the owners start, so each
+    # task's STATE.md regeneration reads no other open task.
+    areas = ["the query parser", "billing webhooks", "the ingestion queue", "the admin dashboard", "the search API",
+             "the export job", "the auth middleware", "the rate limiter", "email digests", "the CSV importer",
+             "the cache layer", "mobile sync", "the audit log", "the onboarding flow", "result ranking",
+             "feature flags"]
+    verbs = ["Harden", "Speed up", "Add tests for", "Document", "Refactor", "Fix flaky tests in", "Add metrics to",
+             "Clean up"]
+    for number, (verb, area) in enumerate((verb, area) for verb in verbs for area in areas):
+        with minutes_ago(60 * 24 * 5 * number / (len(verbs) * len(areas)) + 90):
+            slug = T.new(PROJECT, f"{verb} {area}", f"{verb} {area}.")["slug"]
+            finished = S.load_task(PROJECT, slug)
+            finished.update(state="done", finished=S.now())
+            S.save_task(PROJECT, finished)
+            T._archive(PROJECT, slug)
 
     def checkout(slug):
         """The dispatcher's worktree layout. The seed's own Git commands skip the guards' hooks, which would run a
@@ -175,21 +196,6 @@ def seed() -> dict:
                                                          "session_id": f"readme-{compatibility}", "started_at": at(34)})
     (job / f"readme-{compatibility}.stdout.jsonl").write_text(
         "".join(json.dumps(record) + "\n" for record in records if record["type"] != "attachment"))
-
-    # Work finished this week: each verb and area makes one delivered task.
-    areas = ["the query parser", "billing webhooks", "the ingestion queue", "the admin dashboard", "the search API",
-             "the export job", "the auth middleware", "the rate limiter", "email digests", "the CSV importer",
-             "the cache layer", "mobile sync", "the audit log", "the onboarding flow", "result ranking",
-             "feature flags"]
-    verbs = ["Harden", "Speed up", "Add tests for", "Document", "Refactor", "Fix flaky tests in", "Add metrics to",
-             "Clean up"]
-    for number, (verb, area) in enumerate((verb, area) for verb in verbs for area in areas):
-        with minutes_ago(60 * 24 * 5 * number / (len(verbs) * len(areas)) + 90):
-            slug = T.new(PROJECT, f"{verb} {area}", f"{verb} {area}.")["slug"]
-            finished = S.load_task(PROJECT, slug)
-            finished.update(state="done", finished=S.now())
-            S.save_task(PROJECT, finished)
-            T._archive(PROJECT, slug)
 
     # Later the backfill owner needs a product decision; L3 brings it to the operator.
     T.block(PROJECT, backfill, RETENTION["question"], actor="l2", questions={"questions": [RETENTION]})

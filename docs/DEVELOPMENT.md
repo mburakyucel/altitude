@@ -233,6 +233,9 @@ broker sockets; unfinished work or logged background failures fail the walkthrou
 does not start within ten seconds, or exits while starting, fails with that startup error and its
 output. Playwright starts a test's service before evaluating its skip conditions, so a test that
 only one project runs is tagged `@phone-only` or `@desktop-only`, which the other project excludes.
+The README service seeds its example records without flushing each to disk, so two services
+starting together on a loaded runner stay inside that start limit.
+The improvement-settings walkthrough releases a held press only after it reaches the route.
 The image stream/admission walkthrough holds a real admission receipt until a history poll shows
 its image, then holds later reads while verifying that receipt cannot recreate a queued copy.
 The image selection/viewer/reload journey holds completion after the active turn clears and before
