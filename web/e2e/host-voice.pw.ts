@@ -228,7 +228,7 @@ test("host voice not set up: the mic points to Settings, which sets it up with p
   await expect(page.getByRole("status").filter({ hasText: "420 MB of 698 MB" })).toBeVisible({ timeout: 5000 });
   host.state = READY;
   await walk.state("host-voice-11-ready", {
-    visible: [page.getByText("While you dictate, the speech process uses about 2 GB of memory.", { exact: true }), page.getByRole("button", { name: "Remove voice (698 MB)", exact: true })],
+    visible: [page.getByText("While you dictate, the speech process uses about 2 GB of memory.", { exact: true }), page.getByRole("button", { name: "Remove voice", exact: true })],
     hidden: [page.getByRole("progressbar"), page.getByRole("button", { name: "Cancel setup", exact: true })],
   });
   expect(host.requests).toEqual(["setup"]);

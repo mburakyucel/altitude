@@ -141,9 +141,9 @@ class VoiceInputError(RuntimeError):
 
 
 def _voice_selection(setting: dict) -> str:
-    """Bind a recording to its backend and host runtime: a changed choice, setup or removal ends it."""
-    path = speech.runtime() if setting["backend"] == "host" else None
-    return hashlib.sha256(json.dumps([setting["backend"], path.name if path else ""]).encode()).hexdigest()
+    """Supported runtime replacement preserves replay; backend changes and removal invalidate it."""
+    identity = speech.installation_id() if setting["backend"] == "host" else ""
+    return hashlib.sha256(json.dumps([setting["backend"], identity]).encode()).hexdigest()
 
 
 def voice_view() -> dict:
@@ -2293,9 +2293,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"text": digest.text()})
             if api == "chat" and len(parts) > 2:
                 project = parts[2]
+                config.project(project)  # a removed or unknown project's conversation is refused
                 lifecycle = l3.chat_state(project, int(q.get("limit", ["60"])[0]))
-                return self._json({**lifecycle, "l3": l3.info(project),
-                                   "engine": config.project(project).get("l3_engine")})
+                return self._json({**lifecycle, "l3": l3.info(project)})
             return self._json({"error": "unknown api"}, 404)
         except images.ImageError as exc:
             return self._json({"error": str(exc)}, exc.status)
@@ -2476,6 +2476,8 @@ class Handler(BaseHTTPRequestHandler):
                         return self._json({"error": CHANGED_ELSEWHERE, "changed": True}, 409)
                     if result["status"] != "done":
                         raise ValueError(result["note"])
+                    if l3.queue_path(o["project"]).exists():
+                        request_l3_drain(o["project"])  # a message waiting for an engine tries the changed choice now
                     return self._json(config.defaults_view(o["project"]))
                 except (ValueError, KeyError, T.TransitionError) as exc:
                     return self._json({"error": str(exc)}, 400)
@@ -3612,6 +3614,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
     if os.environ.get("ALTITUDE_SERVICE") and config.RELEASE is None:
         (config.MONITOR_DIR / dispatch.RESTART_PENDING).unlink(missing_ok=True)
     if os.environ.get("ALTITUDE_TIMERS", "1") != "0":
+        SPEECH.update_installed()
         restart_notice()
         settle_interrupted_machine_commands()
         threading.Thread(target=timer_loop, args=(context, certificate_host), name="timers", daemon=True).start()

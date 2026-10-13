@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderApp } from "../test/render";
+import type { HostVoice } from "../data/api";
 
 function response(obj: unknown, status = 200) {
   return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
@@ -14,7 +15,7 @@ const unmet = [
   { key: "git", label: "Git installed", state: "met", detail: null, command: null },
 ];
 
-type Host = { state: "unavailable"; reason: string } | { state: "absent" | "setting-up" | "ready"; download_bytes: number };
+type Host = HostVoice;
 
 function mockFetch(options: { refuseRepository?: boolean; host?: Host; backend?: "host" | "browser" } = {}) {
   const voice = { backend: options.backend ?? (options.host?.state === "unavailable" ? "browser" : "host"), selection: "fixture-1",
@@ -56,6 +57,15 @@ const posted = (fetchMock: ReturnType<typeof mockFetch>, path: string) =>
   fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith(path) && init?.method === "POST").map(([, init]) => JSON.parse(String(init?.body)));
 
 describe("First run onboarding", () => {
+  it("supported voice stays set up while a replacement downloads", async () => {
+    const fetchMock = mockFetch({ host: { state: "ready", download_bytes: 701000000,
+      update: { state: "downloading", done_bytes: 12000000, download_bytes: 40000000 } } });
+    renderApp({ route: "/projects?step=voice" });
+    expect(await screen.findByText("Voice to text runs on this computer and is set up.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Set up voice" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+    expect(posted(fetchMock, "/api/voice/host")).toEqual([]);
+  });
   it("starts with the name filled in, saves it on Continue and moves to the prerequisites", async () => {
     const fetchMock = mockFetch();
     const { user, router } = renderApp({ route: "/projects" });

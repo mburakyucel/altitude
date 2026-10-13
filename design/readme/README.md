@@ -1,10 +1,10 @@
 # README visuals
 
 The README shows the built web app on desktop and phone together: an opening loop of the desktop
-project view with the phone answering a decision in front of it, and the "work at any altitude" drawing
-of the coordinator, task agents and helpers.
-[The walkthrough](../../docs/WALKTHROUGH.md) carries the longer scenario and full-size captures.
-The opening loop and the drawing are the same at every width; the README is laid out for a computer screen first.
+project view with the phone answering a decision in front of it, the "work at any altitude" drawing
+of the coordinator, task agents and helpers, and an animation of new tasks balanced across two engines.
+[The walkthrough](../../docs/WALKTHROUGH.md) carries the longer scenario, full-size captures and the
+feature pictures. The README's pictures are the same at every width; it is laid out for a computer screen first.
 
 The captures come from an ordinary [browser walkthrough](../../docs/DEVELOPMENT.md#browser-walkthroughs):
 `web/e2e/readme.pw.ts` against `web/e2e/readme-service.py`, a disposable service with real handlers and
@@ -20,17 +20,25 @@ answers the decision with seven days from Needs you and checks that it leaves th
 on the desktop run only, answers the same decision on a phone page while a desktop page shows the task
 resume. Page errors and horizontal overflow fail the journey.
 
+The feature pictures come from `web/e2e/readme-features.pw.ts` against `web/e2e/readme-features-service.py`,
+which seeds the same Atlas example and adds four states: the per-tenant limits pull request held for the
+operator after an independent review with two fixed findings, a deploy command the billing owner hands to the
+task's terminal (a real shell with no profile and a fixed prompt), the sign-on task paused by a machine problem
+until the coordinator repairs and resumes it, and improvement suggestions in an Altitude project. The journey
+also runs at both widths in every `make check`.
+
 ## Reproduce
 
 Render the captures from the committed candidate in a validation run:
 
 ```sh
-alt task validate -- sh -c 'ALTITUDE_README_IMAGES="$VALIDATION_RESULTS/images" make ui-validate UI_ARGS=readme.pw.ts'
+alt task validate -- sh -c 'ALTITUDE_README_IMAGES="$VALIDATION_RESULTS/images" make ui-validate UI_ARGS="readme.pw.ts readme-features.pw.ts"'
 ```
 
 The run's `images/` folder in the task's validation evidence receives `project`, `task` and `decision`
 captures for each viewport, plus phone `work` and `session` captures, at 1440×900 and 390×844 with 2× pixel
-density, the opening loop's `opening-*` frames, and `phone-walkthrough.webm`, a silent recording of the phone journey that pauses briefly at
+density, the opening loop's `opening-*` frames, the feature states (`review`, `terminal`, `heal` and `improve`
+captures), and `phone-walkthrough.webm`, a silent recording of the phone journey that pauses briefly at
 each capture. No speech recognition or coding agent runs.
 
 ## Opening loop
@@ -46,8 +54,23 @@ front of its sidebar. After a validation run, compose the loop from its `images/
 Chrome and ffmpeg:
 
 ```sh
-python3 design/readme/opening.py <validation results>/images
+python3 design/readme/compose.py <validation results>/images
 ```
+
+## Feature pictures
+
+The walkthrough's [See the features](../../docs/WALKTHROUGH.md#see-the-features) shows five features as
+`docs/images/feature-*.webp`: two phone captures side by side, each cropped to its top or bottom, on
+`design/readme/pair.html`'s 1720×1200 canvas. At phone widths each shows the one capture that proves it,
+`feature-*-phone.webp` (the live session uses `session-phone.png`). The same `compose.py` run writes them
+after the opening loop.
+
+## Balanced quotas
+
+The README's `docs/images/balance.svg` is a looping vector animation with no script, so GitHub plays it in
+an image. Its meters fill with use and read "N% of week", as the app's engine meters do: each new task goes
+to the engine marked "less used" and that meter fills, until a new week empties both. Its engine figures and
+task names are illustrative, not a capture. `python3 design/readme/balance.py` writes it.
 
 ## Maintain
 
@@ -56,6 +79,7 @@ python3 design/readme/opening.py <validation results>/images
 - Copy only reviewed illustrations needed by README or the walkthrough into `docs/images/`,
   replacing the matching files. Keep routine renders and before/after review evidence outside Git
   under the [project UI rule](../../AGENTS.md#ui); do not add a gallery for each PR.
+- Change the quota animation in `design/readme/balance.py` and write it again; never edit `balance.svg` by hand.
 - Edit `docs/images/altitude.svg` directly. This standalone vector uses system fonts and contains
   no scripts or raster art; it is the same drawing at every width, so keep its type large enough
   to read in a desktop README column.

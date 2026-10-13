@@ -77,7 +77,7 @@ def _routed_models(engine: str) -> list[str]:
                 for option in tier:
                     if option["engine"] == engine:
                         names.append(option.get("model") or config.default_model(role, engine, project))
-            if project.get(f"{role}_engine") == engine:
+            if role == "l2" and project.get("l2_engine") == engine:
                 names.append(config.default_model(role, engine, project))
     return list(dict.fromkeys(name for name in names if name))
 
@@ -156,23 +156,54 @@ def _unavailable(weekly: float | None, short: float | None) -> str | None:
     return None
 
 
+def _epoch(value) -> str | None:
+    return datetime.fromtimestamp(value, timezone.utc).isoformat(timespec="seconds") if isinstance(value, (int, float)) else None
+
+
+def _resets(readings: dict[str, dict]) -> dict[str, tuple[str | None, str | None]]:
+    """Per engine: (weekly reset, short-window reset) as ISO instants; None when not reported."""
+    from . import engines
+    claude, codex = readings["claude"], readings["codex"]
+
+    def codex_reset(minutes: int) -> str | None:
+        return next((codex.get(f"{prefix}_resets") for prefix in ("primary", "secondary")
+                     if str(codex.get(f"{prefix}_window_minutes")) == str(minutes)), None)
+    return {"claude": (_epoch(claude.get("seven_day_resets")), engines.usage_hold() or _epoch(claude.get("five_hour_resets"))),
+            "codex": (codex_reset(WEEK_MINUTES), codex_reset(SHORT_MINUTES))}
+
+
 def model_reading(reading: dict, model: str | None) -> dict | None:
     """The seat reading's own row for this model's family; None when the provider reported none."""
     family = config.model_family(model)
     return next((row for row in reading.get("models") or [] if family and row.get("model") == family), None)
 
 
-def _model_exhausted(option: dict, readings: dict[str, dict]) -> str | None:
-    """A current model-specific reading at its limit; the shared account windows say nothing about it."""
+def _model_exhausted(option: dict, readings: dict[str, dict]) -> tuple[str, str | None] | None:
+    """A current model-specific reading at its limit, with its reset; the shared account windows say nothing about it."""
     reading = readings[option["engine"]]
     row = model_reading(reading, option.get("model")) if reading.get("known") else None
     used = _number(row.get("seven_day")) if row else None
     reset = row.get("seven_day_resets") if row else None
     if used is None or used < 100 or isinstance(reset, (int, float)) and reset <= time.time():
         return None
-    return (f"{row['label']} weekly allowance exhausted; " +
-            (f"resets {datetime.fromtimestamp(reset, timezone.utc).isoformat(timespec='seconds')}"
-             if isinstance(reset, (int, float)) else "reset time unknown"))
+    until = _epoch(reset)
+    return f"{row['label']} weekly allowance exhausted; " + (f"resets {until}" if until else "reset time unknown"), until
+
+
+def _hold(option: dict, readings: dict[str, dict], *, retry_sign_in: bool = False) -> dict | None:
+    """Why this option cannot start now: ``why``, the reported ``until`` and whether a usage ``limit`` holds it."""
+    rejection = _rejection(option, retry_sign_in=retry_sign_in)
+    if rejection:
+        return {"why": rejection["why"] + ("" if rejection.get("until") else
+                                           "; availability observation expires after 30 minutes"),
+                "until": rejection.get("until"), "limit": bool(rejection.get("until") or "exhausted" in rejection["why"])}
+    weekly, short = _usage(readings)[option["engine"]]
+    window = _unavailable(weekly, short)
+    if window:
+        resets = _resets(readings)[option["engine"]]
+        return {"why": window, "until": resets[0] if window.startswith("weekly") else resets[1], "limit": True}
+    exhausted = _model_exhausted(option, readings)
+    return {"why": exhausted[0], "until": exhausted[1], "limit": True} if exhausted else None
 
 
 SWITCH_MARGIN = 15.0  # weekly points of extra headroom the other engine needs before a session moves
@@ -217,17 +248,18 @@ def _active(data: dict) -> bool:
     return _current(data) and not data.get("withdrawn")
 
 
-def _rejected(option: dict, *, retry_sign_in: bool = False) -> str | None:
+def _rejection(option: dict, *, retry_sign_in: bool = False) -> dict | None:
     # A usage limit names the model family ("fable"); a configured model id shares its exclusion.
     family = config.model_family(option.get("model"))
     paths = [*([] if retry_sign_in else [_rejection_path(option, "sign-in")]),
              _rejection_path(option, "engine"), _rejection_path(option, "model"),
              *([_rejection_path(option, "model", family)] if family and family != option.get("model") else [])]
-    for path in paths:
-        data = S.read_json(path, {})
-        if _active(data):
-            return data["why"] + ("" if data.get("until") else "; availability observation expires after 30 minutes")
-    return None
+    return next((data for data in map(lambda path: S.read_json(path, {}), paths) if _active(data)), None)
+
+
+def _rejected(option: dict) -> str | None:
+    data = _rejection(option)
+    return data and data["why"] + ("" if data.get("until") else "; availability observation expires after 30 minutes")
 
 
 def signed_out(engine: str) -> bool:
@@ -277,8 +309,7 @@ def choice_unavailable(role: str, choice: dict | None, project: dict | None = No
     installed = engines.installation(option["engine"])
     if installed["available"] is False:
         return installed["why"]
-    readings = _readings()
-    return _rejected(option) or _unavailable(*_usage(readings)[option["engine"]]) or _model_exhausted(option, readings)
+    return (_hold(option, _readings()) or {}).get("why")
 
 
 def resume_hold(engine: str, model: str | None) -> str | None:
@@ -290,8 +321,7 @@ def resume_hold(engine: str, model: str | None) -> str | None:
     if installed["available"] is False:
         return installed["why"]
     option = {"engine": engine, "model": model or config.default_model("l2", engine), "role": "l2"}
-    readings = _readings()
-    return _rejected(option) or _unavailable(*_usage(readings)[engine]) or _model_exhausted(option, readings)
+    return (_hold(option, _readings()) or {}).get("why")
 
 
 def pick_task(project: dict, task: dict, *, excluded: tuple = ()) -> dict:
@@ -371,12 +401,13 @@ def pick_engine(role: str, *, forced: str | None = None, model: str | None = Non
     """One policy for fresh L2, L3 and explanations. Never used to change an L2 resume.
 
     An explicit task or turn engine/model wins outright. Otherwise the role's choice (New tasks for L2, the
-    project's L3 choice) is tried first, ahead of the routing tiers; a project's Only engine keeps its engine and
+    project's L3 choice) is tried first, ahead of the routing tiers; a project's Only engine for tasks keeps its engine and
     takes the choice's model and effort when they are on it. An explicit launch ``effort`` wins over the choice's,
     which wins over each option's per-role, per-engine project default; an engine that rejects the chosen effort
     uses its default. ``steer=False`` ignores the choice (reviewer selection, explicit engine handoff).
     ``retry_sign_in`` looks past sign-in rejections for an operator's explicit retry; ``signed_out`` lists the
-    engines a sign-in rejection excluded.
+    engines a sign-in rejection excluded, and ``held`` every skipped option in priority order with its reported
+    reset (``until``) and whether a usage ``limit`` holds it.
     Unknown access/quota is eligible. Tiers outrank headroom; a tied tier compares only
     known named weekly windows. Continuity retains the current option inside that tier.
     """
@@ -393,7 +424,7 @@ def pick_engine(role: str, *, forced: str | None = None, model: str | None = Non
     prefer = project.get(f"{role}_preference")
     readings = _readings()
     usage = _usage(readings)
-    skipped, considered, lapsed = [], set(), []
+    skipped, considered, lapsed, held = [], set(), [], []
     for priority, tier in enumerate(tiers, 1):
         available = []
         for configured in tier:
@@ -413,12 +444,13 @@ def pick_engine(role: str, *, forced: str | None = None, model: str | None = Non
                 skipped.append(f"{option_label(option)} unavailable: {exc}")
                 continue
             installed = engines.installation(engine)
-            unavailable = ("already tried in this dispatch/turn" if option_key(option) in excluded else
-                           installed["why"] if installed["available"] is False else
-                           _rejected(option, retry_sign_in=retry_sign_in) or _unavailable(*usage[engine])
-                           or _model_exhausted(option, readings))
-            if unavailable:
-                skipped.append(f"{option_label(option)} unavailable: {unavailable}")
+            hold = ({"why": installed["why"]} if installed["available"] is False else
+                    _hold(option, readings, retry_sign_in=retry_sign_in)
+                    or ({"why": "already tried in this dispatch/turn"} if option_key(option) in excluded else None))
+            if hold:
+                skipped.append(f"{option_label(option)} unavailable: {hold['why']}")
+                held.append({"engine": engine, "model": option["model"], "until": hold.get("until"),
+                             "limit": bool(hold.get("limit"))})
                 if not retry_sign_in and engine not in lapsed and signed_out(engine):
                     lapsed.append(engine)
             else:
@@ -445,8 +477,8 @@ def pick_engine(role: str, *, forced: str | None = None, model: str | None = Non
                   "forced by task or project policy" if pin else
                   f"Auto tier {priority - chosen_tier}"
                   + (f" (prefers {config.ENGINE_LABELS[prefer]})" if prefer in config.ENGINES else ""))
-        return {**chosen, "pinned": bool(pin), "signed_out": lapsed, "why": f"{prefix}: {option_label(chosen)}; {why}; "
+        return {**chosen, "pinned": bool(pin), "signed_out": lapsed, "held": held, "why": f"{prefix}: {option_label(chosen)}; {why}; "
                 + "installation found; model access unverified" + ("; skipped " + "; ".join(skipped) if skipped else "")}
     prefix = f"forced {option_label(pin)} is unavailable" if pin else "no configured option available"
-    return {"engine": None, "model": None, "pinned": bool(pin), "signed_out": lapsed, "why": prefix + ": " + "; ".join(skipped)
+    return {"engine": None, "model": None, "pinned": bool(pin), "signed_out": lapsed, "held": held, "why": prefix + ": " + "; ".join(skipped)
             + ". Install/authenticate an engine, wait for the reported quota reset, or change alt project set --routing with --reason."}

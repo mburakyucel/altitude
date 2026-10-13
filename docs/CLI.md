@@ -215,6 +215,14 @@ The saved `ci_recheck` names its status, next action/time, evidence and delivery
 registration retries return the same receipt; another active probe refuses replacement. L2 asks L3
 to register the probe. Registration starts no worker and needs no free worker slot.
 
+Report a scheduling acknowledgement in project chat or retain it in project tracking, without
+`alt task message` to the blocked owner. An ordinary coordinator message wakes a question-blocked
+owner and invalidates the registered probe. If necessary owner coordination changes lifecycle,
+the old schedule no longer promises observation: name the next actor and trigger. If the owner
+blocks again on pending CI, register a new probe against that block and verify its saved next
+action/time before reporting the replacement schedule. Stop, attempt/session identity, questions
+and merge holds retain their existing rules; scheduling supplies no resume or approval authority.
+
 An owner's ordinary block gets a wait, so the recheck observes and never makes a failed run green.
 For a failed flaky shard, the owner first reruns the failed jobs on the same head
 (`gh run rerun --failed <run>`), and asks for a recheck only while that rerun is queued or running.
@@ -886,8 +894,12 @@ can run the speech model and `browser` elsewhere; `machine show` reports the bac
 
 `alt voice status` reports whether [host voice](OPERATIONS.md#host-voice) can run here and its setup
 state. `alt voice setup` downloads and checks the speech model and its runtime once (about 700 MB),
-printing progress and the final state; `alt voice remove` stops dictation and deletes them. Setup
-and removal are the operator's; agents are refused.
+printing progress and the final state; it also retries a failed or cancelled update. `alt voice cancel`
+cancels setup or updating; `alt voice remove` cancels updating, stops dictation and deletes the files.
+The daemon automatically attempts each release's replacement once for already-installed, selected
+host voice, preserving supported dictation until verification and handoff. Cancel or failure requires
+explicit Retry, even after restart. First installation stays manual. Setup, cancel and removal commands
+are the operator's; agents are refused.
 
 ### Projects folder
 
@@ -965,14 +977,12 @@ attempts keep their engine. With custom routing the preference reorders only the
 routing lists, and an engine it omits stays unused. Auto (unset) is the routing tiers alone: the
 Settings page says whether that is the default distribution or names the custom routing.
 
-**Only** keeps a role on one engine, the Settings page's Only <engine> routing. A project's L3 choice
-and its Only L3 engine never name different engines: setting Only clears an L3 choice on another engine,
-and an L3 choice on another engine sets L3 routing back to Auto, so the newer setting is what answers.
-The request receipt and project event record what was released:
+**Only** keeps a project's tasks on one engine, the Settings page's Only <engine> routing. L3 has no
+Only: its [model choice](#model-choices) is its one engine setting.
 
 ```sh
 alt project set example --l2-engine codex --reason 'Keep tasks on Codex'
-alt project set example --unset-l3-engine --reason 'Let routing choose L3'
+alt project set example --unset-l2-engine --reason 'Let routing choose tasks'
 ```
 
 ### Model choices
@@ -991,11 +1001,11 @@ alt project set example --unset-l3-choice --reason 'Back to Auto'
 ```
 
 Precedence, highest first: a task's or turn's explicit engine, model or effort (`alt task new
---engine/--model/--effort`, `alt chat --engine`); a project's Only engine, which keeps its engine and
-uses the choice's model and effort only when they are on it (for L3 they always are, since saving one
-releases the other); the choice; then the routing tiers with
+--engine/--model/--effort`, `alt chat --engine`); for tasks, a project's Only engine, which keeps its
+engine and uses the choice's model and effort only when they are on it; the choice; then the routing tiers with
 each project's Auto defaults. A choice whose engine or model is unavailable (missing CLI, exhausted
-window or a recent rejection) leaves the tiers to pick meanwhile, and its controls say so. An effort
+window or a recent rejection) leaves the tiers to pick meanwhile, and its controls say so; L3's
+conversation also says so in one line when a usage limit is the reason. An effort
 alone applies to whichever engine the tiers pick that accepts it; an engine that does not keeps its
 default. New tasks applies to tasks that start from then on, including queued ones; started tasks and
 resumes keep their model and effort. L3 uses its choice from the next turn. Reviewer selection and
@@ -1030,7 +1040,7 @@ the two launchers can use different default models. Each alternative is tried at
 eligible, the explanation identifies installation, authentication, reset or configuration actions.
 
 Preferences are distinct from explicit pins. `alt task new --engine claude --model opus …` pins
-one task; project `--l2-engine`/`--l3-engine` pins (Only) and `alt chat --engine …` take precedence
+one task; a project's `--l2-engine` pin (Only) and `alt chat --engine …` take precedence
 over Auto and never silently fall back. An explicit model pin
 also remains strict. A project default model is a preference, not a pin: it names the model an
 Auto option on that engine uses and leaves the engine choice to the tiers. Changing preferences does not unpin them or change a running L2: resume keeps

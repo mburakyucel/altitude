@@ -398,8 +398,9 @@ A project's L2 provider priority (`alt project set <name> --l2-preference <engin
 for fresh L2 only; the other engine stays the availability fallback, L3 is unchanged and Auto
 (unset) uses the tiers as written. [CLI details](CLI.md#automatic-routing-preferences).
 A model choice (New tasks for fresh L2, the project's L3 choice for L3 turns) is tried ahead of the
-tiers, below explicit task/turn selections and a project's Only engine; the tiers pick while it is
-unavailable. Started attempts and resumes keep their model and effort. [Model choices](CLI.md#model-choices).
+tiers, below explicit task/turn selections and, for tasks, a project's Only engine; the tiers pick while
+it is unavailable. The L3 choice is L3's only engine setting, so every L3 turn without its own `--engine`
+runs on an engine that can. Started attempts and resumes keep their model and effort. [Model choices](CLI.md#model-choices).
 
 Auto selects from the highest tier with an eligible option. Within that tier it compares only named
 seven-day Claude data with a Codex window whose reported duration is exactly seven days. A five-hour
@@ -413,8 +414,9 @@ A missing executable or exhausted short/weekly window excludes only affected opt
 authentication, model access or quota remains eligible and is described as unverified. Altitude does
 not infer subscription entitlement from a plan name or separate Fable and Opus allowances from an
 account-wide meter. A current (under thirty minutes old) model-specific reading at 100% excludes only
-that model until its reported reset passes, and a pinned model stays strict, so a pinned L3 on an exhausted model finds no engine
-and leaves queued events queued rather than spending them on failing turns. An explicit
+that model until its reported reset passes, and a pinned model stays strict. When no L3 option can run,
+queued events stay queued rather than being spent on failing turns; a waiting operator message is retried
+on every tick and at once when a project setting is saved. An explicit
 unavailable-model rejection excludes that model for thirty minutes; a usage limit that names a model
 family applies to every configured id of that family.
 an authentication rejection excludes the engine for thirty minutes or until an operator coordinator
@@ -424,7 +426,16 @@ is bounded and requires confirmation that no response output or tool effects occ
 after work starts cannot silently replay the turn. If no option is eligible, the task stays queued
 with an explanation to install/authenticate an engine, wait for the quota reset or change preferences.
 
-Task or project engine/model pins override Auto and never silently fall back. They remain distinct
+When L3's operator conversation runs on another engine or model because the one it would use (its
+choice, else the engine of its last reply) is at a usage limit, chat shows one heads-up line saying so:
+"Claude's usage limit is reached until <reset>, so Codex is answering for now." When nothing can run,
+the line says the message waits: "… and no other engine can answer, so your message waits until then."
+or, with every engine limited, "Claude and Codex's usage limits are reached, so your message waits
+until <earliest reported reset>." Automatic L3 work that changes engine writes the same line. A line is
+written when its text changes and is not repeated while its limit lasts; once a turn runs where no
+limit is involved, the next limit is announced again. A sign-in lapse keeps its own line.
+
+Task engine/model pins and a turn's own `--engine` override Auto and never silently fall back. They remain distinct
 from preferences even when Auto selects the same model. [CLI examples](CLI.md#automatic-routing-preferences)
 include an Opus-only account, omitted Fable and different preference orders.
 
@@ -729,7 +740,9 @@ Every terminal result reaches only the originating L3, including unchanged failu
 a concrete next step and gives a concise heads-up for significant stalled work. Repeated observations
 stay quiet; a finished probe schedules no further CI check. A changed block,
 attempt or lifecycle request invalidates the probe. Fault, questions, hold and provider ownership
-stay intact; probing does not resume implementation. See [bounds and evidence](CLI.md#durable-ci-recheck).
+stay intact; probing does not resume implementation. L3 reports schedules in project chat without
+waking the owner merely to acknowledge registration; necessary lifecycle changes require a truthful
+replacement next action. See [scheduling, bounds and evidence](CLI.md#durable-ci-recheck).
 
 The owner applies the operator's task-chat approval of a held PR with `alt land --merge --approval`;
 L3 applies a project-chat approval through [`hold-merge --approval`](CLI.md#recorded-merge-approval).

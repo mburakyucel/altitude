@@ -207,7 +207,7 @@ class TestProjectRegistry(AltitudeCase):
         other = self.project + "-other"
         self.register(other, approval="manual")
         def failed_setup(_project):
-            set_project_setting(other, "l3_engine", config.ENGINES[0])
+            set_project_setting(other, "l2_engine", config.ENGINES[0])
             raise RuntimeError("test broker unavailable")
         with mock.patch.object(server, "ensure_l3_verb_broker", side_effect=failed_setup):
             result = self.post("add", name=self.project, path=str(self.repo), approval="manual", wip=4)
@@ -219,7 +219,7 @@ class TestProjectRegistry(AltitudeCase):
         self.assertNotIn("wip", json.loads(config.PROJECTS_FILE.read_text())[self.project])
         self.assertEqual(server.project_setup.observe(self.project)["operation"]["state"], "failed")
         self.assertEqual(config.project(other)["approval"], "manual")
-        self.assertEqual(config.project(other)["l3_engine"], config.ENGINES[0])
+        self.assertEqual(config.project(other)["l2_engine"], config.ENGINES[0])
 
 
 if __name__ == "__main__":

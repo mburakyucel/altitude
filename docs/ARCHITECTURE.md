@@ -224,7 +224,7 @@ existing defaults and `native` requests no override. `config.task_effort` owns e
 resolution, and a setting accepts only its own engine's levels. `config.default_model` and
 `config.default_effort` resolve an Auto option for the chosen role and engine: an option's own model,
 then the project default, then the role default (Opus for a Claude L2, Fable for L3, the CLI's own model
-on Codex). They are preferences: only `l2_engine`/`l3_engine` and task or turn pins force an engine.
+on Codex). They are preferences: only `l2_engine` and task or turn pins force an engine.
 Explicit task `effort` and `model` win over the defaults without rewriting them. Routing resolves effort
 per option, excludes Auto candidates that cannot accept an explicit level and keeps pins strict.
 Fresh dispatch saves that selection as `launch_effort` alongside `launch_model`; message/resume
@@ -235,7 +235,7 @@ Both roles clear observed `engine_reasoning_effort` for a new turn; absent obser
 Model compatibility and provider caps remain native decisions. Effort failures do not trigger
 application-side downgrading or engine fallback. No model capability catalog or session migration exists.
 
-`GET /api/defaults/<project>` returns the project's Only engines, L3 choice (with why it is unavailable,
+`GET /api/defaults/<project>` returns the project's task Only engine, L3 choice (with why it is unavailable,
 if it is), routing, the model choices on offer and each role's model/effort pair per engine with its
 setting key, default and engine-owned choices; `POST /api/defaults` saves one setting through
 the existing settings request/apply mechanism under project/registry locks. The machine-wide New
@@ -246,6 +246,7 @@ value differs at the moment the setting is applied, under the same lock, so a se
 [model choices](CLI.md#model-choices) gives the precedence). The project Settings page
 applies its request immediately; CLI `alt project set` requests are applied on the daemon tick,
 independently of worker capacity. A conflicting pending request refuses another save until applied.
+A save while an L3 message waits for an engine retries it at once.
 Neither path mutates Only engines or running tasks. Native L1 helpers inherit or override effort
 through their own engine controls; Altitude does not create helper workers or promise a uniform L1
 override.
@@ -865,9 +866,8 @@ them without a PR, restart or free task slot. Altd applies the request on its ne
 actor, reason and outcome. The project setting serves both L3 and fresh L2 routing; it changes no
 explicit pin or existing L2 attempt. The L2 provider priority (`--l2-preference <engine>`, or
 Auto with `--unset-l2-preference`, also in the project's Settings page) lifts one engine's options
-above the others for fresh L2 only; L3 keeps the tiers as written. `--l2-engine`/`--l3-engine` (Only)
-keep a role on one engine and `--l3-choice` sets L3's model choice; saving either L3 setting releases
-the other when they name different engines and records the release. [CLI examples](CLI.md#automatic-routing-preferences) cover
+above the others for fresh L2 only; L3 keeps the tiers as written. `--l2-engine` (Only) keeps tasks on
+one engine and `--l3-choice` sets L3's model choice, its one engine setting. [CLI examples](CLI.md#automatic-routing-preferences) cover
 single-model accounts, different orders and ties, and the provider priority.
 
 Project removal is L3 detachment: one operator action through `config.remove_project`, shared by
@@ -1594,6 +1594,10 @@ same project-bound coordinator transport. The task's `ci_recheck` record binds i
 worker/session and lifecycle request identities, selected run, due time, budgets, evidence and L3
 receipt. The existing tick/keyed executor owns IO; `resume_after` and `daemon_request` retain their
 ordinary lifecycle meaning. A lifecycle change invalidates further probe actions.
+L3 reports a schedule in project chat or retains it in project tracking, without a task-message
+acknowledgement that wakes the blocked owner and invalidates its probe. Necessary coordination
+that changes lifecycle replaces the old promise with a named next actor and trigger; a renewed CI
+wait needs registration against the current block and verification of the saved next action/time.
 The daemon prefers a relevant fresh run of the same workflow, branch, event and PR identity from
 the latest twenty runs. Otherwise a probe on a fault-blocked task submits one rerun of the selected
 project-origin run after persisting its baseline attempt and submission intent; a probe on a task
@@ -2806,7 +2810,8 @@ Voice transcription sits behind the capability seam as one machine setting, `voi
 settings file: `host` or `browser`. Without a saved choice the backend is `host` when this release's
 speech manifest names a runtime this computer can run, and `browser` elsewhere.
 `GET /api/voice` reports the backend, an opaque selection identity over the backend and, for `host`,
-the pinned runtime, and `host`, where host voice stands on this computer. `alt machine set --voice`
+the installation identity, and `host`, where host voice stands on this computer. Supported runtime
+replacement preserves that identity; removal invalidates it. `alt machine set --voice`
 requests a change through the same durable request that carries `wip`; `--unset-voice` returns to the
 default.
 
@@ -2848,11 +2853,40 @@ Each file streams into `~/.altitude/speech/.staging` with a size cap and must ma
 SHA-256. The wheels are unpacked with the release installer's path rules (no absolute, parent,
 backslash or link entries, a total size cap) into `site/`, not installed with pip. A completion record
 naming the manifest digest is written last and the folder is moved to `runtime-<digest>` in one
-rename; only a runtime whose record matches this release's manifest is used, and a changed manifest
-reads as `outdated`. An exclusive file lock admits one setup across the daemon and the CLI. Cancel or
-any failure deletes staging; a failure, not a cancel, is remembered for Settings until the next setup.
-`remove` refuses during setup, stops the worker and deletes every runtime; the daemon also stops its
-worker within a second when its runtime disappears under it (`alt voice remove`).
+rename. Before promotion, the actual isolated worker loads the model and performs its warmup within
+the load deadline. Completed runtimes explicitly supported by this release keep serving during an
+update; unknown, incompatible or revoked runtimes read as `outdated` and cannot serve recordings.
+Support is an explicit per-platform/interpreter digest list, never inferred from age or a completion
+marker alone. Retained model files are copied only after matching the target size and SHA-256; wheel
+archives are downloaded and deleted after unpacking. There is no download cache.
+
+The support set retains the preceding Linux onnxruntime 1.22 manifests for CPython 3.12 and 3.13;
+both load and warm up with the current worker and the exact pinned model. The supported-table test
+derives their identities from those prior wheel checksums and the unchanged model/decoder/numpy.
+There is no preceding macOS manifest for this transition, so no prior macOS runtime is admitted.
+Future pin changes review and test their preceding platform manifests explicitly. This is fixed-model compatibility, not general support for arbitrary
+ONNX graphs: clients provide bounded PCM, never graph attributes or tensors. A release removes a
+digest if a relevant unsafe runtime is identified; an offline release cannot learn future revocations.
+
+At daemon startup, selected, already-installed host voice gets one automatic attempt per target
+manifest. First installation stays manual. The installation record persists the attempt, cancellation,
+failure and stable selection identity. An interrupted attempt also requires explicit Retry; switching
+to browser recognition cancels an automatic attempt. Availability (`ready` or `outdated`) is independent
+of `host.update`: `preparing`, `downloading` with bytes, `waiting`, `checking`, `failed` or `cancelled`.
+Settings shows phase/progress with Cancel or Retry; ready voice remains usable. Unsupported voice links
+to the running update instead of offering a duplicate setup.
+
+One file lock admits setup across CLI and daemon. Workers inherit a shared use lock; verification,
+promotion and cleanup acquire it exclusively. Active recordings finish before the idle worker exits
+for the update. Finished response replay remains available. Staging temporarily uses another runtime's
+disk space; preflight budgets downloads and bounded wheel expansion. Cancel or failure deletes staging
+and leaves supported voice available. `alt voice cancel` and Settings cancel the shared attempt.
+Remove records an invalidating tombstone first, cancels setup, drains worker use and deletes runtimes;
+the daemon observes removal within a second. Successful promotion cleans superseded runtimes only
+after their readers exit.
+Removal invalidates completion before deleting a runtime's files, so interruption cannot leave a
+partially deleted runtime usable. A later explicit setup can recover an interrupted removal. A lock
+timeout restores availability without restoring old recording identity, and reports removal unfinished.
 
 The worker (`altitude/speech_worker.py`) runs as `python -I` with the daemon's interpreter and a
 minimal environment, imports only the runtime's unpacked wheels, runs the model on onnxruntime's CPU

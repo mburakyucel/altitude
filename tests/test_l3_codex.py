@@ -162,15 +162,14 @@ class TestL3Sessions(AltitudeCase):
         codex.assert_not_called()
         self.assertEqual(out["engine"], "claude")
 
-    def test_turn_engine_pins_the_turn_over_project_pin_and_quota(self):
+    def test_turn_engine_pins_the_turn_over_the_l3_choice_and_quota(self):
         seen = {}
 
         def pick(role, *, forced=None, current=None, project=None, **kwargs):
-            forced = forced or (project or {}).get("l3_engine")
             seen.update({"forced": forced, "current": current})
             return self.choice(forced or "claude")
 
-        with mock.patch.object(config, "project", return_value={"l3_engine": "claude"}), \
+        with mock.patch.object(config, "project", return_value={"l3_choice": {"engine": "claude"}}), \
              mock.patch.object(engines, "usage_hold", return_value="2099-01-01T00:00:00+00:00"), \
              mock.patch.object(l3.route, "pick_engine", side_effect=pick):
             choice = l3._select(self.project, "codex")
@@ -178,11 +177,10 @@ class TestL3Sessions(AltitudeCase):
         self.assertEqual(choice["engine"], "codex")
         self.assertEqual(choice["why"], self.choice("codex")["why"])
 
-    def test_route_learns_the_engine_that_ran_last_and_the_project_pin(self):
+    def test_route_learns_the_engine_that_ran_last(self):
         seen = {}
 
         def pick(role, *, forced=None, current=None, project=None, **kwargs):
-            forced = forced or (project or {}).get("l3_engine")
             seen.update({"forced": forced, "current": current})
             return self.choice(forced or current or "claude")
 
@@ -191,12 +189,8 @@ class TestL3Sessions(AltitudeCase):
              mock.patch.object(l3.route, "pick_engine", side_effect=pick):
             self.assertEqual(l3._select(self.project)["engine"], "codex")
             self.assertEqual(seen, {"forced": None, "current": "codex"})
-            set_project_setting(self.project, "l3_engine", "claude")
-            self.assertEqual(l3._select(self.project)["engine"], "claude")
+            self.assertEqual(l3._select(self.project, "claude")["engine"], "claude")
             self.assertEqual(seen["forced"], "claude")
-            set_project_setting(self.project, "l3_engine", None)
-            l3._select(self.project)
-            self.assertIsNone(seen["forced"]); self.assertNotIn("l3_engine", config.project(self.project))
 
     def test_pinned_claude_turn_never_falls_back_to_codex(self):
         limited = {"text": "", "session_id": "", "usage": {}, "context_tokens": 0, "cost": 0.0, "turns": 0,

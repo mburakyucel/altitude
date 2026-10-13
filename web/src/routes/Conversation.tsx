@@ -599,7 +599,7 @@ export default function Conversation({
           onChange={setDraft}
           onSubmit={send}
           shows={shownCopy}
-          imageScope={{ project: name, engine: view?.engine }}
+          imageScope={{ project: name }}
           placeholder={`Message L3 about ${name}`}
           ariaLabel={`Message L3 about ${name}`}
           busy={busy}

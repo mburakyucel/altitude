@@ -88,7 +88,7 @@ def prepare(project, repo):
     git(repo, "init", "-q", "--bare", str(origin))
     git(repo, "remote", "add", "origin", str(origin))
     git(repo, "push", "-qu", "origin", "main")
-    with config.add_project(project, path=repo, l2_engine="codex", l3_engine="codex"):
+    with config.add_project(project, path=repo, l2_engine="codex"):
         git_policy.install_hooks(repo)
     server.start_l3(project)
     assert project_setup.read(project)["intro"]["state"] == "complete", project_setup.read(project)
