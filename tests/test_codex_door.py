@@ -226,7 +226,7 @@ class TestCodexAdapter(AltitudeCase):
         self.assertIn(str(config.PERSONAS / "l1.md"), prompt)
         self.assertEqual((res["returncode"], res["agent"]["sessionId"]), (0, "thr-1"))
 
-        with mock.patch.object(engines.common, "codex_stop", return_value="stopped") as stop:
+        with mock.patch.object(engines.common, "stop_owned_worker", return_value="stopped") as stop:
             res, _ = self._launch(resume="thr-1", thread="thr-2")
         self.assertEqual(res["returncode"], 1)
         self.assertIn("different Codex thread", res["stderr"])
@@ -245,40 +245,40 @@ class TestCodexAdapter(AltitudeCase):
 
     def test_worker_row_states_follow_the_unit_and_the_events(self):
         wid = "w-states"
-        paths = engines.common._codex_paths(self.job_root, wid)
+        paths = engines.common._worker_paths(self.job_root, wid)
         S.write_json(paths["record"], {"id": wid, "name": "n", "pid": 1, "unit": "u.service", "started_at": "t",
                                        "session_id": None, "stopped": None})
         paths["stdout"].write_text('{"type":"thread.started","thread_id":"thr-9"}\n')
         paths["stderr"].write_text("boom\n")
         with mock.patch.object(platform, "job_active", return_value=True):
-            self.assertEqual(engines.codex_worker(wid, job_root=self.job_root)["state"], "working")
+            self.assertEqual(engines.owned_worker(wid, job_root=self.job_root)["state"], "working")
         with mock.patch.object(platform, "job_active", return_value=False):
-            row = engines.codex_worker(wid, job_root=self.job_root)
+            row = engines.owned_worker(wid, job_root=self.job_root)
             self.assertEqual((row["state"], row["status"], row["detail"], row["sessionId"]),
                              ("failed", "exited", "boom\n", "thr-9"))
             with paths["stdout"].open("a") as f:
                 f.write('{"type":"turn.completed","usage":{"input_tokens":5,"output_tokens":2}}\n')
-            row = engines.codex_worker(wid, job_root=self.job_root)
+            row = engines.owned_worker(wid, job_root=self.job_root)
             self.assertEqual((row["state"], row["usage"]["input_tokens"]), ("done", 5))
-        self.assertIsNone(engines.codex_worker("missing", job_root=self.job_root))
-        self.assertIsNone(engines.codex_worker(None, job_root=self.job_root))
+        self.assertIsNone(engines.owned_worker("missing", job_root=self.job_root))
+        self.assertIsNone(engines.owned_worker(None, job_root=self.job_root))
 
     def test_stop_ends_the_unit_and_stamps_the_record(self):
         wid = "w-stop"
-        paths = engines.common._codex_paths(self.job_root, wid)
+        paths = engines.common._worker_paths(self.job_root, wid)
         S.write_json(paths["record"], {"id": wid, "engine": "codex", "name": "n", "pid": 1, "unit": "altitude-codex-w-stop.service",
                                        "started_at": "t", "session_id": "thr-3", "stopped": None})
         paths["stdout"].write_text("")
         done = subprocess.CompletedProcess([], 0, "", "")
         with mock.patch.object(engines.common.subprocess, "run", return_value=done) as run, \
              mock.patch.object(platform, "job_active", return_value=False):
-            self.assertEqual(engines.codex_stop(wid, job_root=self.job_root), "Codex worker stopped")
-            self.assertEqual(engines.codex_worker(wid, job_root=self.job_root)["state"], "stopped")
+            self.assertEqual(engines.stop_owned_worker(wid, job_root=self.job_root), "Worker stopped")
+            self.assertEqual(engines.owned_worker(wid, job_root=self.job_root)["state"], "stopped")
         self.assertEqual(run.call_args.args[0], [platform.SYSTEMCTL, "--user", "stop", "altitude-codex-w-stop.service"])
         with mock.patch.object(engines.common.subprocess, "run", return_value=done), \
              mock.patch.object(platform, "job_active", return_value=True):
             with self.assertRaisesRegex(RuntimeError, "still running"):
-                engines.codex_stop(wid, job_root=self.job_root)
+                engines.stop_owned_worker(wid, job_root=self.job_root)
 
     def test_a_timed_out_turn_stops_its_unit_with_the_inherited_environment(self):
         proc = mock.Mock(pid=4242, stdin=io.StringIO())

@@ -78,11 +78,10 @@ class TestCoordinatorContext(AltitudeCase):
         self.assertEqual(resumes, [False, True, True, True])
         self.assertEqual(l3.info(self.project)["sessions"]["codex"]["turns"], 4)
 
-    def test_saved_context_rotation_does_not_replace_native_thread_but_explicit_reset_does(self):
+    def test_saved_context_over_the_act_line_keeps_native_thread_but_explicit_reset_replaces_it(self):
         l3.save_info(self.project, {"sessions": {"codex": {
             "session_id": "context-thread", "confinement_version": l3.L3_CONFINEMENT_VERSION,
-            "context_percent": 131.3, "rotate_next": True,
-            "rotate_reason": "context 131.3% ≥ act line 100%"}}})
+            "context_percent": 131.3, "rotate_next": False, "rotate_reason": None}}})
 
         def execute(prompt, **kwargs):
             return {"text": "answer", "reported_session_id": kwargs["resume"] or "reset-thread"}

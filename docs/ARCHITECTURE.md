@@ -626,9 +626,11 @@ its sender. Streamed launch input with images is marked as the human's, as a tex
 | [`route.py`](../altitude/route.py) | Select an engine/model from explicit pins or ordered Auto tiers, installation, rejection and quota evidence; expose the same routing reasons to callers and Monitor. |
 | [`config.py`](../altitude/config.py) | Engine names, executable paths, defaults, preference syntax and context settings, alongside runtime configuration. |
 
-Callers continue importing `altitude.engines` and using its existing callable interface. Each native
-implementation adapts the same execution and authority contract; shared behavior lives in common
-code, with no separate provider policy system or new base-class hierarchy.
+Callers import `altitude.engines` and use its callable interface. Each native module adapts the same
+execution and authority contract. Shared code loads the module named after a `config.ENGINES` entry
+and reaches native behavior only through the names every native module defines, never by comparing
+engine names; `tests/test_engine_interface.py` checks both. Adding or dropping an engine changes its
+module and the registry, with no provider policy system or base-class hierarchy.
 
 The interface is internal and evolves with the integrations. Additional CLI engines such as
 OpenCode are candidates for future support. Provider access is a separate integration concern:

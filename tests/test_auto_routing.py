@@ -220,7 +220,7 @@ class TestAutoIntegration(AltitudeCase):
         self.policy("codex,claude:opus")
         self.quota.side_effect, self.other_quota.side_effect = self.read_quota, self.read_other_quota
         self.patch(engines.common, "_last_quota_refresh", None)
-        native = self.patch(engines.claude, "_claude_quota", return_value={
+        native = self.patch(engines.claude, "read_quota", return_value={
             "known": True, "at": time.time(), "seven_day": 5, "five_hour": 1})
         self.patch(quota_codex, "read_quota", return_value={
             "known": True, "read_at": S.now(), "primary_used": 60,

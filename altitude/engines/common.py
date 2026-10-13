@@ -11,6 +11,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
+from importlib import import_module
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -21,9 +22,15 @@ from . import invocation
 
 
 def implementation(engine: str):
-    """Select the native adapter without importing it during shared-module initialization."""
-    from . import claude, codex
-    return {"claude": claude, "codex": codex}[engine]
+    """The engine's native module, named after it; importing on use keeps shared-module initialization free of it."""
+    if engine not in config.ENGINES:
+        raise ValueError(f"unknown engine {engine!r}")
+    return import_module(f"{__package__}.{engine}")
+
+
+def _configured(engine: str):
+    """The native module of a configured engine; None for a saved engine no longer configured."""
+    return implementation(engine) if engine in config.ENGINES else None
 
 
 logger = logging.getLogger(__name__)
@@ -41,10 +48,10 @@ def refresh_quotas(min_interval: float = 300) -> None:
     if _last_quota_refresh is not None and now - _last_quota_refresh < min_interval:
         return
     _last_quota_refresh = now
-    for engine, path, read in (("codex", route.QUOTA_CODEX, implementation("codex").read_quota), ("claude", route.QUOTA_CLAUDE, implementation("claude")._claude_quota)):
-        reading = read()
+    for engine in config.ENGINES:
+        reading = implementation(engine).read_quota()
         rejected = reading.pop("rejection", None) or rejection(engine, {"error": reading.pop("error", None)})
-        S.write_json(config.MONITOR_DIR / path, reading)
+        S.write_json(config.MONITOR_DIR / route.quota_file(engine), reading)
         if reading.get("known"):
             route.signed_in(engine)
         elif rejected and rejected.get("sign_in"):
@@ -61,9 +68,6 @@ def repository_rule_prompt(repo: Path) -> str:
     rules = repository_rules(repo)
     return (f"[altitude] Before proceeding, read the repository rules at `{rules}` and follow their "
             "references/imports and any applicable directory instructions.\n\n" if rules else "")
-
-
-_codex_processes: dict[str, subprocess.Popen] = {}
 
 
 RAW_CAPTURE_CAP = 2 * 1024 * 1024
@@ -117,7 +121,8 @@ class ImageInputError(ValueError):
 
 def image_capability(engine: str) -> dict:
     """Inspect local CLI help only; native transport support does not prove model/account access."""
-    binary = implementation(engine).binary() if engine in config.ENGINES else None
+    native = _configured(engine)
+    binary = native.binary() if native else None
     executable = shutil.which(binary, path=clean_env()["PATH"]) if binary else None
     if not executable:
         return {"available": False, "why": "Image input unavailable: the selected engine is not installed."}
@@ -174,7 +179,7 @@ def _engine_input(engine: str, prompt: str, images: list[dict] | tuple = ()) -> 
 def _event_error(engine: str, event: dict):
     if event.get("type") in ("error", "turn.failed"):
         return event.get("error") or event.get("message") or event
-    return implementation("claude").event_error(event) if engine == "claude" else None
+    return implementation(engine).event_error(event)
 
 
 def _strings(value) -> list[str]:
@@ -190,13 +195,13 @@ AUTH_CODES = frozenset({"authentication_error", "authentication_failed", "invali
 def rejection(engine: str, result: dict, model: str | None = None) -> dict | None:
     """Recognize provider rejection evidence, without echoing tokens or arbitrary provider text.
 
-    Claude's error codes/messages are emitted by stream-json; Codex includes API errors in turn.failed.
     A sign-in failure is the CLI's own authentication code or an HTTP 401, whatever its wording; each CLI's
     sign-in prompts cover failures reported before any request. Capacity, transport errors, plan names, and
     a generic permission/404 failure prove no model entitlement.
     """
+    native = implementation(engine)
     envelope = [result.get(key) for key in ("error", "detail", "synthetic")]
-    envelope.extend(_event_error(engine, event) for event in _codex_parse(result.get("raw_stdout") or ""))
+    envelope.extend(_event_error(engine, event) for event in _parse_events(result.get("raw_stdout") or ""))
     errors = [*envelope, result.get("stderr"), result.get("raw_stderr")]
     text = "\n".join(value if isinstance(value, str) else json.dumps(value) for value in errors if value)
     # Sign-in wording counts only where one of the CLI's own failure messages begins with it, so a tool or
@@ -207,9 +212,7 @@ def rejection(engine: str, result: dict, model: str | None = None) -> dict | Non
         codes.add(text.strip())
     model_missing = "model_not_found" in codes
     auth = bool(codes & AUTH_CODES) or bool(re.search(r'"api_error_status"\s*:\s*401\b', text))
-    if engine not in config.ENGINES:
-        raise ValueError(f"unknown engine {engine!r}")
-    auth, model_missing = implementation(engine).rejection_flags(text, said, model, auth, model_missing)
+    auth, model_missing = native.rejection_flags(text, said, model, auth, model_missing)
     if auth:
         return {"scope": "engine", "sign_in": True,
                 "why": "provider rejected authentication or account access; sign in, then Retry or Resume"}
@@ -221,7 +224,7 @@ def rejection(engine: str, result: dict, model: str | None = None) -> dict | Non
 def _safe_event(engine: str, event: dict) -> bool:
     if event.get("type") in ("thread.started", "turn.started", "turn.failed", "error"):
         return True
-    return implementation("claude").safe_event(event) if engine == "claude" else False
+    return implementation(engine).safe_event(event)
 
 
 def _safe_output(engine: str, text: str) -> bool:
@@ -339,7 +342,8 @@ def usage_limit_in(text: str | None, quota: dict | None = None, now: datetime | 
 def record_usage_limit(engine: str, limit: dict, detail: str = "") -> None:
     from .. import route
     route.note_limit(engine, limit)
-    if engine == "claude" and limit["scope"] == "engine" and limit["until"]:
+    native = _configured(engine)
+    if native and native.WINDOW_HOLD and limit["scope"] == "engine" and limit["until"]:
         note_usage_limit(limit["until"], detail)
 
 
@@ -375,9 +379,10 @@ def usage_hold() -> str | None:
 
 
 def clean_env() -> dict:
-    """Nested launches need CLAUDE* unset (verified); keep PATH sane for the service manager."""
+    """Nested launches drop each engine's session variables; keep PATH sane for the service manager."""
     source = config.subprocess_env()
-    env = {k: v for k, v in source.items() if not k.startswith("CLAUDE")}
+    nested = tuple(prefix for engine in config.ENGINES for prefix in implementation(engine).NESTED_ENV_PREFIXES)
+    env = {k: v for k, v in source.items() if not k.startswith(nested)}
     env.setdefault("HOME", str(Path.home()))
     commands = (config.INSTALL_PREFIX / "launchers" / config.RELEASE["version"]
                 if config.RELEASE is not None and not platform.containerized() else config.SOURCE / "bin")
@@ -406,7 +411,8 @@ def _driver_input(spec: dict) -> str:
 
 def coordinator_native_send(engine: str) -> bool:
     """Whether the isolated coordinator invocation accepts a message inside its running turn."""
-    return engine in config.ENGINES and implementation(engine).NATIVE_SEND
+    native = _configured(engine)
+    return bool(native and native.NATIVE_SEND)
 
 
 def send_into_turn(sends: Path, message_id: str, text: str) -> None:
@@ -443,8 +449,8 @@ def send_into_turn_once(sends: Path, message_id: str, text: str) -> None:
 class _Driver:
     """Hold an engine's input open for one job, so a Send now message reaches the running turn without stopping it.
 
-    The engine's events go to the job's output unchanged (Codex's are translated to the `codex exec --json` form the
-    rest of Altitude reads). A message file in `sends` is claimed by renaming, written to the engine, and settled once
+    The engine's events go to the job's output; the native `worker_events` reads them in the shared worker event
+    form (`thread.started`, `item.*`, `turn.completed`/`turn.failed`) the rest of Altitude reads. A message file in `sends` is claimed by renaming, written to the engine, and settled once
     the engine accepts it; a task's record learns the outcome under the project lock, and the job's output carries an
     `altitude.send` event at that point of the turn. Once the turn has ended, a message is returned for the next turn.
     """
@@ -537,7 +543,7 @@ def engine_driver() -> None:
     """Entry point of every engine job (see `_Driver`). Its input is one JSON line from the launcher: the engine
     command, its first user turn, the Send now folder, the task it settles and the worker's GitHub token."""
     spec = json.loads(sys.stdin.readline() or "null")
-    if not isinstance(spec, dict) or spec.get("engine") not in ("claude", "codex"):
+    if not isinstance(spec, dict) or spec.get("engine") not in config.ENGINES:
         print("altitude-driver: no launch input; the engine was not started", file=sys.stderr, flush=True)
         sys.exit(125)
     env = {key: value for key, value in os.environ.items() if key not in GITHUB_TOKEN_VARIABLES}
@@ -561,7 +567,7 @@ def github_token(env: dict) -> str:
 
 def service_status(unit: str = "altitude.service") -> dict:
     """Read the user service's state once; inspection failure stays in the record."""
-    return platform.service_status(unit, codex_env(retain_user_bus=True))
+    return platform.service_status(unit, launch_env(retain_user_bus=True))
 
 
 def _tool(name: object, command: object = None) -> dict:
@@ -571,8 +577,8 @@ def _tool(name: object, command: object = None) -> dict:
     return entry
 
 
-def codex_env(extra_env: dict | None = None, *, retain_user_bus: bool = False) -> dict:
-    """Altitude's clean environment plus the task identity, the same a Claude worker gets. `retain_user_bus`
+def launch_env(extra_env: dict | None = None, *, retain_user_bus: bool = False) -> dict:
+    """Altitude's clean environment plus the task identity, the same for every engine. `retain_user_bus`
     selects the launcher's environment, which reaches the user service manager; the command inside the job
     starts without it."""
     env = clean_env()
@@ -624,7 +630,7 @@ def machine_command(command: str, *, cwd: Path, folder: Path, unit: str, identit
     survives Altitude restarting while it runs; `machine_outcome` reads it. `properties` adds resource limits."""
     log, status = machine_files(folder, unit)
     folder.mkdir(parents=True, exist_ok=True)
-    env = codex_env(identity, retain_user_bus=True)
+    env = launch_env(identity, retain_user_bus=True)
     try:
         run = subprocess.run(platform.logged_job_command(unit, command, log=log, status=status, env=env,
                                                          timeout=timeout, properties=properties),
@@ -638,7 +644,7 @@ def machine_stop(unit: str) -> None:
     """Ask the service manager to stop a command's job. Callers ask again on every poll until the job has ended,
     so a job not yet created or a failed request is stopped on a later poll."""
     try:
-        platform.job_stop(unit, codex_env(retain_user_bus=True))
+        platform.job_stop(unit, launch_env(retain_user_bus=True))
     except (RuntimeError, OSError, subprocess.SubprocessError):
         pass
 
@@ -654,7 +660,7 @@ def machine_outcome(folder: Path, unit: str, started: str, *, watched: bool, tim
     `stopped` says why the caller already stopped the command while it ran. The reason is recorded as its error."""
     status = machine_files(folder, unit)[1]
     begun = datetime.fromisoformat(started)
-    env = codex_env(retain_user_bus=True)
+    env = launch_env(retain_user_bus=True)
     while not status.exists():
         stopped = stopped or stop()
         if stopped:
@@ -697,13 +703,21 @@ def machine_output(folder: Path, unit: str) -> dict:
             "log": str(log)}
 
 
-def _codex_paths(job_root: Path, worker_id: str) -> dict[str, Path]:
+_worker_processes: dict[str, subprocess.Popen] = {}
+
+
+def _record_engine(record: dict) -> str:
+    """The engine that wrote a worker record; records from before 2026-09-07 (#216) name none and are Codex's."""
+    return record.get("engine", "codex")
+
+
+def _worker_paths(job_root: Path, worker_id: str) -> dict[str, Path]:
     root = Path(job_root)
     return {"record": root / f"{worker_id}.json", "stdout": root / f"{worker_id}.stdout.jsonl",
             "stderr": root / f"{worker_id}.stderr.log", "sends": root / f"{worker_id}.sends"}
 
 
-def _codex_parse(text: str) -> list[dict]:
+def _parse_events(text: str) -> list[dict]:
     events = []
     for line in text.splitlines():
         try:
@@ -715,21 +729,21 @@ def _codex_parse(text: str) -> list[dict]:
     return events
 
 
-def _codex_events(path: Path) -> list[dict]:
+def _read_events(path: Path) -> list[dict]:
     try:
-        return _codex_parse(path.read_text(errors="replace"))
+        return _parse_events(path.read_text(errors="replace"))
     except OSError:
         return []
 
 
-def _codex_thread(events: list[dict]) -> str | None:
+def _event_session(events: list[dict]) -> str | None:
     for event in events:
         if event.get("type") == "thread.started" and event.get("thread_id"):
             return str(event["thread_id"])
     return None
 
 
-def _codex_usage(events: list[dict]) -> dict:
+def _event_usage(events: list[dict]) -> dict:
     for event in reversed(events):
         if event.get("type") == "turn.completed" and isinstance(event.get("usage"), dict):
             return dict(event["usage"])
@@ -752,7 +766,7 @@ def _relative(path, worktree: str) -> str:
 
 
 def _shell_command(command) -> str:
-    """The command as typed: Codex wraps it in `bash -lc '…'`."""
+    """The command as typed, without the `bash -lc '…'` wrapper an engine may add."""
     match = _SHELL.match(str(command or "").strip())
     if not match:
         return str(command or "")
@@ -781,19 +795,21 @@ def transcript_engine(task: dict) -> str:
 def transcript_sources(project: str, slug: str, task: dict):
     """Task-selected session evidence and any owning turn, oldest first."""
     engine = transcript_engine(task)
-    if engine == "codex" and engine in config.ENGINES:
+    native = _configured(engine)
+    if native and native.TRANSCRIPT_IN_JOB:
         with invocation.job_directory(project, slug) as (job, root):
-            items = implementation(engine).transcript_sources(task, job=job, root=root) if job is not None else []
+            items = native.transcript_sources(task, job=job, root=root) if job is not None else []
             info = os.fstat(job) if job is not None else None
             yield invocation.RuntimeSources(items, (info.st_dev, info.st_ino) if info else None)
     else:
-        yield implementation(engine).transcript_sources(task) if engine in config.ENGINES else []
+        yield native.transcript_sources(task) if native else []
 
 
 def transcript_rows(engine: str, record: dict, worktree: str) -> list[dict]:
     """Project only public text/tools; the caller also uses this sanitized record for Raw events."""
     _hide_reasoning(record)
-    return implementation(engine).transcript_rows(record, worktree) if engine in config.ENGINES else []
+    native = _configured(engine)
+    return native.transcript_rows(record, worktree) if native else []
 
 
 def _hide_reasoning(record: dict) -> dict:
@@ -837,30 +853,25 @@ def activity_source(project: str, slug: str, task: dict):
 
 def session_context_source(task: dict) -> Path | None:
     """The selected native session can corroborate source time and inbox-hook attachments."""
-    return implementation("claude")._claude_path(str(task.get("session_id") or "")) if transcript_engine(task) == "claude" else None
+    engine = transcript_engine(task)
+    native = _configured(engine)
+    return native.session_context_source(str(task.get("session_id") or "")) if native else None
 
 
 def delivered_context(engine: str, record: dict) -> list[str]:
     """Positive native hook delivery evidence; ordinary text/tool output is never a receipt."""
-    return implementation(engine).delivered_context(record) if engine in config.ENGINES else []
+    native = _configured(engine)
+    return native.delivered_context(record) if native else []
 
 
 def public_message_identity(engine: str, record: dict) -> str | None:
-    return implementation("claude" if engine == "claude" else "codex").public_message_identity(record)
+    return implementation(engine).public_message_identity(record)
 
 
 def background_work(engine: str, records: list[dict]) -> list[dict] | None:
     """Work one invocation keeps running beside its turn: {id, label, kind (command|agent), call, started_at,
     status (running|completed|failed|stopped), ended_at}, running work oldest first, then outcomes in the order they
-    ended. None when the engine reports no such work.
-
-    Claude announces background tasks (a backgrounded command or helper) with task_started/background_tasks_changed,
-    marks a running call moved to the background (as Send now does) with task_updated, and ends them with
-    task_updated/task_notification; the start is the time of the tool call that launched it. Background work missing
-    from a later background_tasks_changed set no longer runs. Work it marks awaited or ambient is not background.
-    A Codex command stays in progress until its process exits. Parallel calls start together, so a running command
-    is background once the turn takes a further step: the model writes or reasons, or starts another call after a
-    call ended."""
+    ended. None when the engine reports no such work. Each native module says how its records mark background work."""
     items: dict[str, dict] = {}
     ended: list[str] = []
 
@@ -875,9 +886,10 @@ def background_work(engine: str, records: list[dict]) -> list[dict] | None:
         item["status"] = status
         item["ended_at"] = at or item["ended_at"]
 
-    if engine not in config.ENGINES:
+    native = _configured(engine)
+    if not native:
         return None
-    implementation(engine).background_items(records, items, entry, end)
+    native.background_items(records, items, entry, end)
     shown = {identity: item for identity, item in items.items()
              if item["background"] and not item["quiet"] and not (item["gone"] and item["status"] == "running")}
     order = [item for item in shown.values() if item["status"] == "running"] + [shown[i] for i in ended if i in shown]
@@ -887,8 +899,12 @@ def background_work(engine: str, records: list[dict]) -> list[dict] | None:
 _TOKEN_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "reasoning_tokens")
 
 
+def _token_count(value) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
 def _token_numbers(usage: dict, engine: str) -> dict:
-    return implementation("claude" if engine == "claude" else "codex").token_numbers(usage)
+    return implementation(engine).token_numbers(usage)
 
 
 def _token_max(old: dict, new: dict) -> dict:
@@ -959,12 +975,10 @@ def observe_token_usage(engine: str, session_id: str, cursor: dict | None = None
     """Incremental, task-scoped observations from local records, with no engine invocation.
 
     Share the returned JSON cursor across every owner identity of this engine within one task.
-    Codex response records are request increments; legacy snapshots have version-dependent scope.
-    Claude messages are repeated streaming snapshots, deduplicated by message id. Inclusive input
-    is input+cache-read+cache-write for Claude, input alone for Codex; reasoning is an output subset.
-    Native children require recorded parentage. Discovery cannot prove exhaustive helper coverage.
-    A session's context is its newest own request's inclusive input, against the provider-reported
-    window (Codex) or the probed Claude window.
+    Native modules read their records into keyed request values (`token_event`) and define inclusive
+    input (`token_numbers`); reasoning is an output subset. Native children require recorded parentage.
+    Discovery cannot prove exhaustive helper coverage. A session's context is its newest own request's
+    inclusive input, against the provider-reported window or the engine's known window.
     """
     state = json.loads(json.dumps(cursor or {}))
     state.setdefault("owners", [])
@@ -988,9 +1002,10 @@ def observe_token_usage(engine: str, session_id: str, cursor: dict | None = None
         return row
 
     register(session_id)
+    native = _configured(engine)
     try:
-        if engine in config.ENGINES:
-            sources, pending = implementation(engine).token_sources(home, state["owners"], register)
+        if native:
+            sources, pending = native.token_sources(home, state["owners"], register)
         else:
             notes.append("This engine has no local token accounting adapter.")
         # Owned stdout survives archive and supplies a provider aggregate if transcript/rollout
@@ -999,7 +1014,7 @@ def observe_token_usage(engine: str, session_id: str, cursor: dict | None = None
             for path in Path(job_root).glob("*.json"):
                 record = S.read_json(path, {})
                 sid = record.get("session_id") if isinstance(record, dict) else None
-                if sid in state["owners"] and record.get("engine", "codex") == engine:
+                if sid in state["owners"] and _record_engine(record) == engine:
                     sources.append((path.with_suffix(".stdout.jsonl"), sid, "stdout"))
 
         # Revisit disappeared known files too, preserving their counts and exposing the gap.
@@ -1014,8 +1029,8 @@ def observe_token_usage(engine: str, session_id: str, cursor: dict | None = None
                 break
             try:
                 for offset, event in _token_read(path, file, budget):
-                    values, key, at = (implementation(engine).token_event(path, sid, kind, row, file, event, offset)
-                                       if engine in config.ENGINES else (None, None, None))
+                    values, key, at = (native.token_event(path, sid, kind, row, file, event, offset)
+                                       if native else (None, None, None))
                     if key and values:
                         old = state["records"].get(key)
                         # A replacement session may repeat inherited message ids; ownership stays
@@ -1073,7 +1088,7 @@ def observe_token_usage(engine: str, session_id: str, cursor: dict | None = None
         # Context is the newest own request's complete input: replayed history and aggregates never stand in.
         newest = max((entry for entry in entries if entry.get("at") and not entry["values"].get("incomplete")),
                      key=lambda entry: entry["at"], default=None)
-        window = row.get("context_window") or (implementation(engine).context_window() if engine in config.ENGINES else None)
+        window = row.get("context_window") or (native.context_window() if native else None)
         context = {"tokens": newest["values"]["input_tokens"], "window": window, "observed_at": newest["at"],
                    "percent": round(100.0 * newest["values"]["input_tokens"] / window, 1) if window else None} if newest else None
         public = {"session_id": sid, "parent_session_id": row["parent_session_id"], "role": role,
@@ -1142,35 +1157,35 @@ def _worker_events(path: Path, engine: str) -> list[dict]:
     return implementation(engine).worker_events(path)
 
 
-def _turn_activity(event: dict) -> bool:
-    """Whether output is turn activity rather than a report on the session. Claude's background-task and status
-    notices are not, nor is a Send now message the driver returned or could not confirm; a delivered one joins or
-    starts a turn."""
+def _turn_activity(engine: str, event: dict) -> bool:
+    """Whether output is turn activity rather than a report on the session. The engine's status notices are not,
+    nor is a Send now message the driver returned or could not confirm; a delivered one joins or starts a turn."""
     kind = event.get("type")
-    return kind not in ("system", "rate_limit_event") and (kind != "altitude.send" or event.get("outcome") == "delivered")
+    return (kind not in implementation(engine).STATUS_EVENTS
+            and (kind != "altitude.send" or event.get("outcome") == "delivered"))
 
 
-def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
+def owned_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
     """Read an owned CLI turn; the persisted engine selects its output format."""
     if not worker_id:
         return None
-    paths = _codex_paths(job_root, worker_id)
+    paths = _worker_paths(job_root, worker_id)
     record = S.read_json(paths["record"], None)
     if not isinstance(record, dict):
         return None
-    engine = record.get("engine", "codex")
+    engine = _record_engine(record)
     events = _worker_events(paths["stdout"], engine)
     implementation(engine).observe_worker_model(record, events, paths["record"])
-    proc = _codex_processes.get(worker_id)
+    proc = _worker_processes.get(worker_id)
     process_alive = proc is not None and proc.poll() is None
-    job_active = process_alive or platform.job_active(str(record.get("unit") or ""), codex_env(retain_user_bus=True))
+    job_active = process_alive or platform.job_active(str(record.get("unit") or ""), launch_env(retain_user_bus=True))
     if proc is not None and not process_alive:
-        _codex_processes.pop(worker_id, None)
+        _worker_processes.pop(worker_id, None)
     completed = any(event.get("type") == "turn.completed" for event in events)
     failed = next((event for event in reversed(events) if event.get("type") in ("turn.failed", "error")), None)
-    # A failed turn with no activity since ends the worker. The engine can outlive it: Claude waits for a background
+    # A failed turn with no activity since ends the worker. The engine can outlive it, waiting for a background
     # command it started, whose completion would only start another turn that fails the same way under a usage limit.
-    latest = next((event.get("type") for event in reversed(events) if _turn_activity(event)), None)
+    latest = next((event.get("type") for event in reversed(events) if _turn_activity(engine, event)), None)
     alive = job_active and latest != "turn.failed"
     if alive:
         state, status = "working", "busy"
@@ -1189,9 +1204,9 @@ def codex_worker(worker_id: str | None, *, job_root: Path) -> dict | None:
                       or paths["stdout"].read_text(errors="replace")[-500:] or "Worker exited without a result")
         except OSError:
             detail = "Worker exited without a result"
-    row = {"id": worker_id, "sessionId": _codex_thread(events) or record.get("session_id"),
+    row = {"id": worker_id, "sessionId": _event_session(events) or record.get("session_id"),
             "name": record.get("name"), "pid": record.get("pid"), "unit": record.get("unit"),
-            "state": state, "status": status, "detail": detail, "usage": _codex_usage(events),
+            "state": state, "status": status, "detail": detail, "usage": _event_usage(events),
             "detail_at": max((paths[k].stat().st_mtime for k in ("stdout", "stderr") if paths[k].exists()),
                              default=paths["record"].stat().st_mtime),
             "startedAt": record.get("started_at"), "engine": engine, "job_active": job_active,
@@ -1221,26 +1236,23 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
               f'`{config.PERSONAS / "l1.md"}` before working. Your assigned repository is '
               f'`{cwd.resolve()}`." Then give the task-specific assignment; do not copy the persona '
               'into the brief or rely on inherited owner instructions to select the helper role.\n\n' + prompt)
-    if engine not in config.ENGINES:
-        raise ValueError(f"unknown L2 engine {engine!r}")
     native = implementation(engine)
     cmd, content, writable = native.prepare_worker(name, prompt, cwd=cwd, persona=persona, model=model,
                                                     settings=settings, effort=effort, resume=resume, images=images)
     worker_id = uuid.uuid4().hex
-    unit = implementation(engine).worker_unit_name(worker_id)
+    unit = native.worker_unit_name(worker_id)
     root = Path(job_root)
     root.mkdir(parents=True, exist_ok=True)
-    paths = _codex_paths(root, worker_id)
+    paths = _worker_paths(root, worker_id)
     record = {"id": worker_id, "name": name, "pid": None, "unit": unit, "engine": engine,
-              "started_at": datetime.now(timezone.utc).isoformat(),
-              "codex_home": str(implementation("codex")._codex_home(codex_env(extra_env))),
+              "started_at": datetime.now(timezone.utc).isoformat(), **native.worker_record(launch_env(extra_env)),
               "session_id": resume, "cwd": str(cwd), "resume": bool(resume), "stopped": None,
               "launch_model": model, "launch_effort": effort, "input_delivered": False, "sends": str(paths["sends"])}
     S.write_json(paths["record"], record)
-    worker_env = task_tool_env(codex_env(extra_env, retain_user_bus=True), root)
+    worker_env = task_tool_env(launch_env(extra_env, retain_user_bus=True), root)
     if native.EFFORT_ENV and effort is not None:
         worker_env.pop(native.EFFORT_ENV, None)
-    job_env = {key: value for key, value in codex_env(worker_env).items() if key not in GITHUB_TOKEN_VARIABLES}
+    job_env = {key: value for key, value in launch_env(worker_env).items() if key not in GITHUB_TOKEN_VARIABLES}
     try:
         with open(paths["stdout"], "ab", buffering=0) as out, open(paths["stderr"], "ab", buffering=0) as err:
             proc = subprocess.Popen(platform.job_command(unit, _driver_command(), job_env, writable=writable),
@@ -1258,19 +1270,19 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
             input_written = written == len(data)
         except (BrokenPipeError, OSError):
             pass
-        _codex_processes[worker_id] = proc
+        _worker_processes[worker_id] = proc
         record["pid"] = proc.pid
         S.write_json(paths["record"], record)
         deadline = time.monotonic() + start_timeout
         thread_id = None
         while not thread_id and time.monotonic() < deadline and proc.poll() is None:
-            thread_id = _codex_thread(_worker_events(paths["stdout"], engine))
+            thread_id = _event_session(_worker_events(paths["stdout"], engine))
             if not thread_id:
                 time.sleep(0.05)
-        thread_id = thread_id or _codex_thread(_worker_events(paths["stdout"], engine))
+        thread_id = thread_id or _event_session(_worker_events(paths["stdout"], engine))
         if not input_written or not thread_id or (resume and thread_id != resume):
-            codex_stop(worker_id, job_root=root)
-            row = codex_worker(worker_id, job_root=root) or {}
+            stop_owned_worker(worker_id, job_root=root)
+            row = owned_worker(worker_id, job_root=root) or {}
             detail = ("worker input handoff failed" if not input_written else
                       f"resumed a different {engine.title()} thread" if thread_id else
                       row.get("detail") or "no session initialization event")
@@ -1279,13 +1291,13 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
         record["session_id"] = thread_id
         record["input_delivered"] = True
         S.write_json(paths["record"], record)
-        row = codex_worker(worker_id, job_root=root)
+        row = owned_worker(worker_id, job_root=root)
         return {"stdout": "", "stderr": "", "returncode": 0, "agent": row,
                 "rejection": row.get("rejection"), "safe_to_retry": row.get("safe_to_retry", False)}
     except BaseException as exc:
         # I-20260907-171446: startup must not leave an unbound worker that a retry duplicates.
         try:
-            codex_stop(worker_id, job_root=root)
+            stop_owned_worker(worker_id, job_root=root)
         except Exception as stop_error:
             raise RuntimeError(f"worker {worker_id}: {exc}; stop failed: {stop_error}") from exc
         raise
@@ -1293,7 +1305,8 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
 
 def _owned_unit(record: dict, worker_id: str) -> str:
     engine = record.get("engine") if isinstance(record, dict) else None
-    expected = implementation(engine).worker_unit_name(worker_id) if engine in config.ENGINES else None
+    native = _configured(engine)
+    expected = native.worker_unit_name(worker_id) if native else None
     if not expected or record.get("id") != worker_id or record.get("unit") != expected:
         raise RuntimeError("Worker ownership record is unavailable; stop is unconfirmed")
     return expected
@@ -1301,35 +1314,35 @@ def _owned_unit(record: dict, worker_id: str) -> str:
 
 def worker_sends(worker_id: str, *, job_root: Path) -> Path | None:
     """Where Send now hands a running worker a message; None for a worker launched without a driver."""
-    record = S.read_json(_codex_paths(job_root, worker_id)["record"], None)
+    record = S.read_json(_worker_paths(job_root, worker_id)["record"], None)
     sends = record.get("sends") if isinstance(record, dict) and record.get("id") == worker_id else None
     return Path(sends) if sends else None
 
 
 def worker_unit(worker_id: str, *, job_root: Path) -> str:
     """The job a worker runs in, from its ownership record."""
-    return _owned_unit(S.read_json(_codex_paths(job_root, worker_id)["record"], None), worker_id)
+    return _owned_unit(S.read_json(_worker_paths(job_root, worker_id)["record"], None), worker_id)
 
 
-def codex_stop(worker_id: str, *, job_root: Path) -> str:
+def stop_owned_worker(worker_id: str, *, job_root: Path) -> str:
     """Stop the worker's job, which takes every descendant with it."""
-    paths = _codex_paths(job_root, worker_id)
+    paths = _worker_paths(job_root, worker_id)
     record = S.read_json(paths["record"], None)
     unit = _owned_unit(record, worker_id)
-    platform.job_stop(unit, codex_env(retain_user_bus=True))
-    proc = _codex_processes.get(worker_id)
+    platform.job_stop(unit, launch_env(retain_user_bus=True))
+    proc = _worker_processes.get(worker_id)
     if proc is not None:
         try:
             proc.wait(timeout=10)
         except (subprocess.TimeoutExpired, OSError):
             proc.kill()
             proc.wait(timeout=10)
-    if platform.job_active(unit, codex_env(retain_user_bus=True)):
-        raise RuntimeError(f"Codex worker {worker_id} is still running after stop")
-    _codex_processes.pop(worker_id, None)
+    if platform.job_active(unit, launch_env(retain_user_bus=True)):
+        raise RuntimeError(f"Worker {worker_id} is still running after stop")
+    _worker_processes.pop(worker_id, None)
     record["stopped"] = record.get("stopped") or datetime.now(timezone.utc).isoformat(timespec="seconds")
     S.write_json(paths["record"], record)
-    return "Codex worker stopped"
+    return "Worker stopped"
 
 
 def start_l2(engine: str, name: str, prompt: str, *, cwd: Path, persona: Path,
@@ -1347,9 +1360,10 @@ def resume_l2(engine: str, name: str, session_id: str, prompt: str, *, cwd: Path
 
 
 def stop_l2_worker(engine: str, worker_id: str, *, job_root: Path) -> str:
-    if engine == "claude" and not _codex_paths(job_root, worker_id)["record"].exists():
-        return implementation("claude").stop_legacy_worker(worker_id)
-    return codex_stop(worker_id, job_root=job_root)
+    native = _configured(engine)
+    if native and not _worker_paths(job_root, worker_id)["record"].exists():
+        return native.stop_legacy_worker(worker_id)
+    return stop_owned_worker(worker_id, job_root=job_root)
 
 
 def worker_termination(task: dict, *, job_root: Path) -> bool | None:
@@ -1358,20 +1372,20 @@ def worker_termination(task: dict, *, job_root: Path) -> bool | None:
     if not identity:
         return None
     try:
-        record = S.read_json(_codex_paths(job_root, identity)["record"], None)
+        record = S.read_json(_worker_paths(job_root, identity)["record"], None)
         if record is not None:
             if (not isinstance(record, dict) or record.get("id") != identity
                     or record.get("engine") != transcript_engine(task)
                     or record.get("session_id") != task.get("session_id")):
                 return None
             unit = _owned_unit(record, identity)
-        elif transcript_engine(task) == "claude":
-            unit = implementation("claude").legacy_unit(task)
+        elif native := _configured(transcript_engine(task)):
+            unit = native.legacy_unit(task)
             if unit is None:
                 return None
         else:
             return None
-        return not platform.job_active(unit, codex_env(retain_user_bus=True))
+        return not platform.job_active(unit, launch_env(retain_user_bus=True))
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
         return None
 
@@ -1381,16 +1395,15 @@ def remove_l2_worker(engine: str, worker_id: str, *, job_root: Path) -> str:
 
 
 def window_hold(engine: str) -> str | None:
-    """Claude's exhausted window is a machine-wide hold file; Codex reports its limits per turn."""
-    return usage_hold() if engine == "claude" else None
+    """An engine whose exhausted window is recorded machine-wide is held until its reset; others report per turn."""
+    native = _configured(engine)
+    return usage_hold() if native and native.WINDOW_HOLD else None
 
 
 def worker(engine: str, task: dict, *, job_root: Path) -> dict | None:
     """Adopt owned turns from their unit record, or existing jobs from unit plus transcript."""
-    row = codex_worker(task.get("agent_id"), job_root=job_root)
-    if row or engine != "claude":
-        return row
-    return implementation("claude").legacy_worker(task)
+    native = _configured(engine)
+    return owned_worker(task.get("agent_id"), job_root=job_root) or (native.legacy_worker(task) if native else None)
 
 
 def worker_detail(engine: str, row: dict | None) -> tuple[str, datetime | None]:
@@ -1407,20 +1420,22 @@ def _agent_messages(events: list[dict]) -> list[str]:
 
 def _review_env() -> dict:
     """Authentication remains CLI-internal; no owner identity, bus or ambient credentials. USER names the login
-    whose macOS Keychain item holds the CLI's sign-in; without it Claude falls back to a stale plaintext file."""
+    whose macOS Keychain item holds a CLI's sign-in; without it a CLI can fall back to a stale plaintext file."""
     source = clean_env()
-    return {key: source[key] for key in ("HOME", "USER", "PATH", "LANG", "LC_ALL", "CODEX_HOME", "CLAUDE_CONFIG_DIR")
-            if key in source}
+    kept = ("HOME", "USER", "PATH", "LANG", "LC_ALL",
+            *(key for engine in config.ENGINES for key in implementation(engine).REVIEW_ENV))
+    return {key: source[key] for key in kept if key in source}
 
 
 @lru_cache(maxsize=16)
 def _review_native(engine: str, executable: str, modified: int, size: int) -> tuple[bool, tuple[str, ...], bool]:
-    """Whether the installed CLI enforces captured-input review, its Codex features, and whether it attaches images."""
+    """Whether the installed CLI enforces captured-input review, its native features, and whether it attaches images."""
     return implementation(engine).review_native(executable)
 
 
 def _executable(engine: str) -> str | None:
-    return implementation(engine).binary() if engine in config.ENGINES else None
+    native = _configured(engine)
+    return native.binary() if native else None
 
 
 def cli_version(engine: str) -> str | None:
@@ -1439,7 +1454,7 @@ def cli_version(engine: str) -> str | None:
 
 def worker_confinement(engine: str) -> str:
     """The job and the engine boundary an L2 worker of this engine runs under on this host."""
-    native = implementation(engine) if engine in config.ENGINES else None
+    native = _configured(engine)
     boundary = native.CONFINEMENT if native else "engine boundary"
     return f"{platform.job_confinement(profile=native.JOB_PROFILE if native else False)}, {boundary}"
 
@@ -1549,9 +1564,8 @@ def _review_served(runtime: Path) -> Path:
 
 
 def _review_input(engine: str, prompt: str, images: list[tuple[str, Path]]) -> str:
-    """The reviewer's first turn: Codex reads the prompt from stdin and attaches images by flag; Claude's
-    stream-json user line carries each screenshot as an image block after its title."""
-    return implementation("claude").review_input(prompt, images) if engine == "claude" else prompt
+    """The reviewer's first turn on stdin, in the engine's native input form."""
+    return implementation(engine).review_input(prompt, images)
 
 
 def _review_command(engine: str, snapshot: Path, runtime: Path, model: str | None,
@@ -1577,7 +1591,7 @@ def review_active(worker: dict) -> bool | None:
     if not re.fullmatch(r"altitude-review-[0-9a-f]{32}\.service", str(worker.get("unit", ""))):
         return None
     try:
-        active = platform.job_active(worker["unit"], codex_env(retain_user_bus=True))
+        active = platform.job_active(worker["unit"], launch_env(retain_user_bus=True))
         launcher = _review_launcher(worker)
         if not active and launcher is None:
             # A prelaunch receipt survives a crash before PID binding. A missing/collected unit
@@ -1596,7 +1610,7 @@ def review_stop(worker: dict) -> bool:
     if not re.fullmatch(r"altitude-review-[0-9a-f]{32}\.service", str(worker.get("unit", ""))):
         return False
     try:
-        platform.job_stop(worker["unit"], codex_env(retain_user_bus=True), timeout=15)
+        platform.job_stop(worker["unit"], launch_env(retain_user_bus=True), timeout=15)
         return review_active(worker) is False
     except (OSError, subprocess.SubprocessError):
         return False
@@ -1604,9 +1618,8 @@ def review_stop(worker: dict) -> bool:
 
 def _review_kept(engine: str, line: str) -> bool:
     """Whether a stdout line reaches the review's result and diagnostics. Tool calls and their results only echo
-    captured input; Claude's verbose stream carries every one, so they would exhaust the stdout bound of a long
-    review. Kept: Claude's result record, Codex's status events and agent messages, and any line that is not a
-    complete record."""
+    captured input and would exhaust the stdout bound of a long review. Kept: the records the engine names, and
+    any line that is not a complete record."""
     try:
         record = json.loads(line)
     except ValueError:
@@ -1660,8 +1673,7 @@ def _review_stdout_errors(engine: str, stdout: str) -> tuple[str, list[str], dic
     }
     labels = [label for label, pattern in categories.items()
               if any(re.search(pattern, message, re.I) for message in messages)]
-    final = next((record for record in reversed(records) if record.get("type") == "result"), None) if engine == "claude" else None
-    facts = implementation("claude")._review_result_facts(final) if final else {}
+    facts = implementation(engine).review_result_facts(records)
     state = "recognized_error" if labels else "unrecognized_error" if error_seen else "no_structured_error"
     return state, labels, facts
 
@@ -1734,7 +1746,7 @@ def review(prompt: str, *, engine: str, snapshot: Path, runtime: Path, model: st
     unit = f"altitude-review-{uuid.uuid4().hex}.service"
     # #446: never spend a review invocation when its service cannot be observed/cancelled here.
     try:
-        platform.job_active(unit, codex_env(retain_user_bus=True))
+        platform.job_active(unit, launch_env(retain_user_bus=True))
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         return {**out, "error": "Review service inspection is unavailable; no reviewer was launched.", "unavailable": True,
                 "diagnostics": _review_diagnostics(_BoundedRawCapture(), exception=exc)}
@@ -1765,7 +1777,7 @@ def review(prompt: str, *, engine: str, snapshot: Path, runtime: Path, model: st
             return {**out, "error": "Review cancelled before launch."}
         proc = subprocess.Popen(platform.job_command(unit, command, _review_env(),
                                                      writable=implementation(engine).review_writable(runtime)),
-                                cwd=runtime, env=codex_env(retain_user_bus=True), text=True, errors="replace",
+                                cwd=runtime, env=launch_env(retain_user_bus=True), text=True, errors="replace",
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         return {**out, "error": f"Review launch failed: {type(exc).__name__}.",
@@ -1862,24 +1874,16 @@ def review(prompt: str, *, engine: str, snapshot: Path, runtime: Path, model: st
     return failed(out["error"]) if out["error"] else out
 
 
-def context_percent(context_tokens: int, engine: str = "claude") -> float:
+def context_percent(context_tokens: int, engine: str) -> float:
     return round(100.0 * context_tokens / config.CONTEXT_LINES[engine][2], 1)
 
 
 def context_rotation_due(pct: float | None, engine: str) -> bool:
-    """Only Claude needs Altitude's context rotation; Codex compacts its own conversation."""
-    return engine in config.ENGINES and implementation(engine).AUTO_ROTATION and pct is not None and pct >= config.CONTEXT_LINES[engine][1] * 100
+    """Whether Altitude rotates the coordinator at its act line; an engine that compacts natively keeps its conversation."""
+    return implementation(engine).AUTO_ROTATION and pct is not None and pct >= config.CONTEXT_LINES[engine][1] * 100
 
 
-def session_rotation_due(session: dict, engine: str) -> bool:
-    """An explicit reset is independent of an engine's automatic context rotation."""
-    pct = session.get("context_percent")
-    automatic_reason = f"context {pct}% ≥ act line {int(config.CONTEXT_LINES[engine][1] * 100)}%"
-    requested = session.get("rotate_next") and session.get("rotate_reason") != automatic_reason
-    return bool(requested or context_rotation_due(pct, engine))
-
-
-def context_state(pct: float | None, engine: str = "claude") -> str:
+def context_state(pct: float | None, engine: str) -> str:
     """Return ``ok``, ``warn``, or ``act`` against the engine's configured lines."""
     if pct is None:
         return "unknown"
