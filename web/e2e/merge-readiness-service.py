@@ -32,7 +32,7 @@ def main():
         task.update(prs=[number], delivery={"number": number, "head": head, "at": at}, reviews=[{
             "id": review_id, "subject": "changes", "state": "completed", "requested_by": "l2",
             "requested_at": at, "engine_label": "Independent reviewer", "same_engine": True,
-            "snapshot": identity, "reconciled": {**identity, "at": at},
+            "snapshot": identity, "reconciled": {**identity, "at": at, "reason": "Assessed the fictional API finding."},
             "dispositions": [{"finding_id": "F1", "disposition": "open" if finding else "fixed",
                               "reason": "The shared API is pending." if finding else "The shared API is verified."}],
             "result": {"text": "The shared API determines readiness.", "findings": [{"id": "F1",
