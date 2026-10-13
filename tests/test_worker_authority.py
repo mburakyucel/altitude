@@ -154,12 +154,15 @@ class TestCredentialsHidden(AltitudeCase):
 class TestKeyGenerations(AltitudeCase):
     gated = True
 
+    def setUp(self):
+        super().setUp()
+        self.patch(access, "DIR", self.tmp / "access")
+
     def table(self, *units):
         return {pid: (1, ["user.slice", unit]) for pid, unit in enumerate(units, start=2)}
 
     def test_an_earlier_key_is_replaced_twice_and_a_current_one_kept(self):
-        access.DIR.mkdir(parents=True, exist_ok=True)
-        (access.DIR / "key.json").unlink(missing_ok=True)
+        access.DIR.mkdir()
         (access.DIR / "machine.key").write_text("readable-before-the-update\n")
         access.issue_code()
         lasting = ("altitude.service", "altitude-volumes.service", "altitude-terminal-a1.service")  # no agent
@@ -183,8 +186,6 @@ class TestKeyGenerations(AltitudeCase):
         self.assertEqual(access.machine_key(), second)
 
     def test_a_first_key_keeps_the_installers_pairing_code(self):
-        (access.DIR / "machine.key").unlink(missing_ok=True)
-        (access.DIR / "key.json").unlink(missing_ok=True)
         access.issue_code(first_browser=True)
         self.patch(platform, "process_table", return_value=self.table(WORKER))
         access.prepare()
