@@ -3009,8 +3009,9 @@ Altitude's home rather than in it (`config.beside_root`, which validation's stor
 workers can write the home, and the speech worker imports the runtime's code outside any sandbox, so
 no worker's writable roots contain it. At daemon start, `speech.remove_home_runtime()` deletes what
 earlier releases kept in `~/.altitude/speech` without reusing or following any of it, leaving a
-project's state that shares the name in place; when that folder held a finished runtime and host voice
-is selected, voice sets up again beside the home. The model is NVIDIA Parakeet TDT 0.6B v2 (English,
+registered project's state that shares the name in place, and nothing it fails to delete stops the start;
+when that folder held a finished runtime and host voice is selected, voice sets up again beside the home
+as a startup automatic attempt. The model is NVIDIA Parakeet TDT 0.6B v2 (English,
 CC-BY-4.0) as the int8 ONNX export `istupakov/parakeet-tdt-0.6b-v2-onnx` at a pinned revision, run on
 the CPU by the MIT `onnx-asr` decoder with onnxruntime and numpy. It always punctuates and capitalizes.
 

@@ -878,8 +878,35 @@ class TestSetup(SpeechCase):
         self.patch(config, "ROOT", home)
         old = self.old_runtime(home)
         (old / "tasks" / "fictional").mkdir(parents=True)
+        self.patch(config, "load_projects", return_value={"speech": {}})
         self.assertTrue(speech.remove_home_runtime())
-        self.assertEqual(sorted(path.name for path in old.iterdir()), ["tasks"])
+        self.assertEqual(sorted(path.name for path in old.iterdir()), [".lock", "tasks"])
+
+    def test_entries_a_worker_made_unreadable_never_stop_startup(self):
+        home = self.tmp / "home"
+        self.patch(config, "ROOT", home)
+        old = self.old_runtime(home)
+        for path in (old / "runtime-earlier", old):
+            path.chmod(0)
+            self.addCleanup(path.chmod, 0o700)
+        self.assertFalse(speech.remove_home_runtime())
+        old.chmod(0o700)
+        self.assertFalse(speech.remove_home_runtime())
+        self.assertEqual([path.name for path in old.iterdir()], ["runtime-earlier"])
+
+    def test_setup_beside_an_unwritable_parent_leaves_startup_running(self):
+        parent = self.tmp / "parent"
+        parent.mkdir()
+        self.patch(speech, "ROOT", parent / "speech")
+        parent.chmod(0o500)
+        self.addCleanup(parent.chmod, 0o700)
+        self.patch(config, "voice_setting", return_value={"backend": "host"})
+        host = self.host()
+        host.update_installed()
+        host.update_installed(True)
+        self.assertIsNone(host.setup_attempt)
+        self.assertFalse(speech.ROOT.exists())
+        self.assertTrue(any(line.startswith("voice: automatic update unavailable") for line in self.logs))
 
     def test_a_link_in_place_of_the_folder_is_never_followed(self):
         home = self.tmp / "home"

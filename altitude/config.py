@@ -817,10 +817,8 @@ def project_dir(name: str) -> Path:
 
 def beside_root(name: str) -> Path:
     """`~/.altitude-<name>`: beside Altitude's home rather than in it. Task workers can write the home, so what altd
-    runs, mounts or writes as its own must not sit at a path a worker could have replaced. Derived from the resolved
-    home, so no worker's resolved writable root contains it."""
-    root = ROOT.resolve()
-    return root.with_name(f"{root.name}-{name}")
+    runs, mounts or writes as its own must not sit at a path a worker could have replaced."""
+    return ROOT.with_name(f"{ROOT.name}-{name}")
 
 
 def discover_projects() -> list[dict]:

@@ -305,31 +305,45 @@ def installation_id() -> str:
 
 def remove_home_runtime() -> bool:
     """Delete what voice kept in Altitude's home in earlier releases, where task workers could write it; nothing of
-    it is reused. Only voice's own entries go: a project named `speech` shares that folder. No link is followed: one in
-    place of the folder stays, one inside it is removed. Returns whether a finished runtime was there, so host voice
-    is set up again beside the home."""
-    old = config.ROOT / "speech"
-    if old.is_symlink() or not old.is_dir():
-        return False
+    it is reused. Returns whether a finished runtime was there, so host voice is set up again beside the home.
+
+    A worker may still be writing there, so the folder is held open and never followed through a link, only voice's
+    own entries go (a project named `speech` keeps its state and lock), and no failure keeps the daemon from
+    starting: nothing reads what is left."""
+    names = {".staging", "installation.json", ".control", ".use", "worker.log", "verification.log"}
     try:
-        entries = [path for path in old.iterdir() if path.name.startswith("runtime-") or path.name in (
-            ".staging", "installation.json", ".control", ".lock", ".use", "worker.log", "verification.log")]
-    except OSError:
+        if not any(name.lower() == "speech" for name in config.load_projects()):
+            names.add(".lock")
+        home = os.open(config.ROOT, os.O_RDONLY | os.O_DIRECTORY)
+    except (OSError, ValueError):
         return False
-    finished = any(path.name.startswith("runtime-") and (path / "complete.json").is_file() for path in entries)
-    # Nothing reads what a failed removal leaves, so it must not keep the daemon from starting.
-    for path in entries:
-        if path.is_dir() and not path.is_symlink():
-            shutil.rmtree(path, ignore_errors=True)
-        else:
-            try:
-                path.unlink()
-            except OSError:
-                pass
+    finished = False
     try:
-        old.rmdir()
+        folder = os.open("speech", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=home)
+        try:
+            for entry in list(os.scandir(folder)):
+                if not (entry.name.startswith("runtime-") or entry.name in names):
+                    continue
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        if entry.name.startswith("runtime-") and not finished:
+                            try:
+                                complete = os.stat(f"{entry.name}/complete.json", dir_fd=folder, follow_symlinks=False)
+                                finished = stat.S_ISREG(complete.st_mode)
+                            except OSError:
+                                pass
+                        shutil.rmtree(entry.name, dir_fd=folder, ignore_errors=True)
+                    else:
+                        os.unlink(entry.name, dir_fd=folder)
+                except OSError:
+                    pass
+        finally:
+            os.close(folder)
+        os.rmdir("speech", dir_fd=home)  # fails while a project's state shares it
     except OSError:
-        pass  # left in place, or a project's state shares it
+        pass
+    finally:
+        os.close(home)
     return finished
 
 
@@ -396,14 +410,14 @@ class _Attempt:
             _write_state(state)
 
 
-def _begin(automatic: bool = False) -> _Attempt:
+def _begin(automatic: bool = False, reinstall: bool = False) -> _Attempt:
     files, reason = manifest()
     if files is None:
         raise SpeechError(f"Voice isn't available on this computer: {reason}.", 409)
     with _guard():
         state = _state()
         target = _digest(files)
-        if automatic and (state.get("removed") or not _installed()
+        if automatic and (state.get("removed") or not (reinstall or _installed())
                           or config.voice_setting()["backend"] != "host"
                           or state.get("update", {}).get("target") == target
                           or _complete(ROOT / f"runtime-{target}", target)):
@@ -801,14 +815,14 @@ class Host:
 
     # --- setup and removal --------------------------------------------------------------------------------
 
-    def start_setup(self, automatic: bool = False) -> None:
+    def start_setup(self, automatic: bool = False, reinstall: bool = False) -> None:
         """Set up in the background; Settings follows `status()`."""
         with self.changed:
             if self.setup_attempt is not None:
                 raise SpeechError("Voice is already being set up.", 409)
             lock = _lock()  # held before answering, so Settings reads setting-up at once
             try:
-                attempt = _begin(automatic)
+                attempt = _begin(automatic, reinstall)
             except BaseException:
                 lock.close()
                 raise
@@ -830,22 +844,19 @@ class Host:
 
     def update_installed(self, reinstall: bool = False) -> None:
         """One durable automatic attempt for this target, only at daemon startup. `reinstall`: host voice was set up
-        in the folder `remove_home_runtime` deleted, so it is set up again here."""
-        if reinstall and config.voice_setting()["backend"] == "host":
-            try:
-                self.start_setup()
-            except SpeechError as exc:
-                self.log(f"voice: setting up again beside Altitude's home is unavailable: {exc}")
-            else:
-                self.log("voice: setting up again beside Altitude's home")
+        in the folder `remove_home_runtime` deleted, so it is set up here again without an installed runtime."""
+        if not (reinstall or _installed()):
             return
         try:
-            self.start_setup(automatic=True)
+            self.start_setup(automatic=True, reinstall=reinstall)
         except SpeechError as exc:
             if exc.status != 409:
                 self.log(f"voice: automatic update unavailable: {exc}")
+        except OSError as exc:  # the folder beside the home cannot be made; Settings still offers setup
+            self.log(f"voice: automatic update unavailable: {exc}")
         else:
-            self.log("voice: automatic runtime update started at release startup")
+            self.log("voice: setting up again beside Altitude's home" if reinstall
+                     else "voice: automatic runtime update started at release startup")
 
     def cancel_setup(self) -> None:
         cancel_setup()
