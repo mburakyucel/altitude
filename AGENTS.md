@@ -1,8 +1,9 @@
 # Working in Altitude
 
-Read `README.md` for the public introduction and `docs/ARCHITECTURE.md` for the active system
-description before changing behavior. Follow the relevant lifecycle, setup and operations links
-there; Git history is the archive.
+Read `README.md` for the public introduction and `docs/OVERVIEW.md` before changing behavior. The
+overview summarizes the system and links every section of `docs/ARCHITECTURE.md`, the detailed
+reference, and of the lifecycle, setup and operations documents; read the sections a change touches.
+Git history is the archive.
 
 `AGENTS.md` is the authoritative project rule source for both engines; `CLAUDE.md` imports it.
 Current system behavior and useful rationale live in the linked documentation. Ask the operator
