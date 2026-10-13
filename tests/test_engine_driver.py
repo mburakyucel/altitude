@@ -5,6 +5,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from unittest import mock
 
 from tests.support import REPO, AltitudeCase
@@ -55,12 +56,14 @@ class TestEngineDriver(AltitudeCase):
         for engine in ("claude", "codex"):
             with self.subTest(engine=engine):
                 self.setUp()
+                started = datetime.now(timezone.utc)
                 proc = self.drive(engine, helpers=True)
                 self.wait_for_tool(proc)
                 os.kill(int(self.tool.with_suffix(".pid").read_text()), 0)
                 self.assertFalse(self.tool.with_suffix(".completed").exists())
                 engines.send_into_turn(self.sends, "m1", TEXT)
                 events = self.finish(proc)
+                finished = datetime.now(timezone.utc)
                 self.assertEqual(self.tool.with_suffix(".completed").read_text(), "completed")
                 marker = events.index({"type": "altitude.send", "message_id": "m1", "outcome": "delivered"})
                 later = json.dumps(events[marker:])
@@ -84,6 +87,11 @@ class TestEngineDriver(AltitudeCase):
                     self.assertEqual(events[0], {"type": "thread.started", "thread_id": "fake-thread",
                                                  "model": "fake-model"})
                     self.assertEqual(events[2]["item"]["type"], "command_execution")
+                    for event in events:
+                        if event["type"] in ("item.started", "item.completed"):
+                            recorded = datetime.fromisoformat(event["timestamp"])
+                            self.assertLessEqual(started, recorded)
+                            self.assertLessEqual(recorded, finished)
                     self.assertEqual(events[-1], {"type": "turn.completed",
                                                   "usage": {"input_tokens": 5, "output_tokens": 2}})
 
@@ -146,6 +154,24 @@ class TestEngineDriver(AltitudeCase):
                                        "error": {"message": "Other failure"}, "willRetry": False})
         self.assertEqual((driver.session_id, driver.turn, driver.usage), ("owner", "owner-turn", {"input_tokens": 7}))
         driver.emit.assert_not_called()
+
+    def test_item_times_record_notification_receipt_and_survive_projection(self):
+        driver = object.__new__(engines._CodexDriver)
+        driver.session_id = "owner"
+        driver.emit = mock.Mock()
+        moments = [datetime(2026, 9, 3, 10, 0, second, tzinfo=timezone.utc) for second in (1, 5)]
+        with mock.patch.object(engines, "datetime") as clock:
+            clock.now.side_effect = moments
+            for method, status in (("item/started", "inProgress"), ("item/completed", "completed")):
+                driver.notify(method, {"threadId": "owner", "item": {
+                    "id": "command", "type": "commandExecution", "command": "echo fixture", "status": status,
+                    "aggregatedOutput": "fixture" if status == "completed" else "", "durationMs": 4000}})
+        events = [call.args[0] for call in driver.emit.call_args_list]
+        self.assertEqual([event["timestamp"] for event in events], [moment.isoformat() for moment in moments])
+        for event, moment in zip(events, moments):
+            row, = engines.transcript_rows("codex", event, str(self.repo))
+            self.assertEqual(row["at"], moment.isoformat())
+            self.assertEqual(row["kind"], "command")
 
     def test_intermediate_and_final_messages_wait_for_the_owner_turn_completion(self):
         driver = object.__new__(engines._CodexDriver)
