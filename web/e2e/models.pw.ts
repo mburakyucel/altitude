@@ -366,6 +366,8 @@ test("Settings model reading: loading, unavailable and retry after denied readin
   await page.unroute("**/api/overview");
   await page.route("**/api/overview", (route) => route.fulfill({ status: 403, json: { error: "Fixture reading denied." } }));
   await page.reload();
+  // The shared overview query exhausts its normal read retries before exposing the error.
+  await expect(models.getByRole("alert")).toBeVisible({ timeout: 15_000 });
   await walk.state("03-model-read-error", { visible: [models.getByRole("alert"), models.getByRole("button", { name: "Retry", exact: true })], hidden: [models.getByRole("combobox", { name: "Model", exact: true })] });
   await page.unroute("**/api/overview");
   await models.getByRole("button", { name: "Retry", exact: true }).click();
