@@ -229,48 +229,45 @@ Task status, documents and events share the archive lock while their snapshot is
 running, blocked or reported L2 tasks. Other sessions on the machine are not read. Session rows expose `model` beside `engine`, with `engine_reasoning_effort`
 when available. An unknown Monitor model is an absent key rather than null.
 
-`config.DEFAULT_SETTINGS` names one requested model and one requested effort per role and engine
-(`l3_model`, `l3_effort`, `l2_model`, `l2_effort` on Claude; `l3_codex_model`, `l3_codex_effort`,
-`l2_codex_model`, `l2_codex_effort` on Codex); each is independent of the others. Absence preserves
-existing defaults and `native` requests no override. `config.task_effort` owns engine support and
-resolution, and a setting accepts only its own engine's levels. `config.default_model` and
-`config.default_effort` resolve an Auto option for the chosen role and engine: an option's own model,
-then the project default, then the role default (Opus for a Claude L2, Fable for L3, the engine's own model
-on Codex). They are preferences: only `l2_engine` and task or turn pins force an engine.
-Explicit task `effort` and `model` win over the defaults without rewriting them. Routing resolves effort
-per option, excludes Auto candidates that cannot accept an explicit level and keeps pins strict.
-Fresh dispatch saves that selection as `launch_effort` alongside `launch_model`; message/resume
-reuses it without resolving current project defaults or copying observed provider values.
-L3 resolves each turn, including same-conversation resumes, and saves requested `effort` and
-`launch_effort` before calling the engine. Running calls retain their original selection.
-Both roles clear observed `engine_reasoning_effort` for a new turn; absent observations stay unknown.
-Model compatibility and provider caps remain native decisions. Effort failures do not trigger
-application-side downgrading or engine fallback. No model capability catalog or session migration exists.
+The configuration seam resolves model and effort through the existing routing paths. Explicit
+requests, applicable choice/routing fields and project role overrides precede the machine-wide
+engine pair; built-in role/provider defaults apply when neither supplies a value. Global pairs
+apply to both coordinator and task roles and ordinary reviews. Native helper settings and
+specialized improvement review policy retain their existing scope. Engine choice is independent:
+Only-engine routing and task/turn pins remain strict.
 
-`GET /api/defaults/<project>` returns the project's task Only engine, L3 choice (with why it is unavailable,
-if it is), routing, the model choices on offer and each role's model/effort pair per engine with its
-setting key, default and engine-owned choices; `POST /api/defaults` saves one setting through
-the existing settings request/apply mechanism under project/registry locks. The machine-wide New
-tasks choice reads in `GET /api/overview` and saves through `POST /api/new-tasks`, operator only.
-Both writes accept the value the client showed as `expected` and refuse with 409 when the stored
-value differs at the moment the setting is applied, under the same lock, so a second window cannot silently overwrite a change it never saw.
-`route.pick_engine` tries a role's choice ahead of its routing tiers (CLI
-[model choices](CLI.md#model-choices) gives the precedence). The project Settings page
-applies its request immediately; CLI `alt project set` requests are applied on the daemon tick,
-independently of worker capacity. A conflicting pending request refuses another save until applied.
-A save while an L3 message waits for an engine retries it at once.
+Settings exposes one native Model/Effort pair per engine under **Models and effort · All projects**.
+The seam supplies names, exact IDs, inherited descriptions and supported effort levels. Each save
+compares the complete expected pair and atomically merges the new pair into machine settings;
+a stale write refuses instead of overwriting another window. `GET /api/model-defaults` returns
+pairs and existing overrides; `POST /api/model-defaults` writes `{engine, value, expected}`, with
+`model` and `effort` present in each pair (null means inherited). `POST /api/model-defaults/reset`
+clears one scoped override using `{id, expected}`. The affected pair is guarded while
+saving; other engines remain editable. Model changes preserve effort and vice versa. No browser
+model/effort cache or model-specific remembered effort is added.
 
-Settings exposes native model and effort dropdowns for the project coordinator, all new tasks and
-each project role/engine default. Committed selections save immediately; chat and quota shortcuts
-retain the dialog with the same engine-owned choices. The configuration seam supplies named model
-shortcuts, exact IDs and inheritance labels; the list establishes neither discovery nor account
-access. A role's engine-only choice inherits the project default before the engine default; a cleared
-project model inherits the engine default directly. Requested selection and last-reply observations
-stay separate. Custom IDs remain selectable and unknown access stays unverified. Known rejections
-retain the selection and explain routing fallback; shared quota never establishes model entitlement.
-Model-setting writes do not mutate Only engines or running tasks. Native L1 helpers inherit or override effort
-through their own engine controls; Altitude does not create helper workers or promise a uniform L1
-override.
+Existing project role and choice overrides remain stored and visible. A deliberate **Use global
+defaults** action clears that row's model and effort, preserving its engine/routing intent. Explicit
+routing models link to routing details; custom tiers remain editable with the existing `--routing`
+CLI option, not a new UI editor. Individual task pins remain outside this reset.
+Project Settings exposes engine preferences/routing; chat and quota shortcuts navigate to global
+Settings. Changing the engine in an old combined preference drops its engine-specific fields.
+The CLI retains reason-bearing project settings requests; these apply on a daemon tick, independently
+of worker capacity. A conflicting pending request refuses a save until applied.
+
+Fresh task dispatch records resolved `launch_model` and `launch_effort`. Message/resume keeps those
+saved values, including null, without re-resolving global defaults or copying observed provider values.
+L3 resolves each turn, including same-conversation resumes; a running turn keeps its launch choice.
+Inherited effort retains built-in behavior: native on Claude, High for Codex tasks and native
+for Codex chat/reviews. Ordinary reviews use an explicit global effort when set; otherwise they
+retain native effort rather than inheriting project task effort overrides. Explicit `native` requests no override. Unsupported explicit efforts refuse; Auto
+excludes engines that cannot accept an explicit level. Provider caps and model compatibility remain
+native decisions; effort failures do not cause application-side downgrading.
+
+Named model shortcuts are requests, not account discovery or verified entitlement. Unknown access
+stays unverified; known rejections retain the saved request and explain availability. Shared quota
+never establishes model access. Last-reply/task reported model and effort remain separate observations;
+missing reports stay unknown. Changing defaults updates no CLI configuration and migrates no session.
 
 Global role responsibilities live in the personas; project policy lives in the repository's
 instructions, with [AGENTS.md](../AGENTS.md) authoritative for Altitude. The shared engine boundary

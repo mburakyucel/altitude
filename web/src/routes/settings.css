@@ -49,12 +49,9 @@
 .default-field :disabled { opacity: .6; }
 .default-field [aria-disabled="true"] { opacity: .6; }
 .settings-model-row { padding: 16px; display: grid; gap: 12px; min-width: 0; }
-.role-model-settings, .model-other-fields { display: grid; gap: 10px; min-width: 0; }
+.model-other-fields { display: grid; gap: 10px; min-width: 0; }
 .model-other-fields label { display: grid; gap: 4px; min-width: 0; }
-.role-model-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
-.model-detail, .role-model-settings p { overflow-wrap: anywhere; }
-.role-model-settings a { text-decoration: underline; }
-.shell[data-phone] .role-model-fields { grid-template-columns: 1fr; }
+.model-detail { overflow-wrap: anywhere; }
 .settings-switch-row:hover { border-color: var(--border); background: var(--surface); }
 .settings-switch-row label { min-width: 0; cursor: pointer; }
 .settings-switch { position: relative; width: 44px; height: 26px; flex: none; appearance: none; border-radius: var(--radius-pill); background: var(--border); cursor: pointer; transition: background .15s; }
@@ -111,7 +108,7 @@ button.settings-row:disabled { cursor: default; opacity: .7; }
 .defaults-label { padding-top: 11px; }
 .phone-field-label { display: none; }
 .shell[data-phone] .phone-field-label { display: block; }
-.shell[data-phone] .defaults-table { grid-template-columns: 1fr; }
+.shell[data-phone] .defaults-table { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .shell[data-phone] .defaults-head { display: none; }
 .shell[data-phone] .defaults-label { grid-column: 1 / -1; padding-top: 4px; font-weight: 600; }
 .shell[data-phone] .settings-row:has(.settings-select) { flex-wrap: wrap; }

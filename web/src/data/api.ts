@@ -1663,7 +1663,49 @@ export function useSaveNewTasks() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: async (input: { value: Choice; expected: Choice }) => NewTasksSchema.parse(await post("/api/new-tasks", input)),
-    onSuccess: (result) => client.setQueryData<Overview>(["overview"], (old) => old && { ...old, new_tasks: result }),
+    onSuccess: (result) => { client.setQueryData<Overview>(["overview"], (old) => old && { ...old, new_tasks: result }); void client.invalidateQueries({ queryKey: ["model-defaults"] }); },
+  });
+}
+
+
+const ModelPairSchema = z.object({ model: z.string().nullable(), effort: z.string().nullable() });
+const ModelDefaultsSchema = z.object({
+  engines: z.array(z.object({ engine: z.string(), label: z.string(), value: ModelPairSchema,
+    models: z.array(z.object({ value: z.string(), label: z.string() })),
+    efforts: z.array(z.object({ value: z.string(), label: z.string() })),
+    default_model: z.string(), default_effort: z.string(), unavailable: z.string().nullable(),
+  })),
+  overrides: z.array(z.object({ id: z.string(), project: z.string().nullable(), label: z.string(),
+    engine: z.string().nullable(), model: z.string().nullable(), effort: z.string().nullable(), expected: z.unknown(), editable: z.boolean() })),
+});
+export type ModelDefaults = z.infer<typeof ModelDefaultsSchema>;
+export type ModelPair = z.infer<typeof ModelPairSchema>;
+export function useModelDefaults() {
+  return useQuery({ queryKey: ["model-defaults"], queryFn: async () => ModelDefaultsSchema.parse(await api("/api/model-defaults")), retry: false, refetchOnMount: "always" });
+}
+export function useSaveModelDefaults() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { engine: string; value: ModelPair; expected: ModelPair }) => ModelDefaultsSchema.parse(await post("/api/model-defaults", input)),
+    onMutate: () => client.cancelQueries({ queryKey: ["model-defaults"] }),
+    onSuccess: (result, input) => {
+      // A slower response from another engine must not roll back its independently saved pair.
+      client.setQueryData<ModelDefaults>(["model-defaults"], (old) => old ? { ...old,
+        engines: old.engines.map((row) => row.engine === input.engine ? result.engines.find((item) => item.engine === input.engine)! : row),
+      } : result);
+      void client.invalidateQueries({ queryKey: ["defaults"] });
+    },
+  });
+}
+export function useResetModelOverride() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { id: string; expected: unknown }) => ModelDefaultsSchema.parse(await post("/api/model-defaults/reset", input)),
+    onSuccess: (_result, input) => {
+      client.setQueryData<ModelDefaults>(["model-defaults"], (old) => old && { ...old, overrides: old.overrides.filter((row) => row.id !== input.id) });
+      void client.invalidateQueries({ queryKey: ["defaults"] });
+      void client.invalidateQueries({ queryKey: ["overview"] });
+    },
   });
 }
 
@@ -1715,7 +1757,7 @@ export function useSetDefault(project: string) {
     // Merge only the acknowledged field: a slower response to another field's save must not restore its old value.
     onSuccess: (result, { setting }) => client.setQueryData<ProjectDefaults>(["defaults", project], (old) => {
       if (!old) return result;
-      if (setting === "l3_choice") return { ...old, l3_choice: result.l3_choice, l3_unavailable: result.l3_unavailable };
+      if (setting === "l3_choice") { void client.invalidateQueries({ queryKey: ["model-defaults"] }); return { ...old, l3_choice: result.l3_choice, l3_unavailable: result.l3_unavailable }; }
       if ((PROJECT_FIELDS as readonly string[]).includes(setting)) return { ...old, [setting]: result[setting as typeof PROJECT_FIELDS[number]] };
       const saved = result.roles.flatMap((row) => row.engines).flatMap((e) => [e.model, e.effort]).find((f) => f.setting === setting);
       return { ...old, roles: old.roles.map((row) => ({ ...row, engines: row.engines.map((e) => ({

@@ -1,16 +1,9 @@
-import { expect, type APIRequestContext, type Page } from "@playwright/test";
+import { expect, type APIRequestContext } from "@playwright/test";
 import { test } from "./fixtures";
 import { fixtureProject } from "./fixture-data";
 import { walkthrough } from "./walkthrough";
 
-/*
- * Model choice and settings by destination (SPEC.md §3.6, §3.10, §3.15), walked at 390 and 1440 against the
- * disposable service: the L3 button under the message box, New tasks beside the quota (desktop rail, phone
- * Monitor and Work), the Models dialog's states, the Settings overview groups, a project's settings sections,
- * the Remove project dialog and the task's model facts. Choices are saved and read back through the real API;
- * only the save failure and the task's reported model are overlays. Engine and model names come from the API.
- */
-
+// Global pairs persist through the real API; route overlays only force boundary failures.
 type Choice = { engine?: string; model?: string | null; effort?: string } | null;
 type Options = {
   models: { engine: string; model: string | null; label: string }[];
@@ -31,349 +24,170 @@ function runnable(view: Options) {
   expect(models.length, "The walkthrough needs two listed models on one engine").toBeGreaterThan(1);
   return { engine, models, efforts: view.efforts[engine]! };
 }
-const starts = (label: string) => new RegExp(`^${label}`);
 
-function views(page: Page, phone: boolean, project: string) {
-  const main = page.getByRole("main");
-  return {
-    main,
-    l3: main.getByRole("button", { name: /^L3 model: / }),
-    // Desktop: the rail under the engine meters. Phone: the top of Work and Monitor.
-    newTasks: (phone ? main : page.locator(".rail")).getByRole("button", { name: /^New tasks · / }),
-    l3Dialog: page.getByRole("dialog", { name: `Models · L3 · ${project} only`, exact: true }),
-    tasksDialog: page.getByRole("dialog", { name: "Models · Tasks · All projects", exact: true }),
-  };
-}
+type Pair = { model: string | null; effort: string | null };
+type GlobalView = { engines: { engine: string; label: string; value: Pair;
+  models: { value: string; label: string }[]; efforts: { value: string; label: string }[];
+  default_model: string; default_effort: string; unavailable: string | null }[];
+  overrides: { id: string; label: string; expected: unknown }[] };
+const globalView = async (request: APIRequestContext): Promise<GlobalView> => (await request.get("/api/model-defaults")).json();
+const pair = async (request: APIRequestContext, engine: string) => (await globalView(request)).engines.find((row) => row.engine === engine)!.value;
+const key = (engine: string, model: string) => JSON.stringify([engine, model]);
 
-test("Models: closed controls, L3 and Tasks tabs, Other model, saving, failure, changed elsewhere, Use and Back to Auto", async ({ page, request }, info) => {
-  const project = await fixtureProject(request);
-  const phone = info.project.name === "phone";
+test("global model and effort pairs: named choices, independent saves, Native and inheritance", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
-  const v = views(page, phone, project.name);
-  const view = await options(request, project.name);
-  const { engine, models: [first, second], efforts } = runnable(view);
-  const top = efforts.at(-1)!;
-  const high = efforts.find((e) => e.value === "high")!;
-  const tab = (dialog: typeof v.l3Dialog, name: "L3" | "Tasks") => dialog.getByRole("tab", { name: starts(name) });
-  const work = `${project.path}?tab=work`;
-
-  await walk.open(project.path);
-  await walk.state("01-closed-composer-l3", {
-    visible: [v.l3, ...(phone ? [] : [v.newTasks])], hidden: [v.l3Dialog, v.tasksDialog, ...(phone ? [v.newTasks] : [])],
-  });
-  await expect(v.l3).toHaveText("L3 · Auto");
-  if (!phone) await expect(v.newTasks).toHaveText("New tasks · Auto›");
-
-  await walk.state("02-open-on-l3", {
-    action: () => v.l3.click(),
-    visible: [v.l3Dialog, v.l3Dialog.getByText(`Selected: Auto · who answers you in ${project.name}'s chat.`), v.l3Dialog.getByText("Applies from L3's next reply.", { exact: false })],
-    hidden: [v.l3Dialog.getByRole("button", { name: "Back to Auto" }), v.l3Dialog.getByRole("alert")],
-  });
-  await expect(tab(v.l3Dialog, "L3")).toHaveAttribute("aria-selected", "true");
-  await expect(v.l3Dialog.getByRole("radio", { name: /^Auto/ })).toBeFocused();
-  await expect(v.l3Dialog.getByRole("button", { name: `Use for L3 in ${project.name}`, exact: true })).toBeDisabled();
-
-  // One draft belongs to the open tab: switching tabs drops it.
-  await v.l3Dialog.getByRole("radio", { name: starts(second!.label) }).check();
-  await expect(v.l3Dialog.getByRole("button", { name: `Use for L3 in ${project.name}`, exact: true })).toBeEnabled();
-  await tab(v.l3Dialog, "L3").focus();
-  await walk.state("03-tab-switch-to-tasks-drops-draft", {
-    action: () => page.keyboard.press("ArrowRight"),
-    visible: [v.tasksDialog, v.tasksDialog.getByText("For one task, tell L3:", { exact: false })], hidden: [v.l3Dialog],
-  });
-  await expect(tab(v.tasksDialog, "Tasks")).toBeFocused();
-  await expect(v.tasksDialog.getByRole("radio", { name: /^Auto/ })).toBeChecked();
-  await walk.state("04-tab-switch-back-to-l3", {
-    action: () => page.keyboard.press("ArrowLeft"), visible: [v.l3Dialog], hidden: [v.tasksDialog],
-  });
-  await expect(v.l3Dialog.getByRole("radio", { name: /^Auto/ })).toBeChecked();
-  await expect(v.l3Dialog.getByRole("radio", { name: starts(second!.label) })).not.toBeChecked();
-
-  await v.l3Dialog.getByRole("radio", { name: starts(second!.label) }).check();
-  await walk.state("05-l3-used", {
-    action: () => v.l3Dialog.getByRole("button", { name: `Use for L3 in ${project.name}`, exact: true }).click(),
-    visible: [v.l3], hidden: [v.l3Dialog],
-  });
-  await expect(v.l3).toHaveAccessibleName(`L3 model: ${second!.label}`);
-  expect((await options(request, project.name)).l3_choice).toEqual({ engine, model: second!.model });
-
-  if (phone) await walk.open(work);
-  await walk.state("06-closed-new-tasks", { visible: [v.newTasks], hidden: [v.tasksDialog] });
-  await expect(v.newTasks).toHaveText("New tasks · Auto›");
-  await walk.state("07-open-on-tasks", {
-    action: () => v.newTasks.click(),
-    visible: [v.tasksDialog, v.tasksDialog.getByText("Selected: Auto · every project; tasks that start from now, including queued ones. Started tasks keep theirs.")],
-    hidden: [v.tasksDialog.getByRole("button", { name: "Back to Auto" })],
-  });
-  await expect(tab(v.tasksDialog, "Tasks")).toHaveAttribute("aria-selected", "true");
-
-  const use = v.tasksDialog.getByRole("button", { name: "Use for all new tasks", exact: true });
-  const modelId = v.tasksDialog.getByRole("textbox", { name: "Model id" });
-  await v.tasksDialog.getByRole("radio", { name: "Other model…" }).check();
-  await expect(v.tasksDialog.getByRole("combobox", { name: "Engine" })).toHaveValue(engine);
-  await expect(use).toBeDisabled();
-  await modelId.fill("fixture model");
-  await expect(use).toBeDisabled();
-  await modelId.fill("fixture-model-next");
-  await walk.state("08-other-model-typed", {
-    visible: [v.tasksDialog.getByRole("combobox", { name: "Engine" }), modelId, v.tasksDialog.getByText(`When fixture-model-next · ${view.engines[0]!.label} is unavailable, each project's Auto picks instead.`)],
-    hidden: [v.tasksDialog.getByRole("alert")],
-  });
-  await expect(use).toBeEnabled();
-  await v.tasksDialog.getByRole("radio", { name: high.label, exact: true }).check();
-
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => { release = resolve; });
-  let refuse = true;
-  await page.route("**/api/new-tasks", async (route) => {
-    if (!refuse) return route.fallback();
-    await gate;
-    return route.fulfill({ status: 400, json: { error: "The fixture refuses this model." } });
-  });
-  try {
-    await walk.state("09-saving", {
-      action: () => use.click(),
-      visible: [v.tasksDialog.getByRole("button", { name: "Saving…", exact: true })], hidden: [v.tasksDialog.getByRole("alert")],
-    });
-    await expect(v.tasksDialog.getByRole("button", { name: "Saving…", exact: true })).toBeDisabled();
-    await expect(tab(v.tasksDialog, "L3")).toBeDisabled();
-    await expect(modelId).toBeDisabled();
-    release();
-    await walk.state("10-save-failed-retry", {
-      visible: [v.tasksDialog.getByRole("alert").filter({ hasText: "The fixture refuses this model." }), v.tasksDialog.getByRole("button", { name: "Retry", exact: true })],
-      hidden: [v.tasksDialog.getByRole("button", { name: "Saving…" })],
-    });
-    await expect(modelId).toHaveValue("fixture-model-next");
-    expect(await newTasks(request)).toBeNull();
-
-    // Another window saves New tasks meanwhile; Retry then refuses instead of overwriting it.
-    refuse = false;
-    const elsewhere = { engine, model: second!.model!, effort: high.value };
-    expect((await request.post("/api/new-tasks", { data: { value: elsewhere, expected: null } })).ok()).toBe(true);
-    await walk.state("11-changed-elsewhere-reload", {
-      action: () => v.tasksDialog.getByRole("button", { name: "Retry", exact: true }).click(),
-      visible: [v.tasksDialog.getByRole("alert").filter({ hasText: "Changed in another window." }), v.tasksDialog.getByRole("button", { name: "Reload", exact: true })],
-      hidden: [v.tasksDialog.getByRole("button", { name: "Retry" })],
-    });
-    expect(await newTasks(request)).toEqual(elsewhere);
-    await walk.state("12-reloaded-current-choice", {
-      action: () => v.tasksDialog.getByRole("button", { name: "Reload", exact: true }).click(),
-      visible: [v.tasksDialog.getByText(`Selected: ${second!.label} · ${high.label}`), v.tasksDialog.getByRole("button", { name: "Back to Auto" })],
-      hidden: [v.tasksDialog.getByRole("alert"), modelId],
-    });
-    await expect(v.tasksDialog.getByRole("radio", { name: starts(second!.label) })).toBeChecked();
-    await expect(v.tasksDialog.getByRole("radio", { name: high.label, exact: true })).toBeChecked();
-  } finally { release(); }
-
-  await v.tasksDialog.getByRole("radio", { name: starts(first!.label) }).check();
-  await v.tasksDialog.getByRole("radio", { name: top.label, exact: true }).check();
-  await walk.state("13-closed-after-use", { action: () => use.click(), visible: [v.newTasks], hidden: [v.tasksDialog] });
-  await expect(v.newTasks).toHaveText(`New tasks · ${first!.label} · ${top.label}${phone ? " · every project" : ""}›`);
-  expect(await newTasks(request)).toEqual({ engine, model: first!.model, effort: top.value });
-
-  await v.newTasks.click();
-  await walk.state("14-back-to-auto", {
-    action: () => v.tasksDialog.getByRole("button", { name: "Back to Auto", exact: true }).click(),
-    visible: [v.newTasks], hidden: [v.tasksDialog],
-  });
-  await expect(v.newTasks).toHaveText("New tasks · Auto›");
-  expect(await newTasks(request)).toBeNull();
-
-  // Outside a project only the Tasks tab exists; Settings now uses direct native selects.
-  await walk.open("/monitor");
-  const opener = v.newTasks;
-  await walk.state("15-tasks-only-outside-a-project", {
-    action: () => opener.click(), visible: [v.tasksDialog], hidden: [v.tasksDialog.getByRole("tablist")],
-  });
-  await walk.state("16-closed-with-escape", { action: () => page.keyboard.press("Escape"), visible: [opener], hidden: [v.tasksDialog] });
-  await expect(opener).toBeFocused();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-});
-
-test("Settings by destination: the menu, the overview groups, every project and one project's sections", async ({ page, request }, info) => {
-  const project = await fixtureProject(request);
-  const walk = walkthrough(page, info);
-  const main = page.getByRole("main");
-  const menu = page.getByRole("menu", { name: "Project actions" });
-  const group = (name: string) => main.getByRole("region", { name, exact: true });
-  await walk.open(project.path);
-  await walk.state("01-menu-without-remove", {
-    action: () => page.getByRole("button", { name: "More actions" }).click(),
-    visible: [menu.getByRole("menuitem", { name: "Project settings…", exact: true }), menu.getByRole("menuitem", { name: /^Setup: / }),
-      menu.getByRole("menuitem", { name: "Reset L3 conversation…", exact: true }), menu.getByRole("menuitem", { name: "All settings…", exact: true })],
-    hidden: [menu.getByText(/Remove/)],
-  });
-  await walk.state("02-settings-overview", {
-    action: () => menu.getByRole("menuitem", { name: "All settings…", exact: true }).click(),
-    visible: [main.getByRole("link", { name: /Your name|Not set/ }).first(), group("This project"), group("Models"), group("Projects"), group("Voice"),
-      group("Devices and access"), group("Coding agents")],
-    hidden: [menu, main.getByRole("heading", { name: "This machine" }), main.getByRole("link", { name: /^Projects folder / })],
-  });
-  await expect(main.getByRole("link").first()).toHaveAttribute("href", "/settings/name");
-  await expect(group("This project").getByRole("link")).toHaveAttribute("href", `/settings/projects/${project.name}`);
-  await expect(group("Models").getByRole("combobox", { name: "Model", exact: true })).toHaveValue("");
-  await expect(group("This project").getByRole("combobox", { name: "Model", exact: true })).toHaveValue("");
-  await expect(group("Devices and access").getByRole("link", { name: /^Devices / })).toHaveAttribute("href", "/settings/devices");
-  await expect(group("Devices and access").getByRole("switch", { name: /Terminal/ })).toBeVisible();
-  await expect(group("Devices and access").getByText(/ · HTTPS off$/)).toBeVisible();
-  await expect(group("Coding agents").getByRole("switch", { name: /Validation runs/ })).toBeVisible();
-  await expect(group("Coding agents").getByRole("link", { name: /^Prerequisites / })).toBeVisible();
-  await expect(group("Coding agents").getByRole("link", { name: /^Incident reports / })).toBeVisible();
-
-  await walk.state("03-all-projects", {
-    action: () => group("Projects").getByRole("link", { name: /^All projects / }).click(),
-    visible: [main.getByRole("link", { name: project.name, exact: true }), main.getByRole("link", { name: /^Projects folder / })],
-    hidden: [group("Models")],
-  });
-  await walk.state("04-project-sections", {
-    action: () => main.getByRole("link", { name: project.name, exact: true }).click(),
-    visible: [group("L3"), group("Auto defaults"), group("Routing"), group("Project"),
-      group("Auto defaults").getByRole("group", { name: /^Tasks · / }).first(), group("Auto defaults").getByRole("group", { name: /^L3 · / }).first(),
-      group("Routing").getByRole("combobox", { name: "Tasks routing" }),
-      group("Project").getByRole("link", { name: /^Setup / }), group("Project").getByRole("button", { name: "Remove…", exact: true })],
-    hidden: [main.getByRole("alert"), group("Routing").getByRole("combobox", { name: "L3 routing" })],
-  });
-  await expect(group("Project").getByRole("link", { name: /^Setup / })).toHaveAttribute("href", `/projects/${project.name}?setup=1`);
-  const defaults = await options(request, project.name);
-  for (const row of ["Tasks", "L3"]) for (const engine of defaults.engines) {
-    const fields = group("Auto defaults").getByRole("group", { name: `${row} · ${engine.label}`, exact: true });
-    await expect(fields.getByLabel("Model")).toBeVisible();
-    await expect(fields.getByLabel("Effort")).toBeVisible();
+  const initial = await globalView(request);
+  await walk.open("/settings");
+  const section = page.getByRole("region", { name: "Models and effort · All projects", exact: true });
+  await walk.state("01-global-inherited-pairs", { visible: [section], hidden: [section.getByRole("alert")] });
+  for (const row of initial.engines) {
+    const model = section.getByRole("combobox", { name: `${row.label} model`, exact: true });
+    const effort = section.getByRole("combobox", { name: `${row.label} effort`, exact: true });
+    await expect(model).toHaveValue(""); await expect(effort).toHaveValue("");
+    for (const item of row.models) {
+      await model.selectOption(key(row.engine, item.value));
+      await expect.poll(() => pair(request, row.engine)).toEqual({ model: item.value, effort: null });
+    }
+    const selected = row.models.at(-1)!;
+    await effort.selectOption("high");
+    await expect.poll(() => pair(request, row.engine)).toEqual({ model: selected.value, effort: "high" });
+    await model.selectOption(key(row.engine, row.models[0]!.value));
+    await expect.poll(() => pair(request, row.engine)).toEqual({ model: row.models[0]!.value, effort: "high" });
   }
-  await walk.state("05-direct-l3-dropdown", {
-    visible: [group("L3").getByRole("combobox", { name: "Model", exact: true })],
-    hidden: [page.getByRole("dialog", { name: `Models · L3 · ${project.name} only`, exact: true })],
-  });
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-});
-
-test("Settings model dropdowns: named choices, separate scopes, custom IDs, pending, denied and concurrent saves", async ({ page, request }, info) => {
-  const project = await fixtureProject(request);
-  const walk = walkthrough(page, info);
-  const view = await options(request, project.name);
-  const { engine, models: [first, second] } = runnable(view);
-  const key = (choice: NonNullable<Choice>) => JSON.stringify([choice.engine, choice.model ?? null]);
-  const tasks = page.getByRole("group", { name: "New tasks · All projects", exact: true });
-  const model = tasks.getByRole("combobox", { name: "Model", exact: true });
-  const effort = tasks.getByRole("combobox", { name: "Effort", exact: true });
-  const id = tasks.getByRole("textbox", { name: "Model ID", exact: true });
-  const l3 = page.getByRole("group", { name: `L3 · ${project.name}`, exact: true });
-
-  await walk.open(project.path);
-  await page.getByRole("button", { name: "More actions" }).click();
-  await page.getByRole("menuitem", { name: "All settings…", exact: true }).click();
-  await walk.state("01-settings-native-dropdowns", { visible: [model, effort, l3.getByRole("combobox", { name: "Model", exact: true })], hidden: [id] });
-  // Every catalog entry is directly available, including named options on an engine not running this fixture.
-  for (const item of view.models) await expect(model.locator("option").filter({ hasText: item.label })).toHaveCount(1);
-  const named = view.models.filter((item) => item.model);
-  for (const item of named) {
-    await model.selectOption(key(item));
-    await expect.poll(() => newTasks(request)).toEqual({ engine: item.engine, model: item.model });
-    await expect(tasks).toContainText(`${item.model} · Access unverified`);
-  }
-  await tasks.scrollIntoViewIfNeeded();
-  await walk.state("02-explicit-model-access-unverified", { visible: [model, tasks.getByText(/Access unverified/)], hidden: [id] });
-  await model.selectOption(key(first!));
-  await expect.poll(() => newTasks(request)).toEqual({ engine, model: first!.model });
-  await l3.getByRole("combobox", { name: "Model", exact: true }).selectOption(key(second!));
-  await expect.poll(async () => (await options(request, project.name)).l3_choice).toEqual({ engine, model: second!.model });
-  expect(await newTasks(request)).toEqual({ engine, model: first!.model });
-
-  await model.selectOption("other");
-  await id.fill("");
-  await effort.focus();
-  await expect(id).toBeHidden();
-  expect(await newTasks(request)).toEqual({ engine, model: first!.model });
-  await model.selectOption("other");
-  await id.fill("invalid model");
-  await id.press("Enter");
-  await walk.state("03-custom-invalid-id", { visible: [id, tasks.getByRole("alert").filter({ hasText: "without spaces" })], hidden: [] });
-  expect(await newTasks(request)).toEqual({ engine, model: first!.model });
-  await id.fill("fixture-direct-model");
-  await tasks.getByRole("combobox", { name: "Engine", exact: true }).selectOption(engine);
-  expect(await newTasks(request)).toEqual({ engine, model: first!.model });
-  await id.focus();
-  await id.press("Enter");
-  await expect.poll(() => newTasks(request)).toEqual({ engine, model: "fixture-direct-model" });
-  await walk.state("04-custom-saved-and-fields-removed", { visible: [model], hidden: [id, tasks.getByRole("alert")] });
-  await expect(model).toBeFocused();
-
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => { release = resolve; });
-  await page.route("**/api/new-tasks", async (route) => {
-    await gate;
-    await route.fulfill({ status: 403, json: { error: "Model selection denied for this fixture." } });
-  }, { times: 1 });
-  try {
-    await model.selectOption(key(second!));
-    await walk.state("05-native-select-saving-focus-retained", { visible: [tasks.getByText("Saving…", { exact: true })], hidden: [tasks.getByRole("alert")] });
-    await expect(model).toHaveAttribute("aria-disabled", "true");
-    await model.focus();
-    await page.keyboard.press("ArrowDown");
-    await expect(model).toHaveValue(key(second!));
-    await page.keyboard.press("Tab");
-    await expect(effort).toBeFocused();
-  } finally { release(); }
-  await walk.state("06-denied-restores-saved-choice", { visible: [tasks.getByRole("alert").filter({ hasText: "denied" }), tasks.getByRole("button", { name: "Retry save" })], hidden: [tasks.getByText("Saving…", { exact: true })] });
-  await expect(model).toHaveValue(key({ engine, model: "fixture-direct-model" }));
-  await tasks.getByRole("button", { name: "Retry save" }).click();
-  await expect.poll(() => newTasks(request)).toEqual({ engine, model: second!.model });
-
-  await model.selectOption("other");
-  await id.fill("fixture-stale-model");
-  expect((await request.post("/api/new-tasks", { data: { value: { engine, model: first!.model }, expected: { engine, model: second!.model } } })).ok()).toBe(true);
-  await id.press("Enter");
-  await walk.state("07-stale-draft-conflict", { visible: [tasks.getByRole("alert").filter({ hasText: "Changed in another window." }), tasks.getByRole("button", { name: "Reload" })], hidden: [] });
-  await tasks.getByRole("button", { name: "Reload" }).click();
-  await expect(model).toHaveValue(key(first!));
-  await walk.state("08-reload-removes-stale-custom-fields", { visible: [model], hidden: [id, tasks.getByRole("alert")] });
-
-  await walk.open(`/settings/projects/${project.name}`);
-  const fields = page.getByRole("group", { name: `Tasks · ${view.engines[0]!.label}`, exact: true });
-  const defaultModel = fields.getByRole("combobox", { name: "Model", exact: true });
-  await defaultModel.selectOption(key(second!));
-  await expect(defaultModel).toHaveValue(key(second!));
-  await expect(fields.getByText("Saved.", { exact: true })).toBeVisible();
-  await walk.state("09-project-default-native-dropdown", { visible: [defaultModel, l3.getByRole("combobox", { name: "Model", exact: true })], hidden: [fields.getByRole("textbox")] });
+  await walk.state("02-explicit-pairs", { visible: [section, section.getByText(/Access unverified/).first()], hidden: [section.getByRole("alert")] });
   await page.reload();
-  await expect(defaultModel).toHaveValue(key(second!));
-  await expect(l3.getByRole("combobox", { name: "Model", exact: true })).toHaveValue(key(second!));
-  await walk.open(project.path);
-  await expect(page.getByRole("main").getByRole("button", { name: /^L3 model:/ })).toHaveAccessibleName(`L3 model: ${second!.label}`);
+  for (const row of initial.engines) {
+    await expect(section.getByRole("combobox", { name: `${row.label} model`, exact: true })).toHaveValue(key(row.engine, row.models[0]!.value));
+    await expect(section.getByRole("combobox", { name: `${row.label} effort`, exact: true })).toHaveValue("high");
+  }
+  const row = initial.engines[0]!;
+  const effort = section.getByRole("combobox", { name: `${row.label} effort`, exact: true });
+  await effort.selectOption("native");
+  await expect.poll(() => pair(request, row.engine)).toEqual({ model: row.models[0]!.value, effort: "native" });
+  await walk.state("03-explicit-native", { visible: [section.getByText("Provider chooses effort", { exact: true })], hidden: [section.getByRole("alert")] });
+  const other = initial.engines[1]!;
+  expect(await pair(request, other.engine)).toEqual({ model: other.models[0]!.value, effort: "high" });
+  await section.getByRole("combobox", { name: `${row.label} model`, exact: true }).selectOption("");
+  await expect.poll(() => pair(request, row.engine)).toEqual({ model: null, effort: "native" });
+  await effort.selectOption("");
+  await expect.poll(() => pair(request, row.engine)).toEqual({ model: null, effort: null });
+  await walk.state("04-inheritance-restored", { visible: [section.getByText(row.default_effort, { exact: true })], hidden: [section.getByRole("alert")] });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
-test("Settings model reading: loading, unavailable and retry after denied reading", async ({ page, request }, info) => {
-  const project = await fixtureProject(request);
-  const view = await options(request, project.name);
-  const { engine, models: [first] } = runnable(view);
+test("global pairs: custom ID, atomic pending pair, denied save and stale draft", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
-  const models = page.getByRole("main").getByRole("region", { name: "Models", exact: true });
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => { release = resolve; });
-  await page.route("**/api/overview", async (route) => {
-    await gate;
-    const response = await route.fetch();
-    const data = await response.json();
-    data.new_tasks.value = { engine, model: first!.model };
-    data.new_tasks.unavailable = "Fixture account is unavailable.";
-    await route.fulfill({ response, json: data });
+  const initial = await globalView(request); const row = initial.engines[0]!, other = initial.engines[1]!;
+  const group = page.getByRole("group", { name: row.label, exact: true });
+  const model = group.getByRole("combobox", { name: `${row.label} model`, exact: true });
+  const effort = group.getByRole("combobox", { name: `${row.label} effort`, exact: true });
+  const id = group.getByRole("textbox", { name: "Model ID", exact: true });
+  await walk.open("/settings");
+  await model.selectOption("other"); await id.fill("invalid model"); await id.press("Enter");
+  await walk.state("01-invalid-custom", { visible: [id, group.getByRole("alert").filter({ hasText: "without spaces" })], hidden: [] });
+  await id.fill("fictional-model"); await id.press("Enter");
+  await expect.poll(() => pair(request, row.engine)).toEqual({ model: "fictional-model", effort: null });
+  await walk.state("02-custom-saved", { visible: [model], hidden: [id, group.getByRole("alert")] });
+  await expect(model).toBeFocused();
+  let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/model-defaults", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    await gate; await route.fulfill({ status: 403, json: { error: "Fixture selection denied." } });
   });
+  try {
+    await effort.selectOption("high");
+    await expect(model).toHaveAttribute("aria-disabled", "true"); await expect(effort).toHaveAttribute("aria-disabled", "true");
+    await expect(page.getByRole("combobox", { name: `${other.label} model`, exact: true })).toHaveAttribute("aria-disabled", "false");
+    await walk.state("03-pair-pending", { visible: [group.getByRole("status", { name: "Saving…", exact: true })], hidden: [group.getByRole("alert")] });
+    release();
+    await walk.state("04-denied-restores-pair", { visible: [group.getByRole("alert").filter({ hasText: "Fixture selection denied." })], hidden: [group.getByRole("button", { name: "Retry save" })] });
+    await expect(effort).toHaveValue(""); expect(await pair(request, row.engine)).toEqual({ model: "fictional-model", effort: null });
+  } finally { release(); await page.unroute("**/api/model-defaults"); }
+  await model.selectOption("other"); await id.fill("stale-model");
+  expect((await request.post("/api/model-defaults", { data: { engine: row.engine, value: { model: "elsewhere-model", effort: "high" }, expected: { model: "fictional-model", effort: null } } })).ok()).toBe(true);
+  await id.press("Enter");
+  await walk.state("05-stale-pair-refused", { visible: [id, group.getByRole("alert").filter({ hasText: "Changed in another window." })], hidden: [] });
+  await group.getByRole("button", { name: "Reload", exact: true }).click();
+  await expect(model).toHaveValue(key(row.engine, "elsewhere-model")); await expect(effort).toHaveValue("high");
+  await walk.state("06-reload-clears-stale-draft", { visible: [model], hidden: [id, group.getByRole("alert")] });
+  await model.selectOption("other"); await id.fill("retry-custom-model");
+  let finish!: () => void; const pending = new Promise<void>((resolve) => { finish = resolve; });
+  await page.route("**/api/model-defaults", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    await pending; await route.fulfill({ status: 503, json: { error: "Fixture custom save failed." } });
+  });
+  try {
+    await id.press("Enter");
+    await walk.state("07-custom-pending", { visible: [id, group.getByRole("status", { name: "Saving…", exact: true })], hidden: [group.getByRole("alert")] });
+    await expect(id).toHaveAttribute("readonly", "");
+    finish();
+    await walk.state("08-custom-failed-draft-retained", { visible: [id, group.getByRole("alert").filter({ hasText: "Fixture custom save failed." })], hidden: [group.getByRole("status", { name: "Saving…", exact: true })] });
+    await expect(id).toHaveValue("retry-custom-model");
+    expect(await pair(request, row.engine)).toEqual({ model: "elsewhere-model", effort: "high" });
+  } finally { finish(); await page.unroute("**/api/model-defaults"); }
+  await group.getByRole("button", { name: "Retry save" }).click();
+  await expect.poll(() => pair(request, row.engine)).toEqual({ model: "retry-custom-model", effort: "high" });
+  await walk.state("09-custom-retry-success", { visible: [model], hidden: [id, group.getByRole("alert")] });
+});
+
+test("global pair read states and recoverable save failure", async ({ page, request }, info) => {
+  const walk = walkthrough(page, info); const row = (await globalView(request)).engines[0]!;
+  const section = page.getByRole("region", { name: "Models and effort · All projects", exact: true });
+  const model = section.getByRole("combobox", { name: `${row.label} model`, exact: true });
+  let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/model-defaults", async (route) => { await gate; await route.fulfill({ status: 503, json: { error: "Fixture reading unavailable." } }); });
   try {
     await walk.open("/settings");
-    await walk.state("01-loading-models", { visible: [models.getByText("Loading models…", { exact: true })], hidden: [models.getByRole("combobox", { name: "Model", exact: true })] });
-  } finally { release(); }
-  await walk.state("02-unavailable-keeps-selected-request", { visible: [models.getByText("Unavailable · Auto meanwhile: Fixture account is unavailable.")], hidden: [models.getByText("Loading models…", { exact: true })] });
-  await expect(models.getByRole("combobox", { name: "Model", exact: true })).toHaveValue(JSON.stringify([engine, first!.model]));
-  await page.unroute("**/api/overview");
-  await page.route("**/api/overview", (route) => route.fulfill({ status: 403, json: { error: "Fixture reading denied." } }));
+    await walk.state("01-loading", { visible: [section.getByRole("status", { name: "Loading models…", exact: true })], hidden: [model] });
+    release();
+    await walk.state("02-read-error", { visible: [section.getByRole("alert")], hidden: [model] });
+  } finally { release(); await page.unroute("**/api/model-defaults"); }
+  await section.getByRole("button", { name: "Retry", exact: true }).click();
+  await walk.state("03-read-recovered", { visible: [model], hidden: [section.getByRole("alert")] });
+  await page.route("**/api/model-defaults", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    await route.fulfill({ status: 503, json: { error: "Fixture save unavailable." } });
+  });
+  await model.selectOption(key(row.engine, row.models[0]!.value));
+  await walk.state("04-save-error", { visible: [section.getByRole("alert"), section.getByRole("button", { name: "Retry save" })], hidden: [] });
+  await expect(model).toHaveValue("");
+  await page.unroute("**/api/model-defaults"); await section.getByRole("button", { name: "Retry save" }).click();
+  await expect.poll(() => pair(request, row.engine)).toEqual({ model: row.models[0]!.value, effort: null });
+  await walk.state("05-save-recovered", { visible: [model], hidden: [section.getByRole("alert")] });
+  await page.route("**/api/model-defaults", async (route) => {
+    const response = await route.fetch(); const data = await response.json(); data.engines[0].unavailable = "Fixture model access rejected.";
+    await route.fulfill({ response, json: data });
+  });
   await page.reload();
-  // The shared overview query exhausts its normal read retries before exposing the error.
-  await expect(models.getByRole("alert")).toBeVisible({ timeout: 15_000 });
-  await walk.state("03-model-read-error", { visible: [models.getByRole("alert"), models.getByRole("button", { name: "Retry", exact: true })], hidden: [models.getByRole("combobox", { name: "Model", exact: true })] });
-  await page.unroute("**/api/overview");
-  await models.getByRole("button", { name: "Retry", exact: true }).click();
-  await walk.state("04-model-read-recovered", { visible: [models.getByRole("combobox", { name: "Model", exact: true })], hidden: [models.getByRole("alert")] });
+  await walk.state("06-unavailable-keeps-request", { visible: [section.getByText("Unavailable · Fixture model access rejected.")], hidden: [section.getByRole("alert")] });
+  await expect(model).toHaveValue(key(row.engine, row.models[0]!.value));
+});
+
+test("explicit existing override clears without changing engine or global pair", async ({ page, request }, info) => {
+  const walk = walkthrough(page, info); const project = await fixtureProject(request);
+  const row = (await globalView(request)).engines[0]!;
+  const value = { engine: row.engine, model: "existing-model", effort: "high" };
+  expect((await request.post("/api/new-tasks", { data: { value, expected: null } })).ok()).toBe(true);
+  await walk.open("/settings");
+  const override = page.getByRole("group", { name: "New tasks · All projects", exact: true });
+  await walk.state("01-existing-override", { visible: [override, override.getByRole("button", { name: "Use global defaults" })], hidden: [] });
+  let finish!: () => void; const pending = new Promise<void>((resolve) => { finish = resolve; });
+  await page.route("**/api/model-defaults/reset", async (route) => {
+    await pending; await route.fulfill({ status: 503, json: { error: "Fixture reset failed." } });
+  });
+  try {
+    await override.getByRole("button", { name: "Use global defaults" }).click();
+    await walk.state("02-reset-pending", { visible: [override, override.getByRole("status", { name: "Saving…", exact: true })], hidden: [override.getByRole("alert")] });
+    finish();
+    await walk.state("03-reset-failed-keeps-override", { visible: [override, override.getByRole("alert")], hidden: [override.getByRole("status", { name: "Saving…", exact: true })] });
+    expect(await newTasks(request)).toEqual(value);
+  } finally { finish(); await page.unroute("**/api/model-defaults/reset"); }
+  await override.getByRole("button", { name: "Retry save" }).click();
+  await expect.poll(() => newTasks(request)).toEqual({ engine: row.engine });
+  await walk.state("04-override-removed", { visible: [page.getByRole("heading", { name: "Models and effort · All projects" })], hidden: [override] });
+  expect(await pair(request, row.engine)).toEqual({ model: null, effort: null });
+  await walk.open(`/settings/projects/${project.name}`);
+  await walk.state("05-project-keeps-routing", { visible: [page.getByRole("combobox", { name: "Coordinator engine" }), page.getByRole("combobox", { name: "Tasks routing" })], hidden: [page.getByRole("heading", { name: "Auto defaults" })] });
 });
 
 test.describe("Remove project", () => {

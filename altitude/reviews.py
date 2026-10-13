@@ -585,7 +585,7 @@ def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None,
             S.save_task(project, task)
             return _project_review(review, task, None)
         # Reserve capacity before export/launch. Cancellation retains this reservation until termination is known.
-        review.update(state="running", started_at=S.now(), generation=task.get("agent_id"))
+        review.update(state="running", started_at=S.now(), generation=task.get("agent_id"), effort=choice.get("effort"))
         S.save_task(project, task)
         with _inflight_lock:
             _inflight.add(key)
@@ -624,7 +624,7 @@ def _run(project, slug, review_id, *, actor, expected_attempt, context_ids=None,
         prompt = review_prompt(snapshot, review["focus"], review.get("subject", "changes"))
         invoked = True
         result = engines.review(prompt, engine=review["engine"], snapshot=snapshot, runtime=runtime,
-                                model=review["model"], images=(identity.get("design") or {}).get("images", []),
+                                model=review["model"], effort=review.get("effort"), images=(identity.get("design") or {}).get("images", []),
                                 on_start=started, on_wait=waiting)
     except (OSError, ValueError, T.TransitionError, subprocess.SubprocessError) as exc:
         saved = _find(_load(project, slug), review_id)

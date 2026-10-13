@@ -3020,7 +3020,7 @@ def _review_input(engine: str, prompt: str, images: list[tuple[str, Path]]) -> s
 
 
 def _review_command(engine: str, snapshot: Path, runtime: Path, model: str | None,
-                    images: list[tuple[str, Path]] = ()) -> list[str]:
+                    images: list[tuple[str, Path]] = (), effort: str | None = None) -> list[str]:
     adapter = (f"import sys; sys.path.insert(0, {str(config.SOURCE.resolve())!r}); "
                f"from altitude.engines import review_mcp; review_mcp({str(snapshot)!r}, {str(_review_served(runtime))!r})")
     server = {"command": sys.executable, "args": ["-I", "-c", adapter]}
@@ -3032,7 +3032,7 @@ def _review_command(engine: str, snapshot: Path, runtime: Path, model: str | Non
                 "--strict-mcp-config", "--mcp-config", json.dumps({"mcpServers": {"captured": server}}),
                 "--tools", "", "--allowedTools", "mcp__captured__captured_input", "--permission-mode", "dontAsk",
                 "--permission-prompts", "none", "--disable-slash-commands", "--no-chrome", "--no-session-persistence",
-                "--settings", "{}", *(["--model", model] if model else [])]
+                "--settings", "{}", *(["--model", model] if model else []), *(["--effort", effort] if effort else [])]
     executable = Path(shutil.which(config.CODEX_BIN) or config.CODEX_BIN)
     stat = executable.stat()
     _, features, _ = _review_native(engine, str(executable), stat.st_mtime_ns, stat.st_size)
@@ -3052,6 +3052,7 @@ def _review_command(engine: str, snapshot: Path, runtime: Path, model: str | Non
     return [config.CODEX_BIN, "exec", "--json", "--strict-config", "--ignore-user-config", "--ignore-rules",
             "--ephemeral", "--skip-git-repo-check", "-C", str(runtime), *(["-m", model] if model else []),
             *(f"--image={path}" for _, path in images),
+            *(["-c", f'model_reasoning_effort="{effort}"'] if effort else []),
             *(arg for setting in settings for arg in ("-c", setting)), "-"]
 
 
@@ -3262,7 +3263,7 @@ def _review_diagnostics(stderr: _BoundedRawCapture, *, exit_status=None, stdout_
 
 @config.admitted_provider
 def review(prompt: str, *, engine: str, snapshot: Path, runtime: Path, model: str | None = None,
-           images=(), on_start=None, on_wait=None) -> dict:
+           effort: str | None = None, images=(), on_start=None, on_wait=None) -> dict:
     """One focused review without a duration cutoff; callbacks retain owner/caller cancellation.
     `images` are captured screenshots ({title, file} relative to the snapshot), attached natively in order."""
     out = {"text": "", "error": None, "findings": [], "limitations": [], "usage": {}, "worker": None,
@@ -3301,7 +3302,7 @@ def review(prompt: str, *, engine: str, snapshot: Path, runtime: Path, model: st
             stream.close()
     try:
         attached = [(image["title"], snapshot / image["file"]) for image in images]
-        command = _review_command(engine, snapshot, runtime, model, attached)
+        command = _review_command(engine, snapshot, runtime, model, attached, effort)
         prompt = _review_input(engine, prompt, attached)
         if on_start and on_start(worker) is False:
             return {**out, "error": "Review cancelled before launch."}

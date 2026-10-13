@@ -766,12 +766,15 @@ def model_select(label, choices):
     options = ''.join(f'<option>{choice}</option>' for choice in choices)
     return f'<label style="display:block;margin:8px 0">{label}<select class="field" style="width:100%;min-height:44px">{options}</select></label>'
 
-def role_models(scope, timing, status=""):
-    return ('<div style="padding:12px"><b>' + scope + '</b>'
-        + model_select("Model", ("6.1 Sol · Codex", "Auto", "Fable · Claude", "Opus · Claude", "Project default · Codex", "Other model…"))
-        + '<small class="muted">gpt-6.1-sol · Access unverified</small>'
-        + model_select("Effort", ("Default (from project)", "Low", "Medium", "High", "Max"))
-        + f'<p class="muted">{timing}</p><p class="muted">If unavailable, project routing applies.</p>{status}</div>')
+def global_pairs(phone=False):
+    def row(engine, model, effort):
+        columns = "1fr 1fr" if phone else "6rem minmax(0,1fr) minmax(0,1fr)"
+        label = f'<b style="grid-column:{"1 / -1" if phone else "auto"}">{engine}</b>'
+        return (f'<div style="display:grid;grid-template-columns:{columns};gap:12px;align-items:start;padding:12px;border-bottom:1px solid var(--hairline)">'
+                + label + model_select("Model", (model, "Altitude default", "Other model…"))
+                + model_select("Effort", (effort, "Altitude default", "Native", "Medium", "Extra High", "Max")) + '</div>')
+    return (row("Claude", "Opus", "High") + row("Codex", "6.1 Sol", "High")
+            + '<p class="muted" style="padding:0 12px">Access unverified · gpt-6.1-sol</p>')
 
 def settings_content(phone=False):
     target = "MobileVoiceSettings.html" if phone else "VoiceSettings.html"
@@ -781,8 +784,9 @@ def settings_content(phone=False):
     switch = '<span class="field" style="min-width:3rem;text-align:center">On</span>'
     group = lambda title, rows: f'<div class="sgroup"><h2>{title}</h2><div class="card">{rows}</div></div>'
     left = (f'<div class="sgroup" style="margin-top:0"><div class="card">{link("Operator", "Your name on every screen")}</div></div>'
-        + group("This project", link("altitude", "tasks prefer Codex", project) + role_models("L3 · altitude", "Applies from the next reply."))
-        + group("Models", role_models("New tasks · All projects", "Applies when tasks start, including queued tasks. Started tasks keep theirs."))
+        + group("This project", link("altitude", "tasks prefer Codex", project))
+        + group("Models and effort · All projects", global_pairs(phone))
+        + group("Engines", model_select("New tasks · All projects", ("Auto", "Prefer Claude", "Prefer Codex")))
         + group("Projects", link("All projects", "2 projects · folder ~/Projects")))
     right = (group("Voice", link("Voice input", "This computer", target))
         + group("Devices and access", link("Devices", "2 paired · pair another, certificate")
@@ -794,23 +798,14 @@ def settings_content(phone=False):
         + group("About", row("Version", "1.4.0 · Up to date", "")))
     return ('' if phone else '<h1>Settings</h1>') + (left + right if phone else f'<div class="scols"><div>{left}</div><div>{right}</div></div>')
 
-def default_row(engine, model, effort, phone):
-    cols = "1fr" if phone else "9rem 1fr 1fr"
-    return (f'<div style="display:grid;grid-template-columns:{cols};gap:12px;align-items:end;border-top:1px solid var(--hairline);padding-top:14px;margin-top:14px">'
-            f'<b>{engine}</b>' + model_select("Model", (model, "6.1 Sol", "Other model…") if "Codex" in engine else (f"Default ({model})", "Fable", "Opus", "Other model…"))
-            + model_select("Effort", (f"Default ({effort})", "Low", "Medium", "High")) + '</div>')
-
 def project_settings_content(phone=False):
     heading = '' if phone else '<a class="btn setting-back" href="Settings.html">' + I("chev-l") + 'Settings</a><h1>altitude</h1>'
     section = lambda title, note, body: f'<h2 style="margin-top:20px">{title}</h2><p class="muted" style="margin-top:-6px">{note}</p><div class="card">{body}</div>'
-    defaults = "".join(default_row(label, model, effort, phone) for label, model, effort in
-        (("Tasks · Claude", "opus", "High"), ("Tasks · Codex", "Codex's own default", "High"), ("L3 · Claude", "fable", "High"), ("L3 · Codex", "Codex's own default", "Medium")))
     select = lambda title, note, value: (f'<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;padding:6px 0">'
         f'<span><b>{title}</b><br><small class="muted">{note}</small></span><span class="field" style="min-width:9rem">{value}</span></div>')
-    return (heading + '<p class="muted" style="margin:0 0 6px">Applies to this project only. A model or effort L3 sets for one task wins over these.</p>'
-        + section("L3", "Who answers in this project's chat. The same choice as the button under the message box; it comes before routing.",
-            role_models("L3 · altitude", "Applies from the next reply.", '<p class="muted">Last reply reported gpt-6-astra · High</p>'))
-        + section("Auto defaults", "Used under Auto and as the fallback. Started tasks keep their model and effort; L3 uses a change from its next reply.", defaults)
+    return (heading + '<p class="muted" style="margin:0 0 6px">Applies to this project only.</p>'
+        + section("Coordinator engine", "Applies from the next reply.", model_select("Engine", ("Auto", "Prefer Claude", "Prefer Codex")))
+        + section("Models and effort", "Across all projects.", '<a href="Settings.html#models">Open global model and effort settings ›</a>')
         + section("Routing", "The order Auto tries: Claude and Codex share work by weekly headroom.",
             select("Tasks", "Auto, Prefer or Only an engine.", "Prefer Codex"))
         + section("Project", "", f'<a class="setting-link" style="border:0;margin:0;padding:0 0 10px" href="#"><span><b>Setup</b><small>Ready</small></span>{I("chev-r")}</a>'
@@ -864,7 +859,7 @@ settings_inner = (
     '<p class="muted" style="margin:6px 0 18px">Settings opens an overview grouped by where each setting applies. The voice choices live inside Voice input at /settings/voice. Desktop left; phone right.</p></div>'
     '<div class="sgrid">'
     + srow("Entry points", "the rail gear and the project three dots on desktop; the project three dots on phone. The menu holds no destructive item", None).split('<div class="vdesk"')[0] + entry_desktop + entry_phone
-    + '<div class="vlab">Model selection<span>Native dropdowns save immediately; separate scope and timing.</span></div>' + role_models("New tasks · All projects", "Applies when tasks start, including queued tasks. Started tasks keep theirs.") + role_models("L3 · altitude", "Applies from the next reply.")
+    + '<div class="vlab">Models and effort · All projects<span>One pair per engine; routing remains separate.</span></div>' + global_pairs()
     + srow("Loading", "no selected default or editable controls", None, "Loading settings…")
     + srow("Read failed", "Retry reads again; typing elsewhere is unaffected", None, 'Could not load settings. <span style="color:var(--accent);text-decoration:underline">Retry</span>')
     + srow("Saved host", "This computer, saved at once; its setup panel shows the current state; the overview reads This computer, with · not set up until ready", "host", "Saved.")
@@ -995,35 +990,18 @@ state_sheet("ProjectLifecycleStates", "Remove project: detach L3", [
     ("Restored", "registration succeeds; saved queue resumes", '<p>Saved project history.</p><p>Queued request answered.</p>' + composer("Message L3 about example", engine=False)),
 ], 1400)
 
-def models_dialog(tab="l3", chosen="Auto", effort="Default", note="", other=False, saving=False):
-    tabs = '<div class="tabs"><span' + (' class="on"' if tab == "l3" else '') + '>L3 · altitude only</span><span' + (' class="on"' if tab == "tasks" else '') + '>Tasks · All projects</span></div>'
-    head = ('<p class="muted" style="margin:0 0 8px">Selected: <b>Auto</b> · who answers you in altitude\'s chat</p>' if tab == "l3"
-            else '<p class="muted" style="margin:0 0 8px">Selected: <b>Auto</b> · every project; tasks that start from now, including queued ones. Started tasks keep theirs.</p>')
-    opts = "".join(f'<div class="opt"><i class="r{" on" if name == chosen else ""}"></i>{name}<small>{where}</small></div>' for name, where in
-        (("Auto", "routing and defaults"), ("Fable", "Claude"), ("Opus", "Claude"), ("Sonnet", "Claude"), ("6.1 Sol", "Codex · gpt-6.1-sol · Access unverified"), ("Project default · Codex", "project, then engine default"), ("Other model…", "")))
-    if other:
-        opts += '<div style="display:flex;gap:8px;margin:4px 0 0 22px"><span class="field" style="min-width:6rem">Codex</span><span class="field" style="flex:1">gpt-6-astra</span></div>'
-    seg = '<div class="seg">' + "".join(f'<span{" class=on" if e == effort else ""}>{e}</span>' for e in ("Default", "Low", "Medium", "High", "Max")) + '</div>'
-    use = "Saving…" if saving else ("Use for L3 in altitude" if tab == "l3" else "Use for all new tasks")
-    foot = ('<p class="muted" style="font-size:12px;margin:6px 0 0">Applies from L3\'s next reply.</p>' if tab == "l3" else
-            '<p class="muted" style="font-size:12px;margin:6px 0 0">harbor runs tasks only on Codex, so it keeps its Codex model. <u>Change</u></p>'
-            '<p class="muted" style="font-size:12px;margin:4px 0 0">For one task, tell L3: “use 6.1 Sol for this”.</p>')
-    return (f'<div class="models"><div style="display:flex;justify-content:space-between"><b>Models</b><span>{I("x","i sm")}</span></div>{tabs}{head}'
-            f'{opts}<div style="margin-top:6px"><b style="font-size:13px">Effort</b></div>{seg}{note}'
-            f'<div class="act"><span class="btn primary"' + (' aria-disabled="true"' if saving else '') + f'>{use}</span></div>{foot}</div>')
-
-state_sheet("ModelsStates", "Models: direct Settings dropdowns and chat shortcuts", [
-    ("Settings · new tasks", "native dropdowns; selection saves immediately", role_models("New tasks · All projects", "Applies when tasks start, including queued tasks. Started tasks keep theirs.")),
-    ("Settings · coordinator", "same saved choice as project Settings and chat", role_models("L3 · altitude", "Applies from the next reply.", '<p class="muted">No reply yet.</p>')),
-    ("Closed controls", "the L3 button under the message box; New tasks beside the quota (rail, phone Monitor and Work)", '<span class="l3pill">L3 · <b>Auto</b></span> <span class="l3pill">L3 · <b>Fable · Low</b></span><p></p><span class="newtasks">New tasks · <b>Auto</b></span> <span class="newtasks set">New tasks · <b>Fable · High</b></span><p></p><span class="newtasks set">New tasks · <b>Fable unavailable · Auto meanwhile</b></span>'),
-    ("L3 tab", "opens from the L3 button; focus on the current choice", models_dialog("l3")),
-    ("Tasks tab", "opens from New tasks; the Only project keeps its engine", models_dialog("tasks", "Fable", "High")),
-    ("Other model", "an engine and an exact model id", models_dialog("tasks", "Other model…", "High", other=True)),
-    ("Saving", "choices and the other tab are locked", models_dialog("l3", "Fable", "Low", saving=True)),
-    ("Changed elsewhere", "Reload drops the draft and shows the current value", models_dialog("tasks", "Opus", "Max", note='<p class="danger" style="font-size:13px">Changed in another window. <u>Reload</u></p>')),
-    ("Save failed", "the server's reason and Retry; Selected keeps the earlier value", models_dialog("l3", "Opus", "Default", note='<p class="danger" style="font-size:13px">Claude does not support reasoning effort minimal. <u>Retry</u></p>')),
-    ("Loading and read failed", "the closed control is disabled while loading", '<p class="muted">Loading models…</p><p class="danger">Could not load models. <u>Retry</u></p>'),
-], 2950)
+state_sheet("ModelsStates", "Models and effort · All projects", [
+    ("Global defaults", "native paired controls, independent of engine routing", global_pairs()),
+    ("Phone pairs", "engine name above its Model and Effort controls", global_pairs(phone=True)),
+    ("Timing", "one setting across projects", '<p>Applies from the next chat reply and when tasks or reviews start. Started tasks keep theirs.</p>'),
+    ("Inherited effort", "Altitude default preserves role defaults; Native asks the provider", '<p>Claude: Native for all roles</p><p>Codex: Tasks: High · Chat/reviews: Native</p>'),
+    ("Existing override", "deliberate reset preserves engine routing", '<b>example · Coordinator</b><p>Codex · gpt-6-astra · High</p><button class="btn">Use global defaults</button>'),
+    ("Other model", "fixed engine; effort stays beside model", '<label>Model<input class="field" value="custom-model"></label><p class="muted">Saved: gpt-6.1-sol</p>'),
+    ("Saving / saved", "both fields in this pair guarded; other engine stays usable", '<p class="muted">Saving…</p><p class="muted">Saved.</p>'),
+    ("Changed elsewhere", "Reload reads the current pair", '<p class="danger">Changed in another window. <u>Reload</u></p>'),
+    ("Failed / denied", "committed pair retained; denial has no automatic retry", '<p class="danger">Could not save models. <u>Retry save</u></p><p class="danger">Permission denied.</p>'),
+    ("Loading / read failed", "no invented selected values", '<p class="muted">Loading models…</p><p class="danger">Could not load models. <u>Retry</u></p>'),
+], 2250)
 
 state_sheet("ConversationStates", "Conversation and report states", [
     ("L3 never ran", "header offers Start L3", '<span class="btn primary">Start L3</span><p class="muted">L3 has not started. Start L3 to begin the conversation.</p>'),
@@ -1208,7 +1186,7 @@ ROUTES = [
     ("Settings · Voice input", "VoiceSettings", "MobileVoiceSettings"),
     ("Settings · This project", "ProjectSettings", "MobileProjectSettings"),
     ("Settings states and entry points", "SettingsStates", None),
-    ("Models settings and dialog states", "ModelsStates", None),
+    ("Models and effort settings", "ModelsStates", None),
     ("System turns in chat: reports, faults, FYIs", "SystemTurnStates", None),
     ("Conversation and report states", "ConversationStates", None),
     ("Create task: a reply that could become a task", "ReplyTask", "MobileReplyTask"),

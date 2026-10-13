@@ -993,13 +993,38 @@ alt project set example --unset-l2-engine --reason 'Let routing choose tasks'
 
 ### Model choices
 
-A model choice is tried ahead of a role's routing tiers: **New tasks** for every project's fresh L2
-attempts, and each project's **L3** choice for its L3 turns. Settings offers native **Model** and
-**Effort** dropdowns directly: **Models → New tasks** applies across projects, and **This project →
-L3** applies to that project's coordinator. Each selection saves immediately. The chat and quota
-shortcuts open the same choices in the Models dialog
-(the [UI spec](../design/wireframes/SPEC.md#361-models-dialog)). A choice is `[engine][:model][@effort]`;
-a Claude alias alone names Claude:
+**Settings → Models and effort · All projects** has one **Model + Effort** pair per engine.
+Choose **6.1 Sol** in the Codex row to request `gpt-6.1-sol` without changing external CLI
+configuration. Both pairs remain editable regardless of engine routing. Changing one field keeps
+its paired value and leaves other engines unchanged. Selections save immediately; the chat and
+quota shortcuts open this same Settings section.
+
+The defaults apply to coordinator turns, fresh task starts (including queued tasks) and ordinary
+reviews across projects. Existing task/review pins, role choices, project defaults and explicit
+routing models keep their precedence. **Existing overrides** lists saved scoped exceptions;
+**Use global defaults** clears that row's model and effort while retaining engine/routing intent.
+Explicit routing tiers link to **Routing details** instead of being reset together; use the
+existing `alt project set --routing` CLI option to edit those tiers. Individual task pins
+are not cleared here. Project Settings contains engine routing, not another model/effort table.
+
+**Altitude default** inherits built-in role behavior. Inherited effort is Native for Claude;
+Codex uses High for tasks and Native for chat/reviews. **Native** explicitly delegates effort to the
+provider, including for Codex tasks. The available effort list is engine support, not a claim that
+every model accepts every level. Provider caps remain separate from the requested effort.
+**Other model…** accepts an exact ID. Selecting Other alone writes nothing; Enter or leaving a
+valid ID saves, and blank input or Escape restores the saved value. Explicit choices show the ID
+and **Access unverified**. Named options are maintained requests, not a discovered account catalog.
+Known unavailable models retain their saved selection and recorded reason. Reported model and
+effort remain observations, separate from the requested defaults.
+
+**Engines → New tasks** controls engine preference across projects. Each project's coordinator
+engine preference and task routing remain in Project Settings. Changing an engine preference
+clears any model/effort fields saved in that preference and uses the target engine's defaults.
+A default does not pin an engine. Only-engine project routing and explicit task/turn pins remain
+strict; ordinary preferences still use existing routing fallback when unavailable.
+
+The CLI also supports scoped choices, tried ahead of routing tiers. A choice is
+`[engine][:model][@effort]`; a Claude alias alone names Claude:
 
 ```sh
 alt machine set --new-tasks fable@high --reason 'Fable for new work this week'
@@ -1009,27 +1034,13 @@ alt project set example --l3-choice codex@low --reason 'Light coordination on Co
 alt project set example --unset-l3-choice --reason 'Back to Auto'
 ```
 
-Precedence, highest first: a task's or turn's explicit engine, model or effort (`alt task new
---engine/--model/--effort`, `alt chat --engine`); for tasks, a project's Only engine, which keeps its
-engine and uses the choice's model and effort only when they are on it; the choice; then the routing tiers with
-each project's Auto defaults. A choice whose engine or model is unavailable (missing CLI, exhausted
-window or a recent rejection) leaves the tiers to pick meanwhile, and its controls say so; L3's
-conversation also says so in one line when a usage limit is the reason. An effort
-alone applies to whichever engine the tiers pick that accepts it; an engine that does not keeps its
-default. New tasks applies to tasks that start from then on, including queued ones; started tasks and
-resumes keep their model and effort. L3 uses its choice from the next turn. Reviewer selection and
-explicit engine handoff ignore choices. Routing explanations read "chosen for new tasks" or "chosen
-for L3". New tasks is a machine setting, so only the operator sets it; the L3 choice is a project
-setting.
-
-Named choices include **6.1 Sol · Codex**, requesting `gpt-6.1-sol` without editing external CLI
-configuration. **Project default · Codex** instead inherits each project's model for that role,
-then the engine's own default. **Auto** leaves engine selection to project routing and keeps the
-separate Effort selection; **Default (from project)** restores effort inheritance. **Other model…**
-accepts an exact ID; selecting Other alone writes nothing. Explicit choices show the requested ID
-and **Access unverified**: the list is maintained shortcuts, not a discovered account catalog.
-Known unavailable choices retain their selected value and explain project routing meanwhile.
-The last reply's reported model and effort remain separate from the current selection.
+Task/turn explicit requests win, followed by applicable scoped choices/routing model fields,
+project role defaults, the global engine pair and built-in role/provider defaults. A project's
+Only engine confines its tasks; a preference for another engine cannot move them. Explicit engine
+handoff ignores the New tasks choice. Native helpers and specialized improvement reviews retain
+their own policies. Coordinator changes apply from the next turn; a running turn finishes with its
+original selection. Started task messages/resumes retain saved launch values, even when the saved
+model or effort is null. No running session is migrated and no provider default is rewritten.
 
 The daemon collects account quota every five minutes without an interactive session. The native
 headless usage reader requires CLI 2.1.277+ with a subscription login and structured live account
@@ -1209,22 +1220,19 @@ and maintained model shortcuts, not the app-server model catalog or automatic ac
 The [official configuration documentation](https://learn.chatgpt.com/docs/config-file/config-basic)
 establishes the `gpt-6.1-sol` ID, not account access.
 
-**Settings → This project → Auto defaults** provides native model dropdowns for each role and
-engine. **Default (<role default>)** restores inheritance; **Codex's own default** names that
-engine's inherited behavior. Other model accepts a custom ID on Enter or leaving its field;
-blank input or Escape restores the saved value without writing. Selections save immediately.
+The global Settings pair is the normal model/effort editor. Existing project CLI overrides remain
+supported and appear in **Existing overrides** until deliberately cleared.
 
-Precedence for a fresh launch is the task's `alt task new --model …` or turn pin, then the model named in
-the selected routing option, then the project default for that role and engine, then the role default:
-Opus for a Claude L2, Fable for a Claude L3 and the engine's own default for Codex. L2 defaults apply at
-dispatch, including queued tasks; messages and resumes keep the attempt's saved `launch_model`. L3
-defaults apply from its next turn. A default never pins an engine: with the default tiers a project
-whose Claude default is Fable still ties Codex first. The operator and the project's L3 set these
-through the same reason-bearing requests as effort; L2 cannot.
+Fresh launches resolve an explicit task/turn model, a selected choice/routing model, a project
+role override, the global engine model, then the built-in role default. L2 resolves at dispatch,
+including queued tasks; messages/resumes keep the attempt's saved `launch_model`. L3 resolves
+from its next turn. An ordinary review uses the task-role model default unless it has an explicit request.
+For effort, an explicit global engine value applies; absent that value, ordinary reviews retain
+native effort rather than inheriting a task effort override. A model default does not select an engine.
 
 ### Task reasoning effort
 
-Set independent defaults per role and engine without changing engine/model selection:
+Global Settings keeps effort beside each engine's model. Explicit project overrides remain available through the CLI:
 
 ```sh
 alt project set example --l3-effort low --reason 'Light coordination on Claude'
@@ -1239,11 +1247,10 @@ alt project list
 `--l3-codex-effort`/`--l2-codex-effort` the Codex defaults (`l3_codex_effort`, `l2_codex_effort`).
 Each accepts only the levels its engine supports. The operator and the project's L3 use these
 reason-bearing settings requests; L2 cannot change project defaults. Altd applies them on its next
-tick, without a free worker slot or service restart. **Settings → This project** provides the same
-defaults with immediate saves: `GET /api/defaults/<project>` returns each role's model/effort pair per
-engine with its setting key, default and choices, and `POST /api/defaults`
-`{"project", "setting", "value" | null}` saves one. Default restores existing behavior: native, except
-High for a Codex L2. Native explicitly requests no Altitude override, including for a Codex L2.
+tick, without a free worker slot or service restart. Existing project overrides appear in global
+Settings with a deliberate reset action. An absent project effort inherits the global engine effort,
+then the built-in default: native, except High for a Codex L2. Native explicitly requests no
+Altitude override, including for a Codex L2.
 
 Levels are `native`, `low`, `medium`, `high`, `xhigh` (Extra High), `max`, and `ultra`.
 The current adapters accept Low through Max on both engines and Ultra on Codex. Engine support
@@ -1253,8 +1260,8 @@ Effort does not create an engine/model pin. Higher effort can use more time and 
 
 `alt task new --title "Investigate a difficult failure" --effort xhigh --paths src/,tests/ -`
 overrides the project defaults for that task without changing them; it is how L3 asks for more effort
-for one L2. Precedence is explicit task effort, then the project default for the routed engine, then
-the existing engine default, then native configuration when no override exists. Fresh attempts
+for one L2. Precedence is explicit task effort, the applicable choice, the project override for the routed
+engine, the global engine effort, then the built-in role/provider default. Fresh attempts
 resolve at dispatch, including queued tasks; messages/resumes reuse their saved launch override.
 L3 resolves its project default for the engine of each turn, including in its existing conversation.
 A turn already running finishes with its original selection. No existing L2 session is migrated or

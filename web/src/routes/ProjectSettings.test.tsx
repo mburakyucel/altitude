@@ -1,5 +1,4 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
-import { defaultScheduler, notifyManager } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import { renderApp } from "../test/render";
 
@@ -57,90 +56,13 @@ function fixture({ refuse = "", l3 = {} as Record<string, unknown>, hold = null 
   return { posts, saved, removeNow: () => { managed = false; } };
 }
 
-const group = (name: string) => screen.findByRole("group", { name });
 
 describe("Project settings", () => {
-  it("saves each role and engine default independently and restores Default", async () => {
-    const { posts } = fixture();
-    const { user } = renderApp({ route: "/settings/projects/example" });
-    const l3Alpha = await group("L3 · Alpha");
-    expect(within(l3Alpha).getByLabelText("Model")).toHaveDisplayValue("Default (alpha-default)");
-    expect(within(await group("Tasks · Beta")).getByLabelText("Effort")).toHaveDisplayValue("Default (High)");
-    await user.selectOptions(within(l3Alpha).getByLabelText("Effort"), "low");
-    await within(l3Alpha).findByText("Saved.");
-    expect(posts).toEqual([{ project: "example", setting: "l3_alpha_effort", value: "low" }]);
-    for (const other of ["L3 · Beta", "Tasks · Alpha", "Tasks · Beta"]) {
-      expect(within(await group(other)).getByLabelText("Effort")).toHaveValue("");
-      expect(within(await group(other)).queryByText("Saved.")).toBeNull();
-    }
-    await user.selectOptions(within(l3Alpha).getByLabelText("Effort"), "");
-    await waitFor(() => expect(posts.at(-1)).toEqual({ project: "example", setting: "l3_alpha_effort", value: null }));
-    await waitFor(() => expect(within(l3Alpha).getByLabelText("Effort")).toHaveDisplayValue("Default (Native)"));
-  });
-
-  it("saves a typed model on Enter or leaving the field, restores on Escape, and clears to Default", async () => {
-    const { posts } = fixture();
-    const { user } = renderApp({ route: "/settings/projects/example" });
-    const model = within(await group("Tasks · Beta")).getByLabelText("Model");
-    expect(model).toHaveDisplayValue("Default (CLI default)");
-    await user.selectOptions(model, "other");
-    await user.type(within(await group("Tasks · Beta")).getByRole("textbox", { name: "Model ID" }), "  beta-model {Enter}");
-    await within(await group("Tasks · Beta")).findByText("Saved.");
-    expect(posts).toEqual([{ project: "example", setting: "l2_beta_model", value: "beta-model", expected: null }]);
-    expect(model).toHaveDisplayValue("beta-model · Beta");
-    await user.selectOptions(model, "other");
-    await user.type(within(await group("Tasks · Beta")).getByRole("textbox", { name: "Model ID" }), "-draft{Escape}");
-    expect(model).toHaveDisplayValue("beta-model · Beta");
-    await user.selectOptions(model, "");
-    await waitFor(() => expect(posts.at(-1)).toEqual({ project: "example", setting: "l2_beta_model", value: null, expected: "beta-model" }));
-    await waitFor(() => expect(model).toHaveValue(""));
-    await user.click(model);
-    await user.tab();
-    expect(posts).toHaveLength(2);
-  });
-
-  it("keeps the saved model visible while cache notifications wait", async () => {
-    fixture();
-    const { user } = renderApp({ route: "/settings/projects/example" });
-    const model = within(await group("L3 · Alpha")).getByLabelText("Model");
-    const pending: (() => void)[] = [];
-    notifyManager.setScheduler((callback) => pending.push(callback));
-    try {
-      await user.selectOptions(model, JSON.stringify(["alpha", "deep"]));
-      await act(async () => { while (pending.length) pending.shift()!(); });
-      expect(model).toHaveDisplayValue("Deep · Alpha");
-    } finally {
-      notifyManager.setScheduler(defaultScheduler);
-      await act(async () => { while (pending.length) pending.shift()!(); });
-    }
-  });
-
-  it("keeps a later save of another field when an earlier save's response arrives last", async () => {
-    let release!: () => void;
-    const { posts } = fixture({ hold: { setting: "l3_alpha_effort", until: new Promise<void>((resolve) => { release = resolve; }) } });
-    const { user } = renderApp({ route: "/settings/projects/example" });
-    const l3Alpha = await group("L3 · Alpha");
-    const model = within(await group("Tasks · Beta")).getByLabelText("Model");
-    await user.selectOptions(within(l3Alpha).getByLabelText("Effort"), "low");
-    await user.selectOptions(model, "other");
-    await user.type(within(await group("Tasks · Beta")).getByRole("textbox", { name: "Model ID" }), "beta-model{Enter}");
-    await within(await group("Tasks · Beta")).findByText("Saved.");
-    release();
-    await within(l3Alpha).findByText("Saved.");
-    expect(posts.map((post) => post.setting)).toEqual(["l3_alpha_effort", "l2_beta_model"]);
-    expect(model).toHaveDisplayValue("beta-model · Beta");
-    expect(within(l3Alpha).getByLabelText("Effort")).toHaveValue("low");
-  });
-
-  it("keeps the saved choice and offers Retry save when the server refuses", async () => {
-    const { posts } = fixture({ refuse: "l3_alpha_effort" });
-    const { user } = renderApp({ route: "/settings/projects/example" });
-    const l3Alpha = await group("L3 · Alpha");
-    await user.selectOptions(within(l3Alpha).getByLabelText("Effort"), "low");
-    expect(await within(l3Alpha).findByRole("alert")).toHaveTextContent("does not support reasoning effort low");
-    expect(within(l3Alpha).getByLabelText("Effort")).toHaveValue("");
-    await user.click(within(l3Alpha).getByRole("button", { name: "Retry save" }));
-    await waitFor(() => expect(posts).toHaveLength(2));
+  it("links global model and effort settings instead of project editors", async () => {
+    fixture(); renderApp({ route: "/settings/projects/example" });
+    expect(await screen.findByRole("link", { name: "Models and effort · All projects" })).toHaveAttribute("href", "/settings#models");
+    expect(screen.queryByRole("region", { name: "Auto defaults" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Model" })).toBeNull();
   });
 
   it("routes tasks Auto, Prefer or Only an engine, sending the value each page showed, and has no L3 routing", async () => {
@@ -181,12 +103,12 @@ describe("Project settings", () => {
       l3: { engine_last: "alpha", engine_model: "alpha-deep-2", launch_effort: "high", engine_reasoning_effort: "low" } });
     const { user } = renderApp({ route: "/settings/projects/example" });
     const section = await screen.findByRole("region", { name: "L3" });
-    const model = within(section).getByRole("combobox", { name: "Model" });
-    expect(model).toHaveDisplayValue("Deep · Alpha");
+    const model = within(section).getByRole("combobox", { name: "Coordinator engine" });
+    expect(model).toHaveDisplayValue("Prefer Alpha");
     expect(section).toHaveTextContent("last reply reported alpha-deep-2 · Low");
     await user.selectOptions(model, "");
     await waitFor(() => expect(model).toHaveDisplayValue("Auto"));
-    expect(posts).toEqual([{ project: "example", setting: "l3_choice", value: { effort: "high" }, expected: { engine: "alpha", model: "deep", effort: "high" } }]);
+    expect(posts).toEqual([{ project: "example", setting: "l3_choice", value: null, expected: { engine: "alpha", model: "deep", effort: "high" } }]);
     expect(within(section).queryByRole("button", { name: "Back to Auto" })).toBeNull();
     expect(section).toHaveTextContent("last reply reported alpha-deep-2");
   });
@@ -276,7 +198,7 @@ describe("Settings overview", () => {
   it("groups settings by destination and shows This project only when opened from one", async () => {
     fixture();
     const { router, user } = renderApp({ route: "/settings" });
-    for (const name of ["Models", "Projects", "Voice", "Devices and access", "Coding agents"])
+    for (const name of ["Models and effort · All projects", "Engines", "Projects", "Voice", "Devices and access", "Coding agents"])
       expect(await screen.findByRole("region", { name })).toBeVisible();
     expect(screen.queryByRole("region", { name: "This project" })).toBeNull();
     await user.click(within(screen.getByRole("region", { name: "Projects" })).getByRole("link", { name: /All projects/ }));

@@ -307,15 +307,19 @@ Open the project and send:
 The coordinator, shown as L3, replies. When you settle on a change, ask it to create a task, then
 follow the task's owner (L2), its session and its pull request in the work panel. Ask for a merge
 hold to review a result yourself before it merges. Agent work uses your coding account's allowance
-and normal charges. Altitude picks engines and models automatically. To choose a model, open
-**Settings → Models → New tasks → Model**; choosing saves immediately for tasks when they start,
-including queued tasks. Started tasks keep their model. For the coordinator, use **Settings →
-This project → L3 → Model**; it applies from the next reply. Named choices need no external
-configuration. **Auto** restores project model routing and keeps the selected effort; select
-**Default (from project)** in Effort to inherit that too. An explicit choice shows its exact ID and whether
-access is unverified or a known rejection prevents use. A shared account allowance does not prove
-access to a particular model. See [model choices](CLI.md#model-choices) for inheritance, per-project
-defaults and individual-task pins.
+and normal charges. Altitude picks engines automatically. Open **Settings → Models and effort ·
+All projects** to choose a model and matching effort for each engine. For example, select **6.1 Sol**
+in the Codex Model dropdown; no external CLI configuration is needed. Each selection saves
+immediately and leaves the other engine's pair unchanged. **Engines** separately chooses how new
+work is routed.
+
+These defaults apply across projects to coordinator replies, fresh task starts (including queued
+tasks) and ordinary reviews. Started tasks keep their launch model and effort. Existing explicit
+project or task requests still win; **Existing overrides** shows saved exceptions and lets you
+clear a model/effort override with **Use global defaults**, retaining its engine preference.
+**Altitude default** restores inheritance; **Native** effort asks the provider to choose.
+Named choices and shared account allowance do not prove model access. Requested and reported
+values remain distinct. See [model choices](CLI.md#model-choices) for precedence and timing.
 
 ## When something does not work
 
