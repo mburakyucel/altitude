@@ -364,9 +364,8 @@ def note_usage_limit(until: str, detail: str = "") -> bool:
         cur = {}
     if cur.get("until") == until:
         return False
-    tmp = p.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"until": until, "seen": datetime.now(timezone.utc).isoformat(timespec="seconds"), "detail": detail[:200]}))
-    os.replace(tmp, p)
+    S.atomic_write(p, json.dumps({"until": until, "seen": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                  "detail": detail[:200]}))
     return True
 
 
@@ -1262,7 +1261,8 @@ def _start_worker(engine: str, name: str, prompt: str, *, cwd: Path, job_root: P
         worker_env.pop(native.EFFORT_ENV, None)
     job_env = {key: value for key, value in launch_env(worker_env).items() if key not in GITHUB_TOKEN_VARIABLES}
     try:
-        with open(paths["stdout"], "ab", buffering=0) as out, open(paths["stderr"], "ab", buffering=0) as err:
+        with open(paths["stdout"], "ab", buffering=0, opener=storage.opener) as out, \
+                open(paths["stderr"], "ab", buffering=0, opener=storage.opener) as err:
             proc = subprocess.Popen(platform.job_command(unit, _driver_command(), job_env, writable=writable),
                                     cwd=str(cwd), stdin=subprocess.PIPE, stdout=out, stderr=err,
                                     env=worker_env, start_new_session=True)

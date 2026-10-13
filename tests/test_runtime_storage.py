@@ -10,8 +10,8 @@ from contextlib import contextmanager
 from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import (config, dispatch, engines, incidents, l3, platform, project_setup, reviews, server,
-                      speech, state as S, storage, transcript)
+from altitude import (config, dispatch, engines, incidents, installation, l3, platform, project_setup, reviews,
+                      server, speech, state as S, storage, transcript)
 
 
 class RuntimeStorage(AltitudeCase):
@@ -152,6 +152,11 @@ class RuntimeStorage(AltitudeCase):
             (project / ".publication-settlement.lock", lambda: dispatch.publication_settlement(self.project)),
             (project / ".setup.lock", lambda: project_setup.operation_lock(self.project)),
             (project / "incidents" / ".lock", lambda: incidents._incident_lock(self.project)),
+            (project / "incidents.jsonl", lambda: called(incidents.new_incident, self.project, title="fixture",
+                                                         task=None, what="$(planted)", evidence="-", cause="-",
+                                                         tags=[])),
+            (slug / ".review-merge.lock", lambda: reviews.merge_lock(self.project, "demo")),
+            (self.runtime / "update.lock", lambda: installation._changing_update_record()),
             (self.runtime / ".launch.lock", lambda: dispatch.launch_lock()),
             (self.runtime / ".projects.lock", lambda: config.projects_lock()),
             (self.runtime / "monitor" / "restart.lock", lambda: config.restart_lock()),
@@ -189,6 +194,18 @@ class RuntimeStorage(AltitudeCase):
                     (self.tmp / "moved").rename(parent)
                 self.assertEqual(victim.read_text(), "precious\n")
                 self.assertEqual(sorted(p.name for p in self.outside.iterdir()), ["shell-startup"])
+
+    def test_worker_launch_refuses_a_linked_job_folder(self):
+        jobs = S.task_dir(self.project, "demo") / "l2-engine"
+        jobs.parent.mkdir(parents=True)
+        jobs.symlink_to(self.outside, target_is_directory=True)
+        self.patch(engines.common, "_worker_processes", {})
+        self.patch(engines.claude, "claude_agents", return_value=[])
+        with mock.patch.object(engines.common.subprocess, "Popen", side_effect=AssertionError("launched")), \
+                self.assertRaises((OSError, ValueError)):
+            engines.start_l2("claude", "project/worker-1", "brief", cwd=self.tmp, persona=None, model=None,
+                             settings=None, extra_env={"ALTITUDE_TASK": "demo"}, job_root=jobs)
+        self.assertEqual(list(self.outside.iterdir()), [])
 
     def test_record_replacement_replaces_links_and_refuses_linked_folders(self):
         victim = self.outside / "shell-startup"

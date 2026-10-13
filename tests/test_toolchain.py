@@ -174,7 +174,7 @@ class TestToolchain(AltitudeCase):
 
                     with mock.patch.object(platform, "job_command", side_effect=service_command):
                         result = engines.common._start_worker(
-                            engine, "fixture", "continue", cwd=self.repo, job_root=self.tmp / "jobs",
+                            engine, "fixture", "continue", cwd=self.repo, job_root=self.runtime_tmp / "jobs",
                             resume="session" if resume else None,
                             extra_env={"ALTITUDE_TASK": "toolchain-task", "ALTITUDE_ATTEMPT": "1"})
                     self.assertEqual(result["returncode"], 0, result)
@@ -182,7 +182,7 @@ class TestToolchain(AltitudeCase):
                     process = engines.common._worker_processes.get(worker_id)
                     if process:
                         process.wait(timeout=5)
-                    self.assertEqual(engines.common._worker_paths(self.tmp / "jobs", worker_id)["stderr"].read_text(), "")
-                    row = engines.worker(engine, {"agent_id": worker_id}, job_root=self.tmp / "jobs")
+                    self.assertEqual(engines.common._worker_paths(self.runtime_tmp / "jobs", worker_id)["stderr"].read_text(), "")
+                    row = engines.worker(engine, {"agent_id": worker_id}, job_root=self.runtime_tmp / "jobs")
                     self.assertEqual(row["sessionId"], "session")
                     self.assertEqual(row["state"], "failed")

@@ -657,7 +657,7 @@ def ensure_root() -> None:
     for d in (ROOT, MONITOR_DIR, ROOT / "hooks"):
         d.mkdir(parents=True, exist_ok=True)
     if not PROJECTS_FILE.exists():
-        PROJECTS_FILE.write_text("{}\n")
+        storage.replace(PROJECTS_FILE, b"{}\n")
 
 
 def load_projects() -> dict:

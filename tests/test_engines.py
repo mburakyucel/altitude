@@ -366,7 +366,7 @@ class TestWorkerTokenInput(AltitudeCase):
             result = engines.start_l2(engine, "project/worker-1", "brief", cwd=self.repo, persona=self.tmp / "persona.md",
                                       model=None, settings=self.tmp / "settings.json",
                                       extra_env={"ALTITUDE_TASK": "worker", "FAKE_ENGINE_LOG": str(self.log)},
-                                      job_root=self.tmp / "jobs")
+                                      job_root=self.runtime_tmp / "jobs")
         self.assertEqual(result["returncode"], 0, result)
         return launches[0][0], launches[0][1].stdin.getvalue()
 

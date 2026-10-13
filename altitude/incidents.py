@@ -654,7 +654,7 @@ def _reserve_incident_file(directory: Path) -> tuple[str, Path]:
         iid = f"I-{stamp}" if n == 1 else f"I-{stamp}-{n}"
         path = directory / f"{iid}.md"
         try:
-            os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            os.close(storage.open_runtime(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
             return iid, path
         except FileExistsError:
             continue
@@ -684,9 +684,7 @@ def new_incident(project: str, *, title: str, task: str | None, what: str, evide
     fields = dict(title=title, date=S.now()[:10], task=task or "-", project=project, system=system,
                   what=_one_field(what), summary=_one_field(summary or ""),
                   evidence=_one_field(evidence), cause=_one_field(cause), status="watch", issue="")
-    d = config.project_dir(project) / "incidents"
-    d.mkdir(parents=True, exist_ok=True)
-    iid, path = _reserve_incident_file(d)
+    iid, path = _reserve_incident_file(config.project_dir(project) / "incidents")
     try:
         S.atomic_write(path, template.format(id=iid, **fields))
     except Exception:
@@ -694,8 +692,7 @@ def new_incident(project: str, *, title: str, task: str | None, what: str, evide
         raise
     row = {"at": S.now(), "project": project, "id": iid, "title": title, "task": task, "tags": sorted(set(tags)),
            "cause": cause.strip()[:200]}
-    with open(config.project_dir(project) / "incidents.jsonl", "a") as f:
-        f.write(json.dumps(row, sort_keys=True) + "\n")
+    storage.append(config.project_dir(project) / "incidents.jsonl", json.dumps(row, sort_keys=True) + "\n")
     _index_append(row)
     if task:
         S.append_event(project, task, "incident", id=iid, tags=row["tags"], by=actor)

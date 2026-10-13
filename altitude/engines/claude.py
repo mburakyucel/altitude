@@ -295,8 +295,7 @@ def claude_settings() -> Path:
     except (OSError, ValueError):
         cur = None
     if cur != want:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(want, indent=2) + "\n")
+        S.atomic_write(p, json.dumps(want, indent=2) + "\n")
     return p
 
 

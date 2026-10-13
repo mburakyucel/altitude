@@ -163,10 +163,9 @@ def _update_record() -> tuple[Path, dict]:
 @contextmanager
 def _changing_update_record():
     """The daemon, the app's request and the detached update each change update.json under one lock."""
-    from . import state as S
+    from . import state as S, storage
     path, _ = _update_record()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with (path.parent / "update.lock").open("a") as lock:
+    with storage.runtime_lock(path.parent / "update.lock") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         record = S.read_json(path, {})
         before = json.dumps(record, sort_keys=True)
@@ -280,14 +279,14 @@ def automatic_update() -> str | None:
 
 def update_notice() -> str | None:
     """The terminal's once-a-day line about a newer release, read from the daemon's last check; no network."""
-    from . import config
+    from . import config, storage
     status = update_status()
     marker = config.ROOT / "update-notice"
     if not status or not status["available"] or marker.exists() and time.time() - marker.stat().st_mtime < 86400:
         return None
     try:
-        marker.touch()
-    except OSError:
+        storage.replace(marker, b"")
+    except (OSError, ValueError):
         return None
     version = status["available"]["version"]
     when = "installs when Altitude is next idle; alt update installs it now" if status["automatic_pending"] else "run alt update"

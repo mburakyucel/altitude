@@ -124,6 +124,11 @@ def open_runtime(path: Path, flags: int, *, truncate: bool = False) -> int:
     return fd
 
 
+def opener(path, flags: int) -> int:
+    """An `open()` opener for a file in the runtime root."""
+    return open_runtime(Path(path), flags)
+
+
 def runtime_lock(path: Path):
     """A lock file in the runtime root as an unbuffered binary handle for flock."""
     return os.fdopen(open_runtime(path, os.O_WRONLY | os.O_CREAT), "wb", buffering=0)

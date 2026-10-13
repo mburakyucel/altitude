@@ -13,7 +13,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
-from . import config, engines, state as S, tasks as T
+from . import config, engines, state as S, storage, tasks as T
 
 # Room for a long task's complete mandatory history plus selected evidence (I-20260927-193716), well
 # under the captured-input tool's 2 MiB file limit, while keeping a review's context finite.
@@ -80,7 +80,7 @@ def _find(task, identity):
 @contextmanager
 def merge_lock(project, slug, *, wait=True):
     """Request admission and the actual merge share a task-local lock, not a second hold field."""
-    with open(S.task_dir(project, slug) / ".review-merge.lock", "a") as lock:
+    with storage.runtime_lock(S.task_dir(project, slug) / ".review-merge.lock") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
         except BlockingIOError:
@@ -480,7 +480,9 @@ def _capture(project, task, review, context_ids, proposal_id=None, show=None):
         raise T.TransitionError("The proposal exceeds 64 KiB. Publish a proposal of at most 64 KiB and name it with --proposal-message.")
     folder = S.task_dir(project, task["slug"]) / "reviews" / review["id"]
     snapshot = folder / "snapshot"
-    snapshot.mkdir(parents=True, exist_ok=False)
+    with storage.runtime_directory(storage.runtime_parts(folder), create=True):
+        pass  # creates the review folder without following a link planted on the way
+    snapshot.mkdir(exist_ok=False)
     source = snapshot / "source"
     source.mkdir()
     # Blob reads preserve exact Git content even when export-ignore/export-subst attributes exist.
