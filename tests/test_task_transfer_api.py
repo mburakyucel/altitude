@@ -55,7 +55,7 @@ class TestTaskTransferAPI(AltitudeCase):
         view = self.view()
         self.assertTrue(view["eligible"])
         self.assertTrue(view["preparation"])
-        target = view["targets"][0]
+        target = next(item for item in view["targets"] if item["engine"] != view["current_engine"])
         self.action(engine=target["engine"], observed=view["observed"])
         request = self.view()["request"]
         self.assertEqual(request["status"], "pending")
@@ -70,7 +70,7 @@ class TestTaskTransferAPI(AltitudeCase):
 
     def test_switch_now_is_fenced_and_daemon_requeues_original_task(self):
         view = self.view()
-        target = view["targets"][0]["engine"]
+        target = next(item for item in view["targets"] if item["engine"] != view["current_engine"])["engine"]
         self.action(engine=target, observed=view["observed"])
         request = self.view()["request"]
         self.action("handoff-now", request_id="stale-request", status=409)
@@ -94,7 +94,7 @@ class TestTaskTransferAPI(AltitudeCase):
 
     def test_checkpoint_correction_has_one_short_display_receipt_and_unchanged_native_text(self):
         view = self.view()
-        self.action(engine=view["targets"][0]["engine"], observed=view["observed"])
+        self.action(engine=next(item for item in view["targets"] if item["engine"] != view["current_engine"])["engine"], observed=view["observed"])
         dispatch.run_task_operation(self.project, self.task["slug"])
         request = self.view()["request"]
         self.action("handoff-cancel", request_id=request["id"])
@@ -112,9 +112,9 @@ class TestTaskTransferAPI(AltitudeCase):
         for key in ("attempt", "agent_id", "session_id", "block_id"):
             with self.subTest(key=key):
                 observed = {**view["observed"], key: "changed"}
-                self.action(engine=view["targets"][0]["engine"], observed=observed, status=409)
+                self.action(engine=next(item for item in view["targets"] if item["engine"] != view["current_engine"])["engine"], observed=observed, status=409)
                 self.assertNotIn("daemon_request", S.load_task(self.project, self.task["slug"]))
-        self.action(engine=view["targets"][0]["engine"], status=400)
+        self.action(engine=next(item for item in view["targets"] if item["engine"] != view["current_engine"])["engine"], status=400)
 
     def test_pins_unavailable_and_single_engine_are_explained(self):
         self.task["routing_pinned"] = True
@@ -122,14 +122,15 @@ class TestTaskTransferAPI(AltitudeCase):
         view = self.view()
         self.assertFalse(view["eligible"])
         self.assertIn("pin", view["reason"])
-        self.action(engine=view["targets"][0]["engine"], observed=view["observed"], status=409)
+        self.action(engine=next(item for item in view["targets"] if item["engine"] != view["current_engine"])["engine"], observed=view["observed"], status=409)
         self.task.pop("routing_pinned")
         S.save_task(self.project, self.task)
         self.register(self.project, routing=[[{"engine": self.task["l2_engine"], "model": "fable"}]])
         view = self.view()
-        self.assertEqual(view["targets"], [])
-        self.assertFalse(view["eligible"])
-        self.assertEqual(view["reason"], "No other engine is configured.")
+        self.assertEqual([item["engine"] for item in view["targets"]], [view["current_engine"]])
+        self.assertTrue(view["eligible"])
+        self.action(engine=view["current_engine"], selection={"model": view["current_model"], "effort": "medium"}, observed=view["observed"])
+        self.assertEqual(self.view()["request"]["selection"]["effort"], "medium")
 
     def test_quota_stop_or_confirmed_end_skips_preparation(self):
         self.task["usage_limit"] = {"kind": "weekly"}
@@ -141,13 +142,24 @@ class TestTaskTransferAPI(AltitudeCase):
         self.engine.workers[self.task["agent_id"]].update(state="failed", status="exited")
         self.assertFalse(self.view()["preparation"])
 
+    def test_task_selection_posts_exact_tuple_and_checks_default_preview(self):
+        view = self.view()
+        before = config.project(self.project)
+        target = next(item for item in view["targets"] if item["engine"] != view["current_engine"])
+        selected = target["models"][0]["model"]
+        self.action(engine=target["engine"], selection={"model": selected, "effort": "medium"},
+                    default_model="stale-default", observed=view["observed"], status=409)
+        self.action(engine=target["engine"], selection={"model": selected, "effort": "medium"}, observed=view["observed"])
+        self.assertEqual(self.view()["request"]["selection"], {"model": selected, "effort": "medium"})
+        self.assertEqual(config.project(self.project), before)
+
     def test_stopped_task_transfers_and_completed_task_refuses(self):
         self.action("stop", generation=self.task["agent_id"])
         dispatch.run_task_operation(self.project, self.task["slug"])
         view = self.view()
         self.assertTrue(view["eligible"])
         self.assertFalse(view["preparation"])
-        target = view["targets"][0]["engine"]
+        target = next(item for item in view["targets"] if item["engine"] != view["current_engine"])["engine"]
         self.action(engine=target, observed=view["observed"])
         dispatch.run_task_operation(self.project, self.task["slug"])
         self.assertEqual(self.view()["request"]["status"], "done")
@@ -164,12 +176,12 @@ class TestTaskTransferAPI(AltitudeCase):
             view = self.view()
             self.assertFalse(view["eligible"])
             self.assertIn("unavailable", view["reason"])
-            self.action(engine=view["targets"][0]["engine"], observed=view["observed"], status=409)
+            self.action(engine=next(item for item in view["targets"] if item["engine"] != view["current_engine"])["engine"], observed=view["observed"], status=409)
         self.assertNotIn("daemon_request", S.load_task(self.project, self.task["slug"]))
 
     def test_unconfirmed_handoff_stop_uses_termination_evidence_without_mutating_lifecycle(self):
         view = self.view()
-        self.action(engine=view["targets"][0]["engine"], observed=view["observed"])
+        self.action(engine=next(item for item in view["targets"] if item["engine"] != view["current_engine"])["engine"], observed=view["observed"])
         request = self.view()["request"]
         self.action("handoff-now", request_id=request["id"])
 
@@ -217,7 +229,7 @@ class TestTaskTransferAPI(AltitudeCase):
         T.block(self.project, slug, "Which retention period?", actor="l2",
                 updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE}, recommendation="Fourteen days.")
         view = self.view()
-        target = view["targets"][0]["engine"]
+        target = next(item for item in view["targets"] if item["engine"] != view["current_engine"])["engine"]
         self.assertFalse(view["eligible"], "A question alone does not prove the old worker ended")
         self.action(engine=target, observed=view["observed"], status=409)
         self.engine.workers[self.task["agent_id"]].update(state="done", status="exited")

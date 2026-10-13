@@ -936,6 +936,12 @@ This works with workers
 whose immutable CLI predates handoff. Readiness does not depend on file modification time or a send receipt.
 There is no automatic timeout. Confirmed engine exit, a recorded usage limit, an existing Stop or an
 explicit `--now` allows saved-context transfer without a new note; silence and network failure do not.
+The task composer's model chooser uses this same lifecycle for engine, model and effort changes.
+Confirmation freezes its resolved selection; later defaults do not alter the pending attempt. An
+unchanged selection creates no request. Same-engine changes start a fresh session after the same
+patient checkpoint and confirmed termination. This selection is local to the new attempt and its
+ordinary resumes; it changes no global/project settings or explicit pin. Pending questions and holds
+stay open, and confirmed quota exhaustion uses saved progress without requiring a fresh note.
 `--request <id> --cancel` cancels while the request waits and sends a correction to the same owner.
 Once the daemon records its stopping phase, cancellation refuses. The daemon stops the entire owned
 job and requires confirmed termination before requeue. A restart retains the request and readiness

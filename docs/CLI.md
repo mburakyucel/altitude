@@ -135,9 +135,12 @@ policy. L3 still verifies the actual cause and recovery before resuming work.
 
 ### Explicit provider handoff
 
-The task page offers the same operation in the **Engine transfer** card at the bottom of **Task details**,
-after ordinary task information and actions. **Switch engine…** opens its confirmation. Unanswered
-decisions precede contextual transfer controls; quota offers use secondary buttons.
+The task conversation's model button opens a task-only chooser for engine, model and effort.
+**Prepare change** confirms a fresh attempt, including model or effort changes on the same engine.
+The chooser previews the resolved default model; a changed default requires a refreshed confirmation,
+and an unchanged effective selection creates no attempt. The confirmed selection stays fixed through
+preparation and dispatch, independent of later defaults. Project and global Settings stay unchanged.
+Unanswered decisions precede contextual transfer controls; quota offers use a secondary **Change model…** button.
 A usage-limit stop also offers switching beside its explanation. Confirmation warns that some session
 context may not carry over and the new engine uses extra tokens to get up to speed. A conversation card
 keeps **Switch now** and **Cancel switch** visible during preparation; neither a slow response nor a
@@ -191,7 +194,9 @@ targets refuse. A changed block or replacement worker invalidates the request. A
 its receipt while the resulting lifecycle still matches.
 
 Successful handoff queues the same task for ordinary dispatch, constrained to the requested engine's
-configured options for one fresh attempt, ignoring model choices for new tasks. Configuration and availability are checked again at launch;
+configured options for one fresh attempt, ignoring model choices for new tasks. A task-chooser request
+also fixes its explicit model and effort; the engine-only CLI form retains its configured routing options.
+Configuration and availability are checked again at launch;
 an unavailable target does not fall through to another engine, and the queue shows that target's
 availability or pin conflict using the same routing decision as dispatch. The worktree, uncommitted edits, branch,
 PRs, expected files, progress, messages, provider history, questions and merge holds remain. Prior reports remain

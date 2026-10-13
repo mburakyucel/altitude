@@ -34,7 +34,7 @@ def main():
     with config.add_project(project, path=repo):
         pass
     projects = config.load_projects()
-    projects[project]["routing"] = [[{"engine": engine}] for engine in config.ENGINES]
+    projects[project]["routing"] = [[{"engine": engine, "model": "fixture-model"}] for engine in config.ENGINES]
     config.save_projects(projects)
     fixture_tasks = {}
     for title, mode in (("Transfer running work", "running"), ("Transfer quota work", "quota"),
@@ -49,6 +49,8 @@ def main():
         fake.workers[agent] = {"id": agent, "sessionId": agent, "state": "working", "status": "busy"}
         task = T.dispatch(project, slug, attempt=1, session_id=agent, agent_id=agent,
                           worktree=str(worktree), branch=f"worktree-{slug}", l2_engine=config.ENGINES[0])
+        task.update(launch_model="fixture-model", launch_effort="high")
+        S.save_task(project, task)
         T.message(project, slug, "l2", "Saved work is ready for the next engine.")
         if mode in {"question", "quota-question"}:
             T.block(project, slug, "Keep the bounded validation scope?", actor="l2",

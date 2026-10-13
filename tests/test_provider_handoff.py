@@ -237,6 +237,74 @@ class TestProviderHandoff(AltitudeCase):
         dispatch.run(self.project, task["slug"])
         return S.load_task(self.project, task["slug"])
 
+    def select(self, task, engine, selection, **options):
+        return dispatch.request_task_operation(
+            self.project, task["slug"], "handoff", "Apply the chosen task model and effort.",
+            actor="l3", engine=engine, selection=selection, expected_attempt=task["attempt"], **options)
+
+    def test_same_engine_selection_waits_then_starts_exact_fresh_attempt_without_pin(self):
+        task = self.running_owner()
+        selection = {"model": task["launch_model"], "effort": "high"}
+        request = self.select(task, task["l2_engine"], selection)["request"]
+        waiting = dispatch.run_task_operation(self.project, task["slug"])
+        self.assertTrue(waiting["pending"])
+        self.assertEqual(len(self.engine.calls), 1)
+        self.ready(task, request)
+        queued = self.execute(task)
+        self.assertEqual(queued["next_selection"], selection)
+        self.assertEqual(queued["l2_engine"], task["l2_engine"])
+        dispatch.run(self.project, task["slug"])
+        fresh = S.load_task(self.project, task["slug"])
+        self.assertEqual(fresh["attempt"], 2)
+        self.assertNotEqual(fresh["session_id"], task["session_id"])
+        self.assertEqual((fresh["launch_model"], fresh["launch_effort"]), (selection["model"], "high"))
+        self.assertFalse(fresh["routing_pinned"])
+        self.assertNotIn("next_selection", fresh)
+        self.assertNotIn("next_engine", fresh)
+        self.assertTrue(self.select(fresh, fresh["l2_engine"], {**selection, "effort": "medium"})["queued"])
+
+    def test_selected_tuple_is_frozen_across_default_changes_and_request_retries(self):
+        task = self.owner(question=True)
+        selection = {"model": "target-a", "effort": "medium"}
+        first = self.select(task, "codex", selection)
+        self.assertEqual(self.select(task, "codex", selection)["request"]["id"], first["request"]["id"])
+        with self.assertRaisesRegex(T.TransitionError, "already queued"):
+            self.select(task, "codex", {**selection, "effort": "high"})
+        with mock.patch.object(config, "default_model", return_value="different-default"), \
+                mock.patch.object(config, "default_effort", return_value="ultra"):
+            self.execute(task)
+            dispatch.run(self.project, task["slug"])
+        fresh = S.load_task(self.project, task["slug"])
+        self.assertEqual((fresh["launch_model"], fresh["launch_effort"]), ("target-a", "medium"))
+        self.assertEqual(fresh["questions"], task["questions"])
+        self.assertEqual(fresh["hold_merge"], task["hold_merge"])
+
+    def test_default_preview_changes_and_unchanged_tuple_create_no_request(self):
+        task = self.running_owner()
+        current = {"model": task["launch_model"], "effort": task.get("launch_effort")}
+        with self.assertRaisesRegex(T.TransitionError, "already uses"):
+            self.select(task, task["l2_engine"], current)
+        with self.assertRaisesRegex(T.TransitionError, "Default changed"):
+            self.select(task, "codex", {"model": "old-default", "effort": "high"}, handoff_default="old-default")
+        self.assertFalse(S.load_task(self.project, task["slug"]).get("daemon_request"))
+
+    def test_selected_transfer_keeps_pin_and_attempt_refusals(self):
+        task = self.owner()
+        selection = {"model": "target-a", "effort": "medium"}
+        task["routing_pinned"] = True
+        S.save_task(self.project, task)
+        with self.assertRaisesRegex(T.TransitionError, "pin"):
+            self.select(task, "codex", selection)
+        task["routing_pinned"] = False
+        S.save_task(self.project, task)
+        self.select(task, "codex", selection)
+        changed = S.load_task(self.project, task["slug"])
+        changed["attempt"] += 1
+        S.save_task(self.project, changed)
+        result = dispatch.run_task_operation(self.project, task["slug"])
+        self.assertEqual(result["request"]["status"], "refused")
+        self.assertNotIn("next_selection", S.load_task(self.project, task["slug"]))
+
     def ready(self, task, request):
         folder = S.task_dir(self.project, task["slug"])
         (folder / "progress.md").write_text("Saved work. Next: validate the unfinished change.\n")

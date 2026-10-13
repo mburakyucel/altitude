@@ -395,6 +395,7 @@ describe("Task on desktop", () => {
   it.each([true, false])("keeps single-engine quota recovery visible, current hold=%s", async (heldNow) => {
     stub({ ...stuck, usage_limit: { kind: "weekly" }, transfer: {
       current_engine: "first", current_label: "Engine A", eligible: false, preparation: false, quota_limited: true,
+      current_model: null, current_model_label: null, current_effort: null, current_effort_label: "Native",
       resume_hold: heldNow ? "usage limit" : null, targets: [], request: null,
       observed: { attempt: 1, agent_id: "worker", session_id: "session", block_id: null },
     } });

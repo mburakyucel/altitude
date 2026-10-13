@@ -170,7 +170,11 @@ engine's configured options and is consumed when dispatch binds the fresh attemp
 availability are checked again before execution and launch. `route.pick_task` supplies the same
 target-aware availability and pin explanation to dispatch and the queue. A fresh attempt clears current
 verification while retaining prior reports and delivery history. Handoff ignores new-task model choices
-and reports whether a fresh handoff note was obtained. Ordinary resume remains unchanged.
+and reports whether a fresh handoff note was obtained. The task composer extends this same receipt
+with an explicit model/effort selection, including same-engine changes. Admission checks the displayed
+default resolution and rejects an unchanged effective tuple. Requeue retains that selection for one
+attempt; dispatch consumes it without turning it into a permanent policy pin. Explicit task/project
+pins and unavailable targets still refuse. Ordinary resume remains unchanged.
 The attempt number fences every L2 command to the current attempt: an L2 may reply, block, complete,
 resolve a dilemma against its source message, and land only its own task.
 

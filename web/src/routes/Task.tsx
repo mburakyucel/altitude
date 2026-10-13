@@ -24,7 +24,7 @@ import { TaskActivity } from "../components/TaskActivity";
 import { Stamp } from "../components/Stamp";
 import { SteeringControls, SteeringNotice, useTaskSteering } from "../components/TaskSteering";
 import type { Steering } from "../components/TaskSteering";
-import { TransferCard, TransferDialog, useTaskTransfer } from "../components/TaskTransfer";
+import { TransferCard, TransferDialog, TransferModelButton, useTaskTransfer } from "../components/TaskTransfer";
 import type { Transfer } from "../components/TaskTransfer";
 import type { ImageSubmission } from "../components/ImageDraft";
 import { MessageImages, PendingImages } from "../components/MessageImages";
@@ -633,6 +633,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
       </div>
       {facts.canMessage ? <div className="convo-dock">
         <Composer active={active} conversation={conversation} value={draft} onChange={setDraft} onSubmit={(text, accepted, images, copy) => prepareSend()(text, accepted, images, copy)} prepareSubmit={prepareSend} selection={selection} onEscapeOwnership={onEscapeOwnership}
+        pill={<TransferModelButton transfer={transfer} />}
         shows={shownCopy}
         imageScope={{ project, task: task.slug, engine: str(task["l2_engine"]) || str(task["engine"]) }}
         ariaLabel="Message the L2" placeholder="Message the L2" disabled={readOnly || denied}
@@ -852,7 +853,6 @@ function TaskPage({
         <ConfirmRow actions={actions} />
         {resumeError}
       </> : null}
-      {!readOnly && !denied ? <TransferCard transfer={transfer} details /> : null}
     </div>
   </Overlay> : null;
   useEffect(() => {

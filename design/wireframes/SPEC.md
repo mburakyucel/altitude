@@ -1158,28 +1158,32 @@ unavailable.** with **Retry capture**, and recovery removes the error.
 
 ### 3.10 Task page
 
-**Engine transfer.** A stacked card at the bottom of Task details, after existing information and
-actions, offers **Switch engine…**. It shares the review cards’ icon, title, state and button treatment.
-Opening details keeps ordinary status and reviews first; it never scrolls to the transfer card.
-A quota-stop card combines the explanation and a secondary **Switch to {engine}** button without
-duplicating the explanation. Unanswered questions and merge-review actions precede contextual
-transfer controls. A confirmation identifies the target and warns **Some session context
-may not carry over. The new engine uses extra tokens to get up to speed.** It preserves saved work,
-questions and merge holds. A running owner prepares its note with no timeout; stopped/exhausted work
-uses saved context. No alternative hides the entry; pins and unavailable targets reveal a reason on press.
-After admission, a conversation card shows **Preparing switch to {engine}**, **Switch now** and
-**Cancel switch**. The compact header state replaces ordinary activity; Stop stays in its existing
-slot. Reading history offers **Switch controls ↓** in the jump area. Details provides the same
-controls from Live session/Terminal. Switch now confirms stopping pending commands without a fresh
-note. Once stopping starts, now/cancel disappear. An uncertain response keeps **Switch unconfirmed**
-and **Check status**, without another mutation; unknown termination uses the shared Stop-unconfirmed
-state. Outcomes become concise conversation messages. Draft, selection, recording and view survive;
-polling never steals focus. Escape closes a dialog before applying page shortcuts. There is no new
-browser cache or persistent transfer state.
-Idle uses transfer arrows; preparing, stopping and queued states use an activity arc with reduced
-motion support. Unconfirmed/failure uses a warning, completion a check, and cancellation a stopped
-mark, always alongside state text. Details retains the latest result and eligible next action in
-one card. A completed switch does not retain a progress animation.
+**Task model.** The composer has a model pill matching the L3 control, with a downward chevron
+and an actual 44px minimum phone hit area. It shows the launched model and effort; pending choices
+never appear as already applied. Task details retains read-only launch facts, with no separate idle
+transfer card. The pill opens **This task’s model**, bottom sheet on phone and centered on desktop:
+current selection, then labeled Engine, Model and Effort selectors. Models and efforts come from the
+engine seam. **Default · {resolved model}** previews the concrete choice; changed defaults require
+refresh and an unchanged effective tuple cannot start another attempt. Only this task is affected.
+
+One concise confirmation block says **Waits for a handoff note, then starts a fresh session. Some
+context may be lost; rebuilding it uses extra tokens. Saved work, questions and holds stay.** Its
+first sentence becomes **Starts a fresh session from saved context.** after confirmed quota exhaustion
+or worker exit. **Cancel** and **Prepare change** (or **Start fresh session**) complete the chooser.
+Unknown model facts stay explicitly unknown; unavailable/pinned choices give a reason and disable
+submission. Editing fields alone never changes the task. Read-only/denied views remove mutation controls.
+
+After admission, a shared review-style card shows **Preparing change**, the requested model/effort,
+**Switch now** and **Cancel switch**. It follows unanswered questions and merge actions, before activity
+evidence. A current quota offer uses secondary **Change model…** and no duplicate explanation.
+Preparation has no timeout. Switch now confirms stopping pending work without a note; now/cancel
+vanish once stopping commits. Stop stays in its existing location. **Switch controls ↓** leads back
+from history; return to Conversation from Live session/Terminal to use the chooser. Opening the model
+pill during preparation shows the fixed request and controls, not editable selectors. Uncertain
+responses offer **Check status**, never a duplicate mutation. Outcomes become conversation messages.
+Draft, selection, recording and view survive; polling never steals focus. Escape closes the active
+dialog first. Activity/warning/terminal cues accompany explicit state text and respect reduced motion.
+No browser cache or persistent client-side transfer state is added.
 
 The [maintained task states](TaskStates.html) describe activity and steering. Task actions stay
 directly accessible in the compact header, with one consistent button treatment.

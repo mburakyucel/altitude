@@ -15,43 +15,45 @@ test("fixture control only addresses its own created tasks", async ({ request })
 
 const path = (slug: string) => `/api/task/atlas/${slug}`;
 const card = (page: Page) => page.getByRole("region", { name: "Task conversation", exact: true })
-  .getByRole("region", { name: "Engine transfer", exact: true });
+  .getByRole("region", { name: /^(Preparing change|Task change)$/ });
 const draft = (page: Page) => page.getByRole("textbox", { name: "Message the L2", exact: true });
 async function start(page: Page) {
-  await page.getByRole("button", { name: /Task details$/ }).click();
-  await page.getByRole("dialog", { name: "Task details", exact: true }).getByRole("button", { name: "Switch engine…", exact: true }).click();
+  await page.getByRole("button", {name:/^Task model:/}).click();
+  const engine=page.getByRole("combobox",{name:"Engine",exact:true});
+  const slug=new URL(page.url()).pathname.split("/").at(-1);
+  const task=await (await page.request.get(`/api/task/atlas/${slug}`)).json();
+  const other=task.transfer.targets.find((item:{engine:string;available:boolean})=>item.engine!==task.transfer.current_engine && item.available);
+  if(other) await engine.selectOption(other.engine);
 }
 
 test("patient transfer cancels without losing the draft, then readiness starts a fresh owner", async ({ page, request }, info) => {
   const slug = "transfer-running-work";
   const read = async () => (await (await request.get(path(slug))).json());
   const before = await read();
-  const target = before.transfer.targets.find((item: { available: boolean }) => item.available);
+  const target = before.transfer.targets.find((item: { available: boolean; engine: string }) => item.available && item.engine !== before.transfer.current_engine);
   const walk = walkthrough(page, info);
   await walk.open(`/projects/atlas/tasks/${slug}`);
   await walk.state("00a-task-before-switch", { visible: [page.getByRole("button", { name: /Task details$/ })], hidden: [card(page)] });
   await page.getByRole("button", { name: /Task details$/ }).click();
   const details = page.getByRole("dialog", { name: "Task details", exact: true });
-  const entryCard = details.getByRole("region", { name: "Engine transfer", exact: true });
-  expect(await entryCard.evaluate(node => node.parentElement?.lastElementChild === node)).toBe(true);
-  await expect(details.getByRole("button", { name: "Switch engine…", exact: true })).not.toBeFocused();
-  await walk.state("00b-details-opens-with-status", { visible: [details], hidden: [] });
-  await entryCard.scrollIntoViewIfNeeded();
-  await walk.state("00b-switch-entry-in-task-details", { visible: [details, details.getByRole("button", { name: "Switch engine…", exact: true })], hidden: [card(page)] });
-  await details.getByRole("button", { name: "Switch engine…", exact: true }).focus();
+  await expect(details.getByRole("button",{name:"Switch engine…"})).toBeHidden();
   await page.keyboard.press("Escape");
   await expect(details).toBeHidden();
+  const pill=page.getByRole("button",{name:/^Task model:/});
+  const box=await pill.boundingBox();
+  expect(box!.height).toBeGreaterThanOrEqual(44);
+  await walk.state("00b-task-composer-model-entry",{visible:[pill],hidden:[details]});
   await draft(page).fill("Keep this unsent instruction.");
   await draft(page).evaluate((node: HTMLTextAreaElement) => node.setSelectionRange(5, 9));
   await start(page);
-  const confirm = page.getByRole("dialog", { name: `Switch to ${target.label}?`, exact: true });
-  await walk.state("01-confirm-context-and-cost", { visible: [confirm, confirm.getByText("Some session context may not carry over. The new engine uses extra tokens to get up to speed.")], hidden: [card(page)] });
+  const confirm = page.getByRole("dialog", { name: "This task’s model", exact: true });
+  await walk.state("01-confirm-context-and-cost", { visible: [confirm, confirm.getByText(/Some context may be lost/)], hidden: [card(page)] });
   await page.keyboard.press("Escape");
   await expect(confirm).toBeHidden();
   expect((await read()).daemon_request).toBeFalsy();
   await expect(draft(page)).toHaveValue("Keep this unsent instruction.");
   await start(page);
-  await confirm.getByRole("button", { name: "Prepare switch", exact: true }).click();
+  await confirm.getByRole("button", { name: "Prepare change", exact: true }).click();
   await walk.state("02-preparing-card-stop-and-draft", { visible: [card(page), card(page).getByRole("button", { name: "Switch now", exact: true }), card(page).getByRole("button", { name: "Cancel switch", exact: true }), page.getByRole("button", { name: "Stop", exact: true }).first()], hidden: [confirm] });
   expect((await read()).attempt).toBe(before.attempt);
   await card(page).getByRole("button", { name: "Cancel switch", exact: true }).click();
@@ -59,7 +61,7 @@ test("patient transfer cancels without losing the draft, then readiness starts a
   await walk.state("03-cancelled-restores-owner", { visible: [draft(page)], hidden: [card(page).getByRole("button", { name: "Switch now", exact: true })] });
   await expect(draft(page)).toHaveValue("Keep this unsent instruction.");
   await start(page);
-  await confirm.getByRole("button", { name: "Prepare switch", exact: true }).click();
+  await confirm.getByRole("button", { name: "Prepare change", exact: true }).click();
   await expect(card(page)).toBeVisible();
   const response = await request.post("/fixture/transfer", { data: { slug, ready: true, launch: true } });
   expect(response.ok()).toBe(true);
@@ -80,7 +82,7 @@ test("explicit switch now replaces a running owner and preserves the merge hold"
   const walk = walkthrough(page, info);
   await walk.open(`/projects/atlas/tasks/${slug}`);
   await start(page);
-  await page.getByRole("button", { name: "Prepare switch", exact: true }).click();
+  await page.getByRole("button", { name: "Prepare change", exact: true }).click();
   await card(page).getByRole("button", { name: "Switch now", exact: true }).click();
   const confirm = page.getByRole("dialog", { name: "Switch without a fresh note?", exact: true });
   await walk.state("01-switch-now-confirmation", { visible: [confirm, confirm.getByRole("button", { name: "Keep waiting", exact: true })], hidden: [] });
@@ -104,13 +106,13 @@ test("a blocked question owner switches from saved context without answering the
   expect(before.state).toBe("blocked");
   expect(before.questions.some((question: { status: string }) => question.status === "open")).toBe(true);
   expect(before.transfer.preparation).toBe(false);
-  const target = before.transfer.targets.find((item: { available: boolean }) => item.available);
+  const target = before.transfer.targets.find((item: { available: boolean; engine: string }) => item.available && item.engine !== before.transfer.current_engine);
   const walk = walkthrough(page, info);
   await walk.open(`/projects/atlas/tasks/${slug}`);
   await start(page);
-  const confirm = page.getByRole("dialog", { name: `Switch to ${target.label}?`, exact: true });
-  await walk.state("01-blocked-question-saved-context", { visible: [confirm, confirm.getByText(`${target.label} continues from the saved task record.`, { exact: true })], hidden: [confirm.getByRole("button", { name: "Prepare switch", exact: true })] });
-  await confirm.getByRole("button", { name: `Switch to ${target.label}`, exact: true }).click();
+  const confirm = page.getByRole("dialog", { name: "This task’s model", exact: true });
+  await walk.state("01-blocked-question-saved-context", { visible: [confirm, confirm.getByText(/Starts a fresh session from saved context/)], hidden: [confirm.getByRole("button", { name: "Prepare change", exact: true })] });
+  await confirm.getByRole("button", { name: "Start fresh session", exact: true }).click();
   await expect.poll(async () => (await read()).state).toBe("queued");
   expect((await request.post("/fixture/transfer", { data: { slug, launch: true } })).ok()).toBe(true);
   const after = await read();
@@ -119,7 +121,7 @@ test("a blocked question owner switches from saved context without answering the
   expect(after.hold_merge).toBe(before.hold_merge);
   await walk.state("02-new-owner-question-stays-open", { visible: [page.getByText("Keep the bounded validation scope?", { exact: true }).first(), page.locator('[data-tone="held"]').filter({ hasText: "Merge held" }).first()], hidden: [confirm, page.getByRole("button", { name: "Resume", exact: true })] });
   await start(page);
-  await page.getByRole("button", { name: "Prepare switch", exact: true }).click();
+  await page.getByRole("button", { name: "Prepare change", exact: true }).click();
   const answer = page.getByPlaceholder("Your answer or a follow-up question…");
   await answer.fill("Keep this unanswered decision.");
   await answer.focus();
@@ -136,7 +138,7 @@ test("quota switching stays secondary to an unanswered decision", async ({ page 
   const offer = page.getByRole("region", { name: "Engine usage limit", exact: true });
   await expect(offer).toBeVisible();
   expect(await offer.evaluate(node => Boolean(document.querySelector('.conversation-question')?.compareDocumentPosition(node)! & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
-  await expect(offer.getByRole("button", { name: /^Switch to / })).not.toHaveClass(/btn-primary/);
+  await expect(offer.getByRole("button", { name: "Change model…" })).not.toHaveClass(/btn-primary/);
   await expect(page.locator('.conversation-status')).toHaveCount(0);
   await walk.state("01-question-before-quota-offer", { visible: [page.getByText("Keep the bounded validation scope?", { exact: true }).first(), offer], hidden: [] });
 });
@@ -144,24 +146,22 @@ test("quota switching stays secondary to an unanswered decision", async ({ page 
 test("quota stop offers saved-context confirmation; pinned work explains unavailability", async ({ page, request }, info) => {
   const slug = "transfer-quota-work";
   const row = await (await request.get(path(slug))).json();
-  const target = row.transfer.targets.find((item: { available: boolean }) => item.available);
+  const target = row.transfer.targets.find((item: { available: boolean; engine: string }) => item.available && item.engine !== row.transfer.current_engine);
   const walk = walkthrough(page, info);
   await walk.open(`/projects/atlas/tasks/${slug}`);
-  await walk.state("01-quota-offers-switch", { visible: [page.getByRole("button", { name: `Switch to ${target.label}`, exact: true })], hidden: [] });
+  await walk.state("01-quota-offers-switch", { visible: [page.getByRole("button", { name: "Change model…", exact: true })], hidden: [] });
   expect(row.transfer.resume_hold).toBeTruthy();
   if (info.project.name === "desktop") await expect(page.getByRole("button", { name: "Resume", exact: true })).toBeDisabled();
-  await page.getByRole("button", { name: `Switch to ${target.label}`, exact: true }).click();
-  const confirm = page.getByRole("dialog", { name: `Switch to ${target.label}?`, exact: true });
-  await walk.state("02-quota-saved-context", { visible: [confirm, confirm.getByText(`${target.label} continues from the saved task record.`, { exact: true })], hidden: [confirm.getByRole("button", { name: "Prepare switch", exact: true })] });
-  await confirm.getByRole("button", { name: `Switch to ${target.label}`, exact: true }).click();
+  await page.getByRole("button", { name: "Change model…", exact: true }).click();
+  const confirm = page.getByRole("dialog", { name: "This task’s model", exact: true });
+  await walk.state("02-quota-saved-context", { visible: [confirm, confirm.getByText(/Starts a fresh session from saved context/)], hidden: [confirm.getByRole("button", { name: "Prepare change", exact: true })] });
+  await confirm.getByRole("button", { name: "Start fresh session", exact: true }).click();
   await expect.poll(async () => (await (await request.get(path(slug))).json()).state).toBe("queued");
   await walk.open("/projects/atlas/tasks/transfer-pinned-work");
-  await page.getByRole("button", { name: /Task details$/ }).click();
-  const details = page.getByRole("dialog", { name: "Task details", exact: true });
-  const entry = details.getByRole("button", { name: "Switch engine…", exact: true });
-  await expect(entry).toHaveAttribute("aria-disabled", "true");
-  await entry.click({ force: true });
-  await walk.state("03-pin-explains-unavailable", { visible: [details, details.locator(".transfer-entry [role=status]")], hidden: [confirm] });
+  await page.getByRole("button",{name:/^Task model:/}).click();
+  const pinned=page.getByRole("dialog",{name:"This task’s model"});
+  await expect(pinned.getByRole("button",{name:"Prepare change"})).toBeDisabled();
+  await walk.state("03-pin-explains-unavailable",{visible:[pinned,pinned.getByRole("status")],hidden:[]});
 });
 
 test("lost switch response remains uncertain with Stop available and reconciles without a duplicate", async ({ page, request }, info) => {
@@ -178,8 +178,8 @@ test("lost switch response remains uncertain with Stop available and reconciles 
   await walk.open(`/projects/atlas/tasks/${slug}`);
   await draft(page).fill("Retain this draft across the lost receipt.");
   await start(page);
-  await page.getByRole("button", { name: "Prepare switch", exact: true }).click();
-  await walk.state("01-unconfirmed-stop-retained", { visible: [card(page).getByRole("button", { name: "Check status", exact: true }), page.getByRole("button", { name: "Stop", exact: true }).first()], hidden: [page.getByRole("button", { name: "Prepare switch", exact: true })] });
+  await page.getByRole("button", { name: "Prepare change", exact: true }).click();
+  await walk.state("01-unconfirmed-stop-retained", { visible: [card(page).getByRole("button", { name: "Check status", exact: true }), page.getByRole("button", { name: "Stop", exact: true }).first()], hidden: [page.getByRole("button", { name: "Prepare change", exact: true })] });
   await card(page).getByRole("button", { name: "Check status", exact: true }).focus();
   await page.keyboard.press("Escape");
   expect((await (await request.get(path(slug))).json()).daemon_request.operation).toBe("handoff");
@@ -197,8 +197,8 @@ test("new permission denial removes transfer actions", async ({ page }, info) =>
     ? route.fulfill({ status: 403, json: { error: "Permission denied" } }) : route.continue());
   await walk.open("/projects/atlas/tasks/transfer-running-work");
   await start(page);
-  await page.getByRole("button", { name: "Prepare switch", exact: true }).click();
-  await walk.state("01-permission-denied", { visible: [page.getByText("You do not have permission to switch this task.", { exact: true })], hidden: [page.getByRole("button", { name: "Prepare switch", exact: true }), card(page).getByRole("button", { name: "Switch now", exact: true })] });
+  await page.getByRole("button", { name: "Prepare change", exact: true }).click();
+  await walk.state("01-permission-denied", { visible: [page.getByText("You do not have permission to switch this task.", { exact: true })], hidden: [page.getByRole("button", { name: "Prepare change", exact: true }), card(page).getByRole("button", { name: "Switch now", exact: true })] });
 });
 
 test("@chromium listening survives confirmation and an accepted transfer without sending the draft", async ({ page, request }, info) => {
@@ -213,12 +213,12 @@ test("@chromium listening survives confirmation and an accepted transfer without
   await conversation.getByRole("button", { name: "Start voice input", exact: true }).click();
   await expect(draft(page)).toHaveValue("Unsent text. preserve the recorded instruction");
   await start(page);
-  await walk.state("01-listening-during-confirmation", { visible: [page.getByRole("button", { name: "Prepare switch", exact: true })], hidden: [] });
+  await walk.state("01-listening-during-confirmation", { visible: [page.getByRole("button", { name: "Prepare change", exact: true })], hidden: [] });
   await page.keyboard.press("Escape");
   await expect(stopVoice).toBeVisible();
   expect(host.finals).toBe(0);
   await start(page);
-  await page.getByRole("button", { name: "Prepare switch", exact: true }).click();
+  await page.getByRole("button", { name: "Prepare change", exact: true }).click();
   await walk.state("02-listening-while-preparing", { visible: [stopVoice, card(page)], hidden: [] });
   expect((await request.post("/fixture/transfer", { data: { slug, ready: true } })).ok()).toBe(true);
   await expect.poll(async () => (await (await request.get(path(slug))).json()).state).toBe("queued");
@@ -245,7 +245,7 @@ test("@desktop-only compact transfer header remains readable at 1024 pixels", as
   const walk = walkthrough(page, info);
   await walk.open("/projects/atlas/tasks/transfer-running-work");
   await start(page);
-  await page.getByRole("button", { name: "Prepare switch", exact: true }).click();
+  await page.getByRole("button", { name: "Prepare change", exact: true }).click();
   await walk.state("01-1024-preparing-with-stop", { visible: [card(page), page.getByRole("button", { name: "Stop", exact: true }).first(), page.locator('[data-tone="held"]').filter({ hasText: "Merge held" }).first()], hidden: [] });
   expect(await page.locator(".task-header .task-chips").evaluate(node => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
@@ -258,7 +258,7 @@ test("Stop supersedes preparation and uncertain termination never launches a rep
   const walk = walkthrough(page, info);
   await walk.open(`/projects/atlas/tasks/${slug}`);
   await start(page);
-  await page.getByRole("button", { name: "Prepare switch", exact: true }).click();
+  await page.getByRole("button", { name: "Prepare change", exact: true }).click();
   await expect(card(page)).toBeVisible();
   expect((await request.post("/fixture/transfer", { data: { slug, unknown_termination: true, stop_failure: true } })).ok()).toBe(true);
   await page.getByRole("button", { name: "Stop", exact: true }).first().click();
@@ -278,7 +278,7 @@ test("switch-now waits for confirmed old-worker termination", async ({ page, req
   const walk = walkthrough(page, info);
   await walk.open(`/projects/atlas/tasks/${slug}`);
   await start(page);
-  await page.getByRole("button", { name: "Prepare switch", exact: true }).click();
+  await page.getByRole("button", { name: "Prepare change", exact: true }).click();
   expect((await request.post("/fixture/transfer", { data: { slug, unknown_termination: true } })).ok()).toBe(true);
   await card(page).getByRole("button", { name: "Switch now", exact: true }).click();
   await page.getByRole("dialog", { name: "Switch without a fresh note?", exact: true }).getByRole("button", { name: "Switch now", exact: true }).click();
@@ -299,7 +299,7 @@ for (const outcome of ["question", "report", "unavailable"] as const) test(`prep
   await walk.open(`/projects/atlas/tasks/${slug}`);
   await draft(page).fill("Retain the next instruction.");
   await start(page);
-  await page.getByRole("button", { name: "Prepare switch", exact: true }).click();
+  await page.getByRole("button", { name: "Prepare change", exact: true }).click();
   await expect(card(page).getByRole("button", { name: "Cancel switch", exact: true })).toBeVisible();
   expect((await request.post("/fixture/transfer", { data: { slug, outcome } })).ok()).toBe(true);
   await expect.poll(async () => (await read()).transfer.request.status).toBe(outcome === "question" ? "cancelled" : "refused");

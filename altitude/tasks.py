@@ -1573,6 +1573,7 @@ def dispatch(project: str, slug: str, *, attempt: int, session_id: str | None, a
                      "branch": branch, "blocked_reason": None, "l2_engine": l2_engine, "engine_model": engine_model,
                      "routing": routing, "dispatched": S.now()})
         task.pop("next_engine", None)
+        task.pop("next_selection", None)
         ids = {row["id"] for row in (messages or [])} if input_delivered else set()
         for message_id in ids:
             task.setdefault("message_deliveries", {})[message_id] = {
@@ -1734,6 +1735,7 @@ def resume(project: str, slug: str, actor: str = "altd", *, agent_id: str | None
 
 
 def requeue(project: str, slug: str, actor: str = "altd", *, engine: str | None = None,
+            selection: dict | None = None,
             clear_worker: bool = False, expected_daemon_request: str | None = None,
             expected_agent_id: object = _UNSET, expected_session_id: object = _UNSET,
             expected_block_id: object = _UNSET, **ev) -> dict:
@@ -1753,8 +1755,12 @@ def requeue(project: str, slug: str, actor: str = "altd", *, engine: str | None 
         usage.capture(project, task)
         task.pop("verified", None)  # A fresh attempt must establish its own current verification.
         task.pop("nudged", None)  # and its session gets its own nudge
-        task.update({"agent_id": None, "session_id": None, "l2_engine": engine, "engine_model": None,
+        task.update({"agent_id": None, "session_id": None, "engine_model": None,
                      "next_engine": engine or task.get("next_engine"), "routing": None})
+        if selection is not None:
+            task["next_selection"] = dict(selection)
+        elif engine is not None:
+            task.pop("next_selection", None)
         _clear_block(project, task)
         return _move(project, task, "queued", actor, **ev)
 

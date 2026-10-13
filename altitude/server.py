@@ -2682,7 +2682,8 @@ class Handler(BaseHTTPRequestHandler):
                             return self._json({"error": "Refresh the task and choose a target engine."}, 400)
                         request_daemon_task_operation(
                             project, slug, "handoff", reason, actor=config.OPERATOR_ACTOR,
-                            engine=o["engine"], expected_attempt=observed.get("attempt"), handoff_observed=observed)
+                            engine=o["engine"], expected_attempt=observed.get("attempt"), handoff_observed=observed,
+                            selection=o.get("selection"), handoff_default=o.get("default_model"))
                     elif action in ("handoff-now", "handoff-cancel"):
                         dispatch.handoff_control(project, slug, str(o.get("request_id") or ""),
                                                  action.removeprefix("handoff-"), actor=config.OPERATOR_ACTOR,
@@ -3672,7 +3673,7 @@ TASK_VIEW_EVENTS = 20      # the newest events, as many as the task page shows
 
 
 def task_transfer_view(project: str, task: dict) -> dict:
-    """A fresh task snapshot offers only explicit, route-eligible engine transfers."""
+    """One snapshot supplies the exact task-only choices the operator can confirm."""
     current = task.get("l2_engine") or task.get("engine")
     request = task.get("daemon_request") or {}
     active = request.get("status") in ("pending", "executing")
@@ -3682,18 +3683,41 @@ def task_transfer_view(project: str, task: dict) -> dict:
     if task.get("state") not in ("running", "blocked") or not task.get("attempt") or not task.get("l2_engine"):
         configured = {}
     targets = []
+    catalog = config.choice_options()
+    current_model = task.get("launch_model", task.get("engine_model"))
+    current_effort = task.get("launch_effort")
     for engine in configured:
-        if engine == current:
-            continue
-        reason = None
-        try:
-            if active:
-                raise T.TransitionError("A task action is already in progress.")
-            dispatch._require_handoff(project, task, engine, task.get("attempt"))
-        except T.TransitionError as exc:
-            reason = dispatch.handoff_reason(str(exc))
+        names = {row["model"]: row["label"] for row in catalog["models"]
+                 if row["engine"] == engine and row["model"]}
+        for tier in config.role_routing("l2", settings):
+            for option in tier:
+                if option["engine"] == engine and option.get("model"):
+                    names.setdefault(option["model"], config.model_label(option["model"]))
+        if engine == current and current_model:
+            names.setdefault(current_model, config.model_label(current_model))
+        default_model = config.default_model("l2", engine, settings)
+        default_effort = config.task_effort(engine, config.default_effort("l2", engine, settings))
+        models = ([{"value": "default", "model": default_model,
+                    "label": "Default · " + names.get(default_model, config.model_label(default_model))}]
+                  if default_model else [])
+        models += [{"value": model, "model": model, "label": label} for model, label in names.items()]
+        for model in models:
+            reason = None
+            try:
+                if active:
+                    raise T.TransitionError("A task action is already in progress.")
+                dispatch._require_handoff(project, task, engine, task.get("attempt"),
+                                          {"model": model["model"], "effort": default_effort}, allow_unchanged=True)
+            except T.TransitionError as exc:
+                reason = dispatch.handoff_reason(str(exc))
+            model.update(available=reason is None, reason=reason)
+        available = any(model["available"] for model in models)
+        reason = None if available else (models[0]["reason"] if models else "No named model is configured.")
         targets.append({"engine": engine, "label": config.ENGINE_LABELS.get(engine, engine),
-                        "available": reason is None, "reason": reason})
+                        "available": available, "reason": reason, "models": models,
+                        "default_effort": default_effort,
+                        "efforts": [{"value": value, "label": config.effort_label(value)}
+                                    for value in config.ENGINE_EFFORTS[engine]]})
     eligible = any(target["available"] for target in targets)
     preparation = False
     if eligible and not task.get("usage_limit") and T.stopped_by(task) not in dispatch.DAEMON_REQUEST_ACTORS:
@@ -3701,9 +3725,14 @@ def task_transfer_view(project: str, task: dict) -> dict:
         preparation = not (worker and worker.get("state") in ("done", "failed", "stopped"))
     transfer = None
     if request.get("operation") == "handoff":
-        transfer = {key: request.get(key) for key in ("id", "status", "phase", "engine", "at", "note", "now", "checkpoint", "result_state")}
+        transfer = {key: request.get(key) for key in ("id", "status", "phase", "engine", "at", "note", "now", "checkpoint", "result_state", "selection")}
         transfer["target_label"] = config.ENGINE_LABELS.get(request.get("engine"), request.get("engine"))
     return {"current_engine": current, "current_label": config.ENGINE_LABELS.get(current, current),
+            "current_model": current_model,
+            "current_model_label": next((row["label"] for row in catalog["models"]
+                                          if row["engine"] == current and row["model"] == current_model and current_model),
+                                         config.model_label(current_model) if current_model else None),
+            "current_effort": current_effort, "current_effort_label": config.effort_label(current_effort or "native"),
             "targets": targets, "eligible": eligible,
             "reason": None if eligible else (targets[0]["reason"] if targets else "No other engine is configured."),
             "quota_limited": bool(task.get("usage_limit")), "preparation": bool(preparation), "request": transfer,
