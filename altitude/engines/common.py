@@ -1539,7 +1539,7 @@ def _review_command(engine: str, snapshot: Path, runtime: Path, model: str | Non
                     images: list[tuple[str, Path]] = (), effort: str | None = None) -> list[str]:
     adapter = (f"import sys; sys.path.insert(0, {str(config.SOURCE.resolve())!r}); "
                f"from altitude.engines import review_mcp; review_mcp({str(snapshot)!r}, {str(_review_served(runtime))!r})")
-    server = {"command": sys.executable, "args": ["-I", "-c", adapter]}
+    server = {"command": sys.executable, "args": ["-I", "-B", "-c", adapter]}
     return implementation(engine).review_command(snapshot, runtime, model, images, effort, server)
 
 

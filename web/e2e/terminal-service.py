@@ -8,24 +8,16 @@ app's files out of reach. /fixture/notices reads what waits for the task owner a
 import os
 import shutil
 import socket
-import tempfile
 import threading
-from pathlib import Path
 
-from service_support import configure, serve
+from service_support import configure, copy_build, serve
 from tests.support import add_worktree, local_terminal_launch, local_terminal_stop, make_repo
 from altitude import config, l3, server, state as S, tasks as T, terminal
 
 
 def main():
     configure()
-    # The page is served from hard links to this checkout's build, beside it in the ignored artifacts
-    # folder, so an update can replace files without touching the build other walkthroughs read.
-    artifacts = config.WEB_DIST.parent / "ui-artifacts"
-    artifacts.mkdir(exist_ok=True)
-    dist = Path(tempfile.mkdtemp(prefix="dist-", dir=artifacts))
-    shutil.copytree(config.WEB_DIST, dist, copy_function=os.link, dirs_exist_ok=True)
-    config.WEB_DIST = dist
+    dist = config.WEB_DIST = copy_build(config.WEB_DIST)
     os.environ.update({"PS1": r"\W $ ", "PROMPT_COMMAND": ""})
     terminal.shell_command = lambda: ["bash", "--noprofile", "--norc"]
     terminal.launch, terminal.stop = local_terminal_launch, local_terminal_stop

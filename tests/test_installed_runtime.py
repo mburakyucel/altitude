@@ -308,6 +308,38 @@ class InstalledRuntime(AltitudeCase):
         self.assertEqual(self.engine.calls, [])
         self.assertFalse(any(self.source.rglob("__pycache__")))
 
+    def test_isolated_coordinator_adapter_preserves_the_installed_release(self):
+        settings = engines.codex_l3_permissions(self.repo, project=self.project)
+        arguments = json.loads(next(value.partition("=")[2] for value in settings
+                                    if value.startswith("mcp_servers.altitude.args=")))
+        self.assert_adapter_preserves_release({"command": sys.executable, "args": arguments})
+
+    def test_isolated_external_speech_child_preserves_the_installed_release_without_network_access(self):
+        from altitude import speech
+        with mock.patch.object(speech, "__file__", str(self.source / "altitude/speech.py")):
+            # An invalid port refuses before a connection is created; imports and bytecode behavior stay real.
+            with self.assertRaises(speech.ServiceError):
+                speech.transcribe_service({"url": "http://127.0.0.1:invalid"}, b"\0\0")
+        self.assertFalse(any(self.source.rglob("__pycache__")))
+
+    def test_isolated_review_adapter_preserves_the_installed_release(self):
+        snapshot, runtime = self.tmp / "snapshot", self.tmp / "review-runtime"
+        snapshot.mkdir()
+        runtime.mkdir()
+        command = engines.common._review_command(config.ENGINES[0], snapshot, runtime, None)
+        adapter = json.loads(command[command.index("--mcp-config") + 1])["mcpServers"]["captured"]
+        self.assert_adapter_preserves_release(adapter)
+
+    def assert_adapter_preserves_release(self, adapter):
+        environment = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        request = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}) + "\n"
+        result = subprocess.run([adapter["command"], *adapter["args"]], input=request,
+                                env=environment, cwd=self.tmp, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["id"], 1)
+        self.assertFalse(any(self.source.rglob("__pycache__")),
+                         "isolated Python ignores the inherited bytecode setting; each adapter must prevent writes")
+
     def test_installed_runtime_preserves_but_ignores_pending_source_activation(self):
         marker = config.MONITOR_DIR / dispatch.RESTART_PENDING
         S.write_json(marker, {"requested_at": S.now(), "head": "a" * 40, "files": ["altitude/server.py"],

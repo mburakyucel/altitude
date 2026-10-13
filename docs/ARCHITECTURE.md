@@ -1361,6 +1361,8 @@ report, a block, or a completion blocks the task with its result error or stderr
 Codex L3 uses a dedicated permission profile: only its fresh per-turn runtime directory is writable; the
 deployment checkout and Altitude home are read-only, direct command networking and the user-service bus are denied,
 and a required stdio MCP coordinator tool forwards structured requests to that project's role-fenced altd Unix socket.
+The coordinator and captured-review adapters and external speech transcription child pass `-I -B` to
+Python, preserving isolation and suppressing bytecode writes in the manifest-verified installation.
 The adapter runs isolated Python from the protected deployment checkout, outside the command sandbox; it
 executes no shell commands and grants no filesystem or service authority to the model. Only this tool is
 approved for unattended use; altd continues to authorize each verb. Linux Codex proxy mode denies creation
@@ -2088,8 +2090,21 @@ build; Vite names every file under `/assets/` by its content hash, and those fil
 immutable. A warm open therefore fetches only the page and its API reads, and a cold open, the first
 on a device or the first after an update changes the app script, downloads the script and styles
 before anything shows. Hashed scripts, styles, WebAssembly, word lists, SVG and JSON travel
-gzip-encoded (`Vary: Accept-Encoding`) to browsers that accept gzip; altd compresses each once per
-process. That cuts the cold download to about a third: in the fictional walkthrough on simulated
+gzip-encoded (`Vary: Accept-Encoding`) to browsers that accept gzip. Website files, including the
+homepage and client-route index, are read through regular-file descriptors beneath the pinned
+build directory. Component normalization uses held parent directories and judges the existing
+private-place policy before metadata lookup. Inside-build links use relative targets, the canonical
+build-root spelling or its verified configured spelling; other external absolute aliases and paths
+that leave the build and return are refused without lookup. Active link expansions detect cycles
+without limiting acyclic chains. Completed targets are reused only as request-local addresses,
+with fresh private-policy, no-follow and identity checks, so branching acyclic aliases do not repeat
+their expansions. Directory and file opens refuse replacement links. A request keeps its opened
+build namespace if that build pathname changes. Root and client-route pages remain HTML and uncached; directly requested files
+use their resolved target's type and cache policy. Compression uses the same verified descriptor.
+The process keeps at most 64 compressed assets, checking each opened file's device, inode, size and
+modification/change timestamps before reusing an encoding. Replacement or modification invalidates
+that entry. This does not promise an atomic snapshot against a writer changing file contents in place.
+Gzip cuts the cold download to about a third: in the fictional walkthrough on simulated
 slow 4G the page appears in about 1.7 seconds instead of 4.4. The punctuation model's packed weights
 barely compress and travel as stored. Opening requests no dictation asset; `web/e2e/first-open.pw.ts`
 walks cold, warm and slow opens with dictation assets failing.

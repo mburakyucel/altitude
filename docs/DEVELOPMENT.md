@@ -7,6 +7,22 @@ use the operator's service or runtime records.
 
 ## Local checks
 
+`python3 -m unittest tests.test_static_files tests.test_server_head tests.test_task_files`
+checks website bytes and response metadata, index/SPA and inside-build links, plain/gzip replacement
+races, missing assets, malformed paths, regular-file refusals and descriptor cleanup. Fictional
+instrumentation raises on outside/private metadata attempts, covering traversal, aliases and
+replacement. Resolved components classify missing assets; absent indexes are 503 and unsafe indexes
+are 404. Positive 64-link chains, contextual hardlinked links and completed repeated visits preserve
+link behavior; self/mutual/expanding cycles are refused. Pinned-build replacements retain complete
+original bytes/headers without consulting the replacement. A bounded branching-alias case checks
+complete successful responses and operation counts, while reused-address replacements are refused.
+The checks warm the 64-entry compression cache and verify replacement and modification invalidation.
+The terminal and document-update fixtures share independent-inode build copying; concurrent snapshot
+creation/update leaves the original build's
+bytes and signature unchanged, including while gzip is running. The Linux-only
+execute-only-directory case requires an unprivileged process and proves directory listing is denied
+while readable assets and the task-file search helper remain accessible; a root run is not evidence.
+
 Contributors work from a repository checkout; the private archive is for running the application.
 With repository access, clone it, then use the commands below from its root.
 Owners and helpers run tests relevant to their changes during development. The required PR
@@ -1452,6 +1468,14 @@ Mac is busy so each finishes within the command limit, keeping `RESULTS` in the 
 service, LaunchAgents, keychains, trust stores or network configuration.
 
 ## CI and candidate identity
+
+Text parsing keeps complete fictional output and span fixtures in `tests/fixtures/text-parity.json`.
+`tests/test_text_parsing.py` checks option and recommendation forms, malformed delimiters, whitespace,
+duplicate keys and precedence, failure-summary outputs and JSON-prefix spans, plus shared serial
+recognition, redaction and publication rejection.
+Its long-input probes run the actual parsers in separate Python children with a two-second deadline
+per child. Parser changes preserve the accepted language and full input; they do not truncate text
+or relax publication checks.
 
 `.github/workflows/hosted-checks.yml` runs `make check` for every pull request to main, every push
 to main and manual dispatches as parallel `shard` jobs, each on its own GitHub-hosted

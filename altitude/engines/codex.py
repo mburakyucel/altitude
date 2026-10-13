@@ -465,7 +465,7 @@ def codex_l3_permissions(cwd: Path, *, project: str) -> list[str]:
             f"permissions.{profile}.filesystem={filesystem}",
             f"permissions.{profile}.network.enabled=false", 'approval_policy="never"',
             "mcp_servers.altitude.command=" + json.dumps(sys.executable),
-            "mcp_servers.altitude.args=" + json.dumps(["-I", "-c", adapter]),
+            "mcp_servers.altitude.args=" + json.dumps(["-I", "-B", "-c", adapter]),
             "mcp_servers.altitude.required=true", "mcp_servers.altitude.tool_timeout_sec=150",
             'mcp_servers.altitude.tools.coordinator.approval_mode="approve"',
             "developer_instructions=" + json.dumps("Use the altitude coordinator MCP tool for every alt verb "

@@ -1,5 +1,7 @@
 """Test-only server bootstrap. Real handlers/routing/storage, isolated engine I/O."""
 import json
+import shutil
+import tempfile
 from pathlib import Path
 import signal
 import sys
@@ -9,6 +11,15 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tests.support import SUITE  # imports the offline guards before application paths freeze
 from altitude import access, config, engines, installation, platform, server, terminal
+
+
+def copy_build(source: Path) -> Path:
+    """An update mutates only this service's own build, including inode metadata."""
+    artifacts = source.parent / "ui-artifacts"
+    artifacts.mkdir(exist_ok=True)
+    dist = Path(tempfile.mkdtemp(prefix="build-dist-", dir=artifacts))
+    shutil.copytree(source, dist, dirs_exist_ok=True)
+    return dist
 
 
 def configure(*, expected_error=lambda _message: False):
