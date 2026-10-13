@@ -33,6 +33,8 @@ class TestHead(AltitudeCase):
         assets.mkdir()
         (assets / "app.01234567.js").write_bytes(b"console.log('altitude');")
         (assets / "model.01234567.ort").write_bytes(b"packed-weights" * 64)
+        (self.dist / "scripts").symlink_to("assets", target_is_directory=True)
+        (assets / "client").symlink_to("../route")
         self.patch(config, "WEB_DIST", new=self.dist)
 
         (self.tmp / "digest.wav").write_bytes(b"RIFF-altitude-test-audio")
@@ -79,6 +81,8 @@ class TestHead(AltitudeCase):
     def test_head_matches_get_without_body(self):
         for path, expected_status in (("/", 200), ("/index.html/route", 200), ("/digest.wav", 200),
                                       ("/assets/app.01234567.js", 200), ("/assets/app.01234567.js/route", 404),
+                                      ("/scripts/app.01234567.js", 200), ("/scripts/missing.js", 404),
+                                      ("/assets/client/missing", 200),
                                       ("/api/overview", 200), ("/api/definitely-unknown", 404)):
             with self.subTest(path=path):
                 get_status, get_headers, get_body = self._request("GET", path)

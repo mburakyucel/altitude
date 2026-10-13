@@ -9,7 +9,12 @@ use the operator's service or runtime records.
 
 `python3 -m unittest tests.test_static_files tests.test_server_head tests.test_task_files`
 checks website bytes and response metadata, index/SPA and inside-build links, plain/gzip replacement
-races, missing assets, malformed paths, regular-file refusals and descriptor cleanup. It warms the
+races, missing assets, malformed paths, regular-file refusals and descriptor cleanup. Fictional
+instrumentation raises on outside/private metadata attempts, covering traversal, aliases and
+replacement. Resolved components classify missing assets; absent indexes are503 and unsafe indexes
+are404. Positive64-link chains, contextual hardlinked links and completed repeated visits preserve
+link behavior; self/mutual/expanding cycles are refused. Pinned-build replacements retain complete
+original bytes/headers without consulting the replacement. It warms the
 64-entry compression cache and verifies replacement and modification invalidation. The built-update
 fixture copies independent inodes; concurrent snapshot creation/update leaves the original build's
 bytes and signature unchanged, including while gzip is running. The Linux-only

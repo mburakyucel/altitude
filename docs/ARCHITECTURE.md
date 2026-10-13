@@ -2092,8 +2092,12 @@ on a device or the first after an update changes the app script, downloads the s
 before anything shows. Hashed scripts, styles, WebAssembly, word lists, SVG and JSON travel
 gzip-encoded (`Vary: Accept-Encoding`) to browsers that accept gzip. Website files, including the
 homepage and client-route index, are read through regular-file descriptors beneath the pinned
-build directory. Inside-build links are normalized before opening; directory and file opens refuse
-replacement links. Root and client-route pages remain HTML and uncached; directly requested files
+build directory. Component normalization uses held parent directories and judges the existing
+private-place policy before metadata lookup. Inside-build links use relative targets, the canonical
+build-root spelling or its verified configured spelling; other external absolute aliases and paths
+that leave the build and return are refused without lookup. Active link expansions detect cycles
+without limiting acyclic chains. Directory and file opens refuse replacement links. A request keeps
+its opened build namespace if that build pathname changes. Root and client-route pages remain HTML and uncached; directly requested files
 use their resolved target's type and cache policy. Compression uses the same verified descriptor.
 The process keeps at most 64 compressed assets, checking each opened file's device, inode, size and
 modification/change timestamps before reusing an encoding. Replacement or modification invalidates

@@ -6,13 +6,13 @@ import os
 import sys
 import unittest
 from collections import Counter
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote
 from unittest import mock
 
 from tests.support import AltitudeCase, REPO
-from altitude import config, server, tasks
+from altitude import config, platform, server, tasks
 
 
 class StaticFiles(AltitudeCase):
@@ -46,6 +46,161 @@ class StaticFiles(AltitudeCase):
         if headers.get("Content-Encoding") == "gzip":
             data = gzip.decompress(data)
         return status[0], headers, data
+
+    @contextmanager
+    def no_forbidden_lookups(self, *extra):
+        """A forbidden attempt raises AssertionError, outside the handler's caught errors."""
+        forbidden = (self.outside, *extra)
+        originals = {name: getattr(os, name) for name in ("open", "stat", "lstat", "readlink", "dup")}
+        directories = {}
+        def candidate(name, kwargs):
+            if isinstance(name, int):
+                return None
+            parent = directories.get(kwargs.get("dir_fd"))
+            return os.path.abspath(os.path.join(parent or os.getcwd(), os.fspath(name)))
+        def checked(name, kwargs):
+            path = candidate(name, kwargs)
+            if path is not None:
+                for root in forbidden:
+                    self.assertFalse(path == str(root) or path.startswith(str(root) + "/"),
+                                     "forbidden metadata/open attempt: " + path)
+            return path
+        def opening(name, flags, *args, **kwargs):
+            path = checked(name, kwargs)
+            fd = originals["open"](name, flags, *args, **kwargs)
+            if flags & os.O_DIRECTORY:
+                directories[fd] = path
+            return fd
+        def duplicate(fd):
+            result = originals["dup"](fd)
+            if fd in directories:
+                directories[result] = directories[fd]
+            return result
+        def observed(operation):
+            def call(name, *args, **kwargs):
+                checked(name, kwargs)
+                return originals[operation](name, *args, **kwargs)
+            return call
+        with mock.patch.object(os, "open", side_effect=opening), \
+             mock.patch.object(os, "dup", side_effect=duplicate), \
+             mock.patch.object(os, "stat", side_effect=observed("stat")), \
+             mock.patch.object(os, "lstat", side_effect=observed("lstat")), \
+             mock.patch.object(os, "readlink", side_effect=observed("readlink")):
+            yield
+
+    def test_metadata_refusal_before_lookup_for_traversal_links_and_private_targets(self):
+        private = self.dist / "sealed"
+        private.mkdir()
+        (private / "marker.js").write_bytes(b"fictional private marker")
+        (self.dist / "outside-link").symlink_to(self.outside / "app.js")
+        (self.dist / "private-link").symlink_to(private / "marker.js")
+        (self.dist / "detour").symlink_to("../outside/../dist/assets/app.js")
+        with mock.patch.object(platform, "private_places", return_value=(str(private),)), \
+             self.no_forbidden_lookups(private):
+            for path in ("/../outside/app.js", "/%2e%2e/outside/app.js", "/outside-link",
+                         "/private-link", "/sealed/../assets/app.js", "/detour"):
+                for encoded in (False, True):
+                    self.assertEqual(self.request(path, encoded)[0], 404)
+            self.assertEqual(self.request("/assets/app.js", True)[2], b"console.log('fictional build');")
+            self.index.unlink()
+            self.index.symlink_to(private / "marker.js")
+            self.assertEqual(self.request("/projects/atlas")[0], 404)
+
+    def test_configured_aliases_and_external_alias_restriction(self):
+        configured = self.tmp / "configured-build"
+        configured.symlink_to(self.dist, target_is_directory=True)
+        external = self.tmp / "external-build"
+        external.symlink_to(self.dist, target_is_directory=True)
+        (self.dist / "configured.js").symlink_to(configured / "assets/app.js")
+        (self.dist / "external.js").symlink_to(external / "assets/app.js")
+        with mock.patch.object(config, "WEB_DIST", configured), self.no_forbidden_lookups(external):
+            for path in ("/", "/configured.js", "/assets/app.js"):
+                self.assertEqual(self.request(path, True)[0], 200)
+            self.assertEqual(self.request("/external.js")[0], 404)
+        configured.unlink()
+        configured.symlink_to(self.outside, target_is_directory=True)
+        with mock.patch.object(config, "WEB_DIST", configured), \
+             mock.patch.object(platform, "private_places", return_value=(str(self.outside),)), \
+             self.no_forbidden_lookups():
+            self.assertEqual(self.request("/")[0], 404)
+        with mock.patch.object(config, "WEB_DIST", external), \
+             mock.patch.object(platform, "private_places", return_value=(str(external),)), \
+             self.no_forbidden_lookups(external):
+            self.assertEqual(self.request("/")[0], 404)
+
+    def test_missing_classification_follows_resolved_components_and_virtual_parents(self):
+        (self.dist / "to-assets").symlink_to("assets", target_is_directory=True)
+        (self.assets / "away").symlink_to("../client-route")
+        for path, status in (("/to-assets/missing.js", 404), ("/assets/away/missing", 200),
+                             ("/missing/../assets/missing.js", 404), ("/index.html/../assets/app.js", 200),
+                             ("/index.html/route", 200)):
+            self.assertEqual(self.request(path)[0], status, path)
+
+    def test_index_absence_is_unavailable_but_unsafe_index_is_refused(self):
+        self.index.unlink()
+        self.assertEqual(self.request("/")[0], 503)
+        self.index.mkdir()
+        self.assertEqual(self.request("/")[0], 503)
+        self.index.rmdir()
+        self.index.symlink_to("absent/route")
+        self.assertEqual(self.request("/")[0], 503)
+        self.index.unlink()
+        self.index.symlink_to(self.outside / "app.js")
+        with self.no_forbidden_lookups():
+            self.assertEqual(self.request("/projects/atlas")[0], 404)
+        self.index.unlink()
+        self.index.symlink_to("index.html")
+        self.assertEqual(self.request("/")[0], 404)
+
+    def test_inspected_file_removal_never_becomes_successful_fallback(self):
+        ordinary = self.dist / "direct.txt"
+        ordinary.write_bytes(b"direct bytes")
+        original = os.open
+        for leaf, path in ((ordinary, "/direct.txt"), (self.index, "/")):
+            expected = leaf.read_bytes()
+            def opening(name, flags, *args, **kwargs):
+                if name == leaf.name:
+                    leaf.unlink()
+                return original(name, flags, *args, **kwargs)
+            try:
+                with mock.patch.object(os, "open", side_effect=opening):
+                    self.assertEqual(self.request(path)[0], 404)
+            finally:
+                leaf.write_bytes(expected)
+
+    def test_acyclic_64_links_completed_visits_and_contextual_hardlinks(self):
+        for n in reversed(range(64)):
+            (self.dist / f"chain{n}").symlink_to(f"chain{n + 1}" if n < 63 else "assets/app.js")
+        (self.dist / "alias").symlink_to("assets", target_is_directory=True)
+        for path in ("/chain0", "/alias/../alias/app.js"):
+            self.assertEqual(self.request(path, True), self.request("/assets/app.js", True))
+        for n in reversed(range(64)):
+            (self.tmp / f"build{n}").symlink_to(f"build{n + 1}" if n < 63 else "dist",
+                                              target_is_directory=True)
+        with mock.patch.object(config, "WEB_DIST", self.tmp / "build0"):
+            self.assertEqual(self.request("/assets/app.js", True), self.request("/chain0", True))
+        self.index.unlink()
+        self.index.symlink_to("chain0")
+        status, headers, data = self.request("/", True)
+        self.assertEqual((status, data), (200, b"console.log('fictional build');"))
+        self.assertEqual(headers["Content-Type"], "text/html; charset=utf-8")
+        self.assertEqual(headers["Cache-Control"], "no-store")
+        self.assertNotIn("Content-Encoding", headers)
+        # These symlinks share an inode but have different parent/name contexts.
+        (self.dist / "a").mkdir()
+        (self.dist / "a/a").mkdir()
+        (self.dist / "a/a/a").write_bytes(b"finite hardlinked links")
+        link = self.dist / "step"
+        link.symlink_to("a/step")
+        os.link(link, self.dist / "a/step", follow_symlinks=False)
+        self.assertEqual(link.lstat().st_ino, (self.dist / "a/step").lstat().st_ino)
+        (self.dist / "a/a/step").symlink_to("a")
+        self.assertEqual(self.request("/step")[2], b"finite hardlinked links")
+        for name, target in (("self", "self"), ("left", "right"), ("right", "left"),
+                             ("expanding", "expanding/more")):
+            (self.dist / name).symlink_to(target)
+        for path in ("/self", "/left", "/expanding"):
+            self.assertEqual(self.request(path)[0], 404)
 
     def test_successful_bytes_headers_and_inside_links(self):
         unusual = self.assets / "a \\ β%.js"
@@ -125,7 +280,7 @@ class StaticFiles(AltitudeCase):
                     swapped.append(True)
                 return original(name, flags, *args, **kwargs)
             try:
-                with mock.patch.object(os, "open", side_effect=opened):
+                with mock.patch.object(os, "open", side_effect=opened), self.no_forbidden_lookups():
                     self.assertEqual(self.request("/routes/missing", encoded)[0], 404)
             finally:
                 if swapped:
@@ -157,7 +312,7 @@ class StaticFiles(AltitudeCase):
                                 swapped.append(True)
                             return original(path, flags, *args, **kwargs)
                         try:
-                            with mock.patch.object(os, "open", side_effect=opened):
+                            with mock.patch.object(os, "open", side_effect=opened), self.no_forbidden_lookups():
                                 status, _, data = self.request("/assets/app.js", encoded)
                             self.assertTrue(swapped)
                             self.assertEqual(status, 404)
@@ -177,7 +332,7 @@ class StaticFiles(AltitudeCase):
                     self.index.symlink_to(self.outside / "app.js")
                 return original_open(name, flags, *args, **kwargs)
             try:
-                with mock.patch.object(os, "open", side_effect=opened):
+                with mock.patch.object(os, "open", side_effect=opened), self.no_forbidden_lookups():
                     self.assertEqual(self.request(path)[0], 404)
             finally:
                 self.index.unlink()
@@ -211,13 +366,15 @@ class StaticFiles(AltitudeCase):
         self.assertEqual(len(server._gzip_cache), 64)
         self.assertNotIn(self.asset, server._gzip_cache)
 
-    def test_pinned_build_root_survives_replacement_after_normalization(self):
+    def test_pinned_build_root_serves_original_namespace_after_replacement(self):
         original = os.open
         (self.outside / "index.html").write_bytes(b"outside index")
         for path in ("/", "/projects/atlas", "/assets/app.js"):
             for encoded in (False, True):
                 for warm in (False, True):
                     with self.subTest(path=path, encoded=encoded, warm=warm):
+                        baseline = self.request(path, encoded)
+                        server._gzip_cache.clear()
                         if warm:
                             self.request("/assets/app.js", True)
                         swapped = []
@@ -229,13 +386,12 @@ class StaticFiles(AltitudeCase):
                                 swapped.append(True)
                             return original(name, flags, *args, **kwargs)
                         try:
-                            with mock.patch.object(os, "open", side_effect=opened):
-                                status, _, data = self.request(path, encoded)
-                            # The homepage uses the index already opened from the pinned root. Any
-                            # later request normalization observes and refuses the outside target.
-                            self.assertEqual(status, 200 if path == "/" else 404)
-                            if status == 200:
-                                self.assertEqual(data, b"<title>fictional build</title>")
+                            with mock.patch.object(os, "open", side_effect=opened), self.no_forbidden_lookups():
+                                response = self.request(path, encoded)
+                            status, _, data = response
+                            expected = b"console.log('fictional build');" if path.startswith("/assets/") else b"<title>fictional build</title>"
+                            self.assertEqual((status, data), (200, expected))
+                            self.assertEqual(response, baseline)
                             self.assertNotIn(b"outside", data)
                         finally:
                             if swapped:
@@ -299,7 +455,7 @@ class StaticFiles(AltitudeCase):
 
     def test_nonregular_substitution_and_read_failures_close_all_descriptors(self):
         original_open, original_dup, original_close, original_stat = os.open, os.dup, os.close, os.fstat
-        for failure in ("fifo", "stat", "fdopen", "read", "close"):
+        for failure in ("fifo", "initial-stat", "directory-stat", "stat", "fdopen", "read", "close"):
             opened, closed = [], []
             def opening(path, flags, *args, **kwargs):
                 if path == "app.js" and failure == "fifo":
@@ -318,6 +474,10 @@ class StaticFiles(AltitudeCase):
                 if failure == "close" and any(item == (fd, "app.js") for item in opened):
                     raise OSError("fictional close failure")
             def observed(fd):
+                if failure == "initial-stat" and len(opened) == 2:
+                    raise OSError("fictional initial stat failure")
+                if failure == "directory-stat" and opened[-1] == (fd, "assets"):
+                    raise OSError("fictional directory stat failure")
                 if failure == "stat" and opened[-1] == (fd, "app.js"):
                     raise OSError("fictional stat failure")
                 return original_stat(fd)

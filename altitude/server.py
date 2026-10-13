@@ -135,41 +135,107 @@ def _gzipped(path: Path, stream) -> bytes:
 
 
 @contextmanager
-def _static_directory(root: Path | int, parts: tuple[str, ...]):
-    """Pin normalized directory components without following replacement links."""
+def _static_path(root: int, base: Path, path: Path, places: tuple[str, ...], anchors: tuple[Path, ...]):
+    """Normalize within a pinned namespace; links never cause an unchecked target lookup."""
     flags = platform.directory_search_access() | os.O_DIRECTORY | os.O_NOFOLLOW
     with ExitStack() as opened:
-        fd = os.dup(root) if isinstance(root, int) else os.open(root, flags)
-        opened.callback(os.close, fd)
-        for part in parts:
+        def frame(name, fd, info):
+            lifetime = ExitStack()
+            opened.callback(lifetime.close)
+            if fd is not None:
+                lifetime.callback(os.close, fd)
+            return name, fd, info, lifetime
+
+        initial = frame("", os.dup(root), None)
+        frames = [(initial[0], initial[1], os.fstat(initial[1]), initial[3])]
+        pending = list(path.parts)
+        active = set()
+        while pending:
+            part = pending.pop(0)
+            if isinstance(part, tuple):
+                active.remove(part)
+                continue
+            if part in ("", "."):
+                continue
+            if part == "..":
+                if len(frames) == 1:
+                    raise ValueError("website path leaves its root")
+                frames.pop()[3].close()
+                continue
+            candidate = base.joinpath(*(f[0] for f in frames[1:]), part)
+            if platform.private_prefix(candidate, places):
+                raise ValueError("private website path")
+            parent = frames[-1][1]
+            if parent is None:
+                frames.append(frame(part, None, None))
+                continue
             try:
-                child = os.open(part, flags, dir_fd=fd)
-            except NotADirectoryError:
-                # Linux also uses ENOTDIR for O_DIRECTORY|O_NOFOLLOW on a symlink.
-                # Only an ordinary file can make this a missing client-side route.
-                if not stat.S_ISREG(os.stat(part, dir_fd=fd, follow_symlinks=False).st_mode):
-                    raise ValueError("not a website directory") from None
-                raise
-            fd = child
-            opened.callback(os.close, fd)
-        yield fd
+                info = os.stat(part, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                frames.append(frame(part, None, None))
+                continue
+            if stat.S_ISLNK(info.st_mode):
+                parent_info = frames[-1][2]
+                key = parent_info.st_dev, parent_info.st_ino, part
+                if key in active:
+                    raise ValueError("cyclic website link")
+                target = Path(os.readlink(part, dir_fd=parent))
+                after = os.stat(part, dir_fd=parent, follow_symlinks=False)
+                if (info.st_dev, info.st_ino, info.st_mtime_ns, info.st_ctime_ns) != (
+                        after.st_dev, after.st_ino, after.st_mtime_ns, after.st_ctime_ns):
+                    raise ValueError("website link changed")
+                active.add(key)
+                if target.is_absolute():
+                    # Known spellings address the held root, never a mutable alias rewalk.
+                    parts = ("/", *target.parts[1:])
+                    anchor = next((a for a in sorted(anchors, key=lambda a: len(a.parts), reverse=True)
+                                   if parts[:len(a.parts)] == a.parts), None)
+                    if anchor is None:
+                        raise ValueError("website link leaves its root")
+                    for entry in reversed(frames[1:]):
+                        entry[3].close()
+                    del frames[1:]
+                    target_parts = parts[len(anchor.parts):]
+                else:
+                    target_parts = target.parts
+                pending = [*target_parts, key, *pending]
+                continue
+            if stat.S_ISDIR(info.st_mode):
+                child = os.open(part, flags, dir_fd=parent)
+                entry = frame(part, child, info)
+                actual = os.fstat(child)
+                if (actual.st_dev, actual.st_ino, actual.st_mode) != (info.st_dev, info.st_ino, info.st_mode):
+                    raise ValueError("website directory changed")
+                frames.append(entry)
+            elif stat.S_ISREG(info.st_mode):
+                frames.append(frame(part, None, info))
+            else:
+                raise ValueError("not a regular website path")
+        relative = Path(*(f[0] for f in frames[1:]))
+        yield frames[-2][1] if len(frames) > 1 else root, relative, frames[-1][1], frames[-1][2]
 
 
 @contextmanager
-def _static_file(root: int, relative: Path):
-    """Read only a regular file beneath a pinned root; even a substituted FIFO cannot block."""
-    with _static_directory(root, relative.parts[:-1]) as directory:
-        fd = os.open(relative.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
-        try:
-            mode = os.fstat(fd).st_mode
-            if stat.S_ISDIR(mode):
-                raise IsADirectoryError(relative)
-            if not stat.S_ISREG(mode):
-                raise ValueError("not a regular website file")
-            with os.fdopen(fd, "rb", closefd=False) as stream:
-                yield stream
-        finally:
-            os.close(fd)
+def _static_file(parent: int | None, relative: Path, info):
+    """Read the inspected regular file without following replacements or blocking on a FIFO."""
+    if info is None:
+        raise FileNotFoundError(relative)
+    if stat.S_ISDIR(info.st_mode):
+        raise IsADirectoryError(relative)
+    if parent is None:
+        raise NotADirectoryError(relative)
+    try:
+        fd = os.open(relative.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+    except (FileNotFoundError, NotADirectoryError, IsADirectoryError):
+        raise ValueError("website file changed") from None
+    try:
+        actual = os.fstat(fd)
+        if not stat.S_ISREG(actual.st_mode) or (actual.st_dev, actual.st_ino) != (info.st_dev, info.st_ino):
+            raise ValueError("website file changed")
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            yield stream
+    finally:
+        os.close(fd)
 
 
 def _accepts_gzip(header: str | None) -> bool:
@@ -1702,30 +1768,40 @@ class Handler(BaseHTTPRequestHandler):
         other GET falls back to index.html so client-side routes deep-link. A missing build is
         an explicit 503 naming `make web`, never a silent fallback."""
         try:
-            dist = config.WEB_DIST.resolve()
+            places = platform.private_places()
+            configured = config.WEB_DIST
+            if not configured.is_absolute():
+                configured = Path.cwd() / configured
+            configured = Path("/", *configured.parts[1:])
             with ExitStack() as opened:
-                try:
-                    root = opened.enter_context(_static_directory(Path("/"), dist.parts[1:]))
-                except OSError:
+                filesystem = os.open("/", platform.directory_search_access() | os.O_DIRECTORY | os.O_NOFOLLOW)
+                opened.callback(os.close, filesystem)
+                _, normalized, root, info = opened.enter_context(
+                    _static_path(filesystem, Path("/"), Path(*configured.parts[1:]), places, (Path("/"),)))
+                if root is None or info is None or not stat.S_ISDIR(info.st_mode):
                     return self._json({"error": "web UI not built: web/dist is missing — run `make web` first"}, 503)
-                index = (dist / "index.html").resolve()
-                index_relative = index.relative_to(dist)
+                dist = Path("/") / normalized
+                anchors = (dist, configured)
+                parent, index_relative, _, info = opened.enter_context(
+                    _static_path(root, dist, Path("index.html"), places, anchors))
+                index = dist / index_relative
                 try:
-                    page = opened.enter_context(_static_file(root, index_relative))
-                except (FileNotFoundError, IsADirectoryError, NotADirectoryError, ValueError):
+                    page = opened.enter_context(_static_file(parent, index_relative, info))
+                except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
                     return self._json({"error": "web UI not built: web/dist is missing — run `make web` first"}, 503)
                 rel = unquote(raw_path).lstrip("/")
-                resolved = (dist / rel).resolve() if rel else index
-                relative = resolved.relative_to(dist)
                 html = not rel
                 if html:
-                    stream = page
+                    stream, resolved, relative = page, index, index_relative
                 else:
+                    parent, relative, _, info = opened.enter_context(
+                        _static_path(root, dist, Path(rel), places, anchors))
+                    resolved = dist / relative
                     try:
-                        stream = opened.enter_context(_static_file(root, relative))
+                        stream = opened.enter_context(_static_file(parent, relative, info))
                     except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
                         if relative.parts[:1] == ("assets",):
-                            # Missing build assets are stale imports, never client-side routes.
+                            # Missing resolved build assets are stale imports, never client-side routes.
                             return self._json({"error": "not found"}, 404)
                         stream, resolved, relative, html = page, index, index_relative, True
                 immutable = not html and resolved != dist / "index.html" and relative.parts[:1] == ("assets",)
