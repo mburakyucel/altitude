@@ -25,6 +25,8 @@ export function useTaskTransfer(project: string, task: TaskView, refresh: () => 
   useEffect(() => {
     if (dialog || pending || !restoreFocus.current) return;
     restoreFocus.current = false;
+    // Completing a request must not take focus from work started while its receipt was pending.
+    if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) return;
     (document.querySelector<HTMLElement>('.transfer-card') || (opener.current?.isConnected ? opener.current
       : document.querySelector<HTMLElement>('[aria-label="Task details"], .phone-header [aria-haspopup="dialog"]')))?.focus({ preventScroll: true });
   }, [dialog, pending]);
@@ -69,7 +71,7 @@ export function useTaskTransfer(project: string, task: TaskView, refresh: () => 
   };
   const label = uncertain ? "Switch unconfirmed" : active ? stopping ? `Switching to ${request?.target_label}` : "Preparing switch"
     : request?.status === "done" && task.state === "queued" ? `Waiting for ${request.target_label}` : "";
-  const quotaOffer = Boolean(task.state === "blocked" && info?.quota_limited && info.targets.length && !active && !uncertain && !error);
+  const quotaOffer = Boolean(task.state === "blocked" && info?.quota_limited && info.resume_hold && info.targets.length && !active && !uncertain && !error);
   return { info, shown, request, active, stopping, label, dialog, setDialog: openDialog, target, setTarget, selected,
     pending, uncertain, error, unavailable, blocked, disabled, quotaOffer, start, perform, recheck,
     controls: active && !stopping || uncertain,
@@ -105,7 +107,7 @@ export function TransferCard({ transfer: t, details = false }: { transfer: Trans
     : t.label || (t.request?.status === "cancelled" ? "Switch cancelled." : t.request?.status === "done" ? `Switched to ${t.request.target_label}.`
       : t.request ? "Switch failed." : t.info?.current_label);
   return <section className="review-box transfer-card" aria-label={title} tabIndex={-1}
-    onKeyDown={(event) => { if (event.key === "Escape") event.stopPropagation(); }}>
+    onKeyDown={(event) => { if (event.key === "Escape" && !details) event.stopPropagation(); }}>
     <span className={`review-icon review-icon-${tone}`} aria-hidden><svg viewBox="0 0 24 24"><path d={warning ? "M12 3 2 21h20L12 3zm0 6v5m0 3v1" : busy ? "M20 12a8 8 0 1 1-8-8"
       : t.request?.status === "done" ? "m5 12 4 4L19 6" : t.request?.status === "cancelled" ? "M6 6h12v12H6z" : "M4 7h15m-4-4 4 4-4 4M20 17H5m4-4-4 4 4 4"} /></svg></span>
     <div className="review-main">

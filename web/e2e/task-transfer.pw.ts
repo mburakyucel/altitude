@@ -38,7 +38,9 @@ test("patient transfer cancels without losing the draft, then readiness starts a
   await walk.state("00b-details-opens-with-status", { visible: [details], hidden: [] });
   await entryCard.scrollIntoViewIfNeeded();
   await walk.state("00b-switch-entry-in-task-details", { visible: [details, details.getByRole("button", { name: "Switch engine…", exact: true })], hidden: [card(page)] });
+  await details.getByRole("button", { name: "Switch engine…", exact: true }).focus();
   await page.keyboard.press("Escape");
+  await expect(details).toBeHidden();
   await draft(page).fill("Keep this unsent instruction.");
   await draft(page).evaluate((node: HTMLTextAreaElement) => node.setSelectionRange(5, 9));
   await start(page);

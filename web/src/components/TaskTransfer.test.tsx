@@ -14,11 +14,11 @@ const initial: TaskView = { slug: "sample", state: "running", transfer: {
 } };
 const preparing: TaskView = { ...initial, transfer: { ...initial.transfer!, eligible: false,
   request: { id: "switch-1", status: "executing", phase: "preparing", engine: "second", target_label: "Engine B" } } };
-function Harness({ task = initial, next = preparing, refreshError = false }: { task?: TaskView; next?: TaskView; refreshError?: boolean }) {
+function Harness({ task = initial, next = preparing, refreshError = false, details = true }: { task?: TaskView; next?: TaskView; refreshError?: boolean; details?: boolean }) {
   const [current, update] = useState(task);
   const [denied, setDenied] = useState(false);
   const t = useTaskTransfer("sample", current, async () => { if (refreshError) throw new Error("offline"); update(next); }, denied, () => setDenied(true), () => undefined);
-  return <><TransferCard transfer={t} details /><TransferDialog transfer={t} /><input aria-label="Draft" defaultValue="Keep my draft" /></>;
+  return <><TransferCard transfer={t} details={details} /><TransferDialog transfer={t} /><input aria-label="Draft" defaultValue="Keep my draft" /></>;
 }
 afterEach(() => vi.resetAllMocks());
 it("confirms the warning and fences the observed attempt, then exposes patient controls", async () => {
@@ -78,4 +78,8 @@ it("shows queued progress without offering a conflicting new switch", () => {
   render(<Harness task={{ ...initial, state: "queued", transfer: { ...initial.transfer!, request: { ...preparing.transfer!.request!, status: "done", phase: "done" } } }} />);
   expect(screen.getByText("Waiting for Engine B")).toBeVisible();
   expect(screen.queryByRole("button", { name: "Switch engine…" })).not.toBeInTheDocument();
+});
+it("does not promote historical quota evidence after the current hold clears", () => {
+  render(<Harness details={false} task={{ ...initial, state: "blocked", transfer: { ...initial.transfer!, quota_limited: true, resume_hold: null } }} />);
+  expect(screen.queryByRole("region", { name: "Engine usage limit" })).not.toBeInTheDocument();
 });
