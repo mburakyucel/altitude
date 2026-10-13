@@ -884,7 +884,7 @@ blocks automating it.
 | --- | --- | --- | --- | --- |
 | Linux CI container | `make check` ([required PR check](#ci-and-candidate-identity)) | Application, API/storage integration, systemd unit-file parsing (`systemd-analyze verify`, without systemd running) and phone/desktop browser flows with fixture engines | Clean-host installation, user services, reboot, native macOS, container deployment | In use |
 | Disposable Linux VM | `make installation-vm` ([local VM run](#local-vm-run), in a task through the [validation runner](#validation-runner)) | Fresh install, user-service start, update, failed-update recovery, the service running on after its SSH login closes and starting after a restart with nobody logged in, uninstall, and the built or published `install.sh` through its public command against a release server inside the guest, including an update from a published release (`BASELINE`) and an installation over a failed one (`RECOVERY`); with `PUBLIC`, setup's command and the installed daemon's update lookup and `alt update` against GitHub itself, on Ubuntu 24.04 x86_64 | Desktop login/logout, a physical machine, the app's Update button from a published release, storage migration (no application state is created), other distributions | In use |
-| Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under the [standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac)) | The built `install.sh` through its public command in fresh macOS 26 arm64 guests with automatic login and no network: its refusals with their documented fixes for missing Python, OpenSSL 3 not first on PATH and an account with no desktop session; the [macOS installation lane](#macos-installation-lane)'s lifecycle under a throwaway HOME, including automatic updates, the automatic-updates-off confirmation and recovery from a failed automatic update; and the account's own installation, its HTTPS health and `alt doctor`, its LaunchAgent started again by the automatic login after a restart, and uninstall; the confinement probe's refusal of private places with no consent request, in a guest whose Python was never asked; with `PUBLISHED`, a published release's own daemon installing a later published release and keeping the state made through the app | A physical second Mac, other macOS versions, other Apple chips, Python 3.13, logout/login without a restart, sleep, browser/device CA trust, the guest's own download from GitHub, the real check and notice schedule, the app's rendered notice, a release candidate's lookup | In use on Apple silicon |
+| Disposable macOS VM | `make installation-macos-vm` ([macOS VM run](#macos-vm-run), in a task through `alt task run` under the [standing VM lane approval](../AGENTS.md#vm-lane-runs-on-this-mac)) | The built `install.sh` through its public command in fresh macOS 26 arm64 guests with automatic login and no network: its refusals with their documented fixes for missing Python, absent OpenSSL 3 and an account with no desktop session; discovery with stock LibreSSL first and Homebrew OpenSSL installed; the [macOS installation lane](#macos-installation-lane)'s lifecycle under a throwaway HOME, including automatic updates, the automatic-updates-off confirmation and recovery from a failed automatic update; and the account's own installation, its HTTPS health and `alt doctor`, its LaunchAgent started again by the automatic login after a restart, and uninstall; the confinement probe's refusal of private places with no consent request, in a guest whose Python was never asked; with `PUBLISHED`, a published release's own daemon installing a later published release and keeping the state made through the app | A physical second Mac, other macOS versions, other Apple chips, Python 3.13, logout/login without a restart, sleep, browser/device CA trust, the guest's own download from GitHub, the real check and notice schedule, the app's rendered notice, a release candidate's lookup | In use on Apple silicon |
 | Hosted installation workflow | `installation-lifecycle.yml` ([lifecycle acceptance](#installation-lifecycle-acceptance)) | The same harness on GitHub's Ubuntu 24.04 runners | As for the VM | Not executed: hosted-runner spending limit |
 | Validation container | `alt task validate -- COMMAND` ([validation runner](#validation-runner)); `make browser-sandbox` | A committed candidate's command in a disposable rootless Podman container, including nested rootless containers and Playwright's Chromium with its own sandbox | Running Altitude itself in a container, other hosts' kernels or Podman versions, native macOS | In use on Linux x86_64 |
 | macOS validation run | `alt task validate -- COMMAND` on a Mac ([macOS validation runs](#macos-validation-runs)) | A committed candidate's command on macOS under the validation profile, with fictional state and fixture engines: the Python suites and application journeys with local-process jobs | Native launchd jobs and worker confinement, browsers with their own sandbox, installation, provider compatibility | Implemented; native acceptance is recorded on the delivering PR |
@@ -1283,7 +1283,8 @@ of the run as `captures/installation-vm.gif` ([validation captures](#validation-
 ### macOS installation lane
 
 `scripts/installation_mac.py` runs the lifecycle on a Mac with macOS 15 or newer,
-Homebrew's Python 3.12 and OpenSSL 3 first on `PATH`, Git, GitHub CLI and `pnpm`:
+Homebrew's Python 3.12 and OpenSSL 3 installed, Git, GitHub CLI and `pnpm`. The clean environment
+keeps stock LibreSSL first on PATH so installation, startup and updates exercise OpenSSL discovery:
 
 ```sh
 make installation-mac RESULTS=/tmp/altitude-mac SOURCE=origin/main
@@ -1362,12 +1363,13 @@ on the guest's loopback over HTTPS with a throwaway certificate authority that t
 shell trusts, with `github.com` resolving to the loopback.
 
 - `fresh`: the public command must stop for the missing Python.
-- `prerequisites`: it must stop for OpenSSL 3 not being first on PATH; after the documented fix, a
-  second account with the same shell setup and no desktop session must be stopped for the missing
+- `prerequisites`: with only the OpenSSL CLI temporarily hidden in the disposable guest, it must
+  stop for missing OpenSSL 3 and name `brew install openssl@3` without asking for a profile change.
+  After restoring that CLI, a second account with the same shell setup and no desktop session must be stopped for the missing
   session. Each refusal must name its documented fix and leave the size and modification time of
   every file outside `Library` and in the `Library` folders an installation writes, and the
   account's launchd jobs, unchanged.
-- `lifecycle`: with the documented fix and GitHub CLI in place, the guest's account runs the
+- `lifecycle`: with Homebrew's OpenSSL installed, stock LibreSSL first on PATH and GitHub CLI in place, the guest's account runs the
   [macOS installation lane](#macos-installation-lane)'s `mac` phase under a throwaway HOME, as
   `installation_mac.py` does: install, the daemon's automatic installation of a newer release with
   no browser terminal open and the overview reporting it, update detection and notice with automatic
@@ -1387,7 +1389,8 @@ shell trusts, with `github.com` resolving to the loopback.
   stored answer, refused.
 
 `PUBLISHED=<baseline>..<candidate>` names two published release tags instead of `SOURCE` and runs only
-the `published` phase:
+the `published` phase. Its isolated environment puts Homebrew OpenSSL first for baselines whose
+shipped installer requires that order; it does not establish discovery with LibreSSL first:
 
 ```sh
 make installation-macos-vm RESULTS=/tmp/altitude-macos-vm PUBLISHED=v0.3.0..v0.4.0

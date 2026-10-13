@@ -16,7 +16,8 @@ only the next step (each finishes within ten minutes) and says what comes next. 
 an image, checks that its network reaches the internet and a listener on this Mac, unplugs the network card and checks
 that neither answers, then runs the release's install.sh through its public `curl … | sh` command against a server on
 the guest's loopback that answers for github.com. `fresh` must stop for the missing Python; `prerequisites` must stop
-for OpenSSL 3 not being first on PATH and, for a second account with no desktop session, for the missing session.
+for missing OpenSSL 3 and, for a second account with no desktop session, for the missing session. With Homebrew's
+OpenSSL installed, installation and service startup must succeed while stock LibreSSL remains first on PATH.
 Each refused attempt must leave the account's files and launchd jobs as they were. `privacy` runs the revision's own
 platform_probe.py confinement rows as the logged-in account in a guest whose Python was never asked for access to a
 private place. `--published` downloads two published releases on this Mac, checked against their SHA256SUMS and tags,
@@ -758,8 +759,8 @@ def attempt(guest: Guest, repository: str, user: str, results: Path, label: str)
 # Each refusal names the missing prerequisite and its documented fix.
 EXPECTED = {
     "missing-python": ("Python 3.12 or newer was not found", "brew install python@3.12"),
-    "openssl-not-first": ("not OpenSSL 3", "brew install openssl@3",
-                          'export PATH="$(brew --prefix openssl@3)/bin:$PATH", also in your shell profile'),
+    "missing-openssl": ("OpenSSL 3 or newer was not found", "brew install openssl@3",
+                        "no shell-profile change is needed"),
     "no-desktop-session": ("no logged-in desktop session", "Log in to this Mac's desktop"),
 }
 
@@ -778,11 +779,6 @@ def prerequisites(guest: Guest) -> dict:
     return {"command_line_tools": found("xcode-select -p"), "homebrew": found("test -d /opt/homebrew"),
             "python3.12": found("command -v python3.12"),
             "openssl": guest.ssh("zsh -lc 'openssl version'", check=False).stdout.strip()}
-
-
-def fix_openssl(guest: Guest) -> None:
-    """The fix the installer names for OpenSSL 3, written with Homebrew's resolved path so a login shell needs no lookup."""
-    guest.ssh("zsh -lc 'echo \"export PATH=\\\"$(brew --prefix openssl@3)/bin:\\$PATH\\\"\" >> ~/.zprofile'")
 
 
 def add_github_cli(guest: Guest, record: dict) -> None:
@@ -804,9 +800,14 @@ def phase_fresh(guest: Guest, repository: str, results: Path, record: dict, inpu
 def phase_prerequisites(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
     record["prerequisites"] = prerequisites(guest)
     cases = record["cases"] = {}
-    cases["openssl-not-first"] = judged(attempt(guest, repository, ACCOUNT, results, "openssl-not-first"), "openssl-not-first")
-    # The documented fix, then a second account with the same shell setup and no desktop session.
-    fix_openssl(guest)
+    # Hide only the CLI in this disposable guest; Python's linked libraries remain available.
+    binary = "/opt/homebrew/opt/openssl@3/bin/openssl"
+    guest.ssh(f"mv {binary} {binary}.unavailable")
+    try:
+        cases["missing-openssl"] = judged(attempt(guest, repository, ACCOUNT, results, "missing-openssl"), "missing-openssl")
+    finally:
+        guest.ssh(f"mv {binary}.unavailable {binary}")
+    # Homebrew's keg is available again, without editing either account's shell profile.
     password = secrets.token_urlsafe(18)
     guest.ssh(f"sudo -n sysadminctl -addUser {SECOND} -password {quote(password)} -home /Users/{SECOND} 2>&1 && "
               f"sudo -n createhomedir -c -u {SECOND} >/dev/null && sudo -n cp ~/.zprofile /Users/{SECOND}/.zprofile && "
@@ -847,7 +848,6 @@ def phase_published(guest: Guest, repository: str, results: Path, record: dict, 
 def lifecycle(guest: Guest, results: Path, record: dict, baseline: Path, candidate: Path, commits: str, phase: str,
               case: str) -> None:
     """An installation_lifecycle.py phase in installation_mac.py's clean environment; its results join the record."""
-    fix_openssl(guest)
     add_github_cli(guest, record)
     record["prerequisites"] = prerequisites(guest)
     guest.copy(baseline, f"{SHARED}/baseline")
@@ -855,11 +855,15 @@ def lifecycle(guest: Guest, results: Path, record: dict, baseline: Path, candida
     guest.copy(SCRIPTS / "installation_lifecycle.py", f"{SHARED}/installation_lifecycle.py")
     (results / "diagnose.sh").write_text(DIAGNOSE)
     guest.copy(results / "diagnose.sh", f"{SHARED}/diagnose.sh")
-    # installation_mac.py's clean environment: the throwaway HOME, Homebrew's OpenSSL 3, Python and GitHub CLI first.
+    # Stock LibreSSL remains first in both the installing shell and the saved service environment.
+    path = "/usr/bin:/bin:/opt/homebrew/bin:/usr/sbin:/sbin"
+    if phase == "mac-published":
+        # The published baseline may predate discovery; its own installer contract still applies.
+        path = "/opt/homebrew/opt/openssl@3/bin:" + path
     script = (f'temp=$(getconf DARWIN_USER_TEMP_DIR); work="$temp/altitude-installation-mac"; '
               f'mkdir -m 700 "$work" "$work/home" && mkdir "$work/home/results" && cd "$work/home" && '
               f'env -i HOME="$work/home" USER={ACCOUNT} LOGNAME={ACCOUNT} SHELL=/bin/zsh LANG=en_US.UTF-8 TMPDIR="$temp" '
-              f'PATH="$(/opt/homebrew/bin/brew --prefix openssl@3)/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" '
+              f'PATH="{path}" '
               f'/opt/homebrew/bin/python3.12 -I -B {SHARED}/installation_lifecycle.py {SHARED}/baseline {SHARED}/candidate '
               f'"$work/home/results" {commits} {phase}; code=$?; cp -R "$work/home/results" {SHARED}/lifecycle; '
               f'cp -R "$work/home/Library/Logs" {SHARED}/lifecycle/logs 2>/dev/null; '
@@ -876,7 +880,6 @@ def lifecycle(guest: Guest, results: Path, record: dict, baseline: Path, candida
 def phase_login(guest: Guest, repository: str, results: Path, record: dict, inputs: Path, commit: str) -> None:
     """The account's own installation through the public command, its LaunchAgent started again by the automatic login
     after the guest restarts, and its uninstall."""
-    fix_openssl(guest)
     add_github_cli(guest, record)
     record["prerequisites"] = prerequisites(guest)
     steps = record["steps"] = []

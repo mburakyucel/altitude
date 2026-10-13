@@ -883,13 +883,12 @@ class TestInstallationMacosVm(AltitudeCase):
                         {"exit": 1, "output": "Altitude cannot be installed on this Mac yet.", "unchanged": True}):
             self.assertFalse(vm.judged(outcome, "missing-python")["passed"])
 
-    def test_openssl_refusal_needs_the_path_fix_as_well_as_the_install(self):
+    def test_openssl_refusal_names_install_without_a_profile_change(self):
         from scripts import installation_macos_vm as vm
-        output = ("Altitude was not installed: the openssl on PATH is LibreSSL 3.3.6, not OpenSSL 3.\n"
-                  "  Install it (brew install openssl@3), put it ahead of /usr/bin")
-        path_fix = ' (export PATH="$(brew --prefix openssl@3)/bin:$PATH", also in your shell profile), then run this again.'
-        self.assertFalse(vm.judged({"exit": 1, "output": output, "unchanged": True}, "openssl-not-first")["passed"])
-        self.assertTrue(vm.judged({"exit": 1, "output": output + path_fix, "unchanged": True}, "openssl-not-first")["passed"])
+        output = ("Altitude was not installed: OpenSSL 3 or newer was not found.\n"
+                  "Install it (brew install openssl@3), then run this again; no shell-profile change is needed.")
+        self.assertTrue(vm.judged({"exit": 1, "output": output, "unchanged": True}, "missing-openssl")["passed"])
+        self.assertFalse(vm.judged({"exit": 1, "output": output, "unchanged": False}, "missing-openssl")["passed"])
 
     def test_public_command_trusts_the_test_authority_for_its_own_and_install_shs_downloads(self):
         from scripts import installation_macos_vm as vm
