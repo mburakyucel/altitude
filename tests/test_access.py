@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 from tests.support import ALT, AltitudeCase
 from tests.test_restart_command import load_script
-from altitude import access, config, server, state as S, tasks as T
+from altitude import access, config, server, tls, state as S, tasks as T
 
 IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
 DESKTOP = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
@@ -75,7 +75,7 @@ class TestAccess(AltitudeCase):
                 self.assertEqual((status, reply), (401, {"error": "Pair this device to use Altitude.", "pair": True}))
         # On the computer itself, over plain HTTP, pairing needs no certificate check.
         trust = {"local": True, "https": False, "check": False,
-                 "certificate": None}
+                 "certificate": None, "guide": tls.setup_guide()}
         self.assertEqual(self.request("GET", "/api/access")[:2], (200, {"paired": False, "device": None, "trust": trust}))
         self.assertEqual(self.request("GET", "/api/health")[0], 200)
         self.assertNotEqual(self.request("GET", "/api/overview", device="made-up")[0], 200)
@@ -95,7 +95,7 @@ class TestAccess(AltitudeCase):
         self.assertEqual(self.request("GET", "/api/access", device=key)[:2],
                          (200, {"paired": True, "device": "Home Screen app on iPhone", "trust": {
                              "local": True, "https": False,
-                             "check": False, "certificate": None}}))
+                             "check": False, "certificate": None, "guide": tls.setup_guide()}}))
         status, reply, _ = self.pair(code)
         self.assertEqual((status, reply["error"]), (410, "This code has expired or was already used. Make a new one."))
 

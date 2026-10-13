@@ -45,7 +45,7 @@ def atomic(path: Path, content: str, mode: int = 0o600) -> None:
         Path(filename).unlink(missing_ok=True)
 
 
-def metadata(root: Path) -> dict:
+def _release_manifest(root: Path) -> dict:
     if root.is_symlink() or any(path.is_symlink() for path in root.rglob("*")):
         raise ValueError("Release resources must not be symbolic links")
     data = json.loads((root / "release.json").read_text())
@@ -56,16 +56,25 @@ def metadata(root: Path) -> dict:
     files = data.get("files")
     if not isinstance(files, dict) or any(name not in files for name in REQUIRED):
         raise ValueError("Release is missing required application resources")
-    actual = {str(path.relative_to(root)) for path in root.rglob("*") if path.is_file()}
-    if actual != {*files, "release.json"}:
-        raise ValueError("Release files do not match its manifest")
-    for name, digest in files.items():
+    for name in files:
         parts = PurePosixPath(name)
         if parts.is_absolute() or ".." in parts.parts or "\\" in name:
             raise ValueError("Unsafe release path")
-        path = root / name
-        if path.is_symlink() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+    return data
+
+
+def _verify_declared(root: Path, data: dict) -> None:
+    for name, digest in data["files"].items():
+        if hashlib.sha256((root / name).read_bytes()).hexdigest() != digest:
             raise ValueError(f"Release verification failed: {name}")
+
+
+def metadata(root: Path) -> dict:
+    data = _release_manifest(root)
+    actual = {str(path.relative_to(root)) for path in root.rglob("*") if path.is_file()}
+    if actual != {*data["files"], "release.json"}:
+        raise ValueError("Release files do not match its manifest")
+    _verify_declared(root, data)
     return data
 
 
@@ -468,14 +477,15 @@ def _lock(prefix: Path, *, wait: bool = False):
         yield
 
 
-def _probe(version: str, *, prefix: Path, timeout: float = 30) -> None:
+def _probe(version: str, *, prefix: Path, timeout: float = 30, network: dict | None = None) -> None:
     from . import config, platform
     expected = json.loads((prefix / "versions" / version / "release.json").read_text())
-    ca = config.TLS_DIR / "ca.crt"
+    network = network or {"host": config.HOST, "port": config.PORT, "tls_dir": config.TLS_DIR}
+    ca = Path(network["tls_dir"]) / "ca.crt"
     context = ssl.create_default_context(cafile=str(ca) if ca.exists() else None)
-    host = config.HOST if config.HOST not in ("0.0.0.0", "::") else "localhost"
+    host = network["host"] if network["host"] not in ("0.0.0.0", "::") else "localhost"
     authority = f"[{host}]" if ":" in host else host
-    base = f"https://{authority}:{config.PORT}"
+    base = f"https://{authority}:{network['port']}"
     deadline = time.monotonic() + timeout
     while True:
         try:
@@ -574,6 +584,86 @@ def prerequisites() -> list[dict]:
     return items
 
 
+def hosting_status(native: dict | None = None) -> dict:
+    """Diagnose the owned service first; saved configuration and calling-shell overrides stay distinct."""
+    from . import config, platform, tls
+    saved = None
+    result = {"state": "unknown", "computer": platform.computer_name(), "native": native,
+              "url": None, "configured_url": None, "verified": False, "overrides": []}
+    try:
+        native = platform.status() if native is None else native
+        if config.RELEASE is not None and _settings().exists():
+            saved = json.loads(_settings().read_text())["environment"]
+        else:
+            unit = platform.service_unit()
+            saved = dict(value.split("=", 1) for value in shlex.split(unit.get("Environment", "")) if "=" in value)
+        configured = tls.located(config.network(saved)) if saved else None
+        overrides = [key for key in ("ALTITUDE_HOST", "ALTITUDE_PORT", "ALTITUDE_TLS_DIR", "ALTITUDE_TLS")
+                     if saved and key in os.environ and key in saved and os.environ[key] != saved[key]]
+        result = {"state": "stopped", "native": native, "overrides": overrides,
+                  "configured_url": configured and configured["url"], "url": configured and configured["url"],
+                  **(tls.address_view(configured) if configured else {}),
+                  "computer": platform.computer_name(), "verified": False,
+                  "tls_dir": str(configured["tls_dir"]) if configured else None,
+                  "host": configured and configured["host"]}
+        if native.get("ActiveState") != "active":
+            if native.get("ActiveState") not in ("inactive", "failed"):
+                result.update(state="unknown", detail="The service manager could not confirm the service state.")
+            return result
+        found = tls.service()
+        if str(found["pid"]) != native.get("MainPID"):
+            raise tls.TLSFailure("The saved service address belongs to a different process; it is not the active address.")
+        unit_path = platform.service_path()
+        if unit_path.is_symlink() or Path(native.get("FragmentPath", "")).absolute() != unit_path.absolute():
+            raise tls.TLSFailure("The active service is not loaded from Altitude's owned service definition.")
+        tls.verify_service(found)
+        result.update(tls.address_view(found), state="running", verified=True,
+                      tls_dir=str(found["tls_dir"]), host=found["host"])
+        if configured and found["url"] != configured["url"]:
+            result["detail"] = "The verified running address differs from the saved configuration."
+        return result
+    except (OSError, ValueError, RuntimeError) as exc:
+        result.update(state="unknown", url=None, verified=False, detail=str(exc))
+        return result
+
+
+def describe_hosting(hosting: dict) -> str:
+    lines = [f"Altitude runs on {hosting['computer']}.", f"Service: {hosting['state']}."]
+    if hosting.get("url"):
+        label = "Open Altitude" if hosting["verified"] else "Configured address (not serving)"
+        lines.append(f"{label}: {hosting['url']}")
+        lines.append("Listening: all interfaces; the localhost certificate URL is for the hosting computer. Other-device reachability is unverified."
+                     if hosting.get("listener_scope") == "all" else
+                     "Access: only the hosting computer; no VPN needed." if hosting.get("listener_scope") == "local"
+                     else "Access: devices that can reach this address and port; other-device reachability is unverified.")
+    elif hosting.get("configured_url"):
+        lines.append(f"Configured address (not verified): {hosting['configured_url']}")
+    if hosting.get("detail"):
+        lines.append(hosting["detail"])
+    if hosting.get("overrides"):
+        lines.append("Ignored calling-shell values: " + ", ".join(hosting["overrides"]) + "; the service keeps its saved settings.")
+    lines.append("Next: open the URL for browser setup." if hosting["verified"] else
+                 "Next: use alt service logs to investigate, or alt service start to start a stopped installation.")
+    return "\n".join(lines)
+
+
+def describe_doctor(report: dict) -> str:
+    lines = [describe_hosting(report["hosting"]), "", "Readiness:"]
+    lines += [f"  {item['name']}: {item['state']}" for item in report["checks"]]
+    lines += ["  " + item["detail"] for item in report["checks"]
+              if item["state"] in ("unavailable", "unknown") and isinstance(item.get("detail"), str)]
+    lines += ["Browser certificate trust: unverified; compare the certificate and reopen without a warning.",
+              "Coding-provider access: unverified; no provider requests are made."]
+    trust = report["certificate_trust"]
+    if trust.get("ca_cert"):
+        lines += [f"Certificate: {trust['ca_name']}", f"Public CA file: {trust['ca_cert']}",
+                  f"SHA-256: {trust['ca_sha256'].split('=', 1)[-1]}"]
+    elif trust.get("detail"):
+        lines.append("Certificate check: " + trust["detail"])
+    lines.append("Use alt doctor --json for complete checks and platform trust instructions.")
+    return "\n".join(lines)
+
+
 def doctor() -> dict:
     from . import config, engines, platform, tls
     checks = [{"name": "Python", "state": "tested" if sys.version_info >= (3, 12) else "unavailable",
@@ -607,20 +697,24 @@ def doctor() -> dict:
     checks.append({"name": "GitHub authentication", "state": "tested" if authenticated else "unknown",
                    "detail": "Authentication check passed; repository permissions are checked during project setup."
                    if authenticated else "Run gh auth login, then gh auth status; repository access remains unverified."})
+    hosting = hosting_status()
     try:
-        identity = tls.info()
-        trust = {"state": "unknown", "url": tls.url(),
+        if not hosting.get("tls_dir"):
+            raise tls.TLSFailure("The service's certificate directory is not known. Inspect alt service status.")
+        identity = tls.info(hosting["host"], directory=Path(hosting["tls_dir"]))
+        trust = {"state": "unknown", "url": hosting.get("url"),
                  **{key: identity[key] for key in ("ca_cert", "ca_name", "ca_sha256", "ca_expires", "ca_scope",
                                                     "trust_steps")}}
     except (tls.TLSFailure, OSError) as exc:
         trust = {"state": "unavailable", "detail": str(exc)}
     seats = [{"name": config.ENGINE_LABELS[engine], **engines.installation(engine)} for engine in config.ENGINES]
     return {"version": (config.RELEASE or {}).get("version"), "update": update_status(), "checks": checks, "engines": seats,
+            "hosting": hosting,
             "engine_access": "unknown; no provider requests are made", "certificate_trust": trust,
             "optional": "Voice, GPU and telemetry do not gate typing or task delivery."}
 
 
-def recover(prefix: Path | None = None) -> dict:
+def recover(prefix: Path | None = None, *, generated_bytecode: bool = False) -> dict:
     from . import config, platform
     platform.require_native_application()
     prefix = prefix or _prefix()
@@ -628,6 +722,11 @@ def recover(prefix: Path | None = None) -> dict:
     with _lock(prefix), config.restart_lock(exclusive=True) as quiet:
         if not quiet:
             raise RuntimeError("Recovery waits for dispatch, L3 or report verification; retry shortly")
+        if generated_bytecode:
+            if (prefix / "pending.json").exists():
+                raise RuntimeError("Finish interrupted activation with alt recover before repairing generated bytecode")
+            _require_no_update(prefix)
+            return _quarantine_generated_bytecode(prefix)
         if not (prefix / "pending.json").exists():
             _require_no_update(prefix)
         result = _recover(prefix)
@@ -637,12 +736,49 @@ def recover(prefix: Path | None = None) -> dict:
         return result
 
 
+def _quarantine_generated_bytecode(prefix: Path) -> dict:
+    """An explicit operator repair; declared resources and normal manifest validation stay strict."""
+    require_service_owner(prefix)
+    root = _version_path(prefix, os.readlink(prefix / "current"))
+    release = _release_manifest(root)
+    _verify_declared(root, release)
+    actual = {str(path.relative_to(root)) for path in root.rglob("*") if path.is_file()}
+    extras = actual - {*release["files"], "release.json"}
+    saved = json.loads(_settings().read_text())
+    tag = subprocess.check_output([saved["python"], "-I", "-B", "-c", "import sys; print(sys.implementation.cache_tag)"],
+                                  text=True, timeout=10).strip()
+    allowed = {str(Path(name).parent / "__pycache__" / f"{Path(name).stem}.{tag}.pyc")
+               for name in release["files"] if name.endswith(".py")}
+    if extras - allowed:
+        raise RuntimeError("The installed release has unexpected files beyond generated Python caches; no repair was applied")
+    if not extras:
+        metadata(root)
+        return {"repaired": False, "version": release["version"], "detail": "The installed release already matches its manifest"}
+    backup = prefix / "recovery" / uuid.uuid4().hex
+    backup.mkdir(parents=True, mode=0o700)
+    receipt = {"version": release["version"], "files": sorted(extras), "source": str(root), "complete": False}
+    atomic(backup / "recovery.json", json.dumps(receipt) + "\n")
+    for name in sorted(extras):
+        destination = backup / name
+        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.replace(root / name, destination)
+    metadata(root)
+    atomic(backup / "recovery.json", json.dumps({**receipt, "complete": True}) + "\n")
+    return {"repaired": True, "version": release["version"], "backup": str(backup),
+            "quarantined": sorted(extras), "service": "unchanged",
+            "retained": "declared release files, settings, certificate identity, pairing, projects and automatic-attempt history",
+            "next": "This is a manual repair, not an upgrade. Use alt update for an explicit retry, or let the daemon "
+                    "install a newer offered release automatically. A failed release is not automatically retried."}
+
+
 def _recover(prefix: Path) -> dict:
     from . import platform
     receipt = prefix / "pending.json"
     if not receipt.exists():
         return {"recovered": False, "detail": "No interrupted activation"}
     saved = json.loads(receipt.read_text())
+    if saved.get("kind") == "address":
+        return _recover_address(prefix, saved)
     for target in (saved["previous"], saved["candidate"]):
         if target is not None:
             _version_path(prefix, target)
@@ -694,9 +830,9 @@ def _version_path(prefix: Path, target: str) -> Path:
     return prefix / target
 
 
-def require_service_owner() -> Path:
+def require_service_owner(prefix: Path | None = None) -> Path:
     from . import platform
-    prefix = _prefix()
+    prefix = prefix or _prefix()
     settings = _settings()
     saved = json.loads(settings.read_text())
     _require_saved_environment(saved)
@@ -725,6 +861,134 @@ def service(operation: str) -> dict | str:
         elif native.get("ActiveState") not in ("inactive", "failed"):
             raise RuntimeError("Service stop is unconfirmed; inspect alt service status")
         return native
+
+
+def _address_leaf(directory: Path, host: str) -> str:
+    from . import tls
+    # External identities must already cover the chosen address. Altitude never replaces their issuer or key.
+    tls._load(directory)
+    if not tls._managed(directory):
+        tls._verify(directory, host)
+        return (directory / "server.crt").read_text()
+    with tempfile.TemporaryDirectory(prefix=".address-", dir=directory) as temporary:
+        staging = Path(temporary)
+        certificate = tls._issue(directory, staging, host)
+        for name in ("server.key", "ca.crt"):
+            (staging / name).symlink_to(directory.resolve() / name)
+        tls._load(staging)
+        tls._verify(staging, host)
+        return certificate.read_text()
+
+
+def configure_address(host: str, *, apply: bool = False) -> dict:
+    """Preview an owned packaged service change; only explicit apply mutates the service or certificate."""
+    from . import config, platform, tls
+    platform.require_native_application()
+    prefix = require_service_owner()
+    host = platform.service_address(host)
+    settings = _settings()
+    before = settings.read_text()
+    saved = json.loads(before)
+    old = config.network(saved["environment"])
+    directory = old["tls_dir"]
+    identity = tls.info(old["host"], directory=directory)
+    after = {**saved, "environment": {**saved["environment"], "ALTITUDE_HOST": host}}
+    proposed = config.network(after["environment"])
+    result = {"applied": False, "current_url": tls.located(old)["url"], "url": tls.located(proposed)["url"],
+              "port": proposed["port"], "ca_name": identity["ca_name"], "ca_sha256": identity["ca_sha256"],
+              "certificate": "renew server certificate; retain CA and keys" if identity["managed"] else "verify existing external certificate",
+              "retained": "port, settings, certificate identity, pairing and projects",
+              "apply": f"alt service configure --host {host} --apply", "recovery": "alt recover",
+              "reachability": "Other-device reachability is unverified; the private connection is separate."}
+    if not identity["managed"]:
+        tls._verify(directory, host)
+    if not apply:
+        return result
+    with _lock(prefix), config.restart_lock(exclusive=True) as quiet:
+        _require_no_update(prefix)
+        if not quiet or (prefix / "pending.json").exists():
+            raise RuntimeError("Address changes wait for active work or installation recovery")
+        require_service_owner()
+        if settings.read_text() != before:
+            raise RuntimeError("Service settings changed; preview the address again")
+        for path in (settings, directory / "server.crt", platform.service_path()):
+            if path.is_symlink():
+                raise RuntimeError("Address changes require owned regular configuration, certificate and service files")
+        native = platform.status()
+        if native.get("ActiveState") not in ("active", "inactive", "failed"):
+            raise RuntimeError("The service is changing state or its state is unknown; wait for a settled service status before applying")
+        target = os.readlink(prefix / "current")
+        version = metadata(_version_path(prefix, target))["version"]
+        candidate = _address_leaf(directory, host)
+        receipt = {"kind": "address", "previous": target, "previous_version": version,
+                   "configuration": before, "candidate_configuration": json.dumps(after, indent=2) + "\n",
+                   "service": platform.service_path().read_text(),
+                   "candidate_service": platform.definition(prefix, Path(saved["python"]), settings, after["environment"]),
+                   "certificate": (directory / "server.crt").read_text(), "candidate_certificate": candidate,
+                   "active": native["ActiveState"] == "active"}
+        atomic(prefix / "pending.json", json.dumps(receipt) + "\n")
+        try:
+            if receipt["active"]:
+                platform.control("stop")
+                if platform.status().get("ActiveState") not in ("inactive", "failed"):
+                    raise RuntimeError("Service stop is unconfirmed")
+            atomic(directory / "server.crt", candidate)
+            atomic(settings, receipt["candidate_configuration"])
+            atomic(platform.service_path(), receipt["candidate_service"], 0o644)
+            platform.control("reload")
+            if receipt["active"]:
+                platform.control("start")
+                _probe(version, prefix=prefix, network=proposed)
+        except Exception as exc:
+            try:
+                _recover(prefix)
+            except Exception as rollback:
+                raise RuntimeError(f"Address change failed ({exc}); recovery is incomplete ({rollback}). Run alt recover.") from exc
+            raise RuntimeError(f"Address change failed; previous address restored: {exc}") from exc
+        (prefix / "pending.json").unlink()
+        return {**result, "applied": True, "service": "running" if receipt["active"] else "stopped",
+                "verified": receipt["active"], "next": "Open this URL and complete trust and pairing on the other device."
+                if receipt["active"] else "The service stays stopped. Use alt service start, then open the configured URL."}
+
+
+def _recover_address(prefix: Path, saved: dict) -> dict:
+    """Restore only the files still owned by the interrupted address transaction."""
+    from . import config, platform, tls
+    settings, unit = _settings(), platform.service_path()
+    before, after = (json.loads(saved[key]) for key in ("configuration", "candidate_configuration"))
+    old = config.network(before["environment"])
+    leaf = old["tls_dir"] / "server.crt"
+    _require_owned_unit()
+    target = saved["previous"]
+    if (not (prefix / "current").is_symlink() or os.readlink(prefix / "current") != target
+            or metadata(_version_path(prefix, target))["version"] != saved["previous_version"]):
+        raise RuntimeError("Active version changed during the address transaction; inspect before recovery")
+    if after != {**before, "environment": {**before["environment"], "ALTITUDE_HOST": after["environment"]["ALTITUDE_HOST"]}}:
+        raise RuntimeError("Address receipt contains unrelated configuration changes; inspect before recovery")
+    for configuration, definition in ((before, saved["service"]), (after, saved["candidate_service"])):
+        if (Path(configuration["prefix"]).resolve() != prefix
+                or platform.definition(prefix, Path(configuration["python"]), settings, configuration["environment"]) != definition):
+            raise RuntimeError("Address receipt does not name the owned installation")
+    for path, choices in ((settings, (saved["configuration"], saved["candidate_configuration"])),
+                          (unit, (saved["service"], saved["candidate_service"])),
+                          (leaf, (saved["certificate"], saved["candidate_certificate"]))):
+        if path.is_symlink() or path.read_text() not in choices:
+            raise RuntimeError("Address transaction ownership changed; existing files are retained")
+    platform.control("stop")
+    if platform.status().get("ActiveState") not in ("inactive", "failed"):
+        raise RuntimeError("Service stop is unconfirmed; address recovery remains pending")
+    atomic(leaf, saved["certificate"])
+    atomic(settings, saved["configuration"])
+    atomic(unit, saved["service"], 0o644)
+    tls._load(old["tls_dir"])
+    tls._verify(old["tls_dir"], old["host"])
+    platform.control("reload")
+    if saved["active"]:
+        platform.control("start")
+        _probe(saved["previous_version"], prefix=prefix, network=old)
+    (prefix / "pending.json").unlink()
+    return {"recovered": True, "version": saved["previous_version"], "url": tls.located(old)["url"],
+            "service": "running" if saved["active"] else "stopped", "retained": "original address, certificate identity, pairing and projects"}
 
 
 @contextmanager
@@ -860,6 +1124,7 @@ def _activate(stage: Path, release: dict, prefix: Path, settings: Path, *, newer
             raise RuntimeError("Update staged; activation waits for dispatch, L3 or report verification. Retry this version.")
         time.sleep(0.25)
     return {"version": release["version"], "prefix": str(prefix), "url": tls.url(),
+            "network": tls.address_view(config.network(saved["environment"])), "lifecycle": platform.installation_lifecycle(),
             "service": "running" if previous_service is None or receipt["active"] else "stopped",
             # The first installation keeps the service running without a login; an update leaves the account's choice.
             "lingering": platform.lingering(enable=previous_service is None), "trust": tls.info(), "retained": "previous versions and all user data", "next": "Follow trust.trust_steps in each desktop or phone browser. Use the public ca_cert file locally, or alt tls-share on a configured private network. Compare the CA name and full fingerprint before trusting it, then verify the exact HTTPS URL without a warning and pair with the code `alt pair` prints."}
@@ -920,11 +1185,15 @@ def main() -> None:
     parser.add_argument("--prepare-source-tls", type=Path, metavar="DIRECTORY",
                         help="verify the active source deployment's existing TLS; do not install")
     parser.add_argument("--apply", action="store_true", help="apply the verified source TLS service override")
+    parser.add_argument("--repair-generated-bytecode", action="store_true",
+                        help="use verified archive code to quarantine only generated caches in the owned installation; no upgrade")
     args = parser.parse_args()
     if os.environ.get("ALTITUDE_ACTOR") in ("l2", "l3"):
         parser.error("Application installation is an operator operation")
     if (args.prepare_source_tls and (args.recover or args.prefix)) or (args.apply and not args.prepare_source_tls):
         parser.error("--prepare-source-tls uses --archive/--sha256 without --prefix; --apply requires it")
+    if args.repair_generated_bytecode and (args.recover or args.prepare_source_tls or args.apply):
+        parser.error("--repair-generated-bytecode requires --archive/--sha256 and performs no installation")
     try:
         if args.recover:
             prefix = (args.prefix or Path.home() / ".local/share/altitude").expanduser().resolve()
@@ -938,7 +1207,10 @@ def main() -> None:
         else:
             if not args.sha256:
                 parser.error("--archive requires --sha256 from the release")
-            if args.prepare_source_tls:
+            if args.repair_generated_bytecode:
+                with _prepare_install(args.archive, args.sha256, args.prefix) as prepared:
+                    result = recover(prepared[2], generated_bytecode=True)
+            elif args.prepare_source_tls:
                 with tempfile.TemporaryDirectory(prefix="altitude-tls-review-") as folder:
                     stage = Path(folder)
                     extract(args.archive, args.sha256, stage)

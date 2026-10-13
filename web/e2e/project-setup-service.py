@@ -4,11 +4,13 @@ import threading
 
 from service_support import configure, serve
 from tests.support import SUITE, git
-from altitude import config, engines, git_policy, l3, project_setup, server, state as S, tasks as T
+from altitude import config, engines, git_policy, installation, l3, project_setup, server, state as S, tasks as T
 
 
 def main():
     configure()
+    # Initial ready setup uses a signed-in external account fixture; prerequisites still run their real checks.
+    installation._gh_signed_in = lambda: True
     # Guard composition generations belong to a disposable installation, never this checkout.
     installation = SUITE / "installation"
     installation.mkdir()
@@ -74,6 +76,12 @@ def main():
 
         def do_POST(self):
             nonlocal fail_intro
+            if self.path == "/fixture/sign-out":
+                installation._gh_signed_in = lambda: False
+                return self._json({"ok": True})
+            if self.path == "/fixture/sign-in":
+                installation._gh_signed_in = lambda: True
+                return self._json({"ok": True})
             if self.path == "/fixture/release-intro":
                 gate.set()
                 return self._json({"ok": True})

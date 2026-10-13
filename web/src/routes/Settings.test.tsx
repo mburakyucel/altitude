@@ -59,7 +59,7 @@ describe("Host voice settings", () => {
     const host = hostFixture({ state: "absent", download_bytes: 698435338 });
     const { user } = renderApp({ route: "/settings/voice" });
     expect(screen.queryByRole("button", { name: "Set up voice" })).toBeNull();
-    await user.click(await screen.findByRole("radio", { name: "This computer" }));
+    await user.click(await screen.findByRole("radio", { name: "Hosting computer" }));
     expect(await screen.findByText("Needs a one-time download of about 698 MB, checked against this release.")).toBeVisible();
     expect(screen.getByText("Speech model: NVIDIA Parakeet TDT 0.6B v2, licensed CC-BY-4.0.")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Set up voice" }));
@@ -154,20 +154,20 @@ describe("Host voice settings", () => {
     await user.click(await screen.findByRole("button", { name: "Cancel update" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Action denied.");
     expect(screen.getByRole("button", { name: "Cancel update" })).toBeEnabled();
-    expect(screen.getByRole("radio", { name: "This computer" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Hosting computer" })).toBeChecked();
   });
 
   it.each(["ready", "outdated"])("overview separates installed availability from update status (%s)", async (state) => {
     hostFixture({ state, download_bytes: 701000000, update: { state: "downloading", done_bytes: 12, download_bytes: 40 } }, "host");
     renderApp({ route: "/settings" });
-    expect(await screen.findByRole("link", { name: state === "ready" ? "Voice input This computer" : "Voice input This computer · update required" })).toBeVisible();
+    expect(await screen.findByRole("link", { name: state === "ready" ? "Voice input Hosting computer" : "Voice input Hosting computer · update required" })).toBeVisible();
   });
 
   it("a computer that cannot run voice says why and cannot choose it", async () => {
     hostFixture({ state: "unavailable", reason: "voice runs on Linux x86_64 and on Macs with Apple silicon" });
     renderApp({ route: "/settings/voice" });
-    expect(await screen.findByRole("radio", { name: "This computer" })).toBeDisabled();
-    expect(screen.getByText("Not available on this computer: voice runs on Linux x86_64 and on Macs with Apple silicon.")).toBeVisible();
+    expect(await screen.findByRole("radio", { name: "Hosting computer" })).toBeDisabled();
+    expect(screen.getByText("Not available on the hosting computer: voice runs on Linux x86_64 and on Macs with Apple silicon.")).toBeVisible();
   });
 });
 
@@ -298,10 +298,10 @@ describe("Voice settings", () => {
   it("fresh settings replace an untouched cached form but preserve an edit's original selection", async () => {
     const calls = fixture();
     const { user, queryClient } = renderApp({ route: "/settings/voice" });
-    await screen.findByRole("radio", { name: "This computer" });
+    await screen.findByRole("radio", { name: "Hosting computer" });
     act(() => queryClient.setQueryData(["voice-settings"], { ...saved, backend: "browser", selection: "browser-fresh" }));
     await waitFor(() => expect(screen.getByRole("radio", { name: "Browser recognition" })).toBeChecked());
-    await user.click(screen.getByRole("radio", { name: "This computer" }));
+    await user.click(screen.getByRole("radio", { name: "Hosting computer" }));
     act(() => queryClient.setQueryData(["voice-settings"], { ...saved, backend: "browser", selection: "browser-later" }));
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await screen.findByText("Saved.");
@@ -337,14 +337,14 @@ describe("Voice settings", () => {
     expect(screen.getByText("This connection is unencrypted. Audio and any key travel over HTTP.")).toBeVisible();
     expect(calls).toHaveLength(0);
   });
-  it.each([390, 1440])("offers three deliberate choices, This computer first, and keeps the overview compact (%s)", async (width) => {
+  it.each([390, 1440])("offers three deliberate choices, Hosting computer first, and keeps the overview compact (%s)", async (width) => {
     setViewport(width);
     const calls = fixture();
     const { user } = renderApp({ route: "/settings" });
-    await user.click(await screen.findByRole("link", { name: "Voice input This computer" }));
+    await user.click(await screen.findByRole("link", { name: "Voice input Hosting computer" }));
     const radios = await screen.findAllByRole("radio");
-    expect(radios.map((radio) => radio.closest("label")?.textContent)).toEqual(["This computer", "Browser recognition", "Your speech service"]);
-    expect(screen.getByRole("radio", { name: "This computer" })).toBeChecked();
+    expect(radios.map((radio) => radio.closest("label")?.textContent)).toEqual(["Hosting computer", "Browser recognition", "Your speech service"]);
+    expect(screen.getByRole("radio", { name: "Hosting computer" })).toBeChecked();
     expect(screen.queryByRole("textbox")).toBeNull();
     await user.click(screen.getByRole("link", { name: "‹ Settings" }));
     expect(screen.queryByRole("radio")).toBeNull();
@@ -361,18 +361,18 @@ describe("Voice settings", () => {
       return fetchOriginal(input, init);
     }));
     const { user } = renderApp({ route: "/settings/voice" });
-    await screen.findByRole("radio", { name: "This computer" });
+    await screen.findByRole("radio", { name: "Hosting computer" });
     const pending: (() => void)[] = [];
     notifyManager.setScheduler((callback) => pending.push(callback));
     try {
       await user.click(screen.getByRole("radio", { name: "Browser recognition" }));
       await user.click(screen.getByRole("button", { name: "Save changes" }));
-      expect(screen.getByRole("radio", { name: "This computer" })).toBeDisabled();
+      expect(screen.getByRole("radio", { name: "Hosting computer" })).toBeDisabled();
       expect(screen.getByText("Saving…")).toBeVisible();
       expect(screen.getByRole("status", { name: "Saving…" })).toBeVisible();
       release();
       await screen.findByText("Saved.");
-      expect(screen.getByRole("radio", { name: "This computer" })).toBeEnabled();
+      expect(screen.getByRole("radio", { name: "Hosting computer" })).toBeEnabled();
       expect(screen.getByRole("radio", { name: "Browser recognition" })).toBeChecked();
     } finally {
       release();
@@ -384,7 +384,7 @@ describe("Voice settings", () => {
   it("saves each choice with the selection it replaces and keeps it while cache notifications wait", async () => {
     const calls = fixture();
     const { user } = renderApp({ route: "/settings/voice" });
-    await screen.findByRole("radio", { name: "This computer" });
+    await screen.findByRole("radio", { name: "Hosting computer" });
     const pending: (() => void)[] = [];
     const flush = () => { while (pending.length) pending.shift()!(); };
     notifyManager.setScheduler((callback) => pending.push(callback));
@@ -394,11 +394,11 @@ describe("Voice settings", () => {
       await screen.findByText("Saved.");
       await act(async () => flush());
       expect(screen.getByRole("radio", { name: "Browser recognition" })).toBeChecked();
-      await user.click(screen.getByRole("radio", { name: "This computer" }));
+      await user.click(screen.getByRole("radio", { name: "Hosting computer" }));
       await user.click(screen.getByRole("button", { name: "Save changes" }));
       await waitFor(() => expect(calls).toHaveLength(2));
       await act(async () => flush());
-      await waitFor(() => expect(screen.getByRole("radio", { name: "This computer" })).toBeChecked());
+      await waitFor(() => expect(screen.getByRole("radio", { name: "Hosting computer" })).toBeChecked());
       expect(calls).toEqual([{ backend: "browser", selection: "host-one" }, { backend: "host", selection: "browser-selection" }]);
     } finally {
       notifyManager.setScheduler(defaultScheduler);
@@ -431,9 +431,9 @@ describe("Voice settings", () => {
     setViewport(1440);
     fixture();
     const { user, router } = renderApp({ route: "/settings/voice" });
-    await screen.findByRole("radio", { name: "This computer" });
+    await screen.findByRole("radio", { name: "Hosting computer" });
     await user.click(screen.getByRole("link", { name: "Settings" }));
-    await screen.findByRole("link", { name: "Voice input This computer" });
+    await screen.findByRole("link", { name: "Voice input Hosting computer" });
     setViewport(390);
     await user.click(await screen.findByRole("button", { name: "‹ Back" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/projects"));
@@ -454,7 +454,7 @@ describe("Voice settings", () => {
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Reload settings" }));
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
-    expect(screen.getByRole("radio", { name: "This computer" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Hosting computer" })).toBeChecked();
     stale = false;
     await user.click(screen.getByRole("radio", { name: "Browser recognition" }));
     await user.click(screen.getByRole("button", { name: "Save changes" }));

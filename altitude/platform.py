@@ -37,6 +37,34 @@ import time
 
 
 SERVICE = "altitude.service"
+
+
+def computer_name() -> str:
+    """The hosting computer's name, shown only inside the paired app or a local terminal."""
+    return "Altitude container" if containerized() else socket.gethostname()
+
+
+def service_address(host: str) -> str:
+    """An explicit local/private bind assigned to this computer; never change networking to make it fit."""
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError as exc:
+        raise ValueError("Choose a concrete loopback or private IP address assigned to the hosting computer") from exc
+    private = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16") if address.version == 4 else ("fc00::/7",)
+    if not address.is_loopback and not any(address in ipaddress.ip_network(network) for network in private):
+        raise ValueError("Choose loopback or a private LAN/VPN address; wildcard, public and link-local binds are not supported here")
+    try:
+        with socket.socket(socket.AF_INET if address.version == 4 else socket.AF_INET6) as probe:
+            probe.bind((str(address), 0))
+    except OSError as exc:
+        raise ValueError("That address is not available on the hosting computer; arrange the private connection first") from exc
+    return str(address)
+
+
+def installation_lifecycle() -> str:
+    return ("Altitude runs in the background while you are logged in and starts at your next login."
+            if _darwin() else "Altitude runs as your account's background service; logout and boot behavior is shown below.")
+
 CONTAINER_STOP_WAIT = 105  # process termination45 + stop-post45 + margin15
 CONTAINER_BUILD_SECONDS = 900  # extraction, build480, inspections60, save60, load60, margin
 #: The LaunchAgent that runs the account's service on macOS; service_label() names the one for the current home.

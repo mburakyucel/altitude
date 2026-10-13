@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { StatusMark, BusyLabel } from "../components/StatusMark";
 import FolderBrowser from "../components/FolderBrowser";
 import { Command, IncidentReportsForm, NameForm, PrerequisiteList } from "../components/Onboarding";
+import { HostingCard, networkSummary } from "../components/Network";
 import { ApiError, type Machine, changeHostVoice, closePhoneShare, makePairingCode, openPhoneShare, readVoiceSettings, revokeDevice, saveProjectsFolder, saveTerminalAccess, saveUpdateAutomatic, saveUpdateCheck, saveValidationAccess, saveVoiceSettings, startUpdate, useDevices, useMachine, useOverview, useProjectDefaults } from "../data/api";
 import type { Certificate, Device, Overview, PairingCode, PhoneShare, ProjectDefaults, Update } from "../data/api";
 import { GlobalModelSettings, EnginePreference } from "../components/Models";
@@ -19,11 +20,11 @@ import { disableAlerts, enableAlerts, savePreferences, useAlertNote, useAlertSta
 import type { Preferences, Reveal } from "../data/alerts";
 import "./settings.css";
 
-const labels: Record<VoiceBackend, string> = { host: "This computer", browser: "Browser recognition", service: "Your speech service" };
+const labels: Record<VoiceBackend, string> = { host: "Hosting computer", browser: "Browser recognition", service: "Your speech service" };
 const explanations: Record<VoiceBackend, string> = {
-  host: "Words appear as you speak, with punctuation and capitals, in English, in every browser. Audio goes from your device to this computer over Altitude’s own connection, is transcribed here and is never stored or sent to another service. If the connection drops, recording continues and your words catch up.",
+  host: "Words appear as you speak, with punctuation and capitals, in English, in every browser. Audio goes from your device to the hosting computer over Altitude’s own connection, is transcribed there and is never stored or sent to another service. If the connection drops, recording continues and your words catch up.",
   browser: "No setup in supported browsers. Words appear as you speak; English gets punctuation and capitals on this device. Your browser may send audio to its speech service; that service’s privacy policy applies.",
-  service: "Words appear after you stop. Audio passes through this computer to the service you choose. Its privacy policy and charges apply.",
+  service: "Words appear after you stop. Audio passes through the hosting computer to the service you choose. Its privacy policy and charges apply.",
 };
 const queryKey = ["voice-settings"];
 
@@ -54,7 +55,7 @@ function HostVoicePanel({ host, onChange }: { host: HostVoice; onChange: (value:
       setBusy(null);
     }
   };
-  if (host.state === "unavailable") return <UnavailableAction label="Set up voice" reason={`Not available on this computer: ${host.reason}.`} />;
+  if (host.state === "unavailable") return <UnavailableAction label="Set up voice" reason={`Not available on the hosting computer: ${host.reason}.`} />;
   const size = megabytes(host.download_bytes);
   const update = host.update;
   const installed = host.state === "ready" || host.state === "outdated";
@@ -440,6 +441,8 @@ function DeviceRow({ device, current, onRemoved }: { device: Device; current: bo
 function DevicesPage() {
   const client = useQueryClient();
   const devices = useDevices();
+  const network = useMachine().data?.network;
+  const local = network && !("error" in network) && network.scope === "local";
   const [code, setCode] = useState<{ status: "idle" | "making" } | { status: "made"; code: PairingCode } | { status: "failed"; error: Error }>({ status: "idle" });
   const make = async () => {
     setCode({ status: "making" });
@@ -462,8 +465,9 @@ function DevicesPage() {
       <h2>Pair another device</h2>
       {code.status === "made" ? <>
         <p className="device-code" aria-label="Pairing code">{code.code.code}</p>
-        <p className="text-meta text-muted">Works once, for the next {code.code.minutes} minutes. On the other device,{" "}
+        <p className="text-meta text-muted">Works once, for the next {code.code.minutes} minutes. {local ? "On the hosting computer," : "On the other device,"}{" "}
           {code.code.address ? <>open <span className="device-address">{code.code.address}</span> and type it.</> : "type it on the Pair this device screen."}</p>
+        {local ? <p className="text-meta text-muted">This URL works only on the hosting computer. A phone cannot use its localhost address, so there is no phone QR. <Link className="link" to="/settings/network">Set up another device</Link>.</p> : null}
         {code.code.address && code.code.qr ? <>
           <QRCode rows={code.code.qr} label={`QR code for ${code.code.address}`} />
           <p className="text-meta text-muted">Scan with a phone to open Altitude.</p>
@@ -656,7 +660,7 @@ function VersionRows({ update }: { update: Update }) {
 
 const titles = {
   voice: "Voice input", projects: "Projects", "projects-folder": "Projects folder", name: "Your name",
-  prerequisites: "Prerequisites", "incident-reports": "Incident reports", devices: "Devices",
+  prerequisites: "Prerequisites", "incident-reports": "Incident reports", devices: "Devices", network: "Network",
 } as const;
 
 /** A machine setting the onboarding flow also sets: its form, saving in place with a Saved confirmation. */
@@ -726,6 +730,7 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
       {!phone ? <>{page || state?.settingsFrom ? back : null}<h1>{title}</h1></> : null}
       {page === "name" || page === "prerequisites" || page === "incident-reports" ? <MachinePage key={page} page={page} />
         : page === "devices" ? <DevicesPage />
+        : page === "network" ? <HostingCard detail />
         : page === "projects" ? <ProjectsPage state={state} />
         : page === "projects-folder" ? <>
         <p className="text-meta text-muted">First run offers the folders directly inside this folder. Altitude lists them only when you open First run or Add a folder; it never looks deeper or reads files.</p>
@@ -758,9 +763,9 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
               <span><strong>Devices</strong>{" "}<small>{devices.data ? `${devices.data.devices.length} paired · pair another, certificate` : "Loading…"}</small></span><span aria-hidden>›</span>
             </Link>
             <TerminalSwitch machine={machine.data} />
-            <div className="settings-row" aria-label="Network">
-              <span><strong>Network</strong>{" "}<small>{window.location.origin} · HTTPS {window.location.protocol === "https:" ? "on" : "off"}</small></span>
-            </div>
+            <Link className="settings-row" to="/settings/network" state={state}>
+              <span><strong>Network</strong>{" "}<small>{machine.isPending ? "Reading service address…" : networkSummary(machine.data?.network)}</small></span><span aria-hidden>›</span>
+            </Link>
           </Group>
           <Group title="Coding agents">
             <Link className="settings-row" to="/settings/prerequisites" state={state}>

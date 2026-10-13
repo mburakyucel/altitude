@@ -1937,6 +1937,7 @@ class Handler(BaseHTTPRequestHandler):
         """What the pairing screen needs to walk a device through trusting this installation's certificate."""
         return {"local": self._local(), "https": isinstance(self.connection, ssl.SSLSocket),
                 "check": TRUST is not None and isinstance(self.connection, ssl.SSLSocket),
+                "guide": tls.setup_guide(),
                 "certificate": {"name": TRUST.name} if TRUST else None}
 
     def _certificate_download(self, name: str) -> None:
@@ -3196,6 +3197,7 @@ def machine_view() -> dict:
     """The operator's name, incident publication, the terminal, validation and update-check switches, as First run and
     Settings show them."""
     return {"lifecycle": platform.container_lifecycle(), "operator": config.operator_name(), "incident_repository": config.incident_repository(),
+            "network": {**tls.address_view(_located()), "state": "running"},
             "altitude_repository": config.ALTITUDE_REPOSITORY, "terminal": terminal.enabled(),
             "terminal_unavailable": platform.container_unavailable("Terminal"),
             "container_shell": platform.container_shell_command(),
@@ -3757,6 +3759,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
         log(f"cannot bind {host}:{port} ({e}); exiting so the unit restarts (RestartSec)")
         raise SystemExit(1)
     srv.daemon_threads = True
+    config.HOST, config.PORT = host, srv.server_port
     try:
         if context is not None:
             srv.socket = context.wrap_socket(srv.socket, server_side=True, do_handshake_on_connect=False)

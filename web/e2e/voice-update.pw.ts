@@ -48,8 +48,8 @@ test("voice update presentation: all phases and outcomes keep supported voice in
   host.state = updating(downloading);
   await walk.open("/settings");
   await walk.state("09-overview-supported", {
-    visible: [page.getByRole("link", { name: "Voice input This computer", exact: true })],
-    hidden: [page.getByText("This computer · not set up", { exact: true })],
+    visible: [page.getByRole("link", { name: "Voice input Hosting computer", exact: true })],
+    hidden: [page.getByText("Hosting computer · not set up", { exact: true })],
   });
   expect(host.requests).toEqual([]);
 });
@@ -102,7 +102,7 @@ test("voice update presentation: cancel, retry, denied removal and removal show 
       visible: [page.getByRole("alert").filter({ hasText: "Fixture voice removal denied" }), button(page, "Cancel update"), button(page, "Remove voice")],
       hidden: [button(page, "Set up voice")],
     });
-    await expect(page.getByRole("radio", { name: "This computer", exact: true })).toBeChecked();
+    await expect(page.getByRole("radio", { name: "Hosting computer", exact: true })).toBeChecked();
     denyRemove = false;
     hold();
     await button(page, "Remove voice").click();
@@ -139,7 +139,7 @@ test("voice update presentation: unsupported runtime points to update without st
     hidden: [button(page, "Set up voice")],
   });
   await walk.open("/settings");
-  await expect(page.getByRole("link", { name: "Voice input This computer · update required", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Voice input Hosting computer · update required", exact: true })).toBeVisible();
   host.state = updating({ state: "failed", reason: "Download failed." }, "outdated");
   await walk.open("/settings/voice");
   await walk.state("03-unusable-failure-alert", {
@@ -167,7 +167,7 @@ test("voice update presentation: choosing browser leaves cancellation visible wh
   });
   await walk.open("/settings/voice");
   const browser = page.getByRole("radio", { name: "Browser recognition", exact: true });
-  const computer = page.getByRole("radio", { name: "This computer", exact: true });
+  const computer = page.getByRole("radio", { name: "Hosting computer", exact: true });
   await browser.click();
   await button(page, "Save changes").click();
   await expect(browser).toBeChecked();

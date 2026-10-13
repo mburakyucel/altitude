@@ -212,12 +212,12 @@ test("host voice not set up: the mic points to Settings, which sets it up with p
   await setUp.click();
   const button = page.getByRole("button", { name: "Set up voice", exact: true });
   await walk.state("host-voice-09-settings-absent", {
-    visible: [page.getByRole("radio", { name: "This computer", exact: true }), button,
+    visible: [page.getByRole("radio", { name: "Hosting computer", exact: true }), button,
       page.getByText("Needs a one-time download of about 698 MB, checked against this release.", { exact: true }),
       page.getByText("Speech model: NVIDIA Parakeet TDT 0.6B v2, licensed CC-BY-4.0.", { exact: true })],
     hidden: [page.getByRole("progressbar")],
   });
-  await expect(page.getByRole("radio", { name: "This computer", exact: true })).toBeChecked();
+  await expect(page.getByRole("radio", { name: "Hosting computer", exact: true })).toBeChecked();
   await walk.state("host-voice-10-setting-up", {
     action: () => button.click(),
     visible: [page.getByRole("progressbar", { name: "Voice setup" }), page.getByRole("status").filter({ hasText: "0 MB of 698 MB" }),

@@ -43,6 +43,8 @@ def configure(*, expected_error=lambda _message: False):
 def serve(handler=server.Handler, *, release=lambda: None, context=None):
     httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     httpd.daemon_threads = False
+    config.HOST, config.PORT, config.TLS = "127.0.0.1", httpd.server_port, context is not None
+    platform.computer_name = lambda: "Atlas host"
     if context is not None:  # HTTPS as altd serves it: each request thread completes its own handshake
         httpd.socket = context.wrap_socket(httpd.socket, server_side=True, do_handshake_on_connect=False)
     stopping = threading.Event()

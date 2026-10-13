@@ -918,9 +918,10 @@ def phase_login(guest: Guest, repository: str, results: Path, record: dict, inpu
 
     installed = step("install", public_command(repository), timeout=300)
     check(installed.returncode == 0 and f"Altitude {version} is installed" in installed.stdout, "the installer failed")
-    port = int(re.search(r"Address: https://\S+:(\d+)", installed.stdout).group(1))
+    port = int(re.search(r"(?:Address|Open Altitude): https://\S+:(\d+)", installed.stdout).group(1))
     before = running()
-    doctor = step("doctor", f"{alt} doctor")
+    help_text = step("doctor-help", f"{alt} doctor --help").stdout
+    doctor = step("doctor", f"{alt} doctor" + (" --json" if "--json" in help_text.split() else ""))
     report = json.loads(doctor.stdout)
     checks = {item["name"]: item["state"] for item in report["checks"]}
     record["doctor"] = checks

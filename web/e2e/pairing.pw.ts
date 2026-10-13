@@ -72,9 +72,8 @@ test("on the computer running Altitude, pairing needs only a code, and wrong and
   const { heading, trust, field, pair, alert, app } = screen(page);
   await walk.open("/projects");
   await walk.state("01-local", {
-    visible: [heading, trust.getByRole("status", { name: "Trusted", exact: true }),
-      field, page.getByText("Enter the code from alt pair, or from Settings › Devices on a paired device.")],
-    hidden: [alert, app, page.getByRole("link", { name: /^Download/ }), page.getByText(/without a warning/)],
+    visible: [heading, field, page.getByText("On the hosting computer, run:")],
+    hidden: [trust, alert, app, page.getByRole("link", { name: /^Download/ }), page.getByText(/without a certificate warning/)],
   });
   await expect(pair).toBeDisabled();
   const cancelled = await code(request);
@@ -278,7 +277,9 @@ test("a device on the network checks that it trusts Altitude's certificate befor
         : "Not trusted yet. Import the certificate as a trusted authority, then restart the browser.")],
     hidden: [field, trust.getByRole("link", { name: apple ? "Download the certificate" : "Download the profile" }), trust.getByText(/^[0-9A-F]{2}( [0-9A-F]{2}){7}$/)],
   });
-  if (!apple && !android) await expect(trust.getByRole("link", { name: "Setup guide" })).toBeVisible();
+  await expect(trust.getByRole("link", { name: "Certificate guide" })).toBeVisible();
+  await expect(trust.getByText(/On a mismatch, delete the download, close this page and stop/)).toBeVisible();
+  await expect(trust.getByText(/If a warning remains, do not enter a pairing code/)).toBeVisible();
   const release = device.hold();
   await walk.state("02-checking", { action: () => check.click(), visible: [trust.getByRole("status", { name: "Checking…", exact: true })], hidden: [field] });
   await expect(check).toBeDisabled();
@@ -325,7 +326,7 @@ test("with an externally supplied certificate, the device confirms it by hand be
   await walk.open("/");
   const proceed = page.getByRole("button", { name: "Continue" });
   await walk.state("01-external-certificate", {
-    visible: [page.getByText("Altitude can’t check this automatically. Open this address in a new Private tab; if it loads without a warning, tap Continue."), proceed],
+    visible: [page.getByText(/Altitude can’t check this automatically. Reopen this exact URL in a new private window/), proceed],
     hidden: [field, trust.getByRole("link", { name: /^Download/ })],
   });
   await walk.state("02-confirmed", { action: () => proceed.click(), visible: [trust.getByRole("status", { name: "Trusted", exact: true }), field], hidden: [proceed] });

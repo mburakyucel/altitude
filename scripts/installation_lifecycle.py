@@ -149,8 +149,14 @@ class Lifecycle:
                                          "version": release["version"], "commit": release["commit"]})
         return archive, checksum, package, release
 
+    def diagnostic(self, label: str, *command: str) -> dict:
+        """Published baselines may print JSON by default; candidates advertise their explicit JSON option."""
+        help_text = self.run(label + "-help", self.alt, *command, "--help")
+        options = ("--json",) if "--json" in help_text.split() else ()
+        return json.loads(self.run(label, self.alt, *command, *options))
+
     def healthy(self, label: str, release: dict):
-        native = json.loads(self.run(label + "-service", self.alt, "service", "status"))
+        native = self.diagnostic(label + "-service", "service", "status")
         assert native["ActiveState"] == "active", native
         assert native["UnitFileState"] == "enabled", native
         context = ssl.create_default_context(cafile=str(self.tls / "ca.crt"))
@@ -173,7 +179,7 @@ class Lifecycle:
         return health
 
     def doctor(self, label: str, release: dict):
-        report = json.loads(self.run(label + "-doctor", self.alt, "doctor"))
+        report = self.diagnostic(label + "-doctor", "doctor")
         write_json(self.results / f"{label}-doctor.json", report)
         assert report["version"] == release["version"]
         checks = {item["name"]: item for item in report["checks"]}
@@ -579,7 +585,7 @@ class Lifecycle:
             self.advance_check(manual_version)
             record = self.home / ".altitude/update.json"
             write_json(self.results / "offered-update-record.json", json.loads(record.read_text()))
-            offered = json.loads(self.run("offered-doctor", self.alt, "doctor"))
+            offered = self.diagnostic("offered-doctor", "doctor")
             write_json(self.results / "offered-doctor.json", offered)
             assert offered["update"]["available"]["version"] == manual_version, offered["update"]
             assert not offered["update"]["automatic"], offered["update"]
@@ -607,7 +613,7 @@ class Lifecycle:
             self.wait_attempt(manual_version, "succeeded")
             manual_health = self.healthy("updated", manual)
             assert manual_health["pid"] != updated_health["pid"], "Manual update did not replace the daemon"
-            updated = json.loads(self.run("updated-doctor", self.alt, "doctor"))
+            updated = self.diagnostic("updated-doctor", "doctor")
             write_json(self.results / "updated-doctor.json", updated)
             assert updated["update"]["available"] is None and updated["update"]["attempt"] is None, updated["update"]
             write_json(self.results / "updated-update-record.json", json.loads(record.read_text()))
@@ -879,7 +885,7 @@ class MacLifecycle(Lifecycle):
         """What the app, alt doctor and the terminal show for the newest published release."""
         update = self.request("/api/overview")["update"]
         write_json(self.results / f"{label}-app-update.json", update)
-        report = json.loads(self.run(label + "-doctor-update", self.alt, "doctor"))
+        report = self.diagnostic(label + "-doctor-update", "doctor")
         assert report["update"] == update, (report["update"], update)
         assert update["check"] and update["command"] == "alt update" and update["checked"], update
         if version is None:

@@ -64,12 +64,19 @@ and one authenticated coding CLI. Agent work uses your coding account's allowanc
    nothing it downloads unless it matches the release's checksums and prints the next steps. The
    [installation steps](docs/SETUP.md#install-the-application) explain what it trusts and how to
    verify a release's script before running it.
-2. Put `~/.local/bin` on your PATH and run `alt doctor`. Installation enables a per-user service.
-3. Trust Altitude's certificate on each device with the
-   [certificate guide for Linux, macOS and phones](docs/SETUP.md#trust-https-on-each-device), then
-   run `alt pair` and open its address or QR code on your phone to
-   [pair it](docs/SETUP.md#pair-each-device). [First run](docs/SETUP.md#first-run-in-the-browser)
-   adds your project.
+2. Open the URL printed by installation. Altitude is a web app running in the background on
+   that computer; closing the terminal or browser tab leaves it running. The default
+   `https://127.0.0.1:8890` opens only on that computer, with no VPN needed.
+3. Follow browser setup for [certificate trust](docs/SETUP.md#trust-https-on-each-device) and
+   [pairing](docs/SETUP.md#pair-each-device). Expect the initial certificate warning: compare the
+   certificate name and full SHA-256 independently with the hosting terminal, import the matching
+   CA and reopen the exact URL in a new private window without a warning before entering a code.
+   Every browser pairs, including the host's. [First run](docs/SETUP.md#first-run-in-the-browser)
+   explains hosting, checks coding tools and registers one project; preferences stay optional.
+
+**Settings → Network** explains optional other-device access and the separate private VPN connection.
+`alt doctor` and `alt service status` lead with the actual service address; `--json` retains automation
+output. If `alt` is absent from PATH, use `~/.local/bin/alt` and add `~/.local/bin` to your shell profile.
 
 <details>
 <summary>Ask your coding agent to help install</summary>

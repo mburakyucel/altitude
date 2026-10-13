@@ -13,7 +13,7 @@ from tests import test_installation
 from altitude import config, installation, platform, tls
 
 
-class TestInstallationProbe(AltitudeCase):
+class ProbeCase(AltitudeCase):
     def setUp(self):
         super().setUp()
         self.prefix = self.tmp / "application"
@@ -54,6 +54,9 @@ class TestInstallationProbe(AltitudeCase):
 
     def probe(self):
         return installation._probe(self.version, prefix=self.prefix, timeout=0)
+
+
+class TestInstallationProbe(ProbeCase):
 
     def test_correct_certificate_commit_process_and_bundle_pass_with_explicit_prefix(self):
         self.assertIsNone(config.INSTALL_PREFIX)

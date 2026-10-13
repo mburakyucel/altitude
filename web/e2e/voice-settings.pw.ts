@@ -15,7 +15,7 @@ async function savedVoice(request: APIRequestContext) {
 async function voiceRow(page: Page, request: APIRequestContext) {
   const voice = await savedVoice(request);
   const summary = voice.backend === "browser" ? "Browser recognition"
-    : voice.host.state === "ready" ? "This computer" : "This computer · not set up";
+    : voice.host.state === "ready" ? "Hosting computer" : "Hosting computer · not set up";
   return page.getByRole("main").getByRole("link", { name: `Voice input ${summary}`, exact: true });
 }
 
@@ -25,7 +25,7 @@ test("Settings navigation keeps voice options nested and preserves the project d
   const main = page.getByRole("main");
   const draft = main.getByRole("textbox", { name: /^Message L3 about /, includeHidden: true });
   const row = await voiceRow(page, request);
-  const host = main.getByRole("radio", { name: "This computer", exact: true });
+  const host = main.getByRole("radio", { name: "Hosting computer", exact: true });
   const browser = main.getByRole("radio", { name: "Browser recognition", exact: true });
   await walk.open(project.path);
   await draft.fill("Keep my typed project draft");
@@ -64,7 +64,7 @@ test("Settings navigation keeps voice options nested and preserves the project d
 test("Voice settings persist the choice between this computer and browser recognition", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const main = page.getByRole("main");
-  const host = main.getByRole("radio", { name: "This computer", exact: true });
+  const host = main.getByRole("radio", { name: "Hosting computer", exact: true });
   const browser = main.getByRole("radio", { name: "Browser recognition", exact: true });
   const saved = page.getByRole("status").filter({ hasText: "Saved." });
   await walk.open("/settings/voice");
@@ -119,7 +119,7 @@ test("Voice settings loading, denied save and retry keep the persisted selection
     failRead = false;
     await page.getByRole("button", { name: "Retry", exact: true }).click();
     const browser = page.getByRole("radio", { name: "Browser recognition", exact: true });
-    const host = page.getByRole("radio", { name: "This computer", exact: true });
+    const host = page.getByRole("radio", { name: "Hosting computer", exact: true });
     await expect(host).toBeChecked();
     await browser.click();
     await page.getByRole("button", { name: "Save changes", exact: true }).click();
@@ -144,7 +144,7 @@ test("Voice settings loading, denied save and retry keep the persisted selection
 test("A choice made from a stale page is refused and Reload settings shows the current one", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   const main = page.getByRole("main");
-  const host = main.getByRole("radio", { name: "This computer", exact: true });
+  const host = main.getByRole("radio", { name: "Hosting computer", exact: true });
   const browser = main.getByRole("radio", { name: "Browser recognition", exact: true });
   await walk.open("/settings/voice");
   await expect(host).toBeChecked();
@@ -173,7 +173,7 @@ test("A choice made from a stale page is refused and Reload settings shows the c
 
 test("Reopening voice settings replaces the cached form with a fresh machine choice", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
-  const host = page.getByRole("radio", { name: "This computer", exact: true });
+  const host = page.getByRole("radio", { name: "Hosting computer", exact: true });
   const browser = page.getByRole("radio", { name: "Browser recognition", exact: true });
   await walk.open("/settings/voice");
   await expect(host).toBeChecked();

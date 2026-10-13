@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { useSearchParams } from "react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useSearchParams } from "react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { StatusMark, BusyLabel } from "./StatusMark";
-import { changeHostVoice, readVoiceSettings, saveIncidentReports, saveOperatorName, saveVoiceSettings, useMachine, usePrerequisites } from "../data/api";
-import type { Machine, VoiceSettings } from "../data/api";
-import { updateVoiceSettings } from "./voiceBackend";
+import { saveIncidentReports, saveOperatorName, useMachine, usePrerequisites } from "../data/api";
+import type { Machine } from "../data/api";
+import { HostingCard } from "./Network";
 import "./onboarding.css";
 
 type Save = { status: "idle" | "saving" } | { status: "failed"; error: Error };
@@ -91,24 +91,24 @@ export function PrerequisiteList({ actions }: { actions: (check: ReactNode, read
   const machine = useMachine();
   const checking = checks.isFetching;
   const check = <button type="button" className="btn" disabled={checking} onClick={() => void checks.refetch()}>
-    <BusyLabel busy={checking} label="Check again" working="Checking…" />
+    <BusyLabel busy={checking} label={checks.isError ? "Retry" : "Check again"} working="Checking…" />
   </button>;
   return <>
     {machine.data?.container_shell ? <div className="onboarding-note">Run on the host to open the container shell:<Command text={machine.data.container_shell} /></div> : null}
     <div className="settings-card onboarding-checks" aria-busy={checking}>
-      {checks.isPending ? <p className="text-meta text-muted"><StatusMark label="Checking this computer…" /></p>
-        : checks.isError ? <p role="alert" className="text-meta text-danger">Could not check this computer: {checks.error.message}</p>
+      {checks.isPending ? <p className="text-meta text-muted"><StatusMark label="Checking coding tools…" /></p>
+        : checks.isError ? <p role="alert" className="text-meta text-danger">Could not check coding tools: {checks.error.message}</p>
           : checks.data.map((item) => <div key={item.key} className="onboarding-check">
             <span className={`onboarding-mark onboarding-${item.state}`} aria-hidden>{marks[item.state]}</span>
             <div className="min-w-0">
               <strong>{item.label}</strong>
-              <span className="sr-only">{item.state === "met" ? " — ready" : item.state === "optional" ? " — optional" : " — needs attention"}</span>
+              <span className="block text-meta text-muted">{item.state === "met" ? "Ready" : item.state === "optional" ? "Optional" : "Needs attention"}</span>
               {item.detail ? <p className="text-meta text-muted">{item.detail}</p> : null}
               {item.command && item.state === "unmet" ? <Command text={item.command} /> : null}
             </div>
           </div>)}
     </div>
-    {actions(check, !!checks.data?.every((item) => item.state !== "unmet"))}
+    {actions(check, !checks.isError && !checks.isFetching && !!checks.data?.every((item) => item.state !== "unmet"))}
   </>;
 }
 
@@ -153,114 +153,53 @@ export function IncidentReportsForm({ onSaved, actions, save: label }: FormProps
   </form>;
 }
 
-/**
- * Voice to text: host voice is the default where it can run, and its model is a one-time download. Setup runs
- * in the background, so a slow or failed download never holds the first run; the microphone offers it later
- * after Skip, and Settings shows its progress.
- */
-export function VoiceStep({ onDone, actions }: { onDone: () => void; actions: (controls: ReactNode, settled?: boolean) => ReactNode }) {
-  const client = useQueryClient();
-  const voice = useQuery({ queryKey: ["voice-settings"], queryFn: ({ signal }) => readVoiceSettings(signal), refetchOnWindowFocus: false });
-  const [save, setSave] = useState<Save>({ status: "idle" });
-  const run = async (write: (current: VoiceSettings) => Promise<VoiceSettings>) => {
-    setSave({ status: "saving" });
-    try {
-      const value = await write(voice.data!);
-      client.setQueryData(["voice-settings"], value);
-      updateVoiceSettings(value);
-      onDone();
-    } catch (error) {
-      setSave({ status: "failed", error: error as Error });
-    }
-  };
-  const browser = () => run((current) => saveVoiceSettings({ backend: "browser", selection: current.selection }));
-  const setUp = () => run(async (current) => {
-    if (current.backend !== "host") await saveVoiceSettings({ backend: "host", selection: current.selection });
-    return changeHostVoice("setup");
-  });
-  if (!voice.data) {
-    return <>{voice.isError
-      ? <p role="alert" className="text-meta text-danger">Could not load this setting. <button type="button" className="link" onClick={() => void voice.refetch()}>Retry</button></p>
-      : <p className="text-meta text-muted"><StatusMark label="Loading…" /></p>}{actions(null)}</>;
-  }
-  const host = voice.data.host;
-  const busy = save.status === "saving";
-  const browserButton = (label: string) => <button key="browser" type="button" className="btn" disabled={busy} onClick={() => void browser()}>{label}</button>;
-  if (host.state === "unavailable") {
-    return <>
-      <div className="settings-card">
-        <p>Voice to text can’t run on this computer: {host.reason}.</p>
-        <p className="text-meta text-muted">Browser recognition works in supported browsers with no download. Your browser may send audio to its speech service.</p>
-        <Failure save={save} />
-      </div>
-      {voice.data.backend === "browser" ? actions(null, true) : actions(browserButton("Use browser recognition"))}
-    </>;
-  }
-  const size = `${Math.round(host.download_bytes / 1e6)} MB`;
-  const started = host.state === "ready" || host.state === "setting-up";
-  return <>
-    <div className="settings-card">
-      <p>{host.state === "ready" ? "Voice to text runs on this computer and is set up."
-        : host.state === "setting-up" ? "Voice to text is being set up on this computer. It continues in the background."
-          : `Voice to text runs on this computer. It needs a one-time download of about ${size}.`}</p>
-      <p className="text-meta text-muted">Words appear as you speak, with punctuation, in every browser. Audio stays between your device and this computer.</p>
-      <Failure save={save} />
-    </div>
-    {actions(<>
-      {voice.data.backend === "browser" && started ? null : browserButton("Use browser recognition instead")}
-      {started ? null : <button key="setup" type="button" className="btn btn-primary" disabled={busy} onClick={() => void setUp()}><BusyLabel busy={busy} label="Set up voice" working="Starting…" /></button>}
-    </>, started)}
-  </>;
-}
-
 const steps = [
-  { key: "name", title: "Your name" },
-  { key: "agents", title: "Prerequisites" },
-  { key: "incidents", title: "Incident reports" },
-  { key: "voice", title: "Voice" },
-  { key: "projects", title: "Projects" },
+  { key: "welcome", title: "Your Altitude" },
+  { key: "agents", title: "Coding tools" },
+  { key: "projects", title: "Project" },
 ] as const;
 type Step = (typeof steps)[number]["key"];
 
-/**
- * First run while no project is managed (SPEC.md §3.12): name, what the agents need, incident reports, voice,
- * then projects. The step lives in `?step=` so reload and Back keep the place; every step is skippable and is a
- * Settings row afterwards. Adding a project opens its Setup and ends the flow.
- */
-export default function Onboarding({ projects }: { projects: ReactNode }) {
+/** Numbered positions describe navigation, never completion or readiness. */
+export default function Onboarding({ projects, busy = false }: { projects: ReactNode; busy?: boolean }) {
   const inContainer = useMachine().data?.deployment === "container";
   const [params, setParams] = useSearchParams();
   const index = Math.max(0, steps.findIndex((step) => step.key === params.get("step")));
   const current = steps[index]!;
   const go = (step: Step) => setParams((current) => { const next = new URLSearchParams(current); next.set("step", step); return next; });
-  const back = index > 0 ? <button type="button" className="btn btn-ghost" onClick={() => go(steps[index - 1]!.key)}>‹ Back</button> : null;
+  const back = index > 0 ? <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => go(steps[index - 1]!.key)}>‹ Back</button> : null;
   const next = () => go(steps[Math.min(index + 1, steps.length - 1)]!.key);
-  const skip = <button type="button" className="btn btn-ghost" onClick={next}>Skip</button>;
   const nav = (...controls: ReactNode[]) => <div className="onboarding-nav">{back}<span className="grow" />{controls}</div>;
   const step = current.key;
   return <section className="first-run onboarding" aria-label="First run">
     <ol className="onboarding-steps" aria-label={`Step ${index + 1} of ${steps.length}`}>
-      {steps.map((item, i) => <li key={item.key} aria-current={i === index ? "step" : undefined} className={i < index ? "done" : undefined}>
-        <span aria-hidden>{i < index ? "✓" : i + 1}</span><span className="onboarding-step-title">{item.title}</span>
+      {steps.map((item, i) => <li key={item.key} aria-current={i === index ? "step" : undefined}>
+        <span aria-hidden>{i + 1}</span><span className="onboarding-step-title">{item.title}</span>
       </li>)}
     </ol>
     <p className="onboarding-step-count text-meta">Step {index + 1} of {steps.length} · {current.title}</p>
-    {step === "name" ? <>
-      <header><h1>Welcome to Altitude</h1><p className="onboarding-lead">Altitude runs coding agents on your projects {inContainer ? "inside this Linux container" : "on this computer"}. Agents and screens use your name wherever they would otherwise say “the operator”.</p></header>
-      <NameForm onSaved={next} actions={(submit) => nav(<span key="skip">{skip}</span>, <span key="submit">{submit}</span>)} />
+    {step === "welcome" ? <>
+      <header><h1>Welcome to Altitude</h1><p className="onboarding-lead">Altitude runs coding agents on projects {inContainer ? "inside the Linux container on the hosting computer" : "on the hosting computer"}. This browser is your control panel.</p></header>
+      <HostingCard />
+      <details className="settings-card"><summary className="link">Optional settings</summary>
+        <p className="text-meta text-muted">Choose these now or later in Settings.</p>
+        <div className="optional-settings">
+          <Link className="link" to="/settings/name">Your name</Link>
+          <Link className="link" to="/settings/incident-reports">Incident reports</Link>
+          <Link className="link" to="/settings/voice">Voice input</Link>
+        </div>
+      </details>
+      {nav(<button key="next" type="button" className="btn btn-primary" onClick={next}>Continue</button>)}
     </> : step === "agents" ? <>
-      <header><h1>What the agents need</h1><p className="onboarding-lead">{inContainer ? "These checks run inside the container. Open its shell from a host terminal, run the commands below there, then check again. Host tools and sign-ins do not count." : "Agents use the command-line tools on this computer. Run any missing command in a terminal there, then check again."} Altitude never asks for a password or token in the browser.</p></header>
-      <PrerequisiteList actions={(check, ready) => nav(<span key="check">{check}</span>,
-        <button key="next" type="button" className={ready ? "btn btn-primary" : "btn"} onClick={next}>{ready ? "Continue" : "Continue anyway"}</button>)} />
-    </> : step === "incidents" ? <>
-      <header><h1>Report Altitude’s own faults?</h1><p className="onboarding-lead">When Altitude’s machinery fails, it records an incident on this computer. It can also open a GitHub issue for each one, so the fault gets fixed in Altitude itself.</p></header>
-      <IncidentReportsForm onSaved={next} actions={(submit) => nav(<span key="skip">{skip}</span>, <span key="submit">{submit}</span>)} />
-    </> : step === "voice" ? <>
-      <header><h1>Voice to text</h1><p className="onboarding-lead">Dictate messages instead of typing them, on your phone or here.</p></header>
-      <VoiceStep onDone={next} actions={(controls, settled) => nav(settled ? null : <span key="skip">{skip}</span>, <span key="controls">{controls}</span>,
-        settled ? <button key="next" type="button" className="btn btn-primary" onClick={next}>Continue</button> : null)} />
+      <header><h1>What the agents need</h1><p className="onboarding-lead">{inContainer ? "These checks run inside the container. Open its shell from a host terminal, run the commands below there, then check again. Host tools and sign-ins do not count." : "Run these commands in a terminal on the hosting computer, then check again. Sign-ins stay in your terminal."} Altitude never asks for a password or token in the browser.</p></header>
+      <PrerequisiteList actions={(check, ready) => <>
+        {!ready ? <p className="text-meta text-muted">You can add a project now. Required tools still need attention before agent work.</p> : null}
+        {nav(<span key="check">{check}</span>,
+          <button key="next" type="button" className={ready ? "btn btn-primary" : "btn"} onClick={next}>{ready ? "Continue" : "Choose a project anyway"}</button>)}
+      </>} />
     </> : <>
-      <header><h1>Add your projects</h1><p className="onboarding-lead">{inContainer ? "Clone or import your repositories into /home/altitude/Projects from the container shell. These folders live in a persistent volume; host folders are not shared." : "A project is a folder on this computer, usually a Git checkout. Choose the folder that holds your projects; Altitude lists the folders directly inside it and nothing deeper."}</p></header>
+      <header><h1>Add a project</h1><p className="onboarding-lead">{inContainer ? "Clone or import your repositories into /home/altitude/Projects from the container shell. These folders live in a persistent volume; host folders are not shared." : "Choose a repository on the hosting computer."} Adding it registers it with Altitude and sets up its Git guards and coordinator. Existing custom hooks require your review. Agent work uses your coding account’s allowance.</p>
+        <p className="onboarding-lead">Setup may start the coordinator’s first introduction; it reuses an existing conversation.</p></header>
       {projects}
       {nav()}
     </>}

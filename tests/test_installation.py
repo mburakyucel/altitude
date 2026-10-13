@@ -288,7 +288,7 @@ class Installation(InstallationCase):
         self.assertNotIn("NVM_DIR", environment)
         for command, expected in (("node", "v24.21.0"), ("pnpm", "10.34.5")):
             self.assertEqual(subprocess.check_output([command, "--version"], env=environment, text=True).strip(), expected)
-        checked = subprocess.run([str(self.launcher), "doctor"], cwd=self.tmp, env=environment,
+        checked = subprocess.run([str(self.launcher), "doctor", "--json"], cwd=self.tmp, env=environment,
                                  capture_output=True, text=True, timeout=30)
         self.assertEqual(checked.returncode, 0, checked.stderr)
         reported = json.loads(checked.stdout)

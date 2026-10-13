@@ -3,7 +3,7 @@ import atexit
 
 from service_support import configure, serve
 from tests.support import git
-from altitude import config, engines
+from altitude import config, engines, installation, server
 
 
 def main():
@@ -20,7 +20,14 @@ def main():
     atexit.register(locked.chmod, 0o700)  # runs before the suite's cleanup removes the home
     engines.claude_print = lambda _prompt, **_options: {"text": "The project conversation is ready.",
                                                          "session_id": "fixture-folders-session"}
-    serve()
+    class Handler(server.Handler):
+        def do_POST(self):
+            if self.path == "/fixture/sign-in":
+                installation._gh_signed_in = lambda: True
+                return self._json({"ok": True})
+            return super().do_POST()
+
+    serve(Handler)
 
 
 if __name__ == "__main__":

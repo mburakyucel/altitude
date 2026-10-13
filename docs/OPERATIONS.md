@@ -313,7 +313,7 @@ alt update
 ```
 
 The daemon makes the same lookup at startup and every twelve hours and records what it finds.
-`alt doctor`, Settings › This machine and a notice in the app show a newer release, and an
+`alt doctor`, Settings → About and a notice in the app show a newer release, and an
 `alt` command you run in a terminal prints one line about it at most once a day. The app's
 **Automatic updates** switch is on by default. The daemon installs the offered release at the
 existing quiet point, with no browser terminal open: dispatch/resume claims, reviews, validation,
@@ -328,12 +328,43 @@ that survives the service restart. **Check for new versions** turns off both loo
 starts, retaining the automatic preference. Neither switch cancels an update already started.
 Each version gets one automatic attempt. Failure restores the previous installation through
 activation recovery and offers explicit retry; a failed recovery retains its receipt for `alt recover`.
+**Try again** in Settings → About is an explicit retry, including after dismissing the failure
+banner. It does not turn the failed attempt into an automatic success or clear automatic-attempt
+history. A newer offered release remains eligible for its own automatic attempt.
 An invalid installed release settles its update attempt as failed, with a release-check explanation;
 reconciliation does not repair or ignore unexpected installed files. Other abandoned jobs are marked
 failed after thirty minutes only when the installation lock is free; a slow live update keeps its
 admission fence. Failed preflight ends the detached updater's own reservation. Manual updates and
 activation share that lock through download, verification, activation and recovery, so automatic
 work cannot overlap them.
+
+#### Generated-cache recovery
+
+`alt recover --generated-bytecode` is an explicit, narrow repair for an owned installed release
+whose only extra files are the saved interpreter's generated caches corresponding to declared
+Python sources. It verifies every declared resource, rejects symlinks and any other extras, then
+moves caches into a private backup under the application prefix and repeats strict manifest
+validation. It changes neither service lifecycle nor settings, CA identity, pairing or projects.
+The backup records what moved, including an interruption. This is manual recovery, not an upgrade;
+use the explicit update retry afterwards. Archive and ordinary installed manifest checks accept no
+extra files. Isolated application-importing adapters use `-B` because `-I` ignores inherited
+bytecode-suppression environment settings.
+
+An affected older CLI without that recovery option needs the newer release's independently
+verified standalone `install.py` and matching archive/checksum from the same release:
+
+```sh
+python3 -B install.py --archive altitude-<tag>.tar.gz --sha256 <trusted-sha256> --repair-generated-bytecode
+```
+
+This imports only the checksum/manifest-verified repair code and repairs the existing installation;
+it does not activate the supplied archive. Preserve the backup and distinguish this intervention
+from an unattended automatic upgrade. Other integrity failures need diagnosis, not cache removal.
+
+Uninstall retains configuration, identity and runtime data, so reinstall reuses them. It is not a
+fresh reset. No reset command is provided: use a disposable installation/home for clean validation;
+do not erase registered repositories or retained work. A genuinely new identity needs its new CA
+verified and trusted on every device; trust in an older CA does not transfer.
 
 Source deployments and containers keep their source/image lifecycle; the
 [changelog](../CHANGELOG.md) notes how each release updates from earlier ones. The release lookup
@@ -651,11 +682,11 @@ alt machine set --unset-voice --reason 'Back to the default'
 
 The default follows what this computer can run: host voice where its model runs, browser recognition
 elsewhere. A saved choice stays until you change it; host voice that is not set up, failed or cannot
-run keeps its choice and says why. First run offers the one-time download (**Set up voice**, **Use
-browser recognition instead** or **Skip**); after Skip, the microphone offers the download.
+run keeps its choice and says why. First run links optional voice preferences to Settings; the
+microphone also offers setup when the selected hosting-computer runtime is absent.
 
 The setting lands in the private `~/.altitude/settings.json` through the machine-settings request.
-**Settings → Voice input** edits the same setting: **This computer**, **Browser recognition**, and
+**Settings → Voice input** edits the same setting: **Hosting computer**, **Browser recognition**, and
 **Your speech service** use explicit Save/Cancel. Saving another choice removes saved service details;
 tapping a radio only changes the draft choice. Built-in setup/removal actions remain immediate and
 independent of saving the choice. A Settings read or save updates the next capture in that browser document. Other
@@ -695,7 +726,7 @@ the service details in Voice settings, or explicitly save a different voice choi
 ### Host voice
 
 Host voice runs NVIDIA's Parakeet TDT 0.6B v2 speech model (English, CC-BY-4.0) on this computer's
-CPU. Set it up once, from first run, **Settings → Voice input → This computer → Set up voice** or:
+CPU. Set it up once, from **Settings → Voice input → Hosting computer → Set up voice** or:
 
 ```sh
 alt voice setup    # downloads about 700 MB once, checks every file, then reports "ready"

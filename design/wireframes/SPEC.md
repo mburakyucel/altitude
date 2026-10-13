@@ -1516,43 +1516,31 @@ chevron and no sheet when exactly one project is managed and no folder is unmana
 
 ### 3.12 First run and project setup
 
-Shown on any project route when no project is managed: a centred card with five steps, **Your
-name**, **Prerequisites**, **Incident reports**, **Voice** and **Projects**. Desktop shows a numbered stepper
-(done steps ticked); phone shows "Step N of 5 · Title" and keeps the step's buttons in a sticky bar
-above the tab bar. The step is `?step=` so reload and browser Back keep the place. The name,
-incident and voice steps have **Skip**, prerequisites always allow **Continue anyway**, and every step but the
-first has **‹ Back**, which saves nothing. Each step is also
-a Settings row (§3.15), and the name reads “you” wherever none is known.
+Shown on any project route when no project is managed: a centred card with three positions,
+**Welcome**, **Coding tools**, **Project**. Desktop shows inert numbered positions, never completion
+checkmarks or clickable navigation; phone shows "Step N of 3 · Title" and keeps Back/Continue in
+a sticky bar above the tab bar. `?step=` retains the position on reload and browser Back. Optional
+name, reporting and voice link to Settings and save nothing while omitted. The name reads “you”
+wherever none is known.
 
-- **Welcome to Altitude** (name): one field filled in from the saved name, `ALTITUDE_OPERATOR` or
-  Git's `user.name`; **Continue** saves it (empty clears it). Failure: the server sentence under the
-  field, the step stays.
+- **Welcome to Altitude**: the actual daemon's hosting computer, URL and listener scope (§3.15
+  Network); loading and read failure have explicit Retry, never inferred browser-origin facts.
+  Continue opens coding tools. Optional preference links remain visible.
 - **What the agents need**: one row per doctor check (GitHub CLI, each coding agent, Git), a green
   tick when met, a red mark when unmet, a hollow mark when optional (another agent is signed in).
   An unmet row explains itself and shows the terminal command with **Copy** (then Copied); no field
   asks for a password or token. **Check again** reads again (Checking…). The primary action reads
   **Continue** when nothing is unmet, else a secondary **Continue anyway**. States: checking, read
   failed (one sentence).
-- **Report Altitude’s own faults?**: two radios, **Keep incidents on this computer** (default) and
-  **Also publish them as GitHub issues**, which reveals **Repository** filled in with Altitude's
-  repository and the note that a fork receives them instead. The note **What leaves this computer**
-  states the sanitization and whether the repository is public. Publishing reads **Save and
-  continue** (Checking… while the GitHub CLI confirms the repository); a refusal shows the server
-  sentence under the choice and keeps the step. Keeping incidents local saves nothing.
-- **Voice to text**: where this computer can run the speech model, "Voice to text runs on this
-  computer. It needs a one-time download of about 698 MB." with **Set up voice** (saves This computer
-  and starts the download, which continues in the background), **Use browser recognition instead** and
-  **Skip**; once set up or setting up, the step says so and offers **Continue**. Where it cannot run,
-  "Voice to text can’t run on this computer: <reason>." with **Use browser recognition** (or
-  **Continue** when that is already the choice). A failed save shows the server sentence and keeps the
-  step; a setup that later fails is retried from Settings and never blocks first run.
 - **Add your projects**: a **Projects folder** card with **Change…**, which opens the folder browser
   with **Use "<folder>"** in place; with two or more folders, "N folders" and **Add all N**; one row per
   folder directly inside it with **Add project**; then "A project can live anywhere: **Choose a
   folder elsewhere…**". States: looking for folders; none found (a "No folders in <projects folder>
   yet" card, pointing at Change… and Choose a folder elsewhere…); adding ("Adding 2 of 3…"); failed
   (one sentence with **Retry**, or **Retry Add all** when nothing was added; a later refusal opens
-  the added project with a toast naming the folder left out). Adding opens the first project's Setup.
+  the added project with a toast naming the folder left out). Back is disabled while accepted
+  registration is pending. Adding explains integration and the coordinator introduction's coding-account
+  allowance, then opens the first project's Setup. Optional preferences remain in Settings.
 
 The rail's **Add a folder** dialog and the phone switcher sheet show only the folder list: "Altitude
 found N folders in <projects folder>", the rows and **Choose a folder elsewhere…**; with none found,
@@ -1586,6 +1574,9 @@ guards and coordinator rows. Problems appear before healthy checks. Text and ico
 pending/running, completed, reused, not applicable, failed and input-needed results. Completed rows
 have green checks and readable labels. No percentage, simulated progress or second attention count
 is introduced. A non-Git folder says conversation is available and Git tasks are unavailable.
+Current project integration and coding-tool readings support **Open conversation** only when ready;
+that action closes Setup and focuses the existing composer without sending or launching work.
+Unmet tools link to Settings → Prerequisites; loading or failed reads never count as ready.
 
 The concise explanation reads: **Setup runs automatically. If a step fails, L3 can help.**
 **Check again** refreshes observations. **Retry** repeats supported programmatic setup;
@@ -1746,7 +1737,14 @@ targets. Neither is disabled because routing prefers another engine. **Engines**
 its page, then **Projects folder**.
 **Voice** holds **Voice input**. **Notifications** holds this device's decision alerts (below).
 **Devices and access** holds Devices, the Terminal switch and the
-read-only Network row (address and HTTPS). **Coding agents** holds Prerequisites, the Validation
+Network row (daemon URL and listener scope), opening `/settings/network`. The page shows the actual
+hosting computer, URL and listening address, with loading, failure/Retry and success states. Wildcard
+listeners read All interfaces separately from a localhost certificate URL; other-device reachability
+stays unverified. Container listeners are inside the container and host port publishing stays explicit.
+Local, another-device and away-from-home guidance keeps an optional private VPN separate from
+Altitude's binding, HTTPS and pairing. Packaged installs show terminal preview, explicit apply and
+recovery; source/container installs link their own configuration. No browser service-control action
+is added. **Coding agents** holds Prerequisites, the Validation
 runs switch and Incident reports. **About** holds the Version rows on an installed copy. Every row
 that opens a page has a chevron; switches save in place.
 
@@ -2016,14 +2014,16 @@ attention). The code never rides in a URL. Pairing opens the route the browser a
    HTTP "This is the computer running Altitude." Plain HTTP elsewhere fails with "This Altitude serves plain
    HTTP. Pair on the computer running it."; the other items are absent.
 2. **Trust Altitude's certificate** with a pill: Not trusted yet, Checking…, Trusted or Couldn't check. The
-   computer running Altitude is Trusted at once. Elsewhere the item shows instructions for the device:
+   hosting computer follows the same HTTPS check; local location is never proof of CA trust. The item shows instructions for the device:
    iPhone and iPad (including iPadOS reporting a Mac with touch) get **Download the profile**, the Profile
-   Downloaded check (one Certificate named "<CA name>", SHA-256 ending with the 8 pairs `alt pair` shows,
-   otherwise Remove and stop), the Certificate Trust Settings switch and "Come back here; this checks
-   itself."; Android gets **Download the certificate** and the CA certificate install; other browsers get
+   Downloaded check (one Certificate with name and full SHA-256 independently matching the hosting terminal,
+   otherwise Remove and stop), and the Certificate Trust Settings switch; Android gets **Download the certificate** and the CA certificate install; other browsers get
    **Download the certificate**, the name and SHA-256 check, importing it as a trusted authority and
-   restarting the browser, and a **Setup guide** link. The page never shows the SHA-256 itself: the
-   reference is the computer. The check runs as the page opens, whenever it becomes visible again and on
+   reopening the exact URL in a new private window without a warning, and a versioned **Setup guide** link.
+   Before any code entry, all devices compare the certificate name and full SHA-256 independently
+   against the hosting terminal, stop/delete on mismatch, import the matching CA and reopen without a
+   warning. A warning-bypassed page cannot authenticate itself; its probe is only a convenience.
+   The page never supplies its own trusted fingerprint reference. The check runs as the page opens, whenever it becomes visible again and on
    **Check again**; Trusted collapses the instructions. With an externally supplied certificate Altitude
    cannot check: "Altitude can't check this automatically. Open this address in a new Private tab; if it
    loads without a warning, tap Continue." and **Continue** marks it done.
@@ -2036,7 +2036,7 @@ attention). The code never rides in a URL. Pairing opens the route the browser a
 | --- | --- |
 | Loading | The mark alone while Altitude answers whether this browser is paired. |
 | Unreachable | "Could not reach Altitude." and Retry. |
-| Local | Completed step marks, a check named Trusted, and the Pair item. |
+| Local HTTP development | No certificate claim; the Pair item. Local HTTPS follows the trust states below. |
 | Plain HTTP | ! with the plain-HTTP sentence; no other items. |
 | Not trusted yet | ○ with the device's instructions, its reason ("Not trusted yet. The usual missing step is the switch in Certificate Trust Settings." on iPhone/iPad, "…Install the certificate as a CA certificate." on Android, "…Import the certificate as a trusted authority, then restart the browser." elsewhere) and **Check again**; no Pair item. |
 | Checking | A spinner named Checking… and a disabled **Check again**. |

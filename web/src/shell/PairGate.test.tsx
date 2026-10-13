@@ -57,12 +57,26 @@ function agent(value: string) {
 const step = (name: RegExp) => screen.getByRole("heading", { name }).closest("li") as HTMLElement;
 
 describe("Pair this device", () => {
+  it("probes HTTPS even on the host and keeps code entry absent until the probe succeeds", async () => {
+    const calls = service({ ...remote, local: true, guide: "https://example.test/v1/docs/SETUP.md" }, ["untrusted", "trusted"]);
+    const user = renderGate();
+    expect(await screen.findByText("Not trusted yet")).toBeVisible();
+    expect(calls.challenges).toBe(1);
+    expect(screen.queryByLabelText("Pairing code")).toBeNull();
+    expect(screen.getByText(/On a mismatch, delete the download, close this page and stop/)).toBeVisible();
+    expect(screen.getByText("full SHA-256")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Certificate guide" })).toHaveAttribute("href", "https://example.test/v1/docs/SETUP.md");
+    await user.click(screen.getByRole("button", { name: "Check again" }));
+    expect(await screen.findByLabelText("Pairing code")).toBeVisible();
+    expect(screen.getByText(/The check is a convenience; it does not replace independent certificate verification/)).toBeVisible();
+    expect(calls.pairs).toEqual([]);
+  });
   it("on the computer running Altitude, needs no certificate step and pairs with a code", async () => {
     const calls = service({ local: true, https: false, check: false, certificate: null });
     const user = renderGate();
     expect(await screen.findByRole("button", { name: "Pair" })).toBeVisible();
     expect(screen.queryByText("This is the computer running Altitude.")).toBeNull();
-    expect(within(step(/^Trust Altitude’s certificate/)).getByRole("status", { name: "Trusted" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: /^Trust Altitude’s certificate/ })).toBeNull();
     expect(screen.queryByRole("link", { name: /Download/ })).toBeNull();
     const field = screen.getByLabelText("Pairing code");
     await user.type(field, "2222-2222");
@@ -147,7 +161,7 @@ describe("Pair this device", () => {
     service(remote);
     renderGate();
     expect(await screen.findByText("Not trusted yet. Import the certificate as a trusted authority, then restart the browser.")).toBeVisible();
-    expect(screen.getByRole("link", { name: "Setup guide" })).toHaveAttribute("href", expect.stringContaining("docs/SETUP.md#trust-https-on-each-device"));
+    expect(screen.getByRole("link", { name: "Certificate guide" })).toHaveAttribute("href", expect.stringContaining("docs/SETUP.md#trust-https-on-each-device"));
     expect(screen.getByText(/Keychain Access › login/)).toBeVisible();
   });
 

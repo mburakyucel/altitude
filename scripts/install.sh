@@ -146,30 +146,41 @@ main() {
         stop "the installer stopped with the message above." "Your existing data and any previous installation are kept."
 
     "$python" - "$workdir/result.json" <<'EOF'
-import json, os, sys
+import json, os, shlex, sys
 result = json.load(open(sys.argv[1]))
 home = os.path.expanduser("~")
 tilde = lambda path: "~" + path[len(home):] if path.startswith(home + "/") else path
 trust = result.get("trust") or {}
-print(f"\nAltitude {result['version']} is installed and its service is {result['service']}.")
-print(f"  Address: {result['url']}")
+print(f"\nOpen Altitude: {result['url']}")
+print(f"Altitude {result['version']} is installed. Its web app is hosted by a background process on this computer ({result['service']}).")
+print("You can close this terminal; the service runs independently of it and the browser tab.")
+network = result.get("network") or {}
+if network.get("listener_scope") == "all":
+    print("The service listens on all interfaces. The localhost certificate URL opens on this computer; other-device reachability is unverified.")
+elif network.get("listener_scope") == "local":
+    print("This URL opens only on this computer. No VPN is needed here.")
+else:
+    print("Other-device reachability depends on the configured address and port; it is not verified here.")
+print("Expect a certificate warning until this browser trusts Altitude's CA. The browser setup screen guides trust and pairing.")
+print("A warning-bypassed setup page cannot authenticate itself. Compare its certificate name and full SHA-256 independently with this terminal; stop on mismatch.")
 if trust.get("ca_sha256"):
-    print(f"  Certificate authority: {tilde(trust['ca_cert'])}")
-    print(f"  Its fingerprint: {trust['ca_sha256'].split('=', 1)[-1]}")
+    print(f"  Certificate name: {trust['ca_name']}")
+    print(f"  Public CA file: {tilde(trust['ca_cert'])}")
+    print(f"  SHA-256: {trust['ca_sha256'].split('=', 1)[-1]}")
+print("Import the matching CA, then reopen this exact URL in a new private window without a warning before entering a pairing code.")
+print(f"Pair every browser, including this computer: run {shlex.quote(os.path.join(home, '.local/bin/alt'))} pair when setup asks.")
+print(result.get("lifecycle", "Altitude runs as your account's background service."))
 if result.get("lingering"):
     print(f"\n{result['lingering']['detail']}")
-print("\nNext:")
+print("Control automatic updates in Settings → About; reinstall preserves your preference. Closing a tab does not stop Altitude.")
+print("Use alt service stop to stop the app. alt uninstall removes the command and service, retains settings, certificates and data, and keeps application resources needed by registered project hooks.")
+print("Troubleshooting: alt doctor explains the service and readiness; add --json for automation.")
 EOF
-    step=1
     case ":$PATH:" in
         *":$HOME/.local/bin:"*) ;;
-        *) printf '  %s. Put alt on your PATH (add this line to your shell profile too):\n       export PATH="$HOME/.local/bin:$PATH"\n' "$step"
-           step=$((step + 1)) ;;
+        *) printf '\nTo use alt by name in new shells, add this line to your shell profile:\n  export PATH="$HOME/.local/bin:$PATH"\n' ;;
     esac
-    printf '  %s. Run: alt doctor\n' "$step"
-    printf '  %s. Trust the certificate authority on each device, comparing the fingerprint above:\n       %s\n' \
-        "$((step + 1))" "$REPOSITORY/blob/$VERSION/docs/SETUP.md#trust-https-on-each-device"
-    printf '  %s. Open the address; First run walks you through the rest.\n' "$((step + 2))"
+    printf '\nCertificate instructions for this release:\n  %s\n' "$REPOSITORY/blob/$VERSION/docs/SETUP.md#trust-https-on-each-device"
 }
 
 main "$@"

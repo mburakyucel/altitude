@@ -457,7 +457,13 @@ In the container deployment, published-port forwarding gives every peer one addr
 arms and settles that shared address: while one device checks, a device that only clicked past the
 warning fails its new connections for those seconds, and a device checking at the same moment can
 read Not trusted yet until Check again.
-The computer running Altitude (a loopback peer) needs no check. The screen downloads the public CA
+An HTTPS loopback peer follows the same trust flow; being on the host is not evidence of browser
+CA trust. A warning-bypassed page provides instructions but cannot authenticate itself. Before
+pairing-code entry, the operator independently compares the CA name and full SHA-256 against the
+hosting terminal, stops on mismatch, imports the matching CA and reopens the exact URL in a new
+private window without a warning. The probe is a convenience rather than that security boundary;
+the pairing API authenticates the code, not the browser's trust store. Plain HTTP is only a local
+development flow. The screen downloads the public CA
 from `/api/certificate/altitude.mobileconfig` (the iPhone/iPad profile) or
 `/api/certificate/altitude.crt`.
 

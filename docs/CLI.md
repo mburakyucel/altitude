@@ -778,6 +778,24 @@ including any merge hold.
 
 ## Device pairing
 
+`alt doctor` leads with the owned service's hosting computer, verified URL and listener exposure,
+then tool readiness and explicit unknown browser/provider states. `alt doctor --json` retains
+structured diagnostics. `alt service status` uses the same hosting reading;
+`alt service status --json` includes service-manager details and hosting facts. Conflicting shell
+host/port/TLS values are explained separately from the running service.
+
+Packaged installs use `alt service configure --host <private-address>` to preview current/proposed
+URLs and retained identity, then the same command with `--apply` to change an assigned private or
+loopback address. This is an operator terminal action, with no new worker or browser authority.
+The configured port and CA stay fixed; interruption uses `alt recover`. Source and container
+deployments retain their own configuration flow. A VPN provides the connection separately.
+
+`alt recover --generated-bytecode` verifies declared release resources and quarantines only matching
+generated caches, retaining strict manifests, service state and automatic-attempt history. Older
+affected installs can use [verified standalone repair](OPERATIONS.md#generated-cache-recovery).
+The operation is manual recovery; `alt update` or the app's Try again explicitly retries a failed
+release. A new release may still receive its own automatic attempt.
+
 `alt pair` prints a one-time code that pairs one browser with Altitude, the running service's
 address to open on that browser (or the reason there is none), a QR code of that address when a
 phone can reach it, and the CA's name and the last eight pairs of its SHA-256 to compare before

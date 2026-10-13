@@ -314,6 +314,14 @@ class InstalledRuntime(AltitudeCase):
                                     if value.startswith("mcp_servers.altitude.args=")))
         self.assert_adapter_preserves_release({"command": sys.executable, "args": arguments})
 
+    def test_isolated_external_speech_child_preserves_the_installed_release_without_network_access(self):
+        from altitude import speech
+        with mock.patch.object(speech, "__file__", str(self.source / "altitude/speech.py")):
+            # An invalid port refuses before a connection is created; imports and bytecode behavior stay real.
+            with self.assertRaises(speech.ServiceError):
+                speech.transcribe_service({"url": "http://127.0.0.1:invalid"}, b"\0\0")
+        self.assertFalse(any(self.source.rglob("__pycache__")))
+
     def test_isolated_review_adapter_preserves_the_installed_release(self):
         snapshot, runtime = self.tmp / "snapshot", self.tmp / "review-runtime"
         snapshot.mkdir()

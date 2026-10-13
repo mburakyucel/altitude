@@ -457,7 +457,7 @@ describe("Project page", () => {
     });
     renderApp({ route: "/projects/altitude?step=projects" });
 
-    await screen.findByRole("heading", { name: "Add your projects" });
+    await screen.findByRole("heading", { name: "Add a project" });
     expect(screen.getAllByRole("button", { name: "Add project" })).toHaveLength(2);
     expect(screen.getByRole("button", { name: "Choose a folder elsewhere…" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Conversation" })).toBeNull();

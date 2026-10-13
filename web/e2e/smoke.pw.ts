@@ -127,7 +127,7 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       // The fixture service chooses host voice; its setup state is this machine's, read from the service.
       const voice = await (await request.get("/api/voice")).json();
       expect(voice.backend).toBe("host");
-      const summary = voice.host.state === "ready" ? "This computer" : "This computer · not set up";
+      const summary = voice.host.state === "ready" ? "Hosting computer" : "Hosting computer · not set up";
       await expect(main.getByRole("link", { name: `Voice input ${summary}`, exact: true })).toBeVisible();
       // A direct visit has no project it was opened from; the groups follow SPEC §3.15.
       for (const group of ["Models and effort · All projects", "Engines", "Projects", "Voice", "Devices and access", "Coding agents"]) {
@@ -145,7 +145,7 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       await expect(main.getByRole("status", { name: "Loading settings…", exact: true })).toHaveCount(0);
     } else if (route === "/settings/voice") {
       await expect(main.getByRole("heading", { name: "Voice input", exact: true })).toBeVisible();
-      await expect(main.getByRole("radio", { name: "This computer", exact: true })).toBeChecked();
+      await expect(main.getByRole("radio", { name: "Hosting computer", exact: true })).toBeChecked();
       await expect(main.getByRole("radio", { name: "Browser recognition", exact: true })).not.toBeChecked();
       await expect(main.getByRole("radio", { name: "Your speech service", exact: true })).not.toBeChecked();
       await expect(main.getByRole("radio")).toHaveCount(3);
