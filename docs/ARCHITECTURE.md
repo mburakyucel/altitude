@@ -154,7 +154,7 @@ transport and daemon request for a running owner, an operator/L3-stopped owner, 
 worker death or a recognized usage limit, or an unanswered question whose owner has exited without a recovery fault.
 The running owner receives a native instruction to refresh
 `progress.md` and write a request/attempt/worker-bound readiness file; no updated owner CLI is required.
-The task page invokes that same request from task details or a quota-stop action, with an atomic fence
+The task page invokes that same request from its composer chooser or a quota-stop action, with an atomic fence
 on the observed attempt, worker/session and block. A conversation card exposes now/cancel while
 preparing. Confirmation retains the observed identity even if polling sees a replacement; uncertain
 responses require a status read, not a duplicate mutation. Task polling derives target eligibility
