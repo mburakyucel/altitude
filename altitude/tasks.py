@@ -975,7 +975,7 @@ def steering_view(task: dict, events: list[dict], *, job_root=None) -> dict:
         elif task.get("resume_after") or (request.get("operation") == "resume" and active_request):
             state = "resuming"
         elif confirmed:
-            state = "stopped"
+            state = "idle" if handoff_stop and not stop_id and task.get("state") == "blocked" else "stopped"
         else:
             state = "stop_unconfirmed"
     elif task.get("state") == "blocked" and task.get("resume_after"):

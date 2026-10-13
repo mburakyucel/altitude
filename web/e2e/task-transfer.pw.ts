@@ -49,12 +49,12 @@ test("patient transfer cancels without losing the draft, then readiness starts a
   expect(after.l2_engine).toBe(target.engine);
   for (const key of ["worktree", "branch", "hold_merge", "paths", "prs"]) expect(after[key]).toEqual(before[key]);
   expect(after.session_id).not.toBe(before.session_id);
-  await walk.state("04-new-owner-draft-and-hold-retained", { visible: [draft(page), page.getByText("Merge held", { exact: true }).first()], hidden: [confirm] });
+  await walk.state("04-new-owner-draft-and-hold-retained", { visible: [draft(page), page.getByText(/^(?:· )?Merge held$/).first()], hidden: [confirm] });
   await expect(draft(page)).toHaveValue("Keep this unsent instruction.");
 });
 
-test("explicit switch now retains the unanswered operator question and merge hold", async ({ page, request }, info) => {
-  const slug = "transfer-question-work";
+test("explicit switch now replaces a running owner and preserves the merge hold", async ({ page, request }, info) => {
+  const slug = "transfer-running-work";
   const read = async () => (await (await request.get(path(slug))).json());
   const before = await read();
   const walk = walkthrough(page, info);
@@ -68,13 +68,36 @@ test("explicit switch now retains the unanswered operator question and merge hol
   await card(page).getByRole("button", { name: "Switch now", exact: true }).click();
   await confirm.getByRole("button", { name: "Switch now", exact: true }).click();
   await expect.poll(async () => (await read()).state).toBe("queued");
-  await walk.state("02-queued-has-no-conflicting-controls", { visible: [page.getByText("Merge held", { exact: true }).first()], hidden: [confirm, card(page).getByRole("button", { name: "Cancel switch", exact: true })] });
+  await walk.state("02-queued-has-no-conflicting-controls", { visible: [page.getByText(/^(?:· )?Merge held$/).first()], hidden: [confirm, card(page).getByRole("button", { name: "Cancel switch", exact: true })] });
   expect((await request.post("/fixture/transfer", { data: { slug, launch: true } })).ok()).toBe(true);
   const after = await read();
   expect(after.attempt).toBe(before.attempt + 1);
   expect(after.questions).toEqual(before.questions);
   expect(after.hold_merge).toBe(before.hold_merge);
-  await walk.state("03-new-attempt-question-kept", { visible: [page.getByText("Keep the bounded validation scope?", { exact: true }).first()], hidden: [confirm] });
+  await walk.state("03-new-attempt-hold-kept", { visible: [page.getByText(/^(?:· )?Merge held$/).first()], hidden: [confirm] });
+});
+
+test("a blocked question owner switches from saved context without answering the question", async ({ page, request }, info) => {
+  const slug = "transfer-question-work";
+  const read = async () => (await (await request.get(path(slug))).json());
+  const before = await read();
+  expect(before.state).toBe("blocked");
+  expect(before.questions.some((question: { status: string }) => question.status === "open")).toBe(true);
+  expect(before.transfer.preparation).toBe(false);
+  const target = before.transfer.targets.find((item: { available: boolean }) => item.available);
+  const walk = walkthrough(page, info);
+  await walk.open(`/projects/atlas/tasks/${slug}`);
+  await start(page);
+  const confirm = page.getByRole("dialog", { name: `Switch to ${target.label}?`, exact: true });
+  await walk.state("01-blocked-question-saved-context", { visible: [confirm, confirm.getByText(`${target.label} continues from the saved task record.`, { exact: true })], hidden: [confirm.getByRole("button", { name: "Prepare switch", exact: true })] });
+  await confirm.getByRole("button", { name: `Switch to ${target.label}`, exact: true }).click();
+  await expect.poll(async () => (await read()).state).toBe("queued");
+  expect((await request.post("/fixture/transfer", { data: { slug, launch: true } })).ok()).toBe(true);
+  const after = await read();
+  expect(after.attempt).toBe(before.attempt + 1);
+  expect(after.questions).toEqual(before.questions);
+  expect(after.hold_merge).toBe(before.hold_merge);
+  await walk.state("02-new-owner-question-stays-open", { visible: [page.getByText("Keep the bounded validation scope?", { exact: true }).first(), page.getByText(/^(?:· )?Merge held$/).first()], hidden: [confirm, page.getByRole("button", { name: "Resume", exact: true })] });
 });
 
 test("quota stop offers saved-context confirmation; pinned work explains unavailability", async ({ page, request }, info) => {
@@ -180,7 +203,7 @@ test("@desktop-only compact transfer header remains readable at 1024 pixels", as
   await walk.open("/projects/atlas/tasks/transfer-running-work");
   await start(page);
   await page.getByRole("button", { name: "Prepare switch", exact: true }).click();
-  await walk.state("01-1024-preparing-with-stop", { visible: [card(page), page.getByRole("button", { name: "Stop", exact: true }).first(), page.getByText("Merge held", { exact: true }).first()], hidden: [] });
+  await walk.state("01-1024-preparing-with-stop", { visible: [card(page), page.getByRole("button", { name: "Stop", exact: true }).first(), page.getByText(/^(?:· )?Merge held$/).first()], hidden: [] });
   expect(await page.locator(".task-header .task-chips").evaluate(node => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
 });
@@ -194,7 +217,7 @@ test("Stop supersedes preparation and uncertain termination never launches a rep
   await start(page);
   await page.getByRole("button", { name: "Prepare switch", exact: true }).click();
   await expect(card(page)).toBeVisible();
-  expect((await request.post("/fixture/transfer", { data: { slug, unknown_termination: true } })).ok()).toBe(true);
+  expect((await request.post("/fixture/transfer", { data: { slug, unknown_termination: true, stop_failure: true } })).ok()).toBe(true);
   await page.getByRole("button", { name: "Stop", exact: true }).first().click();
   await expect.poll(async () => (await read()).steering.state).toBe("stop_unconfirmed");
   await walk.state("01-stop-unconfirmed", { visible: [page.getByText(/Stop unconfirmed/).first(), page.getByRole("button", { name: "Check status", exact: true }).first()], hidden: [card(page).getByRole("button", { name: "Cancel switch", exact: true })] });

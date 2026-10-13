@@ -101,6 +101,7 @@ interface Facts {
   canMessage: boolean;
   canStop: boolean;
   canResume: boolean;
+  resumeHeld: boolean;
   canReject: boolean;
   /** A held review-ready PR waiting for the operator (#419), and where the PR lives. */
   review: Decision | null;
@@ -214,7 +215,8 @@ export function taskFacts(task: TaskView, overview: Overview | undefined, projec
     finished,
     canMessage: state === "running" || state === "blocked" || task["can_continue"] === true || (state === "queued" && (!task["dispatched"] || Boolean(task.question) || task.transfer?.request?.status === "done")),
     canStop: state === "running",
-    canResume: !task.transfer?.quota_limited && (state === "blocked" || task["can_continue"] === true) && (!task.steering || task.steering.state === "idle") && task.question?.status !== "open",
+    canResume: (state === "blocked" || task["can_continue"] === true) && (!task.steering || task.steering.state === "idle") && task.question?.status !== "open",
+    resumeHeld: Boolean(task.transfer?.resume_hold),
     canReject: ["queued", "running", "blocked", "reported"].includes(state),
     review: turnRows.find((row) => row.kind === "review") ?? null,
     repository,
@@ -636,7 +638,7 @@ function TaskConversation({ project, task, facts, readOnly, checking, refresh, d
         imageScope={{ project, task: task.slug, engine: str(task["l2_engine"]) || str(task["engine"]) }}
         ariaLabel="Message the L2" placeholder="Message the L2" disabled={readOnly || denied}
         sendDisabled={transfer.stopping || (task.state === "queued" && task.transfer?.request?.status === "done") || ["stopping", "stop_unconfirmed"].includes(steering.state)}
-        hint={task.state === "blocked" && steering.state === "idle" && !task.transfer?.quota_limited ? "Sending resumes the L2 with your message." : ""} />
+        hint={task.state === "blocked" && steering.state === "idle" && !task.transfer?.resume_hold ? "Sending resumes the L2 with your message." : ""} />
         {steering.state === "stopped" ? <p className="text-meta text-muted">Send a correction to continue this session.</p>
           : null}
       </div> : null}
@@ -680,7 +682,7 @@ function ActionButtons({ facts, actions }: { facts: Facts; actions: ReturnType<t
   if (!facts.canStop && !facts.canReject) return null;
   return (
     <>
-      {facts.canResume ? <button type="button" className="btn btn-ghost task-action" disabled={actions.pending} onClick={actions.resume}><BusyLabel busy={actions.pending} label="Resume" working="Resuming…" /></button> : null}
+      {facts.canResume ? <button type="button" className="btn btn-ghost task-action" disabled={actions.pending || facts.resumeHeld} title={facts.resumeHeld ? "Waiting for engine availability" : undefined} onClick={actions.resume}><BusyLabel busy={actions.pending} label="Resume" working="Resuming…" /></button> : null}
       {facts.canReject ? (
         <button type="button" className="btn btn-ghost task-action" onClick={() => actions.open("reject")}>
           Reject
@@ -879,7 +881,7 @@ function TaskPage({
   });
   // The phone tab row stays above the sliding views; the terminal on screen places its × there.
   const [tabSlot, setTabSlot] = useState<HTMLDivElement | null>(null);
-  const control = <SteeringControls steering={steering} disabled={readOnly || denied || transfer.stopping || Boolean(steering.state === "stopped" && (task.transfer?.quota_limited || (transfer.request?.phase === "stopping" && !task.steering?.stop_id)))} escape={!phone} />;
+  const control = <SteeringControls steering={steering} disabled={readOnly || denied || transfer.stopping || Boolean(steering.state === "stopped" && (task.transfer?.resume_hold || (transfer.request?.phase === "stopping" && !task.steering?.stop_id)))} escape={!phone} />;
 
   // A drag that reveals Live session starts its transcript, so the incoming view loads while it slides in.
   const panelSwitch = terminalOffered ? <nav className="panel-switch" aria-label="Panel view">

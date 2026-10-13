@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError, taskAction } from "../data/api";
 import type { TaskView } from "../data/api";
 import { Overlay } from "../shell/Overlay";
@@ -20,6 +20,13 @@ export function useTaskTransfer(project: string, task: TaskView, refresh: () => 
   const [unavailable, setUnavailable] = useState("");
   const [shown, setShown] = useState(info);
   const opener = useRef<HTMLElement | null>(null);
+  const restoreFocus = useRef(false);
+  useEffect(() => {
+    if (dialog || pending || !restoreFocus.current) return;
+    restoreFocus.current = false;
+    (document.querySelector<HTMLElement>('.transfer-card') || (opener.current?.isConnected ? opener.current
+      : document.querySelector<HTMLElement>('[aria-label="Task details"], .phone-header [aria-haspopup="dialog"]')))?.focus({ preventScroll: true });
+  }, [dialog, pending]);
   const openDialog = (value: "" | "start" | "now") => {
     if (value) { opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setShown(info); beforeDialog(); }
     setDialog(value);
@@ -31,7 +38,7 @@ export function useTaskTransfer(project: string, task: TaskView, refresh: () => 
     if (!info?.eligible) { setUnavailable(info?.reason || "Engine switching is unavailable."); return; }
     const next = info.targets.find((item) => item.available);
     if (!next) { setUnavailable(info.reason || info.targets[0]?.reason || "No engine is available."); return; }
-    setTarget(next.engine); setError(""); openDialog("start");
+    setTarget(next.engine); setError(""); setUnavailable(""); openDialog("start");
   };
   const perform = async (action: "handoff" | "handoff-now" | "handoff-cancel") => {
     if (submitting.current || blocked || !info) return;
@@ -50,7 +57,7 @@ export function useTaskTransfer(project: string, task: TaskView, refresh: () => 
         setUncertain(true);
         setError(cause instanceof ApiError && cause.status === 409 ? "The task changed. Check status before switching." : "Could not confirm the switch. Check status before trying again.");
       }
-    } finally { submitting.current = false; setPending(false); }
+    } finally { restoreFocus.current = true; submitting.current = false; setPending(false); }
   };
   const recheck = async () => {
     if (submitting.current) return;
@@ -80,7 +87,7 @@ export function TransferEntry({ transfer: t, quota = false }: { transfer: Transf
       aria-disabled={!t.info.eligible} onClick={t.start}>
       {quota && offered.length === 1 ? `Switch to ${offered[0]?.label}` : "Switch engine…"}
     </button>
-    {t.unavailable ? <p className="text-meta" role="status">{t.unavailable}</p> : null}
+    {t.unavailable && !t.info.eligible ? <p className="text-meta" role="status">{t.unavailable}</p> : null}
   </div>;
 }
 

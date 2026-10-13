@@ -31,6 +31,7 @@ it("confirms the warning and fences the observed attempt, then exposes patient c
   expect(taskAction).toHaveBeenCalledWith({ project: "sample", slug: "sample", action: "handoff", engine: "second", observed: initial.transfer!.observed });
   expect(await screen.findByRole("button", { name: "Switch now" })).toBeVisible();
   expect(screen.getByText("Preparing switch to Engine B")).toBeVisible();
+  expect(screen.getByRole("region", { name: "Engine transfer" })).toHaveFocus();
   expect(screen.getByLabelText("Draft")).toHaveValue("Keep my draft");
 });
 it("reconciles a lost response by reading instead of resubmitting", async () => {

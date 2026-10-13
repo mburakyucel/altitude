@@ -282,11 +282,14 @@ def _require_handoff(project: str, task: dict, engine: str, attempt: int) -> dic
     # Explicit transfer preserves decisions and pins; a lifecycle already in flight keeps ownership.
     if (task.get("state") not in ("running", "blocked") or task.get("attempt") != attempt or not attempt
             or not task.get("agent_id") or not task.get("session_id")
-            or (task.get("state") == "blocked" and task.get("fault") != "l2-died"
-                and not task.get("usage_limit") and T.stopped_by(task) not in DAEMON_REQUEST_ACTORS)
             or task.get("completion_requested") or task.get("resume_claim") or task.get("dispatching")
             or any(review.get("state") == "running" for review in task.get("reviews", []))):
         raise T.TransitionError("handoff requires the expected running or stopped/exit/limit-blocked attempt, with no active claim")
+    if (task["state"] == "blocked" and task.get("fault") != "l2-died"
+            and not task.get("usage_limit") and T.stopped_by(task) not in DAEMON_REQUEST_ACTORS):
+        worker = engines.worker(l2_engine(task), task, job_root=l2_job_root(project, task["slug"]))
+        if not worker or worker.get("state") not in ("done", "failed", "stopped"):
+            raise T.TransitionError("handoff requires confirmed worker exit for this blocked attempt")
     if engine == l2_engine(task):
         raise T.TransitionError("handoff requires another engine; use ordinary resume for this engine")
     choice = route.pick_task(config.project(project), {**task, "next_engine": engine})
@@ -431,6 +434,21 @@ def _notify_handoff_cancelled(project: str, task: dict) -> None:
     _record_handoff_outcome(project, task)
 
 
+def handoff_reason(note: str) -> str:
+    """Short task-page copy; the daemon request retains the diagnostic evidence."""
+    if "stop is unconfirmed" in note:
+        return "The previous worker's stop is unconfirmed. Check task status."
+    if "finished its report" in note:
+        return "The task finished before the switch. Review its result."
+    if "pin" in note:
+        return "An engine or model is pinned for this task or project."
+    if "confirmed worker exit" in note:
+        return "Waiting for the current worker to finish."
+    if "active claim" in note or "already in progress" in note:
+        return "Another task action is in progress or the task has changed."
+    return "The selected engine is unavailable. Check task status."
+
+
 def _handoff_outcome_text(request: dict) -> str:
     target = config.ENGINE_LABELS.get(request.get("engine"), request.get("engine"))
     status, note = request.get("status"), request.get("note") or ""
@@ -441,7 +459,7 @@ def _handoff_outcome_text(request: dict) -> str:
                 "Superseded by reject": "Switch cancelled because the task was rejected.",
                 "Owner needs to block": "Switch cancelled because the current engine needs a decision or dependency."}.get(
                     note, "Switch cancelled.")
-    return f"Switch to {target} did not finish." + (f" {note}" if note else " Check task status.")
+    return f"Switch to {target} did not finish. " + handoff_reason(note)
 
 
 def _record_handoff_outcome(project: str, task: dict) -> None:

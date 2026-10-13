@@ -5,7 +5,8 @@
 .transfer-actions .btn, .transfer-entry .btn { min-height: 44px; white-space: normal; }
 .transfer-entry { margin: 8px 0; }
 .transfer-entry p { margin-top: 6px; }
-.transfer-dialog { padding: 20px; display: flex; flex-direction: column; gap: 16px; max-width: 440px; overflow-wrap: anywhere; }
+.overlay:has(.transfer-dialog) .overlay-panel { width: min(440px, 100%); }
+.transfer-dialog { padding: 20px; display: flex; flex-direction: column; gap: 16px; overflow-wrap: anywhere; }
 .transfer-dialog h2 { margin: 0; font-size: 20px; }
 .transfer-warning { padding: 12px; border-radius: 8px; background: var(--accent-tint); border: 1px solid var(--accent-tint-border); }
 .transfer-dialog fieldset { display: flex; flex-direction: column; gap: 12px; border: 0; padding: 0; margin: 0; }

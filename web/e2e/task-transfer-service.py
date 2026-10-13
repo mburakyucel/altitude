@@ -6,13 +6,21 @@ from altitude import config, dispatch, engines, server, state as S, tasks as T
 
 
 def main():
-    configure()
+    configure(expected_error=lambda message: "fixture termination could not be confirmed" in message)
     fake = FakeL2()
     for name in ("start_l2", "resume_l2", "worker", "worker_sends", "worker_termination",
                  "stop_l2_worker", "remove_l2_worker"):
         setattr(engines, name, getattr(fake, name))
     unavailable = set()
     unknown_termination = set()
+    failed_stops = set()
+
+    def stop_worker(engine, worker_id, *, job_root):
+        if worker_id in failed_stops:
+            raise RuntimeError("fixture termination could not be confirmed")
+        return fake.stop_l2_worker(engine, worker_id, job_root=job_root)
+
+    engines.stop_l2_worker = stop_worker
     engines.installation = lambda engine: {"available": engine not in unavailable,
                                            "why": "fictional engine unavailable" if engine in unavailable else "fictional installed engine"}
     engines.worker_termination = lambda task, **options: None if task["slug"] in unknown_termination else fake.worker_termination(task, **options)
@@ -40,7 +48,7 @@ def main():
         if mode == "question":
             T.block(project, slug, "Keep the bounded validation scope?", actor="l2",
                     updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE})
-            T.resume(project, slug)
+            fake.workers[agent].update(state="done", status="exited")
         if mode == "quota":
             fake.workers[agent].update(state="failed", status="exited")
             T.block(project, slug, "Engine allowance exhausted.", actor="altd",
@@ -59,8 +67,14 @@ def main():
                 if "unknown_termination" in body:
                     if body["unknown_termination"]:
                         unknown_termination.add(slug)
+                        if body.get("stop_failure"):
+                            failed_stops.add(task["agent_id"])
                     else:
                         unknown_termination.discard(slug)
+                        if task["agent_id"] in failed_stops:
+                            failed_stops.discard(task["agent_id"])
+                            fake.stop_l2_worker(task["l2_engine"], task["agent_id"],
+                                                job_root=dispatch.l2_job_root(project, slug))
                     return self._json(server.task_view(project, slug))
                 if body.get("outcome") == "question":
                     T.block(project, slug, "Which validation scope should the new engine preserve?", actor="l2",

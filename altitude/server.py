@@ -3555,8 +3555,9 @@ def task_transfer_view(project: str, task: dict) -> dict:
     current = task.get("l2_engine") or task.get("engine")
     request = task.get("daemon_request") or {}
     active = request.get("status") in ("pending", "executing")
-    configured = dict.fromkeys(option["engine"] for tier in config.role_routing("l2", config.project(project))
-                               for option in tier)
+    settings = config.load_projects().get(project)
+    configured = (dict.fromkeys(option["engine"] for tier in config.role_routing("l2", settings)
+                                for option in tier) if settings else {})
     if task.get("state") not in ("running", "blocked") or not task.get("attempt") or not task.get("l2_engine"):
         configured = {}
     targets = []
@@ -3569,7 +3570,7 @@ def task_transfer_view(project: str, task: dict) -> dict:
                 raise T.TransitionError("A task action is already in progress.")
             dispatch._require_handoff(project, task, engine, task.get("attempt"))
         except T.TransitionError as exc:
-            reason = str(exc)
+            reason = dispatch.handoff_reason(str(exc))
         targets.append({"engine": engine, "label": config.ENGINE_LABELS.get(engine, engine),
                         "available": reason is None, "reason": reason})
     eligible = any(target["available"] for target in targets)
@@ -3585,6 +3586,8 @@ def task_transfer_view(project: str, task: dict) -> dict:
             "targets": targets, "eligible": eligible,
             "reason": None if eligible else (targets[0]["reason"] if targets else "No other engine is configured."),
             "quota_limited": bool(task.get("usage_limit")), "preparation": bool(preparation), "request": transfer,
+            "resume_hold": (dispatch.resume_engine_hold(task)
+                            if task.get("state") == "blocked" and task.get("usage_limit") else None),
             "observed": {key: task.get(key) for key in ("attempt", "agent_id", "session_id", "block_id")}}
 
 

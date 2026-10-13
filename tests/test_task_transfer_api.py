@@ -198,3 +198,55 @@ class TestTaskTransferAPI(AltitudeCase):
         for status in ("done", "cancelled"):
             ended = {**after, "daemon_request": {**after["daemon_request"], "status": status}}
             self.assertEqual(T.steering_view(ended, [])["state"], "running")
+        T.block(self.project, self.task["slug"], "The worker exited.", actor="altd", updates={"fault": "l2-died"})
+        with mock.patch.object(engines, "worker_termination", return_value=None):
+            self.assertEqual(self.request(url)["steering"]["state"], "stop_unconfirmed")
+        with mock.patch.object(engines, "worker_termination", return_value=True):
+            self.assertEqual(self.request(url)["steering"]["state"], "idle")
+        self.action("resume", stop_id=None)
+        self.assertEqual(S.load_task(self.project, self.task["slug"])["daemon_request"]["operation"], "resume")
+
+    def test_question_blocked_ended_owner_transfers_without_answering_question(self):
+        slug = self.task["slug"]
+        T.block(self.project, slug, "Which retention period?", actor="l2",
+                updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE}, recommendation="Fourteen days.")
+        view = self.view()
+        target = view["targets"][0]["engine"]
+        self.assertFalse(view["eligible"], "A question alone does not prove the old worker ended")
+        self.action(engine=target, observed=view["observed"], status=409)
+        self.engine.workers[self.task["agent_id"]].update(state="done", status="exited")
+        before = S.load_task(self.project, slug)
+        questions = before["questions"]
+        view = self.view()
+        self.assertTrue(view["eligible"])
+        self.assertFalse(view["preparation"])
+        self.action(engine=target, observed=view["observed"])
+        dispatch.run_task_operation(self.project, slug)
+        dispatch.run(self.project, slug)
+        after = S.load_task(self.project, slug)
+        self.assertEqual(after["attempt"], before["attempt"] + 1)
+        self.assertEqual(after["l2_engine"], target)
+        self.assertEqual(after["questions"], questions)
+        for key in ("worktree", "branch", "hold_merge"):
+            self.assertEqual(after[key], before[key])
+
+    def test_historical_quota_record_does_not_outlive_current_resume_hold(self):
+        T.block(self.project, self.task["slug"], "Usage limit reached.", actor="altd",
+                updates={"usage_limit": {"kind": "weekly"}})
+        with mock.patch.object(engines, "window_hold", return_value="later"):
+            view = self.view()
+            self.assertTrue(view["quota_limited"])
+            self.assertIn("usage limit", view["resume_hold"])
+        with mock.patch.object(engines, "window_hold", return_value=None):
+            view = self.view()
+            self.assertTrue(view["quota_limited"])
+            self.assertIsNone(view["resume_hold"])
+
+    def test_archived_task_remains_readable_after_project_removal(self):
+        self.action("reject")
+        dispatch.run_task_operation(self.project, self.task["slug"])
+        config.remove_project(self.project)
+        page = self.request(f"/api/task/{self.project}/{self.task['slug']}")
+        self.assertEqual(page["state"], "rejected")
+        self.assertEqual(page["transfer"]["targets"], [])
+        self.assertFalse(page["transfer"]["eligible"])

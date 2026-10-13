@@ -461,12 +461,13 @@ class TestProviderHandoff(AltitudeCase):
             self.assertFalse(any(row["id"] == request["id"] + "-cancel"
                                  for row in T.pending(self.project, task["slug"])))
 
-    def test_decision_only_other_fault_unlaunched_and_finished_tasks_are_ineligible(self):
+    def test_unconfirmed_blocked_unlaunched_and_finished_tasks_are_ineligible(self):
         for state, fault, attempt in (("blocked", None, 1), ("blocked", "external-ci", 1),
                                       ("blocked", "l2-died", 0), ("reported", "l2-died", 1),
                                       ("done", "l2-died", 1)):
             with self.subTest(state=state, fault=fault, attempt=attempt):
                 task = self.owner(f"Eligibility {state} {fault} {attempt}", question=True)
+                self.engine.workers[task["agent_id"]].update(state="working", status="busy")
                 task.update(state=state, fault=fault, attempt=attempt)
                 S.save_task(self.project, task)
                 with self.assertRaises(T.TransitionError):
