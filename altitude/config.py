@@ -330,7 +330,11 @@ def voice_setting() -> dict:
     """The saved backend and private service details, else host where its model can run."""
     value = machine_settings().get("voice")
     if isinstance(value, dict) and value.get("backend") == "service":
-        validate_voice(value)
+        try:
+            validate_voice(value)
+        except ValueError:
+            # A corrupt service stays unavailable, never silently selecting another audio destination.
+            return {"backend": "service", "selection": "invalid-service", "error": "service_response"}
         return value
     if value not in ("host", "browser"):
         from . import speech

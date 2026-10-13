@@ -8,6 +8,7 @@ import io
 import wave
 import time
 import subprocess
+import ssl
 import threading
 from unittest import mock
 
@@ -191,6 +192,32 @@ class TestServiceConfiguration(TestVoiceSettingsRoute):
     def configure(self, **extra):
         return self.save(backend="service", url="https://speech.example.test/v1/audio/transcriptions",
                          **extra)
+
+    def test_invalid_saved_service_is_recoverable_without_fallback_or_secret_exposure(self):
+        for invalid in ({"url": "not-a-url", "selection": "old", "key": "fixture-secret"},
+                        {"url": "https://speech.example.test/transcribe", "key": "fixture-secret"},
+                        {"url": "https://speech.example.test/transcribe", "selection": "old", "model": []}):
+            S.write_json(config.ROOT / "settings.json", {"voice": {"backend": "service", **invalid}})
+            status, view = self.request("GET", "/api/voice")
+            self.assertEqual(status, 200)
+            self.assertEqual((view["backend"], view["selection"], view["error"]),
+                             ("service", "invalid-service", "service_response"))
+            self.assertNotIn("service", view)
+            self.assertNotIn("fixture-secret", json.dumps(view))
+            outgoing = mock.Mock()
+            with mock.patch.object(speech, "transcribe_service", outgoing):
+                self.assertEqual(self.audio()[1]["code"], "service_response")
+            outgoing.assert_not_called()
+            shown = self.alt("machine", "show", env={"ALTITUDE_ACTOR": config.OPERATOR_ACTOR})
+            self.assertEqual(shown.returncode, 0, shown.stderr)
+            self.assertNotIn("fixture-secret", shown.stdout)
+            self.assertNotIn("speech.example.test", shown.stdout)
+            self.assertEqual(self.configure()[0], 200)
+            self.assertNotIn("error", self.request("GET", "/api/voice")[1])
+            self.assertNotIn("key", config.voice_setting())
+        S.write_json(config.ROOT / "settings.json", {"voice": {"backend": "service"}})
+        self.assertEqual(self.save(backend="browser")[0], 200)
+        self.assertEqual(config.voice_setting(), {"backend": "browser"})
 
     def test_reports_the_backend_and_host_state(self):
         view = self.request("GET", "/api/voice")[1]
@@ -442,6 +469,69 @@ class TestServiceTransport(VoiceCase):
             self.assertEqual((wav.getnchannels(), wav.getsampwidth(), wav.getframerate()), (1, 2, 16000))
             self.assertEqual(wav.readframes(160), b"\1\0" * 160)
         self.assertEqual(len(self.received), 1)
+
+    def test_paired_route_storage_child_and_compatible_endpoint_integration(self):
+        self.patch(access, "is_machine", return_value=False)
+        self.patch(access, "DIR", self.tmp / "access")
+        self.patch(terminal, "agent_connection", return_value=False)
+        access.prepare()
+        cookie, device = access.redeem(access.issue_code()["code"], "Fictional browser")
+        altitude = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        altitude.daemon_threads = True
+        thread = threading.Thread(target=altitude.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(lambda: (altitude.shutdown(), altitude.server_close(), thread.join(2)))
+        def request(method, path, body=None, headers=None):
+            connection = http.client.HTTPConnection(*altitude.server_address, timeout=5)
+            connection.request(method, path, body, headers={"Cookie": f"{access.COOKIE}={cookie}",
+                               "Content-Type": "application/json", **(headers or {})})
+            response = connection.getresponse()
+            answer = response.status, json.loads(response.read())
+            connection.close()
+            return answer
+        status, view = request("GET", "/api/voice")
+        self.assertEqual(status, 200)
+        status, view = request("POST", "/api/voice", json.dumps({
+            "backend": "service", "selection": view["selection"], "url": self.setting["url"],
+            "key": self.setting["key"], "model": self.setting["model"]}))
+        self.assertEqual(status, 200, view)
+        self.assertEqual(view["owner"], access.voice_owner(device["id"]))
+        self.assertNotIn("fixture-secret", json.dumps(view))
+        headers = {"X-Voice-Owner": view["owner"], "X-Voice-Selection": view["selection"],
+                   "Content-Type": "application/octet-stream"}
+        self.assertEqual(request("POST", "/api/voice/service", b"\1\0" * 160, headers),
+                         (200, {"text": "fixture words"}))
+        self.assertEqual(len(self.received), 1)
+        self.assertEqual(self.received[0][1]["Authorization"], "Bearer fixture-secret")
+        self.assertIn(b"RIFF", self.received[0][2])
+        self.assertEqual(config.voice_setting()["key"], "fixture-secret")
+        for path in ("events.jsonl", "voice-request.json"):
+            self.assertNotIn("fixture-secret", (config.ROOT / path).read_text())
+        # Actual pairing revocation prevents a second child/endpoint request, not merely a mocked owner check.
+        access.revoke(device["id"])
+        self.assertEqual(request("POST", "/api/voice/service", b"\0\0", headers)[0], 401)
+        self.assertEqual(len(self.received), 1)
+
+    def test_real_child_rejects_untrusted_https_without_sending_audio(self):
+        key, cert = self.tmp / "fixture.key", self.tmp / "fixture.crt"
+        made = subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt",
+                               "ec_paramgen_curve:prime256v1", "-nodes", "-keyout", str(key),
+                               "-out", str(cert), "-days", "1", "-subj", "/CN=localhost"],
+                              capture_output=True, timeout=10)
+        self.assertEqual(made.returncode, 0, made.stderr.decode())
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(cert, key)
+        https = server.ThreadingHTTPServer(("127.0.0.1", 0), self.fixture.RequestHandlerClass)
+        https.socket = context.wrap_socket(https.socket, server_side=True)
+        https.daemon_threads = True
+        thread = threading.Thread(target=https.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(lambda: (https.shutdown(), https.server_close(), thread.join(2)))
+        setting = {**self.setting, "url": f"https://127.0.0.1:{https.server_port}/transcribe"}
+        with self.assertRaises(speech.ServiceError) as caught:
+            speech.transcribe_service(setting, b"\0\0")
+        self.assertEqual(caught.exception.code, "service_unavailable")
+        self.assertEqual(self.received, [], "TLS authentication must finish before audio or key are transmitted")
 
     def test_failures_are_sanitized_no_redirect_retry_or_provider_body(self):
         for status, data, code in ((302, b"private", "service_response"), (401, b"private", "service_auth"),

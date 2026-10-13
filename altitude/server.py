@@ -151,9 +151,11 @@ def _voice_selection(setting: dict) -> str:
 def voice_view(device: str | None = None) -> dict:
     setting = config.voice_setting()
     view = {"backend": setting["backend"], "selection": _voice_selection(setting), "host": speech.status()}
+    if setting.get("error"):
+        view["error"] = setting["error"]
     if device is not None:
         view["owner"] = access.voice_owner(device)
-        if setting["backend"] == "service":
+        if setting["backend"] == "service" and not setting.get("error"):
             view["service"] = {"url": setting["url"], "model": setting.get("model", ""),
                                "key_present": bool(setting.get("key"))}
     return view
@@ -1815,6 +1817,8 @@ class Handler(BaseHTTPRequestHandler):
             if (not access.known(device) or owner != access.voice_owner(device)
                     or setting["backend"] != "service" or setting["selection"] != selection):
                 raise speech.ServiceError("selection_changed")
+            if setting.get("error"):
+                raise speech.ServiceError("service_response")
             return setting
         acquired = False
         try:

@@ -1176,6 +1176,21 @@ describe("Composer", () => {
     expect(getUserMedia).not.toHaveBeenCalled();
   });
 
+  it("invalid service settings explain repair without opening the microphone or changing backend", async () => {
+    const { getUserMedia } = installVoiceBrowser({ backend: "service" });
+    const settings = { backend: "service" as const, selection: "invalid-service", owner: "device", error: "service_response" as const, host: { state: "absent" as const, download_bytes: 0 } };
+    updateVoiceSettings(settings);
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(settings)));
+    const user = userEvent.setup();
+    render(<MemoryRouter><Harness /></MemoryRouter>);
+    await user.type(screen.getByRole("textbox"), "Keep this draft");
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your speech service settings are invalid.");
+    expect(screen.getByRole("link", { name: "Voice settings" })).toHaveAttribute("href", "/settings/voice");
+    expect(screen.getByRole("textbox")).toHaveValue("Keep this draft");
+    expect(getUserMedia).not.toHaveBeenCalled();
+  });
+
   /** The host's answers: each chunk is answered with how many samples it has heard. */
   function stubHost(options: { refuse?: string } = {}) {
     let heard = 0;

@@ -10,7 +10,7 @@ import type { ImagePreview } from "./MessageImages";
 import { HostCapture, MAX_RETAINED, UNREACHED, serviceFailures, type ServiceFailure } from "./hostCapture";
 import { useLiveReveal } from "./liveReveal";
 import { RecognitionCapture, recognitionAvailable } from "./recognition";
-import { refreshVoiceBackend, updateVoiceSettings, useVoiceBackend } from "./voiceBackend";
+import { INVALID_SERVICE, refreshVoiceBackend, updateVoiceSettings, useVoiceBackend } from "./voiceBackend";
 import { traceVoice, traceVoiceTracks, voiceError } from "./voiceTrace";
 
 /*
@@ -834,6 +834,7 @@ export default function Composer({
         const current = await readVoiceSettings(AbortSignal.any([opening.signal, AbortSignal.timeout(12_000)]));
         if (!mounted.current || opening.signal.aborted) return;
         updateVoiceSettings(current);
+        if (current.error) { setPhase("idle"); setVoiceFailure(INVALID_SERVICE); return; }
         if (current.backend !== "service" || current.selection !== captureSelection.current || !current.owner) {
           setPhase("idle"); setVoiceFailure(serviceFailures.selection_changed); return;
         }
@@ -1056,7 +1057,7 @@ export default function Composer({
     hintText = <>{hintText} Recovery could not be updated. Keep this tab open to retain your latest text.</>;
   }
 
-  const serviceError = typeof hintText === "string" && Object.values(serviceFailures).some((text) => text === hintText);
+  const serviceError = typeof hintText === "string" && (hintText === INVALID_SERVICE || Object.values(serviceFailures).some((text) => text === hintText));
   if (serviceError) hintText = <>{String(hintText).replace(/ in Voice settings\./, ".")} <Link className="composer-destination" to="/settings/voice">Voice settings</Link></>;
   const quietProgress = (transcribing || listening) && !servicePending && connection !== "lost" && !recoveryUnavailable;
   const hiddenReason = ["insecure", "unrecognized", "host"].includes(unavailable ?? "") && !showVoiceReason && !hintRole && !recoveryUnavailable;

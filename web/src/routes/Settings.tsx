@@ -10,7 +10,7 @@ import type { Certificate, Device, Overview, PairingCode, PhoneShare, ProjectDef
 import { ModelsDialog, choiceLabel, closedLabel } from "../components/Models";
 import { managedProjects } from "../shell/projects";
 import type { HostVoice, VoiceBackend, VoiceSettings, VoiceUpdate } from "../data/api";
-import { updateVoiceSettings } from "../components/voiceBackend";
+import { INVALID_SERVICE, updateVoiceSettings } from "../components/voiceBackend";
 import { useViewport } from "../shell/breakpoints";
 import VoiceDiagnostics from "../components/VoiceDiagnostics";
 import { UnavailableAction } from "../components/UnavailableAction";
@@ -169,6 +169,7 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
     <form className="settings-card" noValidate onSubmit={(event) => { event.preventDefault(); saveDraft(); }}>
       <fieldset disabled={save.status === "saving"}>
         <legend>Transcription</legend>
+        {saved.error ? <p role="alert" className="text-meta text-danger">{INVALID_SERVICE}</p> : null}
         {(["host", "browser", "service"] as const).map((backend) => <div className="voice-option" key={backend}>
           <label className="voice-choice">
             <input type="radio" name="voice-backend" value={backend} checked={choice === backend} onChange={() => choose(backend)}

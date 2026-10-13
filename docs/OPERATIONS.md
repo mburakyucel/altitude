@@ -685,6 +685,8 @@ services, check reachability from the Altitude computer and the complete endpoin
 invalid or empty responses, check the model and compatible response format. Selection changes or
 re-pairing invalidate unfinished recordings; audio is never silently routed to a new destination.
 Typing remains usable after every failure.
+Malformed saved service settings remain unavailable without choosing another backend. Re-enter
+the service details in Voice settings, or explicitly save a different voice choice.
 
 ### Host voice
 

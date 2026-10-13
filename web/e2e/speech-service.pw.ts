@@ -28,6 +28,22 @@ function controls(page: Page) {
   };
 }
 
+test("invalid saved service stays unavailable with a usable draft and repair form", async ({ page, request }, info) => {
+  const project = await fixtureProject(request);
+  const current = await voice(request);
+  await page.route("**/api/voice", route => route.fulfill({ json: { ...current, backend: "service", selection: "invalid-service", error: "service_response", service: undefined } }));
+  const walk = walkthrough(page, info);
+  await walk.open(project.path);
+  const composer = controls(page);
+  await composer.field.fill("Keep this draft");
+  await composer.mic.click();
+  await walk.state("service-invalid-settings-composer", { visible: [page.getByRole("alert").filter({ hasText: "Your speech service settings are invalid." })], hidden: [composer.stop] });
+  await expect(composer.field).toHaveValue("Keep this draft");
+  await page.getByRole("link", { name: "Voice settings", exact: true }).click();
+  await walk.state("service-invalid-settings-repair", { visible: [page.getByRole("alert"), page.getByRole("textbox", { name: "Transcription URL", exact: true })], hidden: [] });
+  await expect(page.getByRole("textbox", { name: "Transcription URL", exact: true })).toHaveValue("");
+});
+
 test("speech service settings: explicit save, key privacy, new address and removal", async ({ page, request }, info) => {
   const walk = walkthrough(page, info);
   await walk.open("/settings/voice");

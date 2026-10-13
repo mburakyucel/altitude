@@ -39,11 +39,12 @@ describe("HostCapture", () => {
     vi.unstubAllGlobals();
   });
 
-  const serviceSettings = { backend: "service", selection: "s", owner: "device", service: { url: "https://speech.example.test/v1/audio/transcriptions", key_present: false }, host: { state: "absent", download_bytes: 0 } };
-
   it("service keeps samples local until Stop, uploads once and releases the microphone before the reply", async () => {
     const mic = microphone();
-    reply = (call) => call.path === "/api/voice" ? answer(serviceSettings) : answer({ text: "finished words" });
+    reply = (call) => {
+      if (call.path === "/api/voice") throw new TypeError("settings connection lost");
+      return answer({ text: "finished words" });
+    };
     const capture = new HostCapture(mic.stream, "s", "device");
     capture.start(); mic.speak(8000); await vi.advanceTimersByTimeAsync(0);
     expect(calls).toHaveLength(0);
@@ -53,6 +54,7 @@ describe("HostCapture", () => {
     expect(calls[0]).toMatchObject({ path: "/api/voice/service", headers: { "X-Voice-Selection": "s", "X-Voice-Owner": "device" } });
     expect((calls[0]!.body as Int16Array).length).toBe(8000);
     expect(capture.text).toBe("finished words");
+    expect(calls).toHaveLength(1);
     expect(HostCapture.retained.has(capture)).toBe(false);
   });
 
@@ -87,7 +89,7 @@ describe("HostCapture", () => {
 
   it("service rejects changed ownership at completion and re-pairing before upload", async () => {
     const mic = microphone();
-    reply = (call) => call.path === "/api/voice" ? answer({ ...serviceSettings, owner: "other" }) : answer({ text: "must not land" });
+    reply = () => answer({ error: "Voice settings changed", code: "selection_changed" }, 409);
     const capture = new HostCapture(mic.stream, "s", "device");
     capture.start(); mic.speak(8000); capture.stop(); await vi.advanceTimersByTimeAsync(0);
     expect(capture.serviceFailure).toBe("selection_changed"); expect(capture.text).toBe("");
@@ -96,6 +98,20 @@ describe("HostCapture", () => {
     repaired.start(); mic.speak(8000); window.dispatchEvent(new Event("altitude:unpaired")); repaired.stop();
     await vi.advanceTimersByTimeAsync(0);
     expect(calls).toHaveLength(0); expect(repaired.serviceFailure).toBe("selection_changed");
+  });
+
+  it("keeps a known selection change when an in-flight upload loses its connection", async () => {
+    const mic = microphone();
+    let reject: (error: Error) => void = () => {};
+    reply = () => new Promise((_resolve, fail) => { reject = fail; });
+    const capture = new HostCapture(mic.stream, "s", "device");
+    capture.start(); mic.speak(8000); capture.stop();
+    capture.checkServiceSelection("new-selection", "device");
+    reject(new TypeError("connection reset"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(capture.serviceFailure).toBe("selection_changed");
+    expect(capture.text).toBe("");
+    expect(calls).toHaveLength(1);
   });
 
   it("listens once samples arrive, sends half-second chunks one at a time and ends with the final words", async () => {

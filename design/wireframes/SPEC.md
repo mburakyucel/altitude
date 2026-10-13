@@ -1915,6 +1915,10 @@ Success removes transient UI. Errors keep typed text/images and offer one Voice 
 omitting the separate destination link. Failed audio is discarded; no recording retry appears.
 Switching conversations cancels unsent recording; an explicit Send completes only for its captured
 conversation. This service presentation does not change live host/browser recognition.
+An interrupted upload says “Transcription did not finish. Check your connection and service
+address.” with the Voice settings link. Malformed saved configuration says “Your speech service
+settings are invalid. Re-enter them in Voice settings.” in Settings; the composer replaces the
+last words with the same Settings link and keeps the microphone closed until repaired.
 
 The project page `/settings/projects/<name>` has a labelled **Settings** back button, the line
 "Applies to this project only. A model or effort L3 sets for one task wins over these." and its

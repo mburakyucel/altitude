@@ -942,6 +942,7 @@ const HostVoiceSchema = z.union([
   }),
 ]);
 const VoiceSchema = z.object({ backend: z.enum(["browser", "host", "service"]), selection: z.string(), host: HostVoiceSchema,
+  error: z.literal("service_response").optional(),
   owner: z.string().optional(), service: z.object({ url: z.string(), model: z.string().optional(), key_present: z.boolean() }).optional() });
 export type VoiceBackend = z.infer<typeof VoiceSchema>["backend"];
 export type VoiceSettings = z.infer<typeof VoiceSchema>;

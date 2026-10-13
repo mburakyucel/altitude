@@ -17,7 +17,7 @@
  * the browser was paired again as another device. The words shown hold still until the replay catches up. After Stop, the capture waits two minutes
  * at most for the connection, then ends with the words shown.
  */
-import { ApiError, UNPAIRED_EVENT, cancelHostVoice, readVoiceSettings, sendHostVoice, sendServiceVoice, startHostVoice } from "../data/api";
+import { ApiError, UNPAIRED_EVENT, cancelHostVoice, sendHostVoice, sendServiceVoice, startHostVoice } from "../data/api";
 import { traceVoice, voiceError } from "./voiceTrace";
 
 const RATE = 16000;
@@ -39,7 +39,7 @@ export const MAX_RETAINED = 2;
 export const UNREACHED = "Couldn't reach this computer: your recording's last words weren't added.";
 export const serviceFailures = {
   service_auth: "The speech service rejected its key. Update it in Voice settings.",
-  service_unavailable: "Could not reach your speech service. Check its address in Voice settings.",
+  service_unavailable: "Transcription did not finish. Check your connection and service address in Voice settings.",
   service_response: "The speech service returned no usable transcription. Check its endpoint and model.",
   service_empty: "No words were returned. Try recording again.",
   selection_changed: "Voice settings changed. Record again using the current choice.",
@@ -259,9 +259,8 @@ export class HostCapture {
     try {
       const answer = await sendServiceVoice(this.selection, this.serviceOwner!, this.slice(0, this.recorded), request.signal);
       if (this.state === "inactive") return;
-      const current = await readVoiceSettings(request.signal);
-      if (request.signal.aborted) return;
-      if (current.owner !== this.serviceOwner || current.selection !== this.selection) { this.serviceFail("selection_changed"); return; }
+      // The upload response already verifies owner and selection on the server.
+      // Local Settings and unpairing events invalidate this capture while it waits.
       if (!answer.text.trim()) { this.serviceFail("service_empty"); return; }
       this.text = answer.text;
       this.finished = true;

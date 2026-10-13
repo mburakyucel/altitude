@@ -3,6 +3,8 @@ import { readVoiceSettings } from "../data/api";
 import type { HostVoice, VoiceBackend, VoiceSettings } from "../data/api";
 import { HostCapture } from "./hostCapture";
 
+export const INVALID_SERVICE = "Your speech service settings are invalid. Re-enter them in Voice settings.";
+
 /*
  * The installation's transcription backend, read once per document from `GET /api/voice`. "host" streams
  * to this computer's speech model; "browser" runs the browser's own recognition; "service" uploads after Stop.
