@@ -36,11 +36,13 @@ def main():
     projects = config.load_projects()
     projects[project]["routing"] = [[{"engine": engine}] for engine in config.ENGINES]
     config.save_projects(projects)
+    fixture_tasks = {}
     for title, mode in (("Transfer running work", "running"), ("Transfer quota work", "quota"),
                         ("Transfer pinned work", "pinned"), ("Transfer question work", "question")):
         task = T.new(project, title, "Fictional transfer walkthrough.", paths=["README.md"],
                      hold_merge="Review the delivered change before merging.")
         slug = task["slug"]
+        fixture_tasks[slug] = slug
         worktree = add_worktree(repo, slug)
         agent = f"fixture-{slug}"
         fake.workers[agent] = {"id": agent, "sessionId": agent, "state": "working", "status": "busy"}
@@ -64,7 +66,9 @@ def main():
         def do_POST(self):
             if self.path == "/fixture/transfer":
                 body = self._body()
-                slug = body["slug"]
+                slug = fixture_tasks.get(body.get("slug"))
+                if slug is None:
+                    return self._json({"error": "Unknown fixture task"}, 400)
                 task = S.load_task(project, slug)
                 if "unknown_termination" in body:
                     if body["unknown_termination"]:

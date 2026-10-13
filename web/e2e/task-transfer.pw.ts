@@ -5,6 +5,14 @@ import { fixtureHost } from "./hostVoice";
 
 test.use({ serviceScript: "task-transfer-service.py" });
 
+test("fixture control only addresses its own created tasks", async ({ request }) => {
+  for (const slug of ["../outside", "unknown-task"]) {
+    const response = await request.post("/fixture/transfer", { data: { slug, ready: true } });
+    expect(response.status()).toBe(400);
+    expect(await response.json()).toEqual({ error: "Unknown fixture task" });
+  }
+});
+
 const path = (slug: string) => `/api/task/atlas/${slug}`;
 const card = (page: Page) => page.getByRole("region", { name: "Task conversation", exact: true })
   .getByRole("region", { name: "Engine transfer", exact: true });
