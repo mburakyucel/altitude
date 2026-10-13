@@ -100,6 +100,37 @@ class StaticFiles(AltitudeCase):
         self.index.mkdir()
         self.assertEqual(self.request("/")[0], 503)
 
+    def test_nonasset_routes_beneath_ordinary_files_keep_the_spa_fallback(self):
+        (self.dist / "ordinary.txt").write_bytes(b"ordinary file")
+        for path in ("/index.html/route", "/ordinary.txt/nested/route"):
+            status, headers, data = self.request(path, True)
+            self.assertEqual((status, data), (200, self.index.read_bytes()))
+            self.assertEqual(headers["Content-Type"], "text/html; charset=utf-8")
+            self.assertEqual(headers["Cache-Control"], "no-store")
+            self.assertNotIn("Content-Encoding", headers)
+        self.assertEqual(self.request("/assets/app.js/route", True)[0], 404)
+
+    def test_nonasset_replacement_link_does_not_become_a_successful_spa_route(self):
+        folder = self.dist / "routes"
+        folder.mkdir()
+        original = os.open
+        for encoded in (False, True):
+            swapped = []
+            saved = self.dist / "saved-routes"
+            def opened(name, flags, *args, **kwargs):
+                if name == "routes" and not swapped:
+                    folder.rename(saved)
+                    folder.symlink_to(self.outside, target_is_directory=True)
+                    swapped.append(True)
+                return original(name, flags, *args, **kwargs)
+            try:
+                with mock.patch.object(os, "open", side_effect=opened):
+                    self.assertEqual(self.request("/routes/missing", encoded)[0], 404)
+            finally:
+                if swapped:
+                    folder.unlink()
+                    saved.rename(folder)
+
     def test_outside_index_links_are_unavailable_for_every_route(self):
         self.index.unlink()
         self.index.symlink_to(self.outside / "app.js")

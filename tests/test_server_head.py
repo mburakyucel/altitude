@@ -77,7 +77,8 @@ class TestHead(AltitudeCase):
         return status, headers, body
 
     def test_head_matches_get_without_body(self):
-        for path, expected_status in (("/", 200), ("/digest.wav", 200), ("/assets/app.01234567.js", 200),
+        for path, expected_status in (("/", 200), ("/index.html/route", 200), ("/digest.wav", 200),
+                                      ("/assets/app.01234567.js", 200), ("/assets/app.01234567.js/route", 404),
                                       ("/api/overview", 200), ("/api/definitely-unknown", 404)):
             with self.subTest(path=path):
                 get_status, get_headers, get_body = self._request("GET", path)
@@ -89,7 +90,8 @@ class TestHead(AltitudeCase):
                     self.assertEqual(head_headers[name], get_headers[name])
                 self.assertEqual(int(head_headers["content-length"]), len(get_body))
                 self.assertEqual(head_body, b"")
-                if not path.startswith("/api/") and not path.endswith(".wav"):  # another site cannot frame the app
+                if expected_status == 200 and not path.startswith("/api/") and not path.endswith(".wav"):
+                    # Successful app documents cannot be framed by another site; JSON errors are not documents.
                     self.assertEqual(get_headers["content-security-policy"], "frame-ancestors 'none'")
                     self.assertEqual(get_headers["x-frame-options"], "DENY")
                 self.assertEqual(self.httpd.errors, [])

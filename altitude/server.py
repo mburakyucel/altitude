@@ -142,7 +142,15 @@ def _static_directory(root: Path | int, parts: tuple[str, ...]):
         fd = os.dup(root) if isinstance(root, int) else os.open(root, flags)
         opened.callback(os.close, fd)
         for part in parts:
-            fd = os.open(part, flags, dir_fd=fd)
+            try:
+                child = os.open(part, flags, dir_fd=fd)
+            except NotADirectoryError:
+                # Linux also uses ENOTDIR for O_DIRECTORY|O_NOFOLLOW on a symlink.
+                # Only an ordinary file can make this a missing client-side route.
+                if not stat.S_ISREG(os.stat(part, dir_fd=fd, follow_symlinks=False).st_mode):
+                    raise ValueError("not a website directory") from None
+                raise
+            fd = child
             opened.callback(os.close, fd)
         yield fd
 
@@ -1704,7 +1712,7 @@ class Handler(BaseHTTPRequestHandler):
                 index_relative = index.relative_to(dist)
                 try:
                     page = opened.enter_context(_static_file(root, index_relative))
-                except (FileNotFoundError, IsADirectoryError, ValueError):
+                except (FileNotFoundError, IsADirectoryError, NotADirectoryError, ValueError):
                     return self._json({"error": "web UI not built: web/dist is missing — run `make web` first"}, 503)
                 rel = unquote(raw_path).lstrip("/")
                 resolved = (dist / rel).resolve() if rel else index
@@ -1715,7 +1723,7 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     try:
                         stream = opened.enter_context(_static_file(root, relative))
-                    except (FileNotFoundError, IsADirectoryError):
+                    except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
                         if relative.parts[:1] == ("assets",):
                             # Missing build assets are stale imports, never client-side routes.
                             return self._json({"error": "not found"}, 404)
