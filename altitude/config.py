@@ -12,6 +12,7 @@ import sys
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
+from urllib.parse import urlsplit
 from . import platform
 
 HOME = Path.home()
@@ -330,8 +331,15 @@ def machine_wip() -> int:
 # The capability seam for speech: host voice runs the pinned speech model on this computer (`altitude/speech.py`)
 # and is the default wherever that model can run; elsewhere the browser's own recognition is.
 def voice_setting() -> dict:
-    """The transcription backend: the saved host or browser choice, else host where the model can run."""
+    """The saved backend and private service details, else host where its model can run."""
     value = machine_settings().get("voice")
+    if isinstance(value, dict) and value.get("backend") == "service":
+        try:
+            validate_voice(value)
+        except ValueError:
+            # A corrupt service stays unavailable, never silently selecting another audio destination.
+            return {"backend": "service", "selection": "invalid-service", "error": "service_response"}
+        return value
     if value not in ("host", "browser"):
         from . import speech
         value = "host" if speech.manifest()[0] is not None else "browser"
@@ -339,8 +347,38 @@ def voice_setting() -> dict:
 
 
 def validate_voice(value) -> None:
+    if isinstance(value, dict) and value.get("backend") == "service":
+        if value.keys() - {"backend", "url", "model", "key", "selection"}:
+            raise ValueError("Unsupported voice settings fields.")
+        url = value.get("url")
+        try:
+            parsed = urlsplit(url) if isinstance(url, str) else None
+            valid = (parsed and parsed.scheme in ("http", "https") and parsed.hostname and parsed.port != 0
+                     and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment
+                     and "?" not in url and "#" not in url and not any(c.isspace() or ord(c) < 32 for c in url))
+        except ValueError:
+            valid = False
+        if not valid:
+            raise ValueError("Enter a complete http:// or https:// transcription URL.")
+        if not isinstance(value.get("selection"), str) or not value["selection"]:
+            raise ValueError("Voice settings need a selection identity.")
+        for field in ("key", "model"):
+            text = value.get(field, "")
+            if not isinstance(text, str) or len(text) > 4096 or any(ord(c) < 32 or ord(c) == 127 for c in text):
+                raise ValueError(f"Enter a valid speech service {field}.")
+        return
     if value not in (None, "browser", "host"):
         raise ValueError("voice must be host or browser")
+
+
+def voice_receipt(value):
+    """The nonsecret projection used before voice events and completed receipts are written."""
+    return {"backend": "service"} if isinstance(value, dict) else value
+
+
+def voice_expected(value):
+    """Optimistic writes compare a service nonce, never another retained copy of its key."""
+    return value.get("selection") if isinstance(value, dict) else value
 
 
 def validate_wip(value) -> None:

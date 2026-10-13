@@ -343,6 +343,7 @@ and bounded task-document access with rendered Markdown on 2026-09-15 Pacific.
 | Hover / focus / touch | Ordinary link focus styling; keyboard activation or tap opens the same reader in another tab. |
 | Loading / retry | Loading file; previous contents disappear while the new read is pending. |
 | Readable Markdown / text | Rendered Markdown with Raw toggle, or plain text; commands remain selectable text. |
+| Formatting code unavailable | Exact wrapped source remains readable under **Formatting unavailable** and a bordered **Reload page** button. No draft warning: this is a separate tab. Raw retains its pressed state and hides the formatting notice; returning to formatting shows it again while the shared import remains failed. |
 | Empty file | This file is empty; full target remains visible. |
 | Missing / unreadable / denied / unsupported | File unavailable with the reason and Retry. The full target stays selectable and copyable. |
 | Copy succeeds / clipboard denied | Path copied confirmation, or a manual-copy hint with selectable path. |
@@ -1110,6 +1111,13 @@ Inside it:
 - Wide tables and code scroll inside their own block; the reader never scrolls sideways. Code has no
   Copy or terminal action. No script, style, frame or form from the document runs or renders.
 
+The formatting recovery notice is left aligned with 8 px gaps and 20 px before source text. In an
+expanded system information message it also has 16 px above it, separating it from card metadata;
+the same notice and inert source retain Hide and the conversation draft. Reload page explicitly
+reloads the whole page, clearing unsent text only on that action. The button has a 44 px phone touch
+target. Content-read failures keep their existing Retry, and unrelated renderer errors retain the
+route's error page. Document styles load with the app; formatting code remains deferred.
+
 **Gallery.** The image viewer shows one set's images in order (extra images, then the document's in
 document order), with a quiet **2 / 5** count in its header, **Zoom image** and **Close image**, and
 previous and next arrows at the sides (hidden at the ends). Arrow keys and a horizontal swipe move
@@ -1127,6 +1135,7 @@ the gallery to the exact place it was opened from, and the next Back closes the 
 | Card | Saved files missing or resized | No cover or chevron, a broken-document icon and **Preview unavailable** under the name; not a control. Its question's answers are disabled until the owner shows the files again; the conversation stays open. Previews saved before shown files existed show the same card with their title. A copy whose content changed at its saved size opens to the reader's Unavailable state. |
 | Reader | Loading | A page skeleton (heading bar, text lines, image block), static under reduced motion; "Loading README.md". |
 | Reader | Ready | Header and document. |
+| Reader | Formatting code unavailable | Header and Close remain. **Formatting unavailable**, "Reloading clears text you have typed but not sent.", and a bordered **Reload page** button precede exact wrapped monospace source. Saved embedded images follow as full-width gallery controls; extra images keep their position. The conversation stays mounted and its draft survives Close. Nothing reloads automatically. |
 | Reader | Image loading / failed | A grey block at the saved size; on failure an outlined box with a broken-image icon, **Image unavailable** and **Retry**. |
 | Reader | Earlier | **Newer** in the header. |
 | Reader | Unavailable | A broken-document icon, **Preview unavailable**, "It could not be loaded. Try again, or ask in the conversation." and **Retry**; × still closes. |
@@ -1875,7 +1884,11 @@ Voice input has a labelled **Settings** back button at both widths. It returns
 to the overview even on a direct visit; browser Back retains normal history. The phone header stays
 visible while the content scrolls. Opening a Settings page does not change a setting or probe a service.
 
-The voice page offers two choices, This computer and Browser recognition, each saved immediately.
+The voice page offers This computer, Browser recognition and Your speech service with explicit
+Save/Cancel. A radio changes only the draft; switching away from a saved service uses **Save and remove
+service**, deleting its URL/key/model. Built-in setup/remove/cancel actions are immediate, independent
+of the draft choice; Cancel discards the form choice without cancelling a download. Setup does not
+automatically select the built-in backend.
 Descriptions state where audio goes and any setup. This computer shows its setup below the choice:
 "Needs a one-time download of about 698 MB, checked against this release." with **Set up voice**;
 while setting up, a progress bar, "Setting up… X MB of Y MB" and **Cancel setup**; when ready,
@@ -1916,6 +1929,33 @@ text for retry; concurrent changes offer Reload. No prior reply says "No reply y
 Listening does not apply. Long labels wrap and IDs stay accessible without horizontal overflow.
 These states are walked at phone and desktop sizes; native keyboard saves retain focus through
 pending, success and failure. Boards: SettingsStates, ModelsStates and ProjectSettings.
+**Your speech service** says “Words appear after you stop. Audio passes through this computer to
+the service you choose. Its privacy policy and charges apply.” It shows **Transcription URL**, a full
+endpoint input, and “Use a compatible audio transcription endpoint reachable from the computer
+running Altitude.” **How to run one** links to setup guidance. **Key or model (optional)** expands an
+API key password field and Model. Saved keys are not returned: the placeholder says “Key saved —
+leave blank to keep”, with a 44px **Remove saved key** label. Changing the address clears the key
+association and shows a muted key hint, “Enter a key for the new address, if needed.” HTTP endpoints
+show “This connection is unencrypted. Audio and any key travel over HTTP.” before saving.
+
+First save is **Save and use service**, later edits **Save changes**, alongside **Cancel**. Invalid
+URLs show “Enter a complete http:// or https:// transcription URL.” The form says once, “If
+transcription fails, record again. Recordings are not kept.” Phone fields fill the card and scroll
+naturally; desktop keeps the 680px maximum. Controls have 44px targets. Hints associate with their
+fields; errors announce without moving focus. No endpoint probing or autosave occurs.
+
+The service composer keeps microphone/image and recording controls. A 44px underlined destination
+link shows **Voice: speech.example.test**, wrapping the hostname/port without exposing a path or key.
+Stop releases the microphone and shows **Transcribing…** with Cancel; Send shows **Transcribing to
+send…**. Pending service transcription hides waveform/timer and disables editing/microphone/send.
+Success removes transient UI. Errors keep typed text/images and offer one Voice settings link,
+omitting the separate destination link. Failed audio is discarded; no recording retry appears.
+Switching conversations cancels unsent recording; an explicit Send completes only for its captured
+conversation. This service presentation does not change live host/browser recognition.
+An interrupted upload says “Transcription did not finish. Check your connection and service
+address.” with the Voice settings link. Malformed saved configuration says “Your speech service
+settings are invalid. Re-enter them in Voice settings.” in Settings; the composer replaces the
+last words with the same Settings link and keeps the microphone closed until repaired.
 
 The project page `/settings/projects/<name>` has a labelled **Settings** back button, the line
 "Applies to this project only. A model or effort L3 sets for one task wins over these." and its

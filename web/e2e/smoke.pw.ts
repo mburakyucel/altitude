@@ -147,7 +147,8 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       await expect(main.getByRole("heading", { name: "Voice input", exact: true })).toBeVisible();
       await expect(main.getByRole("radio", { name: "This computer", exact: true })).toBeChecked();
       await expect(main.getByRole("radio", { name: "Browser recognition", exact: true })).not.toBeChecked();
-      await expect(main.getByRole("radio")).toHaveCount(2);
+      await expect(main.getByRole("radio", { name: "Your speech service", exact: true })).not.toBeChecked();
+      await expect(main.getByRole("radio")).toHaveCount(3);
       await expect(main.getByRole("link", { name: "‹ Settings", exact: true })).toHaveAttribute("href", "/settings");
       const host = (await (await request.get("/api/voice")).json()).host;
       if (host.state === "unavailable") await expect(main.getByText(`Not available on this computer: ${host.reason}.`, { exact: true })).toBeVisible();

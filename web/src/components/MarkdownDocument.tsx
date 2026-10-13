@@ -8,7 +8,6 @@ import remarkGfm from "remark-gfm";
 import { shownReference } from "../shown";
 import type { ShownImage } from "../data/api";
 import { Icon, SavedImage } from "./Shown";
-import "./markdown.css";
 
 /** GitHub's sanitizing schema, narrowed: no responsive or media sources, forms, inline styles or keyboard shortcuts.
  * Event attributes, scripts, iframes and styles are already outside it. */

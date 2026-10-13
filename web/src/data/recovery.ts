@@ -5,7 +5,7 @@
  */
 
 /** "transcription": the recording failed; "unreached": host voice lost the connection past its wait. */
-export type SendFailure = "refused" | "unconfirmed" | "transcription" | "unreached" | null;
+export type SendFailure = "refused" | "unconfirmed" | "transcription" | "unreached" | import("../components/hostCapture").ServiceFailure | null;
 /** `refused` names the pending copies the server refused; every other pending copy recovers as unconfirmed. */
 export type SubmittedText = { pending: Record<string, string>; text: string; failure: SendFailure; refused?: string[] };
 

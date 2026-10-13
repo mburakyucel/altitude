@@ -892,6 +892,12 @@ alt machine set --unset-voice --reason 'Back to the default'
 can run the speech model and `browser` elsewhere; `machine show` reports the backend in effect. See
 [voice input](OPERATIONS.md#voice-input) for what each backend needs and where audio goes.
 
+An operator-supplied transcription service is configured in **Settings → Voice input → Your speech
+service**. No CLI key or endpoint argument is exposed. `machine show` reports the backend without
+service credentials or address. Setting `host`, `browser`, or `--unset-voice` replaces the complete
+voice setting and removes saved service details. Voice setup/status/remove commands operate only
+on the built-in runtime, including when a service is selected.
+
 `alt voice status` reports whether [host voice](OPERATIONS.md#host-voice) can run here and its setup
 state. `alt voice setup` downloads and checks the speech model and its runtime once (about 700 MB),
 printing progress and the final state; it also retries a failed or cancelled update. `alt voice cancel`

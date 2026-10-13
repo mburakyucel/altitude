@@ -233,6 +233,9 @@ broker sockets; unfinished work or logged background failures fail the walkthrou
 does not start within ten seconds, or exits while starting, fails with that startup error and its
 output. Playwright starts a test's service before evaluating its skip conditions, so a test that
 only one project runs is tagged `@phone-only` or `@desktop-only`, which the other project excludes.
+The README service seeds its example records without flushing each to disk, so two services
+starting together on a loaded runner stay inside that start limit.
+The improvement-settings walkthrough releases a held press only after it reaches the route.
 The image stream/admission walkthrough holds a real admission receipt until a history poll shows
 its image, then holds later reads while verifying that receipt cannot recreate a queued copy.
 The image selection/viewer/reload journey holds completion after the active turn clears and before
@@ -366,6 +369,23 @@ illustrations that explain current behavior belong in `docs/images/`. Maintain t
 boards in place, removing obsolete review scaffolding and its generators/references together.
 
 ### Loading and caching evidence
+
+`web/e2e/document-update.pw.ts` walks all three document entry points across replacement of the
+actual built JS/CSS served by a disposable real server. Fixture controls use PUT requests, leaving
+the application's GET and POST dispatchers real. Separate script, stylesheet and combined removal cases
+establish readable-source recovery, saved-image access, draft preservation, repeated
+document entry and explicit whole-page reload at phone and desktop widths. Styles load with the
+app, so removal of an old stylesheet leaves the open page's formatting usable. Connection-drop
+fixtures keep the browser cache enabled and verify same-script reload without module preloads.
+Content transport abort overlays keep API Retry, whose successful read uses real API/storage;
+offline content reads resume on reconnect. A successful
+module whose renderer throws reaches the route error page at each entry point, rather than being
+misclassified as a load failure. `file-references.pw.ts` and `shown-files.pw.ts` cover the readers'
+loading, empty, denied, unavailable and image states; `app-update.pw.ts` retains terminal recovery,
+and `first-open.pw.ts` keeps the cold/warm/slow opening checks and compressed-script limit.
+Run these committed candidates through `alt task validate -- make ui-validate` and the separate
+emulated-iPhone WebKit lane. Their fictional network failures establish application behavior, not
+the response or network/TLS cause of a private browser incident.
 
 Caching and prefetch changes follow the [project rule](../AGENTS.md#working-rules-for-every-pr): a
 reviewed proposal, then a reviewed implementation. Measure before choosing. `web/e2e/first-open.pw.ts`
