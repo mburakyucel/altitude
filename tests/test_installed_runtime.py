@@ -326,7 +326,7 @@ class InstalledRuntime(AltitudeCase):
         snapshot, runtime = self.tmp / "snapshot", self.tmp / "review-runtime"
         snapshot.mkdir()
         runtime.mkdir()
-        command = engines._review_command(config.ENGINES[0], snapshot, runtime, None)
+        command = engines.common._review_command(config.ENGINES[0], snapshot, runtime, None)
         adapter = json.loads(command[command.index("--mcp-config") + 1])["mcpServers"]["captured"]
         self.assert_adapter_preserves_release(adapter)
 
