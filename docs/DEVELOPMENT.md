@@ -99,8 +99,8 @@ full brief reads and lock acquisition. No provider, private-place or native sand
 Fixtures may select another service backend while using the runner's real filesystem; directory
 search flags follow the interpreter's native platform constants in both cases.
 Invocation-reader fixtures use fictional registered projects and worker records. They cover
-malformed-name refusal before opening directories or attempting task metadata with live or
-archived tasks, activity's earlier identity refusal, live and archived selection with missing,
+refusal of malformed task and worker names before any directory or record is opened,
+activity's earlier identity refusal, live and archived selection with missing,
 ordinary-file and linked live parents and archive entries, historical headers,
 current activity, normal/Raw/record reads, complete
 UTF-8 and partial lines, replacement of JSON and stdout between discovery and consumption,

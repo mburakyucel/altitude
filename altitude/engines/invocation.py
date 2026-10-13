@@ -26,6 +26,14 @@ def _identity(info: os.stat_result) -> tuple[int, int]:
     return info.st_dev, info.st_ino
 
 
+def _name(value: str) -> None:
+    """Refuse a malformed task or worker name before any directory is opened or inspected."""
+    try:
+        storage._component(value)
+    except ValueError as exc:
+        raise InvocationRefused("invalid invocation name") from exc
+
+
 def _linked(directory: int, name: str) -> bool:
     try:
         return stat.S_ISLNK(os.stat(name, dir_fd=directory, follow_symlinks=False).st_mode)
@@ -36,7 +44,7 @@ def _linked(directory: int, name: str) -> bool:
 @contextmanager
 def job_directory(project: str, slug: str):
     """Select the logical live or archive invocation, holding its task and job directories."""
-    storage._component(slug)
+    _name(slug)
     with ExitStack() as stack:
         try:
             root = stack.enter_context(storage.runtime_directory([project], search=False))
@@ -203,8 +211,8 @@ class NativeSession:
 
 def invocation(job: int, root: Path, worker: str) -> RuntimeInvocation | None:
     """Parse a flat enumerated record exactly once through a regular no-follow descriptor."""
+    _name(worker)
     try:
-        storage._component(worker)
         with storage.regular_reader(job, f"{worker}.json") as fd:
             info = os.fstat(fd)
             with os.fdopen(os.dup(fd), "r", encoding="utf-8") as stream:
