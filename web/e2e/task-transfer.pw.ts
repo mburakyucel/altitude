@@ -48,6 +48,8 @@ test("patient transfer cancels without losing the draft, then readiness starts a
   await start(page);
   const confirm = page.getByRole("dialog", { name: "This task’s model", exact: true });
   await walk.state("01-confirm-context-and-cost", { visible: [confirm, confirm.getByText(/Some context may be lost/)], hidden: [card(page)] });
+  // Opening the chooser and choosing a target only shows choices; nothing is requested until confirmed.
+  expect((await read()).daemon_request).toBeFalsy();
   await page.keyboard.press("Escape");
   await expect(confirm).toBeHidden();
   expect((await read()).daemon_request).toBeFalsy();
@@ -63,14 +65,13 @@ test("patient transfer cancels without losing the draft, then readiness starts a
   await start(page);
   await confirm.getByRole("button", { name: "Prepare change", exact: true }).click();
   await expect(card(page)).toBeVisible();
-  await page.getByRole("button", {name:/^Task model:/}).click();
-  await expect(confirm.getByRole("button", {name:"Cancel switch"})).toBeVisible();
+  // While it prepares, the pill leads to the switch's card; it never reopens the chooser over it.
+  await page.getByRole("button", { name: /^Task model: switching to .+\. Show the switch$/ }).click();
+  await expect(card(page)).toBeFocused();
+  await walk.state("03b-pill-leads-to-own-switch", { visible: [card(page), card(page).getByText("Started by you", { exact: true })], hidden: [confirm] });
   const response = await request.post("/fixture/transfer", { data: { slug, ready: true, launch: true } });
   expect(response.ok()).toBe(true);
   await expect.poll(async () => (await read()).attempt).toBe(before.attempt + 1);
-  await expect(confirm.getByRole("combobox")).toHaveCount(0);
-  await walk.state("03b-open-progress-shows-completed-outcome", {visible:[confirm,confirm.getByText(`Switched to ${target.label}.`,{exact:true})],hidden:[confirm.getByRole("button",{name:"Prepare change"})]});
-  await page.keyboard.press("Escape");
   await expect(card(page).getByRole("button", { name: "Cancel switch", exact: true })).toBeHidden();
   const after = await read();
   expect(after.l2_engine).toBe(target.engine);
@@ -78,6 +79,29 @@ test("patient transfer cancels without losing the draft, then readiness starts a
   expect(after.session_id).not.toBe(before.session_id);
   await walk.state("04-new-owner-draft-and-hold-retained", { visible: [draft(page), page.locator('[data-tone="held"]').filter({ hasText: "Merge held" }).first()], hidden: [confirm] });
   await expect(draft(page)).toHaveValue("Keep this unsent instruction.");
+});
+
+test("a switch the coordinator started says so and why, and the pill shows it without starting anything", async ({ page, request }, info) => {
+  const slug = "transfer-running-work";
+  const read = async () => (await (await request.get(path(slug))).json());
+  const walk = walkthrough(page, info);
+  await walk.open(`/projects/atlas/tasks/${slug}`);
+  const chooser = page.getByRole("dialog", { name: "This task’s model", exact: true });
+  await page.getByRole("button", { name: /^Task model:/ }).click();
+  await expect(chooser).toBeVisible();
+  expect((await read()).daemon_request).toBeFalsy();
+  // The coordinator starts a switch while the operator is only looking at the choices.
+  expect((await request.post("/fixture/transfer", { data: { slug, l3_switch: true } })).ok()).toBe(true);
+  await expect(chooser).toBeHidden();
+  await expect(card(page).getByText(/^Started by the coordinator · The operator asked for existing tasks to run on /)).toBeVisible();
+  await walk.state("01-coordinator-switch-names-its-source", { visible: [card(page), card(page).getByRole("button", { name: "Cancel switch", exact: true })], hidden: [chooser] });
+  await page.getByRole("button", { name: /^Task model: switching to .+\. Show the switch$/ }).click();
+  await expect(card(page)).toBeFocused();
+  await expect(chooser).toBeHidden();
+  const after = await read();
+  expect(after.daemon_request.actor).toBe("l3");
+  expect(after.transfer.request.by).toBe("l3");
+  expect(after.transfer.request.status).toBe("executing");
 });
 
 test("explicit switch now replaces a running owner and preserves the merge hold", async ({ page, request }, info) => {
@@ -104,7 +128,7 @@ test("explicit switch now replaces a running owner and preserves the merge hold"
   await walk.state("03-new-attempt-hold-kept", { visible: [page.locator('[data-tone="held"]').filter({ hasText: "Merge held" }).first()], hidden: [confirm] });
 });
 
-test("same-engine effort change shows the current tuple until the fresh attempt runs", async ({ page, request }, info) => {
+test("same-engine effort change names the new effort while it prepares and applies with the fresh attempt", async ({ page, request }, info) => {
   const slug="transfer-running-work";
   const read=async ()=>(await (await request.get(path(slug))).json());
   const before=await read();
@@ -119,7 +143,8 @@ test("same-engine effort change shows the current tuple until the fresh attempt 
   await walk.state("01-same-engine-effort-confirmation",{visible:[page.getByRole("dialog",{name:"This task’s model"})],hidden:[]});
   await page.getByRole("button",{name:"Prepare change",exact:true}).click();
   await expect.poll(async ()=>(await read()).daemon_request?.selection).toEqual({model:before.transfer.current_model,effort:"medium"});
-  await expect(page.getByRole("button",{name:/^Task model:/})).toContainText("High");
+  await expect(page.getByRole("button",{name:/^Task model: switching to .* · Medium\. Show the switch$/})).toBeVisible();
+  await expect(page.getByRole("region",{name:"Preparing change"})).toContainText("Started by you");
   expect((await request.post("/fixture/transfer",{data:{slug,ready:true}})).ok()).toBe(true);
   await expect.poll(async ()=>(await read()).state).toBe("queued");
   await expect(page.getByRole("button",{name:/^Task model:/})).toContainText("High");

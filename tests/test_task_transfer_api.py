@@ -68,6 +68,20 @@ class TestTaskTransferAPI(AltitudeCase):
         self.assertEqual(after["hold_merge"], self.task["hold_merge"])
         self.assertEqual(self.view()["request"]["status"], "cancelled")
 
+    def test_reading_the_view_requests_nothing_and_a_switch_names_who_started_it(self):
+        view = self.view()
+        self.assertIsNone(view["request"])
+        self.assertIsNone(S.load_task(self.project, self.task["slug"]).get("daemon_request"))
+        target = next(item for item in view["targets"] if item["engine"] != view["current_engine"])
+        dispatch.request_task_operation(self.project, self.task["slug"], "handoff", "Run existing tasks on the other engine.",
+                                        actor="l3", engine=target["engine"], expected_attempt=self.task["attempt"])
+        request = self.view()["request"]
+        self.assertEqual((request["by"], request["reason"]), ("l3", "Run existing tasks on the other engine."))
+        self.action("handoff-cancel", request_id=request["id"])
+        self.action(engine=target["engine"], observed=self.view()["observed"])
+        request = self.view()["request"]
+        self.assertEqual((request["by"], request["reason"]), ("operator", None))
+
     def test_switch_now_is_fenced_and_daemon_requeues_original_task(self):
         view = self.view()
         target = next(item for item in view["targets"] if item["engine"] != view["current_engine"])["engine"]

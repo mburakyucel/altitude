@@ -88,6 +88,14 @@ def main():
                             fake.stop_l2_worker(task["l2_engine"], task["agent_id"],
                                                 job_root=dispatch.l2_job_root(project, slug))
                     return self._json(server.task_view(project, slug))
+                if body.get("l3_switch"):
+                    target = next(engine for engine in config.ENGINES if engine != task["l2_engine"])
+                    dispatch.request_task_operation(
+                        project, slug, "handoff",
+                        f"The operator asked for existing tasks to run on {config.ENGINE_LABELS[target]}.",
+                        actor="l3", engine=target, expected_attempt=task["attempt"])
+                    dispatch.run_task_operation(project, slug)
+                    return self._json(server.task_view(project, slug))
                 if body.get("outcome") == "question":
                     T.block(project, slug, "Which validation scope should the new engine preserve?", actor="l2",
                             updates={"waiting_on": T.OPERATOR_MESSAGE_ROLE}, expected_attempt=task["attempt"])
