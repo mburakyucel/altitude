@@ -141,49 +141,37 @@ def read(timeout: float = 20.0) -> dict:
 
     result = response.get("result")
     limits = result.get("rateLimits") if isinstance(result, dict) else None
-    primary = limits.get("primary") if isinstance(limits, dict) else None
-    used = primary.get("usedPercent") if isinstance(primary, dict) else None
-    if used is None:
-        return _unknown("Codex response missing rateLimits.primary.usedPercent")
-    secondary = limits.get("secondary")
-    try:
-        primary_used = float(used)
-    except (TypeError, ValueError, OverflowError):
-        return _unknown(f"Codex response has invalid primary usedPercent: {used!r}")
-    if not math.isfinite(primary_used) or not 0 <= primary_used <= 100:
-        return _unknown(f"Codex response has invalid primary usedPercent: {used!r}")
-
-    resets_at = primary.get("resetsAt")
-    if resets_at is None:
-        return _unknown("Codex response missing rateLimits.primary.resetsAt")
-    try:
-        primary_resets = _epoch_iso(resets_at)
-    except (TypeError, ValueError, OverflowError, OSError):
-        return _unknown(f"Codex response has invalid primary resetsAt: {resets_at!r}")
-
-    secondary_used = None
-    secondary_resets = None
-    secondary_window = None
-    if isinstance(secondary, dict):
-        secondary_value = secondary.get("usedPercent")
+    limits = limits if isinstance(limits, dict) else {}
+    windows, errors = {}, []
+    for name in ("primary", "secondary"):
+        windows.update({f"{name}_used": None, f"{name}_resets": None, f"{name}_window_minutes": None})
+        window = limits.get(name)
+        used = window.get("usedPercent") if isinstance(window, dict) else None
+        if used is None:
+            errors.append(f"Codex response missing rateLimits.{name}.usedPercent")
+            continue
         try:
-            candidate_used = float(secondary_value)
-            if math.isfinite(candidate_used) and 0 <= candidate_used <= 100:
-                candidate_resets = _epoch_iso(secondary.get("resetsAt"))
-                secondary_used = candidate_used
-                secondary_resets = candidate_resets
-                secondary_window = secondary.get("windowDurationMins")
+            percent = float(used)
+            if not math.isfinite(percent) or not 0 <= percent <= 100:
+                raise ValueError
+        except (TypeError, ValueError, OverflowError):
+            errors.append(f"Codex response has invalid {name} usedPercent: {used!r}")
+            continue
+        resets_at = window.get("resetsAt")
+        try:
+            resets = _epoch_iso(resets_at)
         except (TypeError, ValueError, OverflowError, OSError):
-            pass
+            errors.append(f"Codex response has invalid {name} resetsAt: {resets_at!r}")
+            continue
+        windows.update({f"{name}_used": percent, f"{name}_resets": resets,
+                        f"{name}_window_minutes": window.get("windowDurationMins")})
+
+    if not any(windows[f"{name}_used"] is not None for name in ("primary", "secondary")):
+        return _unknown(errors[0])
 
     return {
         "known": True,
-        "primary_used": primary_used,
-        "primary_resets": primary_resets,
-        "primary_window_minutes": primary.get("windowDurationMins"),
-        "secondary_used": secondary_used,
-        "secondary_resets": secondary_resets,
-        "secondary_window_minutes": secondary_window,
+        **windows,
         "plan_type": limits.get("planType"),
         "read_at": state.now(),
     }
