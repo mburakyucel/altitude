@@ -190,7 +190,7 @@ print(json.dumps({"type": "result", "is_error": error, "result": detail}), flush
         persona = (config.PERSONAS / "l2.md").read_text()
         self.assertIn("Run each `alt` command alone from your worktree as one plain invocation", persona)
         self.assertIn("rerun the command plainly rather than reporting a fault", persona)
-        self.assertIn("tool in the task folder, not with a shell or interpreter writer", persona)
+        self.assertIn("file-editing method your engine provides, not an ad hoc shell or interpreter writer", persona)
 
     def test_incident_171446_provider_stream_from_real_process_preserves_result_and_error(self):
         real_popen = subprocess.Popen

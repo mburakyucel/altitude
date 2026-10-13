@@ -638,8 +638,8 @@ Owner launch and resume pre-approve `Bash(alt *)` in native auto mode, so Altitu
 coordination commands do not depend on the permission classifier. The rule matches a plain `alt`
 invocation only; a chained or redirected form, or a shell or interpreter command that writes a file
 for `alt` to read, goes to the classifier, which can refuse it. The L2 persona therefore has owners
-run each `alt` command alone, write its input files with the engine's file tool, and rerun a
-refused chained form plainly. Native deny/ask rules, worker confinement and Altitude's role,
+run each `alt` command alone, write its input files with the engine's own file-editing method, and
+rerun a refused chained form plainly. Native deny/ask rules, worker confinement and Altitude's role,
 task-attempt, merge-hold and operator-grant checks still apply. Other external commands retain
 their native permission checks. The other launcher already admits coordination within its
 network-enabled workspace-write sandbox. The allowance is shared by Linux and macOS launches; it
