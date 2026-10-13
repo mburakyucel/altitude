@@ -119,7 +119,8 @@ class TestProviderHandoff(AltitudeCase):
         self.assertEqual(resumed["hold_merge"], before["hold_merge"])
 
     def test_fresh_handoff_keeps_already_delivered_chat_images_visually_inspectable(self):
-        self.patch(engines, "image_capability", return_value={"available": True, "why": "fixture transport"})
+        capability = self.patch(engines, "image_capability", return_value={"available": True, "why": "fixture transport"})
+        self.patch(engines.common, "image_capability", new=capability)
         task = self.owner()
         slug = task["slug"]
         rows = [T.message(self.project, slug, T.OPERATOR_MESSAGE_ROLE, f"Inspect screenshot {index}.",
@@ -140,7 +141,7 @@ class TestProviderHandoff(AltitudeCase):
         self.assertEqual(messages[-1]["text"], "Switch to Codex queued.")
         self.assertEqual(T.pending(self.project, slug), [], "Historical context must not requeue delivered messages")
         self.assertEqual(len(launch["images"]), len(rows))
-        content = engines._engine_input(launch["engine"], launch["prompt"], launch["images"])
+        content = engines.common._engine_input(launch["engine"], launch["prompt"], launch["images"])
         self.assertEqual([item["type"] for item in content], ["text"], "A larger history uses native visual reads")
         prompt = content[0]["text"]
         self.assertIn("native view_image tool", prompt)

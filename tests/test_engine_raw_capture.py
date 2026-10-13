@@ -35,14 +35,14 @@ class FakeProcess:
 
 class TestEngineRawCapture(AltitudeCase):
     def claude_print(self, process):
-        self.patch(engines, "usage_hold", return_value=None)
-        self.patch(engines.subprocess, "Popen", side_effect=lambda *_args, **_kwargs: process)
+        self.patch(engines.common, "usage_hold", return_value=None)
+        self.patch(engines.common.subprocess, "Popen", side_effect=lambda *_args, **_kwargs: process)
         return engines.claude_print("prompt", cwd=self.tmp, settings=self.tmp / "settings.json")
 
     def test_codex_exec_returns_both_complete_raw_streams(self):
         stdout = json.dumps({"type": "turn.completed", "usage": {"input_tokens": 3}}) + "\n"
         process = SimpleNamespace(pid=1, returncode=0, stdin=io.StringIO(), communicate=lambda *_a, **_k: (stdout, "codex diagnostic\n"))
-        with mock.patch.object(engines.subprocess, "Popen", return_value=process):
+        with mock.patch.object(engines.common.subprocess, "Popen", return_value=process):
             result = engines.codex_exec("prompt", cwd=self.tmp)
 
         self.assertEqual(result["raw_stdout"], stdout)
@@ -59,7 +59,7 @@ class TestEngineRawCapture(AltitudeCase):
     def test_claude_print_caps_raw_stdout_with_runtime_constant(self):
         raw = "HEAD" + ("x" * 300) + "TAIL"
         cap = 120
-        self.patch(engines, "RAW_CAPTURE_CAP", new=cap)
+        self.patch(engines.common, "RAW_CAPTURE_CAP", new=cap)
         result = self.claude_print(FakeProcess(raw))
 
         rendered = result["raw_stdout"]

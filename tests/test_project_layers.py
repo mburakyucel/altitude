@@ -2,11 +2,11 @@
 
 Four grep-level counts that may fall and never rise:
 
-1. Provider names outside the engine seam. Engine-specific code belongs in `altitude/engines.py`,
+1. Provider names outside the engine seam. Engine-specific code belongs in `altitude/engines/`,
    `altitude/route.py`, and `altitude/config.py`. The incident class this prevents is engine
    assumptions spreading past the seam — a dispatch, server, or CLI path that names one provider,
-   until dropping a subscription or adding an engine means editing the whole system instead of three
-   modules.
+   until dropping a subscription or adding an engine means editing the whole system instead of the
+   named seam.
 2. The operator's name outside a configured value. Altitude serves one operator, but the name is
    configuration; text that spells it cannot be read by anyone else and cannot be reconfigured. The
    incident class is the operator being welded into personas, code, UI, and docs.
@@ -34,25 +34,25 @@ OPERATOR = re.compile(r"(?<![a-z])burak", re.IGNORECASE)
 HOST = re.compile(r"systemd|systemctl|journalctl|launchd|launchctl|/proc\b|pidfd|sysctl|libproc")
 
 #: Engine-specific code is expected here and nowhere else.
-ENGINE_SEAM = ("altitude/config.py", "altitude/engines.py", "altitude/route.py")
+ENGINE_SEAM = ("altitude/config.py", "altitude/engines/", "altitude/route.py")
 #: The configured operator name and the persisted authority identity live here and nowhere else.
 OPERATOR_SEAM = ("altitude/config.py",)
 
-#: Provider names per file in `altitude/*.py` and `bin/alt`, outside the engine seam.
+#: Provider names per file in `altitude/**/*.py` and `bin/alt`, outside the engine seam.
 PROVIDER_BASELINE = {
     "altitude/dispatch.py": 2,
     "altitude/l3.py": 30,
     "altitude/monitor.py": 4,
-    "altitude/quota_codex.py": 13,
     "altitude/server.py": 1,
     "altitude/tasks.py": 2,
 }
 
-#: Host mechanisms per file in `altitude/*.py` and `bin/alt`, outside the platform seam.
+#: Host mechanisms per file in `altitude/**/*.py` and `bin/alt`, outside the platform seam.
 PLATFORM_SEAM = ("altitude/platform.py",)
 HOST_BASELINE = {
     "altitude/dispatch.py": 1,
-    "altitude/engines.py": 3,
+    "altitude/engines/claude.py": 2,
+    "altitude/engines/codex.py": 1,
     "altitude/l3.py": 12,
     "altitude/source_tls.py": 5,
 }
@@ -90,12 +90,14 @@ def _counts(paths, pattern):
 
 
 def _provider_files():
-    files = [*sorted((REPO / "altitude").glob("*.py")), REPO / "bin" / "alt"]
-    return [p for p in files if p.relative_to(REPO).as_posix() not in ENGINE_SEAM]
+    files = [*sorted((REPO / "altitude").rglob("*.py")), REPO / "bin" / "alt"]
+    return [p for p in files if not any(p.relative_to(REPO).as_posix() == seam or
+                                       (seam.endswith("/") and p.relative_to(REPO).as_posix().startswith(seam))
+                                       for seam in ENGINE_SEAM)]
 
 
 def _host_files():
-    files = [*sorted((REPO / "altitude").glob("*.py")), REPO / "bin" / "alt"]
+    files = [*sorted((REPO / "altitude").rglob("*.py")), REPO / "bin" / "alt"]
     return [p for p in files if p.relative_to(REPO).as_posix() not in PLATFORM_SEAM]
 
 

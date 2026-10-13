@@ -223,7 +223,7 @@ class TestReviewerCall(AltitudeCase):
             if raises:
                 raise raises
             return subprocess.CompletedProcess(cmd, returncode, stdout, "")
-        return self.patch(engines.subprocess, "run", side_effect=run)
+        return self.patch(engines.common.subprocess, "run", side_effect=run)
 
     def call(self, prompt="# Project orchard", **kw):
         return engines.improvement_review(prompt, "Instructions", improve.SCHEMA, model=kw.pop("model", self.model),
@@ -268,7 +268,7 @@ class TestReviewerCall(AltitudeCase):
         self.assertEqual(self.call(model="unpriced-model")["error"], "no usage figures for unpriced-model")
         self.assertEqual(self.call(prompt="x" * engines.IMPROVEMENT_SENT_BYTES)["error"],
                          "its prompt exceeds the usage limit")
-        with mock.patch.object(engines, "usage_hold", return_value=at(-1)):
+        with mock.patch.object(engines.common, "usage_hold", return_value=at(-1)):
             self.assertEqual(self.call()["error"], "Claude Sonnet 5.5 is unavailable")
         self.assertEqual(self.calls, [])
 
@@ -277,7 +277,7 @@ class TestReviewerCall(AltitudeCase):
         self.assertEqual(self.call()["error"], "it timed out")
         self.scripted(stream(INIT, {**RESULT, "structured_output": None}))
         self.assertEqual(self.call()["error"], "its answer was not usable")
-        record = self.patch(engines, "record_usage_limit")
+        record = self.patch(engines.common, "record_usage_limit")
         self.scripted(stream(INIT, {"type": "assistant", "message": {"model": "<synthetic>", "content": [
             {"type": "text", "text": "You've hit your usage limit · resets 8pm (UTC)"}]}}, RESULT))
         self.assertEqual(self.call()["error"], "it went over its usage limit")

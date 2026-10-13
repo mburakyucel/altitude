@@ -179,7 +179,7 @@ publication rules.
 
 ## The reviewer
 
-One fresh call per run through the engine seam (`engines.py`), using the isolation Altitude already
+One fresh call per run through the engine seam (`engines/`), using the isolation Altitude already
 uses for its quota read: `--safe-mode` (no CLAUDE.md, skills, plugins, hooks or MCP),
 `--no-session-persistence`, `--tools ""`, `--strict-mcp-config`, an empty temporary working directory,
 no added directories and a JSON response schema. The adapter fails closed: if the session's own start

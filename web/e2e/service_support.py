@@ -29,12 +29,15 @@ def configure(*, expected_error=lambda _message: False):
     # The real selector reads one installed option; no selection/state machine is replaced.
     engines.installation = lambda engine: {
         "available": engine == config.ENGINES[0], "why": "deterministic browser engine fixture"}
+    engines.common.installation = engines.installation
     engines.claude_agents = lambda: []
+    engines.claude.claude_agents = engines.claude_agents
     # First run's prerequisites: the installed engine is signed in and the GitHub CLI is not.
     engines.sign_in = lambda engine: {"signed_in": engine == config.ENGINES[0], "command": engines.SIGN_IN[engine][1]}
     installation._gh_signed_in = lambda: False
     installation._gh_lacks = lambda: []
     engines.image_capability = lambda _engine: {"available": True, "why": "deterministic image fixture"}
+    engines.common.image_capability = engines.image_capability
     # The browser runs beside the harness, which may itself run inside an Altitude worker unit; the agent
     # check's own behaviour is covered in tests/test_terminal.py.
     terminal.agent_connection = lambda _peer, _local: False

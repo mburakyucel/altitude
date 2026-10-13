@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 from tests.support import AltitudeCase, git, make_repo
-from altitude import dispatch, engines, l3, server, state as S, status, tasks as T
+from altitude import config, dispatch, engines, l3, server, state as S, status, tasks as T
 
 
 class TestCIRecheck(AltitudeCase):
@@ -19,7 +19,7 @@ class TestCIRecheck(AltitudeCase):
         self.slug = "blocked-owner"
         self.owner = {"slug": self.slug, "title": "CI recovery", "state": "blocked", "fault": "artifact quota",
                       "blocked_reason": "Upload refused", "block_id": "block-1", "attempt": 2,
-                      "agent_id": "worker", "session_id": "session", "l2_engine": engines.config.ENGINES[0],
+                      "agent_id": "worker", "session_id": "session", "l2_engine": config.ENGINES[0],
                       "hold_merge": "operator review", "questions": [{"id": "question", "status": "open",
                           "audience": "operator", "revision": 1, "question": "Review the held PR?"}],
                       "source": "recovery", "paths": [], "created": self.now}

@@ -171,7 +171,10 @@ for (const route of [...routePaths, "/projects/:name?tab=work"]) test.describe((
       await expect(main.getByRole("region", { name: "Where Altitude runs" })).toContainText(network.computer);
       await expect(main.getByText("Only the hosting computer", { exact: true })).toBeVisible();
       await expect(main.getByRole("link", { name: network.url, exact: true })).toHaveAttribute("href", network.url);
-      await expect(main.getByText(/A VPN changes neither Altitude’s address, certificate trust nor pairing/)).toBeVisible();
+      const vpnGuidance = main.getByText(/A VPN changes neither Altitude’s address, certificate trust nor pairing/);
+      await expect(vpnGuidance).toBeHidden();
+      await main.getByText("Use another device…", { exact: true }).click();
+      await expect(vpnGuidance).toBeVisible();
     } else if (route === "/settings/name") {
       await expect(main.getByRole("heading", { name: "Your name", exact: true })).toBeVisible();
       await expect(main.getByLabel("Your name")).toBeEditable();

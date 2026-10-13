@@ -78,10 +78,10 @@ class TestReviews(AltitudeCase):
 
     def test_failed_process_diagnostics_stay_on_owning_review_and_survive_retry(self):
         self.engine.side_effect = run_engine_review
-        self.patch(engines, "review_capability", return_value={"available": True})
-        self.patch(engines, "_review_command", return_value=["fixture-only"])
-        self.patch(engines.platform, "job_active", return_value=False)
-        self.patch(engines.platform, "job_command", return_value=[sys.executable, "-I", "-c",
+        self.patch(engines.common, "review_capability", return_value={"available": True})
+        self.patch(engines.common, "_review_command", return_value=["fixture-only"])
+        self.patch(engines.common.platform, "job_active", return_value=False)
+        self.patch(engines.common.platform, "job_command", return_value=[sys.executable, "-I", "-c",
             "import sys; sys.stdin.read(); print('PRIVATE TRANSCRIPT'); "
             "sys.stderr.write('adapter startup failed\\napi_key=fictional-secret-value\\n'); sys.exit(17)"])
         other = T.new(self.project, "Other task", "Unrelated task records.")
@@ -107,9 +107,9 @@ class TestReviews(AltitudeCase):
 
     def test_stdout_only_error_receipt_is_owner_readable_after_explicit_retry(self):
         self.engine.side_effect = run_engine_review
-        self.patch(engines, "review_capability", return_value={"available": True})
-        self.patch(engines, "_review_command", return_value=["fixture-only"])
-        self.patch(engines.platform, "job_active", return_value=False)
+        self.patch(engines.common, "review_capability", return_value={"available": True})
+        self.patch(engines.common, "_review_command", return_value=["fixture-only"])
+        self.patch(engines.common.platform, "job_active", return_value=False)
         records = [
             {"type": "result", "is_error": True, "errors": ["captured adapter connection refused PRIVATE SOURCE"]},
             {"type": "turn.failed", "error": {"message": "captured adapter connection refused PRIVATE SOURCE"}},
@@ -119,7 +119,7 @@ class TestReviews(AltitudeCase):
         for engine, record in zip(config.ENGINES, records):
             with self.subTest(engine=engine):
                 self.pick.return_value = {**self.choice, "engine": engine}
-                self.patch(engines.platform, "job_command", return_value=[sys.executable, "-I", "-c",
+                self.patch(engines.common.platform, "job_command", return_value=[sys.executable, "-I", "-c",
                     f"import sys; sys.stdin.read(); print({json.dumps(record)!r}); sys.exit(1)"])
                 failed = self.run_review(self.request(previous=previous))
                 self.assertEqual(failed["state"], "failed")
@@ -139,13 +139,13 @@ class TestReviews(AltitudeCase):
 
     def test_unrecognized_claude_failure_receipt_names_fixed_facts(self):
         self.engine.side_effect = run_engine_review
-        self.patch(engines, "review_capability", return_value={"available": True})
-        self.patch(engines, "_review_command", return_value=["fixture-only"])
-        self.patch(engines.platform, "job_active", return_value=False)
+        self.patch(engines.common, "review_capability", return_value={"available": True})
+        self.patch(engines.common, "_review_command", return_value=["fixture-only"])
+        self.patch(engines.common.platform, "job_active", return_value=False)
         self.pick.return_value = {**self.choice, "engine": "claude"}
         record = {"type": "result", "subtype": "success", "is_error": True, "result": "PRIVATE SOURCE",
                   "terminal_reason": "api_error", "api_error_status": 401, "num_turns": 1, "duration_api_ms": 90}
-        self.patch(engines.platform, "job_command", return_value=[sys.executable, "-I", "-c",
+        self.patch(engines.common.platform, "job_command", return_value=[sys.executable, "-I", "-c",
             f"import sys; sys.stdin.read(); print({json.dumps(record)!r}); sys.exit(1)"])
         failed = self.run_review(self.request())
         self.assertEqual(failed["state"], "failed")

@@ -76,7 +76,8 @@ class ImageDeliveryCase(AltitudeCase):
                       "size": len(PNG), "width": 1, "height": 1,
                       "sha256": hashlib.sha256(PNG).hexdigest(), "source_message_id": "message-one",
                       "source_task": None, "path": str(path)}
-        self.patch(engines, "image_capability", return_value={"available": True, "why": "fixture transport"})
+        capability = self.patch(engines, "image_capability", return_value={"available": True, "why": "fixture transport"})
+        self.patch(engines.common, "image_capability", new=capability)
 
     def assert_input(self, engine, payload, *, resume):
         """`payload` is the job driver's launch input; the engine command and first turn travel inside it."""
@@ -90,7 +91,7 @@ class ImageDeliveryCase(AltitudeCase):
             self.assertEqual(command[command.index("--model") + 1], "original-model")
             # The driver writes the first turn as one user line, as it writes every later one.
             lines = []
-            engines._ClaudeDriver.line(SimpleNamespace(write=lines.append, waiting={}), content, None)
+            engines.claude._ClaudeDriver.line(SimpleNamespace(write=lines.append, waiting={}), content, None)
             body, = lines
             self.assertEqual((body["type"], body["message"]["role"]), ("user", "user"))
             self.assertIsNone(body["parent_tool_use_id"])
@@ -118,8 +119,8 @@ class TestNativeImages(ImageDeliveryCase):
             for resume in (False, True):
                 process = _Process(engine)
                 with self.subTest(engine=engine, resume=resume), \
-                     mock.patch.object(engines, "usage_hold", return_value=None), \
-                     mock.patch.object(engines.subprocess, "Popen", return_value=process) as popen:
+                     mock.patch.object(engines.common, "usage_hold", return_value=None), \
+                     mock.patch.object(engines.common.subprocess, "Popen", return_value=process) as popen:
                     common = dict(cwd=self.repo, model="original-model", resume="session" if resume else None,
                                   images=[self.image])
                     result = (engines.claude_print("inspect the screenshot", settings=self.tmp / "settings.json", **common)
@@ -129,7 +130,7 @@ class TestNativeImages(ImageDeliveryCase):
                 command = popen.call_args.args[0]
                 process.received.ended.wait(10)
                 if engine == "claude":
-                    self.assertEqual(command[-len(engines._driver_command()):], engines._driver_command())
+                    self.assertEqual(command[-len(engines.common._driver_command()):], engines.common._driver_command())
                     self.assert_input(engine, process.received.getvalue(), resume=resume)
                 else:
                     self.assertEqual(command[command.index("--image") + 1], self.image["path"])
@@ -152,10 +153,10 @@ class TestNativeImages(ImageDeliveryCase):
                 persona = self.tmp / "persona.md"
                 persona.write_text("Task authority")
                 with self.subTest(engine=engine, resume=resume), \
-                     mock.patch.object(engines, "claude_agents", return_value=[]), \
+                     mock.patch.object(engines.claude, "claude_agents", return_value=[]), \
                      mock.patch.object(platform, "job_active", return_value=True), \
-                     mock.patch.object(engines, "_git_dirs", return_value=[]), \
-                     mock.patch.object(engines.subprocess, "Popen", side_effect=popen) as launch:
+                     mock.patch.object(engines.common, "_git_dirs", return_value=[]), \
+                     mock.patch.object(engines.common.subprocess, "Popen", side_effect=popen) as launch:
                     common = dict(cwd=self.repo, persona=persona, model="original-model", settings=self.tmp / "settings.json",
                                   extra_env={"ALTITUDE_TASK": "owner"}, job_root=self.tmp / "jobs", images=[self.image],
                                   effort="xhigh" if engine == "codex" else None)
@@ -164,7 +165,7 @@ class TestNativeImages(ImageDeliveryCase):
                 self.assertEqual(result["returncode"], 0)
                 self.assertEqual(result["agent"]["sessionId"], "session")
                 command = launch.call_args.args[0]
-                self.assertEqual(command[-len(engines._driver_command()):], engines._driver_command())
+                self.assertEqual(command[-len(engines.common._driver_command()):], engines.common._driver_command())
                 self.assertIn("ALTITUDE_TASK=owner", command)
                 spec = json.loads(processes[-1].stdin.getvalue())
                 if engine == "codex":
@@ -176,7 +177,7 @@ class TestNativeImages(ImageDeliveryCase):
         batch = [{**self.image, "id": str(index) * 32, "source_message_id": f"message-{index}"} for index in range(5)]
         for engine, reader in (("claude", "Read"), ("codex", "view_image")):
             with self.subTest(engine=engine):
-                content = engines._engine_input(engine, "Each caption belongs to its message.", batch)
+                content = engines.common._engine_input(engine, "Each caption belongs to its message.", batch)
                 self.assertEqual([part["type"] for part in content], ["text"], "no image is attached natively")
                 prompt = content[0]["text"]
                 self.assertIn(f"native {reader} tool", prompt)
@@ -188,14 +189,14 @@ class TestNativeImages(ImageDeliveryCase):
     def test_missing_or_unsupported_images_never_launch_or_stop_an_existing_worker(self):
         for unavailable in (False, True):
             with self.subTest(unavailable=unavailable), \
-                 mock.patch.object(engines, "image_capability", return_value={"available": not unavailable, "why": "Image input unavailable"}), \
-                 mock.patch.object(engines.subprocess, "Popen") as launch, \
-                 mock.patch.object(engines, "_git_dirs", return_value=[]), \
-                 mock.patch.object(engines, "claude_agents", return_value=[]) as old_workers:
+                 mock.patch.object(engines.common, "image_capability", return_value={"available": not unavailable, "why": "Image input unavailable"}), \
+                 mock.patch.object(engines.common.subprocess, "Popen") as launch, \
+                 mock.patch.object(engines.common, "_git_dirs", return_value=[]), \
+                 mock.patch.object(engines.claude, "claude_agents", return_value=[]) as old_workers:
                 image = {**self.image, "path": str(self.tmp / "missing.png")}
                 for engine in ("claude", "codex"):
                     with self.assertRaises(engines.ImageInputError):
-                        engines._start_worker(engine, "owner", "caption", cwd=self.repo,
+                        engines.common._start_worker(engine, "owner", "caption", cwd=self.repo,
                                               job_root=self.tmp / "jobs", images=[image])
                 launch.assert_not_called()
                 old_workers.assert_not_called()
@@ -205,9 +206,9 @@ class TestImageCapability(AltitudeCase):
     def test_local_help_checks_the_turn_transport_and_refreshes_after_binary_change(self):
         binary = self.tmp / "engine"
         binary.write_text("fixture executable")
-        self.addCleanup(engines._image_cli_support.cache_clear)
-        with mock.patch.object(engines.shutil, "which", return_value=str(binary)), \
-             mock.patch.object(engines.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "--strict-config", "")) as run:
+        self.addCleanup(engines.common._image_cli_support.cache_clear)
+        with mock.patch.object(engines.common.shutil, "which", return_value=str(binary)), \
+             mock.patch.object(engines.common.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "--strict-config", "")) as run:
             # Fresh and resumed Codex turns both run `codex app-server`, so its help is the one transport check.
             self.assertTrue(engines.image_capability("codex")["available"])
             self.assertEqual([call.args[0][1:] for call in run.call_args_list], [["app-server", "--help"]])
@@ -219,15 +220,15 @@ class TestImageCapability(AltitudeCase):
             self.assertEqual(run.call_count, 2)
 
     def test_absent_and_unsupported_transport_are_explicit(self):
-        with mock.patch.object(engines.shutil, "which", return_value=None), \
-             mock.patch.object(engines.subprocess, "run") as run:
+        with mock.patch.object(engines.common.shutil, "which", return_value=None), \
+             mock.patch.object(engines.common.subprocess, "run") as run:
             self.assertFalse(engines.image_capability("claude")["available"])
             run.assert_not_called()
         binary = self.tmp / "engine"
         binary.write_text("fixture")
-        self.addCleanup(engines._image_cli_support.cache_clear)
-        with mock.patch.object(engines.shutil, "which", return_value=str(binary)), \
-             mock.patch.object(engines.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "--input-format stream-json", "")):
+        self.addCleanup(engines.common._image_cli_support.cache_clear)
+        with mock.patch.object(engines.common.shutil, "which", return_value=str(binary)), \
+             mock.patch.object(engines.common.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "--input-format stream-json", "")):
             self.assertTrue(engines.image_capability("claude")["available"])
 
 
@@ -338,7 +339,7 @@ class TestImageInbox(ImageDeliveryCase):
         hook = config.HOOKS / "inbox.py"
         for failed in (True, False):
             output = io.StringIO()
-            with mock.patch.object(engines, "image_capability", return_value={"available": not failed, "why": "Image input unavailable"}), \
+            with mock.patch.object(engines.common, "image_capability", return_value={"available": not failed, "why": "Image input unavailable"}), \
                  mock.patch.object(sys, "stdin", io.StringIO('{"hook_event_name":"PostToolUse"}')), \
                  contextlib.redirect_stdout(output):
                 try:
