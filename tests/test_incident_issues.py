@@ -85,6 +85,14 @@ class TestPublication(IncidentIssueCase):
                                    "for [project]\n[REDACTED]\nat [path]")
             with self.assertRaisesRegex(ValueError, "operator's name"):
                 incidents.check_public("Ada Fixture")
+        # Key runs are matched from their start, flag hyphens included; other redactions keep their reach.
+        for flag in ("--password=hunter22", "-token=abcd1234", "--api-key=abcd1234"):
+            with self.subTest(flag=flag):
+                self.assertEqual(incidents.sanitize(f"ran tool {flag} then"), "ran tool [REDACTED] then")
+                with self.assertRaisesRegex(ValueError, "credential"):
+                    incidents.check_public(f"ran tool {flag}")
+        self.assertEqual(incidents.sanitize("mail (fixture.name@example.org), see repo:.altitude/state.json"),
+                         "mail ([email]), see [path]")
 
     def test_a_fault_detail_with_its_own_bullet_line_stays_one_field(self):
         incident, result = self.file(what="output was\n- issue: private log line\n- status: closed")

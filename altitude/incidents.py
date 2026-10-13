@@ -336,7 +336,7 @@ def _system_section(system: str) -> str:
 _CREDENTIAL = re.compile(
     r"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[A-Z0-9]{16})\b"
     r"|-----BEGIN [\w ]*PRIVATE KEY-----(?:[\s\S]*?-----END [\w ]*PRIVATE KEY-----)?"
-    r"|\b(?:authorization\s*[:=]\s*(?:bearer|basic)\s+|(?<![\w-])(?:[\w-]*(?:token|password|secret|api[_-]?key))[\"']?\s*[:=]\s*[\"']?)"
+    r"|(?:\bauthorization\s*[:=]\s*(?:bearer|basic)\s+|(?<![\w-])[\w-]*(?:token|password|secret|api[_-]?key)[\"']?\s*[:=]\s*[\"']?)"
     r"(?!\[REDACTED\]|<REDACTED>)\S{4,}"
     r"|https?://[^\s/@:]+:[^\s/@]+@", re.I)
 _PRIVATE = re.compile(r"(?:/home/|/Users/|~/|\$HOME/|[A-Z]:\\Users\\)|\bI-\d{8}-\d{6}(?:-\d+)?\.md\b|\bincidents(?:/|\.jsonl\b)|"

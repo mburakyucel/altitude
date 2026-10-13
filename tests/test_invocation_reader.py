@@ -184,9 +184,10 @@ class TestInvocationReader(_CodexTranscriptCase):
                     self._view(raw=raw)
             record.unlink()
             S.write_json(record, current)
+        expected = transcript.activity(self.project, self.slug)
         with mock.patch.object(invocation.RuntimeInvocation, "read", replace):
-            activity = transcript.activity(self.project, self.slug)
-        self.assertNotIn("outside marker", json.dumps(activity))  # the record was parsed before its replacement
+            # A replaced record no longer withholds activity: it was parsed once, before its replacement.
+            self.assertEqual(transcript.activity(self.project, self.slug), expected)
         record.unlink()
         S.write_json(record, current)
         self.assertEqual(self._view(mode="delta", cursor=before["cursor"])["events"], [])
