@@ -127,8 +127,10 @@ Altitude-specific rules. No session rotation or extra engine policy is needed fo
 The [L2](../personas/l2.md) and [L3](../personas/l3.md) personas own role judgment and essential
 operating guidance; the [CLI reference](CLI.md) owns detailed command contracts. Global personas
 do not depend on a managed project containing Altitude's reference docs. Project rules are
-referenced each turn; personas come from the activated committed installation export, supplied
-per invocation or at fresh session creation through the existing engine loading path.
+referenced each turn: a launch asks the owner to read them, and a resume adds one line naming the
+current rules, persona and helper-persona paths to consult as needed instead of a full reread.
+Personas come from the activated committed installation export, supplied per invocation or at fresh
+session creation through the existing engine loading path.
 A native resume can retain an earlier persona, so a merged persona edit alone does not establish that
 an existing session has loaded it. The per-invocation adapter receives the current persona file on
 fresh and resumed turns; the fresh-thread adapter embeds the current contents when starting a new
@@ -163,9 +165,9 @@ keys the edit-count telemetry across worker replacements.
 ## Native helper instructions
 
 The shared [L1 persona](../personas/l1.md) describes bounded helper work and return evidence. Each
-L2 launch and resume supplies an absolute path from the activated installation's `personas/l1.md`,
-alongside the assigned worktree. L2 puts that explicit read instruction in the native helper's
-assignment and adds only task-specific context, allowed actions, exclusions and expected evidence.
+L2 launch and resume supplies an absolute path from the activated installation's `personas/l1.md`;
+a launch also names the assigned worktree, and the L2 persona holds the instruction's wording. L2 puts
+that explicit read instruction in the native helper's assignment and adds only task-specific context, allowed actions, exclusions and expected evidence.
 The helper reads the persona and repository rules before working; missing instructions go back to
 the parent. L2 verifies the result and retains decisions, publication, lifecycle and final reporting.
 The persona contents are not copied into the owner prompt or repository instruction files.
@@ -522,7 +524,10 @@ concurrent reads see complete messages. The owner receives the exact text with i
 message ID, plus the answered question's ID for a Needs you answer; it already holds the brief,
 persona and its own questions, so no question state or procedure is attached. Hooks fired inside a
 helper subagent leave the inbox to the owner. Ordinary sends do not interrupt work. The engine seam supplies the inbox at a native hook
-checkpoint when supported, or resumes the saved session after a clean CLI turn finishes. The operator's own
+checkpoint when supported. A Codex owner has no hook checkpoint, so its driver claims the waiting messages
+itself, as Send now does, and writes them into the running turn within a second of their arrival, in arrival
+order up to the first message with images. Messages it cannot take, including every message after the engine
+refuses one in that turn, wait until the turn finishes and altd resumes the saved session with them. The operator's own
 messages always arrive as a user turn, because the engine's action classifier reads only user turns as the
 user's intent (#612). At a hook checkpoint, a running Claude owner reads L3, server and other-owner messages as
 hook context and a notice naming the operator's waiting messages by ID. When it stops with only operator
@@ -975,7 +980,8 @@ requesting a live handoff, and observes the new running attempt before reporting
 
 Claude resume uses foreground `claude -p --resume` inside the task's transient unit; Codex resume
 runs `codex app-server` and resumes the thread with the inbox as its next turn, from the same task worktree.
-Both run through the job's engine driver, which keeps the engine's input open for Send now.
+Both run through the job's engine driver, which keeps the engine's input open for Send now and, on Codex, for
+the messages that arrive during the turn.
 Both engines have one contract: the persona may invoke the scoped Altitude
 CLI, and the backend applies the identity, clean-Git, isolation, and merge-policy checks relevant to each
 command and effect boundary. Claude hooks add telemetry, coordination delivery and the operator-message notice;
@@ -1074,7 +1080,7 @@ report handoff. Existing restart adoption and merge activation observe the conti
 
 ## Engine containment
 
-Every fresh and resumed owner receives the same browser capability instruction. Worker admission does
+The [L2 persona](../personas/l2.md) carries the browser capability instruction. Worker admission does
 not certify browser isolation, so verification that needs the browser's own sandbox runs through
 `alt task validate`, in a disposable container where Playwright's Chromium keeps it with
 `chromiumSandbox: true`. If the runner is unavailable or the browser refuses its sandbox there, the
@@ -1092,8 +1098,10 @@ Its current standing VM-policy grant is checked at admission and revocation stop
 confirms the recorded VM process lifetime ended and removes its disk before releasing the runner.
 That lane's Linux preflight establishes the required container and Chromium protections; it does
 not expand the fictional Mac Seatbelt harness's scope.
-The instruction takes effect on launches/resumes after normal source
-activation; running turns retain their delivered instructions. Deterministic launch fixtures prove
+The instruction takes effect as any persona change does, after normal source activation; running
+turns retain their delivered instructions. A Codex thread holds the persona from its first message, so
+each resume line directs the owner to reread the browser rules before a browser check when they are
+no longer in context. Deterministic fixtures prove the persona text and its
 delivery, not provider adherence or live browser isolation. See
 [browser verification](DEVELOPMENT.md#browser-verification).
 
@@ -1209,11 +1217,12 @@ Both engines launch L2 workers through the same transient user-unit command buil
 cgroup. Claude runs foreground `-p --output-format stream-json` inside its own unit, with its settings,
 hooks, model pin and resumable session; launch and resume stop any daemon job still bound to the task name.
 Fresh and resumed owners retain `--permission-mode auto` with the narrow `--allowedTools "Bash(alt *)"`
-allowance. Native deny/ask rules and worker confinement remain effective; Altitude's CLI and broker
-enforce role, task-attempt, merge-hold and operator-grant authority. No allowance covers other external
-commands. Running messages still arrive through the inbox hook, whose context does not establish
-operator authorization for those commands in the native classifier; that part of
-[issue #612](https://github.com/mburakyucel/altitude/issues/612) remains open.
+allowance. It matches a plain `alt` invocation only; a chained or redirected form goes to the native
+classifier, which can refuse it, so owners run each `alt` command alone. Native deny/ask rules and
+worker confinement remain effective; Altitude's CLI and broker enforce role, task-attempt, merge-hold
+and operator-grant authority. No allowance covers other external commands. Running messages still
+arrive through the inbox hook, whose context does not establish operator authorization for those
+commands in the native classifier; that part of [issue #612](https://github.com/mburakyucel/altitude/issues/612) remains open.
 Each turn has a private worker record and output log, and Stop removes the unit's descendants.
 Each Codex turn also uses this boundary,
 because altd's own `NoNewPrivileges` hardening would stop its nested bwrap from starting.

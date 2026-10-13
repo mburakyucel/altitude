@@ -1,7 +1,7 @@
 # Contributing to Altitude
 
 Altitude is early-stage, source-available software developed in the open. Start with the [README](README.md),
-[setup](docs/SETUP.md) and [architecture](docs/ARCHITECTURE.md). The project rules that every
+[setup](docs/SETUP.md) and the [overview](docs/OVERVIEW.md). The project rules that every
 change follows, including the seven review questions, are in [AGENTS.md](AGENTS.md); it is
 the same instruction file the coding agents read.
 

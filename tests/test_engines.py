@@ -186,6 +186,12 @@ print(json.dumps({"type": "result", "is_error": error, "result": detail}), flush
                     self.assertEqual(S.load_task(self.project, task["slug"])["hold_merge"], "Operator security review")
                     self.assertFalse(any(row["title"] == "Unowned task" for row in S.list_tasks(self.project)))
 
+    def test_incident_933_owner_persona_runs_alt_as_the_plain_invocation_the_allowance_matches(self):
+        persona = (config.PERSONAS / "l2.md").read_text()
+        self.assertIn("Run each `alt` command alone from your worktree as one plain invocation", persona)
+        self.assertIn("rerun the command plainly rather than reporting a fault", persona)
+        self.assertIn("file-editing method your engine provides, not an ad hoc shell or interpreter writer", persona)
+
     def test_incident_171446_provider_stream_from_real_process_preserves_result_and_error(self):
         real_popen = subprocess.Popen
         for error in (False, True):
