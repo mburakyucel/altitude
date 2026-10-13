@@ -21,10 +21,15 @@ test("unfinished held deliveries keep findings and waits without automatic appro
     await walk.open(`/projects/atlas/tasks/${slug}`);
     const chat = conversation(page);
     await walk.state(`02-${slug}-no-approval`, {
-      visible: [page.getByText("Merge held", { exact: true }).filter({ visible: true }).first(),
-        chat.getByText("Shared API remains pending", { exact: true })],
+      visible: [page.getByText(/Merge held/).filter({ visible: true }).first(),
+        chat.getByText("1 finding · 1 open, blocks merge", { exact: true })],
       hidden: [chat.getByRole("button", { name: "Approve merge", exact: true }),
         chat.getByText("Your turn · review before merge", { exact: true }), page.getByText(/Your turn · review PR/)],
+    });
+    await chat.getByRole("button", { name: "Show implementation review details", exact: true }).click();
+    await walk.state(`02b-${slug}-finding-accessible`, {
+      visible: [chat.getByText("Shared API remains pending", { exact: true })],
+      hidden: [chat.getByRole("button", { name: "Approve merge", exact: true })],
     });
     const task = await request.get(`/api/task/atlas/${slug}`).then(response => response.json());
     expect(task.hold_merge).toBe("Operator reviews the finished feature");
