@@ -104,8 +104,7 @@ test("the New tasks button picks what every project's new tasks start on", async
   await walk.state("03-new-tasks-saved", { visible: [button], hidden: [panel] });
   expect(await coordinator(request)).toEqual(before);
   // On a phone the same button also leads a project's Work; on a desktop the rail carries it beside Work.
-  await walk.open("/projects/atlas");
-  if (phone) await page.getByRole("navigation", { name: "Primary", exact: true }).getByRole("link", { name: "Work", exact: true }).click();
+  await walk.open(phone ? "/projects/atlas?tab=work" : "/projects/atlas");
   await walk.state("04-beside-work", { visible: [page.getByRole("region", { name: "Work", exact: true }), button], hidden: [] });
 });
 
