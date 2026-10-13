@@ -942,6 +942,8 @@ unchanged selection creates no request. Same-engine changes start a fresh sessio
 patient checkpoint and confirmed termination. This selection is local to the new attempt and its
 ordinary resumes; it changes no global/project settings or explicit pin. Pending questions and holds
 stay open, and confirmed quota exhaustion uses saved progress without requiring a fresh note.
+While a fresh attempt is queued, the previous launch's engine, model and effort remain applied
+facts; only a successful replacement launch updates them. These facts do not pin Auto routing.
 `--request <id> --cancel` cancels while the request waits and sends a correction to the same owner.
 Once the daemon records its stopping phase, cancellation refuses. The daemon stops the entire owned
 job and requires confirmed termination before requeue. A restart retains the request and readiness
