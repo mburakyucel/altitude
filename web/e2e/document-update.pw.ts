@@ -3,6 +3,10 @@ import { test } from "./fixtures";
 import { walkthrough } from "./walkthrough";
 
 test.use({ serviceScript: "document-update-service.py" });
+test.beforeAll(async ({ browser }, info) => {
+  await info.attach("document-browser.json", { contentType: "application/json",
+    body: JSON.stringify({ browser: info.project.use.browserName, version: browser.version() }) });
+});
 type Entry = "shown" | "file" | "system";
 const entries: Entry[] = ["shown", "file", "system"];
 const draft = (page: Page, entry: Entry) => page.getByRole("textbox", {
@@ -67,7 +71,7 @@ for (const entry of entries) {
         await walk.state(`${entry}-${asset}-readable-source`, {
           visible: [notice, reload, page.locator(".document-source")], hidden: [router],
         });
-        await expect(page.locator(".document-source")).toHaveText(view.source);
+        expect(await page.locator(".document-source").textContent()).toBe(view.source);
         await expect(page.locator(".document-source a, .document-source img, .document-source button")).toHaveCount(0);
         const warning = page.getByText("Reloading clears text you have typed but not sent.", { exact: true });
         if (entry === "file") await expect(warning).toBeHidden();
@@ -122,7 +126,7 @@ for (const entry of entries) {
       visible: [page.locator(".document-source"), page.getByRole("button", { name: "Reload page", exact: true })],
       hidden: [page.getByText("Unexpected Application Error!", { exact: true })],
     });
-    await expect(page.locator(".document-source")).toHaveText(view.source);
+    expect(await page.locator(".document-source").textContent()).toBe(view.source);
     expect((await request.post("/fixture/back")).ok()).toBe(true);
     await page.getByRole("button", { name: "Reload page", exact: true }).click();
     if (entry === "system") await page.getByRole("button", { name: "Show", exact: true }).click();
