@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent, ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { StatusMark, BusyLabel } from "../components/StatusMark";
-import { checkTrust, pairDevice, readAccess, UNPAIRED_EVENT } from "../data/api";
+import { ApiError, checkTrust, pairDevice, readAccess, UNPAIRED_EVENT } from "../data/api";
 import type { Access, Trust } from "../data/api";
 import { forgetVisits } from "../components/visitMemory";
 import { BrandMark } from "./BrandMark";
+import type { PairingLink } from "./pairingLink";
 import "./pairing.css";
 
 const SETUP_GUIDE = "https://github.com/mburakyucel/altitude/blob/main/docs/SETUP.md#trust-https-on-each-device";
@@ -50,12 +51,12 @@ function Step({ mark, title, aside, children }: { mark: Mark; title: string; asi
 
 /** Where to download the certificate and how this kind of device installs and trusts it. The SHA-256 to compare
  * comes from the computer running Altitude, never from this page, which a forged one could imitate. */
-function Instructions({ kind, name }: { kind: Kind; name: string }) {
+function Instructions({ kind, name, installLink }: { kind: Kind; name: string; installLink: boolean }) {
   if (kind === "apple") {
     return <ol className="pair-instructions">
       <li><a className="btn btn-primary" href="/api/certificate/altitude.mobileconfig">Download the profile</a></li>
       <li>Open Settings › Profile Downloaded. It must list one Certificate, “{name}”. Tap More Details: the SHA-256 must end
-        with the 8 pairs <code>alt pair</code> shows on your computer. Anything else: tap Remove and stop. Otherwise tap Install.</li>
+        with the 8 pairs the installer or <code>alt pair</code> shows on your computer. Anything else: tap Remove and stop. Otherwise tap Install.</li>
       <li>Turn it on: Settings › General › About › Certificate Trust Settings › “{name}”.</li>
       <li>Come back here; this checks itself.</li>
     </ol>;
@@ -64,15 +65,16 @@ function Instructions({ kind, name }: { kind: Kind; name: string }) {
     return <ol className="pair-instructions">
       <li><a className="btn btn-primary" href="/api/certificate/altitude.crt">Download the certificate</a></li>
       <li>Install it: Settings › Security › Encryption &amp; credentials › Install a certificate › CA certificate (names vary).
-        Its name must be “{name}” and its SHA-256 must end with the 8 pairs <code>alt pair</code> shows on your computer; otherwise stop.</li>
+        Its name must be “{name}” and its SHA-256 must end with the 8 pairs the installer or <code>alt pair</code> shows on your computer; otherwise stop.</li>
       <li>Come back here; this checks itself.</li>
     </ol>;
   }
   return <ol className="pair-instructions">
     <li><a className="btn btn-primary" href="/api/certificate/altitude.crt">Download the certificate</a></li>
-    <li>Check its name is “{name}” and its SHA-256 ends with the 8 pairs <code>alt pair</code> shows. Import it as a trusted
-      authority in this browser or system (macOS: Keychain Access › login, set Secure Sockets Layer to Always Trust), then
-      restart the browser and reopen this page.</li>
+    <li>Check its name is “{name}” and its SHA-256 ends with the 8 pairs the installer or <code>alt pair</code> shows. Import it as a trusted
+      authority in this browser or system (macOS: Keychain Access › login, set Secure Sockets Layer to Always Trust).</li>
+    <li>{installLink ? <>Restart the browser, then reopen the original private link from the installer. If it has expired, run <code>~/.local/bin/alt pair</code> for a new code.</>
+      : <>Restart the browser and reopen this page.</>}</li>
     <li><a className="link" href={SETUP_GUIDE} target="_blank" rel="noopener noreferrer">Setup guide</a></li>
   </ol>;
 }
@@ -117,14 +119,57 @@ const pill: Record<TrustState["status"], { label: string; tone?: string }> = {
 const trustMark: Record<TrustState["status"], Mark> = { checking: "checking", untrusted: "pending", manual: "pending", unknown: "problem", trusted: "done" };
 
 /** Pair this device (SPEC.md §3.16): the one screen an unpaired browser gets. */
-function PairScreen({ trust, removed, onPaired }: { trust: Trust; removed: boolean; onPaired: () => void }) {
+function PairScreen({ trust, removed, onPaired, pairingLink }: { trust: Trust; removed: boolean; onPaired: () => void; pairingLink: PairingLink }) {
   const [kind] = useState(deviceKind);
   const [trusted, check, confirm] = useTrust(trust);
   const [code, setCode] = useState("");
-  const [state, setState] = useState<{ status: "idle" | "pairing" } | { status: "failed"; error: string }>({ status: "idle" });
+  const pending = useRef(pairingLink);
+  const live = useRef(true);
+  const [state, setState] = useState<{ status: "idle" } | { status: "pairing"; link?: true } | { status: "failed"; error: string }>(
+    pairingLink && "invalid" in pairingLink
+      ? { status: "failed", error: "This pairing link is not valid. Run ~/.local/bin/alt pair on the computer running Altitude for a new code." }
+      : { status: "idle" });
   const secure = trust.https || trust.local;
+  const linkReady = pending.current && "code" in pending.current && !!pending.current.code;
+  const linkBusy = (state.status === "pairing" && state.link) || (linkReady && trust.https && trusted.status === "trusted");
+  const discardLink = () => {
+    if (pending.current && "code" in pending.current) pending.current.code = "";
+    pending.current = null;
+  };
+  useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+      // StrictMode immediately sets up the same page again; actual disposal clears its pending capability.
+      queueMicrotask(() => { if (!live.current) discardLink(); });
+    };
+  }, []);
+  // Claim the capability before the request: StrictMode or a trust-state rerender cannot redeem it twice.
+  useEffect(() => {
+    if (!trust.https || trusted.status !== "trusted" || !pending.current || !("code" in pending.current) || !pending.current.code) return;
+    const code = pending.current.code;
+    discardLink();
+    setState({ status: "pairing", link: true });
+    void (async () => {
+      try {
+        await pairDevice(code);
+        if (live.current) onPaired();
+      } catch (error) {
+        // A lost reply may already have set the cookie. Observation reconciles it without another pair POST.
+        const observed = await readAccess().catch(() => null);
+        if (!live.current) return;
+        if (observed?.paired) { onPaired(); return; }
+        const recovery = "Run ~/.local/bin/alt pair on the computer running Altitude for a new code.";
+        setState({ status: "failed", error: error instanceof ApiError && error.status === 410
+          ? `This pairing link has expired or was already used. ${recovery}`
+          : error instanceof ApiError ? `${error.message} ${recovery}`
+          : "Could not confirm pairing. Reopen the install link, or run ~/.local/bin/alt pair for a new code." });
+      }
+    })();
+  }, [trust.https, trusted.status, onPaired]);
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
+    discardLink();
     setState({ status: "pairing" });
     try {
       await pairDevice(code);
@@ -149,6 +194,7 @@ function PairScreen({ trust, removed, onPaired }: { trust: Trust; removed: boole
     input.setSelectionRange(at, at);
     if (next === code) return;
     setCode(next);
+    discardLink();
     if (state.status === "failed") setState({ status: "idle" });
   };
   const name = trust.certificate?.name ?? "";
@@ -168,13 +214,14 @@ function PairScreen({ trust, removed, onPaired }: { trust: Trust; removed: boole
             <p className="pair-lead">Altitude can’t check this automatically. Open this address in a new Private tab; if it loads without a warning, tap Continue.</p>
             <button type="button" className="btn btn-primary" onClick={confirm}>Continue</button>
           </> : <>
-            <Instructions kind={kind} name={name} />
+            <Instructions kind={kind} name={name} installLink={!!linkReady} />
             {trusted.status === "untrusted" ? <p role="status" className="text-meta">{untrusted[kind]}</p> : null}
             {trusted.status === "unknown" ? <p role="alert" className="text-meta text-danger">Couldn’t check.</p> : null}
             <button type="button" className="btn" disabled={trusted.status === "checking"} onClick={check}>Check again</button>
           </>}
         </Step> : null}
-        {secure && trusted.status === "trusted" ? <Step mark={state.status === "pairing" ? "checking" : state.status === "failed" ? "problem" : "pending"} title="Pair">
+        {secure && trusted.status === "trusted" ? <Step mark={state.status === "pairing" || linkBusy ? "checking" : state.status === "failed" ? "problem" : "pending"} title="Pair">
+          {linkBusy ? <StatusMark label="Pairing…" /> :
           <form className="pair-form" onSubmit={(event) => void onSubmit(event)}>
             <p className="pair-lead">Enter the code from <code>alt pair</code>, or from Settings › Devices on a paired device.</p>
             <label className="pair-field">Pairing code
@@ -187,7 +234,7 @@ function PairScreen({ trust, removed, onPaired }: { trust: Trust; removed: boole
               <BusyLabel busy={state.status === "pairing"} label="Pair" working="Pairing…" />
             </button>
             <p className="text-meta text-muted">Each code works once, for 10 minutes. This device stays paired until you remove it in Settings.</p>
-          </form>
+          </form>}
         </Step> : null}
       </ol>
     </section>
@@ -196,10 +243,30 @@ function PairScreen({ trust, removed, onPaired }: { trust: Trust; removed: boole
 
 /** Shows the app to a paired browser and the pairing screen to any other. Any API reply of 401 means this
  * browser lost its pairing (removed in Settings, or its cookie expired), so it returns here at once. */
-export default function PairGate({ children }: { children: ReactNode }) {
+export default function PairGate({ children, pairingLink = null }: { children: ReactNode; pairingLink?: PairingLink }) {
   const client = useQueryClient();
   const access = useQuery({ queryKey: ["access"], queryFn: readAccess, staleTime: Infinity, refetchOnWindowFocus: false, retry: 1 });
   const [removed, setRemoved] = useState(false);
+  const link = useRef(pairingLink);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      queueMicrotask(() => {
+        if (!mounted.current) {
+          if (link.current && "code" in link.current) link.current.code = "";
+          link.current = null;
+        }
+      });
+    };
+  }, []);
+  useEffect(() => {
+    if (access.data?.paired) {
+      if (link.current && "code" in link.current) link.current.code = "";
+      link.current = null;
+    }
+  }, [access.data?.paired]);
   useEffect(() => {
     const unpaired = () => {
       if (client.getQueryData<Access>(["access"])?.paired) setRemoved(true);
@@ -217,7 +284,8 @@ export default function PairGate({ children }: { children: ReactNode }) {
     </main>;
   }
   if (!access.data.paired) {
-    return <PairScreen trust={access.data.trust} removed={removed} onPaired={() => {
+    return <PairScreen trust={access.data.trust} removed={removed} pairingLink={link.current} onPaired={() => {
+      link.current = null;
       // Replies cached while unpaired were refusals; the app starts fresh as the paired device, without kept drafts.
       client.removeQueries({ predicate: (query) => query.queryKey[0] !== "access" });
       forgetVisits();

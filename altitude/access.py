@@ -117,12 +117,19 @@ def design_pass_valid(project: str, presented: str) -> bool:
             and known(device_id))
 
 
-def issue_code() -> dict:
-    """A fresh one-time code; it replaces any earlier one."""
+def issue_code(*, first_browser: bool = False) -> dict | None:
+    """A fresh one-time code; manual issuance replaces any earlier one.
+
+    First-install issuance leaves existing devices and an unexpired code intact. Its eligibility
+    and write share the redemption lock, so manual issuance or redemption cannot cross them.
+    """
     raw = "".join(secrets.choice(CODE_ALPHABET) for _ in range(CODE_LENGTH))
     expires = _now() + timedelta(minutes=CODE_MINUTES)
     with _locked():
         record = _read()
+        active = record.get("code")
+        if first_browser and (record["devices"] or (active and datetime.fromisoformat(active["expires"]) > _now())):
+            return None
         record["code"] = {"hash": _hash(raw), "expires": expires.isoformat(), "wrong": 0}
         _write(record)
     return {"code": f"{raw[:4]}-{raw[4:]}", "expires": expires.isoformat(), "minutes": CODE_MINUTES}

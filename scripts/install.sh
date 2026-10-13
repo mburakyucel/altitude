@@ -145,7 +145,7 @@ main() {
     "$python" -B "$workdir/install.py" --archive "$workdir/$ARCHIVE" --sha256 "$ARCHIVE_SHA256" > "$workdir/result.json" ||
         stop "the installer stopped with the message above." "Your existing data and any previous installation are kept."
 
-    "$python" - "$workdir/result.json" <<'EOF'
+    "$python" - "$workdir/result.json" "$REPOSITORY/blob/$VERSION/docs/SETUP.md#trust-https-on-each-device" <<'EOF'
 import json, os, sys
 result = json.load(open(sys.argv[1]))
 home = os.path.expanduser("~")
@@ -155,21 +155,33 @@ print(f"\nAltitude {result['version']} is installed and its service is {result['
 print(f"  Address: {result['url']}")
 if trust.get("ca_sha256"):
     print(f"  Certificate authority: {tilde(trust['ca_cert'])}")
+    print(f"  Certificate name: {trust['ca_name']}")
     print(f"  Its fingerprint: {trust['ca_sha256'].split('=', 1)[-1]}")
 if result.get("lingering"):
     print(f"\n{result['lingering']['detail']}")
 print("\nNext:")
+if trust.get("ca_sha256"):
+    print("  1. Trust the certificate authority in your browser, comparing its name and fingerprint above:")
+else:
+    print("  1. Verify the HTTPS address opens in a new Private tab without a certificate warning:")
+print(f"       {sys.argv[2]}")
+pairing = result.get("pairing")
+if pairing:
+    print("  2. Open this private link to pair your browser and continue to First run:")
+    print(f"       {pairing['url']}")
+    print(f"     Works once, for {pairing['minutes']} minutes. Keep it private.")
+    print("     If it expires, run ~/.local/bin/alt pair.")
+else:
+    print("  2. Open the address; First run walks you through the rest.")
+    print("     If it asks for a code, use your existing code or run ~/.local/bin/alt pair")
+    print("     for a new one when you are ready to replace the existing code.")
+if result.get("pairing_error"):
+    print(f"     {result['pairing_error']}")
+print("\nTerminal setup (optional now):")
+if os.path.join(home, ".local/bin") not in os.environ.get("PATH", "").split(os.pathsep):
+    print('  Put alt on your PATH (add this line to your shell profile too):\n    export PATH="$HOME/.local/bin:$PATH"')
+print("  Check tools and sign-ins with alt doctor.")
 EOF
-    step=1
-    case ":$PATH:" in
-        *":$HOME/.local/bin:"*) ;;
-        *) printf '  %s. Put alt on your PATH (add this line to your shell profile too):\n       export PATH="$HOME/.local/bin:$PATH"\n' "$step"
-           step=$((step + 1)) ;;
-    esac
-    printf '  %s. Run: alt doctor\n' "$step"
-    printf '  %s. Trust the certificate authority on each device, comparing the fingerprint above:\n       %s\n' \
-        "$((step + 1))" "$REPOSITORY/blob/$VERSION/docs/SETUP.md#trust-https-on-each-device"
-    printf '  %s. Open the address; First run walks you through the rest.\n' "$((step + 2))"
 }
 
 main "$@"

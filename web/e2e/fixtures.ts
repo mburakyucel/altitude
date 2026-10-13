@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { createInterface } from "node:readline";
 import { expect, test as base } from "@playwright/test";
 
-type Service = { url: string; device: string };
+type Service = { url: string; device: string; certificate?: string; pairing?: string; output?: string; machine?: string };
 
 /** Every spec owns a disposable real API/storage process serving this checkout's built bundle. Its browser is
  * paired with that service unless a spec sets `paired: false` to walk the pairing screen itself. */
@@ -34,7 +34,7 @@ export const test = base.extend<{ altitude: Service; service: string; scenario: 
       const data = JSON.parse(ready[0] as string);
       expect(data.disposable).toBe(true);
       expect(new URL(data.url).hostname).toBe("127.0.0.1");
-      await use({ url: data.url as string, device: data.device as string });
+      await use(data as Service);
       expect(child.exitCode, `Disposable service died during the test: ${stderr}`).toBeNull();
       expect(child.signalCode, "Disposable service was killed during the test").toBeNull();
     } finally {
@@ -54,7 +54,8 @@ export const test = base.extend<{ altitude: Service; service: string; scenario: 
   baseURL: async ({ service }, use) => { await use(service); },
   // API calls made by a spec itself act as a paired device.
   request: async ({ playwright, altitude }, use) => {
-    const request = await playwright.request.newContext({ baseURL: altitude.url, extraHTTPHeaders: { Cookie: `altitude_device=${altitude.device}` } });
+    const request = await playwright.request.newContext({ baseURL: altitude.url,
+      extraHTTPHeaders: altitude.machine ? { "X-Altitude-Key": altitude.machine } : { Cookie: `altitude_device=${altitude.device}` } });
     await use(request);
     await request.dispose();
   },
