@@ -98,7 +98,6 @@ class RuntimeInvocation:
     root: Path
     worker: str
     record: dict
-    record_identity: tuple[int, int]
     stdout_identity: tuple[int, int] | None = None
 
     @property
@@ -125,10 +124,6 @@ class RuntimeInvocation:
             reader.__exit__(None, None, None)
             raise InvocationRefused("invocation leaf replaced")
         return reader, fd, info
-
-    def _record_check(self) -> None:
-        reader, _, _ = self._open(f"{self.worker}.json", self.record_identity)
-        reader.__exit__(None, None, None)
 
     def discover_stdout(self, *, header: bool) -> str | None:
         """Read only the historical initialization header; save the opened identity."""
@@ -170,7 +165,6 @@ class RuntimeInvocation:
     def read(self) -> tuple[bytes, os.stat_result]:
         if self.stdout_identity is None:
             raise FileNotFoundError("invocation stdout unavailable at discovery")
-        self._record_check()
         reader, fd, info = self._open(f"{self.worker}.stdout.jsonl", self.stdout_identity)
         try:
             with os.fdopen(os.dup(fd), "rb") as stream:
@@ -205,7 +199,6 @@ def invocation(job: int, root: Path, worker: str) -> RuntimeInvocation | None:
     try:
         storage._component(worker)
         with storage.regular_reader(job, f"{worker}.json") as fd:
-            info = os.fstat(fd)
             with os.fdopen(os.dup(fd), "r", encoding="utf-8") as stream:
                 text = stream.read()
     except FileNotFoundError:
@@ -220,7 +213,7 @@ def invocation(job: int, root: Path, worker: str) -> RuntimeInvocation | None:
         raise ValueError(f"corrupt JSON in {root / (worker + '.json')}: {exc}") from exc
     if not isinstance(record, dict):
         return None
-    return RuntimeInvocation(job, root, worker, record, _identity(info))
+    return RuntimeInvocation(job, root, worker, record)
 
 
 def replaced_after_projection(before: list, after: list) -> bool:
@@ -232,16 +225,10 @@ def replaced_after_projection(before: list, after: list) -> bool:
     for source, _ in before:
         if not isinstance(source, RuntimeInvocation):
             continue
-        try:
-            source._record_check()
-        except OSError:
-            pass  # An ordinary disappearance is observed by the next request.
         source.stat()
         fresh = current.get(str(source))
         if fresh is None:
             continue
-        if fresh.record_identity != source.record_identity:
-            return True
         if (source.stdout_identity is not None and fresh.stdout_identity is not None
                 and fresh.stdout_identity != source.stdout_identity):
             return True

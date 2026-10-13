@@ -78,9 +78,21 @@ elif kind == 'serial':
 elif kind == 'failure':
     assert incidents.failure_line('0' * size) == '0' * 300
     assert incidents.failure_line('word' * size + '":') == ''
+elif kind == 'redaction':
+    path, email = incidents._REDACTIONS[1][0], incidents._REDACTIONS[3][0]
+    assert not incidents._CREDENTIAL.search('a-' * size)
+    assert incidents._CREDENTIAL.search('a-' * size + 'token=FICTION1234')
+    assert not path.search('x' * size)
+    assert path.search('x' * size + '/.altitude/state.json')
+    assert not email.search('a' * size) and not email.search('a.' * size)
+    assert email.search('a.' * size + 'a@example.org')
+    headers = size * 4 // 27  # quadratic before: about a second at a quarter of this
+    assert incidents.sanitize('-----BEGIN PRIVATE KEY-----' * headers).count('[REDACTED]') == headers
+    for text in ('-----BEGIN PRIVATE KEY-----' + '-' * size, ('-----BEGIN PRIVATE KEY-----\\n' + 'Q' * 64 + '\\n') * (size // 92)):
+        assert incidents._CREDENTIAL.search(text) and 'QQQQ' not in incidents.sanitize(text)
 """
         root = Path(__file__).resolve().parent.parent
-        for kind in ("labels", "inline", "recommendation", "serial", "failure"):
+        for kind in ("labels", "inline", "recommendation", "serial", "failure", "redaction"):
             for size in (16384, 65536):
                 with self.subTest(kind=kind, size=size):
                     completed = subprocess.run([sys.executable, "-B", "-c", code, str(size), kind],

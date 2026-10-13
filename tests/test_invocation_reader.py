@@ -44,32 +44,43 @@ class TestInvocationReader(_CodexTranscriptCase):
                             + json.dumps({"type": "item.completed", "item": {
                                 "id": "r", "type": "agent_message", "text": "first"}}) + "\n")
         original = transcript._projection
-        for leaf in (record, self.new):
-            for raw, mode in ((False, "initial"), (True, "initial"), (True, "record")):
-                with self.subTest(leaf=leaf.name, raw=raw, mode=mode):
-                    baseline = self._view(raw=raw)
-                    key = (str(config.project_dir(self.project)), self.slug, "codex", "thread-1", 1, raw)
-                    index = transcript._indexes[key]
-                    before = (index.epoch, index.version, index.fingerprint, dict(index.rows), dict(index.sources))
-                    row = next(row for row in baseline["events"] if row["source"] == "codex" and row["kind"] == "message")
-                    def swap(*args, **kwargs):
-                        projected = original(*args, **kwargs)
-                        temp = leaf.with_name("replacement.tmp")
-                        if leaf == record and mode == "record":
-                            changed = dict(source_record, session_id="different-thread")
-                            temp.write_text(json.dumps(changed))
-                        else:
-                            temp.write_bytes(leaf.read_bytes())
-                        temp.replace(leaf)
-                        return projected
-                    with mock.patch.object(transcript, "_projection", swap):
-                        with self.assertRaises(transcript.TranscriptAccessError):
-                            self._view(raw=raw, mode=mode, record=row["id"] if mode == "record" else "")
-                    self.assertEqual((index.epoch, index.version, index.fingerprint,
-                                      dict(index.rows), dict(index.sources)), before)
-                    if leaf == record and mode == "record":
-                        S.write_json(record, source_record)
+        for raw, mode in ((False, "initial"), (True, "initial"), (True, "record")):
+            with self.subTest(raw=raw, mode=mode):
+                baseline = self._view(raw=raw)
+                key = (str(config.project_dir(self.project)), self.slug, "codex", "thread-1", 1, raw)
+                index = transcript._indexes[key]
+                before = (index.epoch, index.version, index.fingerprint, dict(index.rows), dict(index.sources))
+                row = next(row for row in baseline["events"] if row["source"] == "codex" and row["kind"] == "message")
+                def swap(*args, **kwargs):
+                    projected = original(*args, **kwargs)
+                    temp = self.new.with_name("replacement.tmp")
+                    temp.write_bytes(self.new.read_bytes())
+                    temp.replace(self.new)
+                    return projected
+                with mock.patch.object(transcript, "_projection", swap):
+                    with self.assertRaises(transcript.TranscriptAccessError):
+                        self._view(raw=raw, mode=mode, record=row["id"] if mode == "record" else "")
+                self.assertEqual((index.epoch, index.version, index.fingerprint,
+                                  dict(index.rows), dict(index.sources)), before)
         self.assertIn("first", json.dumps(self._view()))
+
+    def test_altitude_rewriting_the_worker_record_during_projection_still_publishes(self):
+        # Altitude rewrites a worker's record at launch, model observation and stop; the stdout identity alone
+        # decides what may be published.
+        record = self.root / "w2.json"
+        source_record = S.read_json(record)
+        source_record.update(engine="codex", session_id="thread-1")
+        S.write_json(record, source_record)
+        self.new.write_text(json.dumps({"type": "thread.started", "thread_id": "thread-1"}) + "\n"
+                            + json.dumps({"type": "item.completed", "item": {
+                                "id": "r", "type": "agent_message", "text": "first"}}) + "\n")
+        original = transcript._projection
+        def rewrite(*args, **kwargs):
+            projected = original(*args, **kwargs)
+            S.write_json(record, dict(source_record, input_delivered=True))
+            return projected
+        with mock.patch.object(transcript, "_projection", rewrite):
+            self.assertIn("first", json.dumps(self._view(raw=True)))
 
     def test_unavailable_at_discovery_cannot_consume_late_stdout(self):
         record = self.root / "w2.json"
@@ -173,9 +184,11 @@ class TestInvocationReader(_CodexTranscriptCase):
                     self._view(raw=raw)
             record.unlink()
             S.write_json(record, current)
+        expected = transcript.activity(self.project, self.slug)
+        self.assertEqual(expected["state"], "available")
         with mock.patch.object(invocation.RuntimeInvocation, "read", replace):
-            activity = transcript.activity(self.project, self.slug)
-        self.assertEqual(activity["state"], "unavailable")
+            # A replaced record no longer withholds activity: it was parsed once, before its replacement.
+            self.assertEqual(transcript.activity(self.project, self.slug), expected)
         record.unlink()
         S.write_json(record, current)
         self.assertEqual(self._view(mode="delta", cursor=before["cursor"])["events"], [])
