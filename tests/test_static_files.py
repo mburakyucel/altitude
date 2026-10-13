@@ -252,6 +252,22 @@ class StaticFiles(AltitudeCase):
             self.assertTrue(all(status == 200 and data == expected for status, _, data in results))
             self.assertEqual(len(server._gzip_cache), 1)
 
+    def test_hardlink_metadata_change_during_compression_keeps_verified_response(self):
+        # Build snapshots share immutable bytes by hardlink. Creating another snapshot changes
+        # ctime while gzip works, without changing the bytes opened by this request.
+        original = server.gzip.compress
+        sibling = self.tmp / "snapshot.js"
+        def compressed(data, **kwargs):
+            os.link(self.asset, sibling)
+            return original(data, **kwargs)
+        expected = self.asset.read_bytes()
+        with mock.patch.object(server.gzip, "compress", side_effect=compressed):
+            status, _, data = self.request("/assets/app.js", True)
+        self.assertEqual((status, data), (200, expected))
+        self.assertNotIn(self.asset, server._gzip_cache)
+        self.assertEqual(self.request("/assets/app.js", True)[2], expected)
+        self.assertIn(self.asset, server._gzip_cache)
+
     def test_nonregular_substitution_and_read_failures_close_all_descriptors(self):
         original_open, original_dup, original_close, original_stat = os.open, os.dup, os.close, os.fstat
         for failure in ("fifo", "stat", "fdopen", "read", "close"):
