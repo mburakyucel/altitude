@@ -149,13 +149,20 @@ state and worker/session identity, refuses a stale target, and treats a retry of
 request as idempotent while the terminal receipt still matches; an intervening lifecycle gets a new
 identity-fenced request before altd relaunches, stops, or removes a worker.
 `alt task handoff <slug> --engine <engine> --attempt <N> --reason '…'` uses this same coordinator
-transport and daemon request for an exited owner blocked by worker death or a recognized usage
-limit. It fences the observed attempt, worker/session and block, refuses live workers, active claims
-and explicit pins, and requeues the same task. Its `next_engine` confines the next launch to that
+transport and daemon request for a running owner, an operator/L3-stopped owner, or one blocked by
+worker death or a recognized usage limit. The running owner receives a native instruction to refresh
+`progress.md` and write a request/attempt/worker-bound readiness file; no updated owner CLI is required.
+The daemon waits without a timeout. Confirmed exit, a recorded usage limit, existing Stop or explicit
+`--now` permits transfer using saved context. `--request <id> --cancel` keeps the current owner until
+the stopping phase commits. Neither silence nor network failure forces a switch. The entire worker
+job must be confirmed stopped before requeue. The durable request fences the observed attempt,
+worker/session and block, refuses active claims/reviews and explicit pins, and retains its receipt
+across restart. Its `next_engine` confines the next launch to that
 engine's configured options and is consumed when dispatch binds the fresh attempt. Pins and
 availability are checked again before execution and launch. `route.pick_task` supplies the same
 target-aware availability and pin explanation to dispatch and the queue. A fresh attempt clears current
-verification while retaining prior reports and delivery history. Ordinary resume remains unchanged.
+verification while retaining prior reports and delivery history. Handoff ignores new-task model choices
+and reports whether a fresh handoff note was obtained. Ordinary resume remains unchanged.
 The attempt number fences every L2 command to the current attempt: an L2 may reply, block, complete,
 resolve a dilemma against its source message, and land only its own task.
 
@@ -1598,6 +1605,10 @@ same project-bound coordinator transport. The task's `ci_recheck` record binds i
 worker/session and lifecycle request identities, selected run, due time, budgets, evidence and L3
 receipt. The existing tick/keyed executor owns IO; `resume_after` and `daemon_request` retain their
 ordinary lifecycle meaning. A lifecycle change invalidates further probe actions.
+L3 reports a schedule in project chat or retains it in project tracking, without a task-message
+acknowledgement that wakes the blocked owner and invalidates its probe. Necessary coordination
+that changes lifecycle replaces the old promise with a named next actor and trigger; a renewed CI
+wait needs registration against the current block and verification of the saved next action/time.
 The daemon prefers a relevant fresh run of the same workflow, branch, event and PR identity from
 the latest twenty runs. Otherwise a probe on a fault-blocked task submits one rerun of the selected
 project-origin run after persisting its baseline attempt and submission intent; a probe on a task
@@ -2807,30 +2818,60 @@ There is no project inbox file and no `fyis` in the digest or overview.
 ### Voice backend
 
 Voice transcription sits behind the capability seam as one machine setting, `voice`, in the private
-settings file: `host` or `browser`. Without a saved choice the backend is `host` when this release's
+settings file: `host`, `browser`, or a tagged service object containing its URL, optional key/model
+and an opaque random selection identity. Without a saved choice the backend is `host` when this release's
 speech manifest names a runtime this computer can run, and `browser` elsewhere.
 `GET /api/voice` reports the backend, an opaque selection identity over the backend and, for `host`,
-the pinned runtime, and `host`, where host voice stands on this computer. `alt machine set --voice`
+the installation identity, and `host`, where host voice stands on this computer. Supported runtime
+replacement preserves that identity; removal invalidates it. `alt machine set --voice`
 requests a change through the same durable request that carries `wip`; `--unset-voice` returns to the
 default.
 
 `/settings` shows a compact Voice input summary under This machine and read-only connection details
-(the browser's current origin/HTTPS state and configured operator). `/settings/voice` holds the two
-choices, This computer and Browser recognition, each saved immediately. Project three-dot menus and the
-desktop operator row open Settings. `POST /api/voice` saves `{backend, selection}` through the same
+(the browser's current origin/HTTPS state and configured operator). `/settings/voice` holds three
+choices, This computer, Browser recognition and Your speech service, with explicit Save/Cancel. Project three-dot menus and the
+desktop operator row open Settings. `POST /api/voice` saves `{backend, selection}` and, for service,
+`url`, optional `key`/`model` and `remove_key`, from a paired same-origin page through the same
 durable request/apply path as the CLI, with no restart or provider probe; a selection that no longer
 matches the saved one is refused (409) and asks the person to reload settings. Failed saves leave the
 persisted choice unchanged. Fresh settings reads update the form as well as the composer's selection.
-First run offers the same choice as its Voice step (see the design spec §3.12); a setup failure there
+First run offers built-in or browser recognition in its Voice step (see the design spec §3.12); a setup failure there
 never blocks onboarding.
 
-Altitude sends no recording to a speech service of its own configuration. On start,
-`dispatch.forget_speech_service()` deletes a stored speech-service setting and any pending or applied
-`voice-request.json` naming one, with its key, under the projects lock, and appends one event without
-URL or key; a machine with nothing stale is left untouched, so the step is idempotent. The machine then
-uses the default. Phone access uses an explicitly configured private HTTPS address whose certificate
+On start, `dispatch.forget_speech_service()` deletes only untagged legacy service settings and
+receipts, including their keys. New deliberate service configurations carry `backend: service`
+and survive startup. No legacy credentials are restored. Pending settings requests retain the key
+only until apply completes; terminal receipts replace secret-bearing fields with a backend-only
+projection. Events are projected before writing. A setting change compares the expected selection
+under the settings lock, and replacing a service with host/browser deletes its details.
+Phone access uses an explicitly configured private HTTPS address whose certificate
 covers that address. Safari can use the microphone after the CA is trusted on the phone; typing
 remains available without voice.
+
+#### Operator-supplied service
+
+Paired Settings reads expose URL/model/key-present, never the key. Machine output exposes the backend
+only. Before capturing service audio, the browser reads the current selection and paired owner;
+both are checked again before accepting and forwarding `POST /api/voice/service`, and before the
+server releases its result. Local settings and unpairing events also invalidate pending captures.
+Saving URL/model/key changes the service selection identity independently
+of the built-in installation identity. Re-pairing or selection changes invalidate unfinished work.
+
+The browser retains raw mono 16 kHz signed 16-bit PCM in page memory until Stop/Send, at most
+19,200,000 bytes per capture and two captures including a pending Send. The authenticated service
+route creates WAV/multipart framing and sends one request to the exact saved endpoint, without
+redirects, environment proxies, probes or retries. It accepts JSON text, limits the response to
+1 MiB, limits concurrent requests to two, and bounds upload and upstream response separately to
+120 seconds each. Each admitted outbound request runs in a disposable child process; its timeout
+kills and reaps that process, including stalled DNS or response reads. The key and audio travel on
+stdin, never command arguments or disk. HTTPS uses normal certificate verification.
+
+Stop appends text to its draft; Send carries text/images and completion to its original conversation.
+Cancellation and late results never alter another draft. Errors are sanitized and preserve typed
+text/images; failed audio is discarded rather than replayed after an uncertain submission. Browser
+pending work ends within 240 seconds; cancellation cannot recall audio already forwarded or ensure
+immediate upstream cancellation. Service retention and charges belong to the chosen service.
+The existing document settings cache remains advisory, and no persistent browser audio cache exists.
 
 #### Host voice
 
@@ -2852,11 +2893,40 @@ Each file streams into `~/.altitude/speech/.staging` with a size cap and must ma
 SHA-256. The wheels are unpacked with the release installer's path rules (no absolute, parent,
 backslash or link entries, a total size cap) into `site/`, not installed with pip. A completion record
 naming the manifest digest is written last and the folder is moved to `runtime-<digest>` in one
-rename; only a runtime whose record matches this release's manifest is used, and a changed manifest
-reads as `outdated`. An exclusive file lock admits one setup across the daemon and the CLI. Cancel or
-any failure deletes staging; a failure, not a cancel, is remembered for Settings until the next setup.
-`remove` refuses during setup, stops the worker and deletes every runtime; the daemon also stops its
-worker within a second when its runtime disappears under it (`alt voice remove`).
+rename. Before promotion, the actual isolated worker loads the model and performs its warmup within
+the load deadline. Completed runtimes explicitly supported by this release keep serving during an
+update; unknown, incompatible or revoked runtimes read as `outdated` and cannot serve recordings.
+Support is an explicit per-platform/interpreter digest list, never inferred from age or a completion
+marker alone. Retained model files are copied only after matching the target size and SHA-256; wheel
+archives are downloaded and deleted after unpacking. There is no download cache.
+
+The support set retains the preceding Linux onnxruntime 1.22 manifests for CPython 3.12 and 3.13;
+both load and warm up with the current worker and the exact pinned model. The supported-table test
+derives their identities from those prior wheel checksums and the unchanged model/decoder/numpy.
+There is no preceding macOS manifest for this transition, so no prior macOS runtime is admitted.
+Future pin changes review and test their preceding platform manifests explicitly. This is fixed-model compatibility, not general support for arbitrary
+ONNX graphs: clients provide bounded PCM, never graph attributes or tensors. A release removes a
+digest if a relevant unsafe runtime is identified; an offline release cannot learn future revocations.
+
+At daemon startup, selected, already-installed host voice gets one automatic attempt per target
+manifest. First installation stays manual. The installation record persists the attempt, cancellation,
+failure and stable selection identity. An interrupted attempt also requires explicit Retry; switching
+to browser recognition cancels an automatic attempt. Availability (`ready` or `outdated`) is independent
+of `host.update`: `preparing`, `downloading` with bytes, `waiting`, `checking`, `failed` or `cancelled`.
+Settings shows phase/progress with Cancel or Retry; ready voice remains usable. Unsupported voice links
+to the running update instead of offering a duplicate setup.
+
+One file lock admits setup across CLI and daemon. Workers inherit a shared use lock; verification,
+promotion and cleanup acquire it exclusively. Active recordings finish before the idle worker exits
+for the update. Finished response replay remains available. Staging temporarily uses another runtime's
+disk space; preflight budgets downloads and bounded wheel expansion. Cancel or failure deletes staging
+and leaves supported voice available. `alt voice cancel` and Settings cancel the shared attempt.
+Remove records an invalidating tombstone first, cancels setup, drains worker use and deletes runtimes;
+the daemon observes removal within a second. Successful promotion cleans superseded runtimes only
+after their readers exit.
+Removal invalidates completion before deleting a runtime's files, so interruption cannot leave a
+partially deleted runtime usable. A later explicit setup can recover an interrupted removal. A lock
+timeout restores availability without restoring old recording identity, and reports removal unfinished.
 
 The worker (`altitude/speech_worker.py`) runs as `python -I` with the daemon's interpreter and a
 minimal environment, imports only the runtime's unpacked wheels, runs the model on onnxruntime's CPU

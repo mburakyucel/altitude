@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
 import { readVoiceSettings } from "../data/api";
 import type { HostVoice, VoiceBackend, VoiceSettings } from "../data/api";
+import { HostCapture } from "./hostCapture";
+
+export const INVALID_SERVICE = "Your speech service settings are invalid. Re-enter them in Voice settings.";
 
 /*
  * The installation's transcription backend, read once per document from `GET /api/voice`. "host" streams
- * to this computer's speech model; "browser" runs the browser's own recognition. Until the read answers,
+ * to this computer's speech model; "browser" runs the browser's own recognition; "service" uploads after Stop.
+ * Service captures additionally acquire a fresh paired owner/selection. Until the read answers,
  * the composer shows no microphone; a failed read is retried while a composer is mounted.
  */
 const RETRY_MS = 5000;
@@ -17,7 +21,7 @@ const notify = () => listeners.forEach((listener) => listener());
 function read() {
   if (reading) return;
   const request = readVoiceSettings().then(
-    (backend) => { if (reading === request) { known = backend; notify(); } },
+    (backend) => { if (reading === request) updateVoiceSettings(backend); },
     () => { if (reading === request) retry = setTimeout(() => { retry = null; if (listeners.size) read(); }, RETRY_MS); },
   ).finally(() => { if (reading === request) reading = null; });
   reading = request;
@@ -30,6 +34,7 @@ export function presetVoiceBackend(backend: VoiceBackend | null, host: HostVoice
 
 /** A successful Settings save changes the next capture in every mounted composer. */
 export function updateVoiceSettings(settings: VoiceSettings | null) {
+  if (settings) for (const capture of HostCapture.retained) capture.checkServiceSelection(settings.selection, settings.owner);
   known = settings;
   reading = null;
   if (retry) clearTimeout(retry);

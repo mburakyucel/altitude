@@ -4,6 +4,10 @@ Altitude runs for one person on Linux with a systemd user manager, or on macOS 1
 these steps top to bottom on the computer that will run it. To run it in a Linux container
 instead, see [container deployment](CONTAINERS.md).
 
+Optional [host voice](OPERATIONS.md#host-voice) needs a one-time download started by you. Once installed
+and selected, it receives one automatic update attempt when a release changes its runtime. Supported
+voice remains usable; failed or cancelled updates wait for your Retry in Settings.
+
 ## Prerequisites
 
 - **Linux** with a working systemd user manager (`systemctl --user status` answers), or **macOS 15
@@ -259,6 +263,27 @@ After pairing, the browser opens First run. Each step can be skipped and changed
 | **Report Altitude's own faults?** | Off keeps fault reports on this computer; on sends sanitized reports to Altitude's issue tracker or a fork you name. |
 | **Voice** | Sets up dictation on this computer where it can run, or uses the browser's recognition. |
 | **Add your projects** | Lists the folders inside your projects folder (`~/Projects` unless you pick another). **Add project** registers one and opens its Setup. |
+
+## Your speech service
+
+To use a transcription server you run or choose, open **Settings → Voice input → Your speech
+service**. Enter its complete transcription endpoint, for example
+`https://speech.example.test/v1/audio/transcriptions`, and expand **Key or model (optional)** if
+your server requires them. Choose **Save and use service**. Saving does not contact the endpoint.
+The computer running Altitude must be able to reach it; a loopback address refers to that computer,
+not the phone. Existing defaults and first-run setup stay unchanged.
+
+The server accepts a multipart POST with `file` containing mono 16 kHz signed 16-bit PCM WAV,
+`response_format=json`, an optional `model`, and optional `Authorization: Bearer` key. It returns
+JSON with a string `text`. Configure your server's own compatible transcription route using its
+documentation; Altitude neither installs nor operates that server. The example address is fictional.
+Redirects and environment proxies are not used. HTTPS uses the computer's normal certificate trust;
+HTTP is available with an explicit unencrypted-audio/key warning.
+
+Audio passes through Altitude to that endpoint after you stop recording. Its privacy policy and
+charges apply. Failed recordings are discarded, so record again; typed text and images remain.
+See [service operation and limits](OPERATIONS.md#your-speech-service). Previously deleted service
+credentials cannot be recovered and must be entered again.
 
 ## Register a project and start a conversation
 

@@ -633,8 +633,9 @@ each later request and the next start retry its removal.
 Dictation turns speech into draft text in every conversation. One machine setting selects how; typing
 is never affected.
 
-| `alt machine set --voice …` | How it works | Words appear | Where audio goes | Needs |
+| Voice choice | How it works | Words appear | Where audio goes | Needs |
 | --- | --- | --- | --- | --- |
+| Your speech service (Settings) | [A compatible endpoint you configure](#your-speech-service) | after you stop | through this computer to the exact saved endpoint; its policy and charges apply | a reachable compatible endpoint, optional key/model, microphone permission |
 | `host` (default where it can run) | [Host voice](#host-voice): the browser streams the microphone to this computer, which transcribes it with its own speech model after a one-time setup. | while you speak, with punctuation and capitals; the last words may still change | to this computer only, over Altitude's own connection; kept in memory for the recording, never stored | `alt voice setup`, Linux x86_64 or a Mac with Apple silicon, Python 3.12 or 3.13, about 2.5 GB free memory while dictating |
 | `browser` (default elsewhere) | The browser's speech recognition (Safari on iPhone and Mac, Chrome, Edge). The server is not involved. | while you speak; the last phrase may still change until it is final | Safari recognizes on the device when it can, otherwise through Apple; Chrome and Edge send audio to Google or Microsoft speech services. Firefox and Chromium builds without a vendor key have no recognition and show a typing hint. | HTTPS and a supported browser |
 
@@ -650,11 +651,42 @@ run keeps its choice and says why. First run offers the one-time download (**Set
 browser recognition instead** or **Skip**); after Skip, the microphone offers the download.
 
 The setting lands in the private `~/.altitude/settings.json` through the machine-settings request.
-**Settings → Voice input** edits the same setting: **This computer** and **Browser recognition**
-save immediately. A Settings read or save updates the next capture in that browser document. Other
+**Settings → Voice input** edits the same setting: **This computer**, **Browser recognition**, and
+**Your speech service** use explicit Save/Cancel. Saving another choice removes saved service details;
+tapping a radio only changes the draft choice. Built-in setup/removal actions remain immediate and
+independent of saving the choice. A Settings read or save updates the next capture in that browser document. Other
 documents and CLI changes are picked up when opening Settings, on reload or after a recording is
 refused for a changed setting. Recordings identify their backend and host runtime; changing either
 cannot silently reroute unfinished audio. Altitude keeps no recordings.
+
+### Your speech service
+
+Choose a compatible endpoint in [Voice settings](SETUP.md#your-speech-service). Recordings stay in
+page memory until Stop or Send, then pass through the computer running Altitude to the selected
+service. Stop adds words to the draft; Send transcribes and sends to its original conversation.
+There are no live partial words, automatic endpoint probes, fallback destinations or recording
+retries. The service's own retention policy and any charges apply; Altitude keeps no audio on disk.
+
+Changing the endpoint requires entering its key again. A saved key is never shown; leave the field
+blank to retain it for the same exact address, or choose **Remove saved key**. Saving a switch to
+another backend deletes the address, key and model. The private machine settings and a pending
+settings request contain the key, so protect backups of Altitude's data as credentials. Completed
+receipts and event/status output omit service details.
+
+Recordings are limited to ten minutes (about 19.2 MB), with at most two retained captures. Upload
+has two minutes and transcription has a separate two minutes. A slow link or server can exceed
+those limits. On failure the recording is discarded; typed text and images stay, and a failed Send
+returns unsent to its original conversation. Reconnect and record again. Retrying an uncertain
+upload could duplicate processing or charges, so Altitude does not replay it. Cancellation discards
+the local result but cannot recall audio already received by the service.
+
+Authentication errors link to Voice settings; check the saved key. For unavailable or timed-out
+services, check reachability from the Altitude computer and the complete endpoint address. For
+invalid or empty responses, check the model and compatible response format. Selection changes or
+re-pairing invalidate unfinished recordings; audio is never silently routed to a new destination.
+Typing remains usable after every failure.
+Malformed saved service settings remain unavailable without choosing another backend. Re-enter
+the service details in Voice settings, or explicitly save a different voice choice.
 
 ### Host voice
 
@@ -671,9 +703,20 @@ alt machine set --voice host --reason 'Transcribe on this computer'
 Setup downloads the model from Hugging Face and its runtime (onnxruntime, numpy and the onnx-asr
 decoder) from PyPI, pinned by checksum in the Altitude release, into `~/.altitude/speech`. Nothing is
 installed elsewhere and Altitude's own Python stays standard-library only. Settings shows progress and
-**Cancel setup**; a failed setup shows its reason and **Retry**. An Altitude release that pins a new
-runtime shows "Voice needs an update" with the same button. Only the operator runs `alt voice setup`
-and `alt voice remove`; Altitude's agents cannot.
+**Cancel setup**; a failed setup shows its reason and **Retry**. At startup after a release changes
+the runtime, Altitude makes one automatic update attempt for already-installed, selected host voice.
+Supported voice stays ready while Settings shows update progress. The update waits for recordings to
+finish, checks that the replacement model runs, then switches and removes superseded files. An unsafe
+or incompatible runtime cannot keep serving; Settings and the composer say that it needs an update.
+
+Unchanged model files are reused after checksum verification. Updates download the missing files
+(about 40 MB for a library-only update, up to about 700 MB) and temporarily need space for another
+runtime, including unpacked libraries. Cancel, failure, interrupted setup or switching to browser
+recognition leaves Retry to you, including after restart. `alt voice cancel` also cancels the update.
+First installation stays manual. Only the operator invokes setup, cancel and removal; agents cannot.
+Removing voice cancels any update, stops dictation and deletes its runtime files.
+If removal is interrupted, **Set up voice** restores it; the displayed full-download estimate is an
+upper bound, since any surviving verified model files are reused.
 
 The first recording starts a speech process in about 1–3 seconds; speech during startup is kept. While
 you dictate it uses about 1.3–2 GB of memory and one to two CPU cores; it exits after fifteen minutes

@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useReducer, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from "react";
-import type { VoiceSettings } from "../data/api";
+import { readVoiceSettings, type VoiceSettings } from "../data/api";
 import { documentRecovery, heldFields, liveSubmissions, recoveryKey } from "../data/recovery";
 import type { SendFailure, SubmittedText } from "../data/recovery";
 import { Link } from "react-router";
 import { IMAGE_HELP, useImageDraft } from "./ImageDraft";
 import type { ImageScope, ImageSubmission } from "./ImageDraft";
 import type { ImagePreview } from "./MessageImages";
-import { HostCapture, MAX_RETAINED, UNREACHED } from "./hostCapture";
+import { HostCapture, MAX_RETAINED, UNREACHED, serviceFailures, type ServiceFailure } from "./hostCapture";
 import { useLiveReveal } from "./liveReveal";
 import { RecognitionCapture, recognitionAvailable } from "./recognition";
-import { refreshVoiceBackend, useVoiceBackend } from "./voiceBackend";
+import { INVALID_SERVICE, refreshVoiceBackend, updateVoiceSettings, useVoiceBackend } from "./voiceBackend";
 import { traceVoice, traceVoiceTracks, voiceError } from "./voiceTrace";
 
 /*
@@ -91,7 +91,7 @@ function readSubmitted(conversation: string): SubmittedText {
 }
 function saveSubmitted(conversation: string, saved: SubmittedText, beforeSend = false) {
   const key = recoveryKey(conversation);
-  const stored = saved.text || saved.failure === "transcription" || saved.failure === "unreached" || Object.keys(saved.pending).length
+  const stored = saved.text || saved.failure === "transcription" || saved.failure === "unreached" || (saved.failure && Object.hasOwn(serviceFailures, saved.failure)) || Object.keys(saved.pending).length
     ? JSON.stringify(saved) : null;
   try {
     if (stored) sessionStorage.setItem(key, stored);
@@ -223,7 +223,7 @@ export function voiceUnavailable(voice: VoiceSettings | null): "insecure" | "unr
   if (voice === null) return "pending";
   if (typeof navigator.mediaDevices?.getUserMedia !== "function") return "unsupported";
   if (voice.backend === "browser") return recognitionAvailable() ? null : "unrecognized";
-  if (voice.host.state === "unavailable" || voice.host.state === "failed") return "host";
+  if (voice.backend === "host" && (voice.host.state === "unavailable" || voice.host.state === "failed")) return "host";
   return typeof AudioWorkletNode === "undefined" ? "unsupported" : null;
 }
 
@@ -233,7 +233,12 @@ function hostVoiceHint(voice: VoiceSettings): ReactNode {
   if (host.state === "unavailable") return `Voice isn't available on this computer: ${host.reason}. Typing works.`;
   if (host.state === "failed") return <>Voice setup did not finish. <Link className="link" to="/settings/voice">Retry in Settings</Link>. Typing works.</>;
   if (host.state === "setting-up") return "Voice is being set up on this computer. Typing works.";
-  return <>{host.state === "outdated" ? "Voice needs an update on this computer." : "Voice needs a one-time download on this computer."}{" "}
+  if (host.state === "outdated") {
+    const updating = host.update && host.update.state !== "failed" && host.update.state !== "cancelled";
+    return <>{updating ? "Voice is updating on this computer." : "Voice needs an update on this computer."}{" "}
+      <Link className="link" to="/settings/voice">{updating ? "View update" : "Update voice"}</Link></>;
+  }
+  return <>Voice needs a one-time download on this computer.{" "}
     <Link className="link" to="/settings/voice">Set up voice</Link></>;
 }
 
@@ -578,7 +583,7 @@ export default function Composer({
         // or resending; the cautious hint wins unless every copy was refused.
         const orphaned = Object.entries(saved.pending).filter(([id]) => !liveSubmissions.has(id) && !showing.current?.(id));
         if (live && !orphaned.length) return;
-        if (!orphaned.length && !saved.text && saved.failure !== "transcription" && saved.failure !== "unreached") return;
+        if (!orphaned.length && !saved.text && saved.failure !== "transcription" && saved.failure !== "unreached" && !(saved.failure && Object.hasOwn(serviceFailures, saved.failure))) return;
         // A field that holds recovered words is current (storage has caught up with it); otherwise the field is an
         // ordinary draft, which keeps nothing recovered, and the stored words join it.
         const field = [unshown(conversation, saved, draft.current), draft.current].filter(Boolean).join("\n");
@@ -681,7 +686,7 @@ export default function Composer({
   const currentSubmit = useRef(submit);
   currentSubmit.current = submit;
 
-  const endVoiceSend = useCallback((sending: VoiceSend, problem?: "transcription" | "unreached") => {
+  const endVoiceSend = useCallback((sending: VoiceSend, problem?: "transcription" | "unreached" | ServiceFailure) => {
     if (voiceSends.get(conversation) !== sending) return;
     voiceSends.delete(conversation);
     recoveryViews.get(conversation)?.voice(null);
@@ -715,7 +720,7 @@ export default function Composer({
       if (sending) {
         if (finished.failure) {
           sending.text = combineDraft(sending.text, text);
-          endVoiceSend(sending, unreached ? "unreached" : "transcription");
+          endVoiceSend(sending, finished instanceof HostCapture && finished.serviceFailure ? finished.serviceFailure : unreached ? "unreached" : "transcription");
           return;
         }
         if (!text.trim()) { endVoiceSend(sending); return; }
@@ -730,7 +735,7 @@ export default function Composer({
       setPhase("idle");
       if (finished.failure === "denied") setDenied(true);
       else if (unreached) setVoiceFailure(UNREACHED);
-      else if (finished instanceof HostCapture && finished.reason) setVoiceFailure(`${finished.reason} Typing works.`);
+      else if (finished instanceof HostCapture && finished.reason) setVoiceFailure(finished.serviceOwner ? finished.reason : `${finished.reason} Typing works.`);
       else if (finished.failure) setVoiceFailure("Could not transcribe. Typing works.");
       if (text.trim()) setUnpunctuated(finished.unpunctuated);
       if (text.trim()) {
@@ -796,7 +801,7 @@ export default function Composer({
       refreshVoiceBackend();
       return;
     }
-    if (voice?.backend === "host" && HostCapture.retained.size >= MAX_RETAINED) {
+    if (voice?.backend !== "browser" && HostCapture.retained.size >= MAX_RETAINED) {
       setVoiceFailure("Voice is still sending an earlier recording. Typing works.");
       return;
     }
@@ -824,6 +829,17 @@ export default function Composer({
     }
     let opened: MediaStream | null = null;
     try {
+      let owner: string | undefined;
+      if (backend === "service") {
+        const current = await readVoiceSettings(AbortSignal.any([opening.signal, AbortSignal.timeout(12_000)]));
+        if (!mounted.current || opening.signal.aborted) return;
+        updateVoiceSettings(current);
+        if (current.error) { setPhase("idle"); setVoiceFailure(INVALID_SERVICE); return; }
+        if (current.backend !== "service" || current.selection !== captureSelection.current || !current.owner) {
+          setPhase("idle"); setVoiceFailure(serviceFailures.selection_changed); return;
+        }
+        owner = current.owner;
+      }
       // Every backend opens the microphone: the waveform draws from it, and the browser backend's
       // recognizer needs the same permission.
       traceVoice("microphone.request", opening);
@@ -837,8 +853,8 @@ export default function Composer({
       // Warm native recognition may start before React's next effect. Connect its companion
       // waveform first, after the old capture's release gate, with no await before start().
       waveform.current = openWaveform(opened);
-      if (backend === "host") {
-        const host = new HostCapture(opened, captureSelection.current);
+      if (backend === "host" || backend === "service") {
+        const host = new HostCapture(opened, captureSelection.current, owner);
         host.onupdate = (text) => { if (recorder.current === host && !cancelled.current) setLive(text); };
         host.onstop = () => finish(host, used);
         host.oninterrupted = () => stop();
@@ -877,7 +893,7 @@ export default function Composer({
       const name = cause instanceof DOMException ? cause.name : "";
       setPhase("idle");
       if (name === "NotAllowedError" || name === "SecurityError") setDenied(true);
-      else setVoiceFailure("Could not open the microphone. Typing works.");
+      else setVoiceFailure(backend === "service" && !opened ? serviceFailures.service_unavailable : "Could not open the microphone. Typing works.");
       focusField();
     }
   }, [backend, voice, disabled, finish, focusField, phase, releaseStream, stop, unavailable]);
@@ -978,15 +994,19 @@ export default function Composer({
   let hintRole: "alert" | "status" | undefined;
   // A voice Send keeps its capture after this composer remounts; otherwise the capture is this composer's own.
   const shown = voiceSend?.capture ?? recorder.current;
+  const servicePending = transcribing && shown instanceof HostCapture && !!shown.serviceOwner;
   const connection = shown instanceof HostCapture ? shown.connection : "ok";
   if (transcribing) {
     hintRole = "status";
-    hintText = connection === "lost" ? "Waiting for connection…" : connection === "catching-up" ? "Catching up…" : "Transcribing…";
+    hintText = servicePending && voiceSend ? "Transcribing to send…" : connection === "lost" ? "Waiting for connection…" : connection === "catching-up" ? "Catching up…" : "Transcribing…";
   } else if (listening) {
     hintRole = "status";
     hintText = phase === "starting" ? startingVoice ? "Starting voice…" : "Opening microphone…"
       : connection === "lost" ? "Connection lost — still recording. Your words will catch up."
       : connection === "catching-up" ? "Catching up…" : "Listening… Stop to add text, or Send.";
+  } else if (sendFailure && Object.hasOwn(serviceFailures, sendFailure)) {
+    hintTone = "danger"; hintRole = "alert";
+    hintText = serviceFailures[sendFailure as ServiceFailure];
   } else if (sendFailure === "transcription" || sendFailure === "unreached") {
     hintTone = "danger";
     hintRole = "alert";
@@ -1037,7 +1057,13 @@ export default function Composer({
     hintText = <>{hintText} Recovery could not be updated. Keep this tab open to retain your latest text.</>;
   }
 
-  const quietProgress = (transcribing || listening) && connection !== "lost" && !recoveryUnavailable;
+  const serviceError = typeof hintText === "string" && (hintText === INVALID_SERVICE || Object.values(serviceFailures).some((text) => text === hintText));
+  let serviceDestination = "your speech service";
+  if (voice?.service) {
+    try { serviceDestination = new URL(voice.service.url).host; } catch { /* Keep settings and typing reachable for a URL this browser cannot parse. */ }
+  }
+  if (serviceError) hintText = <>{String(hintText).replace(/ in Voice settings\./, ".")} <Link className="composer-destination" to="/settings/voice">Voice settings</Link></>;
+  const quietProgress = (transcribing || listening) && !servicePending && connection !== "lost" && !recoveryUnavailable;
   const hiddenReason = ["insecure", "unrecognized", "host"].includes(unavailable ?? "") && !showVoiceReason && !hintRole && !recoveryUnavailable;
   const feedback = hintText ? (
     <p id={hintId} className={hiddenReason ? "sr-only" : `composer-hint ${hintTone === "danger" ? "text-danger" : "text-muted"}`} data-routine={routineHint || undefined} role={hintRole} aria-label={hintRole === "status" && typeof hintText === "string" ? hintText : undefined}>
@@ -1093,14 +1119,14 @@ export default function Composer({
               <button type="button" className="composer-icon composer-cancel" aria-label="Cancel voice input" onClick={() => cancel("mic")}>
                 <CloseIcon />
               </button>
-              <canvas ref={canvas} className="composer-wave" aria-hidden />
+              {!servicePending ? <><canvas ref={canvas} className="composer-wave" aria-hidden />
               <span
                 className="composer-timer"
                 data-danger={listening && remaining <= LAST_MINUTE_MS ? "" : undefined}
                 aria-label={listening ? "Recording time" : undefined}
               >
                 {formatTimer(elapsed)}
-              </span>
+              </span></> : null}
             </div>
           ) : (
             <span className="composer-spacer" />
@@ -1135,6 +1161,7 @@ export default function Composer({
         </div>
       </div>
       {phase === "idle" ? feedback : null}
+      {voice?.backend === "service" && voice.service && !serviceError ? <Link className="composer-destination" to="/settings/voice" aria-label={`Voice settings: ${serviceDestination}`}>Voice: {serviceDestination}</Link> : null}
     </div>
   );
 }

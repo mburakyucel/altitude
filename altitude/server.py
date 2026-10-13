@@ -141,28 +141,63 @@ class VoiceInputError(RuntimeError):
 
 
 def _voice_selection(setting: dict) -> str:
-    """Bind a recording to its backend and host runtime: a changed choice, setup or removal ends it."""
-    path = speech.runtime() if setting["backend"] == "host" else None
-    return hashlib.sha256(json.dumps([setting["backend"], path.name if path else ""]).encode()).hexdigest()
+    """Supported runtime replacement preserves replay; backend changes and removal invalidate it."""
+    if setting["backend"] == "service":
+        return setting["selection"]
+    identity = speech.installation_id() if setting["backend"] == "host" else ""
+    return hashlib.sha256(json.dumps([setting["backend"], identity]).encode()).hexdigest()
 
 
-def voice_view() -> dict:
+def voice_view(device: str | None = None) -> dict:
     setting = config.voice_setting()
-    return {"backend": setting["backend"], "selection": _voice_selection(setting), "host": speech.status()}
+    view = {"backend": setting["backend"], "selection": _voice_selection(setting), "host": speech.status()}
+    if setting.get("error"):
+        view["error"] = setting["error"]
+    if device is not None:
+        view["owner"] = access.voice_owner(device)
+        if setting["backend"] == "service" and not setting.get("error"):
+            view["service"] = {"url": setting["url"], "model": setting.get("model", ""),
+                               "key_present": bool(setting.get("key"))}
+    return view
 
 
 def save_voice(body: dict) -> dict:
     """Apply the operator's voice selection through the same durable request as the CLI."""
-    if body.keys() - {"backend", "selection"}:
+    if body.keys() - {"backend", "selection", "url", "key", "model", "remove_key"}:
         raise ValueError("Unsupported voice settings fields.")
-    if body.get("selection") != _voice_selection(config.voice_setting()):
+    with config.projects_lock():
+        saved = config.machine_settings().get("voice")
+        current = config.voice_setting()
+    if body.get("selection") != _voice_selection(current):
         raise VoiceInputError("Voice settings changed. Reload settings and try again.", 409)
     backend = body.get("backend")
-    if backend not in ("browser", "host"):
+    if backend == "service":
+        if not isinstance(body.get("url"), str) or not isinstance(body.get("remove_key", False), bool):
+            raise ValueError("Enter a complete http:// or https:// transcription URL.")
+        value = {"backend": "service", "url": body["url"].strip(), "selection": uuid.uuid4().hex}
+        for field in ("key", "model"):
+            if field in body:
+                if not isinstance(body[field], str):
+                    raise ValueError(f"Enter a valid speech service {field}.")
+                if body[field].strip():
+                    value[field] = body[field].strip()
+        if body.get("remove_key"):
+            value.pop("key", None)
+        elif not value.get("key") and current.get("url") == value["url"] and current.get("key"):
+            value["key"] = current["key"]
+        config.validate_voice(value)
+    elif backend in ("browser", "host") and not body.keys() - {"backend", "selection"}:
+        value = backend
+    else:
         raise ValueError("Choose this computer or browser recognition.")
-    dispatch.request_setting(None, "voice", backend, "Voice input settings", actor=config.OPERATOR_ACTOR)
+    # Apply checks the nonce under its projects lock too, including after a daemon crash/replay.
+    expected = config.voice_expected(saved)
+    dispatch.request_setting(None, "voice", value, "Voice input settings", actor=config.OPERATOR_ACTOR,
+                             expected=expected)
     result = dispatch._run_setting(None, "voice")
     if result["status"] != "done":
+        if result.get("changed"):
+            raise VoiceInputError("Voice settings changed. Reload settings and try again.", 409)
         raise ValueError(result["note"])
     return voice_view()
 
@@ -1439,7 +1474,7 @@ class Handler(BaseHTTPRequestHandler):
             self._head = False
             self.wfile = wfile
 
-    def _json(self, obj, code: int = 200, compress: bool = False) -> None:
+    def _json(self, obj, code: int = 200, compress: bool = False, *, deadline: float | None = None) -> None:
         """A JSON reply. `compress` is for the large read-only views of a task, project or session, which
         carry no credentials; replies that can carry a pairing code or key never do (docs/ARCHITECTURE.md#web-delivery)."""
         body = json.dumps(obj, default=str).encode()
@@ -1448,6 +1483,12 @@ class Handler(BaseHTTPRequestHandler):
             body = gzip.compress(body, compresslevel=6, mtime=0)
         if self._keep_open:  # an HTTP/1.1 reply with its length keeps the connection in every browser
             self.protocol_version = "HTTP/1.1"
+        def budget():
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("response deadline")
+                self.connection.settimeout(remaining)
         try:
             self.send_response(code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -1458,10 +1499,16 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Encoding", "gzip")
             if compress:
                 self.send_header("Vary", "Accept-Encoding")
+            budget()
             self.end_headers()
+            budget()
             self.wfile.write(body)
             if self._keep_open:
                 self.close_connection = False
+        except TimeoutError:
+            if deadline is None:
+                raise
+            self.close_connection = True
         except (ssl.SSLError, BrokenPipeError, ConnectionResetError) as exc:
             # Error replies run inside exception handlers, outside the route's disconnect catcher.
             self.close_connection = True
@@ -1718,7 +1765,7 @@ class Handler(BaseHTTPRequestHandler):
                     SPEECH.remove()
                 else:
                     return self._json({"error": "Choose setup, cancel or remove."}, 400)
-                return self._json(voice_view())
+                return self._json(voice_view(device))
             self._keep_open = True  # one request every half second: no fresh handshake for each
             if len(parts) == 5 and parts[2] == "live" and parts[4] == "cancel":
                 self._body()
@@ -1753,6 +1800,69 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(SPEECH.audio(parts[3], device, seq, pcm, final))
         except speech.SpeechError as exc:
             return self._json({"error": str(exc)}, exc.status)
+
+    def _service_voice(self) -> None:
+        """Bound one capture to the saved service and paired device, through upload and completion."""
+        deadline = time.monotonic() + speech.SERVICE_UPLOAD_SECONDS + speech.SERVICE_RESPONSE_SECONDS
+        denied = self._page_denied(json_body=False, subject="Voice")
+        if denied or not self._device:
+            self.close_connection = True
+            return self._json({"error": denied or "Pair this device to use your speech service."}, 403,
+                              deadline=deadline)
+        device = self._device["id"]
+        selection = self.headers.get("X-Voice-Selection")
+        owner = self.headers.get("X-Voice-Owner")
+        def current():
+            setting = config.voice_setting()
+            if (not access.known(device) or owner != access.voice_owner(device)
+                    or setting["backend"] != "service" or setting["selection"] != selection):
+                raise speech.ServiceError("selection_changed")
+            if setting.get("error"):
+                raise speech.ServiceError("service_response")
+            return setting
+        acquired = False
+        try:
+            current()
+            try:
+                length = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                raise speech.ServiceError("service_response") from None
+            if not 0 < length <= speech.SERVICE_PCM_LIMIT or length % 2 or self.headers.get("Transfer-Encoding"):
+                raise speech.ServiceError("service_response")
+            acquired = speech.SERVICE_SLOTS.acquire(blocking=False)
+            if not acquired:
+                raise speech.ServiceError("service_unavailable")
+            # read1 plus an absolute deadline prevents a slow trickle from renewing the upload lease.
+            until = deadline - speech.SERVICE_RESPONSE_SECONDS
+            pcm = bytearray()
+            while len(pcm) < length:
+                remaining = until - time.monotonic()
+                if remaining <= 0:
+                    raise speech.ServiceError("service_unavailable")
+                self.connection.settimeout(remaining)
+                chunk = self.rfile.read1(min(65536, length - len(pcm)))
+                if not chunk:
+                    raise speech.ServiceError("service_unavailable")
+                pcm.extend(chunk)
+            setting = current()
+            text = speech.transcribe_service(setting, bytes(pcm))
+            current()
+            return self._json({"text": text}, deadline=deadline)
+        except (TimeoutError, OSError):
+            error = speech.ServiceError("service_unavailable")
+            self.close_connection = True
+            return self._json({"error": str(error), "code": error.code}, 502, deadline=deadline)
+        except speech.ServiceError as exc:
+            self.close_connection = True
+            return self._json({"error": str(exc), "code": exc.code},
+                              409 if exc.code == "selection_changed" else 502, deadline=deadline)
+        finally:
+            if acquired:
+                speech.SERVICE_SLOTS.release()
+            try:
+                self.connection.settimeout(None)
+            except OSError:
+                pass
 
     def _cross_site(self) -> bool:
         """Whether another site or page, not Altitude's own page, sent this request. A client that is no page
@@ -1893,6 +2003,10 @@ class Handler(BaseHTTPRequestHandler):
         unavailable = platform.container_unavailable(subject)
         if unavailable:
             return unavailable
+        return self._page_denied(json_body=json_body, subject=subject)
+
+    def _page_denied(self, *, json_body: bool, subject: str) -> str | None:
+        """Page-only operator actions share origin and agent authority without assuming a native host."""
         if self._cross_site() or json_body and self.headers.get_content_type() != "application/json":
             return f"{subject} requests must come from Altitude's own page."
         # One connection keeps one client socket, so its first terminal or update request decides for the rest.
@@ -2230,7 +2344,7 @@ class Handler(BaseHTTPRequestHandler):
             if api == "overview":
                 return self._json(overview(), compress=True)
             if api == "voice":
-                return self._json(voice_view())
+                return self._json(voice_view(self._device["id"] if self._device else None))
             if api == "machine":
                 return self._json(machine_view())
             if api == "prerequisites":
@@ -2355,6 +2469,8 @@ class Handler(BaseHTTPRequestHandler):
             api = parts[1] if len(parts) > 1 and parts[0] == "api" else ""
             if api == "files":
                 return self._json({"error": "Use GET to read a document."}, 405)
+            if parts == ["api", "voice", "service"]:
+                return self._service_voice()
             if api == "voice" and len(parts) > 2:
                 return self._host_voice(parts, parse_qs(u.query))
             o = self._body(max_bytes=images.MAX_BODY if api in ("chat", "l2") else None)
@@ -2505,8 +2621,12 @@ class Handler(BaseHTTPRequestHandler):
                 except (ValueError, T.TransitionError) as exc:
                     return self._json({"error": str(exc)}, 400)
             if parts == ["api", "voice"]:
+                denied = self._page_denied(json_body=True, subject="Voice")
+                if denied or o.get("backend") == "service" and not self._device:
+                    return self._json({"error": denied or "Pair this device to configure your speech service."}, 403)
                 try:
-                    return self._json(save_voice(o))
+                    save_voice(o)
+                    return self._json(voice_view(self._device["id"] if self._device else None))
                 except VoiceInputError as exc:
                     return self._json({"error": str(exc)}, exc.status)
                 except (ValueError, KeyError, T.TransitionError) as exc:
@@ -3615,6 +3735,7 @@ def main(host: str | None = None, port: int | None = None) -> None:
     if os.environ.get("ALTITUDE_SERVICE") and config.RELEASE is None:
         (config.MONITOR_DIR / dispatch.RESTART_PENDING).unlink(missing_ok=True)
     if os.environ.get("ALTITUDE_TIMERS", "1") != "0":
+        SPEECH.update_installed()
         restart_notice()
         settle_interrupted_machine_commands()
         threading.Thread(target=timer_loop, args=(context, certificate_host), name="timers", daemon=True).start()

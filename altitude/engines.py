@@ -635,6 +635,17 @@ def recover_send(sends: Path, message_id: str) -> str:
     return "unconfirmed" if (sends / f"{message_id}.writing").exists() else "returned"
 
 
+def send_into_turn_once(sends: Path, message_id: str, text: str) -> None:
+    """Resume a durable checkpoint send after daemon restart without recreating a claimed message.
+
+    The caller serializes sends for this identity with the task lock; driver renames are atomic.
+    """
+    if any((sends / f"{message_id}.{suffix}").exists()
+           for suffix in ("json", "writing", "delivered", "returned", "unconfirmed")):
+        return
+    send_into_turn(sends, message_id, text)
+
+
 class _Driver:
     """Hold an engine's input open for one job, so a Send now message reaches the running turn without stopping it.
 

@@ -8,8 +8,7 @@ Altitude runs Claude Code and Codex like an engineering team on your computer.
   reach you, wherever you are.
 - **A coordinator runs your project with you** and answers the agents from what you have decided.
 - **Every task gets its own agent,** from idea to production, around the clock.
-- **It heals and improves itself.** When something breaks, the coordinator fixes it and the work
-  resumes, and every fix makes it better.
+- **It heals and improves itself,** so the work keeps moving and keeps getting better.
 
 **Early preview · Linux · macOS · [Get started](#get-started)**
 
@@ -20,33 +19,31 @@ Altitude runs Claude Code and Codex like an engineering team on your computer.
 <img src="docs/images/altitude.svg" alt="You make the executive decisions. Below you, the coordinator (L3) orchestrates the project: it plans with you, starts tasks and answers from your decisions. Each task has its own agent (L2) that takes it from idea to production, and each task agent runs its own helper agents (L1) for focused work such as reading API docs, running tests or profiling latency." width="1000">
 
 Altitude works in levels, and you choose yours: steer the whole project with the coordinator, or step
-straight into any task. Each task agent works in its own worktree, and complex work gets an independent review,
-by your other engine when you use both.
+straight into any task.
 
 One engine is enough, and each integration is
 [replaceable by design](docs/ARCHITECTURE.md#engine-integration-boundary).
 
-[Explore the desktop and phone walkthrough](docs/WALKTHROUGH.md)
+## What you get
 
-## Built in
+- **Self-healing.** When something breaks, it gets repaired and the work picks up where it stopped.
+- **Self-improving.** Altitude learns from its own finished work and fixes what slowed it down.
+- **Parallel without collisions.** Many tasks at once, each on its own copy of the code.
+- **Balanced quotas.** By default, each task goes to the engine that has used less of its week, so both are
+  used evenly.
+- **Steer mid-flight.** Watch any agent live, redirect it in a sentence or take the terminal.
+- **Nothing ships unchecked.** Your checks gate every merge, complex work gets an independent review,
+  and the final say is yours whenever you want it.
+- **Decide from anywhere.** Your phone alerts you when a decision needs you; answer with a tap or
+  your voice. Dictate with built-in recognition, your browser, or [your own speech service](docs/SETUP.md#your-speech-service).
+- **Power with a fence.** Agents leave their sandbox only for a purpose you approve.
 
-- **Your checks, your call.** Your project's checks and review govern every merge; ask for a merge
-  hold whenever you want the final say.
-- **Phone access.** [Pair each browser](docs/SETUP.md#pair-each-device) with a one-time code, add
-  Altitude to the iPhone Home Screen and get an alert when a decision needs you, choosing on each
-  device how much the alert reveals, how often it comes and whether it sounds. Dictation runs on
-  your computer on Linux and on Macs with Apple silicon, and uses the browser's recognition elsewhere.
-- **Terminals beside the work.** [Open a shell](docs/ARCHITECTURE.md#operator-terminal) in a task's
-  worktree or the project folder from the browser. A command an agent hands you arrives typed at
-  the prompt, waiting for your Enter.
-- **Operator grants.** When a task needs to act on your machine beyond its sandbox, such as a
-  service change or a release, you [approve one stated purpose](docs/CLI.md#operator-grant); each
-  command runs as you and is recorded on the task.
-- **Validation runs.** Owners check their changes in
-  [disposable runs](docs/DEVELOPMENT.md#validation-runner) before merging: a Linux container, a
-  confined run on a Mac or an iOS Simulator iPhone.
-  The [actual-image container browser lane](docs/CONTAINERS.md#container-browser-validation) on an
-  Apple silicon Mac uses a disposable Linux guest with a sandboxed browser container.
+<img src="docs/images/balance.svg" alt="Two subscriptions, Claude and Codex, each with a meter for the share of its week used. New tasks arrive one at a time, each goes to the engine marked as less used, and that engine's meter fills, so both rise evenly until a new week empties them." width="760">
+
+[See it all in the desktop and phone walkthrough](docs/WALKTHROUGH.md#see-the-features)
+
+[Container browser validation](docs/CONTAINERS.md#container-browser-validation) on an Apple silicon Mac
+uses a disposable Linux guest with a sandboxed browser container.
 
 ## Get started
 
@@ -54,7 +51,6 @@ Altitude runs for one person on Linux with a systemd user manager or on macOS 15
 are validated on Ubuntu 24.04 x86_64 and Apple silicon Macs. You need Python 3.12+, Git, OpenSSL (on
 a Mac, Homebrew's `openssl@3`), an authenticated GitHub CLI 2.72 or newer ([setup](docs/SETUP.md))
 and one authenticated coding CLI. Agent work uses your coding account's allowance and normal charges.
-A [Linux container deployment](docs/CONTAINERS.md) is under validation.
 
 1. Install the latest release as the account that will use Altitude:
 
@@ -67,16 +63,12 @@ A [Linux container deployment](docs/CONTAINERS.md) is under validation.
    nothing it downloads unless it matches the release's checksums and prints the next steps. The
    [installation steps](docs/SETUP.md#install-the-application) explain what it trusts and how to
    verify a release's script before running it.
-2. Put `~/.local/bin` on your PATH and run `alt doctor`. The release includes the CLI, daemon and
-   web app; installation enables a per-user service and saves its tool PATH.
-3. Follow the [certificate trust guide for Linux, macOS and phones](docs/SETUP.md#trust-https-on-each-device).
-   On the hosting computer, use the public CA file reported by `alt doctor`. To
-   [pair another device](docs/SETUP.md#pair-each-device), run `alt pair` on the hosting computer
-   and open its printed address or scan its QR code. **Pair this device** guides certificate
-   trust before you enter the code: compare the certificate with the computer, trust it
-   deliberately and verify the exact HTTPS URL without a warning. **Set up a device** and
-   `alt tls-share` also offer certificate setup. Use
-   [First run](docs/SETUP.md#first-run-in-the-browser) to add your project.
+2. Put `~/.local/bin` on your PATH and run `alt doctor`. Installation enables a per-user service.
+3. Trust Altitude's certificate on each device with the
+   [certificate guide for Linux, macOS and phones](docs/SETUP.md#trust-https-on-each-device), then
+   run `alt pair` and open its address or QR code on your phone to
+   [pair it](docs/SETUP.md#pair-each-device). [First run](docs/SETUP.md#first-run-in-the-browser)
+   adds your project.
 
 <details>
 <summary>Ask your coding agent to help install</summary>

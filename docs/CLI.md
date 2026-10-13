@@ -135,7 +135,7 @@ policy. L3 still verifies the actual cause and recovery before resuming work.
 
 ### Explicit provider handoff
 
-L3 or the operator can continue an exited owner as a fresh attempt on another configured engine:
+L3 or the operator can transfer a running or stopped owner to a fresh attempt on another configured engine:
 
 ```sh
 alt task status blocked-owner --json
@@ -146,14 +146,43 @@ alt task status blocked-owner --json
 The coordinator transport takes the same argument list:
 `{"kind":"alt","args":["task","handoff","blocked-owner","--engine","<engine>","--attempt","2","--reason","Continue the authorized work"]}`.
 The CLI persists a daemon request; it launches no worker. The task must have a prior attempt and
-worker/session identity and be blocked by worker death (`l2-died`) or a recognized usage limit.
-The daemon checks the attempt, worker/session and block again. Live workers, active lifecycle claims,
+worker/session identity and be running, stopped by L3 or the operator, or blocked by worker death
+(`l2-died`) or a recognized usage limit. A running owner receives a request to refresh `progress.md`
+with its current work, completed checks, unfinished work and next steps, then write the exact
+request-scoped readiness receipt supplied in that instruction. Existing workers use their file tools;
+they do not need an updated CLI. The readiness receipt replaces the owner's normal end-of-turn
+block/report: the owner ends its turn immediately and the daemon completes the transfer. The
+transfer waits for readiness without a time cutoff. A slow
+command, silence or network interruption does not force a switch. Workers launched without native
+message delivery show that the note cannot be requested; use switch-now or cancel explicitly.
+Injected instructions can move pending commands into native background work; the note must distinguish
+finished checks from work still pending. A confirmed ended worker, a
+recorded usage limit or an explicit Stop permits transfer using saved context without a fresh note.
+
+The request ID in task status identifies the waiting transfer. Switch immediately or cancel it explicitly:
+
+```sh
+alt task handoff blocked-owner --request <request-id> --now --reason 'Use saved context now'
+alt task handoff blocked-owner --request <request-id> --cancel --reason 'Keep the current owner'
+```
+
+`--now` also works on the initial request with `--engine` and `--attempt`. Cancellation is accepted
+until stopping begins; it cannot retract an instruction the engine already read. It keeps the current
+owner and leaves a durable correction for its current or next turn. Refusals and failures after
+checkpoint preparation also end that instruction. An owner's new question/block cancels preparation;
+Stop or Reject supersedes it. A report finished during preparation proceeds to ordinary verification,
+not a fresh attempt. The daemon stops
+the worker and its descendants and confirms termination before queuing any replacement. Unknown
+termination refuses the transfer. The new brief says whether the handoff note was refreshed; saved
+context is not current verification and does not include the complete previous native conversation.
+
+The daemon checks the attempt, worker/session and block again. Active lifecycle claims and reviews,
 decision-only waits, reported/completed tasks, explicit task/project pins and unavailable or unconfigured
 targets refuse. A changed block or replacement worker invalidates the request. An identical retry reuses
 its receipt while the resulting lifecycle still matches.
 
 Successful handoff queues the same task for ordinary dispatch, constrained to the requested engine's
-configured options for one fresh attempt. Configuration and availability are checked again at launch;
+configured options for one fresh attempt, ignoring model choices for new tasks. Configuration and availability are checked again at launch;
 an unavailable target does not fall through to another engine, and the queue shows that target's
 availability or pin conflict using the same routing decision as dispatch. The worktree, uncommitted edits, branch,
 PRs, expected files, progress, messages, provider history, questions and merge holds remain. Prior reports remain
@@ -185,6 +214,14 @@ Choose a due time within seven days and an existing CI run in this project's Git
 The saved `ci_recheck` names its status, next action/time, evidence and delivery receipt. Identical
 registration retries return the same receipt; another active probe refuses replacement. L2 asks L3
 to register the probe. Registration starts no worker and needs no free worker slot.
+
+Report a scheduling acknowledgement in project chat or retain it in project tracking, without
+`alt task message` to the blocked owner. An ordinary coordinator message wakes a question-blocked
+owner and invalidates the registered probe. If necessary owner coordination changes lifecycle,
+the old schedule no longer promises observation: name the next actor and trigger. If the owner
+blocks again on pending CI, register a new probe against that block and verify its saved next
+action/time before reporting the replacement schedule. Stop, attempt/session identity, questions
+and merge holds retain their existing rules; scheduling supplies no resume or approval authority.
 
 An owner's ordinary block gets a wait, so the recheck observes and never makes a failed run green.
 For a failed flaky shard, the owner first reruns the failed jobs on the same head
@@ -855,10 +892,20 @@ alt machine set --unset-voice --reason 'Back to the default'
 can run the speech model and `browser` elsewhere; `machine show` reports the backend in effect. See
 [voice input](OPERATIONS.md#voice-input) for what each backend needs and where audio goes.
 
+An operator-supplied transcription service is configured in **Settings → Voice input → Your speech
+service**. No CLI key or endpoint argument is exposed. `machine show` reports the backend without
+service credentials or address. Setting `host`, `browser`, or `--unset-voice` replaces the complete
+voice setting and removes saved service details. Voice setup/status/remove commands operate only
+on the built-in runtime, including when a service is selected.
+
 `alt voice status` reports whether [host voice](OPERATIONS.md#host-voice) can run here and its setup
 state. `alt voice setup` downloads and checks the speech model and its runtime once (about 700 MB),
-printing progress and the final state; `alt voice remove` stops dictation and deletes them. Setup
-and removal are the operator's; agents are refused.
+printing progress and the final state; it also retries a failed or cancelled update. `alt voice cancel`
+cancels setup or updating; `alt voice remove` cancels updating, stops dictation and deletes the files.
+The daemon automatically attempts each release's replacement once for already-installed, selected
+host voice, preserving supported dictation until verification and handoff. Cancel or failure requires
+explicit Retry, even after restart. First installation stays manual. Setup, cancel and removal commands
+are the operator's; agents are refused.
 
 ### Projects folder
 

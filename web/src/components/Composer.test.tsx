@@ -1140,6 +1140,67 @@ describe("Composer", () => {
   });
 
   // ---- host voice: the microphone streams to this computer, whose words appear while listening ----
+  it("service sends only after Stop, shows pending text and removes all recording UI on success", async () => {
+    installVoiceBrowser({ backend: "service" });
+    const settings = { backend: "service" as const, selection: "service-one", owner: "device", service: { url: "https://speech.example.test/v1/audio/transcriptions", key_present: false }, host: { state: "absent" as const, download_bytes: 0 } };
+    updateVoiceSettings(settings);
+    let release: (response: Response) => void = () => {};
+    const uploads: RequestInit[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
+      if (path === "/api/voice") return jsonResponse(settings);
+      uploads.push(init!); return new Promise<Response>((resolve) => { release = resolve; });
+    }));
+    const user = userEvent.setup();
+    render(<MemoryRouter><Harness initial="Note:" /></MemoryRouter>);
+    await listen(user);
+    expect(uploads).toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
+    expect(await screen.findByText("Transcribing…")).toBeVisible();
+    expect(document.querySelector(".composer-wave")).toBeNull();
+    expect(document.querySelector(".composer-timer")).toBeNull();
+    release(jsonResponse({ text: "Returned words." }));
+    await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue("Note: Returned words."));
+    expect(screen.queryByText("Transcribing…")).toBeNull();
+    expect(uploads).toHaveLength(1);
+  });
+
+  it("service reads current selection before opening the microphone and requires another tap if changed", async () => {
+    const { getUserMedia } = installVoiceBrowser({ backend: "service" });
+    const settings = { backend: "service" as const, selection: "service-one", owner: "device", service: { url: "https://speech.example.test/v1/audio/transcriptions", key_present: false }, host: { state: "absent" as const, download_bytes: 0 } };
+    updateVoiceSettings(settings);
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ ...settings, selection: "service-two" })));
+    const user = userEvent.setup();
+    render(<MemoryRouter><Harness /></MemoryRouter>);
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Voice settings changed. Record again using the current choice.");
+    expect(getUserMedia).not.toHaveBeenCalled();
+  });
+
+  it("invalid service settings explain repair without opening the microphone or changing backend", async () => {
+    const { getUserMedia } = installVoiceBrowser({ backend: "service" });
+    const settings = { backend: "service" as const, selection: "invalid-service", owner: "device", error: "service_response" as const, host: { state: "absent" as const, download_bytes: 0 } };
+    updateVoiceSettings(settings);
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(settings)));
+    const user = userEvent.setup();
+    render(<MemoryRouter><Harness /></MemoryRouter>);
+    await user.type(screen.getByRole("textbox"), "Keep this draft");
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your speech service settings are invalid.");
+    expect(screen.getByRole("link", { name: "Voice settings" })).toHaveAttribute("href", "/settings/voice");
+    expect(screen.getByRole("textbox")).toHaveValue("Keep this draft");
+    expect(getUserMedia).not.toHaveBeenCalled();
+  });
+
+  it("keeps typing and settings reachable when a saved service host cannot be parsed by this browser", async () => {
+    installVoiceBrowser({ backend: "service" });
+    updateVoiceSettings({ backend: "service", selection: "s", owner: "device", service: { url: "https://bad|host/transcribe", key_present: false }, host: { state: "absent", download_bytes: 0 } });
+    const user = userEvent.setup();
+    render(<MemoryRouter><Harness /></MemoryRouter>);
+    await user.type(screen.getByRole("textbox"), "Typing works");
+    expect(screen.getByRole("textbox")).toHaveValue("Typing works");
+    expect(screen.getByRole("link", { name: "Voice settings: your speech service" })).toHaveAttribute("href", "/settings/voice");
+  });
+
   /** The host's answers: each chunk is answered with how many samples it has heard. */
   function stubHost(options: { refuse?: string } = {}) {
     let heard = 0;
@@ -1472,19 +1533,36 @@ describe("Composer", () => {
   });
 
   it.each([
-    [{ state: "absent", download_bytes: 698_000_000 }, "Voice needs a one-time download on this computer. Set up voice"],
-    [{ state: "outdated", download_bytes: 698_000_000 }, "Voice needs an update on this computer. Set up voice"],
-    [{ state: "setting-up", download_bytes: 698_000_000, done_bytes: 1 }, "Voice is being set up on this computer. Typing works."],
-  ] as const)("host voice not set up (%o): the mic explains instead of opening the microphone", async (host, hint) => {
+    [{ state: "absent", download_bytes: 698_000_000 }, "Voice needs a one-time download on this computer.", "Set up voice"],
+    [{ state: "outdated", download_bytes: 698_000_000 }, "Voice needs an update on this computer.", "Update voice"],
+    [{ state: "outdated", download_bytes: 698_000_000, update: { state: "preparing" } }, "Voice is updating on this computer.", "View update"],
+    [{ state: "outdated", download_bytes: 698_000_000, update: { state: "downloading", done_bytes: 12, download_bytes: 40 } }, "Voice is updating on this computer.", "View update"],
+    [{ state: "outdated", download_bytes: 698_000_000, update: { state: "checking" } }, "Voice is updating on this computer.", "View update"],
+    [{ state: "outdated", download_bytes: 698_000_000, update: { state: "failed", reason: "Download failed." } }, "Voice needs an update on this computer.", "Update voice"],
+    [{ state: "outdated", download_bytes: 698_000_000, update: { state: "cancelled" } }, "Voice needs an update on this computer.", "Update voice"],
+    [{ state: "setting-up", download_bytes: 698_000_000, done_bytes: 1 }, "Voice is being set up on this computer. Typing works.", null],
+  ] as const)("host voice not set up (%o): the mic explains instead of opening the microphone", async (host, hint, link) => {
     const { getUserMedia } = installVoiceBrowser({ backend: "host", host });
     const fetchMock = vi.fn(async () => jsonResponse({ backend: "host", selection: "fixture-host", url: "", model: "", key_set: false, host }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(<MemoryRouter><Harness /></MemoryRouter>);
     await user.click(screen.getByRole("button", { name: "Start voice input" }));
-    expect(await screen.findByText(hint.split(" Set up voice")[0]!, { exact: false })).toBeInTheDocument();
-    if (hint.endsWith("Set up voice")) expect(await screen.findByRole("link", { name: "Set up voice" })).toHaveAttribute("href", "/settings/voice");
+    expect(await screen.findByText(hint, { exact: false })).toBeInTheDocument();
+    if (link) expect(await screen.findByRole("link", { name: link })).toHaveAttribute("href", "/settings/voice");
     expect(getUserMedia).not.toHaveBeenCalled();
+  });
+
+  it.each(["downloading", "failed", "cancelled"] as const)("supported host voice remains usable during update %s", async (state) => {
+    installVoiceBrowser({ backend: "host", host: { state: "ready", download_bytes: 701000000,
+      update: { state, download_bytes: 40000000, done_bytes: 12000000 } } });
+    hostVoice("Still dictating", "Still dictating.");
+    const { user, field } = mount();
+    await listen(user);
+    expect(field).toHaveValue("Still dictating");
+    expect(screen.queryByRole("link", { name: /update/i })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
+    await waitFor(() => expect(field).toHaveValue("Still dictating."));
   });
 
   it.each([
