@@ -336,7 +336,7 @@ def _system_section(system: str) -> str:
 _CREDENTIAL = re.compile(
     r"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[A-Z0-9]{16})\b"
     r"|-----BEGIN [\w ]*PRIVATE KEY-----(?:[\s\S]*?-----END [\w ]*PRIVATE KEY-----)?"
-    r"|\b(?:authorization\s*[:=]\s*(?:bearer|basic)\s+|(?:[\w-]*(?:token|password|secret|api[_-]?key))[\"']?\s*[:=]\s*[\"']?)"
+    r"|\b(?:authorization\s*[:=]\s*(?:bearer|basic)\s+|(?<![\w-])(?:[\w-]*(?:token|password|secret|api[_-]?key))[\"']?\s*[:=]\s*[\"']?)"
     r"(?!\[REDACTED\]|<REDACTED>)\S{4,}"
     r"|https?://[^\s/@:]+:[^\s/@]+@", re.I)
 _PRIVATE = re.compile(r"(?:/home/|/Users/|~/|\$HOME/|[A-Z]:\\Users\\)|\bI-\d{8}-\d{6}(?:-\d+)?\.md\b|\bincidents(?:/|\.jsonl\b)|"
@@ -397,9 +397,9 @@ def _redact_serials(text: str) -> str:
 _PATH_TAIL = r"(?:[/\\][^\s`'\"<>\[\]{}()]*)?"
 _REDACTIONS = (
     (re.compile(r"(?:~|\$HOME|/home/[^/\s]+|/Users/[^/\s]+|[A-Za-z]:\\Users\\[^\\\s]+)" + _PATH_TAIL), "[path]"),
-    (re.compile(r"[^\s`'\"<>\[\]{}()]*(?:\.altitude/|\bincidents(?:/|\.jsonl\b)|\bI-\d{8}-\d{6}(?:-\d+)?\.md\b)[^\s`'\"<>\[\]{}()]*"), "[path]"),
+    (re.compile(r"(?<![^\s`'\"<>\[\]{}()])[^\s`'\"<>\[\]{}()]*(?:\.altitude/|\bincidents(?:/|\.jsonl\b)|\bI-\d{8}-\d{6}(?:-\d+)?\.md\b)[^\s`'\"<>\[\]{}()]*"), "[path]"),
     (re.compile(r"\b(?:conversation|inbox|faults|chat)\.jsonl?\b", re.I), "[file]"),
-    (re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"), "[email]"),
+    (re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+"), "[email]"),
     (_ADDRESS, lambda m: "[address]" if _private_address(m) else m.group(0)),
     (re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"), "[id]"),
     (re.compile(r"\b[0-9a-f]{12,}\b", re.I), "[id]"),

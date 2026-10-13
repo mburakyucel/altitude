@@ -45,6 +45,24 @@ class _CodexTranscriptCase(AltitudeCase):
 
 
 class TestCodexTranscript(_CodexTranscriptCase):
+    def test_any_valid_project_name_has_a_live_session(self):
+        # Project names are any single folder name, so capitals, spaces and dots are ordinary.
+        self.project = "Atlas Notes 1.2"
+        self.register(self.project)
+        task = T.new(self.project, "Observed work", "Do it")
+        self.slug = task["slug"]
+        task.update({"state": "running", "attempt": 1, "l2_engine": "codex", "session_id": "thread-1",
+                     "agent_id": "w1", "worktree": "/repo/wt"})
+        S.save_task(self.project, task)
+        self.root = dispatch.l2_job_root(self.project, self.slug)
+        self.root.mkdir(parents=True)
+        self._turn("w1", _stamp(-10), "thread-1").write_text(json.dumps(
+            {"type": "item.completed", "item": {"id": "r", "type": "agent_message", "text": "named project"}}) + "\n")
+        self.assertIn("named project", json.dumps(self._view()))
+        for project, slug in (("..", self.slug), (self.project, "../other"), ("a/b", self.slug)):
+            with self.subTest(project=project, slug=slug), self.assertRaises(transcript.TranscriptAccessError):
+                transcript.view(project, slug, engine="codex", session_id="thread-1", attempt=1)
+
     def test_raw_record_hides_recognized_reasoning_fields_before_native_projection(self):
         self.new.write_text('\n'.join(map(json.dumps, [
             {"type": "thread.started", "thread_id": "thread-1"},
