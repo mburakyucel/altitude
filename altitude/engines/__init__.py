@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .. import config
 from . import common, claude, codex
 from .invocation import InvocationRefused, replaced_after_projection
 
@@ -42,7 +43,7 @@ from .common import (
     engine_driver,
     github_token,
     service_status,
-    codex_env,
+    launch_env,
     task_tool_env,
     machine_unit,
     machine_files,
@@ -59,10 +60,10 @@ from .common import (
     public_message_identity,
     background_work,
     observe_token_usage,
-    codex_worker,
+    owned_worker,
     worker_sends,
     worker_unit,
-    codex_stop,
+    stop_owned_worker,
     start_l2,
     resume_l2,
     stop_l2_worker,
@@ -80,7 +81,6 @@ from .common import (
     review,
     context_percent,
     context_rotation_due,
-    session_rotation_due,
     context_state,
 )
 
@@ -114,8 +114,8 @@ from .codex import (
 
 from .common import _safe_output, _shell_command
 
-INSTALL = {engine: native.INSTALL_COMMAND for engine, native in (("claude", claude), ("codex", codex))}
-SIGN_IN = {engine: native.SIGN_IN for engine, native in (("claude", claude), ("codex", codex))}
+INSTALL = {engine: common.implementation(engine).INSTALL_COMMAND for engine in config.ENGINES}
+SIGN_IN = {engine: common.implementation(engine).SIGN_IN for engine in config.ENGINES}
 
 
 def worker_live(engine: str, task: dict, *, job_root: Path) -> bool:

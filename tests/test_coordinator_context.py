@@ -78,11 +78,10 @@ class TestCoordinatorContext(AltitudeCase):
         self.assertEqual(resumes, [False, True, True, True])
         self.assertEqual(l3.info(self.project)["sessions"]["codex"]["turns"], 4)
 
-    def test_saved_context_rotation_does_not_replace_native_thread_but_explicit_reset_does(self):
+    def test_saved_context_over_the_act_line_keeps_native_thread_but_explicit_reset_replaces_it(self):
         l3.save_info(self.project, {"sessions": {"codex": {
             "session_id": "context-thread", "confinement_version": l3.L3_CONFINEMENT_VERSION,
-            "context_percent": 131.3, "rotate_next": True,
-            "rotate_reason": "context 131.3% ≥ act line 100%"}}})
+            "context_percent": 131.3, "rotate_next": False, "rotate_reason": None}}})
 
         def execute(prompt, **kwargs):
             return {"text": "answer", "reported_session_id": kwargs["resume"] or "reset-thread"}
@@ -94,6 +93,23 @@ class TestCoordinatorContext(AltitudeCase):
             l3.turn(self.project, "Start the requested conversation.")
         self.assertEqual([c.kwargs["resume"] for c in execute.call_args_list], ["context-thread", None])
         self.assertEqual(l3.info(self.project)["sessions"]["codex"]["session_id"], "reset-thread")
+
+    def test_pending_rotation_saved_before_native_compaction_rotates_once_then_resumes(self):
+        l3.save_info(self.project, {"sessions": {"codex": {
+            "session_id": "context-thread", "confinement_version": l3.L3_CONFINEMENT_VERSION,
+            "context_percent": 131.3, "rotate_next": True,
+            "rotate_reason": "context 131.3% ≥ act line 100%"}}})
+
+        def execute(prompt, **kwargs):
+            return {"text": "answer", "reported_session_id": kwargs["resume"] or "fresh-thread"}
+
+        with mock.patch.object(l3, "_select", return_value={"engine": "codex", "why": "fixture"}), \
+             mock.patch.object(engines, "codex_exec", side_effect=execute) as execute:
+            l3.turn(self.project, "Start after the pending rotation.")
+            l3.turn(self.project, "Continue the same conversation.")
+        self.assertEqual([c.kwargs["resume"] for c in execute.call_args_list], [None, "fresh-thread"])
+        session = l3.info(self.project)["sessions"]["codex"]
+        self.assertEqual((session["session_id"], session["rotate_next"]), ("fresh-thread", False))
 
     def test_missing_context_does_not_use_aggregate_or_old_request(self):
         self.append("token_usage_record", {"thread_id": "context-thread", "response_id": "old",

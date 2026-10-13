@@ -57,14 +57,14 @@ class TestSessionModel(AltitudeCase):
         task.update(state="running", attempt=1, l2_engine="codex", agent_id="worker-1", session_id="thread-1",
                     engine_model=None, effort="xhigh", launch_effort="xhigh")
         S.save_task(self.project, task)
-        paths = engines.common._codex_paths(dispatch.l2_job_root(self.project, task["slug"]), "worker-1")
+        paths = engines.common._worker_paths(dispatch.l2_job_root(self.project, task["slug"]), "worker-1")
         S.write_json(paths["record"], {"started_at": self.started, "codex_home": str(self.home)})
         paths["stdout"].write_text('{"type":"thread.started","thread_id":"thread-1"}\n')
         self.rollout.write_text(self.context())
         with mock.patch.object(platform, "job_active", return_value=True):
             self.assertEqual(dispatch.poll(self.project), [])
             self.rollout.unlink()
-            row = engines.codex_worker("worker-1", job_root=paths["record"].parent)
+            row = engines.owned_worker("worker-1", job_root=paths["record"].parent)
         saved = S.load_task(self.project, task["slug"])
         self.assertEqual(saved["engine_model"], "actual-model")
         self.assertEqual(saved["engine_reasoning_effort"], "high")

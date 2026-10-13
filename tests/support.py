@@ -130,7 +130,7 @@ def run_native_sandbox_probe(runtime: Path, settings: list[str], probe: str, arg
     command += ["--", sys.executable, "-c", probe, *arguments]
     _native_sandbox_command = tuple(command)
     try:
-        return subprocess.run(command, cwd=runtime, env=engines.codex_env(), capture_output=True, text=True, timeout=45)
+        return subprocess.run(command, cwd=runtime, env=engines.launch_env(), capture_output=True, text=True, timeout=45)
     finally:
         _native_sandbox_command = None
 

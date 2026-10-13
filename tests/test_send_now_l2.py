@@ -24,7 +24,7 @@ READ_RECORD = engines.worker_sends  # FakeL2 replaces it; the driverless case re
 
 def give_driver(job_root, worker_id: str) -> None:
     """The ownership record `engines.start_l2` writes for a worker whose job runs the Send now driver."""
-    paths = engines.common._codex_paths(job_root, worker_id)
+    paths = engines.common._worker_paths(job_root, worker_id)
     paths["record"].parent.mkdir(parents=True, exist_ok=True)
     S.atomic_write(paths["record"], json.dumps({"id": worker_id, "sends": str(paths["sends"])}))
 
@@ -337,7 +337,7 @@ class TestSendNowL2(AltitudeCase):
         task = self.launch(config.ENGINES[0])
         message = self.send(task, "No driver here")
         job_root = dispatch.l2_job_root(self.project, task["slug"])
-        record = engines.common._codex_paths(job_root, task["agent_id"])["record"]
+        record = engines.common._worker_paths(job_root, task["agent_id"])["record"]
         self.patch(engines, "worker_sends", new=READ_RECORD)
         self.assert_refused(task, message, "started before Send now")  # no ownership record
         self.assertIn("next turn", self.delivery(task, message)["send_now_reason"])

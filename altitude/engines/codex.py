@@ -523,12 +523,12 @@ def _codex_outcome(events: list[dict], returncode: int, stdout: str, stderr: str
     tools = [common._tool("Bash", (event.get("item") or {}).get("command")) for event in events
              if event.get("type") == "item.completed"
              and (event.get("item") or {}).get("type") == "command_execution"]
-    thread = common._codex_thread(events)
+    thread = common._event_session(events)
     failure = next((common._event_error("codex", event) for event in reversed(events)
                     if event.get("type") == "turn.failed" or
                     (returncode != 0 and event.get("type") == "error")), None)
     result = {"text": text.strip(), "returncode": returncode,
-              "usage": common._codex_usage(events), "session_id": thread or resume, "reported_session_id": thread,
+              "usage": common._event_usage(events), "session_id": thread or resume, "reported_session_id": thread,
               "tools": tools, **metadata,
               "error": (failure if isinstance(failure, str) else json.dumps(failure))[:500] if failure else
                        None if returncode == 0 else (stderr or "").strip()[:500],
@@ -566,10 +566,10 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
     cmd += [resume, "-"] if resume else ["-"]
     unit = _codex_unit(f"sync-{uuid.uuid4().hex}")
     started_at = datetime.now(timezone.utc).isoformat()
-    proc = subprocess.Popen(platform.job_command(unit, cmd, common.codex_env(extra_env),
+    proc = subprocess.Popen(platform.job_command(unit, cmd, common.launch_env(extra_env),
                             runtime_max=timeout),
                             cwd=str(cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, env=common.codex_env(extra_env, retain_user_bus=True), start_new_session=True)
+                            text=True, env=common.launch_env(extra_env, retain_user_bus=True), start_new_session=True)
     # The writer owns stdin, so the polling communicate() below only reads.
     prompt_input, proc.stdin = proc.stdin, None
     threading.Thread(target=common._feed, args=(prompt_input, prompt), daemon=True).start()
@@ -579,8 +579,8 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
     deadline = time.monotonic() + timeout
     def observe(stdout):
         nonlocal metadata
-        thread = common._codex_thread(common._codex_parse(stdout or ""))
-        metadata = _codex_session_model(thread, started_at, _codex_home(common.codex_env(extra_env)))
+        thread = common._event_session(common._parse_events(stdout or ""))
+        metadata = _codex_session_model(thread, started_at, _codex_home(common.launch_env(extra_env)))
         if metadata and on_session:
             on_session({"session_id": thread, **metadata})
     try:
@@ -600,11 +600,11 @@ def codex_exec(prompt: str, *, cwd: Path, model: str | None = None, timeout: int
         raise
     if not metadata:
         observe(stdout)
-    events = common._codex_parse(stdout or "")
+    events = common._parse_events(stdout or "")
     result = _codex_outcome(events, proc.returncode, stdout, stderr, text=(common._agent_messages(events) or [""])[-1],
                             resume=resume, model=model, metadata=metadata)
     result["context"] = _codex_session_context(result.get("reported_session_id"), started_at,
-                                              _codex_home(common.codex_env(extra_env)))
+                                              _codex_home(common.launch_env(extra_env)))
     return result
 
 
@@ -858,21 +858,16 @@ def read_quota(timeout: float = 20.0) -> dict:
 
 
 def token_numbers(usage):
-    def number(key):
-        value = usage.get(key)
-        return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
-
-    inputs, reads, writes = number("input_tokens"), number("cached_input_tokens"), number("cache_write_input_tokens")
-    reasoning = number("reasoning_output_tokens")
-    return {**dict(zip(common._TOKEN_FIELDS, (inputs, number("output_tokens"), reads, writes,
-                                     reasoning if isinstance(reasoning, int) and not isinstance(reasoning, bool) and reasoning >= 0 else None))),
-            "incomplete": inputs is None or number("output_tokens") is None or
-                          False}
+    """Response records are request increments; inclusive input is the reported input alone."""
+    inputs, outputs, reads, writes, reasoning = (common._token_count(usage.get(key)) for key in (
+        "input_tokens", "output_tokens", "cached_input_tokens", "cache_write_input_tokens", "reasoning_output_tokens"))
+    return {**dict(zip(common._TOKEN_FIELDS, (inputs, outputs, reads, writes, reasoning))),
+            "incomplete": inputs is None or outputs is None}
 
 
 def token_sources(home, owners, register):
     sources, pending = [], False
-    root = home or _codex_home(common.codex_env())
+    root = home or _codex_home(common.launch_env())
     index, pending = _token_rollouts(root)
     wanted = set(owners)
     while True:
@@ -947,7 +942,7 @@ def rejection_flags(text, said, model, auth, model_missing):
 
 
 def worker_events(path):
-    return common._codex_events(path)
+    return common._read_events(path)
 
 
 INSTALL_COMMAND = 'npm install -g @openai/codex'
@@ -955,7 +950,49 @@ SIGN_IN = (('login', 'status'), 'codex login')
 IMAGE_READER = 'view_image'
 EFFORT_ENV = None
 NATIVE_SEND = False
-AUTO_ROTATION = False
+AUTO_ROTATION = False  # the engine compacts its own conversation
+WINDOW_HOLD = False  # limits are reported per turn
+NESTED_ENV_PREFIXES = ()
+REVIEW_ENV = ("CODEX_HOME",)
+TRANSCRIPT_IN_JOB = True
+STATUS_EVENTS = ()
+
+
+def worker_record(env):
+    """Where the worker's rollout records live, for later model observation."""
+    return {"codex_home": str(_codex_home(env))}
+
+
+def session_context_source(session_id):
+    return None
+
+
+def event_error(event):
+    return None
+
+
+def safe_event(event):
+    return False
+
+
+def review_input(prompt, images):
+    return prompt  # images attach by flag
+
+
+def review_result_facts(records):
+    return {}
+
+
+def legacy_worker(task):
+    return None
+
+
+def legacy_unit(task):
+    return None
+
+
+def stop_legacy_worker(worker_id):
+    raise RuntimeError("Worker ownership record is unavailable; stop is unconfirmed")
 
 def binary():
     return config.CODEX_BIN
@@ -1004,11 +1041,11 @@ def review_errors(record):
 
 
 def review_output(stdout):
-    events = common._codex_parse(stdout)
+    events = common._parse_events(stdout)
     messages = [event["item"].get("text", "") for event in events if event.get("type") == "item.completed"
                 and (event.get("item") or {}).get("type") == "agent_message"]
     text = messages[-1] if messages else ""
-    usage = common._codex_usage(events)
+    usage = common._event_usage(events)
     if any(event.get("type") == "turn.failed" for event in events):
         return "", usage, True
     return text, usage, False
@@ -1033,8 +1070,8 @@ def delivered_context(record):
 
 def observe_worker_model(record, events, record_path):
     if not record.get("engine_model"):
-        metadata = _codex_session_model(common._codex_thread(events), record["started_at"],
-                                       Path(record.get("codex_home") or _codex_home(common.codex_env())))
+        metadata = _codex_session_model(common._event_session(events), record["started_at"],
+                                       Path(record.get("codex_home") or _codex_home(common.launch_env())))
         if metadata:
             record.update(metadata)
             S.write_json(record_path, record)

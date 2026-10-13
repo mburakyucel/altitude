@@ -54,7 +54,7 @@ class TestNativeQuota(QuotaFixture):
     def test_live_rows_include_zero_and_observation_time_without_a_session(self):
         self.output = usage(limit("weekly_all", 0), limit("session", 12))
         before = time.time()
-        reading = engines.claude._claude_quota()
+        reading = engines.claude.read_quota()
         self.assertTrue(reading["known"])
         self.assertEqual((reading["seven_day"], reading["five_hour"]), (0, 12))
         self.assertEqual(reading["seven_day_resets"], datetime.fromisoformat(RESET).timestamp())
@@ -73,19 +73,19 @@ class TestNativeQuota(QuotaFixture):
                                     ("session", "five_hour", "seven_day")):
             with self.subTest(kind=kind):
                 self.output = usage(limit(kind, 0), limit("weekly_opus", 100))
-                reading = engines.claude._claude_quota()
+                reading = engines.claude.read_quota()
                 self.assertTrue(reading["known"])
                 self.assertEqual(reading[field], 0)
                 self.assertNotIn(absent, reading)
         self.output = usage(limit("weekly_opus", 20))
-        self.assertFalse(engines.claude._claude_quota()["known"])
+        self.assertFalse(engines.claude.read_quota()["known"])
 
     def test_unsupported_or_unrecognized_version_never_invokes_print(self):
         for version in ("2.1.276 (Claude Code)", "2.0.99", "unknown", ""):
             with self.subTest(version=version):
                 self.version = version
                 self.process.reset_mock()
-                self.assertFalse(engines.claude._claude_quota()["known"])
+                self.assertFalse(engines.claude.read_quota()["known"])
                 self.assertEqual(self.process.call_args_list[0].args[0][1:], ["--version"])
                 self.assertEqual(self.process.call_count, 1)
 
@@ -94,7 +94,7 @@ class TestNativeQuota(QuotaFixture):
                         subprocess.TimeoutExpired("private command", 5)):
             with self.subTest(failure=type(failure).__name__):
                 self.process.side_effect = failure
-                reading = engines.claude._claude_quota()
+                reading = engines.claude.read_quota()
                 self.assertFalse(reading["known"])
                 self.assertNotIn("private", reading["why"])
 
@@ -103,7 +103,7 @@ class TestNativeQuota(QuotaFixture):
                         subprocess.CalledProcessError(1, "private command", stderr="private credentials")):
             with self.subTest(failure=type(failure).__name__):
                 self.failure = failure
-                reading = engines.claude._claude_quota()
+                reading = engines.claude.read_quota()
                 self.assertFalse(reading["known"])
                 self.assertNotIn("private", reading["why"])
                 self.assertNotIn("at", reading)
@@ -115,7 +115,7 @@ class TestNativeQuota(QuotaFixture):
                        json.dumps({"type": "assistant", "usage_report": {"rate_limits": {"limits": [None]}}})):
             with self.subTest(output=output):
                 self.output = output
-                reading = engines.claude._claude_quota()
+                reading = engines.claude.read_quota()
                 self.assertFalse(reading["known"])
                 self.assertNotIn("private", reading["why"])
                 self.assertNotIn("at", reading)
@@ -130,11 +130,11 @@ class TestNativeQuota(QuotaFixture):
         for row in invalid:
             with self.subTest(row=row):
                 self.output = usage(row)
-                self.assertFalse(engines.claude._claude_quota()["known"])
+                self.assertFalse(engines.claude.read_quota()["known"])
         self.output = usage(limit("weekly_all", 5), limit("weekly_all", 10))
-        self.assertFalse(engines.claude._claude_quota()["known"])
+        self.assertFalse(engines.claude.read_quota()["known"])
         self.output = usage(limit("weekly_all", 5)) + '\n' + json.dumps({"type": "result", "is_error": True})
-        self.assertFalse(engines.claude._claude_quota()["known"])
+        self.assertFalse(engines.claude.read_quota()["known"])
 
 
 class TestRefreshRouting(QuotaFixture):

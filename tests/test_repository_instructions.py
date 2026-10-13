@@ -23,7 +23,7 @@ class TestRepositoryInstructions(AltitudeCase):
         super().setUp()
         self.private_ledgers()
         git("init", "-q", cwd=self.repo)
-        self.patch(engines.common, "_codex_processes", {})
+        self.patch(engines.common, "_worker_processes", {})
 
     def layout(self, kind):
         for name in ("AGENTS.md", "CLAUDE.md"):

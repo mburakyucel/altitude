@@ -42,7 +42,7 @@ class TestDeadWorker(AltitudeCase):
         task = T.new(self.project, "owned-error", "Repair worker lifecycle")
         task.update(state="running", attempt=1, l2_engine="claude", agent_id="owned", session_id="session")
         S.save_task(self.project, task)
-        paths = engines.common._codex_paths(dispatch.l2_job_root(self.project, task["slug"]), "owned")
+        paths = engines.common._worker_paths(dispatch.l2_job_root(self.project, task["slug"]), "owned")
         for stream in ("result", "stderr", "stdout"):
             with self.subTest(stream=stream):
                 S.save_task(self.project, task)
