@@ -127,7 +127,7 @@ function TransferEntry({ transfer: t }: { transfer: Transfer }) {
 
 export function TransferCard({ transfer: t, inDialog = false }: { transfer: Transfer; inDialog?: boolean }) {
   const quota = t.quotaOffer && !t.disabled;
-  if (!t.active && !t.label && !t.error && !quota) return null;
+  if (!t.active && !t.label && !t.error && !quota && !(inDialog && t.request)) return null;
   const busy = !t.uncertain && (t.active || t.pending || Boolean(t.label));
   const warning = quota || t.uncertain || Boolean(t.error) || ["failed", "refused"].includes(t.request?.status ?? "");
   const tone = warning ? "warn" : busy ? "run" : t.request?.status === "done" ? "ok" : "wait";
@@ -169,7 +169,7 @@ export function TransferDialog({ transfer: t }: { transfer: Transfer }) {
     <div className="models task-models">
       <header className="models-head"><h2>This task’s model</h2><button type="button" className="icon-btn" aria-label="Close" onClick={t.close}>×</button></header>
       <p className="models-in-use">Current: <strong>{info.current_model_label || `${info.current_label} · Settings unknown`}{info.current_model ? ` · ${info.current_effort_label}` : ""}</strong></p>
-      {t.active || t.label ? <TransferCard transfer={t} inDialog /> : <>
+      {t.active || t.label || ["pending", "executing"].includes(info.request?.status ?? "") ? <TransferCard transfer={t} inDialog /> : <>
         <fieldset className="task-model-fields" disabled={t.pending}>
           <label>Engine<select value={t.target} onChange={(event) => t.pickEngine(event.target.value)}>{info.targets.map((item) => <option key={item.engine} value={item.engine}>{item.label}</option>)}</select></label>
           <label>Model<select value={t.model} onChange={(event) => t.setModel(event.target.value)}>{!t.selected?.models.length ? <option value="">No named model configured</option> : t.selected.models.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>

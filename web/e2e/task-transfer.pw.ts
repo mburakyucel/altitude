@@ -150,6 +150,8 @@ test("a blocked question owner switches from saved context without answering the
   expect(after.attempt).toBe(before.attempt + 1);
   expect(after.questions).toEqual(before.questions.map((question: Record<string, unknown>) => ({ ...question, state: after.state })));
   expect(after.hold_merge).toBe(before.hold_merge);
+  await expect(page.getByRole("button", {name:"Stop", exact:true}).first()).toBeVisible();
+  await expect(page.getByText(/^L2 working(?: ·|$)/).first()).toBeVisible();
   await walk.state("02-new-owner-question-stays-open", { visible: [page.getByText("Keep the bounded validation scope?", { exact: true }).first(), page.locator('[data-tone="held"]').filter({ hasText: "Merge held" }).first()], hidden: [confirm, page.getByRole("button", { name: "Resume", exact: true })] });
   await start(page);
   await page.getByRole("button", { name: "Prepare change", exact: true }).click();

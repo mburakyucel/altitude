@@ -102,3 +102,20 @@ it("Escape closes a chooser opened while preparation controls are visible", asyn
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(taskAction).not.toHaveBeenCalled();
 });
+
+it("keeps an open progress dialog read-only when polling observes the replacement", async () => {
+  function Live({ task }: { task: TaskView }) {
+    const t=useTaskTransfer("sample",task,async()=>undefined,false,()=>undefined,()=>undefined);
+    return <><TransferModelButton transfer={t}/><TransferDialog transfer={t}/></>;
+  }
+  const u=userEvent.setup();
+  const {rerender}=render(<Live task={preparing}/>);
+  await u.click(screen.getByRole("button",{name:/Task model:/}));
+  rerender(<Live task={{...initial,transfer:{...initial.transfer!,request:{...preparing.transfer!.request!,status:"done",phase:"done"}}}}/>);
+  const modal=screen.getByRole("dialog");
+  expect(within(modal).getByText("Switched to Engine B.")).toBeVisible();
+  expect(within(modal).queryByRole("combobox")).not.toBeInTheDocument();
+  await u.keyboard("{Escape}");
+  await u.click(screen.getByRole("button",{name:/Task model:/}));
+  expect(screen.getByRole("combobox",{name:"Engine"})).toBeVisible();
+});
