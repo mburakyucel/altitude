@@ -2546,11 +2546,12 @@ class Handler(BaseHTTPRequestHandler):
                             raise ValueError("alt task run: unsupported fields")
                         return run_machine_command(o["project"], o["slug"], o.get("attempt"), o.get("command"),
                                                    o.get("request"), owner=owner, waiting=waiting, gone=gone)
-                    if o.keys() - {"project", "slug", "attempt", "command", "kvm", "publish", "simulator", "capture"}:
+                    if o.keys() - {"project", "slug", "attempt", "command", "kvm", "publish", "simulator", "capture", "container_browser"}:
                         raise ValueError("alt task validate: unsupported fields")
                     return validation.run(o["project"], o["slug"], o.get("attempt"), o.get("command"),
                                           kvm=o.get("kvm", False), publish=o.get("publish"),
                                           simulator=o.get("simulator", False), capture=o.get("capture", False),
+                                          container_browser=o.get("container_browser", False),
                                           owner=owner, waiting=waiting, gone=gone)
                 return self._in_line(call)
             if parts == ["api", "pr", "close"]:

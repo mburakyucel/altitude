@@ -2145,6 +2145,7 @@ not which local process calls; the grant record and its per-command log are the 
 
 ```text
 alt task validate [--kvm] [--publish PORT] [--simulator [--capture]] -- <command>
+alt task validate --container-browser
 ```
 
 The current owner runs one command against a throwaway clone of its task's committed `HEAD`, isolated
@@ -2172,6 +2173,16 @@ it, or losing its connection takes the request out of the line or stops its run 
 `stopped`, and frees the machine. A newer `alt task validate` from the same task replaces the task's earlier request
 the same way, recorded as `replaced`. The
 [validation runner](DEVELOPMENT.md#validation-runner) describes the isolation, its limits and cleanup.
+
+The fixed `--container-browser` lane checks the actual container image's fictional phone/desktop
+journeys from an Apple silicon Mac. It accepts no command or other lane flags and is available only
+to an owner in the registered Altitude source project with its current standing VM-policy grant.
+Deployed controller code owns a throwaway Ubuntu guest; captured candidate code runs inside that
+guest, with Chromium in a non-root, rootless container with no network interface. The usual validation
+queue, execution limit, client-stop/replacement handling and activation fence own the whole run.
+Cleanup must confirm the guest stopped and its disk was removed before releasing the runner.
+See [container browser validation](CONTAINERS.md#container-browser-validation) for protection and
+resource evidence. An operator grant alone does not make a browser run through `task run` acceptable.
 
 ### Reading the task terminal
 

@@ -7,8 +7,10 @@ import { createRequire } from "node:module";
 import { mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { browserLaunchOptions } from "./browser_launch.mjs";
 
-const { chromium } = createRequire(new URL("../web/package.json", import.meta.url))("@playwright/test");
+const { chromium } = createRequire(process.env.ALTITUDE_BROWSER_PACKAGE || new URL("../web/package.json", import.meta.url))("@playwright/test");
 const output = process.argv[2];
 if (!output) throw new Error("usage: node scripts/browser_sandbox.mjs RESULT.json");
 
@@ -18,7 +20,7 @@ const server = createServer((_, response) => {
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const profile = mkdtempSync(join(tmpdir(), "browser-sandbox-"));
-const options = { channel: "chromium", chromiumSandbox: true, headless: true, timeout: 30000 };
+const options = browserLaunchOptions;
 const status = (pid) => readFileSync(`/proc/${pid}/status`, "utf8");
 const field = (text, name) => new RegExp(`^${name}:\\s+(\\S+)`, "m").exec(text)?.[1];
 const own = (pid, ns) => readlinkSync(`/proc/${pid}/ns/${ns}`) !== readlinkSync(`/proc/self/ns/${ns}`);
@@ -45,7 +47,11 @@ try {
     const version = context.browser()?.version() ?? null;
     const kept = report.includes("You are adequately sandboxed.") && renderers.length > 0 && renderers.every((r) =>
       r.uid !== "0" && r.seccomp === "2" && r.own_user_namespace && r.own_pid_namespace);
+    const executable=chromium.executablePath();
     result = { passed: kept && heading === "Fictional project", version, options, heading, sandbox: report, renderers,
+               executable, executable_sha256:createHash("sha256").update(readFileSync(executable)).digest("hex"),
+               kernel:readFileSync('/proc/version','utf8'),
+               process_namespaces:Object.fromEntries(['user','pid','net','mnt'].map(ns=>[ns,readlinkSync(`/proc/self/ns/${ns}`)])),
                user: field(status("self"), "Uid") };
   } finally {
     await context.close();

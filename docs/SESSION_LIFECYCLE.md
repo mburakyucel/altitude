@@ -1067,6 +1067,13 @@ existing Seatbelt validation runner without Chromium's inner sandbox; it changes
 permissions and establishes only the fictional journeys actually run. Shared configuration owns
 launch options, and actual runner identity/profile, finite preflight and cleanup remain evidence
 requirements. It grants no private/live-content, Simulator or native-worker acceptance.
+The fixed Mac `--container-browser` validation lane owns its throwaway Linux guest through the same
+admission, time limit, client-stop/replacement and activation fence. Only deployed controller code
+runs on the Mac; candidate execution is in the disconnected guest and rootless browser container.
+Its current standing VM-policy grant is checked at admission and revocation stops the run. Recovery
+confirms the recorded VM process lifetime ended and removes its disk before releasing the runner.
+That lane's Linux preflight establishes the required container and Chromium protections; it does
+not expand the fictional Mac Seatbelt harness's scope.
 The instruction takes effect on launches/resumes after normal source
 activation; running turns retain their delivered instructions. Deterministic launch fixtures prove
 delivery, not provider adherence or live browser isolation. See
