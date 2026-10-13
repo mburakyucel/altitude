@@ -274,7 +274,7 @@ L3 resolves each turn, including same-conversation resumes; a running turn keeps
 Inherited effort retains built-in behavior: native on Claude, High for Codex tasks and Medium
 for Codex chat/reviews. Ordinary reviews use an explicit global effort when set; otherwise they
 use the chat role's effort rather than inheriting project task effort overrides. Explicit `native` passes no
-effort to Claude and Medium, the documented Codex default level, to Codex. Unsupported explicit efforts refuse; Auto
+effort to Claude and Medium to Codex. Unsupported explicit efforts refuse; Auto
 excludes engines that cannot accept an explicit level. Provider caps and model compatibility remain
 native decisions; effort failures do not cause application-side downgrading.
 

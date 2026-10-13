@@ -57,7 +57,8 @@ Codex launch, fresh or resumed, owner, coordinator or reviewer, names its model 
 Codex CLI's own defaults and the operator's Codex configuration never choose silently. Auto excludes engines that cannot accept an explicit level;
 unsupported pins refuse. Model compatibility and provider effort caps are separate from the
 configured intent. Messages and resumes keep saved `launch_effort`, `launch_model`, attempt and
-conversation even when global model/effort defaults, project overrides, routing or native configuration change. Provider effort failures remain launch/turn failures without an
+conversation even when global model/effort defaults, project overrides, routing or native configuration change.
+A session saved before every launch named its model and effort resumes on the built-in task defaults. Provider effort failures remain launch/turn failures without an
 application downgrade or engine switch. Observations never become requested settings and start
 unknown on each resumed turn.
 

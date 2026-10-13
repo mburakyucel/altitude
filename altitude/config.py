@@ -100,7 +100,7 @@ CONTEXT_LINES = {"claude": (0.25, 0.30, CONTEXT_WINDOW), "codex": (0.80, 1.00, 2
 # receives a model and effort: its CLI's own defaults (and the user's Codex configuration) never choose silently.
 MODELS = {"claude": {"l3": "fable", "l2": "opus"}, "codex": {"l3": "gpt-6.1-sol", "l2": "gpt-6.1-sol"}}
 # Built-in efforts per engine and role, and the level a Native choice passes. Claude has none: it receives no effort
-# flag and keeps its native default. Codex's Native is its documented default level, passed explicitly.
+# flag and keeps its native default. Codex's Native sends Medium explicitly.
 EFFORTS = {"codex": {"l2": "high", "l3": "medium", "native": "medium"}}
 ENGINES = ("claude", "codex")
 #: Models the improvement review can use, with published dollars per million input and output tokens. The review runs

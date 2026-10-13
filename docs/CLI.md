@@ -1019,8 +1019,8 @@ existing `alt project set --routing` CLI option to edit those tiers. Individual 
 are not cleared here. Project Settings contains engine routing, not another model/effort table.
 
 **Altitude default** inherits built-in role behavior. Inherited effort is Native for Claude;
-Codex uses High for tasks and Medium for chat/reviews. **Native** delegates effort to the provider:
-Claude receives no effort, and Codex receives Medium. The available effort list is engine support, not a claim that
+Codex uses High for tasks and Medium for chat/reviews. **Native** lets Claude choose
+its own effort and sends Codex Medium. The available effort list is engine support, not a claim that
 every model accepts every level. Provider caps remain separate from the requested effort.
 **Other model…** accepts an exact ID. Selecting Other alone writes nothing; Enter or leaving a
 valid ID saves, and blank input or Escape restores the saved value. Explicit choices show the ID
@@ -1252,7 +1252,7 @@ Global Settings keeps effort beside each engine's model. Explicit project overri
 alt project set example --l3-effort low --reason 'Light coordination on Claude'
 alt project set example --l3-codex-effort medium --reason 'Medium coordination on Codex'
 alt project set example --l2-effort high --reason 'High effort for Claude task owners'
-alt project set example --l2-codex-effort native --reason 'Use the Codex default level for tasks'
+alt project set example --l2-codex-effort native --reason 'Use Medium effort for Codex tasks'
 alt project set example --unset-l3-effort --reason 'Restore the existing L3 default'
 alt project list
 ```
@@ -1264,7 +1264,7 @@ reason-bearing settings requests; L2 cannot change project defaults. Altd applie
 tick, without a free worker slot or service restart. Existing project overrides appear in global
 Settings with a deliberate reset action. An absent project effort inherits the global engine effort,
 then the built-in default: native on Claude; on Codex, High for L2 and Medium for L3 and reviews.
-Native passes no effort to Claude and Medium, the documented Codex default level, to Codex, so every
+Native passes no effort to Claude and Medium to Codex, so every
 Codex launch names its level.
 
 Levels are `native`, `low`, `medium`, `high`, `xhigh` (Extra High), `max`, and `ultra`.
@@ -1284,7 +1284,8 @@ edited. Model-specific incompatibility stays a launch/turn failure with its diag
 application-side downgrade or engine fallback.
 
 `alt task status <slug>` exposes `effort` (explicit request, null if omitted), `launch_effort`
-(the actual launch override, null for native Claude configuration and never null on Codex), and `engine_reasoning_effort`
+(the actual launch override, null for native Claude configuration; Codex sessions saved without one
+resume on the built-in task effort), and `engine_reasoning_effort`
 (the provider observation, null until reported for the turn). Worker records retain launch effort
 as evidence. An observation may differ from the selection and never replaces it. Message/resume
 preserves the attempt, owner conversation and saved override through provider configuration and

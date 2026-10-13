@@ -121,6 +121,21 @@ class TestTaskEffort(AltitudeCase):
         self.assertEqual((resume.call_args.args[0], resume.call_args.kwargs["model"], resume.call_args.kwargs["effort"]),
                          ("codex", "chosen-model", "medium"))
 
+    def test_codex_session_saved_without_a_model_resumes_on_the_built_in_defaults(self):
+        """Owners launched before every Codex launch named a model saved none; their resumes name one too."""
+        task = T.new(self.project, "Saved earlier", "request")
+        self.launch(task)
+        saved = S.load_task(self.project, task["slug"])
+        saved.update(launch_model=None, launch_effort=None)
+        S.save_task(self.project, saved)
+        dispatch.request_setting(self.project, "l2_codex_model", "chosen-model", "Set test model", actor="burak")
+        dispatch._run_setting(self.project, "l2_codex_model")
+        T.block(self.project, task["slug"], "Paused")
+        with mock.patch.object(engines, "resume_l2", return_value=self.launched()) as resume:
+            dispatch.resume(self.project, task["slug"])
+        self.assertEqual((resume.call_args.kwargs["model"], resume.call_args.kwargs["effort"]), ("gpt-6.1-sol", "high"),
+                         "the built-in default, never the later configured choice")
+
     def test_invalid_and_pinned_unsupported_effort_refuse_before_task_creation(self):
         for kwargs in ({"effort": "invalid"}, {"effort": ""}, {"effort": "ultra", "engine": "claude"},
                        {"effort": "ultra", "model": "opus"}):

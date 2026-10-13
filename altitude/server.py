@@ -1001,7 +1001,7 @@ def _on_l2_finished(project: str, item: dict) -> None:
         return
     if item.get("rejection"):
         engine = dispatch.l2_engine(t)
-        option = {"engine": engine, "model": t.get("launch_model")}
+        option = {"engine": engine, "model": dispatch.launched(t)[0]}
         route.note_rejection(option, item["rejection"])
         why = item["rejection"]["why"] + ". Check engine authentication/model access or change Auto routing."
         block_snapshot(why)
@@ -3897,8 +3897,7 @@ def task_transfer_view(project: str, task: dict) -> dict:
         configured = {}
     targets = []
     catalog = config.choice_options()
-    current_model = task.get("launch_model", task.get("engine_model"))
-    current_effort = task.get("launch_effort")
+    current_model, current_effort = dispatch.launched(task) if task.get("l2_engine") else (None, None)
     for engine in configured:
         names = {row["model"]: row["label"] for row in catalog["models"]
                  if row["engine"] == engine and row["model"]}
@@ -3961,7 +3960,7 @@ def task_model_view(task: dict) -> dict | None:
     engine = task.get("l2_engine")
     if not engine:
         return None
-    launched, effort = task.get("launch_model", task.get("engine_model")), task.get("launch_effort")
+    launched, effort = dispatch.launched(task)
     seen, seen_effort = task.get("engine_model"), task.get("engine_reasoning_effort")
     name = lambda model: config.model_name(engine, model) if model else None
     chosen = [name(task.get("model")), config.effort_label(task["effort"]) if task.get("effort") else None]

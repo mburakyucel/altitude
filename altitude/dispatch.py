@@ -105,6 +105,14 @@ def l2_engine(task: dict) -> str:
     return task.get("l2_engine") or "claude"
 
 
+def launched(task: dict) -> tuple[str | None, str | None]:
+    """The model and effort a task's session resumes with. A session saved before every launch named both resolves
+    to the built-in task defaults, never to a later configured choice, so no resume falls to the CLI's own."""
+    engine = l2_engine(task)
+    model = task.get("launch_model", task.get("engine_model")) or config.MODELS.get(engine, {}).get("l2")
+    return model, config.task_effort(engine, task.get("launch_effort"))
+
+
 def l2_job_root(project: str, slug: str) -> Path:
     return S.task_dir(project, slug) / "l2-engine"
 
@@ -300,8 +308,7 @@ def _require_handoff(project: str, task: dict, engine: str, attempt: int,
     if not choice.get("engine"):
         raise T.TransitionError(choice["why"])
     if (not allow_unchanged and selection is not None and engine == l2_engine(task)
-            and (choice.get("model"), choice.get("effort")) ==
-                (task.get("launch_model", task.get("engine_model")), task.get("launch_effort"))):
+            and (choice.get("model"), choice.get("effort")) == launched(task)):
         raise T.TransitionError("This task already uses that model and effort.")
     return choice
 
@@ -1122,7 +1129,7 @@ def build_brief(project: str, slug: str, *, choice: dict | None = None) -> str:
         merge_policy = {"default": "Merge when the applicable checks and any appropriate review are complete.",
                         "open-pr-only": "Open PRs and stop; never merge.", "merge-all": "Merge when the review is addressed and CI is green."}.get(policy, policy)
     engine = choice["engine"] if choice else task.get("l2_engine") or task.get("engine") or "pending quota route"
-    model = choice.get("model") if choice else task.get("launch_model") or task.get("model")
+    model = choice.get("model") if choice else launched(task)[0] if task.get("l2_engine") else task.get("model")
     other_leases = leases(project, exclude=slug)
     overlaps = [f"`{other['slug']}` on {', '.join(shared)}" for other in other_leases
                 if (shared := shared_paths(task_paths(project, task), other["paths"]))]
@@ -1446,10 +1453,10 @@ def _resume(project: str, slug: str, *, daemon_request_id: str | None = None,
             current["worker_started_at"] = datetime.now(timezone.utc).isoformat()
             current["engine_reasoning_effort"] = None
             T._save_claim_task(project, current)
+        model, effort = launched(task)
         res = engines.resume_l2(
             engine, worker_name(project, slug, task["attempt"]), task["session_id"], prompt, cwd=cwd,
-            persona=config.PERSONAS / "l2.md", model=task.get("launch_model", task.get("engine_model")),
-            effort=task.get("launch_effort"),
+            persona=config.PERSONAS / "l2.md", model=model, effort=effort,
             settings=session_settings(project, slug, S.session_key(project, slug, task["attempt"])),
             extra_env=l2_env(project, slug, task["attempt"]), job_root=job_root, images=attached)
         worker = res.get("agent") or {}
@@ -1547,7 +1554,7 @@ def resume_engine_hold(task: dict) -> str | None:
     engine = l2_engine(task)
     if window := engines.window_hold(engine):
         return f"usage limit: subscription window exhausted, resets {window}"
-    hold = route.resume_hold(engine, task.get("launch_model", task.get("engine_model")))
+    hold = route.resume_hold(engine, launched(task)[0])
     return f"engine hold: {hold}" if hold else None
 
 

@@ -1200,8 +1200,9 @@ the L2 (same bubbles and composer as §3.3 and §3.6); right the live session pa
 the header button). Task details contains the muted line "attempt 1 · started 32 min ago"
 when those values are available; a finished task reads "done 2h ago" or "rejected 2h ago". The model
 chip names the engine, model and effort the task runs with, in the model pill's words: what the engine
-reported, else what Altitude launched it with ("6.1 Sol on Codex · High"; a Claude alias reads as the
-model it resolved to, "Opus 5.5 on Claude · Native"; an unknown model keeps its reported id). On phone
+reported, else what Altitude launched it with ("6.1 Sol on Codex · High"; a Claude alias reads "Opus on
+Claude · Native" until the engine reports the model it resolved to, "Opus 5.5 on Claude · Native"; an
+unknown model keeps its reported id). On phone
 the chip lives in Task details. Every Codex task launches with a named model and effort, so the chip
 never reads an engine default. Task
 details holds **Model and effort**: Requested (what L3 set for this task, or the project choice and

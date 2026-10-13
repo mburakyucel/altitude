@@ -172,7 +172,7 @@ class TestModelDefaults(AltitudeCase):
                          [("gpt-6.1-sol", "high", None), ("other-model", "medium", "conversation")])
 
     def test_null_saved_session_model_is_not_reinterpreted_after_global_change(self):
-        self.save("codex", "gpt-6.1-sol", "high")
+        self.save("codex", "other-model", "high")
         hold = self.patch(route, "_hold", return_value=None)
-        self.assertIsNone(route.resume_hold("codex", None))
-        self.assertIsNone(hold.call_args.args[0]["model"])
+        self.assertIsNone(dispatch.resume_engine_hold({"l2_engine": "codex", "launch_model": None}))
+        self.assertEqual(hold.call_args.args[0]["model"], "gpt-6.1-sol")
