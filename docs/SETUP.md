@@ -290,7 +290,8 @@ and normal charges. Altitude picks engines and models automatically. To choose a
 **Settings → Models → New tasks → Model**; choosing saves immediately for tasks when they start,
 including queued tasks. Started tasks keep their model. For the coordinator, use **Settings →
 This project → L3 → Model**; it applies from the next reply. Named choices need no external
-configuration. **Auto** restores project routing; an explicit choice shows its exact ID and whether
+configuration. **Auto** restores project model routing and keeps the selected effort; select
+**Default (from project)** in Effort to inherit that too. An explicit choice shows its exact ID and whether
 access is unverified or a known rejection prevents use. A shared account allowance does not prove
 access to a particular model. See [model choices](CLI.md#model-choices) for inheritance, per-project
 defaults and individual-task pins.

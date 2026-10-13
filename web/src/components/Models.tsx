@@ -93,6 +93,7 @@ export function ModelSelect({ value, models, engines, emptyLabel, busy, onChange
     setOther({ ...other, submitted: true });
     try {
       await onChange({ engine: other.engine, model }, other.base);
+      if (custom.current?.contains(document.activeElement)) select.current?.focus();
       setOther(null);
       setInvalid(false);
     } catch { /* The owning field presents the server error and retry. */ }

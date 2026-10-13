@@ -54,6 +54,16 @@ describe("Settings model dropdowns", () => {
   const model = () => within(group()).getByRole("combobox", { name: "Model" });
   const key = (engine: string, model: string | null) => JSON.stringify([engine, model]);
 
+  it("returns focus to the model dropdown after saving a custom ID with Enter", async () => {
+    server();
+    const { user } = renderApp({ route: "/settings" });
+    await screen.findByRole("group", { name: "New tasks · All projects" });
+    await user.selectOptions(model(), "other");
+    await user.type(within(group()).getByRole("textbox", { name: "Model ID" }), "exact-model{Enter}");
+    await waitFor(() => expect(within(group()).queryByRole("textbox")).toBeNull());
+    expect(model()).toHaveFocus();
+  });
+
   it("saves named choices immediately for all new tasks, with project L3 kept separate", async () => {
     const { posts, state } = server();
     const { user, router } = renderApp({ route: "/settings" });

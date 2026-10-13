@@ -1018,7 +1018,8 @@ setting.
 
 Named choices include **6.1 Sol · Codex**, requesting `gpt-6.1-sol` without editing external CLI
 configuration. **Project default · Codex** instead inherits each project's model for that role,
-then the engine's own default. **Auto** leaves engine selection to project routing. **Other model…**
+then the engine's own default. **Auto** leaves engine selection to project routing and keeps the
+separate Effort selection; **Default (from project)** restores effort inheritance. **Other model…**
 accepts an exact ID; selecting Other alone writes nothing. Explicit choices show the requested ID
 and **Access unverified**: the list is maintained shortcuts, not a discovered account catalog.
 Known unavailable choices retain their selected value and explain project routing meanwhile.

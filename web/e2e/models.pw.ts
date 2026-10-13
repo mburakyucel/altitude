@@ -296,6 +296,7 @@ test("Settings model dropdowns: named choices, separate scopes, custom IDs, pend
   await id.press("Enter");
   await expect.poll(() => newTasks(request)).toEqual({ engine, model: "fixture-direct-model" });
   await walk.state("04-custom-saved-and-fields-removed", { visible: [model], hidden: [id, tasks.getByRole("alert")] });
+  await expect(model).toBeFocused();
 
   let release!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
