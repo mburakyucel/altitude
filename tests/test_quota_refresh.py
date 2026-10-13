@@ -206,6 +206,33 @@ class TestRefreshRouting(QuotaFixture):
         self.assertEqual(self.choice()["engine"], "codex")
         self.assertIn("unknown or not comparable", self.choice()["why"])
 
+    def test_independent_windows_and_reset_readings_reach_selection_and_resume_holds(self):
+        current = {"engine": "codex", "model": "fixture-model"}
+        for name in ("primary", "secondary"):
+            for duration in (route.WEEK_MINUTES, route.SHORT_MINUTES):
+                with self.subTest(name=name, duration=duration):
+                    windows = {"primary": None, "secondary": None}
+                    windows[name] = {"usedPercent": 100, "windowDurationMins": duration}
+                    self.talk.return_value = transcript(**windows)
+                    self.refresh()
+                    reading = route.quota_codex()
+                    self.assertTrue(reading["known"])
+                    self.assertIsNone(reading[f"{name}_resets"])
+                    self.assertEqual(self.choice()["engine"], "claude")
+                    self.assertEqual(route.pick_engine("l3", project=self.project_config,
+                                                       current=current["engine"],
+                                                       current_model=current["model"])["engine"], "claude")
+                    self.assertIsNone(self.choice({"engine": "codex"})["engine"])
+                    self.assertIsNotNone(route.resume_hold(current["engine"], current["model"]))
+                    windows[name] = {"usedPercent": 0, "windowDurationMins": duration, "resetsAt": 4070908800}
+                    self.talk.return_value = transcript(**windows)
+                    self.refresh()
+                    reading = route.quota_codex()
+                    self.assertEqual(reading[f"{name}_used"], 0)
+                    self.assertIsNotNone(reading[f"{name}_resets"])
+                    self.assertEqual(self.choice({"engine": "codex"})["engine"], "codex")
+                    self.assertIsNone(route.resume_hold(current["engine"], current["model"]))
+
     def test_failed_refresh_replaces_stale_success_and_reacquisition_restores_balancing(self):
         self.refresh()
         for filename in (route.QUOTA_CLAUDE, route.QUOTA_CODEX):

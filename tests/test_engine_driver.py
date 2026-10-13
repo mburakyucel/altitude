@@ -147,6 +147,32 @@ class TestEngineDriver(AltitudeCase):
         self.assertEqual((driver.session_id, driver.turn, driver.usage), ("owner", "owner-turn", {"input_tokens": 7}))
         driver.emit.assert_not_called()
 
+    def test_intermediate_and_final_messages_wait_for_the_owner_turn_completion(self):
+        driver = object.__new__(engines._CodexDriver)
+        driver.session_id, driver.turn = "owner", "owner-turn"
+        driver.completed, driver.usage = False, {}
+        driver.lock, driver.done = threading.RLock(), threading.Event()
+        driver.emit = mock.Mock()
+        for item in ({"type": "agentMessage", "id": "comment", "phase": "commentary", "text": "Checking."},
+                     {"type": "reasoning", "id": "reason", "summary": ["Inspect the fixture."]},
+                     {"type": "commandExecution", "id": "tool", "command": "echo fixture", "status": "completed"},
+                     {"type": "agentMessage", "id": "final", "phase": "final_answer", "text": "Finished."}):
+            driver.notify("item/completed", {"threadId": "owner", "turnId": "owner-turn", "item": item})
+            self.assertFalse(driver.completed)
+            self.assertFalse(driver.done.is_set())
+            self.assertEqual(driver.turn, "owner-turn")
+        for total in (100, 200):
+            driver.notify("thread/tokenUsage/updated", {"threadId": "owner", "turnId": "owner-turn",
+                          "tokenUsage": {"total": {"inputTokens": total}, "last": {"inputTokens": 50}}})
+        driver.notify("turn/completed", {"threadId": "owner", "turn": {"id": "owner-turn", "status": "completed"}})
+        self.assertTrue(driver.completed)
+        self.assertTrue(driver.done.is_set())
+        self.assertIsNone(driver.turn)
+        events = [call.args[0] for call in driver.emit.call_args_list]
+        self.assertEqual([event["type"] for event in events], ["item.completed"] * 4 + ["turn.completed"])
+        self.assertEqual(engines._agent_messages(events), ["Checking.", "Finished."])
+        self.assertEqual(engines._codex_usage(events), {"input_tokens": 200})
+
     def test_poll_keeps_waiting_owner_then_recovers_its_actual_clean_exit(self):
         self.private_ledgers()
         task = T.new(self.project, "Waiting owner", "Consume the helper review.")
