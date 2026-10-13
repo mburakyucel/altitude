@@ -1140,6 +1140,42 @@ describe("Composer", () => {
   });
 
   // ---- host voice: the microphone streams to this computer, whose words appear while listening ----
+  it("service sends only after Stop, shows pending text and removes all recording UI on success", async () => {
+    installVoiceBrowser({ backend: "service" });
+    const settings = { backend: "service" as const, selection: "service-one", owner: "device", service: { url: "https://speech.example.test/v1/audio/transcriptions", key_present: false }, host: { state: "absent" as const, download_bytes: 0 } };
+    updateVoiceSettings(settings);
+    let release: (response: Response) => void = () => {};
+    const uploads: RequestInit[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
+      if (path === "/api/voice") return jsonResponse(settings);
+      uploads.push(init!); return new Promise<Response>((resolve) => { release = resolve; });
+    }));
+    const user = userEvent.setup();
+    render(<MemoryRouter><Harness initial="Note:" /></MemoryRouter>);
+    await listen(user);
+    expect(uploads).toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "Stop voice input" }));
+    expect(await screen.findByText("Transcribing…")).toBeVisible();
+    expect(document.querySelector(".composer-wave")).toBeNull();
+    expect(document.querySelector(".composer-timer")).toBeNull();
+    release(jsonResponse({ text: "Returned words." }));
+    await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue("Note: Returned words."));
+    expect(screen.queryByText("Transcribing…")).toBeNull();
+    expect(uploads).toHaveLength(1);
+  });
+
+  it("service reads current selection before opening the microphone and requires another tap if changed", async () => {
+    const { getUserMedia } = installVoiceBrowser({ backend: "service" });
+    const settings = { backend: "service" as const, selection: "service-one", owner: "device", service: { url: "https://speech.example.test/v1/audio/transcriptions", key_present: false }, host: { state: "absent" as const, download_bytes: 0 } };
+    updateVoiceSettings(settings);
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ ...settings, selection: "service-two" })));
+    const user = userEvent.setup();
+    render(<MemoryRouter><Harness /></MemoryRouter>);
+    await user.click(screen.getByRole("button", { name: "Start voice input" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Voice settings changed. Record again using the current choice.");
+    expect(getUserMedia).not.toHaveBeenCalled();
+  });
+
   /** The host's answers: each chunk is answered with how many samples it has heard. */
   function stubHost(options: { refuse?: string } = {}) {
     let heard = 0;

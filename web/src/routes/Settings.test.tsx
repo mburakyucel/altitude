@@ -172,13 +172,43 @@ describe("Host voice settings", () => {
 });
 
 describe("Voice settings", () => {
-  it.each([390, 1440])("offers exactly two choices, This computer first, and keeps the overview compact (%s)", async (width) => {
+  it("service edits are drafts, preserve an empty saved key and explicitly remove details on switching", async () => {
+    const calls = fixture({ ...saved, backend: "service", owner: "device", service: { url: "https://speech.example.test/v1/audio/transcriptions", model: "small", key_present: true } });
+    const { user } = renderApp({ route: "/settings/voice" });
+    await screen.findByRole("radio", { name: "Your speech service" });
+    await user.click(screen.getByText("Key or model (optional)"));
+    expect(screen.getByLabelText("API key")).toHaveValue("");
+    expect(screen.getByLabelText("API key")).toHaveAttribute("placeholder", "Key saved — leave blank to keep");
+    await user.click(screen.getByRole("radio", { name: "Browser recognition" }));
+    expect(calls).toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("radio", { name: "Your speech service" })).toBeChecked();
+    await user.click(screen.getByRole("radio", { name: "Browser recognition" }));
+    await user.click(screen.getByRole("button", { name: "Save and remove service" }));
+    await screen.findByText("Saved.");
+    expect(calls).toEqual([{ backend: "browser", selection: "host-one" }]);
+  });
+
+  it("changing a service URL clears any typed key and explains the new destination", async () => {
+    const calls = fixture({ ...saved, backend: "service", owner: "device", service: { url: "https://speech.example.test/v1/audio/transcriptions", key_present: true } });
+    const { user } = renderApp({ route: "/settings/voice" });
+    await screen.findByRole("radio", { name: "Your speech service" });
+    await user.click(screen.getByText("Key or model (optional)"));
+    await user.type(screen.getByLabelText("API key"), "fictional-key");
+    await user.clear(screen.getByLabelText("Transcription URL"));
+    await user.type(screen.getByLabelText("Transcription URL"), "http://new.example.test/v1/audio/transcriptions");
+    expect(screen.getByLabelText("API key")).toHaveValue("");
+    expect(screen.getByText("Enter a key for the new address, if needed.")).toBeVisible();
+    expect(screen.getByText("This connection is unencrypted. Audio and any key travel over HTTP.")).toBeVisible();
+    expect(calls).toHaveLength(0);
+  });
+  it.each([390, 1440])("offers three deliberate choices, This computer first, and keeps the overview compact (%s)", async (width) => {
     setViewport(width);
     const calls = fixture();
     const { user } = renderApp({ route: "/settings" });
     await user.click(await screen.findByRole("link", { name: "Voice input This computer" }));
     const radios = await screen.findAllByRole("radio");
-    expect(radios.map((radio) => radio.closest("label")?.textContent)).toEqual(["This computer", "Browser recognition"]);
+    expect(radios.map((radio) => radio.closest("label")?.textContent)).toEqual(["This computer", "Browser recognition", "Your speech service"]);
     expect(screen.getByRole("radio", { name: "This computer" })).toBeChecked();
     expect(screen.queryByRole("textbox")).toBeNull();
     await user.click(screen.getByRole("link", { name: "‹ Settings" }));
@@ -201,6 +231,7 @@ describe("Voice settings", () => {
     notifyManager.setScheduler((callback) => pending.push(callback));
     try {
       await user.click(screen.getByRole("radio", { name: "Browser recognition" }));
+      await user.click(screen.getByRole("button", { name: "Save changes" }));
       expect(screen.getByRole("radio", { name: "This computer" })).toBeDisabled();
       expect(screen.getByText("Saving…")).toBeVisible();
       release();
@@ -223,10 +254,12 @@ describe("Voice settings", () => {
     notifyManager.setScheduler((callback) => pending.push(callback));
     try {
       await user.click(screen.getByRole("radio", { name: "Browser recognition" }));
+      await user.click(screen.getByRole("button", { name: "Save changes" }));
       await screen.findByText("Saved.");
       await act(async () => flush());
       expect(screen.getByRole("radio", { name: "Browser recognition" })).toBeChecked();
       await user.click(screen.getByRole("radio", { name: "This computer" }));
+      await user.click(screen.getByRole("button", { name: "Save changes" }));
       await waitFor(() => expect(calls).toHaveLength(2));
       await act(async () => flush());
       await waitFor(() => expect(screen.getByRole("radio", { name: "This computer" })).toBeChecked());
@@ -247,7 +280,8 @@ describe("Voice settings", () => {
     }));
     const { user } = renderApp({ route: "/settings/voice" });
     await user.click(await screen.findByRole("radio", { name: "Browser recognition" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Settings unavailable Retry");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not save voice settings. Retry");
     // The choice being saved stays shown beside its failure; Retry saves that same choice.
     expect(screen.getByRole("radio", { name: "Browser recognition" })).toBeChecked();
     fail = false;
@@ -279,6 +313,7 @@ describe("Voice settings", () => {
     }));
     const { user } = renderApp({ route: "/settings/voice" });
     await user.click(await screen.findByRole("radio", { name: "Browser recognition" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Voice settings changed. Reload settings and try again.");
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Reload settings" }));
@@ -286,6 +321,7 @@ describe("Voice settings", () => {
     expect(screen.getByRole("radio", { name: "This computer" })).toBeChecked();
     stale = false;
     await user.click(screen.getByRole("radio", { name: "Browser recognition" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
     await screen.findByText("Saved.");
     expect(calls).toHaveLength(1);
   });

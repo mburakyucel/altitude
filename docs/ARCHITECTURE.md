@@ -2807,7 +2807,8 @@ There is no project inbox file and no `fyis` in the digest or overview.
 ### Voice backend
 
 Voice transcription sits behind the capability seam as one machine setting, `voice`, in the private
-settings file: `host` or `browser`. Without a saved choice the backend is `host` when this release's
+settings file: `host`, `browser`, or a tagged service object containing its URL, optional key/model
+and an opaque random selection identity. Without a saved choice the backend is `host` when this release's
 speech manifest names a runtime this computer can run, and `browser` elsewhere.
 `GET /api/voice` reports the backend, an opaque selection identity over the backend and, for `host`,
 the installation identity, and `host`, where host voice stands on this computer. Supported runtime
@@ -2816,8 +2817,8 @@ requests a change through the same durable request that carries `wip`; `--unset-
 default.
 
 `/settings` shows a compact Voice input summary under This machine and read-only connection details
-(the browser's current origin/HTTPS state and configured operator). `/settings/voice` holds the two
-choices, This computer and Browser recognition, each saved immediately. Project three-dot menus and the
+(the browser's current origin/HTTPS state and configured operator). `/settings/voice` holds three
+choices, This computer, Browser recognition and Your speech service, with explicit Save/Cancel. Project three-dot menus and the
 desktop operator row open Settings. `POST /api/voice` saves `{backend, selection}` through the same
 durable request/apply path as the CLI, with no restart or provider probe; a selection that no longer
 matches the saved one is refused (409) and asks the person to reload settings. Failed saves leave the
@@ -2825,13 +2826,39 @@ persisted choice unchanged. Fresh settings reads update the form as well as the 
 First run offers the same choice as its Voice step (see the design spec §3.12); a setup failure there
 never blocks onboarding.
 
-Altitude sends no recording to a speech service of its own configuration. On start,
-`dispatch.forget_speech_service()` deletes a stored speech-service setting and any pending or applied
-`voice-request.json` naming one, with its key, under the projects lock, and appends one event without
-URL or key; a machine with nothing stale is left untouched, so the step is idempotent. The machine then
-uses the default. Phone access uses an explicitly configured private HTTPS address whose certificate
+On start, `dispatch.forget_speech_service()` deletes only untagged legacy service settings and
+receipts, including their keys. New deliberate service configurations carry `backend: service`
+and survive startup. No legacy credentials are restored. Pending settings requests retain the key
+only until apply completes; terminal receipts replace secret-bearing fields with a backend-only
+projection. Events are projected before writing. A setting change compares the expected selection
+under the settings lock, and replacing a service with host/browser deletes its details.
+Phone access uses an explicitly configured private HTTPS address whose certificate
 covers that address. Safari can use the microphone after the CA is trusted on the phone; typing
 remains available without voice.
+
+#### Operator-supplied service
+
+Paired Settings reads expose URL/model/key-present, never the key. Machine output exposes the backend
+only. Before capturing service audio, the browser reads the current selection and paired owner;
+both are checked again before accepting and forwarding `POST /api/voice/service`, and before applying
+the result in the browser. Saving URL/model/key changes the service selection identity independently
+of the built-in installation identity. Re-pairing or selection changes invalidate unfinished work.
+
+The browser retains raw mono 16 kHz signed 16-bit PCM in page memory until Stop/Send, at most
+19,200,000 bytes per capture and two captures including a pending Send. The authenticated service
+route creates WAV/multipart framing and sends one request to the exact saved endpoint, without
+redirects, environment proxies, probes or retries. It accepts JSON text, limits the response to
+1 MiB, limits concurrent requests to two, and bounds upload and upstream response separately to
+120 seconds each. Each admitted outbound request runs in a disposable child process; its timeout
+kills and reaps that process, including stalled DNS or response reads. The key and audio travel on
+stdin, never command arguments or disk. HTTPS uses normal certificate verification.
+
+Stop appends text to its draft; Send carries text/images and completion to its original conversation.
+Cancellation and late results never alter another draft. Errors are sanitized and preserve typed
+text/images; failed audio is discarded rather than replayed after an uncertain submission. Browser
+pending work ends within 240 seconds; cancellation cannot recall audio already forwarded or ensure
+immediate upstream cancellation. Service retention and charges belong to the chosen service.
+The existing document settings cache remains advisory, and no persistent browser audio cache exists.
 
 #### Host voice
 

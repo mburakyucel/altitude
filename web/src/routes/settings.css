@@ -18,6 +18,12 @@
 .voice-choice { display: flex; gap: 12px; align-items: center; font-weight: 600; cursor: pointer; min-height: 44px; }
 .voice-choice input { accent-color: var(--accent); width: 18px; height: 18px; flex: none; }
 .voice-option > p, .choice-fields, .voice-host { margin-left: 30px; }
+.service-fields > label, .service-fields details > label { display: block; margin-top: 16px; }
+.service-fields input:not([type=checkbox]) { display: block; width: 100%; min-height: 44px; margin-top: 8px; }
+.service-fields summary, .service-help { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
+.service-fields summary { display: list-item; padding-top: 12px; }
+.service-fields .service-remove-key { display: flex; align-items: center; gap: 8px; min-height: 44px; margin-top: 8px; margin-bottom: 16px; }
+.service-help { text-decoration: underline; }
 .voice-host { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
 .voice-host .btn { align-self: flex-start; min-height: 44px; }
 .voice-host progress { width: 100%; height: 8px; accent-color: var(--accent); }

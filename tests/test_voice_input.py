@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import http.client
 import json
+import io
+import wave
+import time
+import subprocess
 import threading
+from unittest import mock
 
 from tests.support import AltitudeCase
-from altitude import config, dispatch, platform, server, speech, state as S
+from altitude import access, config, dispatch, platform, server, speech, terminal, state as S
 
 
 class VoiceCase(AltitudeCase):
@@ -101,7 +106,7 @@ class TestSpeechServiceRemoval(VoiceCase):
         self.assertEqual(shown.returncode, 0, shown.stderr)
         for secret in ("sk-private", "voice.example"):
             self.assertNotIn(secret, shown.stdout)
-        self.assertEqual(json.loads(shown.stdout)["voice_request"]["voice"], "removed speech service")
+        self.assertEqual(json.loads(shown.stdout)["voice_request"]["voice"], {"backend": "service"})
 
     def test_a_pending_service_request_is_never_applied(self):
         S.write_json(config.ROOT / "settings.json", {"voice": "browser"})
@@ -125,6 +130,7 @@ class TestVoiceSettingsRoute(VoiceCase):
     def setUp(self):
         super().setUp()
         self.runs_here(True)
+        self.patch(terminal, "agent_connection", return_value=False)
         self.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         self.httpd.daemon_threads = True
         thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
@@ -173,6 +179,262 @@ class TestVoiceSettingsRoute(VoiceCase):
         connection.request("POST", "/api/transcribe", body=b"audio", headers={"Content-Type": "audio/webm"})
         self.assertEqual(connection.getresponse().status, 404)
         connection.close()
+
+
+class TestServiceConfiguration(TestVoiceSettingsRoute):
+    def setUp(self):
+        super().setUp()
+        self.patch(access, "device", return_value={"id": "fictional-device"})
+        self.patch(access, "renew", return_value=False)
+        self.patch(access, "known", return_value=True)
+
+    def configure(self, **extra):
+        return self.save(backend="service", url="https://speech.example.test/v1/audio/transcriptions",
+                         **extra)
+
+    def test_reports_the_backend_and_host_state(self):
+        view = self.request("GET", "/api/voice")[1]
+        self.assertEqual(view["owner"], access.voice_owner("fictional-device"))
+
+    def test_service_save_persists_without_secret_in_reads_events_or_receipts(self):
+        status, view = self.configure(key="fictional-secret", model="fictional-model")
+        self.assertEqual(status, 200, view)
+        self.assertEqual(view["service"]["key_present"], True)
+        self.assertNotIn("fictional-secret", json.dumps(view))
+        saved = config.voice_setting()
+        dispatch.forget_speech_service()
+        self.assertEqual(config.voice_setting(), saved)
+        for path in ("voice-request.json", "events.jsonl"):
+            content = (config.ROOT / path).read_text()
+            for private in ("fictional-secret", "fictional-model", "speech.example.test"):
+                self.assertNotIn(private, content)
+        shown = self.alt("machine", "show", env={"ALTITUDE_ACTOR": config.OPERATOR_ACTOR})
+        self.assertEqual(shown.returncode, 0, shown.stderr)
+        for private in ("fictional-secret", "fictional-model", "speech.example.test"):
+            self.assertNotIn(private, shown.stdout)
+
+    def test_keep_remove_key_and_address_changes_never_reuse_old_key(self):
+        self.configure(key="fictional-secret")
+        first = config.voice_setting()["selection"]
+        self.configure(key="", model="model")
+        self.assertEqual(config.voice_setting()["key"], "fictional-secret")
+        self.assertNotEqual(config.voice_setting()["selection"], first)
+        self.save(backend="service", url="https://speech.example.test/v1/audio/transcriptions/")
+        self.assertNotIn("key", config.voice_setting())
+        self.configure(key="new-secret")
+        self.configure(remove_key=True)
+        self.assertNotIn("key", config.voice_setting())
+        self.configure(key="last-secret")
+        self.save(backend="browser")
+        self.assertEqual(config.machine_settings()["voice"], "browser")
+        self.assertNotIn("last-secret", (config.ROOT / "voice-request.json").read_text())
+
+    def test_complete_url_validation_does_not_touch_destination(self):
+        outgoing = self.patch(speech, "transcribe_service")
+        for url in ("ftp://example.test/a", "https://user:pass@example.test/a", "https://example.test/a?key=x",
+                    "https://example.test/a#fragment", "https://example.test/a?", "https://example.test/a#",
+                    "https://example.test:bad/a", "https://example.test/\na"):
+            with self.subTest(url=url):
+                self.assertEqual(self.save(backend="service", url=url)[0], 400)
+        self.assertEqual(self.save(backend="service", url="http://speech.example.test/transcribe")[0], 200)
+        outgoing.assert_not_called()
+
+    def test_machine_and_agent_clients_cannot_configure_service(self):
+        with mock.patch.object(access, "device", return_value=None):
+            self.assertEqual(self.configure()[0], 403)
+        with mock.patch.object(terminal, "agent_connection", return_value=True):
+            self.assertEqual(self.configure()[0], 403)
+
+    def test_browser_and_service_work_when_native_host_is_unavailable(self):
+        with mock.patch.object(platform, "containerized", return_value=True):
+            self.assertEqual(self.save(backend="browser")[0], 200)
+            self.assertEqual(self.configure()[0], 200)
+            with mock.patch.object(speech, "transcribe_service", return_value="fixture"):
+                self.assertEqual(self.audio()[1], {"text": "fixture"})
+            self.assertEqual(self.request("POST", "/api/voice/host", {"action": "setup"})[0], 403)
+
+    def audio(self, pcm=b"\0\0", **headers):
+        view = self.request("GET", "/api/voice")[1]
+        connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=5)
+        connection.request("POST", "/api/voice/service", pcm, headers={
+            "X-Voice-Selection": view["selection"], "X-Voice-Owner": view["owner"], **headers})
+        response = connection.getresponse()
+        answer = response.status, json.loads(response.read())
+        connection.close()
+        return answer
+
+    def test_audio_owner_selection_and_cap_before_forwarding(self):
+        self.configure()
+        outgoing = self.patch(speech, "transcribe_service", return_value="hello")
+        self.assertEqual(self.audio()[1], {"text": "hello"})
+        outgoing.reset_mock()
+        for headers in ({"X-Voice-Owner": "other"}, {"X-Voice-Selection": "old"}):
+            self.assertEqual(self.audio(**headers)[1]["code"], "selection_changed")
+        self.assertEqual(self.audio(b"odd")[1]["code"], "service_response")
+        outgoing.assert_not_called()
+        self.assertEqual(self.audio(b"\0" * speech.SERVICE_PCM_LIMIT)[1], {"text": "hello"})
+        self.assertEqual(len(outgoing.call_args.args[1]), speech.SERVICE_PCM_LIMIT)
+
+    def test_late_results_and_repairing_are_rejected(self):
+        self.configure()
+        def changed(*args):
+            S.write_json(config.ROOT / "settings.json", {"voice": "browser"})
+            return "must not arrive"
+        self.patch(speech, "transcribe_service", side_effect=changed)
+        self.assertEqual(self.audio()[1]["code"], "selection_changed")
+        self.configure()
+        with mock.patch.object(access, "known", return_value=False):
+            self.assertEqual(self.audio()[1]["code"], "selection_changed")
+
+    def test_service_errors_are_structured_and_never_pairing_401(self):
+        self.configure()
+        for code in speech.ServiceError.MESSAGES:
+            with mock.patch.object(speech, "transcribe_service", side_effect=speech.ServiceError(code)):
+                status, result = self.audio()
+                self.assertNotEqual(status, 401)
+                self.assertEqual(result, {"error": speech.ServiceError.MESSAGES[code], "code": code})
+
+    def test_host_runtime_actions_keep_service_selection_and_private_view(self):
+        self.configure(key="fixture-secret")
+        original = self.request("GET", "/api/voice")[1]
+        with mock.patch.object(server.SPEECH, "start_setup") as setup:
+            status, result = self.request("POST", "/api/voice/host", {"action": "setup"})
+        setup.assert_called_once()
+        self.assertEqual(status, 200)
+        for field in ("backend", "selection", "owner", "service"):
+            self.assertEqual(result[field], original[field])
+
+    def test_concurrency_limit_releases_after_failure_and_oversized_upload_never_forwards(self):
+        self.configure()
+        outgoing = self.patch(speech, "transcribe_service", return_value="hello")
+        speech.SERVICE_SLOTS.acquire()
+        speech.SERVICE_SLOTS.acquire()
+        try:
+            self.assertEqual(self.audio()[1]["code"], "service_unavailable")
+        finally:
+            speech.SERVICE_SLOTS.release()
+            speech.SERVICE_SLOTS.release()
+        self.assertEqual(self.audio(**{"Content-Length": str(speech.SERVICE_PCM_LIMIT + 2)})[1]["code"],
+                         "service_response")
+        outgoing.assert_not_called()
+        self.assertEqual(self.audio()[1], {"text": "hello"})
+
+    def test_upload_phase_deadline_releases_slot_without_forwarding(self):
+        self.configure()
+        outgoing = self.patch(speech, "transcribe_service")
+        view = self.request("GET", "/api/voice")[1]
+        with mock.patch.object(speech, "SERVICE_UPLOAD_SECONDS", 0.05):
+            connection = http.client.HTTPConnection(*self.httpd.server_address, timeout=2)
+            connection.putrequest("POST", "/api/voice/service")
+            for field, value in {"Content-Length": "4", "X-Voice-Selection": view["selection"],
+                                 "X-Voice-Owner": view["owner"]}.items():
+                connection.putheader(field, value)
+            connection.endheaders(b"\0\0")
+            response = connection.getresponse()
+            self.assertEqual(json.loads(response.read())["code"], "service_unavailable")
+            connection.close()
+        outgoing.assert_not_called()
+        self.assertTrue(speech.SERVICE_SLOTS.acquire(blocking=False))
+        self.assertTrue(speech.SERVICE_SLOTS.acquire(blocking=False))
+        speech.SERVICE_SLOTS.release()
+        speech.SERVICE_SLOTS.release()
+
+    def test_refused_receipt_and_crash_replay_project_before_writing(self):
+        self.configure(key="old-secret")
+        stored = config.voice_setting()
+        value = {**stored, "key": "new-secret", "selection": "new-identity"}
+        dispatch.request_setting(None, "voice", value, "fixture", actor=config.OPERATOR_ACTOR, expected="wrong")
+        receipt = dispatch._run_setting(None, "voice")
+        self.assertTrue(receipt["changed"])
+        self.assertNotIn("secret", json.dumps(receipt))
+        dispatch.request_setting(None, "voice", value, "fixture", actor=config.OPERATOR_ACTOR,
+                                 expected=stored["selection"])
+        real_write = S.atomic_write
+        def fail_event(path, data, *args, **kwargs):
+            if path.name == "events.jsonl":
+                self.assertNotIn("secret", data)
+                raise OSError("fixture crash before event write")
+            return real_write(path, data, *args, **kwargs)
+        with mock.patch.object(S, "atomic_write", side_effect=fail_event):
+            with self.assertRaises(OSError):
+                dispatch._run_setting(None, "voice")
+        self.assertEqual(config.voice_setting()["selection"], "new-identity")
+        dispatch.forget_speech_service()
+        self.assertEqual(dispatch._run_setting(None, "voice")["status"], "done")
+        self.assertNotIn("secret", (config.ROOT / "events.jsonl").read_text())
+        self.assertNotIn("secret", (config.ROOT / "voice-request.json").read_text())
+
+
+class TestServiceTransport(VoiceCase):
+    def setUp(self):
+        super().setUp()
+        self.received = []
+        self.answer = (200, b'{"text":" fixture words "}')
+        owner = self
+        class Fixture(server.http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers["Content-Length"]))
+                owner.received.append((self.path, self.headers, body))
+                status, data = owner.answer
+                self.send_response(status)
+                self.send_header("Location", "/must-not-follow")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                try:
+                    self.wfile.write(data)
+                except BrokenPipeError:
+                    pass
+            def log_message(self, *args):
+                pass
+        self.fixture = server.ThreadingHTTPServer(("127.0.0.1", 0), Fixture)
+        self.fixture.daemon_threads = True
+        thread = threading.Thread(target=self.fixture.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(lambda: (self.fixture.shutdown(), self.fixture.server_close(), thread.join(2)))
+        self.setting = {"backend": "service", "url": f"http://127.0.0.1:{self.fixture.server_port}/transcribe",
+                        "key": "fixture-secret", "model": "fixture-model", "selection": "fixture"}
+
+    def test_real_disposable_transport_wav_multipart_and_no_proxy(self):
+        with mock.patch.dict("os.environ", {"http_proxy": "http://127.0.0.1:1", "HTTP_PROXY": "http://127.0.0.1:1"}):
+            self.assertEqual(speech.transcribe_service(self.setting, b"\1\0" * 160), "fixture words")
+        path, headers, body = self.received[0]
+        self.assertEqual(path, "/transcribe")
+        self.assertEqual(headers["Authorization"], "Bearer fixture-secret")
+        self.assertIn(b'name="model"\r\n\r\nfixture-model', body)
+        self.assertIn(b'name="response_format"\r\n\r\njson', body)
+        with wave.open(io.BytesIO(body[body.index(b"RIFF"):]), "rb") as wav:
+            self.assertEqual((wav.getnchannels(), wav.getsampwidth(), wav.getframerate()), (1, 2, 16000))
+            self.assertEqual(wav.readframes(160), b"\1\0" * 160)
+        self.assertEqual(len(self.received), 1)
+
+    def test_failures_are_sanitized_no_redirect_retry_or_provider_body(self):
+        for status, data, code in ((302, b"private", "service_response"), (401, b"private", "service_auth"),
+                                  (503, b"private", "service_unavailable"), (200, b"private", "service_response"),
+                                  (200, b'{"text":""}', "service_empty"),
+                                  (200, b"x" * (speech.SERVICE_RESPONSE_LIMIT + 1), "service_response")):
+            self.answer = status, data
+            before = len(self.received)
+            with self.assertRaises(speech.ServiceError) as caught:
+                speech.transcribe_service(self.setting, b"\0\0")
+            self.assertEqual(caught.exception.code, code)
+            self.assertNotIn("private", str(caught.exception))
+            self.assertEqual(len(self.received), before + 1)
+
+    def test_hard_deadline_kills_and_reaps_a_stalled_child(self):
+        # Replace only the child's work, retaining real run(timeout)'s kill/communicate/reap behavior.
+        real_popen = subprocess.Popen
+        children = []
+        def stalled(args, **kwargs):
+            child = real_popen([args[0], "-I", "-c", "import time; time.sleep(30)"], **kwargs)
+            children.append(child)
+            return child
+        with mock.patch.object(speech, "SERVICE_RESPONSE_SECONDS", 0.1), mock.patch.object(subprocess, "Popen", stalled):
+            start = time.monotonic()
+            with self.assertRaises(speech.ServiceError) as caught:
+                speech.transcribe_service(self.setting, b"\0\0")
+        self.assertEqual(caught.exception.code, "service_unavailable")
+        self.assertLess(time.monotonic() - start, 3)
+        self.assertIsNotNone(children[0].returncode)
 
 
 if __name__ == "__main__":

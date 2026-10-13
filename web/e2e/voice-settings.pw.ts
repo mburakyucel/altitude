@@ -44,7 +44,7 @@ test("Settings navigation keeps voice options nested and preserves the project d
     visible: [host, browser],
     hidden: [row, main.getByRole("region", { name: "Devices and access", exact: true })],
   });
-  await expect(page.getByRole("radio")).toHaveCount(2);
+  await expect(page.getByRole("radio")).toHaveCount(3);
   await expect(host).toBeChecked();
   await expect(browser).not.toBeChecked();
   await walk.state("04-back-returns-to-overview", {
@@ -69,7 +69,9 @@ test("Voice settings persist the choice between this computer and browser recogn
   const saved = page.getByRole("status").filter({ hasText: "Saved." });
   await walk.open("/settings/voice");
   await expect(host).toBeChecked();
-  await walk.state("01-browser-saved", { action: () => browser.click(), visible: [saved, browser], hidden: [page.getByRole("alert")] });
+  await browser.click();
+  expect((await savedVoice(request)).backend).toBe("host");
+  await walk.state("01-browser-saved", { action: () => page.getByRole("button", { name: "Save changes", exact: true }).click(), visible: [saved, browser], hidden: [page.getByRole("alert")] });
   await expect.poll(async () => (await savedVoice(request)).backend).toBe("browser");
   await expect(browser).toBeChecked();
   await expect(host).not.toBeChecked();
@@ -79,7 +81,8 @@ test("Voice settings persist the choice between this computer and browser recogn
   const browserRow = main.getByRole("link", { name: "Voice input Browser recognition", exact: true });
   await walk.state("02-row-says-browser", { visible: [browserRow], hidden: [page.getByRole("radio")] });
   await browserRow.click();
-  await walk.state("03-this-computer-saved", { action: () => host.click(), visible: [saved, host], hidden: [page.getByRole("alert")] });
+  await host.click();
+  await walk.state("03-this-computer-saved", { action: () => page.getByRole("button", { name: "Save changes", exact: true }).click(), visible: [saved, host], hidden: [page.getByRole("alert")] });
   await expect.poll(async () => (await savedVoice(request)).backend).toBe("host");
   await expect(host).toBeChecked();
   await main.getByRole("link", { name: "‹ Settings", exact: true }).click();
@@ -119,11 +122,12 @@ test("Voice settings loading, denied save and retry keep the persisted selection
     const host = page.getByRole("radio", { name: "This computer", exact: true });
     await expect(host).toBeChecked();
     await browser.click();
+    await page.getByRole("button", { name: "Save changes", exact: true }).click();
     await walk.state("03-saving-controls-disabled", { visible: [page.getByRole("status", { name: "Saving…", exact: true }), host], hidden: [page.getByRole("alert")] });
     await expect(browser).toBeDisabled();
     await expect(host).toBeDisabled();
     releaseSave();
-    await walk.state("04-denied-keeps-saved-choice", { visible: [page.getByRole("alert").filter({ hasText: "Fixture settings update denied" }), page.getByRole("button", { name: "Retry", exact: true })], hidden: [page.getByRole("status", { name: "Saving…", exact: true })] });
+    await walk.state("04-denied-keeps-saved-choice", { visible: [page.getByRole("alert").filter({ hasText: "Could not save voice settings." }), page.getByRole("button", { name: "Retry", exact: true })], hidden: [page.getByRole("status", { name: "Saving…", exact: true })] });
     expect((await savedVoice(request)).backend).toBe("host");
     failSave = false;
     await page.getByRole("button", { name: "Retry", exact: true }).click();
@@ -152,7 +156,7 @@ test("A choice made from a stale page is refused and Reload settings shows the c
   const reload = page.getByRole("button", { name: "Reload settings", exact: true });
   // The page asks for browser recognition too, with the selection it read: the host refuses it (409).
   await walk.state("01-stale-choice-refused", {
-    action: () => browser.click(),
+    action: async () => { await browser.click(); await page.getByRole("button", { name: "Save changes", exact: true }).click(); },
     visible: [stale, reload],
     hidden: [page.getByRole("status", { name: "Saved.", exact: true })],
   });

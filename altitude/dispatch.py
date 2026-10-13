@@ -674,7 +674,11 @@ def _run_setting(project: str | None, setting: str) -> dict:
                 request.update(status="refused", note=str(exc))
         if entry is None:
             request.update(status="refused", note="project is not registered")
-        elif "expected" in request and request["status"] == "pending" and entry.get(setting) != request["expected"]:
+        elif ("expected" in request and request["status"] == "pending"
+              and (config.voice_expected(entry.get(setting)) if setting == "voice" else entry.get(setting))
+              != request["expected"]
+              and not (setting == "voice" and isinstance(request[setting], dict)
+                       and entry.get(setting) == request[setting])):
             request.update(status="refused", note="the stored value changed after it was read", changed=True)
         elif request["status"] == "pending":
             if request[setting] is None:
@@ -690,29 +694,37 @@ def _run_setting(project: str | None, setting: str) -> dict:
         rows = events.read_text().splitlines() if events.exists() else []
         if not any(json.loads(row).get("request_id") == request["id"] for row in rows):
             event = {"at": S.now(), "kind": request["operation"], "project": project, "request_id": request["id"],
-                     "actor": request["actor"], "reason": request["reason"], setting: request[setting],
+                     "actor": request["actor"], "reason": request["reason"],
+                     setting: config.voice_receipt(request[setting]) if setting == "voice" else request[setting],
                      "status": request["status"], "note": request.get("note")}
             S.atomic_write(events, "".join(row + "\n" for row in rows) + json.dumps(event) + "\n")
         request.update({f"result_{setting}": entry.get(setting) if entry else None, "completed_at": S.now()})
+        if setting == "voice":
+            for field in ("voice", "result_voice", "expected"):
+                if field in request:
+                    request[field] = config.voice_receipt(request[field])
         S.write_json(path, request)
         return request
 
 
 def forget_speech_service() -> None:
-    """Delete a speech-service URL and key saved before that option was removed, once, at daemon start. The event
-    names only the removal, never the URL or key."""
+    """Delete only untagged historical service settings/receipts. Deliberate tagged choices survive restart.
+    The event names only the removal, never the URL or key."""
     with config.projects_lock():
         settings = config.machine_settings()
         receipt = config.ROOT / "voice-request.json"
         request = S.read_json(receipt, {})
-        stale_setting = isinstance(settings.get("voice"), dict)
-        stale_receipt = isinstance(request.get("voice"), dict) or isinstance(request.get("result_voice"), dict)
+        def legacy(value):
+            return isinstance(value, dict) and value.get("backend") != "service"
+        stale_setting = legacy(settings.get("voice"))
+        stale_receipt = any(legacy(request.get(field)) for field in ("voice", "result_voice", "expected"))
         if not stale_setting and not stale_receipt:
             return
         if stale_setting:
             del settings["voice"]
             S.write_json(config.ROOT / "settings.json", settings)
-        receipt.unlink(missing_ok=True)
+        if stale_receipt:
+            receipt.unlink(missing_ok=True)
         events = config.ROOT / "events.jsonl"
         rows = events.read_text().splitlines() if events.exists() else []
         event = {"at": S.now(), "kind": "machine-set", "project": None, "actor": "altd",

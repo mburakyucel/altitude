@@ -19,14 +19,16 @@ import { disableAlerts, enableAlerts, savePreferences, useAlertNote, useAlertSta
 import type { Preferences, Reveal } from "../data/alerts";
 import "./settings.css";
 
-const labels: Record<VoiceBackend, string> = { host: "This computer", browser: "Browser recognition" };
+const labels: Record<VoiceBackend, string> = { host: "This computer", browser: "Browser recognition", service: "Your speech service" };
 const explanations: Record<VoiceBackend, string> = {
   host: "Words appear as you speak, with punctuation and capitals, in English, in every browser. Audio goes from your device to this computer over Altitude’s own connection, is transcribed here and is never stored or sent to another service. If the connection drops, recording continues and your words catch up.",
   browser: "No setup in supported browsers. Words appear as you speak; English gets punctuation and capitals on this device. Your browser may send audio to its speech service; that service’s privacy policy applies.",
+  service: "Words appear after you stop. Audio passes through this computer to the service you choose. Its privacy policy and charges apply.",
 };
 const queryKey = ["voice-settings"];
 
 function voiceSummary(settings: VoiceSettings) {
+  if (settings.backend === "service") return labels.service;
   if (settings.backend === "browser") return labels.browser;
   return settings.host.state === "ready" ? labels.host
     : `${labels.host} · ${settings.host.state === "outdated" ? "update required" : "not set up"}`;
@@ -103,15 +105,26 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
   const committed = useRef(saved);
   const [host, setHost] = useState(saved.host);
   const [choice, setChoice] = useState(saved.backend);
+  const [url, setUrl] = useState(saved.service?.url ?? "");
+  const [model, setModel] = useState(saved.service?.model ?? "");
+  const [key, setKey] = useState("");
+  const [removeKey, setRemoveKey] = useState(false);
+  const [invalid, setInvalid] = useState(false);
+  const reset = (value: VoiceSettings) => {
+    setChoice(value.backend); setUrl(value.service?.url ?? ""); setModel(value.service?.model ?? "");
+    setKey(""); setRemoveKey(false); setInvalid(false);
+  };
   useEffect(() => {
     // A new reading of host voice's setup state never resets a choice being saved.
     if (saved === committed.current) return;
     const unchanged = saved.backend === committed.current.backend && saved.selection === committed.current.selection;
-    committed.current = saved;
     setHost(saved.host);
-    if (!unchanged) setChoice(saved.backend);
+    // Preserve the edit's expected selection. A concurrent backend change must conflict at Save,
+    // rather than silently replacing the draft or granting it the new destination's saved key.
+    if (unchanged) committed.current = saved;
   }, [saved]);
   const [save, setSave] = useState<SaveState>({ status: "idle" });
+  const baseline = committed.current;
   const submit = async (update: VoiceUpdate) => {
     setSave({ status: "saving" });
     try {
@@ -121,7 +134,7 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
       committed.current = client.setQueryData<VoiceSettings>(queryKey, value)!;
       updateVoiceSettings(value);
       setHost(value.host);
-      setChoice(value.backend);
+      reset(value);
       setSave({ status: "saved" });
     } catch (error) {
       if (error instanceof ApiError && (error.status === 401 || error.status === 403)) setChoice(committed.current.backend);
@@ -130,7 +143,18 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
   };
   const choose = (backend: VoiceBackend) => {
     setChoice(backend);
-    void submit({ backend, selection: committed.current.selection });
+    setSave({ status: "idle" });
+  };
+  const saveDraft = () => {
+    if (choice === "service") {
+      try {
+        const parsed = new URL(url.trim());
+        if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error();
+      } catch { setInvalid(true); return; }
+    }
+    setInvalid(false);
+    void submit({ backend: choice, selection: committed.current.selection,
+      ...(choice === "service" ? { url: url.trim(), model: model.trim(), key, remove_key: removeKey } : {}) });
   };
   const stale = save.status === "failed" && save.error instanceof ApiError && save.error.status === 409;
   const hostChanged = (value: VoiceSettings) => {
@@ -139,10 +163,10 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
     updateVoiceSettings(value);
   };
   return <>
-    <form className="settings-card" onSubmit={(event) => event.preventDefault()}>
+    <form className="settings-card" noValidate onSubmit={(event) => { event.preventDefault(); saveDraft(); }}>
       <fieldset disabled={save.status === "saving"}>
         <legend>Transcription</legend>
-        {(["host", "browser"] as const).map((backend) => <div className="voice-option" key={backend}>
+        {(["host", "browser", "service"] as const).map((backend) => <div className="voice-option" key={backend}>
           <label className="voice-choice">
             <input type="radio" name="voice-backend" value={backend} checked={choice === backend} onChange={() => choose(backend)}
               disabled={backend === "host" && saved.host.state === "unavailable" && choice !== "host"} />
@@ -150,14 +174,31 @@ function VoiceForm({ saved, reload }: { saved: VoiceSettings; reload: () => void
           </label>
           <p className="text-muted text-meta">{explanations[backend]}</p>
           {backend === "host" && (choice === "host" || host.state !== "absent") ? <HostVoicePanel host={host} onChange={hostChanged} /> : null}
+          {backend === "service" && choice === "service" ? <div className="choice-fields service-fields">
+            <label htmlFor="voice-url">Transcription URL</label>
+            <input id="voice-url" type="url" autoComplete="off" value={url} placeholder="https://speech.example.test/v1/audio/transcriptions" aria-invalid={invalid || undefined} aria-describedby="voice-url-help" onChange={(event) => { setUrl(event.target.value); setKey(""); setRemoveKey(false); setSave({ status: "idle" }); }} />
+            <p id="voice-url-help" className="text-meta text-muted">Use a compatible audio transcription endpoint reachable from the computer running Altitude.</p>
+            {invalid ? <p role="alert" className="text-meta text-danger">Enter a complete http:// or https:// transcription URL.</p> : null}
+            {url.trim().startsWith("http:") ? <p className="text-meta text-danger">This connection is unencrypted. Audio and any key travel over HTTP.</p> : null}
+            <details><summary>Key or model (optional)</summary>
+              <label htmlFor="voice-key">API key</label>
+              <input id="voice-key" type="password" autoComplete="new-password" value={key} aria-describedby="voice-key-help" placeholder={baseline.service?.key_present && url.trim() === baseline.service.url ? "Key saved — leave blank to keep" : undefined} onChange={(event) => { setKey(event.target.value); setRemoveKey(false); }} />
+              {baseline.service?.key_present && url.trim() === baseline.service.url ? <label className="service-remove-key"><input type="checkbox" checked={removeKey} onChange={(event) => { setRemoveKey(event.target.checked); setKey(""); }} /> Remove saved key</label> : null}
+              <p id="voice-key-help" className="text-meta text-muted">{baseline.service && url.trim() !== baseline.service.url ? "Enter a key for the new address, if needed." : ""}</p>
+              <label htmlFor="voice-model">Model</label><input id="voice-model" value={model} autoComplete="off" onChange={(event) => setModel(event.target.value)} />
+            </details>
+            <a className="service-help" href="https://github.com/mburakyucel/altitude/blob/main/docs/SETUP.md#your-speech-service" target="_blank" rel="noreferrer">How to run one</a>
+            <p className="text-meta text-muted">If transcription fails, record again. Recordings are not kept.</p>
+          </div> : null}
         </div>)}
+        <div className="onboarding-nav"><button type="submit" className="btn btn-primary"><BusyLabel busy={save.status === "saving"} working="Saving…" label={choice !== "service" && baseline.backend === "service" ? "Save and remove service" : choice === "service" && baseline.backend !== "service" ? "Save and use service" : "Save changes"} /></button>
+          <button type="button" className="btn" onClick={() => { reset(committed.current); setSave({ status: "idle" }); }}>Cancel</button></div>
       </fieldset>
-      {save.status === "saving" || save.status === "saved" ? <StatusMark busy={save.status === "saving"} label={save.status === "saving" ? "Saving…" : "Saved."} /> : null}
-      {save.status === "failed" ? <p role="alert" className="text-meta text-danger">{save.error.message}{" "}
+      {save.status === "saved" ? <StatusMark busy={false} label="Saved." /> : null}
+      {save.status === "failed" ? <p role="alert" className="text-meta text-danger">{stale ? "Voice settings changed. Reload settings and try again." : "Could not save voice settings."}{" "}
         <button type="button" className="link" onClick={() => stale ? reload() : void submit(save.value)}>{stale ? "Reload settings" : "Retry"}</button>
       </p> : null}
     </form>
-    <p className="text-meta text-muted">Changes apply to your next recording. Altitude keeps no recordings.</p>
     <VoiceDiagnostics />
   </>;
 }
@@ -652,7 +693,7 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
   const navigate = useNavigate();
   const overview = useOverview();
   // Follow first-time setup and replacement phases until they settle.
-  const settings = useQuery({ queryKey, queryFn: readVoiceSettings, refetchOnWindowFocus: false,
+  const settings = useQuery({ queryKey, queryFn: ({ signal }) => readVoiceSettings(signal), refetchOnWindowFocus: false,
     refetchInterval: (query) => {
       const host = query.state.data?.host;
       if (!host || host.state === "unavailable") return false;

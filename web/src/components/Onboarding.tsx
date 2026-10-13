@@ -160,7 +160,7 @@ export function IncidentReportsForm({ onSaved, actions, save: label }: FormProps
  */
 export function VoiceStep({ onDone, actions }: { onDone: () => void; actions: (controls: ReactNode, settled?: boolean) => ReactNode }) {
   const client = useQueryClient();
-  const voice = useQuery({ queryKey: ["voice-settings"], queryFn: readVoiceSettings, refetchOnWindowFocus: false });
+  const voice = useQuery({ queryKey: ["voice-settings"], queryFn: ({ signal }) => readVoiceSettings(signal), refetchOnWindowFocus: false });
   const [save, setSave] = useState<Save>({ status: "idle" });
   const run = async (write: (current: VoiceSettings) => Promise<VoiceSettings>) => {
     setSave({ status: "saving" });

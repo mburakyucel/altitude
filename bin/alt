@@ -719,14 +719,15 @@ def main(argv=None) -> None:
             else:
                 out(dispatch.request_setting(None, "wip", args.wip, args.reason, actor=ACTOR))
         else:
-            # A receipt from before the speech-service removal can name a service key until altd next starts.
+            # Pending and historical voice receipts may contain private service details.
             voice_request = S.read_json(config.ROOT / "voice-request.json", None)
             if isinstance(voice_request, dict):
-                voice_request = {k: "removed speech service" if isinstance(v, dict) else v for k, v in voice_request.items()}
+                voice_request = {k: config.voice_receipt(v) for k, v in voice_request.items()}
+            voice = config.voice_setting()
             out({"wip": config.machine_wip(), "override": config.machine_settings().get("wip"),
                  "default": config.WIP_PER_MACHINE, "machine_runs": config.MACHINE_RUNS,
                  "request": S.read_json(config.ROOT / "wip-request.json", None),
-                 "voice": config.voice_setting(),
+                 "voice": {"backend": voice["backend"]},
                  "voice_request": voice_request,
                  "projects_folder": [str(root) for root in config.project_roots()],
                  "new_tasks": config.machine_settings().get("new_tasks"),

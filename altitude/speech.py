@@ -14,6 +14,8 @@ from __future__ import annotations
 import base64
 import fcntl
 import hashlib
+import http.client
+import io
 import json
 import os
 import queue
@@ -25,7 +27,9 @@ import threading
 import time
 import urllib.request
 import uuid
+import wave
 import zipfile
+from urllib.parse import urlsplit
 from pathlib import Path, PurePosixPath
 from typing import Callable
 
@@ -33,6 +37,111 @@ from . import config, platform, state as S
 
 ROOT = config.ROOT / "speech"
 WORKER = Path(__file__).resolve().parent / "speech_worker.py"
+
+SERVICE_PCM_LIMIT = 600 * 16000 * 2
+SERVICE_UPLOAD_SECONDS = 120
+SERVICE_RESPONSE_SECONDS = 120
+SERVICE_RESPONSE_LIMIT = 1 << 20
+SERVICE_SLOTS = threading.BoundedSemaphore(2)
+
+
+class ServiceError(RuntimeError):
+    """Only these fixed messages cross the service boundary; provider bodies never do."""
+
+    MESSAGES = {
+        "service_auth": "The speech service rejected its key. Update it in Voice settings.",
+        "service_unavailable": "Could not reach your speech service. Check its address in Voice settings.",
+        "service_response": "The speech service returned no usable transcription. Check its endpoint and model.",
+        "service_empty": "No words were returned. Try recording again.",
+        "selection_changed": "Voice settings changed. Record again using the current choice.",
+    }
+
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(self.MESSAGES[code])
+
+
+def transcribe_service(setting: dict, pcm: bytes) -> str:
+    """A disposable child gives DNS, connect and response one hard deadline, then kills and reaps it.
+
+    Configuration and samples cross private pipes only. At most two admitted callers own these children.
+    """
+    if not pcm or len(pcm) > SERVICE_PCM_LIMIT or len(pcm) % 2:
+        raise ServiceError("service_response")
+    code = ("import sys; sys.path.insert(0, sys.argv[1]); "
+            "from altitude.speech import _service_worker; _service_worker()")
+    try:
+        result = subprocess.run([sys.executable, "-I", "-c", code, str(Path(__file__).resolve().parent.parent)],
+                                input=json.dumps(setting).encode() + b"\n" + pcm,
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                timeout=SERVICE_RESPONSE_SECONDS, check=False)
+        if result.returncode:
+            raise ServiceError("service_unavailable")
+        answer = json.loads(result.stdout)
+        if "error" in answer:
+            raise ServiceError(answer["error"])
+        return answer["text"]
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        raise ServiceError("service_unavailable") from None
+
+
+def _service_worker() -> None:
+    setting = json.loads(sys.stdin.buffer.readline())
+    pcm = sys.stdin.buffer.read(SERVICE_PCM_LIMIT + 1)
+    try:
+        answer = {"text": _service_request(setting, pcm)}
+    except ServiceError as exc:
+        answer = {"error": exc.code}
+    sys.stdout.write(json.dumps(answer))
+
+
+def _service_request(setting: dict, pcm: bytes) -> str:
+    """One direct, certificate-verified request: no proxy discovery, redirect, retry or audio file."""
+    wav = io.BytesIO()
+    with wave.open(wav, "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(16000)
+        audio.writeframes(pcm)
+    boundary = uuid.uuid4().hex
+    parts = []
+    for name, value in (("response_format", "json"), ("model", setting.get("model"))):
+        if value:
+            parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
+    parts.extend([f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="recording.wav"\r\n'
+                  'Content-Type: audio/wav\r\n\r\n'.encode(), wav.getvalue(), f'\r\n--{boundary}--\r\n'.encode()])
+    parsed = urlsplit(setting["url"])
+    connection_type = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+    connection = connection_type(parsed.hostname, parsed.port, timeout=SERVICE_RESPONSE_SECONDS)
+    try:
+        headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
+        if setting.get("key"):
+            headers["Authorization"] = "Bearer " + setting["key"]
+        connection.request("POST", parsed.path or "/", b"".join(parts), headers)
+        response = connection.getresponse()
+        if response.status in (401, 403):
+            raise ServiceError("service_auth")
+        if response.status >= 500 or response.status in (408, 429):
+            raise ServiceError("service_unavailable")
+        if response.status != 200:
+            raise ServiceError("service_response")
+        raw = response.read(SERVICE_RESPONSE_LIMIT + 1)
+        if len(raw) > SERVICE_RESPONSE_LIMIT:
+            raise ServiceError("service_response")
+        try:
+            result = json.loads(raw)
+        except (ValueError, UnicodeError):
+            raise ServiceError("service_response") from None
+        if not isinstance(result, dict) or not isinstance(result.get("text"), str):
+            raise ServiceError("service_response")
+        text = result["text"].strip()
+        if not text:
+            raise ServiceError("service_empty")
+        return text
+    except (OSError, http.client.HTTPException, UnicodeError, ValueError):
+        raise ServiceError("service_unavailable") from None
+    finally:
+        connection.close()
 
 _MODEL = "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx/resolve/0bbb45a3365852604aef28b538a8f066f4ccaa85/"
 _PYPI = "https://files.pythonhosted.org/packages/"

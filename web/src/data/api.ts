@@ -22,7 +22,7 @@ import { useOptimisticMutation } from "./useOptimisticMutation";
 export class ApiError extends Error {
   readonly status: number;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, readonly code?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
@@ -34,17 +34,10 @@ export const UNPAIRED_EVENT = "altitude:unpaired";
 
 async function failure(res: Response): Promise<ApiError> {
   if (res.status === 401) window.dispatchEvent(new Event(UNPAIRED_EVENT));
-  return new ApiError(res.status, await errorMessage(res));
-}
-
-async function errorMessage(res: Response): Promise<string> {
   try {
-    const body = (await res.json()) as { error?: unknown };
-    if (typeof body.error === "string" && body.error) return body.error;
-  } catch {
-    // body was not JSON
-  }
-  return `HTTP ${res.status}`;
+    const body = await res.json() as { error?: unknown; code?: unknown };
+    return new ApiError(res.status, typeof body.error === "string" && body.error ? body.error : `HTTP ${res.status}`, typeof body.code === "string" ? body.code : undefined);
+  } catch { return new ApiError(res.status, `HTTP ${res.status}`); }
 }
 
 export async function api<T = unknown>(path: string, init?: RequestInit): Promise<T> {
@@ -948,15 +941,16 @@ const HostVoiceSchema = z.union([
     }).optional(),
   }),
 ]);
-const VoiceSchema = z.object({ backend: z.enum(["browser", "host"]), selection: z.string(), host: HostVoiceSchema });
+const VoiceSchema = z.object({ backend: z.enum(["browser", "host", "service"]), selection: z.string(), host: HostVoiceSchema,
+  owner: z.string().optional(), service: z.object({ url: z.string(), model: z.string().optional(), key_present: z.boolean() }).optional() });
 export type VoiceBackend = z.infer<typeof VoiceSchema>["backend"];
 export type VoiceSettings = z.infer<typeof VoiceSchema>;
 export type HostVoice = z.infer<typeof HostVoiceSchema>;
-export type VoiceUpdate = { backend: VoiceBackend; selection: string };
+export type VoiceUpdate = { backend: VoiceBackend; selection: string; url?: string; model?: string; key?: string; remove_key?: boolean };
 
 /** Which backend this installation transcribes with; "browser" never uploads audio. */
-export async function readVoiceSettings(): Promise<VoiceSettings> {
-  return VoiceSchema.parse(await api("/api/voice"));
+export async function readVoiceSettings(signal?: AbortSignal): Promise<VoiceSettings> {
+  return VoiceSchema.parse(await api("/api/voice", { signal }));
 }
 
 export async function saveVoiceSettings(value: VoiceUpdate): Promise<VoiceSettings> {
@@ -1119,6 +1113,14 @@ export async function sendHostVoice(id: string, selection: string, seq: number, 
 
 export async function cancelHostVoice(id: string): Promise<void> {
   await post(`/api/voice/live/${id}/cancel`, {});
+}
+
+/** One after-stop upload; never retried because an unanswered request may already have reached the service. */
+export async function sendServiceVoice(selection: string, owner: string, pcm: Int16Array, signal: AbortSignal) {
+  return z.object({ text: z.string() }).parse(await api("/api/voice/service", {
+    method: "POST", body: pcm as Int16Array<ArrayBuffer>, signal,
+    headers: { "Content-Type": "application/octet-stream", "X-Voice-Selection": selection, "X-Voice-Owner": owner },
+  }));
 }
 
 /** What the agents need on the computer running Altitude; each read checks again. */

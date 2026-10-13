@@ -764,7 +764,10 @@ the recording keeps going through a lost connection and its words catch up, and 
 waits at most two minutes for the connection. With browser recognition, recognized words appear in
 the read-only draft while listening and **Stop** lands them once the last phrase is punctuated. A
 recording that stops early keeps the words already shown and says why. The send arrow lands, appends
-and sends at once. Both sending paths use
+and sends at once. With an operator-supplied service, audio stays in page memory while listening;
+Stop uploads it and adds the returned words, while Send waits for transcription before submitting.
+Service mode has no streaming transcript or reconnect replay. Failed uploads discard audio and
+preserve typed text/images; a failed Send restores them only to its original conversation. All sending paths use
 the same chat or L2-message endpoint as typed text, so a busy L3 durably queues the combined text
 and an L2 message follows the same checkpoint/resume rules. Cancel, permission denial and
 transcription failure create no conversation or queue record and preserve the typed draft.
@@ -795,7 +798,8 @@ or provider call. The overview stays compact; the nested voice page contains bac
 credentials. Back returns to Settings without saving unfinished endpoint edits. Successful saves
 change the next capture in the document. An upload carries its capture's backend/destination identity;
 if it no longer matches the saved choice, transcription is refused before forwarding and the typed
-draft is preserved. A transcription already accepted completes with its captured settings.
+draft is preserved. A transcription already forwarded uses its captured settings, but a changed
+service selection or paired owner invalidates its result. Cancellation cannot recall forwarded audio.
 
 Message acceptance is separate from the answer or wake succeeding. A saved L2 message receipt,
 L3 turn ID or queue receipt keeps the composer cleared, including after a broken stream or failed
