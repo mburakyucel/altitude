@@ -5,7 +5,7 @@ import { StatusMark, BusyLabel } from "../components/StatusMark";
 import { ApiError, forgetProject, overviewQuery, useOverview, useProject, useProjectDefaults, useProjectRemove, useSetDefault } from "../data/api";
 import type { Overview, ProjectDefaults } from "../data/api";
 import { ImprovementSection } from "../components/ImprovementSettings";
-import { ModelsDialog, choiceLabel, closedLabel } from "../components/Models";
+import { ModelSelect, RoleModelSettings, choiceLabel } from "../components/Models";
 import { Overlay } from "../shell/Overlay";
 import { managedProjects } from "../shell/projects";
 import { useViewport } from "../shell/breakpoints";
@@ -24,30 +24,23 @@ function SaveStatus({ save, retry }: { save: Save; retry: () => void }) {
   return save.isPending || save.isSuccess ? <StatusMark busy={save.isPending} label={save.isPending ? "Saving…" : "Saved."} /> : null;
 }
 
-/** Free text with suggestions: Enter or leaving the field saves, Escape restores, empty means Default. */
-function ModelField({ name, engine }: { name: string; engine: Engine }) {
+/** Named models save directly; exact IDs share the role selector's Other editor. */
+function ModelField({ name, engine, data }: { name: string; engine: Engine; data: ProjectDefaults }) {
   const field = engine.model;
   const save = useSetDefault(name);
-  const [draft, setDraft] = useState<string | null>(null);
-  const saved = field.value ?? "";
-  // Retire the draft once the saved value renders, so the field never flashes the previous one.
-  useEffect(() => { setDraft((current) => current !== null && current.trim() === saved ? null : current); }, [saved]);
-  const commit = () => {
-    const value = draft?.trim() ?? saved;
-    if (value !== saved) save.mutate({ setting: field.setting, value: value || null });
-    else setDraft(null);
-  };
-  const list = field.choices.length ? `${field.setting}-choices` : undefined;
+  const defaults = useProjectDefaults(name);
+  const [revision, setRevision] = useState(0);
+  const shown = save.isPending ? save.variables.value as string | null : field.value;
+  const changed = save.error instanceof ApiError && save.error.status === 409;
   return <div className="default-field">
-    <input aria-label="Model" value={draft ?? saved} placeholder={`Default: ${field.default}`} list={list} disabled={save.isPending}
-      spellCheck={false} autoCapitalize="off"
-      onChange={(event) => { setDraft(event.target.value); save.reset(); }} onBlur={commit}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") { event.preventDefault(); commit(); }
-        if (event.key === "Escape") { setDraft(null); save.reset(); }
-      }} />
-    {list ? <datalist id={list}>{field.choices.map((choice) => <option key={choice} value={choice} />)}</datalist> : null}
-    <SaveStatus save={save} retry={() => save.variables && save.mutate(save.variables)} />
+    <span className="phone-field-label">Model</span>
+    <ModelSelect key={revision} value={shown ? { engine: engine.engine, model: shown } : null}
+      models={data.models.filter((m) => m.engine === engine.engine && m.model)} engines={[engine]}
+      emptyLabel={`Default (${field.default})`} busy={save.isPending}
+      onChange={(next, expected) => save.mutateAsync({ setting: field.setting, value: next?.model ?? null, expected: expected?.model ?? null })} />
+    {changed ? <p role="alert" className="text-meta text-danger">Changed in another window.{" "}<button className="link" onClick={() => {
+      save.reset(); setRevision((n) => n + 1); void defaults.refetch();
+    }}>Reload</button></p> : <SaveStatus save={save} retry={() => save.variables && save.mutate(save.variables)} />}
   </div>;
 }
 
@@ -56,6 +49,7 @@ function EffortField({ name, engine }: { name: string; engine: Engine }) {
   const save = useSetDefault(name);
   const shown = save.isPending ? save.variables.value as string | null : field.value;
   return <div className="default-field">
+    <span className="phone-field-label">Effort</span>
     <select aria-label="Effort" value={shown ?? ""} disabled={save.isPending}
       onChange={(event) => save.mutate({ setting: field.setting, value: event.target.value || null })}>
       <option value="">Default ({field.default})</option>
@@ -65,11 +59,8 @@ function EffortField({ name, engine }: { name: string; engine: Engine }) {
   </div>;
 }
 
-/** The L3 choice: the same value as the message box's button, with Back to Auto and Change…. */
+/** The L3 choice shares its saved value with the message box and Settings overview. */
 function L3Section({ name, data }: { name: string; data: ProjectDefaults }) {
-  const [open, setOpen] = useState(false);
-  const save = useSetDefault(name);
-  const client = useQueryClient();
   const project = useProject(name);
   const l3 = project.data?.l3 ?? {};
   const text = (key: string) => typeof l3[key] === "string" ? l3[key] as string : "";
@@ -77,23 +68,12 @@ function L3Section({ name, data }: { name: string; data: ProjectDefaults }) {
   const last = !text("engine_last") ? "L3 has not replied yet"
     : `last reply reported ${[text("engine_model") || "no model", text("engine_reasoning_effort") ? effort(text("engine_reasoning_effort")) : "no effort"].join(" · ")}`;
   return <section className="settings-section" aria-labelledby="settings-l3">
-    <div><h2 id="settings-l3">L3</h2><p className="text-meta text-muted">Who answers in this project's chat. The same choice as the button under the message box; it comes before routing.</p></div>
-    <div className="settings-group">
-      <div className="settings-row">
-        <span><strong>{closedLabel(data.l3_choice, data.l3_unavailable, data, data.engines)}</strong>{" "}
-          <small>{last}</small>
-          {data.l3_unavailable && data.l3_choice ? <small>{data.l3_unavailable}</small> : null}
-          {save.isError ? <small role="alert" className="text-danger">{save.error.message}</small> : null}
-        </span>
-        <span className="settings-actions">
-          {data.l3_choice ? <button type="button" className="link" disabled={save.isPending}
-            onClick={() => save.mutate({ setting: "l3_choice", value: null, expected: data.l3_choice },
-              { onError: () => void client.invalidateQueries({ queryKey: ["defaults", name] }) })}><BusyLabel busy={save.isPending} label="Back to Auto" working="Saving…" /></button> : null}
-          <button type="button" className="btn" aria-haspopup="dialog" onClick={() => setOpen(true)}>Change…</button>
-        </span>
-      </div>
-    </div>
-    {open ? <ModelsDialog project={name} tab="l3" onClose={() => setOpen(false)} /> : null}
+    <div><h2 id="settings-l3">L3</h2><p className="text-meta text-muted">Who answers in this project's chat.</p></div>
+    <div className="settings-group"><div className="settings-model-row"><RoleModelSettings project={name} />
+      <p className="text-meta text-muted">{last}</p>
+      {text("engine_model") && data.l3_choice?.model && text("engine_model") !== data.l3_choice.model
+        ? <p className="text-meta text-muted">Last reply requested: {text("launch_model") || "engine default"}.</p> : null}
+    </div></div>
   </section>;
 }
 
@@ -112,11 +92,13 @@ function DefaultsSection({ name, data }: { name: string; data: ProjectDefaults }
         const label = `${roleTitle[row.role]} · ${engine.label}`;
         return <div key={`${row.role}-${engine.engine}`} className="defaults-row" role="group" aria-label={label}>
           <span className="defaults-label">{label}</span>
-          <ModelField name={name} engine={engine} />
+          <ModelField name={name} engine={engine} data={data} />
           <EffortField name={name} engine={engine} />
         </div>;
       }))}
     </div>
+    {[...new Set(data.roles.flatMap((row) => row.engines.filter((engine) => !engine.model.value && engine.model.note).map((engine) => engine.model.note)))].map((note) =>
+      <p key={note} className="text-meta text-muted">{note}</p>)}
     <p className="text-meta text-muted">These request a model and effort; the task and chat show what the engine reported. Higher effort can use more time and tokens.</p>
   </section>;
 }

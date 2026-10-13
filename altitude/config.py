@@ -128,6 +128,8 @@ AUTO_ROUTING = [[{"engine": engine, "model": None} for engine in sorted(ENGINES,
 TASK_EFFORTS = ("native", "low", "medium", "high", "xhigh", "max", "ultra")
 ENGINE_EFFORTS = {"claude": TASK_EFFORTS[:-1], "codex": TASK_EFFORTS}
 MODEL_ALIASES = ("opus", "sonnet", "haiku", "fable")
+NAMED_MODELS = {"claude": [(alias, alias.title()) for alias in MODEL_ALIASES],
+                "codex": [("gpt-6.1-sol", "6.1 Sol")]}
 ROLES = ("l3", "l2")
 
 
@@ -200,8 +202,10 @@ def defaults_view(name: str) -> dict:
     def field(role, engine, kind):
         key = role_setting(role, engine, kind)
         if kind == "model":
-            return {"setting": key, "value": entry.get(key), "default": default_model(role, engine) or "CLI default",
-                    "choices": list(MODEL_ALIASES) if engine == "claude" else []}
+            return {"setting": key, "value": entry.get(key),
+                    "default": default_model(role, engine) or f"{ENGINE_LABELS[engine]}'s own default",
+                    "note": ("Tasks use Codex settings outside Altitude; L3 uses its built-in default. "
+                             "The model is reported after it runs.") if engine == "codex" else ""}
         return {"setting": key, "value": entry.get(key), "default": effort_label(task_effort(engine, None, role=role)),
                 "choices": [{"value": v, "label": effort_label(v)} for v in ENGINE_EFFORTS[engine]]}
     return {"l2_engine": entry.get("l2_engine"), "l3_choice": entry.get("l3_choice"),
@@ -403,9 +407,11 @@ def validate_choice(value) -> None:
 
 
 def choice_options() -> dict:
-    """What a model choice offers: each Claude alias, every other engine's own default model, and each engine's efforts."""
-    return {"models": [{"engine": "claude", "model": alias, "label": alias.title()} for alias in MODEL_ALIASES]
-            + [{"engine": e, "model": None, "label": f"{ENGINE_LABELS[e]} default"} for e in ENGINES if e != "claude"],
+    """Maintained shortcuts name requests, never account access or a discovered catalog."""
+    return {"models": [{"engine": e, "model": model, "label": label}
+                       for e in ENGINES for model, label in NAMED_MODELS[e]]
+            + [{"engine": e, "model": None, "label": f"Project default · {ENGINE_LABELS[e]}"} for e in ENGINES if e != "claude"],
+            "task_example": "Use 6.1 Sol for this task.",
             "efforts": {e: [{"value": v, "label": effort_label(v)} for v in ENGINE_EFFORTS[e] if v != "native"]
                         for e in ENGINES}}
 

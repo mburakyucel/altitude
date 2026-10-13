@@ -285,6 +285,23 @@ class TestPickEngine(AltitudeCase):
         self.assertIn("chosen for L3", route.pick_engine("l3", project=project)["why"])
         self.assertEqual(route.pick_engine("l2", project=project)["model"], "fable")
 
+    def test_named_model_headroom_is_not_access_and_explicit_pin_never_falls_back(self):
+        requested = {"engine": "codex", "model": "gpt-6.1-sol"}
+        self.patch(config, "machine_settings", return_value={"new_tasks": requested})
+        self.codex = codex(0)
+        project = {"routing": config.parse_routing("claude:opus")}
+        choice = route.pick_engine("l2", project=project)
+        self.assertEqual((choice["engine"], choice["model"], choice["pinned"]),
+                         ("codex", "gpt-6.1-sol", False))
+        self.assertIn("access unverified", choice["why"])
+        route.note_rejection(requested, {"scope": "model", "why": "model not accessible"})
+        self.assertIn("model not accessible", route.choice_unavailable("l2", requested))
+        fallback = route.pick_engine("l2", project=project)
+        self.assertEqual((fallback["engine"], fallback["model"]), ("claude", "opus"))
+        explicit = route.pick_engine("l2", forced="codex", model="gpt-6.1-sol", project=project)
+        self.assertIsNone(explicit["engine"])
+        self.assertIn("model not accessible", explicit["why"])
+
     def test_explicit_task_or_turn_selection_outranks_the_choice(self):
         self.patch(config, "machine_settings", return_value={"new_tasks": {"engine": "claude", "model": "fable", "effort": "max"}})
         self.assertEqual(route.pick_engine("l2", forced="codex")["engine"], "codex")

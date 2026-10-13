@@ -4,6 +4,7 @@ import { renderApp, setViewport } from "../test/render";
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 const options = {
+  task_example: "use Deep at High for this",
   models: [{ engine: "alpha", model: "swift", label: "Swift" }, { engine: "alpha", model: "deep", label: "Deep" }, { engine: "beta", model: null, label: "Beta default" }],
   efforts: { alpha: [{ value: "low", label: "Low" }, { value: "high", label: "High" }], beta: [{ value: "low", label: "Low" }, { value: "ultra", label: "Ultra" }] },
 };
@@ -48,6 +49,108 @@ const dialog = () => screen.getByRole("dialog", { name: /^Models/ });
 
 beforeEach(() => setViewport(1440));
 
+describe("Settings model dropdowns", () => {
+  const group = () => screen.getByRole("group", { name: "New tasks · All projects" });
+  const model = () => within(group()).getByRole("combobox", { name: "Model" });
+  const key = (engine: string, model: string | null) => JSON.stringify([engine, model]);
+
+  it("saves named choices immediately for all new tasks, with project L3 kept separate", async () => {
+    const { posts, state } = server();
+    const { user, router } = renderApp({ route: "/settings" });
+    await screen.findByRole("group", { name: "New tasks · All projects" });
+    expect(model()).toHaveValue("");
+    expect(group()).toHaveTextContent("Started tasks keep theirs.");
+    await user.selectOptions(model(), key("alpha", "deep"));
+    await waitFor(() => expect(state.newTasks).toEqual({ engine: "alpha", model: "deep" }));
+    expect(group()).toHaveTextContent("deep · Access unverified");
+    await act(() => router.navigate("/settings/projects/example"));
+    const l3 = await screen.findByRole("group", { name: "L3 · example" });
+    expect(l3).toHaveTextContent("Applies from the next reply.");
+    await user.selectOptions(within(l3).getByRole("combobox", { name: "Model" }), key("alpha", "swift"));
+    await waitFor(() => expect(state.l3Choice).toEqual({ engine: "alpha", model: "swift" }));
+    expect(state.newTasks).toEqual({ engine: "alpha", model: "deep" });
+    expect(posts.at(-1)).toEqual({ path: "/api/defaults", body: { project: "example", setting: "l3_choice", value: { engine: "alpha", model: "swift" }, expected: null } });
+  });
+
+  it("commits custom engine and ID together on group exit, while blank, invalid and Escape never save", async () => {
+    const { posts } = server();
+    const { user } = renderApp({ route: "/settings" });
+    await screen.findByRole("group", { name: "New tasks · All projects" });
+    await user.selectOptions(model(), "other");
+    await user.tab();
+    expect(posts).toHaveLength(0);
+    expect(within(group()).queryByRole("textbox")).toBeNull();
+    await user.selectOptions(model(), "other");
+    const id = within(group()).getByRole("textbox", { name: "Model ID" });
+    await user.type(id, "next model");
+    await user.keyboard("{Enter}");
+    expect(within(group()).getByRole("alert")).toHaveTextContent("without spaces");
+    expect(posts).toHaveLength(0);
+    await user.clear(id);
+    await user.type(id, "next-model");
+    await user.selectOptions(within(group()).getByRole("combobox", { name: "Engine" }), "beta");
+    expect(posts).toHaveLength(0);
+    await user.click(id);
+    await user.tab();
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]?.body).toEqual({ value: { engine: "beta", model: "next-model" }, expected: null });
+    await waitFor(() => expect(within(group()).queryByRole("textbox")).toBeNull());
+    await user.selectOptions(model(), "other");
+    await user.keyboard("{Escape}");
+    expect(within(group()).queryByRole("textbox")).toBeNull();
+    expect(posts).toHaveLength(1);
+  });
+
+  it("keeps the custom draft's original comparison value across refresh, then reloads a conflict", async () => {
+    const { posts, state } = server();
+    const { user, queryClient } = renderApp({ route: "/settings" });
+    await screen.findByRole("group", { name: "New tasks · All projects" });
+    await user.selectOptions(model(), "other");
+    await user.type(within(group()).getByRole("textbox", { name: "Model ID" }), "next-model");
+    state.newTasks = { engine: "beta" };
+    await act(() => queryClient.refetchQueries({ queryKey: ["overview"] }));
+    await user.keyboard("{Enter}");
+    expect(await within(group()).findByRole("alert")).toHaveTextContent("Changed in another window.");
+    expect(posts[0]?.body.expected).toBeNull();
+    await user.click(within(group()).getByRole("button", { name: "Reload" }));
+    await waitFor(() => expect(model()).toHaveValue(key("beta", null)));
+    expect(within(group()).queryByRole("textbox")).toBeNull();
+  });
+
+  it("retains focus while saving, ignores further changes, and retries a rejected request", async () => {
+    let release!: () => void;
+    const { posts } = server({ refuse: "Model access denied.", hold: new Promise<void>((resolve) => { release = resolve; }) });
+    const { user } = renderApp({ route: "/settings" });
+    await screen.findByRole("group", { name: "New tasks · All projects" });
+    await user.selectOptions(model(), key("alpha", "deep"));
+    expect(model()).toHaveAttribute("aria-disabled", "true");
+    expect(model()).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    expect(posts).toHaveLength(1);
+    await user.tab();
+    expect(within(group()).getByRole("combobox", { name: "Effort" })).toHaveFocus();
+    release();
+    expect(await within(group()).findByRole("alert")).toHaveTextContent("Model access denied.");
+    expect(model()).toHaveValue("");
+    const retry = server();
+    await user.click(within(group()).getByRole("button", { name: "Retry save" }));
+    await waitFor(() => expect(retry.state.newTasks).toEqual({ engine: "alpha", model: "deep" }));
+    expect(retry.posts[0]?.body).toEqual(posts[0]?.body);
+  });
+
+  it("resets unsupported effort when changing engine and explains inherited versus explicit requests", async () => {
+    const { state } = server({ newTasks: { engine: "alpha", model: "deep", effort: "high" }, unavailable: "Account limit reached" });
+    const { user } = renderApp({ route: "/settings" });
+    await screen.findByRole("group", { name: "New tasks · All projects" });
+    expect(group()).toHaveTextContent("Unavailable · Auto meanwhile: Account limit reached");
+    await user.selectOptions(model(), key("beta", null));
+    await waitFor(() => expect(state.newTasks).toEqual({ engine: "beta" }));
+    expect(await within(group()).findByText("Effort reset to Default for this engine.")).toBeVisible();
+    expect(within(group()).getByRole("combobox", { name: "Effort" })).toHaveValue("");
+    expect(group()).toHaveTextContent("Uses each project's default, then the engine's own default.");
+  });
+});
+
 describe("Models dialog", () => {
   it("opens on Tasks from beside the quota, lists Only-engine projects and saves New tasks for every project", async () => {
     const { posts } = server({ only: [{ project: "harbor", engine: "beta" }] });
@@ -55,17 +158,17 @@ describe("Models dialog", () => {
     await user.click(await screen.findByRole("button", { name: /^New tasks · Auto/ }));
     expect(dialog()).toHaveAccessibleName("Models · Tasks · All projects");
     expect(within(dialog()).getByRole("tab", { name: /Tasks/ })).toHaveAttribute("aria-selected", "true");
-    expect(dialog()).toHaveTextContent("In use: Auto · every project; tasks that start from now, including queued ones. Started tasks keep theirs.");
+    expect(dialog()).toHaveTextContent("Selected: Auto · every project; tasks that start from now, including queued ones. Started tasks keep theirs.");
     expect(within(dialog()).getByRole("radio", { name: /^Auto/ })).toHaveFocus();
     expect(within(dialog()).getByRole("button", { name: "Use for all new tasks" })).toBeDisabled();
     expect(within(dialog()).queryByRole("button", { name: "Back to Auto" })).toBeNull();
     await user.click(within(dialog()).getByRole("radio", { name: /^Swift/ }));
-    expect(within(dialog()).getAllByRole("radio").filter((r) => r.closest(".models-effort")).map((r) => r.parentElement?.textContent)).toEqual(["Default", "Low", "High"]);
+    expect(within(dialog()).getAllByRole("radio").filter((r) => r.closest(".models-effort")).map((r) => r.parentElement?.textContent)).toEqual(["Default (from project)", "Low", "High"]);
     await user.click(within(dialog()).getByRole("radio", { name: "Low" }));
     expect(dialog()).toHaveTextContent("When Swift is unavailable, each project's Auto picks instead.");
     expect(dialog()).toHaveTextContent("harbor runs tasks only on Beta, so it keeps its Beta model.");
     expect(within(dialog()).getByRole("link", { name: "Change" })).toHaveAttribute("href", "/settings/projects/harbor#routing");
-    expect(dialog()).toHaveTextContent("For one task, tell L3: “use Opus at Max for this”.");
+    expect(dialog()).toHaveTextContent("For one task, tell L3: “use Deep at High for this”");
     await user.click(within(dialog()).getByRole("button", { name: "Use for all new tasks" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(posts).toEqual([{ path: "/api/new-tasks", body: { value: { engine: "alpha", model: "swift", effort: "low" }, expected: null } }]);
@@ -95,7 +198,7 @@ describe("Models dialog", () => {
     await user.keyboard("{ArrowLeft}");
     expect(dialog()).toHaveAccessibleName("Models · L3 · example only");
     expect(within(dialog()).getByRole("tab", { name: /L3/ })).toHaveFocus();
-    expect(dialog()).toHaveTextContent("In use: Deep · who answers you in example's chat.");
+    expect(dialog()).toHaveTextContent("Selected: Deep · who answers you in example's chat.");
     expect(within(dialog()).getByRole("radio", { name: /^Deep/ })).toBeChecked();
     expect(within(dialog()).getByRole("button", { name: "Back to Auto" })).toBeEnabled();
     await user.keyboard("{ArrowRight}");
@@ -118,7 +221,7 @@ describe("Models dialog", () => {
     expect(within(dialog()).getByRole("radio", { name: /^Swift/ })).toBeDisabled();
     release();
     expect(await within(dialog()).findByRole("alert")).toHaveTextContent("Alpha does not support reasoning effort ultra");
-    expect(dialog()).toHaveTextContent("In use: Auto");
+    expect(dialog()).toHaveTextContent("Selected: Auto");
     expect(within(dialog()).getByRole("radio", { name: /^Deep/ })).toBeChecked();
     fixture.posts.length = 0;
     vi.stubGlobal("fetch", vi.fn());
@@ -127,7 +230,7 @@ describe("Models dialog", () => {
     expect(await within(dialog()).findByRole("alert")).toHaveTextContent("Changed in another window.");
     expect(changed.posts.at(-1)?.body).toEqual({ value: { engine: "alpha", model: "deep" }, expected: null });
     await user.click(within(dialog()).getByRole("button", { name: "Reload" }));
-    await waitFor(() => expect(dialog()).toHaveTextContent("In use: Beta default"));
+    await waitFor(() => expect(dialog()).toHaveTextContent("Selected: Beta default"));
     expect(within(dialog()).getByRole("radio", { name: /^Beta default/ })).toBeChecked();
   });
 

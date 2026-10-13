@@ -216,7 +216,7 @@ when available. An unknown Monitor model is an absent key rather than null.
 existing defaults and `native` requests no override. `config.task_effort` owns engine support and
 resolution, and a setting accepts only its own engine's levels. `config.default_model` and
 `config.default_effort` resolve an Auto option for the chosen role and engine: an option's own model,
-then the project default, then the role default (Opus for a Claude L2, Fable for L3, the CLI's own model
+then the project default, then the role default (Opus for a Claude L2, Fable for L3, the engine's own model
 on Codex). They are preferences: only `l2_engine` and task or turn pins force an engine.
 Explicit task `effort` and `model` win over the defaults without rewriting them. Routing resolves effort
 per option, excludes Auto candidates that cannot accept an explicit level and keeps pins strict.
@@ -240,7 +240,16 @@ value differs at the moment the setting is applied, under the same lock, so a se
 applies its request immediately; CLI `alt project set` requests are applied on the daemon tick,
 independently of worker capacity. A conflicting pending request refuses another save until applied.
 A save while an L3 message waits for an engine retries it at once.
-Neither path mutates Only engines or running tasks. Native L1 helpers inherit or override effort
+
+Settings exposes native model and effort dropdowns for the project coordinator, all new tasks and
+each project role/engine default. Committed selections save immediately; chat and quota shortcuts
+retain the dialog with the same engine-owned choices. The configuration seam supplies named model
+shortcuts, exact IDs and inheritance labels; the list establishes neither discovery nor account
+access. A role's engine-only choice inherits the project default before the engine default; a cleared
+project model inherits the engine default directly. Requested selection and last-reply observations
+stay separate. Custom IDs remain selectable and unknown access stays unverified. Known rejections
+retain the selection and explain routing fallback; shared quota never establishes model entitlement.
+Model-setting writes do not mutate Only engines or running tasks. Native L1 helpers inherit or override effort
 through their own engine controls; Altitude does not create helper workers or promise a uniform L1
 override.
 

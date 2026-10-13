@@ -195,14 +195,14 @@ class TestCodexAdapter(AltitudeCase):
     def test_fresh_turn_runs_codex_app_server_in_the_worktree_with_the_persona_in_front(self):
         persona = self.tmp / "l2.md"
         persona.write_text("PERSONA")
-        res, procs = self._launch(persona=persona, model="gpt-x")
+        res, procs = self._launch(persona=persona, model="gpt-6.1-sol")
         self.assertEqual(res["returncode"], 0)
         row = res["agent"]
         self.assertEqual(procs[0].cmd, ["svc", engines._codex_unit(row["id"]), *engines._driver_command()])
         spec = launch_spec(procs[0])
         self.assertEqual(spec["command"], [config.CODEX_BIN, "app-server", "--strict-config", "-c", "s1", "-c", "s2"])
         self.assertEqual((spec["engine"], spec["cwd"], spec["model"], spec["resume"], spec["github_token"]),
-                         ("codex", str(self.worktree), "gpt-x", None, ""))
+                         ("codex", str(self.worktree), "gpt-6.1-sol", None, ""))
         self.assertEqual(spec["sends"], str(engines.worker_sends(row["id"], job_root=self.job_root)))
         self.assertEqual([part["type"] for part in spec["input"]], ["text"])
         sent = spec["input"][0]["text"]
@@ -324,12 +324,13 @@ class TestCodexAdapter(AltitudeCase):
         prompt = "Keep the public result stable. ✓\n" * 8192
         self.patch(config, "CODEX_BIN", str(engine))
         self.patch(platform, "job_command", side_effect=lambda unit, command, env, **kw: command)
-        out = engines.codex_exec(prompt, cwd=self.worktree, effort="high", resume="thr-l3",
+        out = engines.codex_exec(prompt, cwd=self.worktree, model="gpt-6.1-sol", effort="high", resume="thr-l3",
                                  extra_env={"ALTITUDE_ACTOR": "l3"}, timeout=30)
         received = json.loads(out["text"])
         self.assertEqual(received["argv"][:2], ["exec", "resume"])
         self.assertEqual(received["argv"][-2:], ["thr-l3", "-"])
         self.assertIn('model_reasoning_effort="high"', received["argv"])
+        self.assertEqual(received["argv"][received["argv"].index("-m") + 1], "gpt-6.1-sol")
         self.assertEqual(received["sha256"], hashlib.sha256(prompt.encode()).hexdigest())
         self.assertEqual((out["reported_session_id"], out["usage"], out["error"]), ("thr-l3", {"input_tokens": 7}, None))
 

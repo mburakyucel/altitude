@@ -727,7 +727,7 @@ it on **Tasks · All projects**. Outside a project only the Tasks tab exists. Ea
 far it reaches; the tabs are a tab list, and arrow keys, Home and End switch them. The dialog's name
 includes the open tab. On phone it is a bottom sheet; on desktop a centered dialog.
 
-Each tab starts with **In use: <choice>** and its scope: "who answers you in <project>'s chat", or
+Each tab starts with **Selected: <choice>** and its scope: "who answers you in <project>'s chat", or
 "every project; tasks that start from now, including queued ones. Started tasks keep theirs." The
 models are a radio group: **Auto** (project routing and defaults), each alias and engine default the
 engine seam names with its engine, and **Other model…** with an engine and an exact model id (no
@@ -743,7 +743,7 @@ The L3 tab says "Applies from L3's next reply." with the last reply's reported m
 Tasks tab says that each project's Auto picks while the chosen model is unavailable, lists every
 project whose **Only <engine>** routing keeps its tasks elsewhere ("harbor runs tasks only on Codex,
 so it keeps its Codex model. Change", linking to its Routing), and ends with the hint "For one task,
-tell L3: “use Opus at Max for this”." With a saved L3 choice, the L3 tab adds "When <model> is
+tell L3: “use 6.1 Sol for this”." (the example comes from the engine seam). With a saved L3 choice, the L3 tab adds "When <model> is
 unavailable, Auto answers instead."
 
 | State | What appears and what actions do |
@@ -751,7 +751,7 @@ unavailable, Auto answers instead."
 | Loading | The closed control is disabled; an opened tab says Loading models…. |
 | Read failed | "Could not load models" with Retry. |
 | Saving | **Use** holds its width and shows a spinner with accessible name Saving…; choices and the other tab are locked. |
-| Save failed | The server's reason and Retry on the tab that saved; In use keeps the earlier value. |
+| Save failed | The server's reason and Retry on the tab that saved; Selected keeps the earlier value. |
 | Changed elsewhere | "Changed in another window." with Reload, which drops the draft and shows the current value. A save compares against the value the draft started from, so a refresh while editing does not hide another window's change. |
 | Unavailable | The closed control reads "Fable unavailable · Auto meanwhile"; the tab names the reason. |
 
@@ -760,6 +760,17 @@ Data: `GET /api/overview` `new_tasks` and `POST /api/new-tasks`; `GET /api/defau
 `l3_choice` and `POST /api/defaults` with setting `l3_choice`. Both writes send the value shown as
 `expected`, so a change made elsewhere is refused instead of overwritten. `web/e2e/models.pw.ts` walks
 these states at 390×844 and 1440×900. Board: ModelsStates.
+
+Settings exposes these scopes directly as native **Model** and **Effort** dropdowns (§3.15),
+without opening this dialog. The dialog and dropdowns share engine-owned labels and exact IDs,
+including **6.1 Sol · Codex** (`gpt-6.1-sol`). **Project default · <engine>** inherits that role's
+project default, then the engine default; **Auto** uses project routing. Explicit selections show
+their ID and **Access unverified**; options are requests, not confirmed account entitlements.
+Known unavailable preferences keep their name and recorded reason. The all-project scope says
+"If unavailable, project routing applies." and links every mismatching Only-engine project's
+Routing section. An Only project waits when no candidate on its engine can run. Last-reply model
+and effort are observations, separate from the selected request; absent values say not reported,
+and a differing recorded launch request is shown without attributing a new selection to an old reply.
 
 ### 3.7 Work panel
 
@@ -1758,9 +1769,12 @@ A direct overview visit returns to `/projects`; entry from another view returns 
 The overview groups rows by where a setting applies, in two columns on desktop and one on phone.
 **Your name** comes first: the name, or "Not set · screens say “you”", opening `/settings/name`.
 **This project**, present only when Settings opens from a project, has one row naming it with its L3
-choice and routing ("L3: Fable · Low · tasks prefer Codex"), opening `/settings/projects/<name>`.
-**Models** holds **New tasks**, the same value and Models dialog as the control beside the quota
-(§3.6.1). **Projects** holds **All projects** ("2 projects · folder ~/Projects"), opening
+choice and routing ("L3: Fable · Low · tasks prefer Codex"), opening `/settings/projects/<name>`,
+followed by **L3 · <project>** with native **Model** and **Effort** dropdowns and "Applies from the
+next reply." **Models** holds **New tasks · All projects**, the same saved choice as the quota
+shortcut (§3.6.1), with native **Model** and **Effort** dropdowns and "Applies when tasks start,
+including queued tasks. Started tasks keep theirs." Both save on selection. **Projects** holds
+**All projects** ("2 projects · folder ~/Projects"), opening
 `/settings/projects`: every managed project, each opening its page, then **Projects folder**.
 **Voice** holds **Voice input**. **Notifications** holds this device's decision alerts (below).
 **Devices and access** holds Devices, the Terminal switch and the
@@ -1880,18 +1894,32 @@ next capture; a recording keeps the selection it started with and stops when it 
 | Saving | A spinner named Saving… and disabled choices until the request answers. |
 | Failed/denied save | Server explanation and Retry; the saved choice is preserved. A choice changed elsewhere offers Reload settings. |
 
+Model dropdowns have full-width, at least 44px controls on phone and preserve normal native
+keyboard behavior. Each committed choice saves immediately; changing engines keeps compatible
+effort, otherwise restores Default with "Effort reset to Default for this engine." Role effort
+inherits with **Default (from project)**. Other model reveals Engine then exact ID for a role,
+or just ID for a fixed-engine project default. Enter in ID or leaving the entire custom group
+saves a valid ID; moving between Engine and ID never saves. Blank blur or Escape restores the
+saved value. An ID containing spaces says "Use one model ID without spaces." without a write.
+Custom saved IDs remain explicit options. Loading disables controls; read failure offers Retry.
+Saving retains focus with guarded aria-disabled controls and shows the pending choice; success
+shows Saved. Failed/denied saves restore the saved value and offer Retry save, preserving custom
+text for retry; concurrent changes offer Reload. No prior reply says "No reply yet."
+Listening does not apply. Long labels wrap and IDs stay accessible without horizontal overflow.
+These states are walked at phone and desktop sizes; native keyboard saves retain focus through
+pending, success and failure. Boards: SettingsStates, ModelsStates and ProjectSettings.
+
 The project page `/settings/projects/<name>` has a labelled **Settings** back button, the line
 "Applies to this project only. A model or effort L3 sets for one task wins over these." and its
 sections, model choices in the order they are applied:
 
-- **L3**: the closed L3 choice ("Fable · Low", "Auto", or "Fable unavailable · Auto meanwhile" with
-  the reason), and what L3's last reply
-  reported ("L3 has not replied yet" before one). **Back to Auto** while a choice is saved, and
-  **Change…**, which opens the Models dialog on its L3 tab.
+- **L3**: the same native Model/Effort dropdowns and saved value as the overview, timing and
+  last-reply observations. Auto is a model option; no Change or Back to Auto button is needed.
 - **Auto defaults**: one row per role and engine ("Tasks · Codex", "L3 · Claude") with **Model** and
-  **Effort**, used under Auto and as the fallback. The model is free text with alias suggestions and
-  a "Default: <model>" placeholder, saved on Enter or leaving the field, restored by Escape and
-  cleared to Default when empty; effort offers "Default (<level>)", Native and only the levels that
+  **Effort**, used under Auto and as the fallback. Model is a native select offering
+  **Default (<role default>)**, named engine models and **Other model…**. The engine-owned
+  inherited label **Codex's own default** explains "Tasks use Codex settings outside Altitude;
+  L3 uses its built-in default. The model is reported after it runs." Effort offers "Default (<level>)", Native and only the levels that
   engine accepts, saved on choice. Each field saves alone with its own status. While New tasks holds
   a choice the copy names it. At 390px each row stacks model above effort.
 - **Routing** (`#routing`): **Tasks** is Auto, Prefer <engine> or Only <engine>; L3 has no routing

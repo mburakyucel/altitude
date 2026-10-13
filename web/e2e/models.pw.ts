@@ -66,7 +66,7 @@ test("Models: closed controls, L3 and Tasks tabs, Other model, saving, failure, 
 
   await walk.state("02-open-on-l3", {
     action: () => v.l3.click(),
-    visible: [v.l3Dialog, v.l3Dialog.getByText(`In use: Auto · who answers you in ${project.name}'s chat.`), v.l3Dialog.getByText("Applies from L3's next reply.", { exact: false })],
+    visible: [v.l3Dialog, v.l3Dialog.getByText(`Selected: Auto · who answers you in ${project.name}'s chat.`), v.l3Dialog.getByText("Applies from L3's next reply.", { exact: false })],
     hidden: [v.l3Dialog.getByRole("button", { name: "Back to Auto" }), v.l3Dialog.getByRole("alert")],
   });
   await expect(tab(v.l3Dialog, "L3")).toHaveAttribute("aria-selected", "true");
@@ -102,7 +102,7 @@ test("Models: closed controls, L3 and Tasks tabs, Other model, saving, failure, 
   await expect(v.newTasks).toHaveText("New tasks · Auto›");
   await walk.state("07-open-on-tasks", {
     action: () => v.newTasks.click(),
-    visible: [v.tasksDialog, v.tasksDialog.getByText("In use: Auto · every project; tasks that start from now, including queued ones. Started tasks keep theirs.")],
+    visible: [v.tasksDialog, v.tasksDialog.getByText("Selected: Auto · every project; tasks that start from now, including queued ones. Started tasks keep theirs.")],
     hidden: [v.tasksDialog.getByRole("button", { name: "Back to Auto" })],
   });
   await expect(tab(v.tasksDialog, "Tasks")).toHaveAttribute("aria-selected", "true");
@@ -158,7 +158,7 @@ test("Models: closed controls, L3 and Tasks tabs, Other model, saving, failure, 
     expect(await newTasks(request)).toEqual(elsewhere);
     await walk.state("12-reloaded-current-choice", {
       action: () => v.tasksDialog.getByRole("button", { name: "Reload", exact: true }).click(),
-      visible: [v.tasksDialog.getByText(`In use: ${second!.label} · ${high.label}`), v.tasksDialog.getByRole("button", { name: "Back to Auto" })],
+      visible: [v.tasksDialog.getByText(`Selected: ${second!.label} · ${high.label}`), v.tasksDialog.getByRole("button", { name: "Back to Auto" })],
       hidden: [v.tasksDialog.getByRole("alert"), modelId],
     });
     await expect(v.tasksDialog.getByRole("radio", { name: starts(second!.label) })).toBeChecked();
@@ -179,10 +179,9 @@ test("Models: closed controls, L3 and Tasks tabs, Other model, saving, failure, 
   await expect(v.newTasks).toHaveText("New tasks · Auto›");
   expect(await newTasks(request)).toBeNull();
 
-  // Outside a project only the Tasks tab exists: phone Monitor, and the desktop Settings row.
-  if (phone) await walk.open("/monitor");
-  else await walk.open("/settings");
-  const opener = phone ? v.newTasks : v.main.getByRole("button", { name: /^New tasks / });
+  // Outside a project only the Tasks tab exists; Settings now uses direct native selects.
+  await walk.open("/monitor");
+  const opener = v.newTasks;
   await walk.state("15-tasks-only-outside-a-project", {
     action: () => opener.click(), visible: [v.tasksDialog], hidden: [v.tasksDialog.getByRole("tablist")],
   });
@@ -212,7 +211,8 @@ test("Settings by destination: the menu, the overview groups, every project and 
   });
   await expect(main.getByRole("link").first()).toHaveAttribute("href", "/settings/name");
   await expect(group("This project").getByRole("link")).toHaveAttribute("href", `/settings/projects/${project.name}`);
-  await expect(group("Models").getByRole("button", { name: "New tasks Auto · each project's own defaults", exact: true })).toBeEnabled();
+  await expect(group("Models").getByRole("combobox", { name: "Model", exact: true })).toHaveValue("");
+  await expect(group("This project").getByRole("combobox", { name: "Model", exact: true })).toHaveValue("");
   await expect(group("Devices and access").getByRole("link", { name: /^Devices / })).toHaveAttribute("href", "/settings/devices");
   await expect(group("Devices and access").getByRole("switch", { name: /Terminal/ })).toBeVisible();
   await expect(group("Devices and access").getByText(/ · HTTPS off$/)).toBeVisible();
@@ -240,12 +240,136 @@ test("Settings by destination: the menu, the overview groups, every project and 
     await expect(fields.getByLabel("Model")).toBeVisible();
     await expect(fields.getByLabel("Effort")).toBeVisible();
   }
-  await walk.state("05-change-opens-models-on-l3", {
-    action: () => group("L3").getByRole("button", { name: "Change…", exact: true }).click(),
-    visible: [page.getByRole("dialog", { name: `Models · L3 · ${project.name} only`, exact: true })], hidden: [],
+  await walk.state("05-direct-l3-dropdown", {
+    visible: [group("L3").getByRole("combobox", { name: "Model", exact: true })],
+    hidden: [page.getByRole("dialog", { name: `Models · L3 · ${project.name} only`, exact: true })],
   });
-  await page.keyboard.press("Escape");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test("Settings model dropdowns: named choices, separate scopes, custom IDs, pending, denied and concurrent saves", async ({ page, request }, info) => {
+  const project = await fixtureProject(request);
+  const walk = walkthrough(page, info);
+  const view = await options(request, project.name);
+  const { engine, models: [first, second] } = runnable(view);
+  const key = (choice: NonNullable<Choice>) => JSON.stringify([choice.engine, choice.model ?? null]);
+  const tasks = page.getByRole("group", { name: "New tasks · All projects", exact: true });
+  const model = tasks.getByRole("combobox", { name: "Model", exact: true });
+  const effort = tasks.getByRole("combobox", { name: "Effort", exact: true });
+  const id = tasks.getByRole("textbox", { name: "Model ID", exact: true });
+  const l3 = page.getByRole("group", { name: `L3 · ${project.name}`, exact: true });
+
+  await walk.open(project.path);
+  await page.getByRole("button", { name: "More actions" }).click();
+  await page.getByRole("menuitem", { name: "All settings…", exact: true }).click();
+  await walk.state("01-settings-native-dropdowns", { visible: [model, effort, l3.getByRole("combobox", { name: "Model", exact: true })], hidden: [id] });
+  // Every catalog entry is directly available, including named options on an engine not running this fixture.
+  for (const item of view.models) await expect(model.locator("option").filter({ hasText: item.label })).toHaveCount(1);
+  const named = view.models.filter((item) => item.model);
+  for (const item of named) {
+    await model.selectOption(key(item));
+    await expect.poll(() => newTasks(request)).toEqual({ engine: item.engine, model: item.model });
+    await expect(tasks).toContainText(`${item.model} · Access unverified`);
+  }
+  await walk.state("02-explicit-model-access-unverified", { visible: [model, tasks.getByText(/Access unverified/)], hidden: [id] });
+  await model.selectOption(key(first!));
+  await expect.poll(() => newTasks(request)).toEqual({ engine, model: first!.model });
+  await l3.getByRole("combobox", { name: "Model", exact: true }).selectOption(key(second!));
+  await expect.poll(async () => (await options(request, project.name)).l3_choice).toEqual({ engine, model: second!.model });
+  expect(await newTasks(request)).toEqual({ engine, model: first!.model });
+
+  await model.selectOption("other");
+  await id.fill("");
+  await effort.focus();
+  await expect(id).toBeHidden();
+  expect(await newTasks(request)).toEqual({ engine, model: first!.model });
+  await model.selectOption("other");
+  await id.fill("invalid model");
+  await id.press("Enter");
+  await walk.state("03-custom-invalid-id", { visible: [id, tasks.getByRole("alert").filter({ hasText: "without spaces" })], hidden: [] });
+  expect(await newTasks(request)).toEqual({ engine, model: first!.model });
+  await id.fill("fixture-direct-model");
+  await tasks.getByRole("combobox", { name: "Engine", exact: true }).selectOption(engine);
+  expect(await newTasks(request)).toEqual({ engine, model: first!.model });
+  await id.focus();
+  await id.press("Enter");
+  await expect.poll(() => newTasks(request)).toEqual({ engine, model: "fixture-direct-model" });
+  await walk.state("04-custom-saved-and-fields-removed", { visible: [model], hidden: [id, tasks.getByRole("alert")] });
+
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/new-tasks", async (route) => {
+    await gate;
+    await route.fulfill({ status: 403, json: { error: "Model selection denied for this fixture." } });
+  }, { times: 1 });
+  try {
+    await model.selectOption(key(second!));
+    await walk.state("05-native-select-saving-focus-retained", { visible: [tasks.getByText("Saving…", { exact: true })], hidden: [tasks.getByRole("alert")] });
+    await expect(model).toHaveAttribute("aria-disabled", "true");
+    await model.focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(model).toHaveValue(key(second!));
+    await page.keyboard.press("Tab");
+    await expect(effort).toBeFocused();
+  } finally { release(); }
+  await walk.state("06-denied-restores-saved-choice", { visible: [tasks.getByRole("alert").filter({ hasText: "denied" }), tasks.getByRole("button", { name: "Retry save" })], hidden: [tasks.getByText("Saving…", { exact: true })] });
+  await expect(model).toHaveValue(key({ engine, model: "fixture-direct-model" }));
+  await tasks.getByRole("button", { name: "Retry save" }).click();
+  await expect.poll(() => newTasks(request)).toEqual({ engine, model: second!.model });
+
+  await model.selectOption("other");
+  await id.fill("fixture-stale-model");
+  expect((await request.post("/api/new-tasks", { data: { value: { engine, model: first!.model }, expected: { engine, model: second!.model } } })).ok()).toBe(true);
+  await id.press("Enter");
+  await walk.state("07-stale-draft-conflict", { visible: [tasks.getByRole("alert").filter({ hasText: "Changed in another window." }), tasks.getByRole("button", { name: "Reload" })], hidden: [] });
+  await tasks.getByRole("button", { name: "Reload" }).click();
+  await expect(model).toHaveValue(key(first!));
+  await walk.state("08-reload-removes-stale-custom-fields", { visible: [model], hidden: [id, tasks.getByRole("alert")] });
+
+  await walk.open(`/settings/projects/${project.name}`);
+  const fields = page.getByRole("group", { name: `Tasks · ${view.engines[0]!.label}`, exact: true });
+  const defaultModel = fields.getByRole("combobox", { name: "Model", exact: true });
+  await defaultModel.selectOption(key(second!));
+  await expect(defaultModel).toHaveValue(key(second!));
+  await expect(fields.getByText("Saved.", { exact: true })).toBeVisible();
+  await walk.state("09-project-default-native-dropdown", { visible: [defaultModel, l3.getByRole("combobox", { name: "Model", exact: true })], hidden: [fields.getByRole("textbox")] });
+  await page.reload();
+  await expect(defaultModel).toHaveValue(key(second!));
+  await expect(l3.getByRole("combobox", { name: "Model", exact: true })).toHaveValue(key(second!));
+  await walk.open(project.path);
+  await expect(page.getByRole("main").getByRole("button", { name: /^L3 model:/ })).toHaveAccessibleName(`L3 model: ${second!.label}`);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test("Settings model reading: loading, unavailable and retry after denied reading", async ({ page, request }, info) => {
+  const project = await fixtureProject(request);
+  const view = await options(request, project.name);
+  const { engine, models: [first] } = runnable(view);
+  const walk = walkthrough(page, info);
+  const models = page.getByRole("main").getByRole("region", { name: "Models", exact: true });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/overview", async (route) => {
+    await gate;
+    const response = await route.fetch();
+    const data = await response.json();
+    data.new_tasks.value = { engine, model: first!.model };
+    data.new_tasks.unavailable = "Fixture account is unavailable.";
+    await route.fulfill({ response, json: data });
+  });
+  try {
+    await walk.open("/settings");
+    await walk.state("01-loading-models", { visible: [models.getByText("Loading models…", { exact: true })], hidden: [models.getByRole("combobox", { name: "Model", exact: true })] });
+  } finally { release(); }
+  await walk.state("02-unavailable-keeps-selected-request", { visible: [models.getByText("Unavailable · Auto meanwhile: Fixture account is unavailable.")], hidden: [models.getByText("Loading models…", { exact: true })] });
+  await expect(models.getByRole("combobox", { name: "Model", exact: true })).toHaveValue(JSON.stringify([engine, first!.model]));
+  await page.unroute("**/api/overview");
+  await page.route("**/api/overview", (route) => route.fulfill({ status: 403, json: { error: "Fixture reading denied." } }));
+  await page.reload();
+  await walk.state("03-model-read-error", { visible: [models.getByRole("alert"), models.getByRole("button", { name: "Retry", exact: true })], hidden: [models.getByRole("combobox", { name: "Model", exact: true })] });
+  await page.unroute("**/api/overview");
+  await models.getByRole("button", { name: "Retry", exact: true }).click();
+  await walk.state("04-model-read-recovered", { visible: [models.getByRole("combobox", { name: "Model", exact: true })], hidden: [models.getByRole("alert")] });
 });
 
 test.describe("Remove project", () => {

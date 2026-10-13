@@ -64,7 +64,7 @@ describe("Project settings", () => {
     const { posts } = fixture();
     const { user } = renderApp({ route: "/settings/projects/example" });
     const l3Alpha = await group("L3 · Alpha");
-    expect(within(l3Alpha).getByLabelText("Model")).toHaveAttribute("placeholder", "Default: alpha-default");
+    expect(within(l3Alpha).getByLabelText("Model")).toHaveDisplayValue("Default (alpha-default)");
     expect(within(await group("Tasks · Beta")).getByLabelText("Effort")).toHaveDisplayValue("Default (High)");
     await user.selectOptions(within(l3Alpha).getByLabelText("Effort"), "low");
     await within(l3Alpha).findByText("Saved.");
@@ -82,16 +82,17 @@ describe("Project settings", () => {
     const { posts } = fixture();
     const { user } = renderApp({ route: "/settings/projects/example" });
     const model = within(await group("Tasks · Beta")).getByLabelText("Model");
-    expect(model).toHaveAttribute("placeholder", "Default: CLI default");
-    await user.type(model, "  beta-model {Enter}");
+    expect(model).toHaveDisplayValue("Default (CLI default)");
+    await user.selectOptions(model, "other");
+    await user.type(within(await group("Tasks · Beta")).getByRole("textbox", { name: "Model ID" }), "  beta-model {Enter}");
     await within(await group("Tasks · Beta")).findByText("Saved.");
-    expect(posts).toEqual([{ project: "example", setting: "l2_beta_model", value: "beta-model" }]);
-    expect(model).toHaveValue("beta-model");
-    await user.type(model, "-draft{Escape}");
-    expect(model).toHaveValue("beta-model");
-    await user.clear(model);
-    await user.tab();
-    await waitFor(() => expect(posts.at(-1)).toEqual({ project: "example", setting: "l2_beta_model", value: null }));
+    expect(posts).toEqual([{ project: "example", setting: "l2_beta_model", value: "beta-model", expected: null }]);
+    expect(model).toHaveDisplayValue("beta-model · Beta");
+    await user.selectOptions(model, "other");
+    await user.type(within(await group("Tasks · Beta")).getByRole("textbox", { name: "Model ID" }), "-draft{Escape}");
+    expect(model).toHaveDisplayValue("beta-model · Beta");
+    await user.selectOptions(model, "");
+    await waitFor(() => expect(posts.at(-1)).toEqual({ project: "example", setting: "l2_beta_model", value: null, expected: "beta-model" }));
     await waitFor(() => expect(model).toHaveValue(""));
     await user.click(model);
     await user.tab();
@@ -105,9 +106,9 @@ describe("Project settings", () => {
     const pending: (() => void)[] = [];
     notifyManager.setScheduler((callback) => pending.push(callback));
     try {
-      await user.type(model, "deep{Enter}");
+      await user.selectOptions(model, JSON.stringify(["alpha", "deep"]));
       await act(async () => { while (pending.length) pending.shift()!(); });
-      expect(model).toHaveValue("deep");
+      expect(model).toHaveDisplayValue("Deep · Alpha");
     } finally {
       notifyManager.setScheduler(defaultScheduler);
       await act(async () => { while (pending.length) pending.shift()!(); });
@@ -121,12 +122,13 @@ describe("Project settings", () => {
     const l3Alpha = await group("L3 · Alpha");
     const model = within(await group("Tasks · Beta")).getByLabelText("Model");
     await user.selectOptions(within(l3Alpha).getByLabelText("Effort"), "low");
-    await user.type(model, "beta-model{Enter}");
+    await user.selectOptions(model, "other");
+    await user.type(within(await group("Tasks · Beta")).getByRole("textbox", { name: "Model ID" }), "beta-model{Enter}");
     await within(await group("Tasks · Beta")).findByText("Saved.");
     release();
     await within(l3Alpha).findByText("Saved.");
     expect(posts.map((post) => post.setting)).toEqual(["l3_alpha_effort", "l2_beta_model"]);
-    expect(model).toHaveValue("beta-model");
+    expect(model).toHaveDisplayValue("beta-model · Beta");
     expect(within(l3Alpha).getByLabelText("Effort")).toHaveValue("low");
   });
 
@@ -174,22 +176,19 @@ describe("Project settings", () => {
     expect(await within(routing).findByRole("alert")).toHaveTextContent("Changed in another window.");
   });
 
-  it("shows L3's choice with the last reply, Back to Auto and Change… opening Models on L3", async () => {
+  it("shows L3's requested choice separately from its last reply and selects Auto directly", async () => {
     const { posts } = fixture({ initial: { l3_choice: { engine: "alpha", model: "deep", effort: "high" } },
       l3: { engine_last: "alpha", engine_model: "alpha-deep-2", launch_effort: "high", engine_reasoning_effort: "low" } });
     const { user } = renderApp({ route: "/settings/projects/example" });
     const section = await screen.findByRole("region", { name: "L3" });
-    await within(section).findByText("Deep · High");
+    const model = within(section).getByRole("combobox", { name: "Model" });
+    expect(model).toHaveDisplayValue("Deep · Alpha");
     expect(section).toHaveTextContent("last reply reported alpha-deep-2 · Low");
-    await user.click(within(section).getByRole("button", { name: "Change…" }));
-    const dialog = await screen.findByRole("dialog", { name: "Models · L3 · example only" });
-    expect(within(dialog).getByRole("tab", { name: /L3/ })).toHaveAttribute("aria-selected", "true");
-    await user.keyboard("{Escape}");
-    await user.click(within(section).getByRole("button", { name: "Back to Auto" }));
-    await within(section).findByText("Auto");
-    expect(posts).toEqual([{ project: "example", setting: "l3_choice", value: null, expected: { engine: "alpha", model: "deep", effort: "high" } }]);
+    await user.selectOptions(model, "");
+    await waitFor(() => expect(model).toHaveDisplayValue("Auto"));
+    expect(posts).toEqual([{ project: "example", setting: "l3_choice", value: { effort: "high" }, expected: { engine: "alpha", model: "deep", effort: "high" } }]);
     expect(within(section).queryByRole("button", { name: "Back to Auto" })).toBeNull();
-    expect(section).toHaveTextContent("Auto last reply reported");
+    expect(section).toHaveTextContent("last reply reported alpha-deep-2");
   });
 
   it("says when L3 has not replied and shows Retry when the settings cannot load", async () => {
@@ -286,7 +285,7 @@ describe("Settings overview", () => {
     expect(screen.getByRole("link", { name: /Projects folder/ })).toHaveAttribute("href", "/settings/projects-folder");
     await act(() => router.navigate("/settings", { state: { settingsFrom: "/projects/example?tab=work" } }));
     const current = await screen.findByRole("region", { name: "This project" });
-    expect(await within(current).findByRole("link", { name: /example L3: Auto · routing Auto/ })).toBeVisible();
+    expect(await within(current).findByRole("link", { name: /example routing Auto/ })).toBeVisible();
     await user.click(within(current).getByRole("link", { name: /example/ }));
     await user.click(await screen.findByRole("link", { name: "‹ Settings" }));
     expect(await screen.findByRole("region", { name: "This project" })).toBeVisible();

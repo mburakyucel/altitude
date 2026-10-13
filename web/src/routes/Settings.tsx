@@ -7,7 +7,7 @@ import FolderBrowser from "../components/FolderBrowser";
 import { Command, IncidentReportsForm, NameForm, PrerequisiteList } from "../components/Onboarding";
 import { ApiError, type Machine, changeHostVoice, closePhoneShare, makePairingCode, openPhoneShare, readVoiceSettings, revokeDevice, saveProjectsFolder, saveTerminalAccess, saveUpdateAutomatic, saveUpdateCheck, saveValidationAccess, saveVoiceSettings, startUpdate, useDevices, useMachine, useOverview, useProjectDefaults } from "../data/api";
 import type { Certificate, Device, Overview, PairingCode, PhoneShare, ProjectDefaults, Update } from "../data/api";
-import { ModelsDialog, choiceLabel, closedLabel } from "../components/Models";
+import { RoleModelSettings } from "../components/Models";
 import { managedProjects } from "../shell/projects";
 import type { HostVoice, VoiceBackend, VoiceSettings, VoiceUpdate } from "../data/api";
 import { updateVoiceSettings } from "../components/voiceBackend";
@@ -139,8 +139,9 @@ function ThisProject({ name, state }: { name: string; state: unknown }) {
     : data.l2_preference ? `tasks prefer ${engineName(data, data.l2_preference)}` : "routing Auto";
   return <Group title="This project">
     <Link className="settings-row" to={`/settings/projects/${encodeURIComponent(name)}`} state={state}>
-      <span><strong>{name}</strong>{" "}<small>{data ? `L3: ${choiceLabel(data.l3_choice, data, data.engines)} · ${routing}` : "L3, default models, routing, setup and removal"}</small></span><span aria-hidden>›</span>
+      <span><strong>{name}</strong>{" "}<small>{data ? routing : "Default models, routing, setup and removal"}</small></span><span aria-hidden>›</span>
     </Link>
+    <div className="settings-model-row"><strong>L3 · {name}</strong><RoleModelSettings project={name} /></div>
   </Group>;
 }
 
@@ -177,18 +178,9 @@ function Group({ title, children }: { title: string; children: ReactNode }) {
   </section>;
 }
 
-/** New tasks as a Settings row: the same dialog as the control beside the quota. */
-function NewTasksRow({ project }: { project?: string }) {
-  const [open, setOpen] = useState(false);
-  const overview = useOverview();
-  const tasks = overview.data?.new_tasks;
-  const label = tasks ? closedLabel(tasks.value, tasks.unavailable, tasks, overview.data?.engines) : "Loading…";
-  return <>
-    <button type="button" className="settings-row" aria-haspopup="dialog" disabled={!tasks} onClick={() => setOpen(true)}>
-      <span><strong>New tasks</strong>{" "}<small>{!tasks ? label : tasks.value ? `${label} in every project` : "Auto · each project's own defaults"}</small></span><span aria-hidden>›</span>
-    </button>
-    {open ? <ModelsDialog project={project} tab="tasks" onClose={() => setOpen(false)} /> : null}
-  </>;
+/** New tasks as direct Settings fields, sharing the rail's saved preference. */
+function NewTasksRow() {
+  return <div className="settings-model-row"><strong>New tasks · All projects</strong><RoleModelSettings /></div>;
 }
 
 /** The projects folder: First run offers the folders directly inside it. */
@@ -665,7 +657,7 @@ export default function Settings({ page }: { page?: keyof typeof titles }) {
             </Link>
           </div>
           {current ? <ThisProject name={current} state={state} /> : null}
-          <Group title="Models"><NewTasksRow project={current} /></Group>
+          <Group title="Models"><NewTasksRow /></Group>
           <Group title="Projects">
             <Link className="settings-row" to="/settings/projects" state={state}>
               <span><strong>All projects</strong>{" "}<small>{overview.data ? `${managed.length} project${managed.length === 1 ? "" : "s"} · folder ${roots.join(" and ") || "not set"}` : "Loading…"}</small></span><span aria-hidden>›</span>

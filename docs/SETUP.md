@@ -282,8 +282,14 @@ Open the project and send:
 The coordinator, shown as L3, replies. When you settle on a change, ask it to create a task, then
 follow the task's owner (L2), its session and its pull request in the work panel. Ask for a merge
 hold to review a result yourself before it merges. Agent work uses your coding account's allowance
-and normal charges. Altitude picks engines and models automatically; to choose them yourself, see
-[routing preferences](CLI.md#automatic-routing-preferences).
+and normal charges. Altitude picks engines and models automatically. To choose a model, open
+**Settings → Models → New tasks → Model**; choosing saves immediately for tasks when they start,
+including queued tasks. Started tasks keep their model. For the coordinator, use **Settings →
+This project → L3 → Model**; it applies from the next reply. Named choices need no external
+configuration. **Auto** restores project routing; an explicit choice shows its exact ID and whether
+access is unverified or a known rejection prevents use. A shared account allowance does not prove
+access to a particular model. See [model choices](CLI.md#model-choices) for inheritance, per-project
+defaults and individual-task pins.
 
 ## When something does not work
 

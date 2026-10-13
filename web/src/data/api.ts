@@ -411,6 +411,7 @@ export type Choice = z.infer<typeof ChoiceSchema>;
 const ChoiceOptionsSchema = z.object({
   models: z.array(z.object({ engine: z.string(), model: z.string().nullable(), label: z.string() })),
   efforts: z.record(z.string(), z.array(z.object({ value: z.string(), label: z.string() }))),
+  task_example: z.string().optional(),
 });
 export type ChoiceOptions = z.infer<typeof ChoiceOptionsSchema>;
 /** server.new_tasks_view(): the choice for every project's new tasks, why it cannot start now, and Only-engine projects. */
@@ -1674,7 +1675,7 @@ const ProjectDefaultsSchema = ChoiceOptionsSchema.extend({
     role: z.enum(["l3", "l2"]),
     engines: z.array(z.object({
       engine: z.string(), label: z.string(),
-      model: DefaultFieldSchema.extend({ choices: z.array(z.string()) }),
+      model: DefaultFieldSchema.extend({ note: z.string().optional() }),
       effort: DefaultFieldSchema.extend({ choices: z.array(z.object({ value: z.string(), label: z.string() })) }),
     })),
   })),

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { Link } from "react-router";
 import { StatusMark, BusyLabel } from "./StatusMark";
@@ -11,7 +11,7 @@ export type ModelsTab = "l3" | "tasks";
 
 type Engines = { engine?: string; value?: string; label: string }[];
 
-/** "Fable · High", "Codex default", "Auto · High", "gpt-5.5 · Codex": a choice in the words its controls use. */
+/** A saved choice in the same words its controls use, including inherited engine defaults. */
 export function choiceLabel(choice: Choice, options: ChoiceOptions | undefined, engines: Engines = []): string {
   if (!choice || (!choice.engine && !choice.effort)) return "Auto";
   const engineLabel = (engine: string) => engines.find((e) => (e.engine ?? e.value) === engine)?.label ?? engine;
@@ -25,7 +25,7 @@ function effortLabel(value: string, options: ChoiceOptions | undefined) {
   return Object.values(options?.efforts ?? {}).flat().find((e) => e.value === value)?.label ?? value;
 }
 
-/** The model a choice names, without its effort: "Fable", "Codex default". */
+/** The model a choice names, without its effort. */
 function modelName(choice: Choice, options: ChoiceOptions | undefined, engines: Engines) {
   return choiceLabel(choice && { engine: choice.engine, model: choice.model }, options, engines);
 }
@@ -60,6 +60,149 @@ function effortsFor(engine: string | null, options: ChoiceOptions) {
   if (engine) return options.efforts[engine] ?? [];
   const all = Object.values(options.efforts).flat();
   return all.filter((e, i) => all.findIndex((x) => x.value === e.value) === i);
+}
+
+const modelKey = (choice: Choice) => choice?.engine ? JSON.stringify([choice.engine, choice.model ?? null]) : "";
+
+/** Native selection shared by Settings role choices and per-engine defaults. Other fields commit as one group. */
+export function ModelSelect({ value, models, engines, emptyLabel, busy, onChange }: {
+  value: Choice; models: ChoiceOptions["models"]; engines: Engines; emptyLabel: string; busy: boolean;
+  onChange: (value: Choice, expected: Choice) => Promise<unknown>;
+}) {
+  const [other, setOther] = useState<{ engine: string; model: string; base: Choice; submitted: boolean } | null>(null);
+  const [invalid, setInvalid] = useState(false);
+  const committing = useRef(false);
+  const select = useRef<HTMLSelectElement>(null);
+  const custom = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!busy && other?.submitted && modelKey(value) === modelKey({ engine: other.engine, model: other.model.trim() })) {
+      if (custom.current?.contains(document.activeElement)) select.current?.focus();
+      setOther(null);
+    }
+  }, [value, busy, other]);
+  const engineRows = engines.map((e) => ({ engine: e.engine ?? e.value ?? "", label: e.label }));
+  const label = (engine: string) => engineRows.find((e) => e.engine === engine)?.label ?? engine;
+  const listed = !value?.engine || models.some((m) => modelKey(m) === modelKey(value));
+  const commit = async () => {
+    if (!other || busy || committing.current) return;
+    const model = other.model.trim();
+    if (!model) { setOther(null); setInvalid(false); return; }
+    if (/\s/.test(model)) { setInvalid(true); return; }
+    if (modelKey({ engine: other.engine, model }) === modelKey(other.base)) { setOther(null); return; }
+    committing.current = true;
+    setOther({ ...other, submitted: true });
+    try {
+      await onChange({ engine: other.engine, model }, other.base);
+      setOther(null);
+      setInvalid(false);
+    } catch { /* The owning field presents the server error and retry. */ }
+    finally { committing.current = false; }
+  };
+  return <div className="default-field">
+    <select ref={select} aria-label="Model" value={other ? "other" : modelKey(value)} aria-disabled={busy}
+      onPointerDown={(event) => { if (busy) event.preventDefault(); }}
+      onKeyDown={(event) => { if (busy && event.key !== "Tab") event.preventDefault(); }}
+      onChange={(event) => {
+        if (busy) return;
+        setInvalid(false);
+        if (event.target.value === "other") {
+          setOther({ engine: value?.engine ?? engineRows[0]?.engine ?? "", model: value?.model ?? "", base: value, submitted: false });
+          return;
+        }
+        setOther(null);
+        const next = models.find((m) => modelKey(m) === event.target.value);
+        void onChange(next ? { engine: next.engine, ...(next.model ? { model: next.model } : {}) } : null, value).catch(() => {});
+      }}>
+      <option value="">{emptyLabel}</option>
+      {models.map((m) => <option key={modelKey(m)} value={modelKey(m)}>
+        {m.model ? `${m.label} · ${label(m.engine)}` : m.label}
+      </option>)}
+      {!listed ? <option value={modelKey(value)}>{value?.model} · {label(value!.engine!)}</option> : null}
+      <option value="other">Other model…</option>
+    </select>
+    {other ? <div ref={custom} className="model-other-fields" onBlur={(event) => {
+      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) void commit();
+    }} onKeyDown={(event) => {
+      if (event.key === "Escape") { event.preventDefault(); setOther(null); setInvalid(false); }
+    }}>
+      {engineRows.length > 1 ? <label>Engine<select value={other.engine} aria-disabled={busy}
+        onPointerDown={(event) => { if (busy) event.preventDefault(); }}
+        onKeyDown={(event) => { if (busy && event.key !== "Tab") event.preventDefault(); }}
+        onChange={(event) => { if (!busy) setOther({ ...other, engine: event.target.value, submitted: false }); }}>
+        {engineRows.map((e) => <option key={e.engine} value={e.engine}>{e.label}</option>)}
+      </select></label> : null}
+      <label>Model ID<input value={other.model} readOnly={busy} autoFocus spellCheck={false} autoCapitalize="off" autoComplete="off"
+        onChange={(event) => { setOther({ ...other, model: event.target.value, submitted: false }); setInvalid(false); }}
+        onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void commit(); } }} /></label>
+      {invalid ? <p role="alert" className="text-meta text-danger">Use one model ID without spaces.</p> : null}
+    </div> : null}
+  </div>;
+}
+
+/** Settings saves a role choice directly; the chat/rail dialog reads exactly the same value. */
+export function RoleModelSettings({ project }: { project?: string }) {
+  const overview = useOverview();
+  const defaults = useProjectDefaults(project ?? "");
+  const saveTasks = useSaveNewTasks();
+  const saveL3 = useSetDefault(project ?? "");
+  const [revision, setRevision] = useState(0);
+  const [resetEffort, setResetEffort] = useState(false);
+  const data = project ? defaults.data : overview.data?.new_tasks;
+  const saved = project ? defaults.data?.l3_choice ?? null : overview.data?.new_tasks?.value ?? null;
+  const unavailable = project ? defaults.data?.l3_unavailable : overview.data?.new_tasks?.unavailable;
+  const engines: Engines = project ? defaults.data?.engines ?? [] : overview.data?.engines ?? [];
+  const query = project ? defaults : overview;
+  const save = project ? saveL3 : saveTasks;
+  const busy = save.isPending;
+  const shown = busy ? save.variables.value as Choice : saved;
+  const submit = async (value: Choice, expected: Choice) => {
+    if (project) await saveL3.mutateAsync({ setting: "l3_choice", value, expected });
+    else await saveTasks.mutateAsync({ value, expected });
+  };
+  const reload = () => { setRevision((n) => n + 1); save.reset(); void query.refetch(); };
+  if (query.isError) return <p role="alert">Could not load models. <button className="link" onClick={reload}>Retry</button></p>;
+  if (!data) return <StatusMark label="Loading models…" />;
+  const levels = effortsFor(shown?.engine ?? null, data);
+  const changed = save.error instanceof ApiError && save.error.status === 409;
+  return <div className="role-model-settings" role="group" aria-label={project ? `L3 · ${project}` : "New tasks · All projects"}>
+    <p className="text-meta text-muted">{project ? "Applies from the next reply." : "Applies when tasks start, including queued tasks. Started tasks keep theirs."}</p>
+    <div className="role-model-fields">
+      <div className="default-field"><span>Model</span><ModelSelect key={revision} value={shown} models={data.models} engines={engines} emptyLabel="Auto" busy={busy}
+        onChange={async (next, base) => {
+          const effort = base?.effort && (base.effort === "native" || effortsFor(next?.engine ?? null, data).some((e) => e.value === base.effort)) ? base.effort : null;
+          const value = valueOf({ engine: next?.engine ?? null, model: next?.model ?? null, effort, other: false });
+          await submit(value, base);
+          setResetEffort(Boolean(base?.effort && !effort));
+        }} /></div>
+      <label className="default-field">Effort<select value={shown?.effort ?? ""} aria-disabled={busy}
+        onPointerDown={(event) => { if (busy) event.preventDefault(); }}
+        onKeyDown={(event) => { if (busy && event.key !== "Tab") event.preventDefault(); }}
+        onChange={(event) => {
+          if (busy) return;
+          setResetEffort(false);
+          void submit(valueOf({ engine: saved?.engine ?? null, model: saved?.model ?? null, effort: event.target.value || null, other: false }), saved).catch(() => {});
+        }}>
+        <option value="">Default (from project)</option>
+        {shown?.effort && !levels.some((e) => e.value === shown.effort) ? <option value={shown.effort}>{shown.effort === "native" ? "Native" : shown.effort}</option> : null}
+        {levels.map((e) => <option key={e.value} value={e.value}>{e.label}</option>)}
+      </select></label>
+    </div>
+    {shown?.model ? <p className="text-meta text-muted model-detail">{shown.model} · Access unverified</p>
+      : <p className="text-meta text-muted">{shown?.engine ? `Uses ${project ? "this project's" : "each project's"} default, then the engine's own default.` : "Uses project routing and defaults."}</p>}
+    {unavailable && saved?.engine ? <p className="text-meta" role="status">Unavailable · Auto meanwhile: {unavailable}</p>
+      : shown?.engine ? <p className="text-meta text-muted">If unavailable, project routing applies.</p> : null}
+    {!project ? overview.data?.new_tasks?.only.filter((row) => shown?.engine && row.engine !== shown.engine).map((row) => <p key={row.project} className="text-meta">
+      {row.project} runs tasks only on {engines.find((e) => (e.engine ?? e.value) === row.engine)?.label ?? row.engine}, so it keeps that engine's model.{" "}
+      <Link to={`/settings/projects/${encodeURIComponent(row.project)}#routing`}>Change</Link>
+    </p>) : null}
+    {busy || save.isSuccess ? <StatusMark busy={busy} label={busy ? "Saving…" : "Saved."} /> : null}
+    {resetEffort && save.isSuccess ? <p role="status" className="text-meta">Effort reset to Default for this engine.</p> : null}
+    {save.error ? <p role="alert" className="text-meta text-danger">{changed ? "Changed in another window." : save.error.message}{" "}
+      <button className="link" onClick={changed ? reload : () => {
+        const variables = save.variables;
+        if (variables) void submit(variables.value as Choice, variables.expected as Choice).catch(() => {});
+      }}>{changed ? "Reload" : "Retry save"}</button></p> : null}
+  </div>;
 }
 
 interface TabState {
@@ -179,10 +322,10 @@ function Choices({ tab, project, state, draft, setDraft, saving, only, lastReply
   const otherEngines = [...new Set(options.models.map((m) => m.engine))];
   const keptOnly = tab === "tasks" && shown.engine ? only.filter((row) => row.engine !== shown.engine) : [];
   const text = (key: string) => typeof lastReply?.[key] === "string" ? lastReply[key] as string : "";
-  const lastModel = text("engine_model"), launched = text("launch_effort"), reported = text("engine_reasoning_effort");
+  const lastModel = text("engine_model"), reported = text("engine_reasoning_effort");
 
   return <>
-    <p className="models-in-use"><strong>In use: {choiceLabel(saved, options, engines)}</strong>{" · "}
+    <p className="models-in-use"><strong>Selected: {choiceLabel(saved, options, engines)}</strong>{" · "}
       {tab === "l3" ? `who answers you in ${project}'s chat.` : "every project; tasks that start from now, including queued ones. Started tasks keep theirs."}</p>
     {state.unavailable && saved?.engine ? <p className="models-note" role="status">
       {modelName(saved, options, engines)} unavailable · Auto meanwhile: {state.unavailable}</p> : null}
@@ -216,16 +359,19 @@ function Choices({ tab, project, state, draft, setDraft, saving, only, lastReply
     {efforts.length ? <fieldset className="models-effort" disabled={saving}>
       <legend>Effort</legend>
       <div className="segmented">
-        {[{ value: null, label: "Default" }, ...efforts].map((e) => <label key={e.value ?? "default"} data-checked={shown.effort === e.value || undefined}>
+        {[{ value: null, label: "Default (from project)" }, ...efforts].map((e) => <label key={e.value ?? "default"} data-checked={shown.effort === e.value || undefined}>
           <input type="radio" name={`effort-${tab}`} checked={shown.effort === e.value} onChange={() => pick({ effort: e.value })} />
           {e.label}
         </label>)}
       </div>
     </fieldset> : null}
+    {value?.model ? <p className="text-meta text-muted model-detail">{value.model} · Access unverified</p>
+      : value?.engine ? <p className="text-meta text-muted">Uses {tab === "l3" ? "this project's" : "each project's"} default, then the engine's own default.</p> : null}
     {tab === "l3" ? <p className="text-meta text-muted">
-      Applies from L3's next reply.{value?.engine ? ` When ${name} is unavailable, Auto answers instead.` : ""}{text("engine_last") ? ` Last reply: ${[lastModel || "model not reported", launched ? effortLabel(launched, options) : "default effort",
-        reported ? `reported ${effortLabel(reported, options)}` : "effort not reported"].join(" · ")}.` : ""}
+      Applies from L3's next reply.{value?.engine ? ` When ${name} is unavailable, Auto answers instead.` : ""}{text("engine_last") ? ` Last reply reported: ${[lastModel || "model not reported",
+        reported ? effortLabel(reported, options) : "effort not reported"].join(" · ")}.` : " No reply yet."}
     </p> : value?.engine ? <p className="text-meta text-muted">When {name} is unavailable, each project's Auto picks instead.</p> : null}
+    {tab === "l3" && lastModel && saved?.model && saved.model !== lastModel ? <p className="text-meta text-muted">Last reply requested: {text("launch_model") || "engine default"}.</p> : null}
     {keptOnly.map((row) => <p key={row.project} className="models-kept">
       <strong>{row.project}</strong> runs tasks only on {engineLabel(row.engine)}, so it keeps its {engineLabel(row.engine)} model.{" "}
       <Link to={`/settings/projects/${row.project}#routing`}>Change</Link></p>)}
@@ -237,7 +383,7 @@ function Choices({ tab, project, state, draft, setDraft, saving, only, lastReply
         <BusyLabel busy={saving} label={tab === "l3" ? `Use for L3 in ${project}` : "Use for all new tasks"} working="Saving…" />
       </button>
     </div>
-    {tab === "tasks" ? <p className="models-hint">For one task, tell L3: “use Opus at Max for this”.</p> : null}
+    {tab === "tasks" && options.task_example ? <p className="models-hint">For one task, tell L3: “{options.task_example}”</p> : null}
   </>;
 }
 

@@ -947,7 +947,10 @@ alt project set example --unset-l2-engine --reason 'Let routing choose tasks'
 ### Model choices
 
 A model choice is tried ahead of a role's routing tiers: **New tasks** for every project's fresh L2
-attempts, and each project's **L3** choice for its L3 turns. These are the Models dialog's two tabs
+attempts, and each project's **L3** choice for its L3 turns. Settings offers native **Model** and
+**Effort** dropdowns directly: **Models → New tasks** applies across projects, and **This project →
+L3** applies to that project's coordinator. Each selection saves immediately. The chat and quota
+shortcuts open the same choices in the Models dialog
 (the [UI spec](../design/wireframes/SPEC.md#361-models-dialog)). A choice is `[engine][:model][@effort]`;
 a Claude alias alone names Claude:
 
@@ -971,6 +974,14 @@ resumes keep their model and effort. L3 uses its choice from the next turn. Revi
 explicit engine handoff ignore choices. Routing explanations read "chosen for new tasks" or "chosen
 for L3". New tasks is a machine setting, so only the operator sets it; the L3 choice is a project
 setting.
+
+Named choices include **6.1 Sol · Codex**, requesting `gpt-6.1-sol` without editing external CLI
+configuration. **Project default · Codex** instead inherits each project's model for that role,
+then the engine's own default. **Auto** leaves engine selection to project routing. **Other model…**
+accepts an exact ID; selecting Other alone writes nothing. Explicit choices show the requested ID
+and **Access unverified**: the list is maintained shortcuts, not a discovered account catalog.
+Known unavailable choices retain their selected value and explain project routing meanwhile.
+The last reply's reported model and effort remain separate from the current selection.
 
 The daemon collects account quota every five minutes without an interactive session. The native
 headless usage reader requires CLI 2.1.277+ with a subscription login and structured live account
@@ -1132,7 +1143,7 @@ Set the model a fresh launch uses on each engine, per role and independently of 
 
 ```sh
 alt project set example --l2-model fable --reason 'Use Fable for Claude-routed tasks in this project'
-alt project set example --l2-codex-model gpt-6-astra --reason 'Name the Codex model instead of its CLI default'
+alt project set example --l2-codex-model gpt-6.1-sol --reason 'Use 6.1 Sol for tasks on this engine'
 alt project set example --l3-model opus --reason 'Coordinate on Opus'
 alt project set example --unset-l2-model --reason 'Restore Opus'
 alt project list
@@ -1144,12 +1155,20 @@ Each role has one flag per engine: `--l3-model`/`--l2-model` for Claude (registr
 nothing else and passes it to the engine, which reports an inaccessible model as a routing rejection.
 The Claude aliases `opus`, `sonnet`, `haiku` and `fable` resolve to the current model of that family in
 the Claude CLI, so new models arrive with CLI updates without an Altitude change; a specific id can
-always be typed. Codex uses the model configured in its CLI unless a default or pin names one. Neither
-CLI exposes a model list, so Altitude offers the aliases as suggestions and does not discover models.
+always be typed. Without an explicit model, Codex tasks use its external settings and L3 uses its
+built-in default; the reported model is known after it runs. Altitude uses the execution integration
+and maintained model shortcuts, not the app-server model catalog or automatic account discovery.
+The [official configuration documentation](https://learn.chatgpt.com/docs/config-file/config-basic)
+establishes the `gpt-6.1-sol` ID, not account access.
+
+**Settings → This project → Auto defaults** provides native model dropdowns for each role and
+engine. **Default (<role default>)** restores inheritance; **Codex's own default** names that
+engine's inherited behavior. Other model accepts a custom ID on Enter or leaving its field;
+blank input or Escape restores the saved value without writing. Selections save immediately.
 
 Precedence for a fresh launch is the task's `alt task new --model …` or turn pin, then the model named in
 the selected routing option, then the project default for that role and engine, then the role default:
-Opus for a Claude L2, Fable for a Claude L3 and the CLI default for Codex. L2 defaults apply at
+Opus for a Claude L2, Fable for a Claude L3 and the engine's own default for Codex. L2 defaults apply at
 dispatch, including queued tasks; messages and resumes keep the attempt's saved `launch_model`. L3
 defaults apply from its next turn. A default never pins an engine: with the default tiers a project
 whose Claude default is Fable still ties Codex first. The operator and the project's L3 set these
