@@ -710,9 +710,9 @@ Supported voice stays ready while Settings shows update progress. The update wai
 finish, checks that the replacement model runs, then switches and removes superseded files. An unsafe
 or incompatible runtime cannot keep serving; Settings and the composer say that it needs an update.
 
-Unchanged model files are reused after checksum verification. Updates download the missing files
-(about 40 MB for a library-only update, up to about 700 MB) and temporarily need space for another
-runtime, including unpacked libraries. Cancel, failure, interrupted setup or switching to browser
+Unchanged model files are reused after checksum verification, without a second copy on disk. Updates
+download the missing files (about 40 MB for a library-only update, up to about 700 MB) and need free
+space for those files and their unpacked libraries. Cancel, failure, interrupted setup or switching to browser
 recognition leaves Retry to you, including after restart. `alt voice cancel` also cancels the update.
 First installation stays manual. Only the operator invokes setup, cancel and removal; agents cannot.
 Removing voice cancels any update, stops dictation and deletes its runtime files.

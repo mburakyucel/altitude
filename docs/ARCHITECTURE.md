@@ -3014,8 +3014,11 @@ rename. Before promotion, the actual isolated worker loads the model and perform
 the load deadline. Completed runtimes explicitly supported by this release keep serving during an
 update; unknown, incompatible or revoked runtimes read as `outdated` and cannot serve recordings.
 Support is an explicit per-platform/interpreter digest list, never inferred from age or a completion
-marker alone. Retained model files are copied only after matching the target size and SHA-256; wheel
-archives are downloaded and deleted after unpacking. There is no download cache.
+marker alone. Retained model files are hard-linked into the replacement and kept only after matching
+the target size and SHA-256; wheel archives are downloaded and deleted after unpacking. There is no
+download cache. Setup needs free disk space for the files it downloads plus the unpacked-library cap.
+Superseded runtimes are removed after promotion; one that cannot be removed then is removed by the
+next setup and never fails the finished update.
 
 The support set retains the preceding Linux onnxruntime 1.22 manifests for CPython 3.12 and 3.13;
 both load and warm up with the current worker and the exact pinned model. The supported-table test

@@ -464,7 +464,7 @@ def _verify(path: Path, cancel: _Attempt) -> None:
     """Load and warm the real model in isolation, bounded and cancellable, before promotion."""
     memory = platform.available_memory()
     if memory is not None and memory < MEMORY_NEEDED:
-        raise SpeechError("Voice needs 2.5 GB of free memory to check the update.")
+        raise SpeechError("Voice needs 2.5 GB of free memory to check the speech model.")
     with open(ROOT / "verification.log", "w") as errors:
         worker = subprocess.Popen([sys.executable, "-I", str(WORKER), str(path)], stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, stderr=errors, text=True, env=_environment())
@@ -501,10 +501,6 @@ def setup(lock=None, attempt: _Attempt | None = None) -> Path:
         shutil.rmtree(staging, ignore_errors=True)
         try:
             if not _complete(target, digest):
-                # Copying model bytes preserves the runtime serving recordings. Budget also includes wheels.
-                needed = sum(size for _, _, size, _ in files) + sum(UNPACKED_LIMIT for name, *_ in files if name.startswith("wheels/"))
-                if shutil.disk_usage(ROOT).free < needed:
-                    raise SpeechError(f"Voice needs {needed / 1e9:.1f} GB of free disk space to prepare the update.")
                 _stage(files, staging, digest, attempt)
                 attempt.progress("waiting")
                 with _lease(True, attempt):
@@ -549,12 +545,10 @@ def setup(lock=None, attempt: _Attempt | None = None) -> Path:
 
 def _finish_setup(target: Path) -> None:
     # Callers hold exclusive worker use and the control lock; no reader or remover can cross promotion.
+    # Leftovers that cannot be removed now go with the next setup; the update itself has finished.
     for old in _runtimes():
         if old != target:
-            try:
-                shutil.rmtree(old)
-            except OSError as exc:
-                raise SpeechError("Voice is updated, but old files could not be removed. Try again.") from exc
+            shutil.rmtree(old, ignore_errors=True)
     state = _state()
     state.pop("update", None)
     _write_state(state)
@@ -566,24 +560,29 @@ def _stage(files, staging: Path, digest: str, cancel: _Attempt) -> None:
     missing = []
     for name, url, size, sha in files:
         cancel.check()
-        copied = False
+        reused = False
         if name.startswith("model/"):
+            # A second link keeps the serving runtime's file in place and costs no disk space.
             for old in _installed():
                 source = old / name
                 if not source.is_file() or source.is_symlink() or source.stat().st_size != size:
                     continue
+                os.link(source, staging / name)
                 hashed = hashlib.sha256()
-                with source.open("rb") as inp, (staging / name).open("wb") as out:
+                with (staging / name).open("rb") as inp:
                     while block := inp.read(BLOCK):
                         cancel.check()
                         hashed.update(block)
-                        out.write(block)
                 if hashed.hexdigest() == sha:
-                    copied = True
+                    reused = True
                     break
-        if not copied:
+                (staging / name).unlink()
+        if not reused:
             missing.append((name, url, size, sha))
     total, done, reported = sum(size for _, _, size, _ in missing), 0, 0
+    needed = total + UNPACKED_LIMIT
+    if shutil.disk_usage(ROOT).free < needed:
+        raise SpeechError(f"Voice needs {needed / 1e9:.1f} GB of free disk space.")
 
     def advance(count: int) -> None:
         nonlocal done, reported
