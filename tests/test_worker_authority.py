@@ -182,6 +182,16 @@ class TestKeyGenerations(AltitudeCase):
         access.settle()
         self.assertEqual(access.machine_key(), second)
 
+    def test_a_first_key_keeps_the_installers_pairing_code(self):
+        (access.DIR / "machine.key").unlink(missing_ok=True)
+        (access.DIR / "key.json").unlink(missing_ok=True)
+        access.issue_code(first_browser=True)
+        self.patch(platform, "process_table", return_value=self.table(WORKER))
+        access.prepare()
+        self.assertIsNotNone(access.machine_key())
+        self.assertIsNotNone(json.loads((access.DIR / "devices.json").read_text())["code"])
+        self.assertEqual(json.loads((access.DIR / "key.json").read_text()), {"generation": access.GENERATION, "after": []})
+
 
 class TestServiceRecord(AltitudeCase):
     def test_the_record_carries_the_public_ca_certificate_and_nothing_secret(self):

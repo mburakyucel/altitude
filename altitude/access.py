@@ -89,7 +89,9 @@ def prepare() -> None:
     with any pairing code in flight, and the jobs running now are noted: they started under sandboxes that could read
     this folder, so `settle` replaces the key once more when they have all ended."""
     with _locked():
-        if machine_key() is None or _generation().get("generation") != GENERATION:
+        if machine_key() is None:
+            _replace_key([])
+        elif _generation().get("generation") != GENERATION:
             _replace_key(_jobs())
             record = _read()
             if record.get("code"):
