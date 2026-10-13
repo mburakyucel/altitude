@@ -1245,6 +1245,26 @@ def claim_send_now(project: str, task: dict, rows: list[dict], sends: Path, *, o
     (engines.send_into_turn_once if once else engines.send_into_turn)(sends, ids[0], render_inbox(rows))
 
 
+def steer_waiting(project: str, slug: str, agent_id: str, sends: Path) -> None:
+    """For a driver whose engine has no hook checkpoint: claim everything waiting for the running owner, as Send now
+    would, in arrival order up to the first message with images, which waits with the rest for the next turn.
+    The driver asks at every poll, so an unlocked read decides whether there is anything to claim."""
+    from . import dispatch
+
+    def group(task: dict) -> list[dict]:
+        rows = _pending_rows(task, S.task_dir(project, slug) / "inbox.jsonl")
+        rows = rows[:next((i for i, row in enumerate(rows) if row.get("images")), len(rows))]
+        if not rows or task.get("agent_id") != agent_id or dispatch.send_now_unavailable(project, task):
+            return []
+        return rows
+
+    if group(S.load_task(project, slug)):
+        with S.project_lock(project):
+            task = S.load_task(project, slug)
+            if rows := group(task):
+                claim_send_now(project, task, rows, sends)
+
+
 def settle_send_now(project: str, slug: str, message_id: str, outcome: str, *, agent_id: str | None,
                     session_id: str | None = None) -> None:
     """The driver's record of a Send now message: the owner has it, may have it, or gets it at its next turn."""
@@ -1262,6 +1282,7 @@ def _settle_send_now(project: str, task: dict, message_id: str, outcome: str, **
     if outcome == "returned":
         return  # still in the inbox, for the session's next user turn
     delivered = outcome == "delivered"
+    _mark_acceptance_delivered(task, set(claim["ids"]))
     for settled in claim["ids"]:
         task.setdefault("message_deliveries", {})[settled] = {
             "state": "delivered" if delivered else "unconfirmed", "at": S.now() if delivered else None, **receipt}

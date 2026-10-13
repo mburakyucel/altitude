@@ -771,6 +771,7 @@ export const TaskViewSchema = z
       observed: z.object({ attempt: z.number().nullable(), agent_id: z.string().nullable(), session_id: z.string().nullable(), block_id: z.string().nullable() }),
       request: z.object({ id: z.string(), status: z.string(), phase: z.string().nullish(), engine: z.string(), target_label: z.string(), at: z.string().nullish(), note: z.string().nullish(), now: z.boolean().nullish(),
         selection: z.object({ model: z.string(), effort: z.string().nullable() }).nullish(),
+        by: z.string().nullish(), reason: z.string().nullish(),
       }).nullish(),
     }).nullish(),
   })

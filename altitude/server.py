@@ -3940,6 +3940,9 @@ def task_transfer_view(project: str, task: dict) -> dict:
     if request.get("operation") == "handoff":
         transfer = {key: request.get(key) for key in ("id", "status", "phase", "engine", "at", "note", "now", "checkpoint", "result_state", "selection")}
         transfer["target_label"] = config.ENGINE_LABELS.get(request.get("engine"), request.get("engine"))
+        # Who asked, and the coordinator's own words, so a switch never reads as caused by opening the chooser.
+        transfer["by"] = "operator" if request.get("actor") == config.OPERATOR_ACTOR else request.get("actor")
+        transfer["reason"] = request.get("reason") if transfer["by"] != "operator" else None
     return {"current_engine": current, "current_label": config.ENGINE_LABELS.get(current, current),
             "current_model": current_model,
             "current_model_label": next((row["label"] for row in catalog["models"]

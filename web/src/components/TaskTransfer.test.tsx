@@ -93,30 +93,68 @@ it("disables unchanged default aliases but allows an explicit same-engine effort
   await u.selectOptions(screen.getByLabelText("Effort"),"medium");
   expect(screen.getByRole("button",{name:"Prepare change"})).toBeEnabled();
 });
-it("Escape closes a chooser opened while preparation controls are visible", async () => {
-  const u=userEvent.setup();render(<Harness task={preparing}/>);
+it("opening and browsing the chooser creates no request", async () => {
+  const u=userEvent.setup();render(<Harness/>);
   await u.click(screen.getByRole("button",{name:/Task model:/}));
-  const modal=screen.getByRole("dialog");
-  within(modal).getByRole("button",{name:"Cancel switch"}).focus();
+  await u.selectOptions(screen.getByLabelText("Effort"),"medium");
+  await u.click(screen.getByRole("button",{name:"Cancel"}));
+  await u.click(screen.getByRole("button",{name:/Task model:/}));
   await u.keyboard("{Escape}");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.queryByRole("region",{name:/Preparing change|Task change/})).not.toBeInTheDocument();
   expect(taskAction).not.toHaveBeenCalled();
 });
 
-it("keeps an open progress dialog read-only when polling observes the replacement", async () => {
+const byCoordinator: TaskView = { ...preparing, transfer: { ...preparing.transfer!, request: { ...preparing.transfer!.request!,
+  by: "l3", reason: "The operator asked for existing tasks to run on Engine B." } } };
+it("names who started a preparing switch, and the pill shows that switch instead of opening the chooser", async () => {
+  const u=userEvent.setup();render(<Harness task={byCoordinator}/>);
+  const card=screen.getByRole("region",{name:"Preparing change"});
+  expect(within(card).getByText("Started by the coordinator · The operator asked for existing tasks to run on Engine B.")).toBeVisible();
+  await u.click(screen.getByRole("button",{name:"Task model: switching to Engine B. Show the switch"}));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(card).toHaveFocus();
+  expect(taskAction).not.toHaveBeenCalled();
+});
+it("says the operator started their own switch", () => {
+  render(<Harness task={{...preparing,transfer:{...preparing.transfer!,request:{...preparing.transfer!.request!,by:"operator",reason:null}}}}/>);
+  expect(screen.getByText("Started by you")).toBeVisible();
+});
+it("a switch someone else starts closes an open chooser without submitting it", async () => {
   function Live({ task }: { task: TaskView }) {
     const t=useTaskTransfer("sample",task,async()=>undefined,false,()=>undefined,()=>undefined);
-    return <><TransferModelButton transfer={t}/><TransferDialog transfer={t}/></>;
+    return <><TransferModelButton transfer={t}/><TransferCard transfer={t}/><TransferDialog transfer={t}/></>;
   }
   const u=userEvent.setup();
-  const {rerender}=render(<Live task={preparing}/>);
+  const {rerender}=render(<Live task={initial}/>);
   await u.click(screen.getByRole("button",{name:/Task model:/}));
-  rerender(<Live task={{...initial,transfer:{...initial.transfer!,current_effort:"medium",current_effort_label:"Medium",request:{...preparing.transfer!.request!,status:"done",phase:"done"}}}}/>);
-  const modal=screen.getByRole("dialog");
-  expect(within(modal).getByText("Switched to Engine B.")).toBeVisible();
-  expect(within(modal).getByText("Model A · Medium")).toBeVisible();
-  expect(within(modal).queryByRole("combobox")).not.toBeInTheDocument();
-  await u.keyboard("{Escape}");
+  expect(screen.getByRole("dialog")).toBeVisible();
+  rerender(<Live task={byCoordinator}/>);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.getByText(/Started by the coordinator/)).toBeVisible();
+  expect(taskAction).not.toHaveBeenCalled();
+});
+it("a switch that finishes between reads also closes the chooser", async () => {
+  function Live({ task }: { task: TaskView }) {
+    const t=useTaskTransfer("sample",task,async()=>undefined,false,()=>undefined,()=>undefined);
+    return <><TransferModelButton transfer={t}/><TransferCard transfer={t}/><TransferDialog transfer={t}/></>;
+  }
+  const u=userEvent.setup();
+  const blocked={...initial,state:"blocked"} as TaskView;
+  const {rerender}=render(<Live task={blocked}/>);
   await u.click(screen.getByRole("button",{name:/Task model:/}));
-  expect(screen.getByRole("combobox",{name:"Engine"})).toBeVisible();
+  rerender(<Live task={{...byCoordinator,state:"queued",transfer:{...byCoordinator.transfer!,request:{...byCoordinator.transfer!.request!,status:"done"}}}}/>);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.getByText("Waiting for Engine B")).toBeVisible();
+  expect(screen.getByText(/Started by the coordinator/)).toBeVisible();
+  expect(taskAction).not.toHaveBeenCalled();
+});
+it("an unconfirmed switch of your own never borrows an earlier request's author", async () => {
+  vi.mocked(taskAction).mockRejectedValue(new Error("response lost"));
+  const cancelled={...byCoordinator,transfer:{...byCoordinator.transfer!,eligible:true,request:{...byCoordinator.transfer!.request!,status:"cancelled"}}};
+  const u=userEvent.setup();render(<Harness task={cancelled} next={cancelled}/>);
+  await u.click(screen.getByRole("button",{name:/Task model:/}));
+  await u.click(screen.getByRole("button",{name:"Prepare change"}));
+  expect(await screen.findByText("Switch unconfirmed")).toBeVisible();
+  expect(screen.queryByText(/Started by/)).not.toBeInTheDocument();
 });

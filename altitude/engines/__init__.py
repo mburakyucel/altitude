@@ -12,7 +12,6 @@ from .common import (
     repository_rules,
     repository_rule_prompt,
     RAW_CAPTURE_CAP,
-    BROWSER_VERIFICATION_NOTE,
     installation,
     install_command,
     sign_in,
