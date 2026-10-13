@@ -49,7 +49,7 @@ test("patient transfer cancels without losing the draft, then readiness starts a
   expect(after.l2_engine).toBe(target.engine);
   for (const key of ["worktree", "branch", "hold_merge", "paths", "prs"]) expect(after[key]).toEqual(before[key]);
   expect(after.session_id).not.toBe(before.session_id);
-  await walk.state("04-new-owner-draft-and-hold-retained", { visible: [draft(page), page.getByText(/^(?:· )?Merge held$/).first()], hidden: [confirm] });
+  await walk.state("04-new-owner-draft-and-hold-retained", { visible: [draft(page), page.locator('[data-tone="held"]').filter({ hasText: "Merge held" }).first()], hidden: [confirm] });
   await expect(draft(page)).toHaveValue("Keep this unsent instruction.");
 });
 
@@ -68,13 +68,13 @@ test("explicit switch now replaces a running owner and preserves the merge hold"
   await card(page).getByRole("button", { name: "Switch now", exact: true }).click();
   await confirm.getByRole("button", { name: "Switch now", exact: true }).click();
   await expect.poll(async () => (await read()).state).toBe("queued");
-  await walk.state("02-queued-has-no-conflicting-controls", { visible: [page.getByText(/^(?:· )?Merge held$/).first()], hidden: [confirm, card(page).getByRole("button", { name: "Cancel switch", exact: true })] });
+  await walk.state("02-queued-has-no-conflicting-controls", { visible: [page.locator('[data-tone="held"]').filter({ hasText: "Merge held" }).first()], hidden: [confirm, card(page).getByRole("button", { name: "Cancel switch", exact: true })] });
   expect((await request.post("/fixture/transfer", { data: { slug, launch: true } })).ok()).toBe(true);
   const after = await read();
   expect(after.attempt).toBe(before.attempt + 1);
-  expect(after.questions).toEqual(before.questions);
+  expect(after.questions).toEqual(before.questions.map((question: Record<string, unknown>) => ({ ...question, state: after.state })));
   expect(after.hold_merge).toBe(before.hold_merge);
-  await walk.state("03-new-attempt-hold-kept", { visible: [page.getByText(/^(?:· )?Merge held$/).first()], hidden: [confirm] });
+  await walk.state("03-new-attempt-hold-kept", { visible: [page.locator('[data-tone="held"]').filter({ hasText: "Merge held" }).first()], hidden: [confirm] });
 });
 
 test("a blocked question owner switches from saved context without answering the question", async ({ page, request }, info) => {
@@ -95,9 +95,9 @@ test("a blocked question owner switches from saved context without answering the
   expect((await request.post("/fixture/transfer", { data: { slug, launch: true } })).ok()).toBe(true);
   const after = await read();
   expect(after.attempt).toBe(before.attempt + 1);
-  expect(after.questions).toEqual(before.questions);
+  expect(after.questions).toEqual(before.questions.map((question: Record<string, unknown>) => ({ ...question, state: after.state })));
   expect(after.hold_merge).toBe(before.hold_merge);
-  await walk.state("02-new-owner-question-stays-open", { visible: [page.getByText("Keep the bounded validation scope?", { exact: true }).first(), page.getByText(/^(?:· )?Merge held$/).first()], hidden: [confirm, page.getByRole("button", { name: "Resume", exact: true })] });
+  await walk.state("02-new-owner-question-stays-open", { visible: [page.getByText("Keep the bounded validation scope?", { exact: true }).first(), page.locator('[data-tone="held"]').filter({ hasText: "Merge held" }).first()], hidden: [confirm, page.getByRole("button", { name: "Resume", exact: true })] });
 });
 
 test("quota stop offers saved-context confirmation; pinned work explains unavailability", async ({ page, request }, info) => {
@@ -106,7 +106,9 @@ test("quota stop offers saved-context confirmation; pinned work explains unavail
   const target = row.transfer.targets.find((item: { available: boolean }) => item.available);
   const walk = walkthrough(page, info);
   await walk.open(`/projects/atlas/tasks/${slug}`);
-  await walk.state("01-quota-offers-switch", { visible: [page.getByRole("button", { name: `Switch to ${target.label}`, exact: true })], hidden: [page.getByRole("button", { name: "Resume", exact: true })] });
+  await walk.state("01-quota-offers-switch", { visible: [page.getByRole("button", { name: `Switch to ${target.label}`, exact: true })], hidden: [] });
+  expect(row.transfer.resume_hold).toBeTruthy();
+  if (info.project.name === "desktop") await expect(page.getByRole("button", { name: "Resume", exact: true })).toBeDisabled();
   await page.getByRole("button", { name: `Switch to ${target.label}`, exact: true }).click();
   const confirm = page.getByRole("dialog", { name: `Switch to ${target.label}?`, exact: true });
   await walk.state("02-quota-saved-context", { visible: [confirm, confirm.getByText(`${target.label} continues from the saved task record.`, { exact: true })], hidden: [confirm.getByRole("button", { name: "Prepare switch", exact: true })] });
@@ -203,7 +205,7 @@ test("@desktop-only compact transfer header remains readable at 1024 pixels", as
   await walk.open("/projects/atlas/tasks/transfer-running-work");
   await start(page);
   await page.getByRole("button", { name: "Prepare switch", exact: true }).click();
-  await walk.state("01-1024-preparing-with-stop", { visible: [card(page), page.getByRole("button", { name: "Stop", exact: true }).first(), page.getByText(/^(?:· )?Merge held$/).first()], hidden: [] });
+  await walk.state("01-1024-preparing-with-stop", { visible: [card(page), page.getByRole("button", { name: "Stop", exact: true }).first(), page.locator('[data-tone="held"]').filter({ hasText: "Merge held" }).first()], hidden: [] });
   expect(await page.locator(".task-header .task-chips").evaluate(node => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
 });

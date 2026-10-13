@@ -26,6 +26,8 @@ def main():
     engines.worker_termination = lambda task, **options: None if task["slug"] in unknown_termination else fake.worker_termination(task, **options)
     engines.sign_in = lambda engine: {"signed_in": True, "command": engines.SIGN_IN[engine][1]}
     engines.usage_hold = lambda *_args, **_kwargs: None
+    # The old seat's recorded exhaustion is also a current engine hold; other seats remain available.
+    engines.window_hold = lambda engine: "2099-01-01T00:00:00+00:00" if engine == config.ENGINES[0] else None
     engines.review_capability = lambda _engine: {"available": False, "why": "fixture has no reviewer"}
     project = "atlas"
     repo = make_repo(config.PROJECT_ROOTS[0] / project)
