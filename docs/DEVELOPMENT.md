@@ -785,6 +785,16 @@ Checks requiring both protections use the Linux container; Mac cannot nest anoth
 inside its validation profile. Neither fictional Mac success nor Linux results establishes the
 original native-worker browser context, deployed/private-content or Simulator acceptance.
 
+Actual-image container browser checks from an Apple silicon Mac use the fixed
+`alt task validate --container-browser` lane, not `container_vm.py --browser` on the outer Mac.
+The deployed controller owns a bounded throwaway Linux guest and a rootless, non-root network-none
+Chromium container. Guest NAT is physically disconnected before candidate execution. Local sockets
+carry fixed fixture actions and raw published HTTPS; fresh browser trust contains only the public
+fictional CA. The receipt records actual guest/container/browser identities, finite dual-protection
+preflight, network/TLS/IPC controls, journeys and cleanup. The current standing VM-policy grant is
+required, but browser acceptance still belongs to validation. See
+[container browser validation](CONTAINERS.md#container-browser-validation).
+
 `make browser-sandbox` is the Linux dual-protection check. It launches Chromium this way against a local fictional page and
 writes `browser-sandbox.json` to the run's results: browser version, launch options,
 `chrome://sandbox` and each renderer's user, seccomp mode and user/PID namespaces. It passes only when

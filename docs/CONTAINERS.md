@@ -510,7 +510,39 @@ then proves that the next preflight reports the retained private transfer and ex
 its partial artifacts. This covers a skipped callback, not a physical host reboot during transfer.
 These are fictional data and small-archive checks, not real-account or maximum-size throughput acceptance.
 
-`scripts/container_vm.py <new-results> --browser` runs the actual image daemon with deterministic
+### Container browser validation
+
+On an Apple silicon Mac, the owner uses `alt task validate --container-browser`. The deployed
+controller builds a minimal architecture-correct Chromium image and the two fixture releases in a
+throwaway Ubuntu guest. It records candidate commit/tree/archive, controller digest, guest runtime,
+image identities and received-byte counters. Online rootless builders execute candidate-derived
+dependency, release and image build steps under a filter denying every Mac interface address,
+special-purpose IPv4 ranges, IPv6 and the hosting service's port (with DNS allowed). They receive no
+guest administration credentials or host mounts. The controller physically disconnects guest NAT
+before candidate guest administration, application daemons or Chromium run. Network controls accompany that
+transition. The lane shares the single-guest lock, uses at most half the host CPUs (up to four), 6 GiB
+memory and a 24 GiB sparse disk, keeps 10 GiB free and stops provisioning before its 1 GB download
+limit. Images, fixture storage, socket endpoints and the guest disk are disposable. Both fictional
+release images use one delegated build lifetime and private store, downloading common distribution
+layers once. That store is deleted after the paired build, including failure, and persists across
+neither validation runs nor devices. The protection image uses deployed locked dependency manifests;
+both preflight and journey containers select its captured image ID.
+
+The browser container runs as a non-root user with `--network=none`. It mounts only read-only candidate
+source, results and local fixture sockets. A bounded, versioned framed Unix protocol admits fixed
+fixture actions in viewport order; it exposes no shell, arbitrary path or guest administration key.
+A separate Unix socket relays raw HTTPS bytes only to the fixture's published loopback endpoint.
+Chromium verifies the public fictional CA in fresh NSS storage and rejects an untrusted CA and wrong
+hostname. Shared launch configuration keeps `chromiumSandbox:true`; a finite Linux preflight records
+browser version, namespaces and seccomp alongside the inspected container boundary. The deployed
+preflight runs before candidate fixture imports, and its evidence is copied to the Mac and checked
+there before candidate guest administration. Later journey receipts are candidate-reachable in the
+disposable guest; they establish tested fictional behavior, not hostile guest-kernel resistance. Failure artifacts
+and process/guest cleanup remain part of the validation receipt. Mac Seatbelt harness results do not
+substitute for these two protections. Fresh native evidence for this route remains tracked in
+[#883](https://github.com/mburakyucel/altitude/issues/883) until deployment and its recorded run.
+
+On Linux, `scripts/container_vm.py <new-results> --browser` runs the actual image daemon with deterministic
 external engine/tool observations through its published HTTPS endpoint. Chromium runs in the
 validation container with its own sandbox; a disposable SSH forward connects to the guest and a
 temporary browser trust database contains only the fictional public CA. It passes on candidate

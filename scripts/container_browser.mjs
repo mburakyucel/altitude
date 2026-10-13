@@ -4,17 +4,33 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, mkdirSync, rmSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-const { chromium, expect: baseExpect } = createRequire(new URL("../web/package.json", import.meta.url))("@playwright/test");
+import { createServer, createConnection } from "node:net";
+import { browserLaunchOptions } from "./browser_launch.mjs";
+const { chromium, expect: baseExpect } = createRequire(process.env.ALTITUDE_BROWSER_PACKAGE || new URL("../web/package.json", import.meta.url))("@playwright/test");
 const expect=baseExpect.configure({timeout:30000});
 const cfg=JSON.parse(readFileSync(process.argv[2],"utf8"));
 const result={passed:false,viewports:[],fixtures:"external engine, installation/authentication observations only"};
 const shell=(text)=>"'"+text.replaceAll("'", "'\\''")+"'";
 const control=(action,value={})=> {
+  if(cfg.control_socket) return JSON.parse(execFileSync(process.execPath,
+    [new URL('./container_browser_control.mjs',import.meta.url).pathname,cfg.control_socket,
+      JSON.stringify({version:1,action,...value})],{encoding:'utf8',timeout:365000}));
   const args=["python3","input/source/tests/container_browser_probe.py",action,JSON.stringify(value)];
   const output=execFileSync("ssh",[...cfg.ssh,"ubuntu@127.0.0.1",args.map(shell).join(" ")],{
     encoding:"utf8",timeout:360000,stdio:['ignore','pipe','pipe']});
   return JSON.parse(output.trim().split("\n").at(-1));
 };
+let relay;
+if(cfg.https_socket) {
+  relay=createServer(client=>{
+    const upstream=createConnection(cfg.https_socket);
+    client.on('error',()=>upstream.destroy());upstream.on('error',()=>client.destroy());
+    client.on('close',()=>upstream.destroy());upstream.on('close',()=>client.destroy());
+    client.pipe(upstream).pipe(client);
+  });
+  await new Promise(resolve=>relay.listen(0,'127.0.0.1',resolve));
+  cfg.port=relay.address().port;
+}
 let prepared=false;
 try {
   result.image=control("prepare"); prepared=true;
@@ -31,10 +47,32 @@ try {
     let context;
     const walked=[];
     try {
+      if(cfg.control_socket) {
+        // Prove the public fictional CA is necessary in a separate empty trust home.
+        const untrustedHome=mkdtempSync(join(tmpdir(),'container-untrusted-'));
+        let untrusted;
+        try {
+          untrusted=await chromium.launchPersistentContext(join(untrustedHome,'profile'),{
+            ...browserLaunchOptions,env:{...process.env,HOME:untrustedHome,
+              XDG_CONFIG_HOME:join(untrustedHome,'config'),XDG_CACHE_HOME:join(untrustedHome,'cache')}});
+          const page=await untrusted.newPage();
+          let rejected=false;
+          try {await page.goto('https://localhost:'+cfg.port,{timeout:15000});}
+          catch(error) {if(!String(error).includes('ERR_CERT_AUTHORITY_INVALID')) throw error;rejected=true;}
+          if(!rejected) throw Error('Untrusted fictional CA was accepted');
+        } finally {if(untrusted) await untrusted.close();rmSync(untrustedHome,{recursive:true,force:true});}
+      }
       context=await chromium.launchPersistentContext(join(home,"profile"),{
-        channel:"chromium",chromiumSandbox:true,headless:true,viewport,timeout:30000,
+        ...browserLaunchOptions,viewport,
         env:{...process.env,HOME:home,XDG_CONFIG_HOME:join(home,"config"),XDG_CACHE_HOME:join(home,"cache")}});
       const page=await context.newPage();
+      if(cfg.control_socket) {
+        let rejected=false;
+        try {await page.goto('https://altitude-wrong.invalid:'+cfg.port,{timeout:15000});}
+        catch(error) {if(!String(error).includes('ERR_CERT_COMMON_NAME_INVALID')) throw error;rejected=true;}
+        if(!rejected) throw Error('Wrong TLS hostname was accepted');
+        writeFileSync(join(evidence,'tls-controls.json'),JSON.stringify({untrusted_ca_rejected:true,wrong_hostname_rejected:true}));
+      }
       page.setDefaultTimeout(30000);
       const errors=[]; page.on("pageerror",e=>errors.push(String(e)));
       const state=async (id,locator)=>{await expect(locator).toBeVisible();await page.screenshot({path:join(evidence,id+".png"),fullPage:true});walked.push(id);};
@@ -171,6 +209,7 @@ try {
   result.passed=true;
 } catch(error) {result.error=String(error);}
 finally {
+  if(relay) relay.close();
   if(prepared) {try {result.cleanup=control("cleanup");} catch(error){result.passed=false;result.cleanup_error=String(error);}}
   writeFileSync(join(cfg.results,"browser.json"),JSON.stringify(result,null,2)+"\n");
 }

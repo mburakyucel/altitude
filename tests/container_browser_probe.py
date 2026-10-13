@@ -1,9 +1,12 @@
 """Guest-only controls for the real daemon/browser fixture; no fixture HTTP routes."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
+import tempfile
+import uuid
 
 SOURCE=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(SOURCE))
@@ -13,11 +16,15 @@ from scripts import container, container_acceptance
 ROOT=Path.home()/'input/browser-runtime'
 STATE=Path.home()/'input/browser-state.json'
 ARCHIVE=Path.home()/'input/altitude-v0.1.0-rc.2.tar.gz'
+BASES=Path.home()/'input/browser-base-images.json'
 
 
-def fixture_image(archive, suffix):
+def fixture_image(archive, suffix, base=None):
     command=platform.container_command
-    image=container.build(archive,hashlib.sha256(archive.read_bytes()).hexdigest(),'localhost/altitude:browser-base-'+suffix)
+    image=(json.loads(command(['image','inspect',base]))[0] if base else
+           container.build(archive,hashlib.sha256(archive.read_bytes()).hexdigest(),'localhost/altitude:browser-base-'+suffix))
+    if base and image['Id'] != base:
+        raise RuntimeError('Captured production image identity differs')
     ident=container.start(image['Id'],'fixture-browser-build','browser-build-home','browser-build-projects',
         '127.0.0.1','localhost',19448,new_volumes=True)
     command(['exec',ident,'mkdir','-p','/opt/fixture','/etc/systemd/user/altitude.service.d'])
@@ -35,13 +42,91 @@ def fixture_image(archive, suffix):
     return fixture,image['Id']
 
 
-def run(action, value):
+def build_base_pair(root, unit, archive):
+    """The two fictional versions share one disposable delegated build store."""
+    images={}
+    for suffix,source in [('old',archive),('new',archive.with_name('altitude-v0.1.0-rc.3.tar.gz'))]:
+        checksum=hashlib.sha256(source.read_bytes()).hexdigest()
+        image=container.build(source,checksum,'localhost/altitude:browser-base-'+suffix,
+                              delegated=unit,root=root)
+        images[suffix]={'id':image['Id'],'archive_sha256':checksum}
+        shutil.rmtree(root/'context')
+        (root/'image.tar').unlink()
+    return images
+
+
+def prepare_bases():
+    """Online build phase: no fixture code runs or production container boots."""
+    ROOT.mkdir(exist_ok=True)
+    with container_acceptance.environment(ROOT,reuse=True):
+        root=Path(tempfile.mkdtemp(prefix='acp-'))
+        unit='altitude-container-build-'+uuid.uuid4().hex+'.service'
+        (root/'storage.conf').write_text('[storage]\ndriver="overlay"\n'+
+            'graphroot='+json.dumps(str(root/'store'))+'\nrunroot='+json.dumps(str(root/'run'))+'\n')
+        (root/'runtime').mkdir(mode=0o700)
+        (root/'runtime/bus').symlink_to(f'/run/user/{os.getuid()}/bus')
+        command=[sys.executable,'-c','import json,sys;from pathlib import Path;'
+                 'from tests.container_browser_probe import build_base_pair;'
+                 'print(json.dumps(build_base_pair(Path(sys.argv[1]),sys.argv[2],Path(sys.argv[3]))))',
+                 str(root),unit,str(ARCHIVE)]
+        cleanup=[sys.executable,'-c','import sys;from pathlib import Path;'
+                 'from scripts.container import cleanup_build;cleanup_build(Path(sys.argv[1]))',str(root)]
+        try:
+            images=json.loads(platform.container_job(unit,command,wait=True,after_stop=cleanup))
+        finally:
+            if root.exists():
+                environment=platform.container_user_environment()
+                if platform.job_active(unit,environment):
+                    platform.container_stop_unit(unit,environment)
+                    if platform.job_active(unit,environment):
+                        raise RuntimeError('Paired build remains active; retain private evidence')
+                container.cleanup_build(root)
+        BASES.write_text(json.dumps(images))
+        return images
+
+
+def cleanup():
+    """Retire created fixture resources; never query units that were not started."""
+    if not ROOT.exists():
+        return {'runtime_removed':True}
+    with container_acceptance.environment(ROOT,reuse=True):
+        command=platform.container_command
+        names=set(command(['ps','--all','--format','{{.Names}}']).splitlines())
+        if STATE.exists():
+            names.update(json.loads(STATE.read_text())['instances'])
+        owned={'fixture-browser-build','browser-phone','browser-desktop',
+               'browser-phone-restored','browser-desktop-restored'}
+        if not names<=owned:
+            raise RuntimeError('Unexpected running fixture resource; retain evidence')
+        for name in names:
+            platform.container_stop_unit(platform.container_unit(name),platform.container_user_environment())
+        command(['rm','--force','--all'],timeout=40)
+        for volume in command(['volume','ls','--quiet']).split(): command(['volume','rm',volume])
+        command(['rmi','--force','--all'],timeout=40)
+        if command(['ps','--all','--quiet']).strip() or command(['volume','ls','--quiet']).strip():
+            raise RuntimeError('Browser fixture resources survived cleanup')
+        command(['system','migrate'])
+        shutil.rmtree(ROOT)
+        STATE.unlink(missing_ok=True)
+        BASES.unlink(missing_ok=True)
+        return {'runtime_removed':not ROOT.exists()}
+
+
+def run(action, value, *, captured_bases=False):
+    if action=='cleanup':
+        return cleanup()
     ROOT.mkdir(exist_ok=True)
     with container_acceptance.environment(ROOT,reuse=True):
         command=platform.container_command
         if action=='prepare':
-            fixture,base=fixture_image(ARCHIVE,'old')
-            upgraded,new=fixture_image(ARCHIVE.with_name('altitude-v0.1.0-rc.3.tar.gz'),'new')
+            bases=json.loads(BASES.read_text()) if captured_bases else {}
+            if captured_bases:
+                for suffix,archive in [('old',ARCHIVE),('new',ARCHIVE.with_name('altitude-v0.1.0-rc.3.tar.gz'))]:
+                    image=bases[suffix]
+                    if not isinstance(image['id'],str) or not image['id'] or image['archive_sha256']!=hashlib.sha256(archive.read_bytes()).hexdigest():
+                        raise RuntimeError('Captured production image/archive identity differs')
+            fixture,base=fixture_image(ARCHIVE,'old',bases['old']['id'] if captured_bases else None)
+            upgraded,new=fixture_image(ARCHIVE.with_name('altitude-v0.1.0-rc.3.tar.gz'),'new',bases['new']['id'] if captured_bases else None)
             STATE.write_text(json.dumps({'image':fixture,'upgrade':upgraded,'instances':[]}))
             return {'image':fixture,'source_image':base,'upgrade':upgraded,'upgrade_source_image':new,
                     'version_scope':'Two fixture release versions from the same application schema; no arbitrary migration claim'}
@@ -110,16 +195,6 @@ def run(action, value):
                 "'later_state_absent':not (config.HOME/'.fixture-after-upgrade').exists()}))"]))
             platform.container_stop(restored)
             return {'complete':saved['complete'],'paused':not receipt['ready'],'upgraded_version':version,**observed}
-        if action=='cleanup':
-            for name in state['instances']:
-                platform.container_stop_unit(platform.container_unit(name),platform.container_user_environment())
-            command(['rm','--force','--all'],timeout=40)
-            for volume in command(['volume','ls','--quiet']).split(): command(['volume','rm',volume])
-            command(['rmi','--force','--all'],timeout=40)
-            if command(['ps','--all','--quiet']).strip() or command(['volume','ls','--quiet']).strip():
-                raise RuntimeError('Browser fixture resources survived cleanup')
-            command(['system','migrate']); shutil.rmtree(ROOT)
-            return {'runtime_removed':not ROOT.exists()}
         raise ValueError(action)
 
 

@@ -56,7 +56,7 @@ else
 	$(if $(RESULTS),,$(error Set RESULTS to a new directory for the evidence))
 	timeout 1800s python3 scripts/container_vm.py "$(RESULTS)"
 endif
-container-macos-vm: ## The container lanes in a throwaway Ubuntu arm64 guest on this Apple silicon Mac (RESULTS=dir [LANE=--image-workflow|--browser|--logout]); inside a task, through `alt task run` under an operator grant
+container-macos-vm: ## Launcher/image/logout in a throwaway Ubuntu arm64 guest (RESULTS=dir [LANE=--image-workflow|--logout]); browser uses `alt task validate --container-browser`
 	$(if $(RESULTS),,$(error Set RESULTS to a new directory for the evidence))
 	python3.12 scripts/container_vm.py "$(RESULTS)" $(LANE)
 browser-sandbox: ## Playwright's Chromium with its own sandbox against a local fictional page, recording the protections it keeps (RESULT=file); inside a task, through the validation runner

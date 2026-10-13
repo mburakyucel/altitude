@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 import platform
 import queue
+import shlex
 import shutil
 import subprocess
 import sys
@@ -89,29 +90,40 @@ def need(path: Path, size: int, what: str) -> None:
                            f"{free / GIB:.1f} GiB is free")
 
 
-def fetch(url: str, path: Path) -> None:
+def fetch(url: str, path: Path, *, budget=None) -> None:
     partial = path.with_name(path.name + ".partial")
-    with urlopen(url, timeout=60) as response, partial.open("wb") as stream:
-        shutil.copyfileobj(response, stream, 1 << 20)
-    partial.replace(path)
+    try:
+        with urlopen(url, timeout=60) as response, partial.open("wb") as stream:
+            while block := response.read(1 << 20):
+                if budget:
+                    budget(len(block))
+                stream.write(block)
+        partial.replace(path)
+    finally:
+        partial.unlink(missing_ok=True)
 
 
 def expected(sums: Path, name: str) -> str:
     return next(line.split()[0] for line in sums.read_text().splitlines() if line.endswith("*" + name))
 
 
-def base_image(cache: Path) -> dict:
+def base_image(cache: Path, *, budget=None) -> dict:
     """Ubuntu's current arm64 root filesystem, kernel and initial ramdisk, downloaded again only when their
     published checksums change. Without the Ubuntu signing keyring on a Mac, the checksums are trusted over HTTPS."""
     folder = cache / IMAGE
     folder.mkdir(parents=True, exist_ok=True)
     with macos.lock():
-        return _base_image(folder)
+        return _base_image(folder, budget=budget)
 
 
-def _base_image(folder: Path) -> dict:
-    fetch(IMAGES + "SHA256SUMS", folder / "SHA256SUMS")
-    fetch(IMAGES + "unpacked/SHA256SUMS", folder / "unpacked-SHA256SUMS")
+def _base_image(folder: Path, *, budget=None) -> dict:
+    def download(url, path):
+        if budget is None:
+            fetch(url, path)
+        else:
+            fetch(url, path, budget=budget)
+    download(IMAGES + "SHA256SUMS", folder / "SHA256SUMS")
+    download(IMAGES + "unpacked/SHA256SUMS", folder / "unpacked-SHA256SUMS")
     wanted = {ROOT: expected(folder / "SHA256SUMS", ROOT),
               KERNEL: expected(folder / "unpacked-SHA256SUMS", KERNEL),
               INITRD: expected(folder / "unpacked-SHA256SUMS", INITRD)}
@@ -120,7 +132,7 @@ def _base_image(folder: Path) -> dict:
         need(folder, 4 * GIB, "the Ubuntu image")
         for name, digest in wanted.items():
             url = IMAGES + ("" if name == ROOT else "unpacked/") + name
-            fetch(url, folder / name)
+            download(url, folder / name)
             if sha256(folder / name) != digest:
                 (folder / name).unlink()
                 raise RuntimeError(f"{name} does not match its published checksum")
@@ -163,14 +175,17 @@ class Machine:
             self.lock.close()
             raise
 
-    def start(self) -> None:
+    def start(self, *, on_spawn=None) -> None:
         self.log = (self.work / "helper.log").open("w")
         self.events = queue.Queue()
         self.process = subprocess.Popen(
             [str(macos.helper(self.image / "bin/macos_vm")), "linux", str(self.image / "vmlinux"),
              str(self.image / "initrd"), COMMAND_LINE, str(self.disk), str(self.work / "seed.iso"),
              str(self.work / "console.log"), str(self.socket), str(CPUS), str(MEMORY_GIB)],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            pass_fds=(self.lock.fileno(),))
+        if on_spawn:
+            on_spawn(self.process.pid)
         self.reader = threading.Thread(target=self._read, daemon=True)
         self.reader.start()
         threading.Thread(target=self._watch_disk, daemon=True).start()
@@ -210,7 +225,7 @@ class Machine:
         subprocess.run(["scp", "-q", "-r", *self.options("-P"), *paths], check=True, timeout=timeout)
 
     def options(self, port_flag: str) -> list[str]:
-        return ["-i", str(self.key), port_flag, "22", "-o", f"ProxyCommand=/usr/bin/nc -U {self.socket}",
+        return ["-i", str(self.key), port_flag, "22", "-o", f"ProxyCommand=/usr/bin/nc -U {shlex.quote(str(self.socket))}",
                 "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "ConnectTimeout=10",
                 "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR"]
 
@@ -230,8 +245,12 @@ class Machine:
             time.sleep(5)
         raise RuntimeError("The guest was not ready in time; see console.log")
 
-    def halt(self) -> None:
+    def halt(self, *, force: bool = False) -> None:
         if self.process and self.process.poll() is None:
+            if force:
+                self.process.kill()
+                self.process.wait(10)
+                return
             try:
                 self.process.stdin.write("stop\n")
                 self.process.stdin.flush()
@@ -239,6 +258,19 @@ class Machine:
             except (OSError, subprocess.TimeoutExpired):
                 self.process.kill()
                 self.process.wait(10)
+
+    def unplug(self) -> str:
+        """Physically remove NAT while retaining the host-guest SSH socket."""
+        self.process.stdin.write("unplug\n")
+        self.process.stdin.flush()
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            event = self.events.get(timeout=max(.1, deadline - time.monotonic()))
+            if event == "unplugged":
+                return event
+            if event.startswith(("failed", "stopped", "exited")):
+                raise RuntimeError("Guest stopped while unplugging its network")
+        raise RuntimeError("Guest network unplug was not confirmed")
 
     def stop(self) -> None:
         try:

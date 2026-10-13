@@ -10,6 +10,9 @@ own, the command runs as a job under the platform's validation Seatbelt profile,
 its run area and nothing of altd's environment. A macOS run can also have a disposable iOS Simulator iPhone, which
 altd creates and removes and the run reaches only through a relay to its Safari and two fixed native walks
 (`simulator`).
+The fixed Mac container-browser lane instead launches deployed controller code, with the task's current standing
+VM policy grant. Its captured candidate executes only in the disposable Linux guest and rootless browser container;
+the isolation receipt identifies that boundary rather than the Mac validation profile.
 The runner's storage sits beside Altitude's home, outside every worker's writable roots, and what a run produces
 reaches the task folder only through no-follow descriptors. Runs are recorded in the task's `machine.jsonl` like
 machine commands.
@@ -33,7 +36,9 @@ import shutil
 import socket
 import stat
 import subprocess
+import sys
 import threading
+import time
 import uuid
 
 from . import capture as C, config, engines, line, platform, simulator as sim, state as S, tasks as T
@@ -160,6 +165,57 @@ def native_script(run: Path, argv: list[str], output: Path, *, simulator: bool =
                       f"cd {shlex.quote(str(run / 'work'))} || exit 125",
                       "exec " + shlex.join(platform.validation_command(
                           tuple(candidate_dirs(run)), output, config.PORT, argv, env))])
+
+
+def browser_controller() -> Path:
+    """Only deployed controller code executes on the Mac; candidates enter its guest."""
+    return config.SOURCE / "scripts" / "container_browser_vm.py"
+
+
+def browser_script(area: Path, ident: str, commit: str, tree: str, timeout: int = 3300) -> str:
+    command = [sys.executable, str(browser_controller()), "--area", str(area), "--cache", str(home() / "cache"),
+               "--run-id", ident, "--commit", commit, "--tree", tree, "--port", str(config.PORT),
+               "--timeout", str(timeout)]
+    return "\n".join(["set -u", f"[ ! -e {shlex.quote(str(area / 'stopped'))} ] || exit 125",
+                      "exec " + shlex.join(command)])
+
+
+def browser_cleanup(area: Path) -> str | None:
+    """Idempotent deployed cleanup also runs after a stopped or interrupted controller."""
+    name = f"{UNIT_PREFIX}clean-{uuid.uuid4().hex[:12]}.service"
+    command = [sys.executable, str(browser_controller()), "cleanup", "--area", str(area),
+               "--cache", str(home() / "cache")]
+    outcome = _job(name, "exec " + shlex.join(command), area, 120, limits=False)
+    return None if outcome["exit"] == 0 else f"guest cleanup failed: {outcome['error'] or outcome['exit']}"
+
+
+def browser_grant(project: str, task: dict) -> dict:
+    """Admit the exact committed VM policy, never a free-text purpose or another attempt's grant."""
+    grant = task.get("grant") or {}
+    policy = grant.get("policy") or {}
+    refused = "alt task validate: --container-browser requires this task's current standing VM policy grant"
+    if config.project_path(project).resolve() != config.REPO.resolve():
+        raise PermissionError("alt task validate: --container-browser is only available for the Altitude source project")
+    if (not grant.get("id") or grant.get("attempt") != task.get("attempt") or grant.get("source") != "project"
+            or grant.get("actor") != "l3" or policy.get("file") != "AGENTS.md"
+            or policy.get("heading") != "VM lane runs on this Mac"
+            or not re.fullmatch(r"[0-9a-f]{40}", str(policy.get("commit", "")))
+            or not isinstance(policy.get("text"), str) or not grant.get("approval")
+            or f"`{grant['approval']}`" not in policy["text"]
+            or grant.get("purpose", "").split() != policy["text"].split()):
+        raise PermissionError(refused)
+    try:
+        pinned = subprocess.run(["git", "show", f"{policy['commit']}:AGENTS.md"], cwd=config.project_path(project),
+                                check=True, capture_output=True, text=True, timeout=30).stdout
+        deployed = (config.SOURCE / "AGENTS.md").read_text()
+        for document in (pinned, deployed):
+            sections = re.findall(r"^#{1,6} VM lane runs on this Mac\n(.*?)(?=^#{1,6} |\Z)",
+                                  document, re.MULTILINE | re.DOTALL)
+            if len(sections) != 1 or sections[0].split() != policy["text"].split():
+                raise PermissionError(refused)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise PermissionError(refused) from exc
+    return grant
 
 
 def isolation(run: Path, unit: str) -> str:
@@ -466,6 +522,8 @@ def _recover() -> str | None:
                 running = f"cannot confirm that {unit} stopped: {exc}"
             if running:
                 reasons.append(running)
+            elif S.read_json(area / "run.json", {}).get("container_browser") and (guest := browser_cleanup(area)):
+                reasons.append(guest)
             elif phone := sim.remove(area / "simulator"):
                 reasons.append(phone)
             elif _interrupted(area):
@@ -505,7 +563,8 @@ def _stop(ended: str, unit: str | None = None, why: str | None = None) -> None:
 
 
 def run(project: str, slug: str, attempt: object, argv: object, *, kvm: object = False, publish: object = None,
-        simulator: object = False, capture: object = False, owner=lambda task: False, waiting=lambda text: None,
+        simulator: object = False, capture: object = False, container_browser: object = False,
+        owner=lambda task: False, waiting=lambda text: None,
         gone=lambda: False) -> dict:
     """One validation run for the running owner's current attempt; returns the command's exit status and output.
     `owner(task)` says whether the request comes from that task's own worker. A request that finds the machine busy
@@ -517,7 +576,7 @@ def run(project: str, slug: str, attempt: object, argv: object, *, kvm: object =
 
     def check() -> dict:
         return _check(project, slug, attempt, argv, kvm=kvm, publish=publish, simulator=simulator, capture=capture,
-                      owner=owner)
+                      container_browser=container_browser, owner=owner)
     with config.restart_lock() as ready:
         if not ready:
             raise ValueError(RESTARTING)
@@ -548,7 +607,7 @@ def run(project: str, slug: str, attempt: object, argv: object, *, kvm: object =
                 _holder = key
                 try:
                     return _run(project, slug, task, argv, kvm=kvm, publish=publish, phone=phone, capture=capture,
-                                leaving=leaving, place=place)
+                                container_browser=container_browser, leaving=leaving, place=place)
                 finally:
                     _holder = None
     finally:
@@ -563,18 +622,23 @@ def holder() -> str | None:
 
 
 def _check(project: str, slug: str, attempt: object, argv: object, *, kvm: object, publish: object,
-           simulator: object, capture: object, owner) -> dict:
+           simulator: object, capture: object, owner, container_browser: object = False) -> dict:
     """Refuse a request this runner cannot or may not run; returns its task."""
     if config.activation_pending():  # an admitted run finishes; a new one would keep the quiet point from opening
         raise ValueError(RESTARTING)
     S.require_task_slug(slug)
-    if (not isinstance(argv, list) or not argv or not all(isinstance(a, str) and a for a in argv)
+    if (not isinstance(argv, list) or not argv and not container_browser or not all(isinstance(a, str) and a for a in argv)
             or sum(len(a) + 1 for a in argv) > COMMAND_LIMIT):
         raise ValueError(f"alt task validate: supply a command of at most {COMMAND_LIMIT} characters after --")
-    if (not all(isinstance(flag, bool) for flag in (kvm, simulator, capture))
+    if (not all(isinstance(flag, bool) for flag in (kvm, simulator, capture, container_browser))
             or publish is not None and (type(publish) is not int or not 1 <= publish <= 65535)):
         raise ValueError("alt task validate: --kvm, --simulator and --capture are on or off and --publish names one "
                          "container port")
+    if container_browser:
+        if argv or kvm or publish is not None or simulator or capture:
+            raise ValueError("alt task validate: --container-browser takes no command or other lane options")
+        if unavailable := platform.validation_container_browser_unavailable():
+            raise ValueError(f"alt task validate: {unavailable}")
     if capture and not simulator:
         raise ValueError("alt task validate: --capture records the iOS Simulator iPhone and needs --simulator; the "
                          "other lanes make their own captures with CAPTURE=1")
@@ -595,6 +659,8 @@ def _check(project: str, slug: str, attempt: object, argv: object, *, kvm: objec
         raise PermissionError("alt task validate: only the running owner's current attempt may run validation")
     if not owner(task):
         raise PermissionError("alt task validate: only this task's owner may run its validation")
+    if container_browser:
+        browser_grant(project, task)
     home().mkdir(mode=0o700, parents=True, exist_ok=True)
     if shutil.disk_usage(home()).free < FREE_DISK:
         raise ValueError(f"alt task validate: less than {FREE_DISK >> 30} GiB free for the validation runner")
@@ -602,8 +668,9 @@ def _check(project: str, slug: str, attempt: object, argv: object, *, kvm: objec
 
 
 def _run(project: str, slug: str, task: dict, argv: list[str], *, kvm: bool, publish: int | None, phone: dict | None,
-         capture: bool, leaving, place: dict) -> dict:
+         capture: bool, leaving, place: dict, container_browser: bool = False) -> dict:
     """The admitted run, holding the validation slot's `place`."""
+    admitted = time.monotonic()
     left = None if _ready.is_set() else _recover()
     if left:
         raise ValueError(f"alt task validate: the runner has not finished removing what earlier runs left: {left}")
@@ -612,12 +679,22 @@ def _run(project: str, slug: str, task: dict, argv: list[str], *, kvm: bool, pub
     row, result, failure, stopped, why, target, skipped = None, None, None, None, None, None, []
     device, relay, recording, unrecorded = None, None, None, None
     watched, watcher = threading.Event(), None
+    guest_cleanup, guest_cleaned = None, False
+    granted = browser_grant(project, task)["id"] if container_browser else None
 
     def watch() -> None:  # the job's launcher waits for the job, so the client is watched beside it
         while not watched.wait(WATCH_SECONDS):
             why = leaving()
+            revoked = False
+            if granted:
+                try:
+                    revoked = (S.load_task(project, slug).get("grant") or {}).get("id") != granted
+                    if revoked:
+                        why = "the VM policy grant was revoked while this validation ran"
+                except (OSError, ValueError):
+                    revoked, why = True, "the VM policy grant could not be confirmed while this validation ran"
             if why:
-                _stop("stopped" if why == line.CLIENT_GONE else "replaced", unit, why)
+                _stop("stopped" if why == line.CLIENT_GONE or revoked else "replaced", unit, why)
                 return
 
     try:
@@ -648,23 +725,32 @@ def _run(project: str, slug: str, task: dict, argv: list[str], *, kvm: bool, pub
             phone = {**{key: phone[key] for key in ("xcode", "runtime", "device")}, "safari": device.safari(),
                      "certificates": certificates}
         ports = (publish, host_port()) if publish else None
-        (area / "run.json").write_text(json.dumps({"project": project, "slug": slug, "unit": unit}))
+        (area / "run.json").write_text(json.dumps({"project": project, "slug": slug, "unit": unit,
+                                                  "container_browser": container_browser}))
+        isolated = ("guest:rootless-container;controller-sha256:" + hashlib.sha256(browser_controller().read_bytes()).hexdigest()
+                    if container_browser else isolation(area, unit))
         row = T.start_machine_run(project, slug, lambda n: {
-            "purpose": "validation", "command": shlex.join(argv), "unit": unit, "commit": commit, "tree": tree,
-            "host": platform.host_identity(), "isolation": isolation(area, unit), "kvm": kvm,
+            "purpose": "validation", "command": "alt task validate --container-browser" if container_browser else shlex.join(argv),
+            "unit": unit, "commit": commit, "tree": tree, "run_id": ident, "granted": granted,
+            "host": platform.host_identity(), "isolation": isolated, "kvm": kvm,
+            "container_browser": container_browser,
             "publish": {"container": ports[0], "host": ports[1]} if ports else None,
             "simulator": phone, "log": str(S.task_dir(project, slug) / "validation" / f"{n}.log")})
         with _state:
             stopped, why = _active["stopped"], _active.get("why")
         if not stopped:
-            LINE.ends(place, TIMEOUT)
+            budget = max(0, int(TIMEOUT - (time.monotonic() - admitted) - 120)) if container_browser else TIMEOUT
+            if not budget:
+                raise ValueError("alt task validate: no time remains for the guest browser run and its cleanup")
+            LINE.ends(place, budget)
             if phone and capture:
                 try:
                     recording = device.record(area / "simulator.mp4")
                 except (OSError, subprocess.SubprocessError) as exc:
                     unrecorded = f"the screen recording did not start: {exc}"
-            result = _job(unit, run_script(f"{UNIT_PREFIX}{ident}", area, argv, kvm=kvm, publish=ports,
-                                           simulator=bool(phone)), area, TIMEOUT, limits=True)
+            script = browser_script(area, ident, commit, tree, budget) if container_browser else run_script(
+                f"{UNIT_PREFIX}{ident}", area, argv, kvm=kvm, publish=ports, simulator=bool(phone))
+            result = _job(unit, script, area, budget, limits=True)
         with _state:
             stopped, why = _active["stopped"], _active.get("why")
             _active.clear()
@@ -677,6 +763,9 @@ def _run(project: str, slug: str, task: dict, argv: list[str], *, kvm: bool, pub
             missing = device.screenshot(area / "simulator.png")
             if capture:
                 uncaptured = uncaptured or _capture(area)
+        if container_browser:
+            guest_cleanup = browser_cleanup(area)
+            guest_cleaned = True
         target, skipped = _deliver(project, slug, row["n"], area, unit)
         if relay:
             evidence = S.task_dir(project, slug) / "validation"
@@ -706,10 +795,17 @@ def _run(project: str, slug: str, task: dict, argv: list[str], *, kvm: bool, pub
             # log and exit status) stay until the record exists, for the next start to finish an interrupted run.
             # The phone goes first: its set is the record of what to remove, so a set that stays keeps the area.
             device_error = sim.remove(area / "simulator") if device else None
+            if container_browser and not guest_cleaned:
+                platform.job_stop(unit, platform.manager_env(engines.clean_env()))
+                guest_cleanup = browser_cleanup(area)
+                guest_cleaned = True
+                if row is not None and target is None:
+                    target, skipped = _deliver(project, slug, row["n"], area, unit)
+                    delivered = True
             scratch = [*candidate_dirs(area), *([] if device_error else [area])] if row is None \
                 else candidate_dirs(area) if delivered else []
-            cleanup_error = cleanup([path for path in scratch if os.path.lexists(path)],
-                                    unit if row is not None else None) or device_error
+            cleanup_error = guest_cleanup or cleanup([path for path in scratch if os.path.lexists(path)],
+                                                     unit if row is not None else None) or device_error
             if row is not None:
                 result = result or {"exit": None, "timed_out": False, "started": None, "finished": S.now(),
                                     "error": f"{why} before it started" if stopped else failure,
@@ -739,5 +835,6 @@ def _run(project: str, slug: str, task: dict, argv: list[str], *, kvm: bool, pub
                     why = cleanup_error or "its record or evidence was not finished"
                     LOG.warning(f"validation: retained {area}: {why}; the next request retries its removal")
     return {**result, "n": row["n"], "commit": commit, "tree": tree, "host": row["host"], "isolation": row["isolation"],
+            "error": row["error"],
             "ended": row["ended"], "cleanup": cleanup_error, "results": str(target), "results_skipped": skipped,
             "publish": row["publish"], "simulator": row["simulator"], "log": row["log"], "unit": unit}

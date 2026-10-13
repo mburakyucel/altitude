@@ -42,6 +42,9 @@ One engine is enough, and each integration is
 
 [See it all in the desktop and phone walkthrough](docs/WALKTHROUGH.md#see-the-features)
 
+[Container browser validation](docs/CONTAINERS.md#container-browser-validation) on an Apple silicon Mac
+uses a disposable Linux guest with a sandboxed browser container.
+
 ## Get started
 
 Altitude runs for one person on Linux with a systemd user manager or on macOS 15 or newer; releases

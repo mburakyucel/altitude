@@ -2,6 +2,18 @@
 
 ## Container deployment boundary
 
+The Mac actual-image browser validation entrypoint is the fixed `alt task validate --container-browser`
+lane. The deployed controller owns a bounded throwaway Ubuntu guest under the task's standing VM
+policy grant; candidate host commands are never accepted. Online rootless builders receive candidate
+build inputs under a filter denying Mac/private addresses and IPv6; candidate guest administration
+starts only after physical network cutoff. A non-root rootless browser container has no network interface or guest
+administration credentials: bounded local fixture-control IPC and a fixed raw HTTPS socket relay
+connect it to fictional application containers. Physical guest NAT cutoff, inspected container
+configuration and a finite Chromium sandbox preflight establish the execution boundary. Validation's
+existing queue, hour limit, disconnect/replacement cleanup and activation fence own that entire
+lifetime. [Container browser validation](CONTAINERS.md#container-browser-validation) defines its
+resource, identity and native evidence requirements. The Linux KVM browser route remains separate.
+
 The host launcher checks that Podman's runtime bus resolves to the local user's owned bus socket.
 Disposable fixture runtimes retain private storage/process metadata and link only that same user
 bus into their runtime directory. The host controller selects cgroupfs and distribution crun;
@@ -1257,7 +1269,7 @@ from the saved status, or as uncertain without one, and the owner's CLI reconnec
 the grant; nobody can widen it. The endpoint shares the operator-trusted HTTP surface every worker
 on this single-account host can reach; the task record and the per-command log are the boundary,
 not caller identity. Both engines share the verb; only the launcher is host-specific.
-Candidate checks, installation VMs, containers and sandboxed-browser checks need no grant:
+Ordinary candidate checks need no grant; the fixed Mac guest browser lane requires its standing VM-policy grant:
 `POST /api/task/validate` lets the running owner's current attempt, from a process in its own worker
 job, run one command against a throwaway clone of its committed `HEAD`. On Linux the command runs in a
 disposable rootless Podman container that altd starts from its own deployed image, with fixed flags and
