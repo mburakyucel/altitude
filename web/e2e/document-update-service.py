@@ -72,7 +72,8 @@ def main():
                 return self._json({"slug": slug, "shown": shown, "second": second, "path": str(saved), "source": source})
             return super().do_GET()
 
-        def do_POST(self):
+        # Fixture controls do not interpose on the application's POST dispatcher.
+        def do_PUT(self):
             nonlocal unreachable, content_unreachable
             if self.path == "/fixture/unreachable":
                 unreachable = True
@@ -111,7 +112,7 @@ def main():
                     if (kind == "css" and path.suffix == ".js") or (kind == "js" and path.suffix == ".css"):
                         path.write_bytes(original)
                 return self._json({"ok": True, "removed": list(renames)})
-            return super().do_POST()
+            return self._json({"error": "Unknown fixture control"}, 404)
 
     serve(Handler, release=lambda: shutil.rmtree(dist))
 

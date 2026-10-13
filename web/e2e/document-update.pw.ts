@@ -51,7 +51,7 @@ for (const entry of entries) {
       });
       let reloads = 0;
       page.on("load", () => { reloads += 1; });
-      const update = await request.post("/fixture/update", { data: { asset } });
+      const update = await request.put("/fixture/update", { data: { asset } });
       expect(update.ok()).toBe(true);
       const { removed } = await update.json() as { removed: string[] };
       const missing = removed.filter(name => asset === "css" ? name.endsWith(".css")
@@ -129,7 +129,7 @@ for (const entry of entries) {
         if (/\/assets\/MarkdownDocument-.*\.js$/.test(sent.url())) chunks.push(new URL(sent.url()).pathname);
       });
       // The standalone file starts its read on entry; dropping code first avoids interception to hold it.
-      expect((await request.post("/fixture/unreachable")).ok()).toBe(true);
+      expect((await request.put("/fixture/unreachable")).ok()).toBe(true);
       const view = await prepare(page, request, entry, false);
       await view.show();
       await walkthrough(page, info).state(`${entry}-connection-failure-readable`, {
@@ -139,7 +139,7 @@ for (const entry of entries) {
       expect(await page.locator(".document-source").textContent()).toBe(view.source);
       await expect(page.locator('link[rel="modulepreload"]')).toHaveCount(0);
       expect(chunks).toHaveLength(1);
-      expect((await request.post("/fixture/back")).ok()).toBe(true);
+      expect((await request.put("/fixture/back")).ok()).toBe(true);
       await page.getByRole("button", { name: "Reload page", exact: true }).click();
       if (entry === "system") await page.getByRole("button", { name: "Show", exact: true }).click();
       await expect(page.getByRole("heading", { name: "Migration plan", exact: true })).toBeVisible();
@@ -150,7 +150,7 @@ for (const entry of entries) {
 
   test(`a renderer runtime error is not a load failure: ${entry}`, async ({ page, request }) => {
     const view = await prepare(page, request, entry);
-    expect((await request.post("/fixture/renderer-error")).ok()).toBe(true);
+    expect((await request.put("/fixture/renderer-error")).ok()).toBe(true);
     await view.show();
     await expect(page.getByText("Unexpected Application Error!", { exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Fictional renderer failure", exact: true })).toBeVisible();
@@ -161,14 +161,14 @@ for (const entry of entries) {
 for (const entry of ["file", "shown"] as const) {
   test(`failed content transport retains API Retry: ${entry}`, async ({ page, request }, info) => {
     const view = await prepare(page, request, entry);
-    expect((await request.post("/fixture/content-unreachable")).ok()).toBe(true);
+    expect((await request.put("/fixture/content-unreachable")).ok()).toBe(true);
     await view.show();
     const title = entry === "file" ? "File unavailable" : "Preview unavailable";
     await walkthrough(page, info).state(`${entry}-failed-content`, {
       visible: [page.getByRole("heading", { name: title, exact: true }), page.getByRole("button", { name: "Retry", exact: true })],
       hidden: [page.getByText("Formatting unavailable", { exact: true })],
     });
-    expect((await request.post("/fixture/back")).ok()).toBe(true);
+    expect((await request.put("/fixture/back")).ok()).toBe(true);
     await page.getByRole("button", { name: "Retry", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Migration plan", exact: true })).toBeVisible();
     await view.close();
