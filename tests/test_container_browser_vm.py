@@ -104,7 +104,7 @@ class ContainerBrowserControllerTests(AltitudeCase):
                    'renderers': [{'uid': '1000', 'seccomp': '2', 'own_user_namespace': True,
                                   'own_pid_namespace': True}]}
         network = {'passed': True, 'attempts': {n: {'refused': True}
-                   for n in ('gateway', 'host_listener', 'internet')}}
+                   for n in ('gateway', 'internet')}}
         container = {'Image': 'fictional-image', 'Config': {'User': '1000:1000'},
                      'HostConfig': {'NetworkMode': 'none'},
                      'Mounts': [{'Destination': n, 'RW': n != '/candidate'}

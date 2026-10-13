@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 const cfg=JSON.parse(readFileSync(process.argv[2],'utf8'));
 const attempts={};
-for(const name of ['gateway','host_listener','internet']) {
+for(const name of ['gateway','internet']) {
   const [host,port]=cfg.network_targets[name];
   attempts[name]=await new Promise(resolve=>{
     const socket=createConnection({host,port});

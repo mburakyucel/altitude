@@ -324,8 +324,8 @@ def _copy_file(source: str, dst_fd: int, name: str) -> None:
 
 def copy_results(source: Path, parent_fd: int, name: str) -> list[str]:
     """Copy the run's results into a new folder `name` under `parent_fd` as regular files and folders only, opened
-    without following links, up to RESULTS_LIMIT. Receipts, then text logs, precede optional artifacts across the
-    whole tree, sharing one budget. Returns what was skipped."""
+    without following links, up to RESULTS_LIMIT. Receipts, then text logs and failure contexts, precede optional
+    artifacts across the whole tree, sharing one budget. Returns what was skipped."""
     skipped, budget = [], [RESULTS_LIMIT]
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
@@ -349,12 +349,12 @@ def copy_results(source: Path, parent_fd: int, name: str) -> list[str]:
                         os.close(child)
                 elif stat.S_ISREG(mode):
                     suffix = Path(entry.name).suffix
-                    order = 0 if suffix in (".json", ".jsonl") else 1 if suffix in (".log", ".txt") else 2
+                    order = 0 if suffix in (".json", ".jsonl") else 1 if suffix in (".log", ".txt", ".md") else 2
                     if order != priority:
                         continue
                     size = entry.stat(follow_symlinks=False).st_size
                     if size > budget[0]:
-                        skipped.append(f"{path}: over the {RESULTS_LIMIT >> 20} MiB results limit")
+                        skipped.append(f"{path}: exceeds what remains of the {RESULTS_LIMIT >> 20} MiB results limit")
                         continue
                     _copy_file(entry.path, dst_fd, entry.name)
                     budget[0] -= size
@@ -370,7 +370,7 @@ def copy_results(source: Path, parent_fd: int, name: str) -> list[str]:
             walk(source, top, "", priority)
     finally:
         os.close(top)
-    return sorted(skipped)
+    return sorted(set(skipped))  # each pass meets the same unreadable folder
 
 
 def _deliver(project: str, slug: str, n: int, area: Path, unit: str) -> tuple[Path, list[str]]:
